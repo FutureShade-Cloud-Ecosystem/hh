@@ -220,6 +220,13 @@ function reset(kind = "full") {
     runs: new Map(),
     keys: new Map(),
     counter: 0,
+    // Walk change 8: cross-account Promises tab read seed.
+    promises: [],
+    // Walk change 8 S6: per-account payment policy keyed by customer_id.
+    paymentPolicies: {},
+    // Walk change 8 S8 / S5M: reminder rules and per-(customer,rule) exemption state.
+    reminderRules: [],
+    exemptions: new Map(),
   };
   if (kind === "empty") {
     world.invoices = [];
@@ -248,6 +255,34 @@ function reset(kind = "full") {
     allocations: [{ invoice_n: 2, amount_cents: 96_000 }],
   };
   world.payments.push(bounced);
+
+  // Walk change 8 S5: seed a couple of cross-account promises so the Promises tab has live rows.
+  world.promises.push({
+    id: uuid("p", 1),
+    customer_id: custId(1),
+    invoice_id: uuid("a", 1),
+    promised_cents: 100_000,
+    promised_date: dayOffset(-7), // 7 days ago, so the row reads BROKEN
+    status: "BROKEN",
+    promised_by: "Accounts payable desk",
+    note: "Cheque went out Friday",
+    taken_by: uuid("u", 9),
+    taken_at: dayOffset(-14),
+    settled_at: null,
+  });
+  world.promises.push({
+    id: uuid("p", 2),
+    customer_id: custId(2),
+    invoice_id: uuid("a", 3),
+    promised_cents: 250_000,
+    promised_date: dayOffset(7), // 7 days from now, OPEN
+    status: "OPEN",
+    promised_by: "Owner",
+    note: "Clearing at month end",
+    taken_by: uuid("u", 9),
+    taken_at: dayOffset(-2),
+    settled_at: null,
+  });
   const hold = (n, cust, kind, auto, reason, daysAgo, extra = {}) => ({
     id: uuid("d", n),
     customer_id: custId(cust),

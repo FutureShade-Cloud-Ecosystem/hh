@@ -39,6 +39,7 @@ package finstmt
 
 import (
 	"context"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -116,6 +117,10 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 		WithPaymentTrail(h.paymentTrail).
 		WithTaxLabel(h.registerTaxWords).
 		RegisterRoutes(r, g)
+	// Walk change 8 S5/S6/S8: promises list, account payment policy, reminder rules + enrol/exempt.
+	// Lives here because cmd/server/main.go is off limits to a lane and the same pool backs it;
+	// see c8walk_handler.go's header for why these handlers are in finstmt and not in billing.
+	NewC8WalkHandler(pool, h.log).RegisterC8WalkRoutes(r, g)
 }
 
 // registerPool resolves the pgx pool behind this service's repository, or nil in scaffold mode.

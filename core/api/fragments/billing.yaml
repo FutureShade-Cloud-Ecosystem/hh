@@ -1061,6 +1061,205 @@ paths:
                 $ref: "#/components/schemas/BillingReminderSendPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/promises:
+    get:
+      operationId: billingListPromises
+      tags: [staff-billing]
+      summary: List promises to pay across accounts, the Worklist and Promises tab
+      description: >-
+        Walk change 8 S5. Open, kept, broken and cancelled promises in one page,
+        enriched with customer name and invoice number so the Money Desk Promises
+        tab and the Worklist can render the row straight from the response. The
+        status filter narrows the read; absent status means all four. Newest
+        promises first, oldest last; cursor drives pagination.
+      x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: >-
+            Comma-separated statuses to include. Absent means all four (OPEN,
+            KEPT, BROKEN, CANCELLED). One bad value rejects the whole read 400.
+          schema:
+            type: string
+            enum: [OPEN, KEPT, BROKEN, CANCELLED, "OPEN,KEPT"]
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The promises page, one promise per row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPromisePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/customers/{customerID}/payment-policy:
+    get:
+      operationId: billingGetAccountPaymentPolicy
+      tags: [staff-billing]
+      summary: Read one account's payment policy
+      description: >-
+        Walk change 8 S6. The policy is what the take-a-payment panel uses to
+        order the tenders and surface a card surcharge line. Absent row means
+        house default: ach_first true, surcharge 240 bps, minimum 0. The row's
+        existence is never an error, an absent row answers 200 with the
+        default-shaped read.
+      x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The payment policy read, the stored row or the house default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAccountPaymentPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: billingPutAccountPaymentPolicy
+      tags: [staff-billing]
+      summary: Write one account's payment policy
+      description: >-
+        Walk change 8 S6. Upserts the row; absent customer is 404 not 400.
+        surcharge_rate_bps is validated 0 to 10000 (a stored value above 10000
+        would be meaningless), min_ach_cents at the same gate as balances.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingAccountPaymentPolicyInput"
+      responses:
+        "200":
+          description: The stored policy row, after the upsert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAccountPaymentPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/reminders/rules:
+    get:
+      operationId: billingListReminderRules
+      tags: [staff-billing]
+      summary: List the reminder rules, the office 5-rule table
+      description: >-
+        Walk change 8 S8 / S5M. The Money Desk AR office renders this read as
+        its reminder rules table. Every rule carries its paylink URL template,
+        last-sent stamp, the cumulative amount reminders have brought in, and
+        the count of accounts re-enrolled. Sorted by code for stable ordering.
+      x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The rules page, one rule per row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderRulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/reminders/enrol:
+    post:
+      operationId: billingEnrolReminder
+      tags: [staff-billing]
+      summary: Re-enrol an exempt account into one reminder rule
+      description: >-
+        Walk change 8 S8. The inverse of exempt: an exempt customer's exemption
+        is flipped to enrolled (or the row is inserted with exempt=false) and
+        the rule's enrolled_count ticks up by one. Idempotent on a non-exempt
+        account: a second enrol call is a no-op plus the active read, never a
+        duplicated counter bump.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingReminderEnrolInput"
+      responses:
+        "200":
+          description: The exemption row after the enrol, plus the rule's new count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderEnrolResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/reminders/exempt:
+    post:
+      operationId: billingExemptReminder
+      tags: [staff-billing]
+      summary: Exempt an account from one reminder rule
+      description: >-
+        Walk change 8 S8. Inserts (or upserts to exempt=true) the per-account
+        exemption for one rule. The note is required and short, the next
+        operator reads it. Idempotent: a second exempt for the same pair is a
+        no-op plus the current read.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingReminderExemptInput"
+      responses:
+        "200":
+          description: The exemption row after the exemption, plus the rule's new count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderEnrolResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/ar/paper-path:
     get:
       operationId: billingListPaperPath
@@ -1720,6 +1919,167 @@ components:
         settled_at:
           type: [string, "null"]
           format: date-time
+
+    # --- walk change 8 S5: promises page -----------------------------------------
+    BillingPromiseEnriched:
+      type: object
+      description: >-
+        Walk change 8 S5: a promise row enriched with customer name and invoice
+        number, so the Money Desk Promises tab and the Worklist can render the
+        row straight from the response without a second read.
+      required: [id, customer_id, customer_name, invoice_id, invoice_no, promised_cents, promised_date, status, taken_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        promised_cents: { type: integer, format: int64 }
+        promised_date: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [OPEN, KEPT, BROKEN, CANCELLED]
+        promised_by: { type: string }
+        note: { type: string }
+        taken_by: { type: string }
+        taken_at: { type: string, format: date-time }
+        settled_at:
+          type: [string, "null"]
+          format: date-time
+
+    BillingPromisePage:
+      type: object
+      required: [rows, next_cursor]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/BillingPromiseEnriched" }
+        next_cursor:
+          type: [string, "null"]
+
+    # --- walk change 8 S6: per-account payment policy ----------------------------
+    BillingAccountPaymentPolicy:
+      type: object
+      description: >-
+        Walk change 8 S6. Stored row OR house default. ach_first=true orders
+        the take-a-payment panel as EFT, CARD, CASH, CHEQUE; surcharge_rate_bps
+        drives the CARD surcharge line; min_ach_cents forces EFT first below
+        that balance. The default-shaped read is what an absent row returns.
+      required: [customer_id, ach_first, surcharge_rate_bps, min_ach_cents, updated_at]
+      properties:
+        customer_id: { type: string, format: uuid }
+        ach_first: { type: boolean }
+        surcharge_rate_bps: { type: integer }
+        min_ach_cents: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    BillingAccountPaymentPolicyInput:
+      type: object
+      required: [ach_first, surcharge_rate_bps, min_ach_cents]
+      properties:
+        ach_first: { type: boolean }
+        surcharge_rate_bps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Card surcharge in basis points (240 = 2.40%, capped at 10000).
+        min_ach_cents:
+          type: integer
+          format: int64
+          minimum: 0
+
+    # --- walk change 8 S8 / S5M: reminder rules, enrol, exempt -------------------
+    BillingReminderRule:
+      type: object
+      description: >-
+        Walk change 8 S8 / S5M. One row in the Money Desk reminder rules table.
+        paylink_url_template carries the {token} placeholder (validated server
+        side); last_sent_at drives the "Last sent" stamp; amount_brought_in_cents
+        drives the "Brought in" line; enrolled_count ticks up on every enrol
+        call. The exclusion_count is the count of customers currently exempt
+        from this rule, the inverse number the operator wants next to the
+        enrolled figure.
+      required:
+        - id
+        - code
+        - label
+        - channel
+        - days_past_due
+        - max_per_window
+        - paylink_url_template
+        - last_sent_at
+        - amount_brought_in_cents
+        - enrolled_count
+        - exclusion_count
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        label: { type: string }
+        channel:
+          type: string
+          enum: [EMAIL, SMS, PHONE]
+        days_past_due: { type: integer }
+        max_per_window: { type: integer }
+        paylink_url_template: { type: string }
+        last_sent_at:
+          type: [string, "null"]
+          format: date-time
+        amount_brought_in_cents: { type: integer, format: int64 }
+        enrolled_count: { type: integer }
+        exclusion_count: { type: integer }
+        updated_at: { type: string, format: date-time }
+
+    BillingReminderRulePage:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/BillingReminderRule" }
+
+    BillingReminderEnrolInput:
+      type: object
+      description: The body for both enrol and exempt; the only difference is the route.
+      required: [customer_id, rule_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        note:
+          type: string
+          description: >-
+            Mandatory for exempt (a note without a reason is not an exemption),
+            optional for enrol.
+
+    BillingReminderExemptInput:
+      type: object
+      description: The body for the exempt route; the note is mandatory.
+      required: [customer_id, rule_id, note]
+      properties:
+        customer_id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        note:
+          type: string
+          description: The reason; an exempt without a reason is refused 400.
+
+    BillingReminderEnrolResult:
+      type: object
+      description: >-
+        The current state of the exemption row after the enrol/exempt call,
+        plus the rule's now-enrolled_count. exclusion_count is the inverse
+        number, so the UI can render "N enrolled / M excluded" without a
+        second read.
+      required: [customer_id, rule_id, exempt, enrolled_count, exclusion_count]
+      properties:
+        customer_id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        exempt:
+          type: boolean
+          description: false after enrol, true after exempt.
+        note: { type: string }
+        enrolled_count: { type: integer }
+        exclusion_count: { type: integer }
+        updated_at: { type: string, format: date-time }
 
     BillingDisputeView:
       type: object

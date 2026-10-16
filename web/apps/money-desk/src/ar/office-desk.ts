@@ -7,11 +7,14 @@
 // who may do it. Each write that carries a key sends one key per attempt and the same key again on a retry whose
 // answer was lost. No address or number a customer gave is ever put on screen.
 import type {
+  BillingAccountPaymentPolicy,
   BillingAgingRow,
   BillingAPContactRead,
   BillingLandingPolicy,
   BillingPaperPathEntry,
   BillingRegisterRow,
+  BillingReminderEnrolResult,
+  BillingReminderRule,
   BillingReminderSend,
   BillingStatementRunResult,
   Result,
@@ -105,6 +108,14 @@ export interface OfficeModel {
   readonly history: Listing<BillingReminderSend>;
   readonly historyFor: string;
   readonly paper: Listing<BillingPaperPathEntry>;
+  /** Walk change 8 S8 / S5M: the office reminder rules table read. */
+  readonly rules: Listing<BillingReminderRule>;
+  /** The account whose payment policy is currently being read for the take-a-payment panel (S6). */
+  readonly paymentFor: string;
+  /** The cached account payment policy read for that account, if any. */
+  readonly paymentPolicy: BillingAccountPaymentPolicy | null;
+  /** A cached per-(customer,rule) read of whether the account has been exempted. */
+  readonly exemptions: ReadonlyMap<string, boolean>;
   /** The paper path flag being closed and the way it closes, waiting on a note. */
   readonly closing: { readonly flagId: string; readonly status: "MOVED_TO_PAPER" | "DISMISSED" } | null;
   readonly run: RunView;
@@ -133,6 +144,10 @@ export class OfficeDesk {
   #history: Listing<BillingReminderSend> = { phase: "none" };
   #historyFor = "";
   #paper: Listing<BillingPaperPathEntry> = { phase: "none" };
+  #rules: Listing<BillingReminderRule> = { phase: "none" };
+  #paymentFor = "";
+  #paymentPolicy: BillingAccountPaymentPolicy | null = null;
+  #exemptions = new Map<string, boolean>();
   #closing: { flagId: string; status: "MOVED_TO_PAPER" | "DISMISSED" } | null = null;
   #invoiceMode: InvoiceMode = "none";
   #invoiceId: string | null = null;
@@ -167,6 +182,10 @@ export class OfficeDesk {
       history: this.#history,
       historyFor: this.#historyFor,
       paper: this.#paper,
+      rules: this.#rules,
+      paymentFor: this.#paymentFor,
+      paymentPolicy: this.#paymentPolicy,
+      exemptions: this.#exemptions,
       closing: this.#closing,
       run: this.#run,
       settings: this.#settings.model(),
@@ -260,9 +279,9 @@ export class OfficeDesk {
 
   // ---- reminders and the paper path --------------------------------------------------------------------------
 
-  /** Opens the Reminders tab: the history and the paper path are read afresh. */
+  /** Opens the Reminders tab: the history, the paper path and the rules are read afresh. */
   async openReminders(): Promise<void> {
-    await Promise.all([this.#loadHistory(), this.#loadPaper()]);
+    await Promise.all([this.#loadHistory(), this.#loadPaper(), this.#loadRules()]);
   }
 
   async #loadHistory(): Promise<void> {
@@ -271,6 +290,58 @@ export class OfficeDesk {
     const got = await this.#api.reminders(this.#historyFor);
     this.#history = got.ok ? { phase: "ready", items: got.value.items } : { phase: "error", words: officeRefusal("reminders", got.error, got.status) };
     this.#host.repaint();
+  }
+
+  /** Walk change 8 S8 / S5M: the office 5-rule reminder table read. */
+  async #loadRules(): Promise<void> {
+    this.#rules = { phase: "loading" };
+    this.#host.repaint();
+    const got = await this.#api.reminderRules();
+    this.#rules = got.ok ? { phase: "ready", items: got.value.rules } : { phase: "error", words: officeRefusal("reminder-rules", got.error, got.status) };
+    this.#host.repaint();
+  }
+
+  /** Walk change 8 S6: read one account's payment policy (the take-a-payment panel reads it). */
+  async #loadPaymentPolicy(customerId: string): Promise<void> {
+    if (customerId === "") {
+      this.#paymentFor = "";
+      this.#paymentPolicy = null;
+      this.#host.repaint();
+      return;
+    }
+    this.#paymentFor = customerId;
+    this.#host.repaint();
+    const got = await this.#api.accountPaymentPolicy(customerId);
+    this.#paymentPolicy = got.ok ? got.value : { customer_id: customerId, ach_first: true, surcharge_rate_bps: 240, min_ach_cents: 0, updated_at: new Date().toISOString() };
+    this.#host.repaint();
+  }
+
+  /** Walk change 8 S8: re-enrol an exempt account into one rule (the office rule row's button). */
+  async #enrol(ruleId: string, customerId: string): Promise<void> {
+    if (this.#busy) return;
+    if (customerId === "" || ruleId === "") return this.#stop("Choose the account and the rule.");
+    this.#busy = true;
+    this.#host.repaint();
+    const result: Result<BillingReminderEnrolResult> = await this.#api.enrolReminder(ruleId, customerId);
+    this.#busy = false;
+    if (!result.ok) return this.#fail("enrol-reminder", result);
+    this.#exemptions.set(`${customerId}:${ruleId}`, result.value.exempt);
+    await this.#loadRules();
+  }
+
+  /** Walk change 8 S8: the inverse of enrol; the route requires a non-empty note. */
+  async #exempt(ruleId: string, customerId: string): Promise<void> {
+    if (this.#busy) return;
+    if (customerId === "" || ruleId === "") return this.#stop("Choose the account and the rule.");
+    const note = this.#host.field("reminder-exempt-note");
+    if (note.trim() === "") return this.#stop("Say why in a few words, the next person to open this account reads it, not the rule.");
+    this.#busy = true;
+    this.#host.repaint();
+    const result: Result<BillingReminderEnrolResult> = await this.#api.exemptReminder(ruleId, customerId, note);
+    this.#busy = false;
+    if (!result.ok) return this.#fail("exempt-reminder", result);
+    this.#exemptions.set(`${customerId}:${ruleId}`, result.value.exempt);
+    await this.#loadRules();
   }
 
   async #loadPaper(): Promise<void> {
@@ -285,7 +356,7 @@ export class OfficeDesk {
     this.#remind = { ...this.#remind, customerId, invoices: customerId === "" ? [] : "loading", invoiceId: "", confirm: false };
     this.#host.repaint();
     if (customerId === "") return;
-    const [invoices] = await Promise.all([this.#api.accountInvoices(customerId), this.ensureContact(customerId)]);
+    const [invoices] = await Promise.all([this.#api.accountInvoices(customerId), this.ensureContact(customerId), this.#loadPaymentPolicy(customerId)]);
     if (this.#remind.customerId !== customerId) return;
     const open = invoices.ok ? invoices.value.items.filter((r) => r.status !== "PAID" && r.balance_cents > 0) : [];
     this.#remind = { ...this.#remind, invoices: open, invoiceId: open[0]?.id ?? "" };
@@ -620,6 +691,15 @@ export class OfficeDesk {
       case "paper-close-confirm":
         void this.#resolvePaper(attr("data-flag-id"));
         return true;
+      case "reminder-enrol":
+        void this.#enrol(attr("data-rule-id"), attr("data-customer-id"));
+        return true;
+      case "reminder-exempt":
+        void this.#exempt(attr("data-rule-id"), attr("data-customer-id"));
+        return true;
+      case "reminder-load":
+        void this.#loadRules();
+        return true;
       default:
         return this.#settings.press(control);
     }
@@ -651,6 +731,10 @@ export class OfficeDesk {
     this.#removing = null;
     this.#history = { phase: "none" };
     this.#paper = { phase: "none" };
+    this.#rules = { phase: "none" };
+    this.#paymentFor = "";
+    this.#paymentPolicy = null;
+    this.#exemptions.clear();
     this.#closing = null;
     this.#settings.clear();
     this.#tillHolds.clear();

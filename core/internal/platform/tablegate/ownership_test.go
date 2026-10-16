@@ -303,6 +303,8 @@ var migrationTopics = map[string]string{
 	"0372_yard_short_line_tax":             "order",
 	"0396_warranty_policy":                 "warranty",
 	"0404_warranty_vendor_agreements":      "warranty",
+	"0409_ar_account_payment_policy":       "billing",
+	"0410_ar_reminder_paylink_enrol":       "billing",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -349,6 +351,7 @@ var multiTopicSplits = map[string]func(table string) string{
 var ownedObjects = map[string]string{
 
 	"ar_ap_contacts":                  "billing",           // 0183_ar_landing_reminders
+	"ar_account_payment_policy":       "billing",           // 0409_ar_account_payment_policy
 	"ar_credit_policy":                "billing",           // 0104_ar_credit_gates
 	"ar_invoice_deliveries":           "billing",           // 0175_ar_invoice_deliveries
 	"ar_invoice_disputes":             "billing",           // 0177_ar_invoice_disputes
@@ -358,6 +361,8 @@ var ownedObjects = map[string]string{
 	"ar_paper_path_flags":             "billing",           // 0183_ar_landing_reminders
 	"ar_promises_to_pay":              "billing",           // 0176_ar_promises_to_pay
 	"ar_reminder_events":              "billing",           // 0183_ar_landing_reminders
+	"ar_reminder_rules":               "billing",           // 0410_ar_reminder_paylink_enrol
+	"ar_reminder_exempts":             "billing",           // 0410_ar_reminder_paylink_enrol
 	"ar_reminder_sends":               "billing",           // 0183_ar_landing_reminders
 	"ar_statement_runs":               "billing",           // 0105_ar_statements
 	"ar_statements":                   "billing",           // 0105_ar_statements

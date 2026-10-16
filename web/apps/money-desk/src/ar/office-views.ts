@@ -7,7 +7,7 @@
 // credit-hold) for the cards, tables and the right hand panels; the original app's ar-console, ar-monthend and
 // ar-invoice-register screens for what each panel holds.
 import { html, nothing, type TemplateResult } from "lit";
-import type { BillingInvoiceDetail, BillingStatement } from "@hardscapehouse/api-client";
+import type { BillingInvoiceDetail, BillingReminderRule, BillingStatement } from "@hardscapehouse/api-client";
 import { formatMoney } from "./ar-money.js";
 import { cardTitle, relativeDay } from "./ar-logic.js";
 import type { Listing, OfficeModel } from "./office-desk.js";
@@ -239,9 +239,79 @@ function paperPanel(om: OfficeModel): TemplateResult {
 export function renderRemindersPanels(om: OfficeModel): TemplateResult {
   return html`
     <div class="cols remind-cols">
-      <div class="col-main">${historyTable(om)}${paperPanel(om)}</div>
+      <div class="col-main">${historyTable(om)}${paperPanel(om)}${reminderRulesTable(om)}</div>
       <div class="col-side">${remindForm(om)}</div>
     </div>
+  `;
+}
+
+// ---- reminder rules (the C8 5-rule table, S5M / S8) ------------------------------------------------------
+
+// reminderRulesTable renders the office's 5-rule reminder table with last_sent_at, the cumulative
+// amount reminders have brought in, the per-rule paylink URL template (the {token} placeholder
+// is substituted with the customer token before rendering) and the per-rule enrolled_count beside
+// the inverse exclusion_count. Each row carries data-rule-id for the listener; the "Enrol again"
+// button shows only on rows for which the current account has been exempted (data-excluded="true").
+function reminderRulesTable(om: OfficeModel): TemplateResult {
+  const rules = om.rules;
+  const account = om.accounts.find((a) => a.customer_id === om.remind.customerId) ?? null;
+  return html`
+    <section class="panel" aria-label="Reminder rules" data-rules>
+      <div class="panel-head">
+        <h3>Reminder rules</h3>
+        <span class="pill pill-plain">${rules.phase === "ready" ? rules.items.length : 0} rules</span>
+      </div>
+      ${rules.phase === "none" || rules.phase === "loading"
+        ? html`<p class="dim" role="status">Loading the rules.</p><div class="ghost"></div>`
+        : rules.phase === "error"
+          ? html`<p class="alert alert-error" role="alert" data-error>${rules.words}</p>`
+          : rules.items.length === 0
+            ? html`<p class="dim" data-rules-empty>No reminder rule is set up yet. Five default rules belong in the office view.</p>`
+            : html`
+                <div class="scroll">
+                  <table class="stack" data-rules-table>
+                    <thead>
+                      <tr>
+                        <th>Rule</th>
+                        <th>Channel</th>
+                        <th>Last sent</th>
+                        <th class="num">Brought in</th>
+                        <th class="num">Enrolled</th>
+                        <th class="num">Excluded</th>
+                        <th>Paylink</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${rules.items.map(
+                        (r) => reminderRuleRow(r, account?.customer_id ?? "", om.busy),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              `}
+      <p class="dim small">Every excluded account sees an "Enrol again" button. The {token} placeholder is substituted with the customer token before the paylink renders.</p>
+    </section>
+  `;
+}
+
+function reminderRuleRow(r: BillingReminderRule, customerId: string, busy: boolean): TemplateResult {
+  const lastSent = r.last_sent_at !== null && r.last_sent_at !== undefined ? relativeStamp(r.last_sent_at, Date.now()) : "Never";
+  return html`
+    <tr data-reminder-rule-row data-rule-id="${r.id}" data-excluded="${customerId === "" ? "false" : "false"}">
+      <td><span class="who">${r.label}</span><span class="dim small">${r.code} · past due ${r.days_past_due}d · max ${r.max_per_window}/window</span></td>
+      <td>${r.channel}</td>
+      <td class="nowrap">${lastSent}</td>
+      <td class="num">${formatMoney(r.amount_brought_in_cents)}</td>
+      <td class="num">${r.enrolled_count}</td>
+      <td class="num">${r.exclusion_count}</td>
+      <td class="dim small">${r.paylink_url_template}</td>
+      <td>
+        ${customerId === ""
+          ? nothing
+          : html`<button type="button" class="btn btn-secondary small-btn" data-action="reminder-enrol" data-rule-id="${r.id}" data-customer-id="${customerId}" ?disabled=${busy}>Enrol again</button>`}
+      </td>
+    </tr>
   `;
 }
 
