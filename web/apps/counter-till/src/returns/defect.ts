@@ -12,15 +12,14 @@
 // the threshold is a warranty claim. Money is integer cents in the prototype too, kept by rounding
 // the displayed cost to the nearest cent; the comparison itself is on integer cents, never a float.
 
+import { perLineSavingCents } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { formatMoney } from "../money.js";
 
-/** The defect's line cost at cost, in integer cents: quantity * unit cost. */
+/** The defect's line cost at cost, in integer cents: quantity * unit cost, via the pos-kit seam. */
 export function defectCostCents(qty: number, unitCostCents: number): number {
   if (!Number.isFinite(qty) || !Number.isFinite(unitCostCents)) return 0;
   if (qty <= 0 || unitCostCents <= 0) return 0;
-  // The picked quantity is the customer's line quantity, never a fractional slip the till
-  // multiplied itself: multiply as integer cents, then round once on a non integer product.
-  return Math.round(qty * unitCostCents);
+  return perLineSavingCents(unitCostCents, qty);
 }
 
 /**
