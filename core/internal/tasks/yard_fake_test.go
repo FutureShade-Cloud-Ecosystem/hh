@@ -128,6 +128,9 @@ func (f *fakeStore) RecordPickLocked(ctx context.Context, taskID, actorID string
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if err := notAPick(t.TaskType); err != nil {
+		return nil, err
+	}
 	if err := pickClosed(t.Status); err != nil {
 		return nil, err
 	}

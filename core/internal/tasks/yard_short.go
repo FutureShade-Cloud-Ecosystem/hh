@@ -60,6 +60,29 @@ func (e pickClosedError) Error() string {
 
 func (e pickClosedError) Is(target error) bool { return target == ErrPickClosed }
 
+// ErrNotAPick is a record against a task whose type the record door does not take. The door records
+// what a picker pulled against a PICK task's order lines; a NEED_WEIGHT task's line is measured by
+// the weight round trip, and a record onto one would backorder an order line and reprice the order
+// for material the yard never picked. → 409, and through sync that op's rejection.
+var ErrNotAPick = errors.New("tasks: that task is not a pick, its record cannot take lines")
+
+// pickTypeError is ErrNotAPick with the refused type in the words.
+type pickTypeError struct{ taskType string }
+
+func (e pickTypeError) Error() string {
+	return "tasks: task type " + e.taskType + " is not a pick, its record cannot take lines"
+}
+
+func (e pickTypeError) Is(target error) bool { return target == ErrNotAPick }
+
+// notAPick is the refusal for a record onto a task whose type the door does not take, nil for a PICK.
+func notAPick(taskType string) error {
+	if taskType == TypePick {
+		return nil
+	}
+	return pickTypeError{taskType: taskType}
+}
+
 // pickClosed is the refusal for a task in a terminal status, nil for any open one.
 func pickClosed(status string) error {
 	if status == StatusCancelled || status == StatusDone {

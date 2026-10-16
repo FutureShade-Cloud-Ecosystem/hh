@@ -554,6 +554,12 @@ func (r *Repository) RecordPickLocked(ctx context.Context, taskID, actorID strin
 		}
 		return nil, fmt.Errorf("tasks: lock %q for pick lines: %w", taskID, err)
 	}
+	// The type gate before the status gate: a record onto a task that is not a PICK is refused for its
+	// type whatever its status, because the door's subject is a pick's order lines and a NEED_WEIGHT
+	// row's line is measured by the weight round trip, never backordered from here.
+	if err := notAPick(task.TaskType); err != nil {
+		return nil, err
+	}
 	if err := pickClosed(task.Status); err != nil {
 		return nil, err
 	}
