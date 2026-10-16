@@ -80,8 +80,8 @@ func TestWarrantyCredit_CostGateMarshal(t *testing.T) {
 func TestWarrantyCredit_RulingR3CapAtSubtotal(t *testing.T) {
 	// Ruling R3: unit prices remain unchanged; credit caps at subtotal; net total reduces to zero if credit >= subtotal
 	lens := costLens{allow: true}
-	subtotal := int64(20000)      // $200.00
-	creditExcess := int64(30000)  // $300.00
+	subtotal := int64(20000)     // $200.00
+	creditExcess := int64(30000) // $300.00
 	po := PO{
 		ID:                         "00000000-0000-0000-0000-000000000002",
 		SubtotalCents:              subtotal,

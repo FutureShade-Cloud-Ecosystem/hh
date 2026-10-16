@@ -110,7 +110,7 @@ type PO struct {
 	// gets a purchase order with no money key on it at all.
 	SubtotalCadCents int64 `json:"-"`
 
-	SubtotalCents int64     `json:"-"`
+	SubtotalCents int64 `json:"-"`
 
 	// Warranty credit applied up to subtotal, ruling R3.
 	WarrantyCreditAppliedCents int64   `json:"-"`
@@ -118,8 +118,8 @@ type PO struct {
 	WarrantyClaimNo            *string `json:"warranty_claim_no,omitempty"`
 	NetTotalCents              int64   `json:"-"`
 
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// POCosts contributes `subtotal_cents` + `subtotal_cad_cents` for an allowed caller and nothing
 	// whatsoever for a refused one. Stamped by exactly one producer (costLens.costs).
