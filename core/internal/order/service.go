@@ -141,6 +141,8 @@ type Service struct {
 	// a material delta through the DIB-360 approvals substrate. Both nil until main.go injects them.
 	picks   PickStateReader
 	finance FinanceApprover
+	// requesterRoles labels a change's requester by role for the cross order queue (change_queue.go).
+	requesterRoles RequesterRoleReader
 	// DIB-78 multi-ship invoice writer (shipgroup.go). Unbound is the SHIPPED state and a documented
 	// PARK: no order→invoice writer exists in the tree outside the POS ring, so readiness is computed
 	// and published while the button stays absent rather than fabricating an invoice number.
