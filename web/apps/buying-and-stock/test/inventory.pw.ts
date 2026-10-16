@@ -288,3 +288,16 @@ test("on a phone the inventory tables stack with their labels and the page never
   const sideways = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   expect(sideways).toBe(false);
 });
+
+test("the stock lookup's table says Reserved for the bucket and the footnote names it (no Allocated)", async ({ page, request }) => {
+  await openInventory(page, request, "lookup");
+  await runLookup(page, "GLS-PAV-60 Copperline Paver 60mm");
+  // The header reads Reserved, and every cell in that column carries the same data-label.
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Reserved")')).toBeVisible();
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Allocated")')).toHaveCount(0);
+  const firstCell = page.locator("[data-onhand-row]").first().locator('td[data-label="Reserved"]');
+  await expect(firstCell).toBeVisible();
+  // The footnote names the same vocabulary, so a worker reads the meaning once.
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved.");
+  await expect(page.locator("[data-lookup]")).not.toContainText("minus allocated");
+});

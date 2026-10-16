@@ -34,6 +34,11 @@ import {
   unreadWord,
   waitedWords,
   youAcked,
+  isAdminCaller,
+  initialsOf,
+  systemEventDetails,
+  parseMentions,
+  QUICK_REPLIES,
 } from "../src/messages-logic.ts";
 
 const ch = (over = {}) => ({
@@ -277,3 +282,73 @@ test("the unread signature is the same for the same counts in any order, and mov
   assert.notEqual(unreadSignature({ total: 3, channels: [a, { ...b, latest_at: "2025-01-03T00:00:00Z" }] }), base);
   assert.equal(unreadSignature({ total: 0, channels: [] }), unreadSignature({ total: 0, channels: null }));
 });
+
+test("admin caller: general manager, dealer admin, and tier 1 are admins; others are not", () => {
+  assert.equal(isAdminCaller({ roleCode: "general_manager", tier: 1 }), true);
+  assert.equal(isAdminCaller({ roleCode: "dealer_admin", tier: 2 }), true);
+  assert.equal(isAdminCaller({ roleCode: "custom_role", tier: 1 }), true);
+  assert.equal(isAdminCaller({ roleCode: "inside_sales", tier: 3 }), false);
+  assert.equal(isAdminCaller({ roleCode: "yard_manager", tier: 2 }), false);
+  assert.equal(isAdminCaller({ roleCode: "payables_receivables", tier: 3 }), false);
+  assert.equal(isAdminCaller(null), false);
+  assert.equal(isAdminCaller(undefined), false);
+});
+
+test("initials of: two letters for multi-word names, single letter for single words, trimmed", () => {
+  assert.equal(initialsOf("Marcus Webb"), "MW");
+  assert.equal(initialsOf("Priya Shah"), "PS");
+  assert.equal(initialsOf("Elena Ruiz"), "ER");
+  assert.equal(initialsOf("Dana"), "D");
+  assert.equal(initialsOf("Inside Sales (demo)"), "IS");
+  assert.equal(initialsOf("Yard manager (demo)"), "YM");
+  assert.equal(initialsOf(""), "");
+});
+
+test("system event details: never display System author name, derives source, icon, and deep link", () => {
+  const yardEvt = systemEventDetails({
+    kind: "EVENT",
+    channel_slug: "yard-point-loma",
+    ref: { topic: "yard.picking", entity: "order:SO-PLM-1042" },
+  });
+  assert.equal(yardEvt.source, "Yard, Point Loma");
+  assert.equal(yardEvt.icon, "truck");
+  assert.deepEqual(yardEvt.actionPill, { label: "Open SO-PLM-1042", entity: "order:SO-PLM-1042" });
+  assert.notEqual(yardEvt.source.toLowerCase(), "system");
+
+  const stockEvt = systemEventDetails({
+    kind: "EVENT",
+    ref: { topic: "stock.receipt", entity: "po:PO-PLM-136" },
+  });
+  assert.equal(stockEvt.source, "Receiving");
+  assert.equal(stockEvt.icon, "box");
+  assert.deepEqual(stockEvt.actionPill, { label: "Open PO-PLM-136", entity: "po:PO-PLM-136" });
+  assert.notEqual(stockEvt.source.toLowerCase(), "system");
+
+  const creditEvt = systemEventDetails({
+    kind: "EVENT",
+    ref: { topic: "order.credit_hold", entity: "order:SO-1042" },
+  });
+  assert.equal(creditEvt.source, "Credit");
+  assert.equal(creditEvt.icon, "shield");
+  assert.deepEqual(creditEvt.actionPill, { label: "Open SO-1042", entity: "order:SO-1042" });
+  assert.notEqual(creditEvt.source.toLowerCase(), "system");
+});
+
+test("parse mentions: extracts @mentions as chips and keeps text intact", () => {
+  const tokens = parseMentions("Can @Elena check the short pallet for @Marcus today?");
+  assert.deepEqual(tokens, [
+    { type: "text", value: "Can " },
+    { type: "mention", value: "@Elena" },
+    { type: "text", value: " check the short pallet for " },
+    { type: "mention", value: "@Marcus" },
+    { type: "text", value: " today?" },
+  ]);
+  assert.deepEqual(parseMentions("No mentions here"), [
+    { type: "text", value: "No mentions here" },
+  ]);
+});
+
+test("quick replies: four standard chips", () => {
+  assert.deepEqual(QUICK_REPLIES, ["On it", "Done", "Need a hand", "Call me"]);
+});
+

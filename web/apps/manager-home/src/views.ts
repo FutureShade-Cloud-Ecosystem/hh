@@ -526,67 +526,7 @@ function renderReceivingCard(row: ReceivingRow): TemplateResult {
 
 // -- Approvals -------------------------------------------------------------------------------------------------
 
-export interface ApprovalsModel {
-  readonly phase: "loading" | "ready" | "error" | "refused";
-  readonly kind: string;
-  readonly rows: readonly ApprovalRow[];
-  readonly error: string;
-  readonly refusal: string;
-  readonly busyId: string;
-}
-
-export function renderApprovals(model: ApprovalsModel): TemplateResult {
-  return html`
-    ${viewHeader("approvals", "", "")}
-    <div class="kind-tabs" role="tablist" aria-label="Approval kinds">
-      ${APPROVAL_KINDS.map((k) => html`
-        <button type="button" class="kind-tab" role="tab" data-action="pick-kind" data-kind=${k.kind} aria-selected=${model.kind === k.kind ? "true" : "false"}>
-          ${k.word}
-        </button>
-      `)}
-    </div>
-    ${model.error !== "" ? html`<p class="error-line">${model.error}</p>` : nothing}
-    ${model.refusal !== "" ? html`<p class="refusal" data-test="approvals-refusal">${model.refusal}</p>` : nothing}
-    <div role="tabpanel" aria-label=${kindWord(model.kind)}>
-      ${model.phase === "loading"
-        ? html`<p class="notice-line">Loading ${kindWord(model.kind)} approvals…</p>`
-        : model.phase === "error"
-          ? html`<div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-view">Try again</button></div>`
-          : model.phase === "refused"
-            ? nothing
-            : model.rows.length === 0
-              ? html`<section class="sheet"><div class="list-card"><p class="notice-line">No ${kindWord(model.kind)} approvals waiting.</p></div></section>`
-              : html`
-                  <section class="sheet">
-                    <div class="list-card">
-                      ${model.rows.map((row) => renderApprovalRow(row, model.busyId))}
-                    </div>
-                  </section>
-                `}
-    </div>
-  `;
-}
-
-function renderApprovalRow(row: ApprovalRow, busyId: string): TemplateResult {
-  const pending = row.status === "PENDING";
-  return html`
-    <div class="approval" data-approval=${row.id}>
-      <p class="detail">${row.detail}</p>
-      <p class="meta">
-        ${kindWord(row.policy_type)}
-        ${row.amount_cents > 0 ? html` · <span class="amount">${money(row.amount_cents)}</span>` : nothing}
-        ${row.subject_ref !== "" ? html` · ${row.subject_ref}` : nothing}
-        ${pending ? nothing : html` · ${row.status === "APPROVED" ? "Approved" : "Rejected"}`}
-      </p>
-      ${pending
-        ? html`<div class="row-actions">
-            <button type="button" class="btn btn-primary" data-action="decide" data-approval-id=${row.id} data-decision="approve" ?disabled=${busyId !== ""}>Approve</button>
-            <button type="button" class="btn btn-danger" data-action="decide" data-approval-id=${row.id} data-decision="reject" ?disabled=${busyId !== ""}>Reject</button>
-          </div>`
-        : nothing}
-    </div>
-  `;
-}
+export { renderApprovals, type ApprovalsModel } from "./approvals-views.js";
 
 function money(cents: number): string {
   // The only money rendering in this app: the core's integer cents, formatted for a person.
