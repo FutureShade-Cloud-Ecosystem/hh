@@ -9,6 +9,7 @@ package order
 //
 //	GET    /api/v1/orders/{id}/changes                            active in-branch staff
 //	POST   /api/v1/orders/{id}/changes                            active in-branch staff
+//	GET    /api/v1/order-changes                                  active in-branch staff  (change_queue.go)
 //	GET    /api/v1/order-changes/{changeId}                       active in-branch staff
 //	POST   /api/v1/order-changes/{changeId}/yard-ack              active in-branch staff  ← the yard
 //	POST   /api/v1/order-changes/{changeId}/finance-approve       manager + named approver
@@ -45,6 +46,7 @@ func (h *Handler) RegisterChangeRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Change orders (SCOPE:F10).
 	r.Handle("GET /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.listChanges)))
 	r.Handle("POST /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.raiseChange)))
+	r.Handle("GET /api/v1/order-changes", g.RequireStaff(h.staff(h.listChangeQueue)))
 	r.Handle("GET /api/v1/order-changes/{changeId}", g.RequireStaff(h.staff(h.getChange)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/yard-ack", g.RequireStaff(h.staff(h.yardAck)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/finance-approve", g.RequireManager(h.staff(h.financeApprove)))
