@@ -429,7 +429,10 @@ paths:
       description: >-
         Read-only reconciliation of the ERP books against the committed static
         BisTrack snapshot. month is required (a closing balance reconciles at
-        one period end); the fixture path is fixed, never a caller input.
+        one period end); the fixture path is fixed, never a caller input. Served
+        only where the dealer's configuration names a legacy import source
+        (legacy_import_source on the surface config); a dealer with none gets a
+        404 sentence. The route keeps its path.
       x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
@@ -465,6 +468,11 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The dealer's configuration names no legacy import source, so the check is off for it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # --- gl: fiscal periods ----------------------------------------------------
   /api/v1/gl/periods:

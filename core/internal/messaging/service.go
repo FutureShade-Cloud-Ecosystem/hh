@@ -62,6 +62,12 @@ type store interface {
 	// Slice S1: the New message picker's roster, the identity read-seam the
 	// repository's StaffRoster answers (active staff of one org, labels in).
 	StaffRoster(ctx context.Context, orgID string) ([]StaffRosterRow, error)
+	// Group rooms (walk change 7, slice S2, rulings 3 and 4): the create,
+	// the any-member seat with its system line, and the rename with its own.
+	CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error)
+	SeatGroupMember(ctx context.Context, channelID, userID, adderName, targetName string) (ChannelMember, bool, error)
+	RenameGroup(ctx context.Context, channelID, name, actorName string) (Channel, error)
+	userActive(ctx context.Context, userID string) error
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)

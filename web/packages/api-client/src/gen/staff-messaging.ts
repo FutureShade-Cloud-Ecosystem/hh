@@ -3,7 +3,11 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
+<<<<<<< HEAD
 import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+=======
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+>>>>>>> origin/main
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -34,6 +38,23 @@ export async function messagingCreateChannel(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingCreateChannel",
+  });
+}
+
+export async function messagingRenameChannel(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelRename,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingRenameChannel",
   });
 }
 
@@ -277,6 +298,21 @@ export async function messagingExport(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingExport",
+  });
+}
+
+export async function messagingCreateGroup(
+  client: ApiClient,
+  body: MessagingGroupCreate,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "POST",
+    path: "/api/v1/messaging/groups",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingCreateGroup",
   });
 }
 

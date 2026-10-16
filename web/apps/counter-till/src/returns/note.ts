@@ -161,11 +161,17 @@ export function noteOrders(draft: ReturnDraft): PosReturnAcrossInput["orders"] {
       entry = { order_id: line.orderId, lines: [] };
       orders.push(entry);
     }
+    const wireDisposition =
+      line.disposition === null
+        ? undefined
+        : line.disposition === "MANUFACTURER_DEFECT"
+          ? "DAMAGED"
+          : line.disposition;
     entry.lines.push({
       order_line_id: line.orderLineId,
       qty_base: line.qty,
-      reason_code: line.disposition === "DAMAGED" ? "DAMAGED" : "OTHER",
-      ...(line.disposition === null ? {} : { disposition: line.disposition }),
+      reason_code: line.disposition === "DAMAGED" || line.disposition === "MANUFACTURER_DEFECT" ? "DAMAGED" : "OTHER",
+      ...(wireDisposition === undefined ? {} : { disposition: wireDisposition }),
     });
   }
   return orders;

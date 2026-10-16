@@ -272,7 +272,8 @@ test("tender and receipt: cash with change due, held against the core's own read
   // re-seeded, so the leg reads the address off the branch row instead of
   // pinning a street that can move again.
   const branches = await staffGet(page, bearer, "/api/v1/branches");
-  const branch = (branches.body as unknown as Array<Record<string, unknown>>)[0];
+  const branchRows = branches.body as unknown as Array<Record<string, unknown>>;
+  const branch = branchRows.find((row) => row.id === POINT_LOMA_ID) ?? branchRows[0];
   const address = branch.address as { line1?: string };
   expect(printedText).toContain(address.line1 as string);
   // The letterhead's honesty pin: the first dealer's real trading name never
@@ -591,6 +592,17 @@ test("beyond the till: the reload keeps the session, sign out ends it, and a fre
   // in, and the till the reload left, still signed in under the same role.
   const afterReload = await page.screenshot({ fullPage: true });
   await shotParts(page, "sales-11-beyond", testInfo, [signedIn, afterReload]);
+  // The testers' page states the third half of the claim: a NEW tab in the same browser
+  // context, while THIS tab is still signed in, starts at the front door, not under
+  // custody. Session storage is per-tab, so the new tab has no hh-demo.front-door.session.v1
+  // key, sees the cards page, and shows no signed-in role. Prove it before clicking Sign
+  // out, because Sign out is the later half of the claim and the new-tab proof belongs to
+  // the reload half.
+  const freshTab = await page.context().newPage();
+  await freshTab.goto("/");
+  await expect(freshTab.getByTestId("header-word")).toHaveText("Pick a role");
+  await expect(freshTab.getByTestId("signed-in-role")).toHaveCount(0);
+  await freshTab.close();
   // Signing out ends the session, deliberately: the till returns to its
   // entry cards.
   await page.getByRole("button", { name: "Sign out" }).click();
