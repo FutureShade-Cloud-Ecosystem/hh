@@ -13,6 +13,7 @@ import {
   isOpen,
   poRows,
   refusalWords,
+  shortOrderWords,
   shortfallRows,
   statusTone,
   statusWord,
@@ -208,4 +209,18 @@ test("total due vendor label names the vendor when present", () => {
   assert.equal(totalDueVendorLabel("Alcli (demo)"), "Total due to Alcli (demo)");
   assert.equal(totalDueVendorLabel(null), "Total due to vendor");
   assert.equal(totalDueVendorLabel(undefined), "Total due to vendor");
+});
+
+test("the sales orders a shortfall holds up read as one reason: the oldest first, the rest as a count", () => {
+  // The ruling on the board's "Short for SO-n" tag (change 5, R7): the orders are named
+  // oldest first, and what the row carries past its names is a count, never a list cut short.
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3314"], short_order_more: 0 }), "Short for SO-3314");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311"], short_order_more: 0 }), "Short for SO-3305 and SO-3311");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311", "SO-3312"], short_order_more: 0 }), "Short for SO-3305, SO-3311 and SO-3312");
+  // The core names at most three and counts the rest: the row's own shape.
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311", "SO-3312"], short_order_more: 2 }), "Short for SO-3305, SO-3311, SO-3312 and 2 more");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305"], short_order_more: 4 }), "Short for SO-3305 and 4 more");
+  // Nothing waits, or the orders seam is unbound: neither key, no tag.
+  assert.equal(shortOrderWords({}), "");
+  assert.equal(shortOrderWords({ short_order_nos: [], short_order_more: 0 }), "");
 });

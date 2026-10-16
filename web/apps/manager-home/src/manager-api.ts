@@ -425,4 +425,171 @@ export class ManagerApi {
     const answer = await staffIdentity.identityDecideApproval(this.#client, id, { approve, reason });
     return answer.ok ? { ok: true, value: true } : answer;
   }
+
+  // -- WALK-C10: Manager Home Landing (boards final, change 10) ---------------------------------
+
+  /** The four TODAY money KPI cards: sales, gross margin, AR overdue, cash collected. */
+  async readLandingKpis(branchId: string): Promise<Result<readonly LandingKpi[]>> {
+    return { ok: true, value: KpiDemo.figures(branchId) };
+  }
+
+  /** The DELIVERIES TODAY card: the count, the summary, and the three branch runs. */
+  async readLandingDeliveries(branchId: string): Promise<Result<LandingDeliveries>> {
+    return { ok: true, value: KpiDemo.deliveries(branchId) };
+  }
+
+  /** The NEEDS YOU, BY MONEY AT STAKE card: ranked rows with inline actions and accent bars. */
+  async readLandingNeeds(branchId: string): Promise<Result<readonly LandingNeedRow[]>> {
+    return { ok: true, value: KpiDemo.needs(branchId) };
+  }
 }
+
+// -- WALK-C10: the landing's read shapes (boards final, change 10) ---------------------------------
+
+/** One of the four money KPI cards the TODAY section carries. */
+export interface LandingKpi {
+  readonly title: string;
+  readonly kind: "money" | "percent";
+  readonly combined: { readonly value: string; readonly compare: string };
+  readonly pointLoma: { readonly value: string };
+  readonly julian: { readonly value: string };
+}
+
+/** The DELIVERIES TODAY card. */
+export interface LandingDeliveries {
+  readonly count: number;
+  readonly pointLomaCount: number;
+  readonly julianCount: number;
+  readonly summary: string;
+  readonly runs: readonly { readonly runId: string; readonly branch: string; readonly when: string; readonly stops: string }[];
+}
+
+/** The inline action a NEEDS YOU row's button runs. */
+export type LandingNeedAction = "approve-credit-hold" | "approve-margin" | "issue-warranty" | "message-branch";
+
+/** The accent bar the row draws. */
+export type LandingNeedAccent = "credit" | "margin" | "warranty" | "escalation";
+
+/** One row on the NEEDS YOU, BY MONEY AT STAKE list. */
+export interface LandingNeedRow {
+  readonly id: string;
+  readonly title: string;
+  readonly body: string;
+  readonly amountLabel: string;
+  readonly action: LandingNeedAction;
+  readonly actionLabel: string;
+  readonly accent: LandingNeedAccent;
+  readonly targetView: "approvals" | "warranty" | "message";
+  readonly targetRef: string;
+}
+
+export const KpiDemo = {
+  figures(branchId: string): readonly LandingKpi[] {
+    void branchId;
+    return [
+      {
+        title: "Sales today",
+        kind: "money",
+        combined: { value: "$48,320.00", compare: "$44,150.00 same day last week, up 9.4%" },
+        pointLoma: { value: "$29,870.00" },
+        julian: { value: "$18,450.00" },
+      },
+      {
+        title: "Gross margin",
+        kind: "percent",
+        combined: { value: "31.8%", compare: "30.9% same day last week, up 0.9 points" },
+        pointLoma: { value: "32.4%" },
+        julian: { value: "30.7%" },
+      },
+      {
+        title: "AR overdue",
+        kind: "money",
+        combined: { value: "$96,240.00", compare: "11 accounts, $18,400.00 at risk" },
+        pointLoma: { value: "$61,300.00" },
+        julian: { value: "$34,940.00" },
+      },
+      {
+        title: "Cash collected today",
+        kind: "money",
+        combined: { value: "$21,860.00", compare: "$19,400.00 same day last week, up 12.7%" },
+        pointLoma: { value: "$14,220.00" },
+        julian: { value: "$7,640.00" },
+      },
+    ];
+  },
+  deliveries(branchId: string): LandingDeliveries {
+    void branchId;
+    return {
+      count: 17,
+      pointLomaCount: 12,
+      julianCount: 5,
+      summary: "12 from Point Loma, 5 from Julian. 5 done, 6 on the road, 6 still to leave.",
+      runs: [
+        { runId: "R1", branch: "Point Loma", when: "left 6:40 AM", stops: "4 of 6 stops done" },
+        { runId: "R5", branch: "Point Loma", when: "leaves 8:15 AM", stops: "3 stops, load 2nd" },
+        { runId: "J2", branch: "Julian", when: "left 7:10 AM", stops: "1 of 5 stops done" },
+      ],
+    };
+  },
+  needs(branchId: string): readonly LandingNeedRow[] {
+    void branchId;
+    return [
+      {
+        id: "credit-hold-1",
+        title: "Credit hold: Fieldstone Pools and Patios",
+        body: "Order SO-PLM-1049 waits on a release. Over limit by $2,100.00, in good standing.",
+        amountLabel: "$11,350.00",
+        action: "approve-credit-hold",
+        actionLabel: "Approve credit hold",
+        accent: "credit",
+        targetView: "approvals",
+        targetRef: "appr-001",
+      },
+      {
+        id: "margin-1",
+        title: "Margin floor: Q-2041, line 2",
+        body: "Seat wall block at 18.4%, below the 22.0% floor. Quote $4,187.88.",
+        amountLabel: "$771.46",
+        action: "approve-margin",
+        actionLabel: "Approve margin",
+        accent: "margin",
+        targetView: "approvals",
+        targetRef: "appr-002",
+      },
+      {
+        id: "warranty-1",
+        title: "Warranty: RT-1017 · needs a claim",
+        body: "Holland paver 60 mm, 12 defective, over the $50 threshold. Copperline Pavers.",
+        amountLabel: "$100.80",
+        action: "issue-warranty",
+        actionLabel: "Issue warranty claim",
+        accent: "warranty",
+        targetView: "warranty",
+        targetRef: "def-rt1017",
+      },
+      {
+        id: "warranty-2",
+        title: "Warranty: RT-1019 · needs a claim",
+        body: "Coping stone 12 in, 4 defective, over the $50 threshold. Heronfield Stone.",
+        amountLabel: "$56.80",
+        action: "issue-warranty",
+        actionLabel: "Issue warranty claim",
+        accent: "warranty",
+        targetView: "warranty",
+        targetRef: "def-rt1019",
+      },
+      {
+        id: "escalation-1",
+        title: "Escalation: #escalations",
+        body: "Julian asks for a ruling on a customer pickup after hours.",
+        amountLabel: "not priced",
+        action: "message-branch",
+        actionLabel: "Message a branch",
+        accent: "escalation",
+        targetView: "message",
+        targetRef: "julian-after-hours",
+      },
+    ];
+  },
+};
+

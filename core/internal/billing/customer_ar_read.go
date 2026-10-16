@@ -93,8 +93,8 @@ func (s *CreditService) CustomerAging(ctx context.Context, customerID string) (A
 // OpenCents is what the account owes right now: every open invoice balance, current and late.
 func (a AgingRow) OpenCents() int64 { return a.TotalCents }
 
-// OverdueCents is the part of the open balance that is PAST ITS DUE DATE, the sum of the three
-// late buckets.
+// OverdueCents is the part of the open balance that is PAST ITS DUE DATE, the sum of the four
+// late C8 buckets.
 //
 // Derived from the buckets rather than as Total − Current, and the difference is not cosmetic: the
 // buckets and the total are computed by separate FILTER aggregates over the same rows, so if one of
@@ -102,19 +102,19 @@ func (a AgingRow) OpenCents() int64 { return a.TotalCents }
 // subtraction would silently absorb the gap into "overdue" and report money as late that nobody has
 // aged. Adding the late buckets can only ever report what was actually bucketed as late.
 func (a AgingRow) OverdueCents() int64 {
-	return a.Days30Cents + a.Days60Cents + a.Days90PlusCents
+	return a.Days30Cents + a.Days60Cents + a.Days60To90Cents + a.Days90PlusCents
 }
 
 // OldestOverdueBucket names how late the OLDEST overdue money on this account is, in the aging
 // screens' own vocabulary ("30" / "60" / "90+"). Empty when nothing is overdue.
 //
-// It reads the same three buckets OverdueCents adds, and for the same reason: a bucket label
+// It reads the same four buckets OverdueCents adds, and for the same reason: a bucket label
 // derived from a subtraction, or from PastBucketCents (which the aging window may or may not fold
 // into 90+ depending on the dealer's bucket_days), could name a bucket that holds no money. A label
 // on a counter screen has to be a fact about a number the customer can be shown.
 func (a AgingRow) OldestOverdueBucket() string {
 	switch {
-	case a.Days90PlusCents > 0:
+	case a.Days90PlusCents > 0 || a.Days60To90Cents > 0:
 		return "90+"
 	case a.Days60Cents > 0:
 		return "60"

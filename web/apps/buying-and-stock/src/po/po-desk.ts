@@ -14,7 +14,7 @@ import type { AreaDesk } from "../purch/area.js";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
 import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { costCentsFromTyped, formatMoney, formatQty } from "./po-money.js";
-import { renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
+import { renderDesk, type DeskModel, type DraftModel } from "./po-views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -30,7 +30,6 @@ export class PoDesk implements AreaDesk {
   readonly #host: DeskHost;
 
   #phase: DeskModel["phase"] = "loading";
-  #tab: Tab = "orders";
   #shortfall: readonly InventoryShortfallRow[] = [];
   #orders: readonly PurchasingPO[] = [];
   #picked: string | null = null;
@@ -157,10 +156,6 @@ export class PoDesk implements AreaDesk {
         return true;
       case "refresh":
         void this.#reload().then(() => this.#host.repaint());
-        return true;
-      case "tab":
-        this.#tab = attr("data-tab-id") === "incoming" ? "incoming" : "orders";
-        this.#host.repaint();
         return true;
       case "pick": {
         const id = attr("data-product-id");
@@ -532,7 +527,6 @@ export class PoDesk implements AreaDesk {
   render(): TemplateResult {
     return renderDesk({
       phase: this.#phase,
-      tab: this.#tab,
       shortfall: this.#shortfall,
       orders: this.#orders,
       picked: this.#picked,

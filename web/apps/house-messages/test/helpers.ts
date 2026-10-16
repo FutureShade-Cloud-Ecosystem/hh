@@ -4,12 +4,13 @@ import { expect, test as base, type APIRequestContext, type Page } from "@playwr
 
 export { expect };
 
-export type Persona = "sales" | "yard-manager" | "payables-receivables";
+export type Persona = "sales" | "yard-manager" | "payables-receivables" | "admin";
 
 export const PERSONA = {
-  sales: { id: "a0000000-0000-4000-9000-000000000001", email: "sales@hh-demo.invalid", name: "Inside Sales (demo)", roleCode: "inside_sales", roleName: "Inside Sales", label: "Sales" },
-  "yard-manager": { id: "a0000000-0000-4000-9000-000000000002", email: "yard.manager@hh-demo.invalid", name: "Yard manager (demo)", roleCode: "yard_manager", roleName: "Yard Manager", label: "Yard manager" },
-  "payables-receivables": { id: "a0000000-0000-4000-9000-000000000003", email: "payables@hh-demo.invalid", name: "Payables and Receivables (demo)", roleCode: "payables_receivables", roleName: "Payables and Receivables", label: "Payables and Receivables" },
+  sales: { id: "a0000000-0000-4000-9000-000000000001", email: "sales@hh-demo.invalid", name: "Inside Sales (demo)", roleCode: "inside_sales", roleName: "Inside Sales", label: "Sales", tier: 3 },
+  "yard-manager": { id: "a0000000-0000-4000-9000-000000000002", email: "yard.manager@hh-demo.invalid", name: "Yard manager (demo)", roleCode: "yard_manager", roleName: "Yard Manager", label: "Yard manager", tier: 2 },
+  "payables-receivables": { id: "a0000000-0000-4000-9000-000000000003", email: "payables@hh-demo.invalid", name: "Payables and Receivables (demo)", roleCode: "payables_receivables", roleName: "Payables and Receivables", label: "Payables and Receivables", tier: 3 },
+  admin: { id: "a0000000-0000-4000-9000-000000000004", email: "admin@hh-demo.invalid", name: "General Manager (demo)", roleCode: "general_manager", roleName: "General Manager", label: "General manager", tier: 1 },
 } as const;
 
 export const CH = {
@@ -36,7 +37,7 @@ export function handoff(who: (typeof PERSONA)[Persona]): void {
     user: { userId: who.id, email: who.email, name: who.name },
     roleCode: who.roleCode,
     roleName: who.roleName,
-    tier: 3,
+    tier: "tier" in who ? (who.tier as number) : 3,
     scope: "BRANCH",
   };
   if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {

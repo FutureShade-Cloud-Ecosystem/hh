@@ -161,6 +161,24 @@ export function draftOf(row: InventoryShortfallRow): DraftMarker | null {
   return { id: row.draft_po_id, no: row.draft_po_no ?? "" };
 }
 
+// ---- the sales orders a shortfall holds up ---------------------------------------------------------
+
+/**
+ * The worklist row's reason, in the board's words: "Short for SO-n". The orders are named oldest
+ * first, the order the core gives them, and what the row carries past its names is a count, never
+ * a list cut short (change 5, R7). The core names at most three and counts the rest; neither key
+ * on the row means nothing waits, and "" draws no tag.
+ */
+export function shortOrderWords(row: Pick<InventoryShortfallRow, "short_order_nos" | "short_order_more">): string {
+  const named = (row.short_order_nos ?? []).filter((n) => n !== "");
+  if (named.length === 0) return "";
+  const more = row.short_order_more ?? 0;
+  if (more > 0) return `Short for ${named.join(", ")} and ${more} more`;
+  if (named.length === 1) return `Short for ${named[0] ?? ""}`;
+  const last = named[named.length - 1] ?? "";
+  return `Short for ${named.slice(0, -1).join(", ")} and ${last}`;
+}
+
 // ---- dates as the yard reads them -------------------------------------------------------------------------
 
 function dayNumber(date: string): number | null {

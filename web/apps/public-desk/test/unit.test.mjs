@@ -15,7 +15,15 @@ import {
   acceptReady,
   acceptHint,
   carriesTax,
+  cardSurchargeCents,
+  offersCardPayment,
+  optionalLineNos,
+  quoteMoneyExcludingOptional,
+  repHasContact,
+  repMailtoHref,
   showsImages,
+  statusBadgeKind,
+  statusBadgeLabel,
   totalsBlock,
 } from "../src/_quote-public.js";
 import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "../src/format.js";
@@ -451,4 +459,143 @@ test("quote-client keeps its statements closed and its lines free of trailing sp
     [],
     "every single line return ends in a semicolon",
   );
+});
+
+test("the status badge label is the customer-facing word for each state, and degrades honestly on a new one", () => {
+  assert.equal(statusBadgeLabel("DRAFT"), "Draft");
+  assert.equal(statusBadgeLabel("SENT"), "Awaiting acceptance");
+  assert.equal(statusBadgeLabel("ACCEPTED"), "Accepted");
+  assert.equal(statusBadgeLabel("CONVERTED"), "Order created");
+  assert.equal(statusBadgeLabel("EXPIRED"), "Expired");
+  assert.equal(statusBadgeLabel("LOST"), "Withdrawn");
+  // A new state reads in its own words rather than as "Unknown": the chip's
+  // colour would be no help on a never-seen-before state, so the words carry.
+  assert.equal(statusBadgeLabel("SOME_NEW_STATE"), "Some new state");
+});
+
+test("the status badge colour kind picks the token family each state was measured for", () => {
+  assert.equal(statusBadgeKind("SENT"), "info");
+  assert.equal(statusBadgeKind("ACCEPTED"), "success");
+  assert.equal(statusBadgeKind("CONVERTED"), "accent");
+  assert.equal(statusBadgeKind("EXPIRED"), "danger");
+  assert.equal(statusBadgeKind("LOST"), "danger");
+  // A new state defaults to info rather than guessing; the contrast pair holds.
+  assert.equal(statusBadgeKind("SOMETHING_ELSE"), "info");
+});
+
+test("excluding an optional add-on line recomputes the totals proportionally, never silently to zero", () => {
+  const money = { subtotalCents: 60000, taxCents: 7800, totalCents: 67800, taxLabel: "HST" };
+  // Excluding zero lines is an identity: the same money comes back.
+  assert.deepEqual(quoteMoneyExcludingOptional(money, []), money);
+  // Excluding a 8000-cent add-on drops the subtotal, tax scales, total scales.
+  const adjusted = quoteMoneyExcludingOptional(money, [8000]);
+  assert.equal(adjusted.subtotalCents, 52000);
+  assert.equal(adjusted.taxCents, 6760);
+  assert.equal(adjusted.totalCents, 58760);
+  assert.equal(adjusted.taxLabel, "HST");
+});
+
+test("excluding ALL subtotal degenerates to a zero subtotal without claiming a tax that is not there", () => {
+  const money = { subtotalCents: 8000, taxCents: 1040, totalCents: 9040, taxLabel: "HST" };
+  const adjusted = quoteMoneyExcludingOptional(money, [8000]);
+  assert.equal(adjusted.subtotalCents, 0);
+  assert.equal(adjusted.taxCents, 0);
+  assert.equal(adjusted.totalCents, 0);
+  assert.equal(adjusted.taxLabel, "HST");
+});
+
+test("optionalLineNos lists only the lines the dealer flagged as optional, in server order", () => {
+  const lines = [
+    { lineNo: 1, optional: false },
+    { lineNo: 2, optional: true },
+    { lineNo: 3, optional: null },
+    { lineNo: 4, optional: true },
+  ];
+  assert.deepEqual(optionalLineNos({ lines }), [2, 4]);
+  assert.deepEqual(optionalLineNos({ lines: [] }), []);
+});
+
+test("cardSurchargeCents computes the surcharge as integer cents, never a fraction, and refuses when the dealer did not configure it", () => {
+  // 2.9% of 10922 cents is 317 (rounded), the surcharge the customer sees.
+  assert.equal(cardSurchargeCents(10922, 2.9), 317);
+  assert.equal(cardSurchargeCents(10000, 3), 300);
+  // No configured surcharge: the page offers ACH only, the helper returns zero.
+  assert.equal(cardSurchargeCents(10922, null), 0);
+  assert.equal(cardSurchargeCents(10922, 0), 0);
+  assert.equal(cardSurchargeCents(10922, -2.9), 0);
+  // Defensive: a NaN percentage and a zero total refuse rather than fabricate a figure.
+  assert.equal(cardSurchargeCents(10922, Number.NaN), 0);
+  assert.equal(cardSurchargeCents(0, 2.9), 0);
+});
+
+test("offersCardPayment is true only when the dealer configured a positive surcharge", () => {
+  assert.equal(offersCardPayment({ cardSurchargePct: 2.9 }), true);
+  assert.equal(offersCardPayment({}), false);
+  assert.equal(offersCardPayment({ cardSurchargePct: null }), false);
+  assert.equal(offersCardPayment({ cardSurchargePct: 0 }), false);
+  assert.equal(offersCardPayment({ cardSurchargePct: -1 }), false);
+  assert.equal(offersCardPayment({ cardSurchargePct: Number.NaN }), false);
+});
+
+test("repHasContact renders a rep card only when there is a name to address", () => {
+  assert.equal(repHasContact({ repName: "Marisol Reyes", repEmail: "m@e.test", repPhone: "555-0140" }), true);
+  assert.equal(repHasContact({ repName: "  Marisol Reyes  ", repEmail: null, repPhone: null }), true);
+  // An email alone does not earn a card: no one to address.
+  assert.equal(repHasContact({ repName: null, repEmail: "m@e.test", repPhone: null }), false);
+  assert.equal(repHasContact({ repName: "", repEmail: "m@e.test" }), false);
+  assert.equal(repHasContact({ repName: null }), false);
+  assert.equal(repHasContact({}), false);
+});
+
+test("repMailtoHref carries the rep's email and a subject naming the quote", () => {
+  assert.equal(repMailtoHref("Q-90", "marisol@example.test"), "mailto:marisol@example.test?subject=Question%20about%20quote%20Q-90");
+  // A missing email becomes a bare mailto:, the customer types their own.
+  assert.equal(repMailtoHref("Q-90", null), "mailto:?subject=Question%20about%20quote%20Q-90");
+  assert.equal(repMailtoHref("Q-90", ""), "mailto:?subject=Question%20about%20quote%20Q-90");
+  assert.equal(repMailtoHref("Q-90", "   "), "mailto:?subject=Question%20about%20quote%20Q-90");
+});
+
+test("validateQuoteView reads the rep fields and the card surcharge as sent, and absent is honest", () => {
+  const withRep = {
+    ...FULL_VIEW,
+    rep_name: "Marisol Reyes",
+    rep_email: "marisol@example.test",
+    rep_phone: "+1-555-0140",
+    card_surcharge_pct: 2.9,
+  };
+  const view = validateQuoteView(withRep);
+  assert.notEqual(view, null);
+  assert.equal(view.repName, "Marisol Reyes");
+  assert.equal(view.repEmail, "marisol@example.test");
+  assert.equal(view.repPhone, "+1-555-0140");
+  assert.equal(view.cardSurchargePct, 2.9);
+  // Absent is honest: a quote without rep fields is a quote without a rep card.
+  const bare = validateQuoteView(FULL_VIEW);
+  assert.notEqual(bare, null);
+  assert.equal(bare.repName, null);
+  assert.equal(bare.repEmail, null);
+  assert.equal(bare.repPhone, null);
+  assert.equal(bare.cardSurchargePct, null);
+  // Wrong types are refused as data: a number cannot stand in for a name.
+  assert.equal(validateQuoteView({ ...FULL_VIEW, rep_name: 7 }).repName, null);
+  // A non-finite surcharge percentage is refused, never guessed.
+  assert.equal(validateQuoteView({ ...FULL_VIEW, card_surcharge_pct: Number.NaN }).cardSurchargePct, null);
+  assert.equal(validateQuoteView({ ...FULL_VIEW, card_surcharge_pct: "2.9" }).cardSurchargePct, null);
+});
+
+test("validateQuoteView reads the line's optional flag as sent, and absent is honest (defaults false)", () => {
+  const withOptional = {
+    ...FULL_VIEW,
+    lines: [
+      { ...FULL_VIEW.lines[0], line_no: 1 },
+      { ...FULL_VIEW.lines[0], line_no: 2, optional: true, line_total_cents: 8000, unit_price_cents: 8000 },
+    ],
+  };
+  const view = validateQuoteView(withOptional);
+  assert.notEqual(view, null);
+  assert.equal(view.lines[0].optional, false);
+  assert.equal(view.lines[1].optional, true);
+  // Absent defaults false: an old server cannot add optional add-ons silently.
+  const withoutOptional = validateQuoteView(FULL_VIEW);
+  assert.equal(withoutOptional.lines[0].optional, false);
 });

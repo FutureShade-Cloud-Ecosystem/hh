@@ -7,10 +7,12 @@
 // desk seeds a field's starting value after the render.
 //
 // Every figure on a screen is the server's, formatted: the app computes no
-// money. References: the procurement screens in design-refs/procurement
-// (procurement home, the draft from the shortfall, placed), the Buying and
-// Stock board, and the original app's purchasing-console and
-// inventory-replenish screens, drawn to HH's design system.
+// money. References: the change 5 boards bs-purchase-orders-worklist and
+// bs-purchase-orders-draft-from-the-shortfall (FB Design, "HH Work
+// (production)", page Buying and Stock), and the original app's
+// purchasing-console and inventory-replenish screens, drawn to HH's design
+// system. Incoming has its own area (bs-incoming-arrivals) and its screens
+// live in src/incoming.
 import { html, nothing, type TemplateResult } from "lit";
 import type {
   InventoryShortfallRow,
@@ -22,20 +24,17 @@ import {
   appliedWarrantyCreditLabel,
   applyWarrantyCreditButtonText,
   dateWords,
-  deliveryWord,
   draftOf,
   isPlaced,
   openWarrantyCreditStripText,
   refusalWords,
+  shortOrderWords,
   statusTone,
   statusWord,
   totalDueVendorLabel,
-  whenWords,
   type DraftMarker,
 } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
-
-export type Tab = "orders" | "incoming";
 
 /** The draft being worked: the order the core made, the worklist row it came from, and the draft
  * the core said was already open when this one was pressed (null when there was none). */
@@ -47,7 +46,6 @@ export interface DraftModel {
 
 export interface DeskModel {
   readonly phase: "loading" | "ready" | "error";
-  readonly tab: Tab;
   readonly shortfall: readonly InventoryShortfallRow[];
   readonly orders: readonly PurchasingPO[];
   readonly picked: string | null;
@@ -105,7 +103,7 @@ export function renderLoadFailed(error: string): TemplateResult {
   `;
 }
 
-// ---- the head, the tabs and the tiles --------------------------------------------------------------
+// ---- the head and the tiles ------------------------------------------------------------------------
 
 function head(): TemplateResult {
   return html`
@@ -118,18 +116,6 @@ function head(): TemplateResult {
   `;
 }
 
-function tabs(model: DeskModel): TemplateResult {
-  const tab = (id: Tab, label: string): TemplateResult => html`
-    <button type="button" class="tab" data-action="tab" data-tab-id=${id} aria-current="${model.tab === id ? "true" : "false"}">${label}</button>
-  `;
-  return html`
-    <nav class="tabs" aria-label="Buying and Stock views">
-      ${tab("orders", "Purchase orders")}
-      ${tab("incoming", "Incoming")}
-    </nav>
-  `;
-}
-
 function tiles(model: DeskModel): TemplateResult {
   const placed = model.orders.filter((o) => isPlaced(o.status));
   const ordered = placed.filter((o) => o.status === "ORDERED").length;
@@ -137,31 +123,33 @@ function tiles(model: DeskModel): TemplateResult {
   const drafts = model.orders.filter((o) => o.status === "DRAFT").length;
   const dated = placed.filter((o) => o.expected_at !== undefined && o.expected_at !== "").length;
   const short = model.shortfall.length;
+  // The tiles link to their areas (the board's one row of pills): Incoming is its own area now,
+  // and the root answers a press that carries data-action="area" before this desk ever sees it.
   return html`
     <div class="tiles">
       <section class="tile" data-tile="open-orders" aria-label="Open purchase orders">
         <span class="kicker">Open purchase orders</span>
         <span class="figure">${placed.length}</span>
         <span class="small">${ordered} ordered, ${partial} partial</span>
-        <button type="button" class="link" data-action="tab" data-tab-id="orders">Open</button>
+        <button type="button" class="link" data-action="area" data-area-id="orders">Open</button>
       </section>
       <section class="tile" data-tile="drafts" aria-label="Drafts waiting">
         <span class="kicker">Drafts waiting</span>
         <span class="figure">${drafts}</span>
         <span class="small">drafted, not yet placed with the vendor</span>
-        <button type="button" class="link" data-action="tab" data-tab-id="orders">Open</button>
+        <button type="button" class="link" data-action="area" data-area-id="orders">Open</button>
       </section>
       <section class="tile ${short > 0 ? "tile-hot" : ""}" data-tile="below-point" aria-label="Lines below reorder point">
         <span class="kicker">Lines below reorder point</span>
         <span class="figure ${short > 0 ? "stop" : ""}">${short}</span>
         <span class="small">${short > 0 ? "worst first on the worklist" : "nothing is short"}</span>
-        <button type="button" class="link" data-action="tab" data-tab-id="orders">Open the worklist</button>
+        <button type="button" class="link" data-action="area" data-area-id="orders">Open the worklist</button>
       </section>
       <section class="tile" data-tile="incoming" aria-label="Incoming">
         <span class="kicker">Incoming</span>
         <span class="figure">${dated}</span>
         <span class="small">arrivals with a promised date</span>
-        <button type="button" class="link" data-action="tab" data-tab-id="incoming">Open incoming</button>
+        <button type="button" class="link" data-action="area" data-area-id="incoming">Open incoming</button>
       </section>
     </div>
   `;
@@ -186,7 +174,6 @@ function worklist(model: DeskModel): TemplateResult {
                 <thead>
                   <tr>
                     <th><span class="visually-hidden">Pick</span></th>
-                    <th>SKU</th>
                     <th>Product</th>
                     <th class="num">On hand</th>
                     <th class="num">Reserved</th>
@@ -196,7 +183,6 @@ function worklist(model: DeskModel): TemplateResult {
                     <th class="num">Point</th>
                     <th class="num">Short by</th>
                     <th class="num">Suggest</th>
-                    <th>Vendor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -216,13 +202,25 @@ function worklist(model: DeskModel): TemplateResult {
 function worklistRow(row: InventoryShortfallRow, isPicked: boolean): TemplateResult {
   const hot = row.projected_base < 0;
   const draft = draftOf(row);
+  const shortWords = shortOrderWords(row);
+  // One product column, as the board draws it: the name, the preferred vendor under it, and the
+  // row's own reasons beneath both (a draft that does not cover it, the sales orders it holds up).
   return html`
     <tr data-shortfall-row data-sku=${row.sku} data-hot=${hot ? "true" : nothing} aria-selected="${isPicked ? "true" : "false"}" class="${hot ? "hot" : ""}">
       <td class="pick"><button type="button" class="box" role="checkbox" aria-checked="${isPicked ? "true" : "false"}" aria-label="${draft === null ? `Pick ${row.sku}` : `Drafted, ${draft.no}`}" data-action="pick" data-product-id=${row.product_id} ?disabled=${draft !== null}></button></td>
-      <td class="sku" data-label="SKU">${row.sku}</td>
-      <td class="full" data-label="Product">${row.product_name}${draft === null
-        ? nothing
-        : html`<span class="drafted"><span class="status status-watch">Drafted, not placed</span> <button type="button" class="link-inline" data-action="open-draft" data-open-draft data-po-id=${draft.id}>${draft.no}</button></span>`}</td>
+      <td class="full" data-label="Product">
+        <span class="visually-hidden">${row.sku}</span>
+        <span class="who">${row.product_name}</span>
+        <span class="small dim">${row.preferred_vendor_name}</span>
+        ${draft === null && shortWords === ""
+          ? nothing
+          : html`<span class="drafted">
+              ${draft === null
+                ? nothing
+                : html`<span class="status status-watch">Drafted, not placed</span> <button type="button" class="link-inline" data-action="open-draft" data-open-draft data-po-id=${draft.id}>${draft.no}</button>`}
+              ${shortWords === "" ? nothing : html`<span class="status status-watch" data-short-order>${shortWords}</span>`}
+            </span>`}
+      </td>
       <td class="num" data-label="On hand">${formatQty(row.on_hand_base, row.uom)}</td>
       <td class="num" data-label="Reserved">${formatQty(row.reserved_base, row.uom)}</td>
       <td class="num" data-label="In transit">${formatQty(row.in_transit_base, row.uom)}</td>
@@ -231,7 +229,6 @@ function worklistRow(row: InventoryShortfallRow, isPicked: boolean): TemplateRes
       <td class="num" data-label="Point">${formatQty(row.reorder_point_base, row.uom)}</td>
       <td class="num stop" data-label="Short by" data-field-short>${formatQty(row.short_base, row.uom)}</td>
       <td class="num" data-label="Suggest">${formatQty(row.suggested_qty_base, row.uom)}</td>
-      <td class="full" data-label="Vendor">${row.preferred_vendor_name}</td>
     </tr>
   `;
 }
@@ -449,7 +446,7 @@ function draftTotals(po: PurchasingPODetail): TemplateResult {
   `;
 }
 
-// ---- the register and incoming --------------------------------------------------------------------------
+// ---- the register -------------------------------------------------------------------------------------
 
 function register(model: DeskModel): TemplateResult {
   const rows = model.orders;
@@ -489,65 +486,19 @@ function register(model: DeskModel): TemplateResult {
   `;
 }
 
-function incoming(model: DeskModel): TemplateResult {
-  const rows = model.orders.filter((o) => isPlaced(o.status));
-  return html`
-    <section class="panel" aria-label="Incoming" data-incoming>
-      <div class="panel-head">
-        <h3>Incoming</h3>
-        ${model.tab === "incoming" ? html`<button type="button" class="btn btn-secondary small-btn" data-action="refresh">Refresh</button>` : nothing}
-      </div>
-      ${rows.length === 0
-        ? html`<div class="empty"><strong>Nothing is on order.</strong><span class="dim">An order placed with a vendor shows here with its promised date.</span></div>`
-        : html`
-            <div class="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>PO</th>
-                    <th>Expected</th>
-                    <th class="opt2">How</th>
-                    <th class="num opt2">Lines</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows.map((po) => incomingRow(model, po))}
-                </tbody>
-              </table>
-            </div>
-          `}
-      <p class="foot dim" data-bills-note>${refusalWords("post-bill", "Forbidden", 403)}</p>
-    </section>
-  `;
-}
-
-function incomingRow(model: DeskModel, po: PurchasingPO): TemplateResult {
-  const words = whenWords(po.expected_at, model.today);
-  return html`
-    <tr data-incoming-row aria-current="${model.placedId === po.id ? "true" : "false"}">
-      <td><span class="who">${po.po_no}</span><span class="small dim">${po.vendor_name}</span></td>
-      <td>${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who" data-expected>${words}</span>`}</td>
-      <td class="opt2">${deliveryWord(po.delivery_method)}</td>
-      <td class="num opt2">${po.line_count}</td>
-    </tr>
-  `;
-}
-
 // ---- the screens ---------------------------------------------------------------------------------------------
 
 export function renderDesk(model: DeskModel): TemplateResult {
   if (model.phase === "loading") return renderLoading();
   if (model.phase === "error") return renderLoadFailed(model.error);
-  const onHome = model.tab === "orders";
+  // The board's one screen: the worklist or the draft on the left, the register beside it.
+  // Incoming is its own area (src/incoming); what is on order leaves this screen to it.
   return html`
-    ${head()} ${tabs(model)} ${tiles(model)} ${notice(model)} ${onHome ? nothing : errorNote(model)}
-    ${onHome
-      ? html`
-          <div class="home">
-            <div class="home-main">${model.draft !== null ? draftPanel(model, model.draft) : worklist(model)}</div>
-            <div class="home-side">${register(model)} ${incoming(model)}</div>
-          </div>
-        `
-      : incoming(model)}
+    ${head()} ${tiles(model)} ${notice(model)}
+    <div class="home">
+      <div class="home-main">${model.draft !== null ? draftPanel(model, model.draft) : worklist(model)}</div>
+      <div class="home-side">${register(model)}</div>
+    </div>
+    <p class="foot dim" data-bills-note>${refusalWords("post-bill", "Forbidden", 403)}</p>
   `;
 }

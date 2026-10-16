@@ -348,6 +348,8 @@ type BillingRegisterRow struct {
 	StoredStatus  string                  `json:"stored_status"`
 	Status        string                  `json:"status"`
 	DaysOverdue   int32                   `json:"days_overdue"`
+	BucketLabel   *string                 `json:"bucket_label,omitempty"`
+	BucketKey     *string                 `json:"bucket_key,omitempty"`
 	AccountStatus string                  `json:"account_status"`
 	Disputed      bool                    `json:"disputed"`
 	PromisedDate  *time.Time              `json:"promised_date,omitempty"`
@@ -446,6 +448,82 @@ type BillingPromiseView struct {
 	SettledAt     *time.Time `json:"settled_at,omitempty"`
 }
 
+type BillingPromiseEnriched struct {
+	Id            string     `json:"id"`
+	CustomerId    string     `json:"customer_id"`
+	CustomerName  string     `json:"customer_name"`
+	InvoiceId     string     `json:"invoice_id"`
+	InvoiceNo     string     `json:"invoice_no"`
+	PromisedCents int64      `json:"promised_cents"`
+	PromisedDate  time.Time  `json:"promised_date"`
+	Status        string     `json:"status"`
+	PromisedBy    *string    `json:"promised_by,omitempty"`
+	Note          *string    `json:"note,omitempty"`
+	TakenBy       *string    `json:"taken_by,omitempty"`
+	TakenAt       time.Time  `json:"taken_at"`
+	SettledAt     *time.Time `json:"settled_at,omitempty"`
+}
+
+type BillingPromisePage struct {
+	Rows       []BillingPromiseEnriched `json:"rows"`
+	NextCursor *string                  `json:"next_cursor"`
+}
+
+type BillingAccountPaymentPolicy struct {
+	CustomerId       string    `json:"customer_id"`
+	AchFirst         bool      `json:"ach_first"`
+	SurchargeRateBps int       `json:"surcharge_rate_bps"`
+	MinAchCents      int64     `json:"min_ach_cents"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type BillingAccountPaymentPolicyInput struct {
+	AchFirst         bool  `json:"ach_first"`
+	SurchargeRateBps int   `json:"surcharge_rate_bps"`
+	MinAchCents      int64 `json:"min_ach_cents"`
+}
+
+type BillingReminderRule struct {
+	Id                   string     `json:"id"`
+	Code                 string     `json:"code"`
+	Label                string     `json:"label"`
+	Channel              string     `json:"channel"`
+	DaysPastDue          int        `json:"days_past_due"`
+	MaxPerWindow         int        `json:"max_per_window"`
+	PaylinkUrlTemplate   string     `json:"paylink_url_template"`
+	LastSentAt           *time.Time `json:"last_sent_at"`
+	AmountBroughtInCents int64      `json:"amount_brought_in_cents"`
+	EnrolledCount        int        `json:"enrolled_count"`
+	ExclusionCount       int        `json:"exclusion_count"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type BillingReminderRulePage struct {
+	Rules []BillingReminderRule `json:"rules"`
+}
+
+type BillingReminderEnrolInput struct {
+	CustomerId string  `json:"customer_id"`
+	RuleId     string  `json:"rule_id"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type BillingReminderExemptInput struct {
+	CustomerId string `json:"customer_id"`
+	RuleId     string `json:"rule_id"`
+	Note       string `json:"note"`
+}
+
+type BillingReminderEnrolResult struct {
+	CustomerId     string     `json:"customer_id"`
+	RuleId         string     `json:"rule_id"`
+	Exempt         bool       `json:"exempt"`
+	Note           *string    `json:"note,omitempty"`
+	EnrolledCount  int        `json:"enrolled_count"`
+	ExclusionCount int        `json:"exclusion_count"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+}
+
 type BillingDisputeView struct {
 	Id          string     `json:"id"`
 	Status      string     `json:"status"`
@@ -482,6 +560,51 @@ type BillingInvoiceDetail struct {
 	ReminderTones []string               `json:"reminder_tones"`
 	LastContactAt *time.Time             `json:"last_contact_at,omitempty"`
 	AsOf          time.Time              `json:"as_of"`
+}
+
+type BillingARWorklistRow struct {
+	CustomerId           string  `json:"customer_id"`
+	CustomerName         string  `json:"customer_name"`
+	AccountNo            string  `json:"account_no"`
+	BranchId             string  `json:"branch_id"`
+	OpenArCents          int64   `json:"open_ar_cents"`
+	PastDueCents         int64   `json:"past_due_cents"`
+	Over60Cents          int64   `json:"over_60_cents"`
+	AvailableCreditCents int64   `json:"available_credit_cents"`
+	UnappliedCreditCents int64   `json:"unapplied_credit_cents"`
+	OldestBucket         string  `json:"oldest_bucket"`
+	OldestBucketKey      string  `json:"oldest_bucket_key"`
+	BrokenPromises       int32   `json:"broken_promises"`
+	DuePromises          int32   `json:"due_promises"`
+	OpenPromises         int32   `json:"open_promises"`
+	PromisedCents        int64   `json:"promised_cents"`
+	NextPromiseDate      *string `json:"next_promise_date,omitempty"`
+	OnHold               bool    `json:"on_hold"`
+	CreditHoldCandidate  bool    `json:"credit_hold_candidate"`
+	ActionNeeded         bool    `json:"action_needed"`
+	Urgency              string  `json:"urgency"`
+	RecommendedAction    string  `json:"recommended_action"`
+}
+
+type BillingARWorklistSummary struct {
+	TotalPastDueCents     int64 `json:"total_past_due_cents"`
+	Over60Cents           int64 `json:"over_60_cents"`
+	BrokenPromises        int32 `json:"broken_promises"`
+	UnappliedCreditsCents int64 `json:"unapplied_credits_cents"`
+}
+
+type BillingARWorklistCounts struct {
+	AllOpen      int32 `json:"all_open"`
+	ActionNeeded int32 `json:"action_needed"`
+	Over60       int32 `json:"over_60"`
+	CreditHold   int32 `json:"credit_hold"`
+}
+
+type BillingARWorklistResponse struct {
+	Rows    []BillingARWorklistRow   `json:"rows"`
+	Summary BillingARWorklistSummary `json:"summary"`
+	Counts  BillingARWorklistCounts  `json:"counts"`
+	AsOf    string                   `json:"as_of"`
 }
 
 type BillingReceiptInput struct {
@@ -931,6 +1054,167 @@ type PaymentCardAttemptSummary struct {
 type PaymentCardAttemptResolve struct {
 	Resolution string `json:"resolution"`
 	Note       string `json:"note"`
+}
+
+type BillingCustomerWorkspaceHeader struct {
+	CustomerId            string                        `json:"customer_id"`
+	Name                  string                        `json:"name"`
+	AccountNo             string                        `json:"account_no"`
+	Status                string                        `json:"status"`
+	TermsDays             int                           `json:"terms_days"`
+	CreditLimitCents      int64                         `json:"credit_limit_cents"`
+	OpenCents             int64                         `json:"open_cents"`
+	AvailableCreditCents  int64                         `json:"available_credit_cents"`
+	OverdueCents          int64                         `json:"overdue_cents"`
+	UtilizationBps        int                           `json:"utilization_bps"`
+	PrimaryApContactName  *string                       `json:"primary_ap_contact_name,omitempty"`
+	PrimaryApContactEmail *string                       `json:"primary_ap_contact_email,omitempty"`
+	PrimaryApContactPhone *string                       `json:"primary_ap_contact_phone,omitempty"`
+	LastPaymentAt         *time.Time                    `json:"last_payment_at,omitempty"`
+	LastPaymentCents      *int64                        `json:"last_payment_cents,omitempty"`
+	Aging                 BillingCustomerWorkspaceAging `json:"aging"`
+}
+
+type BillingCustomerWorkspaceAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
+}
+
+type BillingCustomerWorkspaceInvoice struct {
+	Id                string `json:"id"`
+	InvoiceNo         string `json:"invoice_no"`
+	DocType           string `json:"doc_type"`
+	Status            string `json:"status"`
+	IssueDate         string `json:"issue_date"`
+	DueDate           string `json:"due_date"`
+	TotalCents        int64  `json:"total_cents"`
+	BalanceCents      int64  `json:"balance_cents"`
+	DaysOverdue       int    `json:"days_overdue"`
+	DaysOverdueBucket string `json:"days_overdue_bucket"`
+	IsDisputed        bool   `json:"is_disputed"`
+	HasOpenPromise    bool   `json:"has_open_promise"`
+}
+
+type BillingCustomerWorkspacePayment struct {
+	Id             string    `json:"id"`
+	PaymentNo      string    `json:"payment_no"`
+	ReceivedAt     time.Time `json:"received_at"`
+	AmountCents    int64     `json:"amount_cents"`
+	Method         string    `json:"method"`
+	UnappliedCents int64     `json:"unapplied_cents"`
+	BranchId       *string   `json:"branch_id,omitempty"`
+}
+
+type BillingCustomerWorkspaceCreditNote struct {
+	Id             string  `json:"id"`
+	MemoNo         string  `json:"memo_no"`
+	IssuedAt       string  `json:"issued_at"`
+	AmountCents    int64   `json:"amount_cents"`
+	UnappliedCents int64   `json:"unapplied_cents"`
+	Reason         *string `json:"reason,omitempty"`
+}
+
+type BillingCustomerWorkspaceStatement struct {
+	Id                  string    `json:"id"`
+	RunId               string    `json:"run_id"`
+	Mode                string    `json:"mode"`
+	AsOfDate            string    `json:"as_of_date"`
+	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	DeliveryStatus      string    `json:"delivery_status"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+type BillingCustomerWorkspaceNote struct {
+	Id         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	Body       string    `json:"body"`
+	AuthorId   *string   `json:"author_id,omitempty"`
+	AuthorName *string   `json:"author_name,omitempty"`
+	Pinned     bool      `json:"pinned"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type BillingCustomerWorkspaceActivity struct {
+	Kind              string    `json:"kind"`
+	Reference         *string   `json:"reference,omitempty"`
+	AmountCents       int64     `json:"amount_cents"`
+	BalanceAfterCents int64     `json:"balance_after_cents"`
+	BranchId          *string   `json:"branch_id,omitempty"`
+	Memo              *string   `json:"memo,omitempty"`
+	OccurredAt        time.Time `json:"occurred_at"`
+}
+
+type BillingCustomerWorkspace struct {
+	Header           BillingCustomerWorkspaceHeader       `json:"header"`
+	InvoicesOpen     []BillingCustomerWorkspaceInvoice    `json:"invoices_open"`
+	InvoicesClosed   []BillingCustomerWorkspaceInvoice    `json:"invoices_closed"`
+	InvoicesDisputed []BillingCustomerWorkspaceInvoice    `json:"invoices_disputed"`
+	Payments         []BillingCustomerWorkspacePayment    `json:"payments"`
+	CreditNotes      []BillingCustomerWorkspaceCreditNote `json:"credit_notes"`
+	Statements       []BillingCustomerWorkspaceStatement  `json:"statements"`
+	Notes            []BillingCustomerWorkspaceNote       `json:"notes"`
+	Activity         []BillingCustomerWorkspaceActivity   `json:"activity"`
+	AsOf             time.Time                            `json:"as_of"`
+}
+
+type BillingAddCustomerNoteInput struct {
+	Body   string  `json:"body"`
+	Kind   *string `json:"kind,omitempty"`
+	Pinned *bool   `json:"pinned,omitempty"`
+}
+
+type BillingAddCustomerNoteResult struct {
+	Note BillingCustomerWorkspaceNote `json:"note"`
+}
+
+type BillingCreateHoldRequest struct {
+	CustomerId string `json:"customer_id"`
+	Reason     string `json:"reason"`
+}
+
+type BillingSendPaylinkRequest struct {
+	CustomerId  string  `json:"customer_id"`
+	InvoiceId   *string `json:"invoice_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
+	Channel     *string `json:"channel,omitempty"`
+	Recipient   *string `json:"recipient,omitempty"`
+}
+
+type BillingSendPaylinkResult struct {
+	PaylinkUrl string    `json:"paylink_url"`
+	Status     string    `json:"status"`
+	SentAt     time.Time `json:"sent_at"`
+}
+
+type BillingStatementPreview struct {
+	Statement  BillingStatement              `json:"statement"`
+	OpenLines  []BillingStatementPreviewLine `json:"open_lines"`
+	Aging      BillingStatementPreviewAging  `json:"aging"`
+	Reconciled bool                          `json:"reconciled"`
+}
+
+type BillingStatementPreviewLine struct {
+	InvoiceId    string `json:"invoice_id"`
+	InvoiceNo    string `json:"invoice_no"`
+	DueDate      string `json:"due_date"`
+	BalanceCents int64  `json:"balance_cents"`
+	DaysOverdue  int32  `json:"days_overdue"`
+	BucketLabel  string `json:"bucket_label"`
+}
+
+type BillingStatementPreviewAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
 }
 
 type AssistArgSpec struct {
