@@ -69,13 +69,14 @@ import (
 )
 
 // shapeCensusWantPages pins the page shape operation count the document
-// carries (119 at this census's cut: 114 staff lists, 3 tenant lists, the
-// sync pull and the public products list, all answered at 200). The pin is
+// carries (120 at this census's cut: 114 staff lists, 3 tenant lists, the
+// sync pull, the public products list and the messaging mentions view, all
+// answered at 200). The pin is
 // the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 119
+const shapeCensusWantPages = 120
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -163,7 +164,7 @@ var shapeCensusAllowlist = map[string]string{
 	"purchasingListVendorSKUs":         "answers items (an array, empty for the absent vendor) with no next_cursor key (internal/purchasing/vendor_order_handler.go, Handler.listVendorSKUs writes map[string]any{\"items\": items}) against the contract's PurchasingVendorSKUPage; the fix is the owning lane's",
 	"syncPull":                         "answers scope, items, tombstones and last_seq with no next_cursor key (the engine never sets the cursor (internal/sync/engine.go, Engine.Pull) and the generated response type's tag is next_cursor,omitempty (internal/platform/apigen/types.gen.go), so the nil pointer drops from the JSON) against the contract's SyncPullResponse (next_cursor a string or null); the fix is the owning lane's",
 
-	// (4) wrong key (11): the list sits under a key the contract does not
+	// (4) wrong key (12): the list sits under a key the contract does not
 	// declare (items is the contract's spelling).
 	"finstmtListSchedules":           "writes the (nil guarded) list under the key \"schedules\" (internal/finstmt/handler.go, Handler.listSchedules) against the contract's FinStmtSchedulePage (items, next_cursor); the fix is the owning lane's",
 	"inventoryBrowse":                "writes the (nil guarded) list under the key \"rows\" (beside facets and total) (internal/inventory/stock_truth_handler.go, Handler.browse writes the BrowseResult struct) against the contract's InventoryBrowsePage; the fix is the owning lane's",
@@ -172,6 +173,7 @@ var shapeCensusAllowlist = map[string]string{
 	"inventoryListReservations":      "writes the (possibly nil) list under the key \"reservations\" (internal/inventory/stock_truth_handler.go, Handler.listReservations, no nil guard) against the contract's InventoryReservationPage; the fix is the owning lane's",
 	"inventoryListTransfers":         "writes the (possibly nil) list under the key \"transfers\" (internal/inventory/stock_truth_handler.go, Handler.listTransfers, no nil guard; the observed empty answer was {\"transfers\":null}) against the contract's InventoryTransferPage; the fix is the owning lane's",
 	"inventoryListTransitDays":       "writes the (nil guarded) list under the key \"pairs\" (internal/inventory/stock_truth_handler.go, Handler.transitDays) against the contract's InventoryTransitDaysPairPage; the fix is the owning lane's",
+	"messagingListMentions":          "writes the list under the ERP wire key \"messages\" (internal/messaging/handler.go, (*Handler).listMentions writes the service's MessagePage whose json tag is messages, the same wire the contract normalizes to items for messagingListMessages' shared MessagingMessagePage) against the contract's MessagingMessagePage; the fix is the owning lane's",
 	"taxListEvidence":                "writes the (possibly nil) list under the key \"evidence\" (internal/tax/handler.go, Handler.listEvidence, no nil guard; the observed empty answer was {\"evidence\":null}) against the contract's TaxEvidencePage; the fix is the owning lane's",
 	"taxListProfiles":                "writes the list under the key \"profiles\" (internal/tax/handler.go, Handler.listProfiles) against the contract's TaxStatusCardProfilePage; the fix is the owning lane's",
 	"taxListRates":                   "writes the list under the key \"rates\" (internal/tax/handler.go, Handler.listRates) against the contract's TaxRatePage; the fix is the owning lane's",
