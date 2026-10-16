@@ -156,3 +156,81 @@ test("switching rooms while a post is in flight keeps the new room's draft, and 
   await go(CH.deliveries, "Deliveries");
   await expect(box).toHaveValue("half written about the trucks");
 });
+
+test("admin callers see New channel in + New menu", async ({ page, request }) => {
+  await openAs(page, request, "admin");
+  await page.locator("[data-action='toggle-new-menu']").click();
+  await expect(page.locator("[data-action='new-message']")).toBeVisible();
+  await expect(page.locator("[data-action='new-channel']")).toBeVisible();
+});
+
+test("non-admin callers do not see New channel in + New menu", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await page.locator("[data-action='toggle-new-menu']").click();
+  await expect(page.locator("[data-action='new-message']")).toBeVisible();
+  await expect(page.locator("[data-action='new-channel']")).toHaveCount(0);
+});
+
+test("system messages show source label, real SVG icon, deep-link pill, and zero System author labels", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.branch).click();
+  const conversation = page.locator("[data-conversation]");
+  const eventMsg = conversation.locator("li[data-msg][data-kind='EVENT']").first();
+  await expect(eventMsg).toBeVisible();
+  // Zero System author labels
+  await expect(conversation.locator(".who", { hasText: /^System/ })).toHaveCount(0);
+  // Source label derived from topic or channel
+  await expect(eventMsg.locator(".who")).toContainText("Credit");
+  // Real SVG icon present
+  await expect(eventMsg.locator("svg[data-icon='shield']")).toBeVisible();
+  // Deep-link action pill
+  await expect(eventMsg.locator("[data-action='open-entity']")).toContainText("Open SO-1042");
+});
+
+test("quick replies populate composer, avatar initials render, @mention chips highlight, and thread side panel opens", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.yard).click();
+
+  // Quick reply chips
+  const quickChips = page.locator("[data-quick-reply]");
+  await expect(quickChips).toHaveCount(4);
+  await expect(quickChips.nth(0)).toHaveText("On it");
+  await quickChips.nth(0).click();
+  await expect(page.locator("textarea[data-field='draft']")).toHaveValue("On it");
+
+  // Avatar initials
+  const firstMsg = page.locator("[data-conversation] li[data-msg]").first();
+  await expect(firstMsg.locator("[data-avatar]")).toHaveText("YM");
+
+  // Post message with @mention chip
+  await page.locator("textarea[data-field='draft']").fill("Hello @Elena please verify door 2");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const lastMsg = page.locator("[data-conversation] li[data-msg]").last();
+  await expect(lastMsg.locator(".mention-chip")).toHaveText("@Elena");
+
+  // Thread side panel
+  await page.locator("[data-action='open-thread']").first().click();
+  const threadPanel = page.locator("[data-thread-panel]");
+  await expect(threadPanel).toBeVisible();
+  await expect(threadPanel.getByRole("heading", { name: "Thread" })).toBeVisible();
+  await expect(threadPanel.locator("textarea[data-field='thread-draft']")).toBeVisible();
+});
+
+test("at tablet width the left sidebar collapses when a thread is open", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1112, height: 868 });
+  await openAs(page, request, "sales");
+  await channel(page, CH.yard).click();
+
+  const sidebar = page.locator("[data-channel-list]");
+  await expect(sidebar).toBeVisible();
+
+  await page.locator("[data-action='open-thread']").first().click();
+  const threadPanel = page.locator("[data-thread-panel]");
+  await expect(threadPanel).toBeVisible();
+  await expect(sidebar).toBeHidden();
+
+  await page.locator("[data-action='close-thread']").click();
+  await expect(threadPanel).toBeHidden();
+  await expect(sidebar).toBeVisible();
+});
+

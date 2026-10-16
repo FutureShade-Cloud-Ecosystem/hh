@@ -60,6 +60,15 @@ const USERS = {
     tier: 3,
     scope: "BRANCH",
   },
+  admin: {
+    user_id: "a0000000-0000-4000-9000-000000000004",
+    email: "admin@hh-demo.invalid",
+    display_name: "General Manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "COMPANY",
+  },
 };
 const BY_ID = Object.fromEntries(Object.entries(USERS).map(([flow, u]) => [u.user_id, { flow, ...u }]));
 
@@ -125,13 +134,14 @@ function reset() {
   const S = USERS.sales.user_id;
   const Y = USERS["yard-manager"].user_id;
   const P = USERS["payables-receivables"].user_id;
+  const A = USERS.admin.user_id;
   world = {
     channels: [
       { id: CH.branch, kind: "BRANCH", branch_id: BRANCH, slug: "branch-point-loma", name: "Point Loma", topic: "Everyone at the yard", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, P] },
-      { id: CH.yard, kind: "TEAM", slug: "yard-point-loma", name: "Yard floor", topic: "Picks, staging and the gate", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y] },
-      { id: CH.deliveries, kind: "TOPIC", slug: "deliveries", name: "Deliveries", topic: "Truck 01 to Truck 04", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, P] },
+      { id: CH.yard, kind: "TEAM", slug: "yard-point-loma", name: "Yard floor", topic: "Picks, staging and the gate", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, A] },
+      { id: CH.deliveries, kind: "TOPIC", slug: "deliveries", name: "Deliveries", topic: "Truck 01 to Truck 04", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, P, A] },
       { id: CH.esc, kind: "TOPIC", slug: "escalations", name: "Escalations", topic: "Alerts that must be acknowledged", tier: "ESCALATION", is_archived: false, created_at: at(9000), members: [S, Y, P] },
-      { id: CH.house, kind: "TOPIC", branch_id: BRANCH, slug: "house-point-loma", name: "House queue", topic: "Customers with no assigned rep", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y] },
+      { id: CH.house, kind: "TOPIC", branch_id: BRANCH, slug: "house-point-loma", name: "House queue", topic: "Customers with no assigned rep", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, A] },
       { id: CH.dm, kind: "DM", slug: "dm-sales-yard", name: "Direct message", topic: "", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y], dmNames: { [S]: "Yard manager (demo)", [Y]: "Inside Sales (demo)" } },
       { id: CH.pay, kind: "TOPIC", branch_id: BRANCH, slug: "payments-point-loma", name: "Payments Point Loma", topic: "The day's payments", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [P], defaultMode: "MUTED" },
     ],

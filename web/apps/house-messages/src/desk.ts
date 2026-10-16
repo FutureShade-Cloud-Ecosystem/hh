@@ -19,6 +19,7 @@ import {
   isAckable,
   isHouseChannel,
   isSuperseded,
+  isAdminCaller,
   mergeOlder,
   refusalWords,
   streamOrder,
@@ -27,6 +28,7 @@ import {
   unreadSignature,
   youAcked,
   type AckProgress,
+  type CallerInfo,
   type Channel,
   type HouseConversation,
   type Message,
@@ -57,6 +59,8 @@ export class MessagesDesk {
   readonly #host: DeskHost;
   readonly #meId: string;
   readonly #live: LiveFeed;
+  readonly #caller: CallerInfo | null;
+  readonly #isAdmin: boolean;
 
   #phase: Model["phase"] = "loading";
   #loadError = "";
@@ -66,6 +70,10 @@ export class MessagesDesk {
   #activeId = "";
   #view: Model["view"] = "list";
   #liveState: LiveState | null = null;
+  #newMenuOpen = false;
+  #openThreadId: string | null = null;
+  #threadSending = false;
+  #activeTab: "messages" | "files" = "messages";
 
   // The open channel.
   #loadingChannel = false;
@@ -122,10 +130,12 @@ export class MessagesDesk {
   #refreshFull = false;
   #stopped = false;
 
-  constructor(api: MessagesApi, host: DeskHost, meId: string) {
+  constructor(api: MessagesApi, host: DeskHost, meId: string, caller?: CallerInfo | null) {
     this.#api = api;
     this.#host = host;
     this.#meId = meId;
+    this.#caller = caller ?? null;
+    this.#isAdmin = isAdminCaller(this.#caller);
     this.#live = new LiveFeed({
       mintTicket: () => this.#api.streamTicket(),
       open: (url) => this.#host.openStream(url),
@@ -482,6 +492,45 @@ export class MessagesDesk {
     this.#host.repaint();
   }
 
+  async #openThread(rootId: string): Promise<void> {
+    const channelId = this.#activeId;
+    this.#openThreadId = rootId;
+    this.#host.repaint();
+    const replies = await this.#api.thread(channelId, rootId);
+    if (this.#stopped || channelId !== this.#activeId) return;
+    if (replies.ok) {
+      this.#threads.set(rootId, replies.value);
+    }
+    this.#host.repaint();
+  }
+
+  async #threadSend(): Promise<void> {
+    if (this.#openThreadId === null || this.#threadSending) return;
+    const rootId = this.#openThreadId;
+    const channelId = this.#activeId;
+    const el = this.#host.find("textarea[data-field='thread-draft']");
+    const draftEl = el instanceof HTMLTextAreaElement ? el : null;
+    const text = draftEl?.value.trim() ?? "";
+    if (!text) return;
+    this.#threadSending = true;
+    this.#host.repaint();
+    const posted = await this.#api.post(channelId, text, rootId);
+    this.#threadSending = false;
+    if (this.#stopped) return;
+    if (!posted.ok) {
+      this.#error = refusalWords("The reply", posted.error, posted.status ?? null);
+      this.#host.repaint();
+      return;
+    }
+    if (draftEl) draftEl.value = "";
+    const replies = await this.#api.thread(channelId, rootId);
+    if (replies.ok) {
+      this.#threads.set(rootId, replies.value);
+      this.#held = this.#held.map((m) => (m.id === rootId ? { ...m, reply_count: replies.value.length } : m));
+    }
+    this.#host.repaint();
+  }
+
   // ---- posting ----------------------------------------------------------------------------------
 
   #field(): HTMLTextAreaElement | null {
@@ -553,6 +602,21 @@ export class MessagesDesk {
     const action = control.getAttribute("data-action");
     const id = control.getAttribute("data-id") ?? "";
     switch (action) {
+      case "toggle-new-menu":
+        this.#newMenuOpen = !this.#newMenuOpen;
+        this.#host.repaint();
+        return true;
+      case "new-message":
+        this.#newMenuOpen = false;
+        this.#notice = "New message";
+        this.#host.repaint();
+        return true;
+      case "new-channel":
+      case "add-channel":
+        this.#newMenuOpen = false;
+        this.#notice = "New channel";
+        this.#host.repaint();
+        return true;
       case "open-channel":
         void this.#open(id);
         return true;
@@ -562,6 +626,13 @@ export class MessagesDesk {
         return true;
       case "load-older":
         void this.#loadOlder();
+        return true;
+      case "open-thread":
+        void this.#openThread(id);
+        return true;
+      case "close-thread":
+        this.#openThreadId = null;
+        this.#host.repaint();
         return true;
       case "toggle-thread":
         void this.#toggleThread(id);
@@ -576,6 +647,32 @@ export class MessagesDesk {
       }
       case "cancel-reply":
         this.#replyTo = null;
+        this.#host.repaint();
+        return true;
+      case "quick-reply": {
+        const replyText = control.getAttribute("data-text") ?? "";
+        const field = this.#field();
+        if (field) {
+          field.value = replyText;
+          this.#draft = replyText;
+          field.focus();
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "select-tab": {
+        const tab = control.getAttribute("data-tab");
+        if (tab === "messages" || tab === "files") {
+          this.#activeTab = tab;
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "thread-send":
+        void this.#threadSend();
+        return true;
+      case "open-settings":
+        this.#notice = "Settings opened";
         this.#host.repaint();
         return true;
       case "send":
@@ -687,6 +784,8 @@ export class MessagesDesk {
     const queue: QueueModel | null = isHouseChannel(channel)
       ? { rows: this.#queue, busyId: this.#claimBusy, note: this.#queueNote, error: this.#queueError || this.#queueReadError }
       : null;
+    const openThreadRoot = this.#openThreadId ? this.#held.find((m) => m.id === this.#openThreadId) ?? null : null;
+    const openThreadReplies = this.#openThreadId ? (this.#threads.get(this.#openThreadId) ?? []) : [];
     return {
       channel,
       prefs,
@@ -702,6 +801,11 @@ export class MessagesDesk {
       composerBad: state.over > 0,
       canSend: state.canSend,
       sending: this.#sending,
+      openThreadId: this.#openThreadId,
+      openThreadRoot,
+      openThreadReplies,
+      threadSending: this.#threadSending,
+      activeTab: this.#activeTab,
     };
   }
 
@@ -722,6 +826,8 @@ export class MessagesDesk {
       bubble: this.#bubble(),
       rules: this.#rulesOpen ? { loading: this.#rulesLoading, values: this.#rules, busy: this.#rulesBusy, error: this.#rulesError } : null,
       convo: this.#convo(),
+      isAdmin: this.#isAdmin,
+      newMenuOpen: this.#newMenuOpen,
     });
   }
 }

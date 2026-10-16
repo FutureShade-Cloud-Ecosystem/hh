@@ -18,6 +18,10 @@ import {
   repliesWord,
   timeWords,
   unreadWord,
+  initialsOf,
+  systemEventDetails,
+  parseMentions,
+  QUICK_REPLIES,
   type Channel,
   type ChannelGroup,
   type HouseConversation,
@@ -44,6 +48,8 @@ export interface Model {
   readonly bubble: BubbleModel | null;
   readonly rules: RulesModel | null;
   readonly convo: ConvoModel | null;
+  readonly isAdmin: boolean;
+  readonly newMenuOpen: boolean;
 }
 
 /** The caller's own payment notice rules, drawn in place of the conversation while open. */
@@ -119,6 +125,72 @@ export interface ConvoModel {
   readonly composerBad: boolean;
   readonly canSend: boolean;
   readonly sending: boolean;
+  readonly openThreadId: string | null;
+  readonly openThreadRoot: Message | null;
+  readonly openThreadReplies: readonly Message[];
+  readonly threadSending: boolean;
+  readonly activeTab: "messages" | "files";
+}
+
+// ---- SVGs --------------------------------------------------------------------------------------
+
+function renderGearIcon(): TemplateResult {
+  return html`
+    <svg class="icon icon-gear" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  `;
+}
+
+function renderPaperclipIcon(): TemplateResult {
+  return html`
+    <svg class="icon icon-paperclip" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+    </svg>
+  `;
+}
+
+function renderEventIcon(icon: "truck" | "box" | "shield" | "notice"): TemplateResult {
+  switch (icon) {
+    case "truck":
+      return html`
+        <svg class="icon" data-icon="truck" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="1" y="3" width="15" height="13"></rect>
+          <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>
+          <circle cx="5.5" cy="18.5" r="2.5"></circle>
+          <circle cx="18.5" cy="18.5" r="2.5"></circle>
+        </svg>
+      `;
+    case "box":
+      return html`
+        <svg class="icon" data-icon="box" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      `;
+    case "shield":
+      return html`
+        <svg class="icon" data-icon="shield" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        </svg>
+      `;
+    default:
+      return html`
+        <svg class="icon" data-icon="notice" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      `;
+  }
+}
+
+function notifyModeWord(mode?: NotifyMode | null): string {
+  if (mode === "MENTIONS") return "Mentions";
+  if (mode === "MUTED") return "Muted";
+  return "All";
 }
 
 // ---- the strip ---------------------------------------------------------------------------------
@@ -147,9 +219,8 @@ function renderStrip(m: Model): TemplateResult {
 
 // ---- the channel rail --------------------------------------------------------------------------
 
-function renderChannel(c: Channel, activeId: string): TemplateResult {
+function renderChannelItem(c: Channel, activeId: string, isDm: boolean): TemplateResult {
   const unread = unreadWord(c);
-  const line = channelLine(c);
   return html`
     <li>
       <button
@@ -159,9 +230,11 @@ function renderChannel(c: Channel, activeId: string): TemplateResult {
         data-id=${c.id}
         aria-current=${c.id === activeId ? "true" : "false"}
       >
+        ${isDm
+          ? html`<span class="avatar avatar-sm" aria-hidden="true">${initialsOf(channelTitle(c))}</span>`
+          : html`<span class="ch-prefix" aria-hidden="true">#</span>`}
         <span class="ch-text">
           <span class="ch-name">${channelTitle(c)}</span>
-          ${line === "" ? nothing : html`<span class="ch-line">${line}</span>`}
         </span>
         ${c.unread_count > 0
           ? html`<span class="${c.mentioned ? "badge badge-mention" : "badge"}" data-unread aria-label=${unread}>${c.unread_count > 99 ? "99+" : c.unread_count}</span>`
@@ -171,24 +244,70 @@ function renderChannel(c: Channel, activeId: string): TemplateResult {
   `;
 }
 
-function renderGroup(g: ChannelGroup, activeId: string): TemplateResult {
-  return html`
-    <section class="group">
-      <h3>${g.label}</h3>
-      <ul>${g.channels.map((c) => renderChannel(c, activeId))}</ul>
-    </section>
-  `;
-}
-
 function renderRail(m: Model): TemplateResult {
-  const groups = channelGroups(m.channels);
+  const dmChannels = m.channels.filter((c) => c.kind === "DM");
+  const groups = channelGroups(m.channels.filter((c) => c.kind !== "DM"));
+
   return html`
     <aside class="rail" data-channel-list aria-label="Channels">
-      <div class="rail-head"><h2>Channels</h2></div>
-      ${groups.length === 0
-        ? html`<p class="dim small" data-no-channels>You are not in any channel yet.</p>`
-        : groups.map((g) => renderGroup(g, m.activeId))}
-      <div class="rail-foot"><button type="button" class="link" data-action="open-rules">Payment notice rules</button></div>
+      <div class="rail-top">
+        <button
+          type="button"
+          class="btn btn-primary btn-new"
+          data-action="toggle-new-menu"
+          aria-haspopup="menu"
+          aria-expanded=${m.newMenuOpen ? "true" : "false"}
+        >+ New</button>
+        ${m.newMenuOpen
+          ? html`
+            <div class="new-menu-popover" role="menu" data-new-menu>
+              <button type="button" role="menuitem" class="menu-item" data-action="new-message">New message</button>
+              ${m.isAdmin ? html`<button type="button" role="menuitem" class="menu-item" data-action="new-channel">New channel</button>` : nothing}
+            </div>
+          `
+          : nothing}
+      </div>
+      <div class="search-wrap">
+        <input type="search" class="search-input" placeholder="Search everything" aria-label="Search everything" />
+      </div>
+      <div class="nav-links">
+        <button type="button" class="nav-row" data-action="nav-mentions">
+          <span class="nav-icon" aria-hidden="true">@</span>
+          <span>Mentions</span>
+        </button>
+        <button type="button" class="nav-row" data-action="nav-saved">
+          <span class="nav-icon" aria-hidden="true">&#9734;</span>
+          <span>Saved</span>
+        </button>
+      </div>
+      <div class="section-head">
+        <h3 class="section-title">CHANNELS</h3>
+        ${m.isAdmin ? html`<button type="button" class="btn-icon-plus" data-action="add-channel" aria-label="Add channel">+</button>` : nothing}
+      </div>
+      ${groups.map(
+        (g) => html`
+          <div class="ch-group">
+            <h4 class="group-title">${g.label}</h4>
+            <ul class="ch-list">
+              ${g.channels.map((c) => renderChannelItem(c, m.activeId, false))}
+            </ul>
+          </div>
+        `,
+      )}
+      <div class="section-head">
+        <h3 class="section-title">DIRECT MESSAGES</h3>
+        <button type="button" class="btn-icon-plus" data-action="new-dm" aria-label="Add direct message">+</button>
+      </div>
+      <ul class="ch-list">
+        ${dmChannels.map((c) => renderChannelItem(c, m.activeId, true))}
+      </ul>
+      <div class="rail-foot">
+        <button type="button" class="btn-settings" data-action="open-settings">
+          ${renderGearIcon()}
+          <span>Settings</span>
+        </button>
+        <button type="button" class="link" data-action="open-rules">Payment notice rules</button>
+      </div>
     </aside>
   `;
 }
@@ -197,34 +316,58 @@ function renderRail(m: Model): TemplateResult {
 
 function renderMessageBody(msg: Message): TemplateResult {
   if (msg.deleted_at) return html`<p class="text dim" data-body>This message was removed.</p>`;
-  return html`<p class="text" data-body>${msg.body}</p>`;
+  const segments = parseMentions(msg.body);
+  return html`
+    <p class="text" data-body>
+      ${segments.map((seg) => (seg.type === "mention" ? html`<span class="mention-chip">${seg.value}</span>` : seg.value))}
+    </p>
+  `;
 }
 
 function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean): TemplateResult {
   const mine = msg.author_id !== undefined && msg.author_id !== "" && msg.author_id === m.meId;
-  const system = msg.kind !== "TEXT";
-  const who = mine ? "You" : system ? (messageKindWord(msg) || "System notice") : msg.author_name || "A colleague";
-  const kind = system ? messageKindWord(msg) : "";
-  const classes = ["msg", mine ? "mine" : "", system ? "event" : "", msg.superseded_by ? "superseded" : ""].filter((x) => x !== "").join(" ");
-  const why = msg.kind === "EVENT" ? eventWhy(msg.ref as Parameters<typeof eventWhy>[0]) : "";
+  const isEvent = msg.kind === "EVENT";
+  const eventDetails = isEvent
+    ? systemEventDetails({ kind: msg.kind, ref: msg.ref as { topic?: string; entity?: string }, channel_id: msg.channel_id, channel_slug: c.channel.slug })
+    : null;
+
+  const who = mine ? "You" : isEvent ? eventDetails!.source : msg.author_name || "A colleague";
+  const kind = !isEvent && msg.kind !== "TEXT" ? messageKindWord(msg) : "";
+  const classes = ["msg", mine ? "mine" : "", isEvent ? "event" : "", msg.superseded_by ? "superseded" : ""].filter((x) => x !== "").join(" ");
+  const why = isEvent ? eventWhy(msg.ref as Parameters<typeof eventWhy>[0]) : "";
   const open = c.threads.get(msg.id);
   const replies = open ?? [];
+  const initials = isEvent ? "" : initialsOf(msg.author_name || (mine ? "You" : "Colleague"));
+
   return html`
-    <li class="${classes}" data-msg=${msg.id}>
+    <li class="${classes}" data-msg=${msg.id} data-kind=${msg.kind}>
       <div class="msg-head">
+        ${isEvent
+          ? html`<span class="icon-avatar" aria-hidden="true">${renderEventIcon(eventDetails!.icon)}</span>`
+          : html`<span class="avatar" data-avatar aria-hidden="true">${initials}</span>`}
         <span class="who">${who}</span>
         ${kind !== "" && !mine && who !== kind ? html`<span class="kind">${kind}</span>` : nothing}
         <span class="when">${timeWords(msg.created_at, m.now)}</span>
-        ${msg.edited_at ? html`<span class="dim small">edited</span>` : nothing}
+        ${msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
       </div>
       ${renderMessageBody(msg)}
       ${why === "" ? nothing : html`<p class="why" data-why>${why}</p>`}
+      ${eventDetails?.actionPill
+        ? html`
+          <div class="event-actions">
+            <button type="button" class="btn btn-secondary small-btn btn-action-pill" data-action="open-entity" data-entity=${eventDetails.actionPill.entity}>
+              ${eventDetails.actionPill.label}
+            </button>
+          </div>
+        `
+        : nothing}
       ${renderAck(c.acks.get(msg.id), msg)}
       ${isReply
         ? nothing
         : html`
             <div class="msg-foot">
-              <button type="button" class="link" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
+              <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
+              <button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>${msg.reply_count > 0 ? "Open thread" : "Reply"}</button>
               ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
             </div>
           `}
@@ -375,6 +518,19 @@ function renderQueue(q: QueueModel, now: number): TemplateResult {
 function renderComposer(c: ConvoModel): TemplateResult {
   return html`
     <form class="composer" data-composer>
+      <div class="quick-replies" role="group" aria-label="Quick replies">
+        ${QUICK_REPLIES.map(
+          (text) => html`
+            <button
+              type="button"
+              class="btn btn-secondary small-btn chip-quick"
+              data-action="quick-reply"
+              data-text=${text}
+              data-quick-reply
+            >${text}</button>
+          `,
+        )}
+      </div>
       ${c.replyTo === null
         ? nothing
         : html`
@@ -384,30 +540,112 @@ function renderComposer(c: ConvoModel): TemplateResult {
               <button type="button" class="link" data-action="cancel-reply">Cancel</button>
             </div>
           `}
-      <textarea data-field="draft" rows="3" aria-label="Write a message" placeholder="Write a message"></textarea>
-      <div class="composer-row">
-        <span class="${c.composerBad ? "small words-bad" : "small dim"}" data-composer-words>${c.composerWords}</span>
-        <span class="spacer"></span>
-        <button type="button" class="btn btn-primary" data-action="send" ?disabled=${!c.canSend || c.sending}>Send</button>
+      <div class="composer-box">
+        <textarea data-field="draft" rows="3" aria-label="Write a message" placeholder="Write a message"></textarea>
+        <div class="composer-actions">
+          <button type="button" class="btn btn-secondary small-btn btn-attach" data-action="attach" aria-label="Attach file">
+            ${renderPaperclipIcon()}
+          </button>
+          <span class="spacer"></span>
+          <span class="${c.composerBad ? "small words-bad" : "small dim"}" data-composer-words>${c.composerWords}</span>
+          <button type="button" class="btn btn-primary small-btn btn-send" data-action="send" ?disabled=${!c.canSend || c.sending}>Send</button>
+        </div>
       </div>
       <p class="dim small">Messages send while you are online. Nothing is saved to send later.</p>
     </form>
   `;
 }
 
+function renderThreadSidePanel(m: Model, c: ConvoModel): TemplateResult {
+  const root = c.openThreadRoot;
+  const replies = c.openThreadReplies;
+
+  return html`
+    <aside class="thread-panel" data-thread-panel aria-label="Thread">
+      <div class="thread-head">
+        <h3>Thread</h3>
+        <button type="button" class="btn-close" data-action="close-thread" aria-label="Close thread">&times;</button>
+      </div>
+      <div class="thread-body">
+        ${root !== null
+          ? html`
+            <div class="thread-root">
+              <div class="msg-head">
+                <span class="avatar avatar-sm" aria-hidden="true">${initialsOf(root.author_name || "House")}</span>
+                <span class="who">${root.author_id === m.meId ? "You" : root.author_name || "A colleague"}</span>
+                <span class="when">${timeWords(root.created_at, m.now)}</span>
+              </div>
+              <div class="text">${root.body}</div>
+            </div>
+          `
+          : nothing}
+        <div class="thread-divider">
+          <span>${replies.length} repl${replies.length === 1 ? "y" : "ies"}</span>
+        </div>
+        <ul class="thread-replies">
+          ${replies.map(
+            (r) => html`
+              <li class="thread-reply" data-msg=${r.id}>
+                <div class="msg-head">
+                  <span class="avatar avatar-sm" aria-hidden="true">${initialsOf(r.author_name || "House")}</span>
+                  <span class="who">${r.author_id === m.meId ? "You" : r.author_name || "A colleague"}</span>
+                  <span class="when">${timeWords(r.created_at, m.now)}</span>
+                </div>
+                <div class="text">${r.body}</div>
+              </li>
+            `,
+          )}
+        </ul>
+      </div>
+      <form class="thread-composer" data-thread-composer>
+        <textarea data-field="thread-draft" rows="2" placeholder="Reply..." aria-label="Reply in thread"></textarea>
+        <div class="thread-composer-row">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-primary small-btn" data-action="thread-send" ?disabled=${c.threadSending}>Reply</button>
+        </div>
+      </form>
+    </aside>
+  `;
+}
+
 function renderConvo(m: Model, c: ConvoModel): TemplateResult {
   const ch = c.channel;
   const tier = ch.tier === "ESCALATION" ? "Escalation" : ch.tier === "FIREHOSE" ? "Firehose" : "";
+  const subtitle = ch.topic ? ch.topic : channelLine(ch);
+
   return html`
     <section class="convo" data-conversation>
       <div class="convo-head">
         <button type="button" class="btn btn-secondary small-btn back" data-action="back">Back</button>
         <div class="titles">
-          <h2>${channelTitle(ch)}</h2>
-          ${channelLine(ch) === "" ? nothing : html`<p class="dim small">${channelLine(ch)}</p>`}
+          <div class="channel-title-row">
+            <span class="hash" aria-hidden="true">#</span>
+            <h2>${channelTitle(ch)}</h2>
+          </div>
+          ${subtitle === "" ? nothing : html`<p class="dim small channel-topic">${subtitle}</p>`}
+        </div>
+        <div class="tab-strip" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            class="tab ${c.activeTab === "messages" ? "active" : ""}"
+            data-action="select-tab"
+            data-tab="messages"
+            aria-selected=${c.activeTab === "messages" ? "true" : "false"}
+          >Messages</button>
+          <button
+            type="button"
+            role="tab"
+            class="tab ${c.activeTab === "files" ? "active" : ""}"
+            data-action="select-tab"
+            data-tab="files"
+            aria-selected=${c.activeTab === "files" ? "true" : "false"}
+          >Files and photos</button>
         </div>
         ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
-        <button type="button" class="btn btn-secondary small-btn" data-action="open-prefs">Notifications</button>
+        <button type="button" class="btn btn-secondary small-btn btn-notify" data-action="open-prefs" aria-label="Notifications">
+          <span>Notify: ${notifyModeWord(c.prefs?.mode)}</span>
+        </button>
       </div>
       <div class="convo-body">
         ${c.prefs === null ? nothing : renderPrefs(ch, c.prefs)}
@@ -418,6 +656,7 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
               ${c.hasOlder
                 ? html`<button type="button" class="btn btn-secondary small-btn" data-action="load-older" ?disabled=${c.olderBusy}>Earlier messages</button>`
                 : nothing}
+              <div class="day-separator" role="separator"><span class="day-pill">Today</span></div>
               ${c.messages.length === 0
                 ? html`<div class="empty" data-empty><strong>No messages yet</strong>Write the first one below.</div>`
                 : html`<ul class="stream" data-stream>${c.messages.map((msg) => renderMessage(msg, c, m, false))}</ul>`}
@@ -457,9 +696,10 @@ export function renderDesk(m: Model): TemplateResult {
       ${m.error === "" ? nothing : html`<div class="alert alert-error" role="alert" data-error>${m.error}</div>`}
       ${m.notice === "" ? nothing : html`<div class="alert alert-ok" role="status" data-notice>${m.notice}</div>`}
       ${m.bubble === null ? nothing : renderBubble(m.bubble)}
-      <div class="panes">
+      <div class="panes ${m.convo?.openThreadId ? "has-thread" : ""}">
         ${renderRail(m)}
         ${m.rules !== null ? renderRules(m.rules) : m.convo === null ? renderEmptyConvo() : renderConvo(m, m.convo)}
+        ${m.convo?.openThreadId ? renderThreadSidePanel(m, m.convo) : nothing}
       </div>
     </div>
   `;

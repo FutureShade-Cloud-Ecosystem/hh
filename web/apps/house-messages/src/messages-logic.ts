@@ -20,6 +20,90 @@ export type AckProgress = MessagingAckProgress;
 export type ChannelTier = MessagingChannel["tier"];
 export type NotifyMode = "ALL" | "MENTIONS" | "MUTED";
 
+export interface CallerInfo {
+  readonly roleCode?: string;
+  readonly tier?: number;
+}
+
+export function isAdminCaller(caller?: CallerInfo | null): boolean {
+  if (!caller) return false;
+  return caller.roleCode === "general_manager" || caller.roleCode === "dealer_admin" || caller.tier === 1;
+}
+
+export function initialsOf(name: string): string {
+  const clean = name.replace(/\([^)]*\)/g, "").trim();
+  if (!clean) return "";
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return clean[0].toUpperCase();
+}
+
+export interface SystemEventInfo {
+  readonly source: string;
+  readonly icon: "truck" | "box" | "shield" | "notice";
+  readonly actionPill: { readonly label: string; readonly entity: string } | null;
+}
+
+export function systemEventDetails(msg: {
+  kind: string;
+  ref?: { topic?: string; entity?: string } | null;
+  channel_id?: string;
+  channel_slug?: string;
+}): SystemEventInfo {
+  const topic = (msg.ref?.topic ?? "").toLowerCase();
+  const slug = (msg.channel_slug ?? "").toLowerCase();
+  let source = "Notice";
+  let icon: "truck" | "box" | "shield" | "notice" = "notice";
+
+  if (topic.includes("yard") || topic.includes("picking") || topic.includes("dispatch") || topic.includes("delivery") || slug.startsWith("yard-")) {
+    source = "Yard, Point Loma";
+    icon = "truck";
+  } else if (topic.includes("receiving") || topic.includes("stock") || topic.includes("receipt") || topic.includes("po.") || topic.includes("po_")) {
+    source = "Receiving";
+    icon = "box";
+  } else if (topic.includes("credit") || topic.includes("hold") || topic.includes("payment") || topic.includes("finance") || slug.startsWith("payments-")) {
+    source = "Credit";
+    icon = "shield";
+  } else if (slug.startsWith("branch-")) {
+    source = "Point Loma";
+    icon = "notice";
+  }
+
+  let actionPill: { label: string; entity: string } | null = null;
+  const entity = msg.ref?.entity;
+  if (entity && typeof entity === "string") {
+    const parts = entity.split(":");
+    const id = parts.length > 1 ? parts[1] : entity;
+    actionPill = { label: `Open ${id}`, entity };
+  }
+
+  return { source, icon, actionPill };
+}
+
+export interface MentionToken {
+  readonly type: "text" | "mention";
+  readonly value: string;
+}
+
+export function parseMentions(text: string): MentionToken[] {
+  const regex = /(@[A-Za-z0-9_-]+)/g;
+  const parts = text.split(regex);
+  const out: MentionToken[] = [];
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.startsWith("@")) {
+      out.push({ type: "mention", value: part });
+    } else {
+      out.push({ type: "text", value: part });
+    }
+  }
+  return out;
+}
+
+export const QUICK_REPLIES = ["On it", "Done", "Need a hand", "Call me"] as const;
+
 // ---- the composer ------------------------------------------------------------------------------
 
 /**
