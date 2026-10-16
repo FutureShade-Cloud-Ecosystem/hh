@@ -845,7 +845,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       <p class="label gap">Method</p>
       ${segmented("Method", [{ id: "CHEQUE", word: "Check" }, { id: "EFT", word: "ACH" }, { id: "WIRE", word: "Wire" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
       <div class="two gap">
-        <label>Check or reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Check number or transfer reference" /></label>
+        <label>Check or reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Cheque number or transfer reference" /></label>
         <label>Taken by<span class="ro" data-ro="taken-by"></span></label>
       </div>
       ${paymentChecklist(model, account)}
