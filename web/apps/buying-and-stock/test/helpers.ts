@@ -167,6 +167,8 @@ export const SUPER = { code: "super_admin", stub: "super-admin" };
 // the stub's seat follows it). Passed to roleHandoff as the init script's argument.
 export const YARD_SEAT = { roleCode: "yard_manager", userId: "de110000-0000-4000-9000-000000000003" };
 export const PAYABLES_SEAT = { roleCode: "payables_receivables", userId: "de110000-0000-4000-9000-0000000000a1" };
+// The sales seat the stock lookup is drawn for (change 5 slice S4, ruling R1): read only.
+export const INSIDE_SEAT = { roleCode: "inside_sales", userId: "de110000-0000-4000-9000-0000000000a2" };
 
 /** Switches to one of the app's areas once signed in, by its id (the tabs' data-area-id). */
 export async function showArea(page: Page, id: string): Promise<void> {

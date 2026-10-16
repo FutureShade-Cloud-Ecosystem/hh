@@ -16,7 +16,12 @@ import type {
   DispatchLoadStop,
   DispatchStop,
   DispatchStopPaymentHold,
+  DispatchFreightRaiseView,
+  DispatchMintedPickup,
+  DispatchPolicy,
+  DispatchPolicyChange,
   DispatchTruck,
+  DispatchWillCall,
   Result,
 } from "@hardscapehouse/api-client";
 import { DispatchApi } from "./dispatch-api.js";
@@ -24,6 +29,15 @@ import {
   STOP_LABEL,
   assignTargets,
   bulkLoadOutcome,
+  driverBody,
+  historyFaultWords,
+  manifestNotice,
+  splitBody,
+  splitNotice,
+  splitRefusal,
+  manifestRefusal,
+  policyBody,
+  policyRefusal,
   loadableStops,
   moveAnnouncement,
   plainSentence,
@@ -31,11 +45,29 @@ import {
   refusalWords,
   reopenNotice,
   reopenRunNotice,
+  scheduleBody,
+  scheduleNotice,
+  scheduleRefusal,
   shiftISODate,
   validateReason,
   validateReschedule,
+  validateSchedule,
+  truckBody,
+  validateDriver,
+  validateOrderRef,
+  validateSplit,
+  validatePolicyFields,
+  validateTruck,
+  willCallNotice,
+  willCallRefusal,
+  type DriverFields,
+  type PolicyFields,
+  type SplitFields,
+  type ScheduleFields,
+  type TruckFields,
   type CardId,
 } from "./dispatch-logic.js";
+import { BLOCKED_WINDOW_WORDS, browserPrintDeps, openPrintWindow, printHtmlInto } from "./print-window.js";
 import { renderDesk, type Axis, type BoardModel, type Sheet, type Span, type Tab } from "./views.js";
 
 export interface DeskHost {
@@ -83,6 +115,22 @@ export class DispatchDesk {
   #loading = false;
   #span: Span = "DAY";
   #runError: { id: string; words: string } | null = null;
+  #scheduleError = "";
+  // Will call: the order as typed, its codes, whether a lookup has run, and the code just minted (held in memory, shown once).
+  // The scan trail open on a card: its read, in progress, done or refused.
+  #trail: BoardModel["trail"] = null;
+  // A parked freight ask: held until the person closes it, read again on request.
+  #raise: DispatchFreightRaiseView | null = null;
+  #policy: DispatchPolicy | null = null;
+  #history: readonly DispatchPolicyChange[] = [];
+  #historyFault = "";
+  #wcOrder = "";
+  #wcItems: readonly DispatchWillCall[] = [];
+  #wcLooked = false;
+  #wcError = "";
+  #wcMinted: { code: DispatchMintedPickup; order: string } | null = null;
+  // The day the schedule form's date field was last given its starting value for.
+  #formSeeded: string | null = null;
   // The sheet whose starting field values the screen has already been given.
   #sheetSeeded: string | null = null;
 
@@ -146,6 +194,41 @@ export class DispatchDesk {
       this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
       this.#holds = await this.#readHolds(view.value.loads.map((r) => r.run.id));
       this.#selected = new Set(pruneSelection([...this.#selected], [...view.value.staging, ...view.value.loads.flatMap((r) => r.stops)]));
+    } else if (this.#tab === "settings") {
+      const [policy, history] = await Promise.all([this.#api.policy(branch), this.#api.policyHistory(branch)]);
+      if (!policy.ok) {
+        this.#loadFailed("The dispatch rules", policy);
+        return false;
+      }
+      this.#policy = policy.value;
+      // The trail is the rules' company: a refusal leaves it out and says why.
+      this.#history = history.ok ? (history.value.items ?? []) : [];
+      this.#historyFault = history.ok ? "" : historyFaultWords(history.error, history.status ?? null);
+    } else if (this.#tab === "willcall") {
+      // Nothing on this tab is a board: a code list is read for the order that was named.
+      if (this.#wcOrder !== "") await this.#readWillCalls();
+    } else if (this.#tab === "fleet") {
+      // The registry lists what is out of use too, so a retired truck can be brought back.
+      const [trucks, drivers] = await Promise.all([this.#api.trucks(branch, true), this.#api.drivers(branch, true)]);
+      if (!trucks.ok) {
+        this.#loadFailed("The trucks", trucks);
+        return false;
+      }
+      if (!drivers.ok) {
+        this.#loadFailed("The drivers", drivers);
+        return false;
+      }
+      this.#trucks = trucks.value.items ?? [];
+      this.#drivers = drivers.value.items ?? [];
+    } else if (this.#tab === "schedule") {
+      // The schedule reads the day's books and the week ahead; it crews nothing, so it reads no crew lists.
+      const [board, calendar] = await Promise.all([this.#api.dayBoard(branch, day), this.#api.calendar(branch, day, shiftISODate(day, 6))]);
+      if (!board.ok) {
+        this.#loadFailed("The day's books", board);
+        return false;
+      }
+      this.#day = board.value;
+      this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
     } else {
       const [board, trucks, drivers] = await Promise.all([this.#api.dayBoard(branch, day), this.#api.trucks(branch), this.#api.drivers(branch)]);
       if (!board.ok) {
@@ -175,6 +258,7 @@ export class DispatchDesk {
   async #reload(): Promise<void> {
     await this.#readBoard();
     this.#sheet = null;
+    this.#trail = null;
     this.#sheetSeeded = null;
   }
 
@@ -208,6 +292,13 @@ export class DispatchDesk {
       sheet: this.#sheet,
       loading: this.#loading,
       span: this.#span,
+      scheduleError: this.#scheduleError,
+      trail: this.#trail,
+      raise: this.#raise,
+      policy: this.#policy,
+      history: this.#history,
+      historyFault: this.#historyFault,
+      willCall: { order: this.#wcOrder, items: this.#wcItems, looked: this.#wcLooked, error: this.#wcError, minted: this.#wcMinted },
       runError: this.#runError,
     };
   }
@@ -230,13 +321,35 @@ export class DispatchDesk {
         el.selectedIndex = index < 0 ? 0 : index;
       }
     }
+    if (this.#tab === "schedule") {
+      const dateField = this.#host.find("[data-schedule] [data-field=\"day\"]");
+      const seedKey = `${this.#branchId}:${this.#date}`;
+      if (dateField instanceof HTMLInputElement && this.#formSeeded !== seedKey) {
+        this.#formSeeded = seedKey;
+        dateField.value = this.#date < this.#today ? this.#today : this.#date;
+      }
+    } else {
+      this.#formSeeded = null;
+    }
     const sheet = this.#sheet;
     if (sheet === null) return;
     const key = `${sheet.kind}:${sheet.id}`;
     if (this.#sheetSeeded === key) return;
     this.#sheetSeeded = key;
+    // A fresh sheet takes what the person had typed (after a refusal) or the row it edits (data-initial).
+    const saved = sheet.values ?? {};
+    for (const el of this.#host.findAll("[data-sheet] [data-field]")) {
+      const name = el.getAttribute("data-field") ?? "";
+      const want = saved[name] ?? el.getAttribute("data-initial");
+      if (want === null || want === undefined) continue;
+      if (el instanceof HTMLInputElement) el.value = want;
+      else if (el instanceof HTMLSelectElement) {
+        const index = [...el.options].findIndex((o) => (o.getAttribute("data-id") ?? "") === want);
+        if (index >= 0) el.selectedIndex = index;
+      }
+    }
     const to = this.#host.find("[data-sheet] [data-field=\"to_date\"]");
-    if (to instanceof HTMLInputElement) to.value = shiftISODate(this.#today, 1);
+    if (to instanceof HTMLInputElement && saved.to_date === undefined) to.value = shiftISODate(this.#today, 1);
   }
 
   // ---- the press --------------------------------------------------------------------------------
@@ -253,10 +366,17 @@ export class DispatchDesk {
         void this.#run(NOOP, "", "That", true);
         return true;
       case "tab": {
-        const next: Tab = attr("data-tab-id") === "day" ? "day" : "load";
+        const id = attr("data-tab-id");
+        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : id === "willcall" ? "willcall" : id === "settings" ? "settings" : "load";
         if (next === this.#tab) return true;
         this.#tab = next;
         this.#sheet = null;
+        // Leaving the tab forgets the order and the code: the box is empty when it comes back.
+        this.#wcMinted = null;
+        this.#wcOrder = "";
+        this.#wcItems = [];
+        this.#wcLooked = false;
+        this.#wcError = "";
         this.#clearMessages();
         void this.#run(NOOP, "", "That", true);
         return true;
@@ -310,16 +430,51 @@ export class DispatchDesk {
       case "auto-assign":
         void this.#autoAssign();
         return true;
+      case "schedule-submit":
+        void this.#schedule();
+        return true;
+      case "raise-check":
+        void this.#raiseCheck();
+        return true;
+      case "raise-close":
+        this.#raise = null;
+        this.#host.repaint();
+        return true;
+      case "print-manifest":
+        // The window is opened inside the press, while the click still counts as the person's own act.
+        this.#printManifest(attr("data-run-id"), openPrintWindow());
+        return true;
+      case "wc-lookup":
+        void this.#wcLookup();
+        return true;
+      case "wc-mint":
+        void this.#wcMint();
+        return true;
+      case "wc-print":
+        window.print();
+        return true;
+      case "wc-dismiss":
+        this.#wcMinted = null;
+        this.#host.repaint();
+        return true;
+      case "fleet-toggle":
+        void this.#fleetToggle(attr("data-fleet-kind"), attr("data-fleet-id"), attr("data-active-to") === "true");
+        return true;
       case "new-run":
         this.#openSheet("new-run", "new");
         return true;
       case "open-sheet": {
         const kind = attr("data-sheet-kind") as Sheet["kind"];
-        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id"));
+        if (kind === "scan-trail") {
+          void this.#openTrail(attr("data-stop-id"));
+          return true;
+        }
+        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id") || attr("data-fleet-id") || attr("data-code-id"));
         return true;
       }
       case "sheet-cancel":
         this.#sheet = null;
+        this.#trail = null;
         this.#sheetSeeded = null;
         this.#host.repaint();
         return true;
@@ -350,6 +505,15 @@ export class DispatchDesk {
       default:
         return false;
     }
+  }
+
+  /** Enter in the will call order box looks the order up. (A change event would race the button the person is reaching for.) */
+  key(target: Element, key: string): boolean {
+    if (key === "Enter" && target.getAttribute("data-field") === "wc-order") {
+      void this.#wcLookup();
+      return true;
+    }
+    return false;
   }
 
   /** A select changed. Returns true when it was this desk's. */
@@ -391,6 +555,7 @@ export class DispatchDesk {
     this.#notice = "";
     this.#refusals = [];
     this.#runError = null;
+    this.#scheduleError = "";
   }
 
   #goto(day: string): void {
@@ -409,7 +574,7 @@ export class DispatchDesk {
    * One write, then the board again. A refusal is shown in the core's own words and the board is
    * read again too, because a 409 usually means the world moved under the screen.
    */
-  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That", reading = false): Promise<boolean> {
+  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That", reading = false, refusal?: (f: Failure) => string): Promise<boolean> {
     if (this.#busy) return false;
     this.#busy = true;
     this.#loading = reading;
@@ -420,7 +585,7 @@ export class DispatchDesk {
       refused = await write();
     } finally {
       if (refused === null) this.#notice = okNotice;
-      else this.#error = refusalWords(what, refused.error, refused.status ?? null);
+      else this.#error = refusal !== undefined ? refusal(refused) : refusalWords(what, refused.error, refused.status ?? null);
       await this.#reload();
       this.#busy = false;
       this.#loading = false;
@@ -571,6 +736,208 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  // ---- the manifest and the scan trail ---------------------------------------------------------
+
+  /**
+   * The manifest: the core's document is read, the print is recorded, and only then does the window
+   * take it. A window the browser blocked, a manifest the core refused and a print the queue could
+   * not record each stop the flow with a sentence, and no window is left open behind them.
+   */
+  async #printManifest(runId: string, win: ReturnType<typeof openPrintWindow>): Promise<void> {
+    if (this.#busy) {
+      (win as { close?: () => void } | null)?.close?.();
+      return;
+    }
+    const runs = [...(this.#view?.loads.map((r) => r.run) ?? []), ...(this.#day?.runs ?? [])];
+    const no = runs.find((r) => r.id === runId)?.run_no ?? "The run";
+    this.#clearMessages();
+    if (win === null) {
+      this.#error = BLOCKED_WINDOW_WORDS;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const fail = (words: string): void => {
+      win.close?.();
+      this.#error = words;
+    };
+    const doc = await this.#api.runManifest(runId);
+    if (!doc.ok) fail(manifestRefusal(doc.error, doc.status ?? null));
+    else {
+      const recorded = await this.#api.recordManifestPrint(runId);
+      if (!recorded.ok) fail(manifestRefusal(recorded.error, recorded.status ?? null));
+      else {
+        const outcome = printHtmlInto(win, doc.value, browserPrintDeps);
+        if (outcome.ok) this.#notice = manifestNotice(no);
+        else this.#error = outcome.message;
+      }
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  #stopById(id: string): DispatchStop | undefined {
+    const all: DispatchStop[] = [...(this.#view?.staging ?? []), ...(this.#view?.loads.flatMap((r) => r.stops) ?? []), ...(this.#day?.stops ?? []), ...(this.#day?.unassigned ?? [])];
+    return all.find((s) => s.id === id);
+  }
+
+  /** Reads a parked ask again. A refusal is the core's word, shown as the board's error; the card stays as it was. */
+  async #raiseCheck(): Promise<void> {
+    const raise = this.#raise;
+    if (raise === null || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const r = await this.#api.freightRaise(raise.id);
+    if (r.ok) this.#raise = r.value;
+    else this.#error = refusalWords("Reading the ask", r.error, r.status ?? null);
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Opens a card's scan trail: the sheet shows at once and fills when the core answers. */
+  async #openTrail(stopId: string): Promise<void> {
+    const all: DispatchStop[] = [...(this.#view?.staging ?? []), ...(this.#view?.loads.flatMap((r) => r.stops) ?? []), ...(this.#day?.stops ?? []), ...(this.#day?.unassigned ?? [])];
+    const stop = all.find((s) => s.id === stopId);
+    if (stop === undefined) return;
+    this.#clearMessages();
+    this.#sheet = { kind: "scan-trail", id: stopId, error: "" };
+    this.#sheetSeeded = null;
+    this.#trail = { stopId, orderNo: stop.order_no ?? "the order", state: "loading" };
+    this.#host.repaint();
+    const result = await this.#api.scanTrail(stop.order_id);
+    // The sheet may have been closed, or another card's opened, while the core was answering.
+    if (this.#trail === null || this.#trail.stopId !== stopId) return;
+    this.#trail = result.ok
+      ? { stopId, orderNo: this.#trail.orderNo, state: "ready", value: result.value }
+      : { stopId, orderNo: this.#trail.orderNo, state: "error", words: refusalWords("The scan trail", result.error, result.status ?? null) };
+    this.#host.repaint();
+  }
+
+  // ---- will call ---------------------------------------------------------------------------------
+
+  #wcTyped(): string {
+    const el = this.#host.find("[data-willcall] [data-field=\"wc-order\"]");
+    return el instanceof HTMLInputElement ? el.value.trim() : this.#wcOrder;
+  }
+
+  /** The codes for the order named. A refusal leaves the list as it was and says why beside the box. */
+  async #readWillCalls(): Promise<boolean> {
+    const result = await this.#api.willCalls(this.#wcOrder);
+    if (result.ok) {
+      this.#wcItems = result.value.items ?? [];
+      this.#wcLooked = true;
+      this.#wcError = "";
+      return true;
+    }
+    this.#wcItems = [];
+    this.#wcLooked = false;
+    this.#wcError = willCallRefusal(result.error, result.status ?? null);
+    return false;
+  }
+
+  async #wcLookup(): Promise<void> {
+    if (this.#busy) return;
+    const order = this.#wcTyped();
+    this.#clearMessages();
+    this.#wcError = "";
+    const words = validateOrderRef(order);
+    if (words !== "") {
+      this.#wcError = words;
+      this.#host.repaint();
+      return;
+    }
+    // A different order is a different tag: the code on screen is not its.
+    if (this.#wcMinted !== null && this.#wcMinted.order !== order) this.#wcMinted = null;
+    this.#wcOrder = order;
+    this.#busy = true;
+    this.#host.repaint();
+    await this.#readWillCalls();
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  async #wcMint(): Promise<void> {
+    if (this.#busy) return;
+    const order = this.#wcTyped();
+    this.#clearMessages();
+    this.#wcError = "";
+    const words = validateOrderRef(order);
+    if (words !== "") {
+      this.#wcError = words;
+      this.#host.repaint();
+      return;
+    }
+    this.#wcOrder = order;
+    this.#busy = true;
+    this.#wcMinted = null;
+    this.#host.repaint();
+    const result = await this.#api.mintWillCall(order);
+    if (result.ok) {
+      this.#wcMinted = { code: result.value, order };
+      this.#notice = willCallNotice({ order_no: order, expires_at: result.value.expires_at });
+      await this.#readWillCalls();
+    } else {
+      this.#wcError = willCallRefusal(result.error, result.status ?? null);
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Takes a truck or a driver out of use, or puts them back: a rewrite of the row with the one flag changed. */
+  async #fleetToggle(kind: string, id: string, active: boolean): Promise<void> {
+    const truck = kind === "truck" ? this.#trucks.find((t) => t.id === id) : undefined;
+    const driver = kind === "driver" ? this.#drivers.find((d) => d.id === id) : undefined;
+    if (truck === undefined && driver === undefined) return;
+    const name = truck?.code ?? driver?.name ?? "It";
+    await this.#run(
+      async () => {
+        const r = truck !== undefined ? await this.#api.updateTruck(truck.id, { ...truck, is_active: active }) : await this.#api.updateDriver(id, { ...(driver as DispatchDriver), is_active: active });
+        return r.ok ? null : r;
+      },
+      active ? `${name} is back in use.` : `${name} is out of use. It leaves the pick lists and stays on the books.`,
+      "That change",
+    );
+  }
+
+  /** Schedules the order in the form. A refusal stays beside the button and the form keeps what was typed. */
+  async #schedule(): Promise<void> {
+    if (this.#busy) return;
+    const read = (name: string): string => {
+      const el = this.#host.find(`[data-schedule] [data-field="${name}"]`);
+      return el instanceof HTMLInputElement ? el.value : "";
+    };
+    const fields: ScheduleFields = {
+      order: read("order"), date: read("day"), window: read("window"), contact: read("contact"), phone: read("phone"),
+      address: read("address"), city: read("city"), postal: read("postal"), lat: read("lat"), lon: read("lon"), instructions: read("instructions"),
+    };
+    this.#clearMessages();
+    const words = validateSchedule(fields, this.#today);
+    if (words !== "") {
+      this.#scheduleError = words;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.scheduleStop(scheduleBody(fields));
+    if (result.ok) {
+      this.#notice = scheduleNotice(result.value);
+      // The board follows the order to its day, and the form is ready for the next one.
+      this.#date = result.value.scheduled_date;
+      this.#sheet = null;
+      for (const el of this.#host.findAll("[data-schedule] [data-field]")) {
+        if (el instanceof HTMLInputElement && el.getAttribute("data-field") !== "day") el.value = "";
+      }
+    } else {
+      this.#scheduleError = scheduleRefusal(result.error, result.status ?? null);
+    }
+    await this.#reload();
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
   // ---- the sheets -------------------------------------------------------------------------------
 
   #openSheet(kind: Sheet["kind"], id: string): void {
@@ -579,6 +946,17 @@ export class DispatchDesk {
     this.#sheetSeeded = null;
     this.#clearMessages();
     this.#host.repaint();
+  }
+
+  /** Everything typed in the open sheet, so a refusal can put it back. */
+  #typed(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const el of this.#host.findAll("[data-sheet] [data-field]")) {
+      const name = el.getAttribute("data-field") ?? "";
+      if (el instanceof HTMLInputElement) out[name] = el.value;
+      else if (el instanceof HTMLSelectElement) out[name] = el.selectedOptions[0]?.getAttribute("data-id") ?? "";
+    }
+    return out;
   }
 
   #fieldValue(name: string): string {
@@ -597,6 +975,7 @@ export class DispatchDesk {
     const sheet = this.#sheet;
     if (sheet === null || this.#busy) return;
     const reason = this.#fieldValue("reason");
+    const typed = this.#typed();
     switch (sheet.kind) {
       case "new-run": {
         await this.#run(
@@ -623,7 +1002,7 @@ export class DispatchDesk {
           `Moved to ${to}. The customer's date changed with it.`,
           "Moving it",
         );
-        if (!ok) this.#restoreSheet(sheet);
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "reopen-stop":
@@ -640,11 +1019,108 @@ export class DispatchDesk {
           sheet.kind === "reopen-stop" ? reopenNotice(stop ?? { order_no: undefined, run_id: undefined }) : row !== undefined ? reopenRunNotice(row) : "Reopened.",
           "Reopening it",
         );
-        if (!ok) this.#restoreSheet(sheet);
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "cancel-run": {
         await this.#runAction(sheet.id, "cancel");
+        return;
+      }
+      case "edit-policy": {
+        const base = this.#policy;
+        if (base === null) return;
+        const f: PolicyFields = { prompt: typed.prompt ?? "", reopen: typed.reopen ?? "", visibility: typed.visibility ?? "", horizon: typed.horizon ?? "", view: typed.view ?? "" };
+        const words = validatePolicyFields(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const body = policyBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.savePolicy(body);
+            return r.ok ? null : r;
+          },
+          "Saved. The board reads the new rules on its next read.",
+          "Saving the rules",
+          false,
+          (failure) => policyRefusal(failure.error, failure.status ?? null),
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
+        return;
+      }
+      case "split-freight": {
+        const stop = this.#stopById(sheet.id);
+        if (stop === undefined) return;
+        const f: SplitFields = { loads: typed.loads ?? "", freight: typed.freight ?? "", amounts: typed.amounts ?? "" };
+        const words = validateSplit(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const body = splitBody(f, stop.order_id);
+        let notice = "";
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.splitFreight(body);
+            if (!r.ok) return r;
+            notice = splitNotice(r.value);
+            this.#raise = r.value.parked ?? null;
+            return null;
+          },
+          "",
+          "The split",
+          false,
+          (failure) => splitRefusal(failure.error, failure.status ?? null),
+        );
+        if (ok) {
+          this.#notice = notice;
+          this.#host.repaint();
+        } else this.#restoreSheet(sheet, typed);
+        return;
+      }
+      case "revoke-willcall": {
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.revokeWillCall(sheet.id);
+            return r.ok ? null : r;
+          },
+          "The pickup code is cancelled. The tag already printed no longer works.",
+          "Cancelling the code",
+        );
+        // The code just minted is gone with it; a refusal keeps the sheet beside its button.
+        if (ok) this.#wcMinted = null;
+        else this.#restoreSheet(sheet);
+        return;
+      }
+      case "add-truck":
+      case "edit-truck": {
+        const f: TruckFields = { code: typed.code ?? "", name: typed.name ?? "", type: typed.type ?? "", capacity: typed.capacity ?? "", volume: typed.volume ?? "", pallets: typed.pallets ?? "" };
+        const words = validateTruck(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const base = sheet.kind === "edit-truck" ? this.#trucks.find((t) => t.id === sheet.id) : undefined;
+        const body = truckBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = base === undefined ? await this.#api.createTruck(body) : await this.#api.updateTruck(base.id, body);
+            return r.ok ? null : r;
+          },
+          base === undefined ? `${body.code} added to the trucks.` : `${body.code} saved.`,
+          "Saving the truck",
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
+        return;
+      }
+      case "add-driver":
+      case "edit-driver": {
+        const f: DriverFields = { name: typed.name ?? "", phone: typed.phone ?? "", licence: typed.licence ?? "", login: typed.login ?? "" };
+        const words = validateDriver(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const base = sheet.kind === "edit-driver" ? this.#drivers.find((d) => d.id === sheet.id) : undefined;
+        const body = driverBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = base === undefined ? await this.#api.createDriver(body) : await this.#api.updateDriver(base.id, body);
+            return r.ok ? null : r;
+          },
+          base === undefined ? `${body.name} added to the drivers.` : `${body.name} saved.`,
+          "Saving the driver",
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "fail-stop": {
@@ -658,9 +1134,9 @@ export class DispatchDesk {
   }
 
   /** After a refused submit the sheet stays open with the core's words beside its own button. */
-  #restoreSheet(sheet: Sheet): void {
-    this.#sheet = { ...sheet, error: this.#error };
-    this.#sheetSeeded = `${sheet.kind}:${sheet.id}`;
+  #restoreSheet(sheet: Sheet, values?: Readonly<Record<string, string>>): void {
+    this.#sheet = { ...sheet, error: this.#error, ...(values !== undefined ? { values } : {}) };
+    this.#sheetSeeded = null;
     this.#error = "";
     this.#host.repaint();
   }
