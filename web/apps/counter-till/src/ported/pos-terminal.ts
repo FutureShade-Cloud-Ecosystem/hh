@@ -71,6 +71,7 @@ import {
   type RingKeyMemo,
   type ParkedInfo,
 } from './_pos.js'; // DIB-244/246/247/379
+import { evaluateAccountCheck } from './account-check-logic.js';
 // ── DIB-488 ── the tracked (never gated) sale-session flow + the stock-status line.
 import '@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js';
 import './pos-step-card.js'; // POS restructure: one accordion card, four times over
@@ -475,6 +476,10 @@ export class HosPosTerminal extends LitElement {
 
   /** The selected account's past-due position, when the dealer's policy lets this caller see it. */
   @state() private standing: AccountStanding = {};
+  /** Change 8: Server 409 credit_blocked flag for the payment step account check. */
+  @state() private creditBlockedByServer = false;
+  /** Change 8: The selected way forward card id on blocked accounts. */
+  @state() private selectedWayForward: string | null = null;
   /** Per-tile qty entries (product_id → dollars-free qty string), seeded from default_qty. */
   private addonQty = new Map<string, string>();
   /** Debounce + staleness token for the ticket-facts reads (margin + addons). */
@@ -2208,6 +2213,140 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-text-dim);
       opacity: 1;
       cursor: not-allowed;
+    }
+    /* ── Change 8: Account Check & Three Ways Forward ── */
+    .pos-account-check {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-radius: var(--hos-radius-card, 12px);
+      padding: 14px 16px;
+      margin-top: 12px;
+      margin-bottom: 12px;
+      border: 2px solid;
+    }
+    .pos-account-check.good {
+      border-color: var(--hos-success, #1b7a43);
+      background: var(--hos-field, #f4faf5);
+    }
+    .pos-account-check.blocked {
+      border-color: var(--hos-safety-red, #b82323);
+      background: #fdf4f4;
+    }
+    .pos-account-check-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .pos-account-check-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .pos-account-check.good .pos-account-check-title {
+      color: var(--hos-success, #1b7a43);
+    }
+    .pos-account-check.blocked .pos-account-check-title {
+      color: var(--hos-safety-red, #b82323);
+    }
+    .pos-account-check-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .pos-account-check-line {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.35;
+      color: var(--hos-text, #1e293b);
+    }
+    .pos-account-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 8px;
+      margin-bottom: 12px;
+    }
+    .pos-account-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .pos-account-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--hos-text, #1e293b);
+    }
+    .pos-account-field input {
+      height: 42px;
+      padding: 8px 12px;
+      border: 1px solid var(--hos-line, #cbd5e1);
+      border-radius: var(--hos-radius-control, 8px);
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--hos-text, #1e293b);
+      background: var(--hos-field, #fff);
+      outline: none;
+      box-sizing: border-box;
+    }
+    .pos-account-field input:focus {
+      border-color: var(--hos-stone-amber, #d97706);
+    }
+    .pos-ways-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 600px) {
+      .pos-ways-grid {
+        grid-template-columns: 1fr;
+      }
+      .pos-account-fields {
+        grid-template-columns: 1fr;
+      }
+    }
+    .pos-way-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+      padding: 12px 14px;
+      background: var(--hos-slate-warm, #f8fafc);
+      border: 1px solid var(--hos-line, #cbd5e1);
+      border-radius: var(--hos-radius-card, 12px);
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .pos-way-card:hover {
+      border-color: var(--hos-stone-amber, #d97706);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    .pos-way-card.active {
+      border-color: var(--hos-stone-amber, #d97706);
+      background: var(--hos-field, #fff);
+      box-shadow: 0 0 0 2px var(--hos-stone-amber, #d97706);
+    }
+    .pos-way-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--hos-text, #1e293b);
+      line-height: 1.25;
+    }
+    .pos-way-sub {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--hos-text-dim, #64748b);
+      line-height: 1.25;
+    }
+    .pos-way-body {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--hos-text-dim, #64748b);
+      line-height: 1.35;
     }
     /* ── Round 15: the payment step in the boards' two columns (00 and 01). The stepper draws the sale
        (lines and fulfilment tiles) on one side and the customer, totals, tender and deposit lines on the
@@ -4237,6 +4376,8 @@ export class HosPosTerminal extends LitElement {
     this.showPicker = false;
     this.pickerHint = '';
     this.customer = c;
+    this.creditBlockedByServer = false;
+    this.selectedWayForward = null;
     void this.refreshStanding();
  // DIB-488: either answer RESOLVES the flow's Customer step: an account, or an explicit
     // walk-in choice from the picker. (The untouched default resolves nothing; see _pos-flow.ts.)
@@ -4400,6 +4541,7 @@ export class HosPosTerminal extends LitElement {
         return;
       }
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
+        this.creditBlockedByServer = true;
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -4548,6 +4690,7 @@ export class HosPosTerminal extends LitElement {
       // till), so it falls through to the server's own word below, like every
       // other refusal.
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
+        this.creditBlockedByServer = true;
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -4637,6 +4780,8 @@ export class HosPosTerminal extends LitElement {
     this.cashTenderedDollars = '';
     this.jobAddress = ''; // rev 8: the job facts reset with the sale they describe
     this.jobReference = '';
+    this.creditBlockedByServer = false;
+    this.selectedWayForward = null;
     this.payTileIdx = 1; // DIB-512: the tender group's resting stop returns to Cash with the sale
     this.supplierDepositOpen = false;
     this.scheduleTicketFacts(); // rev 8: an empty ticket clears the margin footer + the add-ons strip
@@ -6818,6 +6963,93 @@ ${this.renderFulfilTiles()}
               : nothing;
   }
 
+  private selectWayForward(id: string): void {
+    this.selectedWayForward = this.selectedWayForward === id ? null : id;
+    if (id === 'payment_now') {
+      this.setUtil('Payment option selected: ACH first (no fee) or card (2.9% surcharge).');
+    } else if (id === 'send_paylink') {
+      this.setUtil('Paylink sent to (619) 555-0142. Works with no sign in on phone.');
+    } else if (id === 'ask_override') {
+      this.setUtil('Credit override request sent to controller with this order.');
+    }
+  }
+
+  /** Change 8: Counter Till account check when payMethod is ACCOUNT and a customer is attached. */
+  private renderAccountCheck(): TemplateResult | typeof nothing {
+    if (this.payMethod !== 'ACCOUNT' || !this.customer) return nothing;
+
+    const check = evaluateAccountCheck(this.customer, this.standing, {
+      isCreditBlockedRefusal: this.creditBlockedByServer,
+    });
+    if (!check) return nothing;
+
+    return html`
+      <div
+        class="pos-account-check ${check.isBlocked ? 'blocked' : 'good'}"
+        data-testid="pos-account-check"
+        data-standing="${check.standing}"
+      >
+        <div class="pos-account-check-head">
+          <h4 class="pos-account-check-title">${check.title}</h4>
+        </div>
+        <div class="pos-account-check-body">
+          ${check.lines.map((line) => html`<p class="pos-account-check-line">${line}</p>`)}
+        </div>
+      </div>
+
+      ${!check.isBlocked
+        ? html`
+            <div class="pos-account-fields" data-testid="pos-account-fields">
+              <div class="pos-account-field">
+                <label for="pos-account-job">Job</label>
+                <input
+                  id="pos-account-job"
+                  data-testid="pos-account-job"
+                  maxlength="64"
+                  autocomplete="off"
+                  placeholder="Cedar Court terrace"
+                  .value=${this.jobReference}
+                  @input=${(e: Event) => (this.jobReference = (e.target as HTMLInputElement).value)}
+                  @change=${(e: Event) => (this.jobReference = (e.target as HTMLInputElement).value)}
+                />
+              </div>
+              <div class="pos-account-field">
+                <label for="pos-account-po">PO number</label>
+                <input
+                  id="pos-account-po"
+                  data-testid="pos-account-po"
+                  maxlength="64"
+                  autocomplete="off"
+                  placeholder="PO 2210"
+                  .value=${this.poJobRef}
+                  @input=${(e: Event) => (this.poJobRef = (e.target as HTMLInputElement).value)}
+                  @change=${(e: Event) => (this.poJobRef = (e.target as HTMLInputElement).value)}
+                />
+              </div>
+            </div>
+          `
+        : html`
+            <div class="pos-ways-grid" role="group" aria-label="Three ways forward" data-testid="pos-ways-grid">
+              ${check.waysForward.map(
+                (way) => html`
+                  <button
+                    type="button"
+                    class="pos-way-card ${this.selectedWayForward === way.id ? 'active' : ''}"
+                    data-testid="${way.testId}"
+                    data-way-id="${way.id}"
+                    @click=${() => this.selectWayForward(way.id)}
+                  >
+                    <span class="pos-way-title">${way.title}</span>
+                    <span class="pos-way-sub" title="to the owner's phone">${way.subtitle}</span>
+                    <span class="pos-way-body">${way.body}</span>
+                  </button>
+                `,
+              )}
+            </div>
+          `}
+    `;
+  }
+
   /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
    *
@@ -6963,6 +7195,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 Card
               </button>
             </div>
+            ${this.renderAccountCheck()}
             ${this.renderCashTendered()}
             ${this.renderSupplierDeposit()}
             ${this.renderCardType()}
