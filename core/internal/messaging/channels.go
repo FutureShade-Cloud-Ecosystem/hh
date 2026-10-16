@@ -66,7 +66,101 @@ var (
 	// ErrLastOwner: a removal may never drop a channel's last OWNER row; a
 	// room without an owner is nobody's to manage.
 	ErrLastOwner = errors.New("messaging: a channel keeps its owner")
+	// ErrNotGroupRoom: the rename route is the group room's own move (change
+	// 7 ruling 4); a room of any other kind (a DM's name is its parties', a
+	// channel's name is its founders') is a conflict with what the room IS,
+	// not a permission failure.
+	ErrNotGroupRoom = errors.New("messaging: only a group room renames through this route")
 )
+
+// GroupCreateInput is one new group room: the optional name (an empty name
+// takes the founding members' display names until a member renames it) and
+// the set of staffers to seat beside the caller. Membership is explicit and
+// the room spans branches; the caller is its owner.
+type GroupCreateInput struct {
+	Name      string
+	MemberIDs []string
+}
+
+// CreateGroup starts a group room (change 7 rulings 3 and 4): any staffer may
+// start one, membership is explicit (never rule filled, like a DM's), and the
+// room spans branches, so the named staffers need reach no branch the caller
+// holds and no branch wall runs. The walls are the seats' own: every named
+// staffer must be an active staff member (an inactive staffer can be named
+// but not seated, an id that names no staffer is not found). There is no
+// convergence: every call starts a new group. An empty name takes the
+// founding members' display names, the DM's own naming shape.
+func (s *Service) CreateGroup(ctx context.Context, c Caller, in GroupCreateInput) (Channel, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	// The set dedupes, and the caller is dropped from it: they are seated
+	// once, as the group's owner, whatever the body named.
+	seen := map[string]bool{c.UserID: true}
+	members := make([]string, 0, len(in.MemberIDs))
+	for _, id := range in.MemberIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		members = append(members, id)
+	}
+	for _, id := range members {
+		if err := s.repo.userActive(ctx, id); err != nil {
+			return Channel{}, err
+		}
+	}
+	if in.Name == "" {
+		names := make([]string, 0, len(members)+1)
+		self, err := s.repo.UserDisplayName(ctx, c.UserID)
+		if err != nil {
+			return Channel{}, err
+		}
+		if strings.TrimSpace(self) != "" {
+			names = append(names, self)
+		}
+		for _, id := range members {
+			n, err := s.repo.UserDisplayName(ctx, id)
+			if err != nil {
+				return Channel{}, err
+			}
+			if strings.TrimSpace(n) != "" {
+				names = append(names, n)
+			}
+		}
+		in.Name = strings.Join(names, ", ")
+		if in.Name == "" {
+			in.Name = "Group"
+		}
+	}
+	return s.repo.CreateGroup(ctx, c.UserID, in.Name, members)
+}
+
+// RenameGroup renames a group room (change 7 ruling 4): any member may rename
+// it, the new name shows to every member through the ordinary channel reads,
+// and the rename writes the system line naming who renamed the group and to
+// what. The walls are the module's own: assertMember first (a non member
+// renames nothing, 403), then the kind (any other room refuses with
+// ErrNotGroupRoom, 409), then the words (an empty name names no room, 400).
+func (s *Service) RenameGroup(ctx context.Context, c Caller, channelID, name string) (Channel, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return Channel{}, err
+	}
+	facts, err := s.repo.channelFacts(ctx, channelID)
+	if err != nil {
+		return Channel{}, err
+	}
+	if facts.Kind != KindGroup {
+		return Channel{}, ErrNotGroupRoom
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Channel{}, ErrChannelNameRequired
+	}
+	actor, err := s.repo.UserDisplayName(ctx, c.UserID)
+	if err != nil {
+		return Channel{}, err
+	}
+	return s.repo.RenameGroup(ctx, channelID, name, actor)
+}
 
 // CreateChannelInput is one caller-founded channel. Slug is optional; an
 // empty slug is derived from the name, so the same founding twice converges
@@ -196,6 +290,24 @@ func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID str
 	}
 	if facts.Kind == KindDM || facts.Kind == KindApproval {
 		return ChannelMember{}, ErrMembershipFixed
+	}
+	// A group room is the change 7 ruling's exception to the manager rule:
+	// any member may add any staffer by hand, of any branch (a group spans
+	// branches and names none, so the branch wall below has nothing to wall;
+	// it holds no member_roles list either). The seat and its system line go
+	// through the group seat, which commits both with the feed bump or not at
+	// all. The DM and APPROVAL refusals above are untouched.
+	if facts.Kind == KindGroup {
+		adder, err := s.repo.UserDisplayName(ctx, c.UserID)
+		if err != nil {
+			return ChannelMember{}, err
+		}
+		target, err := s.repo.UserDisplayName(ctx, userID)
+		if err != nil {
+			return ChannelMember{}, err
+		}
+		m, _, err := s.repo.SeatGroupMember(ctx, channelID, userID, adder, target)
+		return m, err
 	}
 	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
 		return ChannelMember{}, err

@@ -21,19 +21,20 @@ test("only apps with a bundle in the profile are launchable, in manifest order, 
     "buying-and-stock",
     "money-desk",
     "manager-home",
+    "house-messages",
     "dealer-admin",
   ]);
   assert.equal(apps.find((a) => a.id === "counter-till")?.path, "/till/");
   assert.equal(apps.find((a) => a.id === "manager-home")?.path, "/home/");
-  // House Messages is in the profile but has no bundle yet: nothing dead is offered.
+  // House Messages is in the profile and has its bundle: it is offered, in manifest order.
   assert.ok(profile.apps.some((a) => a.id === "house-messages"));
-  assert.ok(!ids(apps).includes("house-messages"));
+  assert.ok(ids(apps).includes("house-messages"));
 });
 
 test("different roles see different switchers", () => {
-  assert.deepEqual(ids(switcherFor(apps, "inside_sales")), ["counter-till", "quote-desk", "buying-and-stock", "money-desk"]);
-  assert.deepEqual(ids(switcherFor(apps, "logistics_manager")), ["dispatch-board", "manager-home"]);
-  assert.deepEqual(ids(switcherFor(apps, "yard_team")), ["dispatch-board", "buying-and-stock"]);
+  assert.deepEqual(ids(switcherFor(apps, "inside_sales")), ["counter-till", "quote-desk", "buying-and-stock", "money-desk", "house-messages"]);
+  assert.deepEqual(ids(switcherFor(apps, "logistics_manager")), ["dispatch-board", "manager-home", "house-messages"]);
+  assert.deepEqual(ids(switcherFor(apps, "yard_team")), ["dispatch-board", "buying-and-stock", "house-messages"]);
   assert.deepEqual(ids(switcherFor(apps, "sales_manager")), [
     "counter-till",
     "quote-desk",
@@ -41,6 +42,7 @@ test("different roles see different switchers", () => {
     "buying-and-stock",
     "money-desk",
     "manager-home",
+    "house-messages",
     "dealer-admin",
   ]);
 });
@@ -56,8 +58,8 @@ test("an app a role does not hold is not in its switcher", () => {
   }
 });
 
-test("a role with no Work app gets an empty switcher, and an unknown role gets none", () => {
-  assert.deepEqual(switcherFor(apps, "driver"), []);
+test("a role holding one Work app gets just that one, and an unknown role gets none", () => {
+  assert.deepEqual(ids(switcherFor(apps, "driver")), ["house-messages"]);
   assert.deepEqual(switcherFor(apps, "no_such_role"), []);
   assert.deepEqual(switcherFor(apps, ""), []);
 });

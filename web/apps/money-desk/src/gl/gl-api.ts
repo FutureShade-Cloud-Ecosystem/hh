@@ -7,7 +7,7 @@
 // Reads: the pending approvals, a journal, the journal register, the trial
 // balance (by branch, year and month), the branches (for the words on a row),
 // the chart, the recurring templates, the periods, the policy, the receivables
-// tie out and the BisTrack check. Writes: decide an approval (which is also how
+// tie out and the legacy import check. Writes: decide an approval (which is also how
 // a parked journal is approved: the core posts the journal in the same
 // transaction that stamps the request), post a journal, approve, void or
 // reverse one, run a template, create or deactivate an account, close or
@@ -20,6 +20,7 @@ import {
   staffBranches,
   staffGl,
   staffIdentity,
+  staffSettings,
   type ApiClient,
   type Branch,
   type GlAccount,
@@ -166,6 +167,16 @@ export class GlApi {
   /** The receivables subledger against account 1100, for every branch or one. */
   tieOut(branchId = ""): Promise<Result<GlTieoutState[]>> {
     return this.#items("tie out", (cursor) => staffGl.glTieOut(this.#client, { limit: 100, ...(branchId === "" ? {} : { branch_id: branchId }), ...(cursor === undefined ? {} : { cursor }) }));
+  }
+
+  /**
+   * The legacy system this dealer imports from, read from the money-desk surface config. "" when the
+   * dealer names none, and "" when the read fails: the legacy import check stays off rather than
+   * drawn for a dealer that may not have one.
+   */
+  async legacyImportSource(): Promise<string> {
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "money-desk", {});
+    return config.ok ? (config.value.legacy_import_source ?? "") : "";
   }
 
   bisTrack(year: number, month: number, toleranceCents: number, branchId = ""): Promise<Result<GlBisTrackTieoutReport>> {

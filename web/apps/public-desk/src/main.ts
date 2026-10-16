@@ -8,4 +8,7 @@
 // its own any more and a customer document renders the same face as every
 // other surface, self-hosted from the bundle, never a font host.
 import "@hardscapehouse/design-system/src/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./quote-public.js";
+
+applyTenantTitle("Your quote", { quote: true });

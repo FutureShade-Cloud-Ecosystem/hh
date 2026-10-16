@@ -53,10 +53,10 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  assert.equal(operations, 729, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 728, "the document's operation count minus the excluded stream");
+  assert.equal(operations, 730, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 729, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 729, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 730, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

@@ -42,10 +42,10 @@ test("the convert route puts focus on its heading", async ({ page }) => {
 test("after Sign out the tab title does not keep the last quote's number", async ({ page }) => {
   await signIn(page);
   await open(page, "Q-1001");
-  await expect.poll(() => page.title()).toBe("Q-1001");
+  await expect.poll(() => page.title()).toBe("Gable Landscape Supply · Q-1001");
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  expect(await page.title()).toBe("Quote Desk");
+  expect(await page.title()).toBe("Gable Landscape Supply · Quote Desk");
 });
 
 test("a read that failed in passing offers a retry, and a quote that is not there says it may not exist", async ({ page }) => {

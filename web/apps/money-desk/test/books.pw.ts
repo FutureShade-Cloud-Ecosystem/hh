@@ -1,7 +1,7 @@
 // The Financial Controller's books on the Money Desk, walked in a real browser on the stub: the chart of
 // accounts, a new journal (posted below the threshold, parked at it), void and reverse behind their review,
 // the recurring templates, the fiscal periods with close, reopen and the year end close, the trial balance by
-// month with its export, the receivables tie out, the BisTrack check, the policy, and Payables and
+// month with its export, the receivables tie out, the legacy import check, the policy, and Payables and
 // Receivables reading the same ledger with every write held. Each destructive step is a review that names
 // what it will change before anything is sent.
 import { test, expect, openApprovals, openTab, fillLine, draftJournal, openReader } from "./gl-helpers.js";
@@ -298,7 +298,7 @@ test("the trial balance takes a month, shows that month alone, and the export do
   await expect(page.locator("[data-trial]")).toContainText("fiscal year 2026");
 });
 
-test("the checks read the receivables tie out in words beside its colour, and run the BisTrack check", async ({ page, request }) => {
+test("the checks read the receivables tie out in words beside its colour, and run the legacy import check", async ({ page, request }) => {
   await openApprovals(page, request);
   await openTab(page, "checks");
   const tie = page.locator("[data-tie]");
@@ -317,13 +317,31 @@ test("the checks read the receivables tie out in words beside its colour, and ru
   await page.getByRole("button", { name: "Run the check" }).click();
   const report = page.locator("[data-bis-report]");
   await expect(report).toContainText("Does not tie");
-  await expect(report).toContainText("Synthetic test data, not a real BisTrack export");
-  await expect(report.getByRole("table", { name: "BisTrack lines" })).toContainText("Only in BisTrack");
+  await expect(report).toContainText("Synthetic test data, not a real legacy export");
+  await expect(report.getByRole("table", { name: "Legacy import lines" })).toContainText("Only in the legacy import");
   await expect(report.locator("[data-bis-count]")).toContainText("2 accounts differ beyond the tolerance");
   // A tolerance wide enough takes them all in.
   await page.locator('[data-field="bis-tolerance"]').fill("200.00");
   await page.getByRole("button", { name: "Run the check" }).click();
   await expect(page.locator("[data-bis-report]")).toContainText("Ties within tolerance");
+});
+
+test("a dealer with no legacy import source sees no legacy import section, and the first dealer sees it neutrally labelled", async ({ page, request }) => {
+  await openApprovals(page, request);
+  await openTab(page, "checks");
+  await expect(page.locator("[data-bis]")).toHaveCount(1);
+  await expect(page.locator("[data-bis]")).toContainText("Legacy import check");
+  await expect(page.locator("main, body").first()).not.toContainText(/bistrack/i);
+  // The demo tenant names no source: the section is not drawn at all.
+  const off = await request.post("/_stub/legacy-import", { data: { source: "" } });
+  expect(off.ok()).toBe(true);
+  await page.reload();
+  await expect(page.locator("[data-approval-id]")).toHaveCount(5);
+  await openTab(page, "checks");
+  await expect(page.locator("[data-tie]")).toContainText("Receivables ledger");
+  await expect(page.locator("[data-bis]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run the check" })).toHaveCount(0);
+  await request.post("/_stub/reset");
 });
 
 test("a journal that moves receivables puts the tie out out of tie, said in words with the difference", async ({ page, request }) => {

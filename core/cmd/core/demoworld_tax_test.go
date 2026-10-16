@@ -127,3 +127,17 @@ func TestDemoWorld_BuiltBoxKeepsATestersTaxRows(t *testing.T) {
 		t.Errorf("the apply renamed a tester's ledger account")
 	}
 }
+
+// TestDemoWorld_HasNoLegacyImportSource: the demo tenant is no one's migration. The legacy import
+// check is off for it, so the world names no legacy import source and the dealer's reader says none.
+func TestDemoWorld_HasNoLegacyImportSource(t *testing.T) {
+	ctx := context.Background()
+	pool := glsBootWorld(t, ctx, "demoworld_legacy_import")
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM system_settings WHERE key = 'legacy_import_source'`); n != 0 {
+		t.Errorf("the demo world carries %d legacy_import_source row(s), want none", n)
+	}
+	src, err := settings.NewDealerConfigReader(pool).LegacyImportSource(ctx)
+	if err != nil || src != "" {
+		t.Errorf("the demo dealer's legacy import source is %q (err %v), want none", src, err)
+	}
+}
