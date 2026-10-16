@@ -14,7 +14,10 @@ package messaging
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // - errors surfaced to the handler -
@@ -247,6 +250,93 @@ func (s *Service) CreateChannel(ctx context.Context, c Caller, in CreateChannelI
 		return Channel{}, false, ErrChannelSlugTaken
 	}
 	return ch, false, nil
+}
+
+// Person is one staffer on the New message picker's roster, the five fields
+// the picker reads and nothing else: no email, no phone, no permission or
+// cost field, no tier.
+type Person struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	RoleLabel   string `json:"role_label"`
+	BranchLabel string `json:"branch_label"`
+	IsMe        bool   `json:"is_me"`
+}
+
+// GetPeople answers the picker's page: the active staff of the caller's org
+// (the repository's StaffRoster read, the identity read-seam), q narrowed to
+// a case insensitive contains match on the display name, ordered by display
+// name then id compared bytewise (the order the cursor itself compares in,
+// whatever collation the database would have sorted by), and cut to the
+// caller's limit with the next page's key. The caller is on their own list,
+// flagged is_me, and the branch wall is the DM rule's: a direct message may
+// be opened with any active staffer of the org, so the roster reaches every
+// branch's staff and wields no branch wall of its own.
+func (s *Service) GetPeople(ctx context.Context, c Caller, orgID, q, cursor string, limit int) ([]Person, string, error) {
+	rows, err := s.repo.StaffRoster(ctx, orgID)
+	if err != nil {
+		return nil, "", err
+	}
+	needle := strings.ToLower(strings.TrimSpace(q))
+	people := make([]Person, 0, len(rows))
+	for _, row := range rows {
+		if needle != "" && !strings.Contains(strings.ToLower(row.DisplayName), needle) {
+			continue
+		}
+		people = append(people, Person{
+			UserID:      row.UserID,
+			DisplayName: row.DisplayName,
+			RoleLabel:   row.RoleLabel,
+			BranchLabel: row.BranchLabel,
+			IsMe:        row.UserID == c.UserID,
+		})
+	}
+	// One order for the slice, the search and the cursor, all bytewise.
+	sort.SliceStable(people, func(i, j int) bool {
+		if people[i].DisplayName != people[j].DisplayName {
+			return people[i].DisplayName < people[j].DisplayName
+		}
+		return people[i].UserID < people[j].UserID
+	})
+	start := 0
+	if cursor != "" {
+		id, name, ok := parsePeopleCursor(cursor)
+		if !ok {
+			return nil, "", ErrBadCursor
+		}
+		// Positional under the list's own order, so a staffer who left the
+		// roster since the cursor was minted neither fails the walk nor
+		// repeats or skips a row.
+		start = sort.Search(len(people), func(i int) bool {
+			if people[i].DisplayName != name {
+				return people[i].DisplayName > name
+			}
+			return people[i].UserID > id
+		})
+	}
+	page := people[start:]
+	next := ""
+	if len(page) > limit {
+		page = page[:limit]
+		last := page[len(page)-1]
+		next = last.UserID + "|" + last.DisplayName
+	}
+	return page, next, nil
+}
+
+// parsePeopleCursor splits "id|display name": the id first (a uuid never
+// holds the separator), the free text last, so a name holding a pipe still
+// cuts cleanly into two. The id must parse as a uuid, a cursor this module
+// never minted is a malformed cursor (400), never a first page.
+func parsePeopleCursor(key string) (id, name string, ok bool) {
+	parts := strings.SplitN(key, "|", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return "", "", false
+	}
+	if _, err := uuid.Parse(parts[0]); err != nil {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // CreateDM opens (or finds) the direct message channel between the caller and
