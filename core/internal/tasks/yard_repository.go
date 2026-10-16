@@ -554,6 +554,15 @@ func (r *Repository) RecordPickLocked(ctx context.Context, taskID, actorID strin
 		}
 		return nil, fmt.Errorf("tasks: lock %q for pick lines: %w", taskID, err)
 	}
+	// A pick record is a yard-pick measurement: only a PICK task carries one. A NEED_WEIGHT /
+	// DISPATCH / OTHER task has no ticket and no order line to update, but RecordPickLocked running
+	// against it would still hand the order module a backorder (FROM-PRINCIPAL row 2122 item 5 /
+	// REVIEW-YS-opus section 4: $8.02 off DEMO-PLM-O14). Refuse BEFORE pickClosed so a CANCELLED /
+	// DONE non-PICK row cannot sneak through either leg; the closed-pick path's caller message would
+	// be misleading on a row that was never a pick to begin with.
+	if task.TaskType != TypePick {
+		return nil, ErrNotPickTask
+	}
 	if err := pickClosed(task.Status); err != nil {
 		return nil, err
 	}

@@ -8455,7 +8455,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecAccountPage"
+                $ref: "#/components/schemas/BankRecAccountList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8648,7 +8648,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchPage"
+                $ref: "#/components/schemas/BankRecMatchList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8680,7 +8680,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchRulePage"
+                $ref: "#/components/schemas/BankRecMatchRuleList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8752,7 +8752,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecReconciliationPage"
+                $ref: "#/components/schemas/BankRecReconciliationList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9422,7 +9422,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxRatePage"
+                $ref: "#/components/schemas/TaxRateList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9479,7 +9479,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxStatusCardProfileList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9538,7 +9538,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxPendingProfileList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9639,7 +9639,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxEvidencePage"
+                $ref: "#/components/schemas/TaxEvidenceList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9895,7 +9895,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryOnHandPage"
+                $ref: "#/components/schemas/InventoryOnHandList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -9936,7 +9936,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryMovePage"
+                $ref: "#/components/schemas/InventoryMoveList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -9970,7 +9970,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryPendingFulfilmentPage"
+                $ref: "#/components/schemas/InventoryPendingFulfilmentList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10036,7 +10036,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransitDaysPairPage"
+                $ref: "#/components/schemas/InventoryTransitDaysPairList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10107,7 +10107,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBranchStockPage"
+                $ref: "#/components/schemas/InventoryBranchStockList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10217,7 +10217,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBrowsePage"
+                $ref: "#/components/schemas/InventoryBrowseResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10255,7 +10255,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReservationPage"
+                $ref: "#/components/schemas/InventoryReservationList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10454,7 +10454,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransferPage"
+                $ref: "#/components/schemas/InventoryTransferList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10657,7 +10657,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryInTransitLinePage"
+                $ref: "#/components/schemas/InventoryInTransitLineList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10723,7 +10723,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReorderPointPage"
+                $ref: "#/components/schemas/InventoryReorderPointList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -35697,22 +35697,11 @@ components:
         unmatched_lines:
           type: integer
           format: int32
-    BankRecAccountPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecAccount"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecAccountList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecAccount"
     BankRecStatementLine:
       type: object
       description: One parsed bank line; amount_cents is signed (positive credit, negative debit)
@@ -35885,22 +35874,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BankRecMatch"
-    BankRecMatchPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatch"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatch"
     BankRecMatchInput:
       type: object
       description: mode auto (or empty) runs the matcher over a window and uses bank_account_id, from and to; mode manual pairs one line with one target and uses statement_line_id, target_type, target_ref_id and optionally amount_cents.
@@ -35956,7 +35934,7 @@ components:
             - unmatched
     BankRecRuleSpec:
       type: object
-      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance)."
+      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance). The core stores the whole object as written and returns it unchanged; the matcher reads the six fields below besides kind and ignores any other key."
       additionalProperties: true
       properties:
         kind:
@@ -35965,6 +35943,26 @@ components:
             - gateway_ref_exact
             - lodgement_ref_exact
             - descriptor_fuzzy
+        target:
+          type: string
+          description: What the matcher pairs a line with (PAYMENT or LODGEMENT in the seeded rules)
+        tolerance_cents:
+          type: integer
+          format: int64
+          description: Amount tolerance in cents; zero or absent means exact
+        descriptor_ilike:
+          type: string
+          description: The ILIKE pattern the line descriptor must satisfy (descriptor_fuzzy)
+        date_window_days:
+          type: integer
+          format: int32
+          description: Days either side of the line date a target may fall
+        allow_fee_split:
+          type: boolean
+          description: Whether the matcher may book a processor fee split
+        fee_account_code:
+          type: string
+          description: The GL account code a fee split books to
     BankRecMatchRule:
       type: object
       description: A match rule row plus its decoded spec
@@ -36019,22 +36017,11 @@ components:
         priority:
           type: integer
           format: int32
-    BankRecMatchRulePage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatchRule"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchRuleList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatchRule"
     BankRecReconciliation:
       type: object
       description: One per-account period reconciliation
@@ -36102,22 +36089,11 @@ components:
         statement_balance_cents:
           type: integer
           format: int64
-    BankRecReconciliationPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecReconciliation"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecReconciliationList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecReconciliation"
     IdentityPing:
       type: object
       description: The identity module liveness record
@@ -36598,7 +36574,7 @@ components:
           type: string
     TaxReasonCode:
       type: string
-      description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
+      description: "The tax decision reason vocabulary: the twelve codes the tax_decision_snapshot CHECK carries and the core accepts on a rate row."
       enum:
         - STD_ON_HST_13
         - STD_SALES_TAX
@@ -36606,6 +36582,12 @@ components:
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
         - MANUAL_TAX_REVIEW
+        - FED_S87_GOODS_ON_RES
+        - FED_S87_SERVICE_RESERVE
+        - FED_BAND_MANAGEMENT
+        - FNT_PRODUCT
+        - TREATY_OR_SELF_GOV_REVIEW
+        - RELIEF_DECLINED_EVIDENCE
     TaxRate:
       type: object
       description: One effective-dated rate row
@@ -36634,22 +36616,18 @@ components:
           format: date
         notes:
           type: string
-    TaxRatePage:
+    TaxRateList:
       type: object
+      description: The core writes this list under the key rates, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - rates
       properties:
-        items:
-          type: array
+        rates:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/TaxRate"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxProfileStatus:
       type: string
       enum:
@@ -36688,22 +36666,28 @@ components:
           $ref: "#/components/schemas/TaxProfileStatus"
         notes:
           type: string
-    TaxStatusCardProfilePage:
+    TaxStatusCardProfileList:
       type: object
+      description: The core writes this list under the key profiles, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - profiles
       properties:
-        items:
+        profiles:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/TaxStatusCardProfile"
+    TaxPendingProfileList:
+      type: object
+      description: The core writes the PENDING profiles under the key pending_profiles, with no cursor and no limit echo. An empty answer is [], never null.
+      required:
+        - pending_profiles
+      properties:
+        pending_profiles:
           type: array
           items:
             $ref: "#/components/schemas/TaxStatusCardProfile"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxConfig:
       type: object
       description: The engine-wide tax config; the org-default row has an empty branch_id
@@ -36765,22 +36749,18 @@ components:
         attestation_status:
           type: string
           description: A fixed banner value, not a stored column
-    TaxEvidencePage:
+    TaxEvidenceList:
       type: object
+      description: The core writes this list under the key evidence, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - evidence
       properties:
-        items:
-          type: array
+        evidence:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/TaxEvidence"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxEvidenceCapture:
       type: object
       description: The capture request for status-card evidence
@@ -37940,156 +37920,122 @@ components:
           type: string
         note:
           type: string
-    InventoryOnHandPage:
+    InventoryOnHandList:
       type: object
+      description: The core writes this list under the key on_hand, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - on_hand
       properties:
-        items:
+        on_hand:
           type: array
           items:
             $ref: "#/components/schemas/InventoryOnHand"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryMovePage:
+    InventoryMoveList:
       type: object
+      description: The core writes this list under the key moves, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - moves
       properties:
-        items:
+        moves:
           type: array
           items:
             $ref: "#/components/schemas/InventoryStockMove"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryPendingFulfilmentPage:
+    InventoryPendingFulfilmentList:
       type: object
+      description: The core writes this list under the key pending, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - pending
       properties:
-        items:
+        pending:
           type: array
           items:
             $ref: "#/components/schemas/InventoryPendingFulfilment"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryTransitDaysPairPage:
+    InventoryTransitDaysPairList:
       type: object
+      description: The core writes this list under the key pairs, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - pairs
       properties:
-        items:
+        pairs:
           type: array
           items:
             $ref: "#/components/schemas/InventoryTransitDaysPair"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryBranchStockPage:
+    InventoryBranchStockList:
       type: object
+      description: The core writes this list under the key branches, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - branches
       properties:
-        items:
-          type: array
+        branches:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryBranchStock"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryBrowsePage:
+    InventoryBrowseResult:
       type: object
+      description: "The browse surface's single round trip, as the core writes it: the rows, the facets, the honest total before the limit, and the page the answer IS (limit and offset echo the service's clamping). It pages by offset, not by cursor, and answers no next_cursor. An empty page is [], never null; facets is null when no facet has a value."
       required:
-        - items
+        - rows
         - facets
+        - total
+        - limit
+        - offset
       properties:
-        items:
+        rows:
           type: array
           items:
             $ref: "#/components/schemas/InventoryBrowseRow"
         facets:
-          type: array
+          type:
+            - array
+            - "null"
           description: Facet counts for the current filter; a facet with no values is dropped
           items:
             $ref: "#/components/schemas/InventoryFacet"
-        next_cursor:
-          type:
-            - string
-            - "null"
+        total:
+          type: integer
+          format: int32
         limit:
           type: integer
           format: int32
-    InventoryReservationPage:
+        offset:
+          type: integer
+          format: int32
+    InventoryReservationList:
       type: object
+      description: The core writes this list under the key reservations, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - reservations
       properties:
-        items:
-          type: array
+        reservations:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryReservation"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryTransferPage:
+    InventoryTransferList:
       type: object
+      description: The core writes this list under the key transfers, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - transfers
       properties:
-        items:
-          type: array
+        transfers:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryTransfer"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryInTransitLinePage:
+    InventoryInTransitLineList:
       type: object
+      description: The core writes this list under the key lines, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - lines
       properties:
-        items:
+        lines:
           type: array
           items:
             $ref: "#/components/schemas/InventoryInTransitLine"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     InventoryShortfallPage:
       type: object
       required:
@@ -38110,22 +38056,18 @@ components:
         limit:
           type: integer
           format: int32
-    InventoryReorderPointPage:
+    InventoryReorderPointList:
       type: object
+      description: The core writes this list under the key reorder_points, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - reorder_points
       properties:
-        items:
-          type: array
+        reorder_points:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryReorderPoint"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     InvCountSheet:
       type: object
       description: One snapshot-frozen cycle count; counted_by is the maker, approved_by the checker (must differ)

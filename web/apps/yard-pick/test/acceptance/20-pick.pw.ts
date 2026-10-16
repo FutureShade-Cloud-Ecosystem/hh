@@ -78,9 +78,9 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled in full");
   await page.getByRole("button", { name: "One skid more" }).click();
-  await page.getByLabel("The reason for the skid count").selectOption("COUNT_CORRECTION");
+  await page.locator('[data-reason-group="skid"] [data-reason="COUNT_CORRECTION"]').click();
   await page.getByRole("button", { name: "Save skid count" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("skids");
+  await expect(page.locator("[data-notice]")).toContainText(/now holds \d+ skids?\./);
   await page.getByLabel("The stage location").fill("Bay 3");
   await page.getByRole("button", { name: "Stage", exact: true }).click();
   await expect(page.locator("[data-notice]")).toContainText("Staged at Bay 3");

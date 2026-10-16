@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -104,5 +105,40 @@ func TestYardHandlers_NobodyRaisesAboveOrderedNotEvenTheYardManager(t *testing.T
 	}
 	if got, _ := svc.ListPickedLines(t.Context(), taskID); len(got) != 0 {
 		t.Fatalf("a refused raise records nothing: %+v", got)
+	}
+}
+
+// The detail read is fenced like the write doors: a caller who cannot reach the task's branch is
+// refused (the pull and the REST board already refuse another branch's tickets), the task's own
+// branch and a GLOBAL caller read it.
+func TestYardPickDetail_FollowsTheBranchFence(t *testing.T) {
+	h, taskID := heldTicketSvc(t, nil)
+	get := func(sc identity.StaffContext) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/yard/picks/"+taskID, nil)
+		r.SetPathValue("id", taskID)
+		r = r.WithContext(identity.ContextWithStaff(r.Context(), sc))
+		w := httptest.NewRecorder()
+		h.pickDetail(w, r, guards.StaffCaller{})
+		return w
+	}
+	w := get(yardCaller("YARD_TEAM", identity.ScopeBranch, otherBranch))
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "branch out of scope") {
+		t.Fatalf("another branch's caller: %d %s, want 403 branch out of scope", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "Armour stone") {
+		t.Fatalf("the refusal carried the ticket: %s", w.Body.String())
+	}
+	for name, sc := range map[string]identity.StaffContext{
+		"own branch": yardCaller("YARD_TEAM", identity.ScopeBranch, branchA),
+		"global":     yardCaller("GENERAL_MANAGER", identity.ScopeGlobal),
+	} {
+		if w := get(sc); w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s, want 200", name, w.Code, w.Body.String())
+		}
+	}
+	noUser := yardCaller("YARD_TEAM", identity.ScopeBranch, branchA)
+	noUser.UserID = ""
+	if w := get(noUser); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no linked user: %d, want 401", w.Code)
 	}
 }
