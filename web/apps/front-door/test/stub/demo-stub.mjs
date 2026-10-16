@@ -5,6 +5,7 @@
 // file. The phrase gate in front of the real demo box is the image's Caddy;
 // this stub checks no credential, like the core's own public demo routes.
 //
+//   GET  /api/v1/tenant/config -> TenantPublicConfig
 //   GET  /api/v1/demo/flows   -> the closed table with each row's class (staff rows, then the five contractor rows)
 //   POST /api/v1/demo/session -> DemoSessionResponse, or the armed refusal
 //   POST /api/v1/feedback     -> 201 { issue_id, issue_number: HH-42 }, or the
@@ -604,6 +605,18 @@ const server = createServer(async (request, response) => {
     } else {
       sendJson(response, 200, { items, next_cursor: null, limit: 20 });
     }
+    return;
+  }
+
+  if (path === "/api/v1/tenant/config" && request.method === "GET") {
+    sendJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
+    });
     return;
   }
 

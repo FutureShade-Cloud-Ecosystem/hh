@@ -198,8 +198,21 @@ test("a zone that arrives after the first read moves the run sheet onto the deal
   await expect(page.getByRole("heading", { name: "My run" })).toBeVisible();
   await page.waitForTimeout(4_000);
   await expect(page.locator("[data-run]")).toHaveCount(1);
-  // The sheet was read twice: on the default day at once, and again on the served day.
-  expect(await page.evaluate((k) => (window as unknown as Record<string, number>)[k], STORE_READS)).toBeGreaterThanOrEqual(4);
+  // Capture the store-read count once the run sheet has rendered (a single
+  // [data-run] means the page settled on one day, so the post-zone reread
+  // has either fired once or not at all). The original assertion, ">= 4",
+  // would also pass if #rereadOnZone entered a continuous re-read loop;
+  // pairing it with "settled count == captured count" proves the reread
+  // fired once for the new zone and then stayed quiet for two seconds.
+  const readsAfterZone = await page.evaluate(
+    (k) => (window as unknown as Record<string, number>)[k],
+    STORE_READS,
+  );
+  expect(readsAfterZone).toBeGreaterThanOrEqual(4);
+  await page.waitForTimeout(2_000);
+  expect(
+    await page.evaluate((k) => (window as unknown as Record<string, number>)[k], STORE_READS),
+  ).toBe(readsAfterZone);
 });
 
 test("an Ontario dealer (zone absent) does not read the store again when the zone read answers", async ({ page, request }) => {
