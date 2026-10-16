@@ -96,9 +96,11 @@ func TestIntegration_Membership_Managed_By_Owner_Or_Admin(t *testing.T) {
 	// previous value after).
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	// The room is setup for the owner pen, founded through the repository
+	// seam (the route's founding is the admins' pen now), sam stays OWNER.
+	room, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Owner wall probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found room: %v", err)
 	}

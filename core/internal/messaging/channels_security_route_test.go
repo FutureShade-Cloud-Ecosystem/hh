@@ -14,6 +14,8 @@ import (
 
 // A slug the caller holds no membership in is refused with 409, in words,
 // and the refusal seats nobody: the double's membership map is the proof.
+// Founding is the admins' pen (change 7, ruling A), so the leg drives the
+// general manager and the collision wall runs behind the gate.
 func TestRoute_CreateChannel_Collision_Refuses_A_NonMember(t *testing.T) {
 	fs := newAdminStore()
 	// A room founded by another staffer: rtBobby is its only member.
@@ -21,7 +23,7 @@ func TestRoute_CreateChannel_Collision_Refuses_A_NonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 		[]byte(`{"kind":"TEAM","name":"Finance desk"}`))
 	if rec.Code != http.StatusConflict {
@@ -39,7 +41,7 @@ func TestRoute_CreateChannel_Collision_Refuses_A_NonMember(t *testing.T) {
 // founder still its member.
 func TestRoute_CreateChannel_Collision_Answers_The_Callers_Own_Room(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	body := []byte(`{"kind":"TEAM","name":"Paving crew"}`)
 	if rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels", body); rec.Code != http.StatusCreated {
 		t.Fatalf("create channel: %d %s", rec.Code, rec.Body.String())
@@ -58,7 +60,7 @@ func TestRoute_CreateChannel_Collision_Answers_The_Callers_Own_Room(t *testing.T
 // system provision that converges on the same slug.
 func TestRoute_CreateChannel_Refuses_Reserved_Slug_Namespaces(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	for _, slug := range []string{"dm-probe", "rep-probe", "approvals-probe"} {
 		rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 			[]byte(`{"kind":"TEAM","slug":"`+slug+`","name":"Probe"}`))
@@ -77,7 +79,7 @@ func TestRoute_CreateChannel_Refuses_Reserved_Slug_Namespaces(t *testing.T) {
 // of a system prefix is refused with 400.
 func TestRoute_CreateChannel_Refuses_Reserved_Slug_In_Every_Case(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	for _, slug := range []string{
 		"APPROVALS-probe", "Rep-probe", "dM-probe", "DM-PROBE",
 	} {
@@ -103,7 +105,7 @@ func TestRoute_CreateChannel_Never_Reaches_ADM_By_Slug(t *testing.T) {
 		t.Fatalf("setup dm: %v", err)
 	}
 	fs.plantRoom(dm, rtCaller, rtBobby)
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 		[]byte(`{"kind":"TEAM","slug":"`+dm.Slug+`","name":"Not a dm"}`))
 	if rec.Code != http.StatusBadRequest {
