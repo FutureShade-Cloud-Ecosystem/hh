@@ -3748,6 +3748,42 @@ export type MessagingPaymentRulePrefs = {
 export type MessagingPaymentRulePut = {
   enabled: boolean;
 };
+export type MessagingPersonEventPref = {
+  user_id: string;
+  event_category: "orders_released_and_blocked" | "stock_received" | "credit_holds_and_credit_owed" | "deliveries_scheduled" | "payments" | "approvals_waiting_on_me";
+  in_app: boolean;
+  push: boolean;
+  updated_at?: string;
+};
+export type MessagingPersonEventPrefPut = {
+  category: "orders_released_and_blocked" | "stock_received" | "credit_holds_and_credit_owed" | "deliveries_scheduled" | "payments" | "approvals_waiting_on_me";
+  in_app?: boolean;
+  push?: boolean;
+};
+export type MessagingQuietHours = {
+  user_id: string;
+  enabled: boolean;
+  start_local: string;
+  end_local: string;
+  timezone: string;
+  bypass_user_ids: string[];
+  updated_at?: string;
+};
+export type MessagingQuietHoursPut = {
+  enabled?: boolean;
+  start_local?: string;
+  end_local?: string;
+  timezone?: string;
+  bypass_user_ids?: string[];
+};
+export type MessagingNotificationSettings = {
+  event_prefs: MessagingPersonEventPref[];
+  quiet_hours: MessagingQuietHours;
+};
+export type MessagingNotificationSettingsPatch = {
+  event_prefs?: MessagingPersonEventPrefPut[];
+  quiet_hours?: MessagingQuietHoursPut;
+};
 export type MessagingRepAssignment = {
   id: string;
   customer_id: string;

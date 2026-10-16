@@ -1351,6 +1351,66 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/messaging/notification-settings:
+    get:
+      operationId: messagingGetNotificationSettings
+      tags: [staff-messaging]
+      summary: Get the caller's notification-settings envelope
+      description: >-
+        Returns the caller's full notification-settings envelope: the closed
+        6-item event-category set in board order (with the per-category default
+        filled when no row exists for that category) and the caller's
+        quiet-hours row (with shipped defaults when no row). The user id comes
+        from the verified staff identity, never from the path or body, so no
+        route reads another staffer's notification choices.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's full notification-settings envelope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotificationSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: messagingPutNotificationSettings
+      tags: [staff-messaging]
+      summary: Upsert the caller's notification-settings envelope
+      description: >-
+        Partial upsert: event_prefs and quiet_hours are both optional and may
+        be sent together or alone. Per-category fields are pointers so an
+        omitted field keeps the caller's current value on the upsert
+        (omitted-fields-keep-their-current-value). Unknown category names
+        return 400, malformed HH:MM and unresolvable timezones return 400.
+        The user id comes from the verified staff identity, so one staffer's
+        PUT cannot alter another's stored rows.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingNotificationSettingsPatch"
+      responses:
+        "200":
+          description: The caller's full notification-settings envelope after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotificationSettings"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/messaging/rep-assignments:
     get:
       operationId: messagingListRepAssignments
@@ -2349,6 +2409,118 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
+
+    MessagingPersonEventPref:
+      type: object
+      description: >-
+        One user's answer for one event-category. The closed 6-item category set
+        (in board order) is the schema's copy of messaging.EventCategories so a
+        value the code does not know can never be stored. updated_at is the row's
+        last-write timestamp; absent when the user has no stored row.
+      required: [user_id, event_category, in_app, push]
+      properties:
+        user_id: { type: string, format: uuid }
+        event_category:
+          type: string
+          enum:
+            - orders_released_and_blocked
+            - stock_received
+            - credit_holds_and_credit_owed
+            - deliveries_scheduled
+            - payments
+            - approvals_waiting_on_me
+        in_app: { type: boolean }
+        push: { type: boolean }
+        updated_at: { type: string, format: date-time }
+
+    MessagingPersonEventPrefPut:
+      type: object
+      description: >-
+        Per-category upsert body. category is required; in_app and push are
+        optional so an omitted field keeps the caller's current value (the
+        omitted-fields-keep-their-current-value rule).
+      required: [category]
+      properties:
+        category:
+          type: string
+          enum:
+            - orders_released_and_blocked
+            - stock_received
+            - credit_holds_and_credit_owed
+            - deliveries_scheduled
+            - payments
+            - approvals_waiting_on_me
+        in_app: { type: boolean }
+        push: { type: boolean }
+
+    MessagingQuietHours:
+      type: object
+      description: >-
+        One user's quiet-hours row. start_local and end_local are 24-hour HH:MM
+        in the user's timezone; overnight windows (start > end) are supported.
+        timezone defaults to America/Los_Angeles. bypass_user_ids is the DM
+        carve-out (ruling 8): DMs from these people still ring as drawn on the
+        board.
+      required: [user_id, enabled, start_local, end_local, timezone, bypass_user_ids]
+      properties:
+        user_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        start_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        end_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        timezone: { type: string }
+        bypass_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+
+    MessagingQuietHoursPut:
+      type: object
+      description: >-
+        Quiet-hours upsert body. Every field is optional; the service merges over
+        the caller's current row. Timezone falls back to UTC on a bad value at
+        the predicate boundary, so the handler refuses bad timezones (400)
+        before any row is written.
+      properties:
+        enabled: { type: boolean }
+        start_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        end_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        timezone: { type: string }
+        bypass_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MessagingNotificationSettings:
+      type: object
+      description: >-
+        The full notification-settings envelope. event_prefs is the closed
+        6-item category set in board order (with per-category defaults when no
+        row exists). quiet_hours is the user's quiet-hours row (with shipped
+        defaults when no row exists).
+      required: [event_prefs, quiet_hours]
+      properties:
+        event_prefs:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingPersonEventPref" }
+        quiet_hours: { $ref: "#/components/schemas/MessagingQuietHours" }
+
+    MessagingNotificationSettingsPatch:
+      type: object
+      description: >-
+        The partial-upsert body for PUT /notification-settings. event_prefs and
+        quiet_hours are both optional and may be sent together or alone.
+      properties:
+        event_prefs:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingPersonEventPrefPut" }
+        quiet_hours: { $ref: "#/components/schemas/MessagingQuietHoursPut" }
 
     MessagingRepAssignment:
       type: object

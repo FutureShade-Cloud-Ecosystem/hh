@@ -51,6 +51,11 @@ type store interface {
 	// Feature 1 (0071): forced-ack write + kiosk poll read seam.
 	AckMessage(ctx context.Context, channelID, messageID, userID, method string) (Ack, error)
 	UnackedRequiresAck(ctx context.Context, userID string) ([]Message, error)
+	// Slice S7 (0401): per-person event-category prefs + quiet-hours read/write seam.
+	GetPersonEventPrefsForUser(ctx context.Context, userID string) (map[string]PersonEventPref, error)
+	UpsertPersonEventPref(ctx context.Context, p PersonEventPref) (PersonEventPref, error)
+	GetQuietHoursForUser(ctx context.Context, userID string) (QuietHours, error)
+	UpsertQuietHours(ctx context.Context, q QuietHours) (QuietHours, error)
 	// Approvals rail (0075): per-person channel provisioning + card/echo/stamp write path.
 	EnsureApprovalChannel(ctx context.Context, userID string) (string, error)
 	PostApprovalMessage(ctx context.Context, channelID, eventKey, body string, ref ApprovalRef) (Message, bool, error)
@@ -814,4 +819,194 @@ func looksLikeCleartextID(s string) bool {
 		}
 	}
 	return false
+}
+
+// - Slice S7: per-person notification settings (event-category toggles + quiet hours), 0401 -
+
+// NotificationSettings is the envelope the GET /notification-settings route returns: the closed
+// 6-category set in board order (always, with the per-category default filled when a user has no
+// stored row) and the user's quiet-hours row (always, with the shipped defaults when no row). A
+// partial payload would force the surface to invent the missing half, and "no row" and "default"
+// must look identical to the reader because they mean the same thing to the system.
+type NotificationSettings struct {
+	EventPrefs []PersonEventPref `json:"event_prefs"`
+	QuietHours QuietHours        `json:"quiet_hours"`
+}
+
+// NotificationSettingsPatch is the PUT body. event_prefs is OPTIONAL (a PUT may touch only quiet
+// hours), quiet_hours is OPTIONAL (a PUT may touch only categories). Inside event_prefs, every
+// entry carries a category; in_app / push are pointers so an omitted field keeps the caller's
+// current value on the upsert (the same omitted-fields-keep-their-current-value rule PrefsPatch
+// uses, applied per-category).
+type NotificationSettingsPatch struct {
+	EventPrefs []PersonEventPrefsPatch `json:"event_prefs,omitempty"`
+	QuietHours QuietHoursPatch         `json:"quiet_hours,omitempty"`
+}
+
+// ErrBadQuietHours is a quiet-hours field that failed HH:MM or timezone validation (caller fault
+// → 400). Surfaced so the handler can map it without writing a Postgres CHECK violation → 500.
+var ErrBadQuietHours = errors.New("messaging: invalid quiet-hours field")
+
+// GetNotificationSettings returns the caller's full notification-settings envelope, ALWAYS the
+// closed 6-category set in board order with the per-category default filled when no row exists,
+// and the user's quiet-hours row with shipped defaults when no row. Caller is taken from the
+// verified StaffContext (the route stamps it via RequireStaff); there is no path through which one
+// staffer can read another's notification choices.
+func (s *Service) GetNotificationSettings(ctx context.Context, c Caller) (NotificationSettings, error) {
+	stored, err := s.repo.GetPersonEventPrefsForUser(ctx, c.UserID)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	qh, err := s.repo.GetQuietHoursForUser(ctx, c.UserID)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	prefs := make([]PersonEventPref, 0, len(EventCategories))
+	for _, cat := range EventCategories {
+		if p, ok := stored[cat]; ok {
+			prefs = append(prefs, p)
+			continue
+		}
+		prefs = append(prefs, DefaultPersonEventPref(c.UserID, cat))
+	}
+	return NotificationSettings{EventPrefs: prefs, QuietHours: qh}, nil
+}
+
+// SetNotificationSettings upserts the caller's notification-settings envelope. event_prefs is
+// optional; quiet_hours is optional; both may be sent in the same PUT. Validation is at the
+// service boundary (ErrBadQuietHours / ErrBadEventCategory → 400) so a bad value never reaches the
+// SQL CHECKs. Each category row is merged over the caller's CURRENT stored values so a partial
+// PUT does not silently coerce an omitted toggle. Returns the full updated envelope.
+//
+// Caller isolation is intrinsic: c.UserID comes from the verified StaffContext (never from the
+// body or a query param), so Alice's PUT cannot alter Bob's settings.
+func (s *Service) SetNotificationSettings(ctx context.Context, c Caller, patch NotificationSettingsPatch) (NotificationSettings, error) {
+	// Validate quiet_hours first; a bad HH:MM / timezone in the patch must fail before any row is
+	// written (defence-in-depth: a half-applied write is worse than a refused write).
+	if patch.QuietHours.StartLocal != nil {
+		if _, _, ok := parseHHMM(*patch.QuietHours.StartLocal); !ok {
+			return NotificationSettings{}, ErrBadHHMM
+		}
+	}
+	if patch.QuietHours.EndLocal != nil {
+		if _, _, ok := parseHHMM(*patch.QuietHours.EndLocal); !ok {
+			return NotificationSettings{}, ErrBadHHMM
+		}
+	}
+	if patch.QuietHours.Timezone != nil {
+		if loc, err := time.LoadLocation(*patch.QuietHours.Timezone); err != nil || loc == nil {
+			return NotificationSettings{}, ErrBadTimezone
+		}
+	}
+
+	// Upsert each category row. Per-category validation: the closed-set check runs before the
+	// upsert so a single bad category refuses the WHOLE request (a partial write of the others is
+	// a half-applied change the surface cannot honestly present back).
+	for _, ep := range patch.EventPrefs {
+		if _, ok := normalizeEventCategory(ep.Category); !ok {
+			return NotificationSettings{}, ErrBadEventCategory
+		}
+		// Merge over the caller's CURRENT stored row so an omitted field keeps its value (the
+		// omitted-fields-keep-their-current-value rule).
+		cur := DefaultPersonEventPref(c.UserID, ep.Category)
+		if stored, ok := s.lookupStoredEventPref(ctx, c.UserID, ep.Category); ok {
+			cur = stored
+		}
+		if ep.InApp != nil {
+			cur.InApp = *ep.InApp
+		}
+		if ep.Push != nil {
+			cur.Push = *ep.Push
+		}
+		if _, err := s.repo.UpsertPersonEventPref(ctx, cur); err != nil {
+			return NotificationSettings{}, err
+		}
+	}
+
+	// Upsert quiet hours if any field was sent. A truly empty patch (no event_prefs, no
+	// quiet_hours fields) is a clean no-op: nothing to merge, nothing to write.
+	if qhHasAny(patch.QuietHours) {
+		cur, _ := s.repo.GetQuietHoursForUser(ctx, c.UserID)
+		if cur.UserID == "" {
+			cur = DefaultQuietHours(c.UserID) // guard against an empty zero-value from a fresh repo
+		}
+		if patch.QuietHours.Enabled != nil {
+			cur.Enabled = *patch.QuietHours.Enabled
+		}
+		if patch.QuietHours.StartLocal != nil {
+			cur.StartLocal = *patch.QuietHours.StartLocal
+		}
+		if patch.QuietHours.EndLocal != nil {
+			cur.EndLocal = *patch.QuietHours.EndLocal
+		}
+		if patch.QuietHours.Timezone != nil {
+			cur.Timezone = *patch.QuietHours.Timezone
+		}
+		if patch.QuietHours.BypassUserIDs != nil {
+			cur.BypassUserIDs = patch.QuietHours.BypassUserIDs
+		}
+		if _, err := s.repo.UpsertQuietHours(ctx, cur); err != nil {
+			return NotificationSettings{}, err
+		}
+	}
+
+	// Re-read the full envelope so the response mirrors what a follow-up GET would return (the
+	// same honesty GetNotifyPrefs / GetPaymentRules apply: round-trip the truth).
+	return s.GetNotificationSettings(ctx, c)
+}
+
+// lookupStoredEventPref is the merge-over-current helper for the category upsert. It returns
+// ok=false when no row is stored (the caller falls back to DefaultPersonEventPref). A repo
+// failure surfaces as an empty map (the upsert that follows will overwrite the defaults with the
+// patch's values, which is what the caller asked for).
+func (s *Service) lookupStoredEventPref(ctx context.Context, userID, category string) (PersonEventPref, bool) {
+	all, err := s.repo.GetPersonEventPrefsForUser(ctx, userID)
+	if err != nil {
+		return PersonEventPref{}, false
+	}
+	p, ok := all[category]
+	return p, ok
+}
+
+// qhHasAny reports whether a QuietHoursPatch carries ANY field. A truly empty patch is a
+// no-op; we don't even open a transaction for it (the brief's "no row" / "default" honesty).
+func qhHasAny(p QuietHoursPatch) bool {
+	return p.Enabled != nil || p.StartLocal != nil || p.EndLocal != nil ||
+		p.Timezone != nil || p.BypassUserIDs != nil
+}
+
+// ErrBadEventCategory is a category outside EventCategories (mirrors ErrBadPaymentRule, ErrBadMode);
+// the handler maps it to HTTP 400.
+var ErrBadEventCategory = errors.New("messaging: unknown event category")
+
+// ShouldDeliverPushOnService is the Service-level wrapper that the SSE/desktop-push path will
+// eventually call (the per-recipient fan-out seam the consumer.go comment names). It looks up the
+// caller's stored prefs (caller pref + per-category pref + quiet hours) and runs the pure
+// ShouldDeliverPush predicate. The full stored-set read is the fan-out's hot path; it is DB-free
+// in the unit-test seam via Service.repo overrides.
+func (s *Service) ShouldDeliverPushOnService(ctx context.Context, userID, channelID, eventCategory, dmSenderID string, isForcedAck bool) bool {
+	pref, err := s.repo.GetNotificationPrefs(ctx, channelID, userID)
+	if err != nil {
+		return false // defensive: a missing prefs row returns the defaults; a DB failure is "no push"
+	}
+	tier, err := s.repo.ChannelTier(ctx, channelID)
+	if err != nil {
+		tier = TierStandard // mirrors the existing predicate: a missing tier is the safe default
+	}
+	var classPref PersonEventPref
+	if eventCategory != "" {
+		stored, err := s.repo.GetPersonEventPrefsForUser(ctx, userID)
+		if err == nil {
+			if p, ok := stored[eventCategory]; ok {
+				classPref = p
+			} else {
+				classPref = DefaultPersonEventPref(userID, eventCategory)
+			}
+		}
+	}
+	qh, err := s.repo.GetQuietHoursForUser(ctx, userID)
+	if err != nil {
+		qh = DefaultQuietHours(userID)
+	}
+	return ShouldDeliverPush(time.Now(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
 }
