@@ -1956,7 +1956,7 @@ test("an optional add-on row shows an include checkbox that excludes the line wh
 });
 
 test("an optional add-on the customer excluded is named in the accept payload, otherwise the wire is unchanged", async ({ page }) => {
-  await page.goto("/?t=q-optional-92");
+  await page.goto("/?t=q-optional-accept-92");
   await page.locator("input[type=\"checkbox\"][data-line-no=\"2\"]").uncheck();
   await page.locator("#qty-confirm").check();
   await page.locator("#name").fill("Sample Customer");
@@ -1973,7 +1973,7 @@ test("an optional add-on the customer excluded is named in the accept payload, o
   });
 
   // A quote with NO optional add-ons keeps the original contract wire.
-  await page.goto("/?t=q-terms-28");
+  await page.goto("/?t=q-plain-accept-28");
   await page.locator("#qty-confirm").check();
   await page.locator("#name").fill("Sample Customer");
   await page.locator("#affirm").check();

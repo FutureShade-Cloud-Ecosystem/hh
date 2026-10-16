@@ -363,6 +363,9 @@ QUOTES["q-card-91"].card_surcharge_pct = 2.9;
 
 QUOTES["q-optional-92"] = structuredClone(QUOTES["q-terms-28"]);
 QUOTES["q-optional-92"].quote_no = "Q-92";
+QUOTES["q-optional-92"].subtotal_cents = 60000;
+QUOTES["q-optional-92"].tax_cents = 7800;
+QUOTES["q-optional-92"].total_cents = 67800;
 QUOTES["q-optional-92"].lines = [
   {
     line_no: 1,
@@ -383,6 +386,9 @@ QUOTES["q-optional-92"].lines = [
   },
 ];
 
+QUOTES["q-optional-accept-92"] = structuredClone(QUOTES["q-optional-92"]);
+QUOTES["q-plain-accept-28"] = structuredClone(QUOTES["q-terms-28"]);
+
 QUOTES["q-lost-93"] = structuredClone(QUOTES["q-terms-28"]);
 QUOTES["q-lost-93"].quote_no = "Q-93";
 QUOTES["q-lost-93"].status = "LOST";
@@ -396,6 +402,9 @@ QUOTES["q-all-94"].rep_name = "Marisol Reyes";
 QUOTES["q-all-94"].rep_email = "marisol@example.test";
 QUOTES["q-all-94"].rep_phone = "+1-555-0140";
 QUOTES["q-all-94"].card_surcharge_pct = 2.9;
+QUOTES["q-all-94"].subtotal_cents = 60000;
+QUOTES["q-all-94"].tax_cents = 7800;
+QUOTES["q-all-94"].total_cents = 67800;
 QUOTES["q-all-94"].lines = [
   {
     line_no: 1,
@@ -421,7 +430,16 @@ QUOTES["q-all-94"].lines = [
 QUOTES["q-charcoal-95"] = structuredClone(QUOTES["q-all-94"]);
 QUOTES["q-charcoal-95"].quote_no = "Q-95";
 // Apply the notice defaults to the new fixtures too (the loop above did not see them).
-for (const token of ["q-rep-90", "q-card-91", "q-optional-92", "q-lost-93", "q-all-94", "q-charcoal-95"]) {
+for (const token of [
+  "q-rep-90",
+  "q-card-91",
+  "q-optional-92",
+  "q-optional-accept-92",
+  "q-plain-accept-28",
+  "q-lost-93",
+  "q-all-94",
+  "q-charcoal-95",
+]) {
   if (QUOTES[token].quantity_notice === undefined) QUOTES[token].quantity_notice = DEFAULT_QUANTITY_NOTICE;
 }
 
