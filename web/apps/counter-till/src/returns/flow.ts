@@ -82,6 +82,13 @@ export interface ReturnsFlowOptions {
   searchProducts: (query: string) => Promise<Result<ReplacementProduct[]>>;
   /** The branch this login reaches, read live; null before it resolves. */
   branchId: () => string | null;
+  /**
+   * The dealer's warranty claim threshold in integer cents, for the Counter Till Return Drawer's
+   * manufacturer defect sentence. The host reads the live warranty policy at sign in and passes
+   * the figure here; absent means the host has not wired the read yet and the flow falls back to
+   * the 0396 seed ($50.00 / 5000 cents) so the unit tests stay deterministic.
+   */
+  claimThresholdCents?: number;
   /** Called after every state change, so the host re-renders. */
   onChange: () => void;
 }
@@ -159,6 +166,14 @@ export class ReturnsFlow {
   drawer: DrawerState = { kind: "unknown" };
   /** The card rail's simulator flag from the status route; null until it answers. */
   cardSimulated: boolean | null = null;
+  /**
+   * The dealer's warranty claim threshold in integer cents, for the Counter Till Return Drawer's
+   * manufacturer defect threshold sentence (walk change 6 item 4, boards ct-return-defect-over and
+   * ct-return-defect-under). The host reads the live warranty policy at sign in and passes the
+   * figure here; null means the read has not answered yet, so the drawer refuses the sentence
+   * rather than guess at a default that may disagree with the dealer's setting.
+   */
+  claimThresholdCents: number | null = null;
   /** True while the note is on the wire: the surface's controls go disabled. */
   submitting = false;
   /** The committed note, once one is. */
@@ -188,6 +203,11 @@ export class ReturnsFlow {
     this.#searchProducts = options.searchProducts;
     this.#branchId = options.branchId;
     this.#onChange = options.onChange;
+    // The host already read the live threshold (the till uses the live policy read at sign in,
+    // not a built in default); the default 5000 (= $50.00 at the 0396 seed) is set as the seed
+    // value so a parent that has not yet wired the read still shows a coherent sentence and the
+    // unit tests stay deterministic. Host callers that read the policy overwrite this immediately.
+    this.claimThresholdCents = options.claimThresholdCents ?? 5000;
   }
 
   /** Bumped on every fresh customer or reset: the view keys its uncontrolled fields on it. */
