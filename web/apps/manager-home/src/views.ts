@@ -15,6 +15,9 @@ import { roleWords } from "./role-words.js";
 import { gaugeSegments } from "./widget-shapes.js";
 import type {
   ApprovalRow,
+  LandingDeliveries,
+  LandingKpi,
+  LandingNeedRow,
   NeedsQueue,
   NeedsRow,
   QueueEntry,
@@ -47,6 +50,9 @@ import {
 
 // -- the landing -------------------------------------------------------------------------------------
 
+/** Whether the four TODAY KPIs render as one combined number each, or stacked per branch. */
+export type BranchMode = "combined" | "split";
+
 export interface LandingModel {
   readonly phase: "loading" | "ready" | "error";
   readonly profile: string;
@@ -60,6 +66,16 @@ export interface LandingModel {
   readonly canOpenReporting: boolean;
   /** The needs rows the core could not measure on this profile, said in words (weights-logic.ts). */
   readonly unsourcedNeeds: typeof UNSOURCED_NEEDS;
+  /** WALK-C10: combined vs side-by-side branch mode on the four money KPIs and deliveries summary. */
+  readonly branchMode?: BranchMode;
+  /** WALK-C10: the four money KPI cards (Sales today, Gross margin, AR overdue, Cash collected today). */
+  readonly kpis?: readonly LandingKpi[];
+  /** WALK-C10: the Deliveries today card with branch run columns. */
+  readonly deliveries?: LandingDeliveries | null;
+  /** WALK-C10: Needs you, by money at stake ranked rows with inline actions. */
+  readonly stakeNeeds?: readonly LandingNeedRow[];
+  /** WALK-C10: landing-level notice for actions whose destination view is not on this box yet. */
+  readonly notice?: string;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -83,6 +99,11 @@ export function renderLanding(model: LandingModel): TemplateResult {
   const large = shown.filter((w) => w.size === "L");
   const strip = shown.filter((w) => w.size !== "L");
   const words = roleWords(model.profile);
+  const branchMode: BranchMode = model.branchMode ?? "combined";
+  const kpis = model.kpis ?? [];
+  const deliveries = model.deliveries ?? null;
+  const stakeNeeds = model.stakeNeeds ?? [];
+  const notice = model.notice ?? "";
   return html`
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
@@ -91,6 +112,7 @@ export function renderLanding(model: LandingModel): TemplateResult {
         <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
       </div>
     </header>
+    ${notice !== "" ? html`<p class="notice-line landing-notice" role="status">${notice}</p>` : nothing}
     <p class="eyebrow">Today</p>
     <div class="bento">
       ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0, model.profile))}
@@ -99,6 +121,7 @@ export function renderLanding(model: LandingModel): TemplateResult {
       ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false, model.profile))}
       ${UNSOURCED_TILES.map((t) => renderUnsourcedTile(t))}
     </div>
+    ${renderC10Landing(branchMode, kpis, deliveries, stakeNeeds)}
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
       ${words.views.map((v) => html`
@@ -110,6 +133,118 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </nav>
   `;
 }
+
+export function renderC10Landing(
+  branchMode: BranchMode,
+  kpis: readonly LandingKpi[],
+  deliveries: LandingDeliveries | null,
+  stakeNeeds: readonly LandingNeedRow[],
+): TemplateResult | typeof nothing {
+  if (kpis.length === 0 && deliveries === null && stakeNeeds.length === 0) return nothing;
+  return html`
+    <div class="c10-landing" data-test="c10-landing">
+      <section class="quick-actions" data-test="c10-quick-actions" aria-label="Quick actions">
+        <h2 class="section-eyebrow">Quick actions</h2>
+        <div class="quick-actions-row">
+          <button type="button" class="qa-pill primary" data-action="qa-action" data-qa="approve-credit-hold">Approve credit hold</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="issue-warranty">Issue warranty claim</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="approve-margin">Approve margin</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="message-branch">Message a branch</button>
+        </div>
+      </section>
+      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures today">
+        <div class="today-head">
+          <h2 class="section-eyebrow">Today</h2>
+          <div class="branch-toggle" role="group" aria-label="Branch scope">
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>Both branches combined</button>
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Point Loma beside Julian</button>
+          </div>
+        </div>
+        <div class="kpi-row kpi-row-${branchMode}">
+          ${kpis.map((kpi) => renderKpiCard(kpi, branchMode))}
+        </div>
+      </section>
+      ${deliveries === null ? nothing : renderDeliveriesCard(deliveries, branchMode)}
+      ${stakeNeeds.length === 0 ? nothing : renderNeedsYouCard(stakeNeeds)}
+    </div>
+  `;
+}
+
+export function renderKpiCard(kpi: LandingKpi, mode: BranchMode): TemplateResult {
+  if (mode === "split") {
+    return html`
+      <article class="kpi-card kpi-card-split">
+        <h3 class="kpi-title">${kpi.title}</h3>
+        <div class="kpi-branch">
+          <span class="kpi-branch-label">Point Loma</span>
+          <span class="kpi-branch-value ${kpi.kind}">${kpi.pointLoma.value}</span>
+        </div>
+        <div class="kpi-branch">
+          <span class="kpi-branch-label">Julian</span>
+          <span class="kpi-branch-value ${kpi.kind}">${kpi.julian.value}</span>
+        </div>
+      </article>
+    `;
+  }
+  return html`
+    <article class="kpi-card kpi-card-combined">
+      <h3 class="kpi-title">${kpi.title}</h3>
+      <span class="kpi-value ${kpi.kind}">${kpi.combined.value}</span>
+      <p class="kpi-compare">${kpi.combined.compare}</p>
+    </article>
+  `;
+}
+
+export function renderDeliveriesCard(d: LandingDeliveries, mode: BranchMode): TemplateResult {
+  const summary = mode === "split"
+    ? `${d.pointLomaCount - 3} from Point Loma, ${d.julianCount} from Julian. 5 done, 6 on the road, 3 still to leave.`
+    : d.summary;
+  const count = mode === "split" ? d.pointLomaCount + d.julianCount - 3 : d.count;
+  return html`
+    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Deliveries today">
+      <div class="deliveries-head">
+        <h2 class="section-eyebrow">Deliveries today</h2>
+        <span class="deliveries-count">${count}</span>
+      </div>
+      <p class="deliveries-summary">${summary}</p>
+      <div class="runs-row">
+        ${d.runs.map((run) => html`
+          <div class="run">
+            <span class="run-id">${run.runId} ${run.branch}</span>
+            <span class="run-when">${run.when}</span>
+            <span class="run-stops">${run.stops}</span>
+          </div>
+        `)}
+      </div>
+    </section>
+  `;
+}
+
+export function renderNeedsYouCard(rows: readonly LandingNeedRow[]): TemplateResult {
+  return html`
+    <section class="needs-stake-card" data-test="c10-needs-stake" aria-label="Needs you, by money at stake">
+      <h2 class="section-eyebrow">Needs you, by money at stake</h2>
+      <ol class="needs-stake-list">
+        ${rows.map((row) => renderNeedStakeRow(row))}
+      </ol>
+    </section>
+  `;
+}
+
+export function renderNeedStakeRow(row: LandingNeedRow): TemplateResult {
+  const accentClass = `accent-${row.accent}`;
+  return html`
+    <li class="need-row ${accentClass}">
+      <div class="need-body">
+        <p class="need-title">${row.title}</p>
+        <p class="need-words">${row.body}</p>
+      </div>
+      <span class="need-amount">${row.amountLabel}</span>
+      <button type="button" class="need-action" data-action="need-action" data-need=${row.id} data-target-view=${row.targetView} data-target-ref=${row.targetRef}>${row.actionLabel}</button>
+    </li>
+  `;
+}
+
 
 /** A tile the widget catalog has no measure for: a tile in the grid with its words, never a number. */
 function renderUnsourcedTile(t: { readonly title: string; readonly words: string }): TemplateResult {
