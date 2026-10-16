@@ -66,16 +66,18 @@ test("a tile filters the register to the accounts it counted, and clears", async
 test("the register's filters: overdue, promised, disputed and paid", async ({ page, request }) => {
   await openDesk(page, request);
   const pick = (word: string) => page.getByRole("group", { name: "Register filter" }).getByRole("button", { name: word, exact: true }).click();
-  await pick("Overdue");
+  await pick("Past due");
   await expect(page.locator("[data-register-row]")).toHaveCount(7);
-  await pick("Promised");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await pick("Disputed");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await expect(page.locator("[data-register-row]")).toContainText("Open dispute");
-  await pick("Paid");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await expect(page.locator("[data-register-row]")).toContainText("INV-1010");
+  await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $11,499.50");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days late");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("91 and over");
+  await pick("Current");
+  await expect(page.locator("[data-register-row]")).toHaveCount(2);
+  await expect(page.locator("[data-testid='c8-summary']")).toHaveCount(0);
+  await pick("On hold");
+  await expect(page.locator("[data-register-row]")).toHaveCount(6);
+  await pick("All");
+  await expect(page.locator("[data-register-row]")).toHaveCount(9);
 });
 
 test("aging to payment applied: Record payment on a row opens the account with the payment ready, and the server's split and balance show", async ({ page, request }) => {

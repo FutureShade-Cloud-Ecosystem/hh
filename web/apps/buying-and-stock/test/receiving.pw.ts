@@ -216,11 +216,21 @@ test("a send whose answer was lost is the same attempt when pressed again, so th
   await expect(page.locator("[data-send-row]")).toHaveCount(1);
 });
 
-test("where the policy hides cost the screen says so and shows no price or value", async ({ page, request }) => {
+test("the manager's queue keeps the Value open column, as the ruling kept it", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
+  // Change 5, R5: the queue's Value open column is the managers'; where cost is visible it stays.
+  const heads = (await page.locator("[data-queue] th").allTextContents()).map((t) => t.trim());
+  expect(heads).toContain("Value open");
+  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toContainText("$");
+});
+
+test("where the policy hides cost the screen says so, shows no price or value, and draws no value column", async ({ page, request }) => {
+  await openArea(page, request, "Receiving");
+  // Change 5, R5: where the policy hides cost the column is not drawn at all, never a stub cell.
   await request.post("/_stub/flag", { data: { name: "costsHidden", value: true } });
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toHaveText("hidden");
+  await expect(page.locator("[data-queue] th", { hasText: "Value open" })).toHaveCount(0);
+  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toHaveCount(0);
   await openOrder(page, "PO-PLM-141");
   await expect(page.locator("[data-costs-hidden]")).toContainText("Cost is hidden for your role by the purchasing policy");
   await expect(page.locator("[data-order-value]")).toHaveCount(0);
@@ -302,4 +312,22 @@ test("a landed cost attach whose answer was lost never advises applying again", 
   const error = page.locator("[data-error]");
   await expect(error).toContainText("check Landed cost for one on PO-PLM-136/R1");
   await expect(error).not.toContainText("apply it again");
+});
+
+test("the queue's Expected cell never truncates: the relative day word reads whole, on a nowrap floor", async ({ page, request }) => {
+  await openArea(page, request, "Receiving");
+  // PO-PLM-141 ships "in 2 days", PO-PLM-67 has no date: the first row must carry the full word.
+  const cell = page.locator("[data-queue-row]").first().locator("td[data-expected-col]");
+  await expect(cell).toHaveText("in 2 days");
+  // The CSS floor: nowrap + min-width 6.5rem, so the cell cannot be crushed past its longest word.
+  const floor = await cell.evaluate((el) => {
+    const cs = window.getComputedStyle(el);
+    return { wrap: cs.whiteSpace, min: cs.minWidth, scrollW: el.scrollWidth, clientW: el.clientWidth };
+  });
+  expect(floor.wrap).toBe("nowrap");
+  expect(floor.min).toMatch(/^\d+(?:\.\d+)?(?:px|rem|em)$/);
+  const minPx = parseFloat(floor.min);
+  expect(minPx).toBeGreaterThanOrEqual(6.5 * 12);
+  // The full cell width holds the whole phrase without horizontal overflow inside the cell.
+  expect(floor.scrollW).toBeLessThanOrEqual(floor.clientW + 1);
 });

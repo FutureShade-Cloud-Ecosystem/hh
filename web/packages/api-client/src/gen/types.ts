@@ -287,6 +287,8 @@ export type BillingRegisterRow = {
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
   status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
   days_overdue: number;
+  bucket_label?: "" | "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  bucket_key?: "" | "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
   account_status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
   disputed: boolean;
   promised_date?: string | null;
@@ -375,6 +377,73 @@ export type BillingPromiseView = {
   taken_at: string;
   settled_at?: string | null;
 };
+export type BillingPromiseEnriched = {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  invoice_id: string;
+  invoice_no: string;
+  promised_cents: number;
+  promised_date: string;
+  status: "OPEN" | "KEPT" | "BROKEN" | "CANCELLED";
+  promised_by?: string;
+  note?: string;
+  taken_by?: string;
+  taken_at: string;
+  settled_at?: string | null;
+};
+export type BillingPromisePage = {
+  rows: BillingPromiseEnriched[];
+  next_cursor: string | null;
+};
+export type BillingAccountPaymentPolicy = {
+  customer_id: string;
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+  updated_at: string;
+};
+export type BillingAccountPaymentPolicyInput = {
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+};
+export type BillingReminderRule = {
+  id: string;
+  code: string;
+  label: string;
+  channel: "EMAIL" | "SMS" | "PHONE";
+  days_past_due: number;
+  max_per_window: number;
+  paylink_url_template: string;
+  last_sent_at: string | null;
+  amount_brought_in_cents: number;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at: string;
+};
+export type BillingReminderRulePage = {
+  rules: BillingReminderRule[];
+};
+export type BillingReminderEnrolInput = {
+  customer_id: string;
+  rule_id: string;
+  note?: string;
+};
+export type BillingReminderExemptInput = {
+  customer_id: string;
+  rule_id: string;
+  note: string;
+};
+export type BillingReminderEnrolResult = {
+  customer_id: string;
+  rule_id: string;
+  exempt: boolean;
+  note?: string;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at?: string;
+};
 export type BillingDisputeView = {
   id: string;
   status: "OPEN" | "RESOLVED";
@@ -409,6 +478,47 @@ export type BillingInvoiceDetail = {
   dispute?: BillingDisputeView;
   reminder_tones: ("FRIENDLY" | "FIRM" | "FINAL")[];
   last_contact_at?: string | null;
+  as_of: string;
+};
+export type BillingARWorklistRow = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  branch_id: string;
+  open_ar_cents: number;
+  past_due_cents: number;
+  over_60_cents: number;
+  available_credit_cents: number;
+  unapplied_credit_cents: number;
+  oldest_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  oldest_bucket_key: "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
+  broken_promises: number;
+  due_promises: number;
+  open_promises: number;
+  promised_cents: number;
+  next_promise_date?: string | null;
+  on_hold: boolean;
+  credit_hold_candidate: boolean;
+  action_needed: boolean;
+  urgency: "broken_promise" | "over_60" | "promise_due" | "credit_hold" | "credit" | "past_due" | "open";
+  recommended_action: "record_payment" | "review_promise" | "review_credit_hold" | "apply_credit" | "open_account";
+};
+export type BillingARWorklistSummary = {
+  total_past_due_cents: number;
+  over_60_cents: number;
+  broken_promises: number;
+  unapplied_credits_cents: number;
+};
+export type BillingARWorklistCounts = {
+  all_open: number;
+  action_needed: number;
+  over_60: number;
+  credit_hold: number;
+};
+export type BillingARWorklistResponse = {
+  rows: BillingARWorklistRow[];
+  summary: BillingARWorklistSummary;
+  counts: BillingARWorklistCounts;
   as_of: string;
 };
 export type BillingReceiptInput = {
@@ -805,6 +915,150 @@ export type PaymentCardAttemptSummary = {
 export type PaymentCardAttemptResolve = {
   resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
   note: string;
+};
+export type BillingCustomerWorkspaceHeader = {
+  customer_id: string;
+  name: string;
+  account_no: string;
+  status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
+  terms_days: number;
+  credit_limit_cents: number;
+  open_cents: number;
+  available_credit_cents: number;
+  overdue_cents: number;
+  utilization_bps: number;
+  primary_ap_contact_name?: string;
+  primary_ap_contact_email?: string;
+  primary_ap_contact_phone?: string;
+  last_payment_at?: string;
+  last_payment_cents?: number;
+  aging: BillingCustomerWorkspaceAging;
+};
+export type BillingCustomerWorkspaceAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
+};
+export type BillingCustomerWorkspaceInvoice = {
+  id: string;
+  invoice_no: string;
+  doc_type: "INVOICE" | "CREDIT_MEMO";
+  status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
+  issue_date: string;
+  due_date: string;
+  total_cents: number;
+  balance_cents: number;
+  days_overdue: number;
+  days_overdue_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  is_disputed: boolean;
+  has_open_promise: boolean;
+};
+export type BillingCustomerWorkspacePayment = {
+  id: string;
+  payment_no: string;
+  received_at: string;
+  amount_cents: number;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT" | "OTHER";
+  unapplied_cents: number;
+  branch_id?: string;
+};
+export type BillingCustomerWorkspaceCreditNote = {
+  id: string;
+  memo_no: string;
+  issued_at: string;
+  amount_cents: number;
+  unapplied_cents: number;
+  reason?: string;
+};
+export type BillingCustomerWorkspaceStatement = {
+  id: string;
+  run_id: string;
+  mode: "MASS" | "INTERIM";
+  as_of_date: string;
+  closing_balance_cents: number;
+  delivery_status: "NOT_QUEUED" | "QUEUED" | "SENT" | "FAILED";
+  created_at: string;
+};
+export type BillingCustomerWorkspaceNote = {
+  id: string;
+  kind: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  body: string;
+  author_id?: string;
+  author_name?: string;
+  pinned: boolean;
+  created_at: string;
+};
+export type BillingCustomerWorkspaceActivity = {
+  kind: "INVOICE" | "PAYMENT" | "CREDIT_MEMO" | "ADJUSTMENT" | "NSF" | "WRITE_OFF";
+  reference?: string;
+  amount_cents: number;
+  balance_after_cents: number;
+  branch_id?: string;
+  memo?: string;
+  occurred_at: string;
+};
+export type BillingCustomerWorkspace = {
+  header: BillingCustomerWorkspaceHeader;
+  invoices_open: BillingCustomerWorkspaceInvoice[];
+  invoices_closed: BillingCustomerWorkspaceInvoice[];
+  invoices_disputed: BillingCustomerWorkspaceInvoice[];
+  payments: BillingCustomerWorkspacePayment[];
+  credit_notes: BillingCustomerWorkspaceCreditNote[];
+  statements: BillingCustomerWorkspaceStatement[];
+  notes: BillingCustomerWorkspaceNote[];
+  activity: BillingCustomerWorkspaceActivity[];
+  as_of: string;
+};
+export type BillingAddCustomerNoteInput = {
+  body: string;
+  kind?: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  pinned?: boolean;
+};
+export type BillingAddCustomerNoteResult = {
+  note: BillingCustomerWorkspaceNote;
+};
+export type BillingCreateHoldRequest = {
+  customer_id: string;
+  reason: string;
+};
+export type BillingSendPaylinkRequest = {
+  customer_id: string;
+  invoice_id?: string | null;
+  amount_cents?: number | null;
+  channel?: "EMAIL" | "SMS";
+  recipient?: string;
+};
+export type BillingSendPaylinkResult = {
+  paylink_url: string;
+  status: "QUEUED" | "SENT";
+  sent_at: string;
+};
+export type BillingStatementPreview = {
+  statement: BillingStatement;
+  open_lines: BillingStatementPreviewLine[];
+  aging: BillingStatementPreviewAging;
+  reconciled: boolean;
+};
+export type BillingStatementPreviewLine = {
+  invoice_id: string;
+  invoice_no: string;
+  due_date: string;
+  balance_cents: number;
+  days_overdue: number;
+  bucket_label: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+};
+export type BillingStatementPreviewAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
 };
 export type AssistArgSpec = {
   name: string;
@@ -5812,6 +6066,10 @@ export type PurchasingPO = {
   delivery_method?: "PICKUP" | "DELIVERY" | "UNKNOWN";
   subtotal_cents?: number;
   subtotal_cad_cents?: number;
+  warranty_credit_applied_cents?: number;
+  warranty_claim_id?: string | null;
+  warranty_claim_no?: string | null;
+  net_total_cents?: number;
   created_at: string;
   updated_at: string;
 };
@@ -5830,7 +6088,20 @@ export type PurchasingPOLine = {
   line_total_cents?: number;
   billed_cents?: number;
 };
-export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[] };
+export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[]; open_warranty_credit?: PurchasingOpenWarrantyCredit };
+export type PurchasingApplyWarrantyCreditRequest = {
+  claim_id?: string;
+  amount_cents?: number;
+};
+export type PurchasingOpenWarrantyCredit = {
+  claim_id: string;
+  claim_no: string;
+  amount_cents: number;
+  description: string;
+  summary?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+};
 export type PurchasingReceipt = {
   id: string;
   po_id: string;

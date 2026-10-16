@@ -222,6 +222,10 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 // SUBSETS of it. The alternative reading (open = "not yet due") would make the chips a partition and
 // leave the operator with no single click for "everything I still have to collect", which is the one
 // thing this screen exists to hand them.
+//
+// The four C8 chips live alongside the legacy strings so every old client URL bookmark and stored
+// automation stays on the same screen. "on_hold" is the C8 wording for what the policy called CREDIT_HOLD
+// previously: a chip that selects every open invoice on an account whose credit is currently blocked.
 var chipPredicates = map[string]string{
 	StatusOpen:          `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
 	StatusDueSoon:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date AND i.due_date <= $1::date + $2::int`,
@@ -230,6 +234,18 @@ var chipPredicates = map[string]string{
 	StatusPaid:          `i.status = 'PAID'`,
 	StatusCredit:        `i.doc_type = 'CREDIT_MEMO'`,
 	StatusPartiallyPaid: `i.status = 'PARTIALLY_PAID'`,
+	// C8 chips below. 'all' is every unpaid document; 'past_due' is the overdue subset; 'current'
+	// is the un-overdue subset; 'on_hold' is the CREDIT_HOLD subset. Both lower and upper keys are
+	// registered because RegisterHandler uppercases the query parameter while direct callers may
+	// pass the C8 constants.
+	ChipAll:     `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
+	"ALL":       `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
+	ChipPastDue: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date < $1::date`,
+	"PAST_DUE":  `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date < $1::date`,
+	ChipCurrent: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date`,
+	"CURRENT":   `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date`,
+	ChipOnHold:  `i.status IN ('FINALIZED','PARTIALLY_PAID') AND EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = i.customer_id AND ch.status = 'ACTIVE')`,
+	"ON_HOLD":   `i.status IN ('FINALIZED','PARTIALLY_PAID') AND EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = i.customer_id AND ch.status = 'ACTIVE')`,
 }
 
 // RegisterRows reads one page of the register. asOf is the service clock; dueSoonDays comes from
@@ -300,6 +316,10 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 		}
 		v.AccountStatus = accountStatusFor(onHold, accountDisputed, v.BalanceCents)
 		v.Status, v.DaysOverdue = registerStatusIn(zone, v, asOf, dueSoonDays)
+		// BucketLabel and BucketKey derive from the SAME DaysOverdue, against the SAME asOf clock,
+		// so the row can never show a "1 to 30" pill while the aging summary says the dollar is in
+		// 31 to 60: the math is one expression, evaluated once.
+		v.BucketLabel, v.BucketKey = BucketLabelFor(v.DaysOverdue)
 		out = append(out, v)
 	}
 	return out, total, rows.Err()

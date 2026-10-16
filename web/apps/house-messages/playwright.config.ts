@@ -54,7 +54,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { MSG_STUB_PORT: stubPort, MSG_APP_PORT: appPort },
+      env: { MSG_STUB_PORT: stubPort, MSG_APP_PORT: appPort, MSG_NO_WATCH: "1" },
     },
   ],
 });
