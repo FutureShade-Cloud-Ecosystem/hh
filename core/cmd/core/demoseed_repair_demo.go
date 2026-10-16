@@ -63,31 +63,32 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 // sync feed. The pick_tasks and weights pulls both read `org_id = caller's org AND seq IS NOT NULL
 // AND seq > cursor` (core/internal/tasks/syncscope.go, syncweights.go), so a task the seed wrote
 // with neither is invisible to every device: the Yard Pick board runs on that feed and showed the
-// yard team an empty queue over a full table. Each unstamped task draws the next number of the
-// type's own counter, in creation order, in this one statement (the counter's rule is the live
-// allocator's: next_value holds the last number issued, so the live draw continues after the
-// block). The guards hold it to its case: the id is a demo task's fixed id, the seq is still NULL
-// (a second run matches nothing), and the org row exists (the first apply of a fresh box runs
-// before the populate provisions it, the second apply stamps).
+// yard team an empty queue over a full table. Each unstamped task draws a number of the type's own
+// counter, in creation order, in this one statement. The counter's rule is the live allocator's:
+// next_value holds the last number issued. So the block is taken the way the allocator takes one,
+// by ONE relative, locked write: the bump adds the block's size to next_value (a concurrent
+// allocator's uncommitted draw makes the upsert wait, and the add lands on top of it), and the
+// block is read back from what that write returned, the last number issued minus the block's size.
+// There is no snapshot base to go stale. The guards hold it to its case: the id is a demo task's
+// fixed id, the seq is still NULL (a second run matches nothing, and with nothing to do the bump
+// is never written, so the counter does not move), and the org row exists (the first apply of a
+// fresh box runs before the populate provisions it, the second apply stamps).
 const taskSyncRepairSQL = `
 WITH todo AS (
 	SELECT id, row_number() OVER (ORDER BY created_at, id) AS n
 	  FROM tasks
 	 WHERE id = ANY($1::uuid[]) AND task_type = $2 AND seq IS NULL
 	   AND EXISTS (SELECT 1 FROM org WHERE slug = $4::citext)
-), base AS (
-	SELECT COALESCE((SELECT next_value FROM scope_sequences WHERE scope = $3), 0) AS b
 ), bump AS (
 	INSERT INTO scope_sequences (scope, next_value)
-	SELECT $3, base.b + (SELECT count(*) FROM todo) FROM base
-	 WHERE EXISTS (SELECT 1 FROM todo)
-	ON CONFLICT (scope) DO UPDATE SET next_value = EXCLUDED.next_value
-	RETURNING 1
+	SELECT $3, count(*) FROM todo HAVING count(*) > 0
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + EXCLUDED.next_value
+	RETURNING next_value
 )
 UPDATE tasks t
-   SET seq = base.b + todo.n,
+   SET seq = (SELECT next_value FROM bump) - (SELECT count(*) FROM todo) + todo.n,
        org_id = COALESCE(t.org_id, (SELECT id FROM org WHERE slug = $4::citext))
-  FROM todo, base
+  FROM todo
  WHERE t.id = todo.id`
 
 // repairDemoTaskSync stamps the demo tasks into their sync feeds: the PICK tasks into pick_tasks and

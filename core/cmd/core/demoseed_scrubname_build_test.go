@@ -171,3 +171,30 @@ func TestDefaultBuildCarriesNoDriverOrgRepair(t *testing.T) {
 		}
 	}
 }
+
+// taskSyncRepairSignatures are the task sync repair's load-bearing literals: the one relative,
+// locked counter write and the seq derived from what it returned. The repair is the demo build's
+// write alone.
+var taskSyncRepairSignatures = []string{
+	`ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + EXCLUDED.next_value`,
+	`SET seq = (SELECT next_value FROM bump) - (SELECT count(*) FROM todo) + todo.n`,
+	"the demo %s tasks into the %s sync feed",
+}
+
+// TestDefaultBuildCarriesNoTaskSyncRepair holds the same gate for the task sync repair: the
+// default binary carries none of it, and the demo binary carries all three markers or this test
+// has stopped probing.
+func TestDefaultBuildCarriesNoTaskSyncRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-taskrepair", "")
+	for _, sig := range taskSyncRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the task sync repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-taskrepair", "-tags=demo")
+	for _, sig := range taskSyncRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the task sync repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}

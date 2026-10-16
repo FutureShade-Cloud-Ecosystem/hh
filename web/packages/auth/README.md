@@ -88,6 +88,22 @@ refresh is armed and the token simply ends at its expiry.
 The served runtime configuration (`/config.json`, the `./runtime-config` entry) has no default
 mode: a missing, unreadable, mode less or unknown file is a refusal with its own reason.
 
+### A page recovers its own session; the persona memo is the one thing that crosses pages (item 7d)
+
+In console mode no token crosses a page: each micro app calls `resume()` on load (FB Console's first
+party cookie, then the exchange for a core token held in that page's memory). A persona has no
+console session behind it, so it cannot be resumed; the front door leaves ONE value for the next
+page, the persona id, in this tab's session storage under the closed key `hh-auth.persona.v1`
+(`PERSONA_MIRROR_KEY`, written and read only by `PersonaMemo`). The value is a JSON string holding one
+id from the core's persona list (lowercase words and hyphens, at most forty characters); anything else
+is refused on write and dropped on read, so a token cannot pass for one. It names a role and is not
+bearer capable. Sign out, Switch role, Continue as own role and a session that ends clear it. On
+load a micro app asks the core for a fresh persona session with that id (`enterPersona`, beside the
+exchange adapter): on the public copy with no bearer, on the testers' copy after it has resumed the
+partner and with the partner's bearer. Each hop mints a persona session and writes an audit row.
+`tapIdentity` (the exchange user block of the last accepted exchange, so a page knows the person's
+role) lives here for the same reason. The shared boot is `bootCustody` in `@hardscapehouse/pos-kit`.
+
 ### Sign-out goes through signOut()
 
 The shell must sign out through `AuthController.signOut()`, never by
