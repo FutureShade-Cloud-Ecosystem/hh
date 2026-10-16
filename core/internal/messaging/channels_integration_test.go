@@ -123,7 +123,7 @@ func TestIntegration_Membership_AddRemove_And_DerivedRefusal(t *testing.T) {
 
 	// Casey (Kingston) is not in #yard-trenton; Sam seats them EXPLICIT, the
 	// seat shows, and removing it drops it again.
-	m, err := repo.AddChannelMember(ctx, chYardTrenton, uCaseyDoyle)
+	m, err := repo.AddChannelMember(ctx, AddMemberInput{ChannelID: chYardTrenton, UserID: uCaseyDoyle})
 	if err != nil {
 		t.Fatalf("add casey: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestIntegration_Membership_AddRemove_And_DerivedRefusal(t *testing.T) {
 	}
 
 	// An unknown user cannot be seated; an absent member row is not-found.
-	if _, err := repo.AddChannelMember(ctx, chYardTrenton, "e1000000-0000-4000-9000-0000000000f3"); !errors.Is(err, errNotFound) {
+	if _, err := repo.AddChannelMember(ctx, AddMemberInput{ChannelID: chYardTrenton, UserID: "e1000000-0000-4000-9000-0000000000f3"}); !errors.Is(err, errNotFound) {
 		t.Fatalf("an unknown user must answer not-found, got %v", err)
 	}
 	if err := repo.RemoveChannelMember(ctx, chYardTrenton, "e1000000-0000-4000-9000-0000000000f3"); !errors.Is(err, errNotFound) {

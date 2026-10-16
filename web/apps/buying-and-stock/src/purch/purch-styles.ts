@@ -44,6 +44,11 @@ export const purchStyles = css`
      than crushing a cell to its longest word. */
   [data-codes] td.full { min-width: 12rem; }
   [data-codes] td[data-label="Vendor unit"] { min-width: 10rem; }
+  /* The Receiving queue's Expected column shows a relative day ("in 2 days", "in 4 days")
+     that must never truncate to "in 2 da...". A nowrap floor lets the word breathe and the
+     table scroll on the inside of its card at narrow widths instead of crushing the cell. */
+  [data-queue] th[data-expected-col],
+  [data-queue] td[data-expected-col] { white-space: nowrap; min-width: 6.5rem; }
   td.warn { color: var(--hh-state-watch); font-weight: 700; }
   td.warn::before { content: ""; }
   .variance-note { margin: var(--hh-s-4) 0 0; font-size: 13px; }

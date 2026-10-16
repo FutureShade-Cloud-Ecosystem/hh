@@ -204,7 +204,7 @@ func TestIntegration_MoneyRooms_AddMemberRefusesANonFinanceRole(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_members WHERE channel_id = $1 AND user_id = $2`, room, target)
 	})
-	_, err := svc.AddMember(ctx, gm, room, target)
+	_, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: room, UserID: target})
 	if err == nil {
 		t.Fatalf("a non finance role was seated in a money room")
 	}
@@ -252,7 +252,7 @@ func TestIntegration_MoneyRooms_SyncDropsAnExplicitSeatAfterTheRoleChange(t *tes
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = 'payments-trenton'`).Scan(&room); err != nil {
 		t.Fatalf("the payments room: %v", err)
 	}
-	if _, err := repo.AddChannelMember(ctx, room, id); err != nil {
+	if _, err := repo.AddChannelMember(ctx, AddMemberInput{ChannelID: room, UserID: id}); err != nil {
 		t.Fatalf("seat the finance user: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

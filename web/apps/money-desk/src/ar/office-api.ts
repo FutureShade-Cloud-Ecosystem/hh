@@ -6,15 +6,20 @@ import {
   type ApiClient,
   type BillingAPContactRead,
   type BillingAutoHoldSetting,
+  type BillingAccountPaymentPolicy,
+  type BillingAccountPaymentPolicyInput,
   type BillingDispatchGateResult,
   type BillingDisputeView,
   type BillingLandingPolicy,
   type BillingPolicyChangePage,
   type BillingPaperPathPage,
   type BillingPaperPathSweepResult,
+  type BillingPromisePage,
   type BillingRegisterPage,
   type BillingRegisterPolicy,
+  type BillingReminderEnrolResult,
   type BillingReminderResult,
+  type BillingReminderRulePage,
   type BillingReminderSend,
   type BillingReminderSendPage,
   type BillingStatementRunResult,
@@ -163,5 +168,50 @@ export class OfficeApi {
 
   dispatchGate(orderId: string): Promise<Result<BillingDispatchGateResult>> {
     return staffBilling.billingGetDispatchGate(this.#client, orderId);
+  }
+
+  // ---- walk change 8: account payment policy (S6), reminder rules (S8 / S5M), enrol / exempt -------------------
+
+  /** Read the account's payment policy (the take-a-payment panel reads this to order its tenders). */
+  accountPaymentPolicy(customerId: string): Promise<Result<BillingAccountPaymentPolicy>> {
+    return staffBilling.billingGetAccountPaymentPolicy(this.#client, customerId);
+  }
+
+  /** Upsert the account's payment policy (ach_first, surcharge_rate_bps, min_ach_cents). */
+  putAccountPaymentPolicy(customerId: string, body: BillingAccountPaymentPolicyInput): Promise<Result<BillingAccountPaymentPolicy>> {
+    return staffBilling.billingPutAccountPaymentPolicy(this.#client, customerId, body);
+  }
+
+  /** The cross-account Promises tab read. */
+  promises(status?: readonly string[], customerId?: string): Promise<Result<BillingPromisePage>> {
+    const statusParam = status === undefined || status.length === 0 ? undefined : (status.join(",") as "OPEN" | "KEPT" | "BROKEN" | "CANCELLED" | "OPEN,KEPT");
+    return staffBilling.billingListPromises(this.#client, {
+      limit: 100,
+      ...(statusParam === undefined ? {} : { status: statusParam }),
+      ...(customerId === undefined || customerId === "" ? {} : { customer_id: customerId }),
+    });
+  }
+
+  /** The reminder rules table (S5M / S8). */
+  reminderRules(): Promise<Result<BillingReminderRulePage>> {
+    return staffBilling.billingListReminderRules(this.#client);
+  }
+
+  /** Re-enrol an exempt account into one reminder rule. */
+  enrolReminder(ruleId: string, customerId: string, note?: string): Promise<Result<BillingReminderEnrolResult>> {
+    return staffBilling.billingEnrolReminder(this.#client, {
+      customer_id: customerId,
+      rule_id: ruleId,
+      ...(note === undefined || note === "" ? {} : { note }),
+    });
+  }
+
+  /** Exempt an account from one reminder rule. The note is mandatory and passed verbatim. */
+  exemptReminder(ruleId: string, customerId: string, note: string): Promise<Result<BillingReminderEnrolResult>> {
+    return staffBilling.billingExemptReminder(this.#client, {
+      customer_id: customerId,
+      rule_id: ruleId,
+      note,
+    });
   }
 }

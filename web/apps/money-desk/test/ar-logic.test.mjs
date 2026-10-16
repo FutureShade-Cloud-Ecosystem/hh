@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
+import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -218,4 +218,24 @@ test("the held key's gate words say when to press: after signing in for a 401, o
   assert.ok(role.words.includes("Your role may not do that. Ask the General Manager or the Financial Controller."), role.words);
   assert.ok(role.words.includes("Press Record payment again only once you are signed in with a role that can record it"), role.words);
   assert.ok(!role.words.includes("Financial Controller. Then press"), role.words);
+});
+
+test("check, ACH, and wire need a reference, while card and cash do not", () => {
+  for (const method of ["CHEQUE", "EFT", "WIRE"]) assert.equal(paymentReferenceRequired(method), true, method);
+  for (const method of ["CARD", "CASH"]) assert.equal(paymentReferenceRequired(method), false, method);
+});
+
+test("the worklist has one plain action label per server recommendation", () => {
+  assert.equal(worklistActionWord("record_payment"), "Record payment");
+  assert.equal(worklistActionWord("review_promise"), "Review promise");
+  assert.equal(worklistActionWord("review_credit_hold"), "Review credit hold");
+  assert.equal(worklistActionWord("apply_credit"), "Review credit");
+  assert.equal(worklistActionWord("open_account"), "Open account");
+});
+
+test("an overpayment banner comes from the server preview, never browser money math", () => {
+  assert.equal(overpaymentPreview(null, "The selected invoices can take at most 96000 cents right now; refresh and retry"), true);
+  assert.equal(overpaymentPreview({ unapplied_cents: 1 }, ""), true);
+  assert.equal(overpaymentPreview({ unapplied_cents: 0 }, ""), false);
+  assert.equal(overpaymentPreview(null, "The server could not be reached"), false);
 });

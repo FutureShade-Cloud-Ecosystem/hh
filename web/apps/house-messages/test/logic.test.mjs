@@ -34,6 +34,19 @@ import {
   unreadWord,
   waitedWords,
   youAcked,
+  isAdminCaller,
+  initialsOf,
+  systemEventDetails,
+  parseMentions,
+  QUICK_REPLIES,
+  groupConversationSubtitle,
+  dmConversationPrompt,
+  groupSystemCreatedMessage,
+  filterRoster,
+  toggleReactionList,
+  canEditMessage,
+  formatFileSize,
+  formatMembershipRuleLine,
 } from "../src/messages-logic.ts";
 
 const ch = (over = {}) => ({
@@ -277,3 +290,151 @@ test("the unread signature is the same for the same counts in any order, and mov
   assert.notEqual(unreadSignature({ total: 3, channels: [a, { ...b, latest_at: "2025-01-03T00:00:00Z" }] }), base);
   assert.equal(unreadSignature({ total: 0, channels: [] }), unreadSignature({ total: 0, channels: null }));
 });
+
+test("admin caller: general manager, dealer admin, and tier 1 are admins; others are not", () => {
+  assert.equal(isAdminCaller({ roleCode: "general_manager", tier: 1 }), true);
+  assert.equal(isAdminCaller({ roleCode: "dealer_admin", tier: 2 }), true);
+  assert.equal(isAdminCaller({ roleCode: "custom_role", tier: 1 }), true);
+  assert.equal(isAdminCaller({ roleCode: "inside_sales", tier: 3 }), false);
+  assert.equal(isAdminCaller({ roleCode: "yard_manager", tier: 2 }), false);
+  assert.equal(isAdminCaller({ roleCode: "payables_receivables", tier: 3 }), false);
+  assert.equal(isAdminCaller(null), false);
+  assert.equal(isAdminCaller(undefined), false);
+});
+
+test("initials of: two letters for multi-word names, single letter for single words, trimmed", () => {
+  assert.equal(initialsOf("Marcus Webb"), "MW");
+  assert.equal(initialsOf("Priya Shah"), "PS");
+  assert.equal(initialsOf("Elena Ruiz"), "ER");
+  assert.equal(initialsOf("Dana"), "D");
+  assert.equal(initialsOf("Inside Sales (demo)"), "IS");
+  assert.equal(initialsOf("Yard manager (demo)"), "YM");
+  assert.equal(initialsOf(""), "");
+});
+
+test("system event details: never display System author name, derives source, icon, and deep link", () => {
+  const yardEvt = systemEventDetails({
+    kind: "EVENT",
+    channel_slug: "yard-point-loma",
+    ref: { topic: "yard.picking", entity: "order:SO-PLM-1042" },
+  });
+  assert.equal(yardEvt.source, "Yard, Point Loma");
+  assert.equal(yardEvt.icon, "truck");
+  assert.deepEqual(yardEvt.actionPill, { label: "Open SO-PLM-1042", entity: "order:SO-PLM-1042" });
+  assert.notEqual(yardEvt.source.toLowerCase(), "system");
+
+  const stockEvt = systemEventDetails({
+    kind: "EVENT",
+    ref: { topic: "stock.receipt", entity: "po:PO-PLM-136" },
+  });
+  assert.equal(stockEvt.source, "Receiving");
+  assert.equal(stockEvt.icon, "box");
+  assert.deepEqual(stockEvt.actionPill, { label: "Open PO-PLM-136", entity: "po:PO-PLM-136" });
+  assert.notEqual(stockEvt.source.toLowerCase(), "system");
+
+  const creditEvt = systemEventDetails({
+    kind: "EVENT",
+    ref: { topic: "order.credit_hold", entity: "order:SO-1042" },
+  });
+  assert.equal(creditEvt.source, "Credit");
+  assert.equal(creditEvt.icon, "shield");
+  assert.deepEqual(creditEvt.actionPill, { label: "Open SO-1042", entity: "order:SO-1042" });
+  assert.notEqual(creditEvt.source.toLowerCase(), "system");
+});
+
+test("parse mentions: extracts @mentions as chips and keeps text intact", () => {
+  const tokens = parseMentions("Can @Elena check the short pallet for @Marcus today?");
+  assert.deepEqual(tokens, [
+    { type: "text", value: "Can " },
+    { type: "mention", value: "@Elena" },
+    { type: "text", value: " check the short pallet for " },
+    { type: "mention", value: "@Marcus" },
+    { type: "text", value: " today?" },
+  ]);
+  assert.deepEqual(parseMentions("No mentions here"), [
+    { type: "text", value: "No mentions here" },
+  ]);
+});
+
+test("quick replies: four standard chips", () => {
+  assert.deepEqual(QUICK_REPLIES, ["On it", "Done", "Need a hand", "Call me"]);
+});
+
+test("C2 logic: group direct message subtitle matches board wording", () => {
+  assert.equal(groupConversationSubtitle(4, false), "A group direct message, 4 people including you");
+  assert.equal(groupConversationSubtitle(3, true), "A named group, 3 people including you");
+});
+
+test("C2 logic: empty DM start prompt matches board wording", () => {
+  const prompt = dmConversationPrompt("Tom Alvarez");
+  assert.equal(prompt.title, "This is the start of your conversation with Tom Alvarez");
+  assert.equal(prompt.subtitle, "Only the two of you see it. Photos and files you share here show under Files and photos.");
+});
+
+test("C2 logic: group creation system text matches board wording", () => {
+  const line = groupSystemCreatedMessage("Saturday runs", ["Marcus Webb", "Priya Shah", "Elena Ruiz"]);
+  assert.equal(line, "You created the group Saturday runs and added Marcus Webb, Priya Shah and Elena Ruiz.");
+});
+
+test("C2 logic: roster filter searches across name, role, branch and excludes caller", () => {
+  const roster = [
+    { user_id: "u1", display_name: "Marcus Webb", role_name: "Yard staff", branch_name: "Point Loma" },
+    { user_id: "u2", display_name: "Priya Shah", role_name: "Dispatch", branch_name: "Point Loma" },
+    { user_id: "u3", display_name: "Tom Alvarez", role_name: "Driver", branch_name: "Julian" },
+  ];
+  const matched = filterRoster(roster, "julian", "u1");
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].display_name, "Tom Alvarez");
+
+  const excludeMe = filterRoster(roster, "", "u1");
+  assert.equal(excludeMe.length, 2);
+  assert.equal(excludeMe.some((r) => r.user_id === "u1"), false);
+});
+
+test("C3 logic: reactions list toggle adds or removes user reaction correctly", () => {
+  const list = [{ emoji: "Thanks", count: 1, mine: false, users: ["u2"] }];
+  const added = toggleReactionList(list, "Thanks", "u1");
+  assert.equal(added.find((r) => r.emoji === "Thanks")?.count, 2);
+  assert.equal(added.find((r) => r.emoji === "Thanks")?.mine, true);
+
+  const removed = toggleReactionList(added, "Thanks", "u1");
+  assert.equal(removed.find((r) => r.emoji === "Thanks")?.count, 1);
+  assert.equal(removed.find((r) => r.emoji === "Thanks")?.mine, false);
+});
+
+test("C3 logic: canEditMessage checks 10 minute window, author match, non-ackable, and TEXT kind", () => {
+  const now = 1000000;
+  const recentMsg = {
+    id: "m1",
+    author_id: "me",
+    kind: "TEXT",
+    created_at: new Date(now - 5 * 60 * 1000).toISOString(),
+    requires_ack: false,
+  };
+  assert.equal(canEditMessage(recentMsg, "me", now), true);
+  assert.equal(canEditMessage(recentMsg, "other", now), false);
+
+  const oldMsg = { ...recentMsg, created_at: new Date(now - 15 * 60 * 1000).toISOString() };
+  assert.equal(canEditMessage(oldMsg, "me", now), false);
+
+  const ackMsg = { ...recentMsg, requires_ack: true };
+  assert.equal(canEditMessage(ackMsg, "me", now), false);
+
+  const eventMsg = { ...recentMsg, kind: "EVENT" };
+  assert.equal(canEditMessage(eventMsg, "me", now), false);
+});
+
+test("C4 logic: membership rule line formatting for automatic joins and leaves", () => {
+  const line = formatMembershipRuleLine({
+    roles: ["Yard staff", "Driver"],
+    branch: "Point Loma",
+  });
+  assert.equal(line, "Role Yard staff, Driver at Point Loma");
+});
+
+test("C6 logic: formatFileSize formats bytes to KB or MB", () => {
+  assert.equal(formatFileSize(84 * 1024), "84 KB");
+  assert.equal(formatFileSize(2 * 1024 * 1024), "2 MB");
+});
+
+

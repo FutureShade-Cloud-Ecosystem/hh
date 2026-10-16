@@ -24,6 +24,7 @@ type fakeStore struct {
 	slugs       map[string]string          // slug -> channelID
 	roomsBySlug map[string]Channel         // slug -> the room that holds it (the convergence the slug index carries)
 	yard        map[string]string          // branchID -> slug
+	archived    map[string]bool            // channelID -> already archived (rule 7's "Channel delete admins only" refusal)
 	// The membership walls' doubles:
 	facts         map[string]channelFactsRow // channelID -> kind/branch/auto_scope
 	memberRoles   map[string]string          // "channelID|userID" -> role
@@ -75,6 +76,7 @@ func newFakeStore() *fakeStore {
 		slugs:         map[string]string{},
 		roomsBySlug:   map[string]Channel{},
 		yard:          map[string]string{},
+		archived:      map[string]bool{},
 		facts:         map[string]channelFactsRow{},
 		memberRoles:   map[string]string{},
 		memberSources: map[string]string{},
@@ -328,13 +330,13 @@ func (f *fakeStore) CreateDM(_ context.Context, aUserID, bUserID string) (Channe
 	return Channel{ID: "dm-" + aUserID + "-" + bUserID, Kind: KindDM}, true, nil
 }
 
-func (f *fakeStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
-	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
-		return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: src}, nil
+func (f *fakeStore) AddChannelMember(_ context.Context, in AddMemberInput) (ChannelMember, error) {
+	if src, ok := f.memberSources[in.ChannelID+"|"+in.UserID]; ok {
+		return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: "MEMBER", Source: src, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
 	}
-	f.setMember(channelID, userID)
-	f.memberSources[channelID+"|"+userID] = SourceExplicit
-	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
+	f.setMember(in.ChannelID, in.UserID)
+	f.memberSources[in.ChannelID+"|"+in.UserID] = SourceExplicit
+	return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: "MEMBER", Source: SourceExplicit, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
 }
 
 func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID string) error {
@@ -342,6 +344,34 @@ func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID str
 		delete(f.members[channelID], userID)
 		delete(f.memberSources, channelID+"|"+userID)
 	}
+	return nil
+}
+
+// SetChannelVisibility satisfies the new settings-panel route's store seam
+// (rule 7's "New channel admins only" hand on visibility); the fake
+// records the new value and answers the channel as it stands.
+func (f *fakeStore) SetChannelVisibility(_ context.Context, channelID, visibility string) (Channel, error) {
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return Channel{}, ErrBadVisibility
+	}
+	if f.exists[channelID] {
+		return Channel{ID: channelID, Visibility: visibility}, nil
+	}
+	return Channel{}, errNotFound
+}
+
+// ArchiveChannel satisfies the channel-delete route's store seam (rule 7's
+// "Channel delete admins only"): the fake records the archive, and a
+// re-archive on an already-archived channel answers ErrChannelArchived in
+// the same shape the live repository hands back.
+func (f *fakeStore) ArchiveChannel(_ context.Context, channelID string) error {
+	if f.archived[channelID] {
+		return ErrChannelArchived
+	}
+	if !f.exists[channelID] {
+		return errNotFound
+	}
+	f.archived[channelID] = true
 	return nil
 }
 
@@ -390,13 +420,17 @@ func (f *fakeStore) channelFacts(_ context.Context, channelID string) (channelFa
 		return facts, nil
 	}
 	if f.exists[channelID] {
-		return channelFactsRow{Kind: KindTeam}, nil
+		return channelFactsRow{Kind: KindTeam, Visibility: VisibilityPublic}, nil
 	}
 	return channelFactsRow{}, errNotFound
 }
 
 func (f *fakeStore) memberRole(_ context.Context, channelID, userID string) (string, error) {
 	return f.memberRoles[channelID+"|"+userID], nil
+}
+
+func (f *fakeStore) memberSource(_ context.Context, channelID, userID string) (string, error) {
+	return f.memberSources[channelID+"|"+userID], nil
 }
 
 func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string) (bool, error) {
@@ -410,6 +444,56 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 // the wall never asks it.
 func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+// S6 directory + join + leave + membership-rule stubs.
+
+func (f *fakeStore) ListDirectory(_ context.Context, _ string, _ bool, _ map[string]bool) (map[string]DirectoryEntry, error) {
+	return map[string]DirectoryEntry{}, nil
+}
+
+func (f *fakeStore) ListChannelMembers(_ context.Context, _ string) ([]ChannelMemberEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetChannelRule(_ context.Context, channelID string) (MembershipRule, error) {
+	if !f.exists[channelID] {
+		return MembershipRule{}, errNotFound
+	}
+	return MembershipRule{Visibility: VisibilityPublic}, nil
+}
+
+func (f *fakeStore) SetChannelRule(_ context.Context, _ string, _ MembershipRule) error {
+	return nil
+}
+
+func (f *fakeStore) ListChannelRules(_ context.Context, _ string, _ bool, _ map[string]bool) ([]MembershipRuleEntry, error) {
+	return nil, nil
+}
+
+// - Change 7, slice S3 doubles: reactions, seen-by, mentions -
+// The base fake answers inertly (a message facts read is not-found, the
+// reaction writes land nowhere, the reads answer empty); the route double in
+// reactions_route_test.go overrides what a leg scripts.
+
+func (f *fakeStore) messageFacts(_ context.Context, _, _ string) (messageFactsRow, error) {
+	return messageFactsRow{}, errNotFound
+}
+
+func (f *fakeStore) AddReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) RemoveReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) reactionsForMessages(_ context.Context, _ []string, _ string) (map[string][]ReactionCount, error) {
+	return map[string][]ReactionCount{}, nil
+}
+
+func (f *fakeStore) MessageSeenBy(_ context.Context, _, _ string, _ time.Time) (SeenByReport, error) {
+	return SeenByReport{Readers: []SeenByReader{}}, nil
+}
+
+func (f *fakeStore) ListMentions(_ context.Context, _, _ string, _ int) (MessagePage, error) {
+	return MessagePage{Messages: []Message{}}, nil
 }
 
 // - change 7 S4: the edit and delete doubles -
