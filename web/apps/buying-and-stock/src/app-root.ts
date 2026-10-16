@@ -44,6 +44,10 @@ import { ReceivingApi } from "./receiving/receiving-api.js";
 import { ReceivingDesk } from "./receiving/receiving-desk.js";
 import { VendorsApi } from "./vendors/vendors-api.js";
 import { VendorsDesk } from "./vendors/vendors-desk.js";
+import { LookupDesk } from "./lookup/lookup-desk.js";
+import { lookupStyles } from "./lookup/lookup-styles.js";
+import { IncomingDesk } from "./incoming/incoming-desk.js";
+import { stockLookupSeat } from "./lookup/lookup-logic.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -62,7 +66,7 @@ function fieldValue(el: HTMLInputElement | HTMLSelectElement | null): string {
 }
 
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, poStyles, areaStyles, purchStyles, css`
+  static styles = [baseStyles, entryStyles, poStyles, areaStyles, purchStyles, lookupStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
@@ -98,16 +102,22 @@ export class BuyingAndStockApp extends HHElement {
   // The areas, each a desk of its own (src/po, src/landed, ...): its state, its loads, its
   // presses. The fields a desk reads are looked up in this element's own shadow root. The
   // purchase orders are first and load at sign in; the others load when first shown.
+  // A sales seat's set is the read only one (ruling R1): Stock lookup first, Incoming beside it;
+  // every other seat keeps the buyers' seven, unchanged.
   #areas: readonly AreaEntry[] = this.#newAreas();
   #area = "orders";
-  readonly #shown = new Set<string>(["orders"]);
+  #shown = new Set<string>(["orders"]);
 
-  #newAreas(): AreaEntry[] {
-    const host = {
+  #deskHost() {
+    return {
       repaint: () => this.requestUpdate(),
       field: (name: string, key?: string) => fieldValue(this.#fieldElement(name, key)),
       role: () => this.#roleCode,
     };
+  }
+
+  #newAreas(): AreaEntry[] {
+    const host = this.#deskHost();
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
       { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
@@ -117,6 +127,28 @@ export class BuyingAndStockApp extends HHElement {
       { id: "inventory", label: "Inventory", desk: new InventoryDesk(new InventoryApi(this.#staffClient), host) },
       { id: "counts", label: "Cycle counts", desk: new CountsDesk(new CountsApi(this.#staffClient), host) },
     ];
+  }
+
+  #salesAreas(): AreaEntry[] {
+    const host = this.#deskHost();
+    return [
+      { id: "lookup", label: "Stock lookup", desk: new LookupDesk(new InventoryApi(this.#staffClient), host, this.#custody.coreBaseUrl) },
+      { id: "incoming", label: "Incoming", desk: new IncomingDesk(new PoApi(this.#staffClient), host) },
+    ];
+  }
+
+  #areasFor(roleCode: string): AreaEntry[] {
+    return stockLookupSeat(roleCode) ? this.#salesAreas() : this.#newAreas();
+  }
+
+  /** One way in for every sign-in: the seat decides the areas, the first one lands and loads. */
+  #enterAs(roleCode: string): void {
+    this.#roleCode = roleCode;
+    this.#areas = this.#areasFor(roleCode);
+    const landing = this.#areas[0]!.id;
+    this.#area = landing;
+    this.#shown = new Set([landing]);
+    void this.#areas[0]!.desk.load();
   }
 
   get #desk(): AreaDesk {
@@ -234,9 +266,8 @@ export class BuyingAndStockApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.user.name;
-        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
-        void this.#areas[0]!.desk.load();
+        this.#enterAs(handoff.session.roleCode);
       }
       this.requestUpdate();
     } else {
@@ -251,8 +282,7 @@ export class BuyingAndStockApp extends HHElement {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
-      this.#roleCode = outcome.entry.roleCode;
-      void this.#areas[0]!.desk.load();
+      this.#enterAs(outcome.entry.roleCode);
     } else if (outcome.kind === "front-door" && outcome.why === "ended") {
       this.#onSignOut();
       return;
@@ -310,8 +340,7 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.user.name;
-        this.#roleCode = result.value.roleCode;
-        void this.#areas[0]!.desk.load();
+        this.#enterAs(result.value.roleCode);
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
@@ -324,6 +353,7 @@ export class BuyingAndStockApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#roleCode = "";
     this.#areas = this.#newAreas();
     this.#area = "orders";
     this.#shown.clear();
@@ -370,7 +400,7 @@ export class BuyingAndStockApp extends HHElement {
       <hos-app-header demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Buying and Stock</h1>
-        <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>
+        <p class="dim">Purchase orders and the reorder worklist for the buying seats; the stock lookup, read only, for Sales. Demo data only.</p>
         ${renderEntry(this.#entryView)}
       </main>
     `;

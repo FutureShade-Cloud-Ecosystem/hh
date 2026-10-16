@@ -1,4 +1,4 @@
-# Dispatch and Load Building: provenance of the ports (part A)
+# Dispatch and Load Building: provenance of the ports (parts A and B)
 
 The load board and the day board carry logic and words from the original HardscapeOS app
 (repository `hardscapeos_dibbits`, read only), master 87d7941, under the roadmap's row 563 rule
@@ -35,9 +35,25 @@ answer it), `/runs`, `/runs/{id}/cancel`, `/crew`, `/dispatch`, `/complete`, `/r
 `/reopen/clear`, `/reschedule`, `/stops/{id}/assign`, `/commit`, `/reopen`, `/reschedule`,
 `/status`, `/loads/mark-loaded`.
 
-## Not ported on purpose (part B or never)
+## Part B
 
-The schedule (`dispatch-schedule.ts`, which turns an order into a stop: the board starts from
-stops), the truck and driver registry, will call, the settings tab and the policy, the freight
-split and raise, the load facts editor, the manifest print, the pickups list, the driver view
-(HH Drive is it), and the curation substrate behind the cards.
+Visual reference for every part B screen: the original's screen named in its row (the newest dispatch
+screens in `hardscapeos_dibbits`, read only) rebuilt at the same HH Drive and Buying and Stock set as
+part A, and the FB Design file `HH: Work`, page "PROPOSED: Dispatch and Load Building", which the
+lead's Sonnet visual read uses. Screens are looked at in `hh-s4/modules/reports/dispatch-b-shots/`.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Schedule a delivery: the order number box, its help line, the form's fields, the day's table | `app/src/dispatch-schedule.ts`, `order-ref.ts` | `scheduleForm`, `renderSchedule`, `validateSchedule`, `scheduleBody`, `scheduleRefusal` | The form asks for a request, never a commitment; the day is cards, not a table; a move of date rides the part A reschedule sheet; the board follows the order to its day |
+| Truck and driver registry: the lists, the add forms, the type list, the advisory capacity note | `app/src/dispatch-fleet.ts` | `renderFleet`, `fleetSheet`, `truckBody`, `driverBody`, `validateTruck`, `validateDriver`, `truckLine`, `driverLine` | Adds the update routes (change, out of use, back in use) the original never had; capacity typed in pounds, volume in cubic yards, shown in tons and pounds; out of use rows stay listed; the staff login link is a plain id field (the staff list route is the dealer admin surface's, which the dispatch roles do not hold) |
+| Will call: the order box and its help line, look up, print a pickup code, the shown once tag, the Live, Collected and Cancelled words, cancel | `app/src/dispatch-willcall.ts`, `dispatch-logic.ts` (`willCallWord`) | `renderWillCall`, `willCallTag`, `willCallWord`, `willCallLine`, `willCallNotice`, `willCallRefusal`, the revoke sheet | The code is held in memory only and gone when the tab is left; the list never carries it; cancelling asks first; the scan link is not printed here because the customer's public page is its own item (`dispatch-willcall-public.ts`), so the tag carries the code and the date it is good until |
+| Settings: the typed policy half (the five knobs, the setters wall, the change history in the controls' own words) | `app/src/dispatch-settings.ts`, `dispatch-settings-logic.ts` | `renderSettings`, the edit-policy sheet, `policyRows`, `policyBody`, `policyRefusal`, `historyRow`, `historyFaultWords`, `DISPATCH_RULE_WORDS`, `REOPEN_CHOICES`, `LOAD_VALUE_CHOICES` | A tab, not a docked sheet; the card, column and action curation half is not ported (the substrate is not); the freight split mode and the driver session length are read only here (the session length is a company rule the dealer row carries, which a yard login cannot set; the freight mode belongs to the freight split); the column names in the core's sentences are turned into the rules' names |
+| Print manifest and the scan trail (read) | `app/src/dispatch-board.ts` (`printManifest`), `dispatch-scan-trail.ts`, `receipt-print-logic.ts` | `printManifestButton`, `src/print-window.ts`, `scanTrailSheet`, `scanStageLabel`, `trailSummary`, `scanLoadLine`, `manifestRefusal` | The window opens inside the click, before the core is asked, so a blocked window stops the flow before anything is recorded; the document is read, then the print is recorded, then the window takes it; the trail is a sheet on any load card (the load board, the day board, the schedule), read only, the spine kept to one row at 390; the yard and driver scan buttons are not here (the yard and HH Drive scan) |
+| Split freight and the raise rail | `app/src/dispatch-board.ts` (split), `dispatch-api.ts` (`dispatchSplitFreight`, `dispatchGetFreightRaise`) | `splitSheet`, `splitButton`, `raiseCard`, `validateSplit`, `splitBody`, `splitNotice`, `splitRefusal`, `dollarsToCents`, `centsText`, `raiseLine` | A sheet on every load card (the core's gate answers in words, no role guess); cents by digits, never a float; the board divides and subtracts nothing; a raise above the quote parks and shows as a card that can be read again, figures only where the core sent them; a lost reply says asking again is safe; deciding the raise stays on Manager Home; reference: the part A sheets and the original's split control |
+| The date move and its reason | `app/src/dispatch-reschedule.ts` | the part A `validateReschedule` and sheet, now also reached from the schedule tab | One sheet, two doors |
+
+## Not ported on purpose (never, or later)
+
+The load facts editor, the pickups
+list, the customer's public will call page, the driver view (HH Drive is it), the scan buttons (the yard and
+HH Drive scan), and the curation substrate behind the cards and the settings sheet's second half.

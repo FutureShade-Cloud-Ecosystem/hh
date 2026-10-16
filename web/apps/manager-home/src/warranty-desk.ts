@@ -18,7 +18,7 @@
 // nothing else: no optimistic figures, no queue, no outbox. The answer's own
 // numbers are what the screen shows, and a refusal keeps the sheet standing
 // with the server's words in it.
-import { WarrantyApi, type BoardColumn, type Claim, type ChecklistState, type ClaimEvent, type IntakePhoto, type RecoveryAction, type RecoveryBoardModel, type ReportBundle, type SlaBoardModel, type SlaTarget, type SettlementPosting, type VendorProfile } from "./warranty-api.js";
+import { WarrantyApi, type BoardColumn, type Claim, type ChecklistState, type ClaimEvent, type DefectFilter, type DefectsTab, type IntakePhoto, type RecoveryAction, type RecoveryBoardModel, type ReportBundle, type SlaBoardModel, type SlaTarget, type SettlementPosting, type VendorCreditsTab, type VendorProfile } from "./warranty-api.js";
 import type { Result } from "@hardscapehouse/api-client";
 import {
   CLAIM_CHANNELS,
@@ -38,13 +38,15 @@ import {
 } from "./warranty-logic.js";
 
 /** The tabs the warranty view carries, in their order on the chip row. */
-export type WTab = "board" | "claims" | "vendors" | "recovery" | "sla" | "reports";
+export type WTab = "board" | "claims" | "defects" | "vendors-credits" | "vendors" | "recovery" | "sla" | "reports";
 
-export const WARRANTY_TABS: readonly WTab[] = ["board", "claims", "vendors", "recovery", "sla", "reports"];
+export const WARRANTY_TABS: readonly WTab[] = ["board", "claims", "defects", "vendors-credits", "vendors", "recovery", "sla", "reports"];
 
 export const WARRANTY_TAB_TITLE: Readonly<Record<WTab, string>> = Object.freeze({
   board: "Board",
   claims: "Claims",
+  defects: "Defects",
+  "vendors-credits": "Vendors and credits",
   vendors: "Vendor registry",
   recovery: "Recovery",
   sla: "Service levels",
@@ -65,6 +67,61 @@ export interface ClaimsTab {
   readonly phaseFilter: string;
   readonly rows: readonly Claim[];
 }
+
+// -- change 6 item 5: defects and claim evidence drawer ------------------------------------------------
+
+/** One event on a claim's "What happened" timeline; the view renders the
+ *  sentence the core answered, with a when the desk stamps in people words. */
+export interface ClaimEvidenceEvent {
+  readonly id: string;
+  readonly when: string;
+  readonly sentence: string;
+}
+
+/** The drawer opened from a defect's Claim cell. Holds the claim's evidence
+ *  (photos), what happened, and the claim rows the claim-evidence board shows.
+ *  Null when the drawer is closed. */
+export interface ClaimEvidenceModel {
+  readonly phase: "loading" | "ready" | "error" | "refused";
+  readonly error: string;
+  readonly refusal: string;
+  readonly defectId: string;
+  readonly claimId: string;
+  readonly claimNo: string;
+  readonly returnNo: string;
+  readonly customerName: string;
+  readonly productText: string;
+  readonly quantityText: string;
+  readonly lotOrBatch: string;
+  readonly costCents: number;
+  readonly vendorName: string;
+  readonly agreementSummary: string;
+  readonly statusBadge: string;
+  readonly photos: readonly IntakePhoto[];
+  readonly photoError: string;
+  readonly timeline: readonly ClaimEvidenceEvent[];
+}
+
+const emptyClaimEvidence = (): ClaimEvidenceModel => ({
+  phase: "loading",
+  error: "",
+  refusal: "",
+  defectId: "",
+  claimId: "",
+  claimNo: "",
+  returnNo: "",
+  customerName: "",
+  productText: "",
+  quantityText: "",
+  lotOrBatch: "",
+  costCents: 0,
+  vendorName: "",
+  agreementSummary: "",
+  statusBadge: "",
+  photos: [],
+  photoError: "",
+  timeline: [],
+});
 
 export interface RecoveryTab {
   readonly board: RecoveryBoardModel | null;
@@ -131,6 +188,12 @@ export interface WarrantyModel {
   readonly captureOpen: boolean;
   readonly captureBusy: boolean;
   readonly captureError: string;
+  /** Change 6 item 5: the Defects tab (lines of damaged product, claim or shrinkage). */
+  readonly defects: TabModel<DefectsTab>;
+  /** Change 6 item 5: the Vendors and credits tab (each vendor's agreement and what they owe). */
+  readonly vendorCredits: TabModel<VendorCreditsTab>;
+  /** Change 6 item 5: the claim-evidence drawer opened from a defect's Claim cell. */
+  readonly claimEvidence: ClaimEvidenceModel | null;
 }
 
 const initialModel = (branchName: string): WarrantyModel => ({
@@ -163,6 +226,9 @@ const initialModel = (branchName: string): WarrantyModel => ({
   captureOpen: false,
   captureBusy: false,
   captureError: "",
+  defects: tabModel<DefectsTab>({ rows: [], threshold_cents: 5000, filter: "" }),
+  vendorCredits: tabModel<VendorCreditsTab>({ rows: [], openVendorId: "", openDetail: null, openError: "", requestingFor: "", requestNotice: "", requestError: "" }),
+  claimEvidence: null,
 });
 
 /** The seam the app element answers: a repaint, a field's current words, and
@@ -433,6 +499,43 @@ export class WarrantyDesk {
       case "w-override-add":
         void this.#addOverride();
         return true;
+      // -- change 6 item 5: defects tab and claim-evidence drawer -----------------------------------------
+      case "w-defects-filter": {
+        const filter = (control.getAttribute("data-filter") ?? "") as DefectFilter;
+        const defects = this.#model.defects.data;
+        if (filter === defects.filter) return true;
+        this.#model = {
+          ...this.#model,
+          defects: { ...this.#model.defects, data: { ...defects, filter } },
+        };
+        this.#host.repaint();
+        return true;
+      }
+      case "w-defects-reload":
+        void this.#loadDefects(true);
+        return true;
+      case "w-defects-open-claim": {
+        const defectId = control.getAttribute("data-defect-id") ?? "";
+        void this.#openClaimEvidence(defectId);
+        return true;
+      }
+      case "w-evidence-close":
+        this.#closeClaimEvidence();
+        return true;
+      // -- change 6 item 5: vendors and credits tab ---------------------------------------------------------
+      case "w-vc-reload":
+        void this.#loadVendorCredits(true);
+        return true;
+      case "w-vc-open": {
+        const vendorId = control.getAttribute("data-vendor-id") ?? "";
+        void this.#expandVendorCredit(vendorId);
+        return true;
+      }
+      case "w-vc-request": {
+        const vendorId = control.getAttribute("data-vendor-id") ?? "";
+        void this.#requestVendorCreditNote(vendorId);
+        return true;
+      }
       default:
         return true;
     }
@@ -447,6 +550,8 @@ export class WarrantyDesk {
   async #loadTab(tab: WTab): Promise<void> {
     if (tab === "board") await this.#loadBoard();
     if (tab === "claims") await this.#loadClaims();
+    if (tab === "defects") await this.#loadDefects();
+    if (tab === "vendors-credits") await this.#loadVendorCredits();
     if (tab === "vendors") await this.#loadVendors();
     if (tab === "recovery") await this.#loadRecovery();
     if (tab === "sla") await this.#loadSla();
@@ -456,6 +561,8 @@ export class WarrantyDesk {
   #tabState(tab: WTab): TabModel<unknown> {
     if (tab === "board") return this.#model.board;
     if (tab === "claims") return this.#model.claims;
+    if (tab === "defects") return this.#model.defects;
+    if (tab === "vendors-credits") return this.#model.vendorCredits;
     if (tab === "vendors") return this.#model.vendors;
     if (tab === "recovery") return this.#model.recovery;
     if (tab === "sla") return this.#model.sla;
@@ -464,7 +571,7 @@ export class WarrantyDesk {
 
   #pickTab(tab: string): void {
     if (!WARRANTY_TABS.some((t) => t === tab) || tab === this.#model.tab) return;
-    this.#model = { ...this.#model, tab: tab as WTab, detail: null, captureOpen: false };
+    this.#model = { ...this.#model, tab: tab as WTab, detail: null, captureOpen: false, claimEvidence: null };
     this.#host.repaint();
     if (this.#tabState(this.#model.tab).phase === "loading") void this.#loadTab(this.#model.tab);
   }
@@ -772,6 +879,7 @@ export class WarrantyDesk {
   async #reloadStandingTabs(): Promise<void> {
     if (this.#model.tab === "board") await this.#loadBoard();
     if (this.#model.tab === "claims") await this.#loadClaims();
+    if (this.#model.tab === "defects") await this.#loadDefects();
     if (this.#model.tab === "reports") await this.#loadReports();
     if (this.#model.tab === "recovery") await this.#loadRecovery();
     if (this.#model.tab === "sla") await this.#loadSla();
@@ -1058,6 +1166,165 @@ export class WarrantyDesk {
       };
       this.#host.repaint();
     }
+  }
+
+  // -- change 6 item 5: defects and vendor credits ---------------------------------------------------------
+
+  /** The defects list: till returns of damaged product, classified by where the line cost sits. */
+  async #loadDefects(force: boolean = false): Promise<void> {
+    if (!force && this.#model.defects.phase !== "loading") return;
+    const current = this.#model.defects.data;
+    this.#model = { ...this.#model, defects: { ...tabModel(current) } };
+    this.#host.repaint();
+    const result = await this.#api.readDefects(this.#scopeId(), current.filter);
+    this.#model = { ...this.#model, defects: loadEnded(result, current) };
+    this.#host.repaint();
+  }
+
+  /** The Vendors and credits table: each vendor's agreement and what they owe. */
+  async #loadVendorCredits(force: boolean = false): Promise<void> {
+    if (!force && this.#model.vendorCredits.phase !== "loading") return;
+    const current = this.#model.vendorCredits.data;
+    this.#model = { ...this.#model, vendorCredits: { ...tabModel(current) } };
+    this.#host.repaint();
+    const result = await this.#api.readVendorCredits(this.#scopeId());
+    if (result.ok) {
+      const merged: VendorCreditsTab = {
+        ...result.value,
+        openVendorId: current.openVendorId,
+        openDetail: current.openDetail,
+        openError: current.openError,
+        requestingFor: current.requestingFor,
+        requestNotice: current.requestNotice,
+        requestError: current.requestError,
+      };
+      this.#model = { ...this.#model, vendorCredits: loadEnded({ ok: true, value: merged }, current) };
+    } else {
+      this.#model = { ...this.#model, vendorCredits: loadEnded(result, current) };
+    }
+    this.#host.repaint();
+  }
+
+  /** Open a vendor's right panel on the Vendors and credits tab. */
+  async #expandVendorCredit(vendorId: string): Promise<void> {
+    const current = this.#model.vendorCredits.data;
+    if (vendorId === current.openVendorId) return;
+    this.#model = {
+      ...this.#model,
+      vendorCredits: { ...this.#model.vendorCredits, data: { ...current, openVendorId: vendorId, openError: "" } },
+    };
+    this.#host.repaint();
+    if (vendorId === "") return;
+    const result = await this.#api.readVendorCreditDetail(this.#scopeId(), vendorId);
+    if (this.#model.vendorCredits.data.openVendorId !== vendorId) return;
+    if (result.ok) {
+      this.#model = {
+        ...this.#model,
+        vendorCredits: {
+          ...this.#model.vendorCredits,
+          data: { ...this.#model.vendorCredits.data, openDetail: result.value, openError: "" },
+        },
+      };
+    } else {
+      this.#model = {
+        ...this.#model,
+        vendorCredits: {
+          ...this.#model.vendorCredits,
+          data: { ...this.#model.vendorCredits.data, openDetail: null, openError: result.error },
+        },
+      };
+    }
+    this.#host.repaint();
+  }
+
+  /** Fire a credit note request for a vendor; the route is not yet wired
+   *  and the stub returns 501, which the panel surfaces as its own refusal. */
+  async #requestVendorCreditNote(vendorId: string): Promise<void> {
+    if (vendorId === "") return;
+    const current = this.#model.vendorCredits.data;
+    this.#model = {
+      ...this.#model,
+      vendorCredits: {
+        ...this.#model.vendorCredits,
+        data: { ...current, requestingFor: vendorId, requestNotice: "", requestError: "" },
+      },
+    };
+    this.#host.repaint();
+    const result = await this.#api.requestVendorCreditNote(vendorId);
+    if (this.#model.vendorCredits.data.requestingFor !== vendorId) return;
+    if (result.ok) {
+      this.#model = {
+        ...this.#model,
+        vendorCredits: {
+          ...this.#model.vendorCredits,
+          data: { ...this.#model.vendorCredits.data, requestingFor: "", requestNotice: "Credit note requested.", requestError: "" },
+        },
+      };
+    } else {
+      this.#model = {
+        ...this.#model,
+        vendorCredits: {
+          ...this.#model.vendorCredits,
+          data: { ...this.#model.vendorCredits.data, requestingFor: "", requestNotice: "", requestError: result.error },
+        },
+      };
+    }
+    this.#host.repaint();
+  }
+
+  /** Open the claim-evidence drawer from a defect's Claim cell. */
+  async #openClaimEvidence(defectId: string): Promise<void> {
+    if (defectId === "") return;
+    const defect = this.#model.defects.data.rows.find((row) => row.id === defectId);
+    if (!defect) return;
+    if (defect.claim_id === "") return;
+    const draft: ClaimEvidenceModel = {
+      ...emptyClaimEvidence(),
+      defectId: defect.id,
+      claimId: defect.claim_id,
+      claimNo: defect.claim_no,
+      returnNo: defect.return_no,
+      customerName: defect.customer_name,
+      productText: defect.product_text,
+      quantityText: defect.qty,
+      lotOrBatch: defect.lot_or_batch,
+      costCents: defect.cost_cents,
+      vendorName: defect.vendor_name,
+    };
+    this.#model = { ...this.#model, claimEvidence: draft };
+    this.#host.repaint();
+    void this.#loadClaimEvidencePhotos(defect.claim_id);
+  }
+
+  /** The photos and timeline the claim-evidence drawer renders. The core
+   *  has both routes already; the read is the seam for when the wire lands. */
+  async #loadClaimEvidencePhotos(claimId: string): Promise<void> {
+    if (this.#model.claimEvidence?.claimId !== claimId) return;
+    const photos = await this.#api.intakePhotos(claimId);
+    if (this.#model.claimEvidence?.claimId !== claimId) return;
+    if (photos.ok) {
+      this.#model = {
+        ...this.#model,
+        claimEvidence: { ...this.#model.claimEvidence, phase: "ready", photos: photos.value, photoError: "" },
+      };
+    } else {
+      this.#model = {
+        ...this.#model,
+        claimEvidence: {
+          ...this.#model.claimEvidence,
+          phase: "error",
+          photoError: photos.status === 403 ? "" : photos.error,
+        },
+      };
+    }
+    this.#host.repaint();
+  }
+
+  /** Close the claim-evidence drawer. */
+  #closeClaimEvidence(): void {
+    if (this.#model.claimEvidence === null) return;
+    this.#model = { ...this.#model, claimEvidence: null };
+    this.#host.repaint();
   }
 }
 
