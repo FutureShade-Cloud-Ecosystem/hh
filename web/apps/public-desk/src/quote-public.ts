@@ -1234,8 +1234,9 @@ export class QuotePublicPage extends HHElement {
    * cannot drop the chip's family.
    */
   private renderStatusBadge(q: QuoteViewRef): TemplateResult {
-    const kind = statusBadgeKind(q.status);
-    return html`<span class="statusbadge statusbadge-${kind}" data-status=${q.status}>${statusBadgeLabel(q.status)}</span>`;
+    const effectiveStatus = q.expired && q.status === "SENT" ? "EXPIRED" : q.status;
+    const kind = statusBadgeKind(effectiveStatus);
+    return html`<span class="statusbadge statusbadge-${kind}" data-status=${effectiveStatus}>${statusBadgeLabel(effectiveStatus)}</span>`;
   }
 
   /**
@@ -1321,7 +1322,7 @@ export class QuotePublicPage extends HHElement {
             <span class="paylabel">
               Card
               <span class="paysub">
-                ${surchargePct.toFixed(surchargePct % 1 === 0 ? 0 : 2)}% surcharge (${formatMoney(surchargeCents)} on this deposit).
+                ${Number(surchargePct.toFixed(2))}% surcharge (${formatMoney(surchargeCents)} on this deposit).
               </span>
             </span>
           </label>`

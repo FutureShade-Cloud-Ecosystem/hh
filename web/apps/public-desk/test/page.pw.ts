@@ -1845,7 +1845,7 @@ test("the quantities tick is one of the card's own ticks: the same row and the s
 // not the wire, so a contract change behind the helper does not move them.
 
 test("an open quote shows the status badge in the customer-facing word for its state", async ({ page }) => {
-  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await page.goto("/?t=q-terms-28");
   // SENT quotes read "Awaiting acceptance": the customer-facing word, not the wire state.
   const badge = page.locator(".statusbadge");
   await expect(badge).toHaveCount(1);
@@ -1929,7 +1929,7 @@ test("the payment selector offers ACH first, with card only when the dealer conf
   await expect(page.locator(".paymentrow input[value=\"card\"]")).toHaveCount(1);
   // The card row's sub-line names the surcharge as a percentage AND a money figure, so the
   // customer sees the cost before they tick.
-  await expect(page.locator(".payopt .paysub")).toContainText("2.9% surcharge");
+  await expect(page.locator(".payopt .paysub").nth(1)).toContainText("2.9% surcharge");
 });
 
 test("the deposit line shows the percentage and the cents, and a card payment adds a surcharge line", async ({ page }) => {
