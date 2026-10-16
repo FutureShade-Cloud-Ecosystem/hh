@@ -184,6 +184,20 @@ export function relativeDay(date: string, today: string): string {
   return d > 0 ? `in ${d} days` : `${-d} days ago`;
 }
 
+/**
+ * A stamp as the screen words it: the day's relative words when it sits within sixty days
+ * of today ("today", "3 days ago", "in 4 days"), the day itself when it does not, and ""
+ * when there is no stamp. The exact value rides no title: the design system's position gate
+ * allows a bound value only on class, role, d and the data- and aria- attributes outside
+ * the till's ported surface, so the words stand alone.
+ */
+export function whenWords(stamp: string | null | undefined, today: string): string {
+  if (stamp === null || stamp === undefined || stamp === "") return "";
+  const date = stamp.slice(0, 10);
+  const rel = relativeDay(date, today);
+  return rel === "" ? date : rel;
+}
+
 /** What has landed against an order, as the register's small line: "6 of 10 pc landed". "" when nothing is known. */
 export function landedWords(lines: readonly { qty_ordered_base: number; qty_received_base: number; uom: string }[]): string {
   if (lines.length === 0) return "";

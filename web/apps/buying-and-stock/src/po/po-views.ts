@@ -18,7 +18,7 @@ import type {
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
-import { dateWords, deliveryWord, draftOf, isPlaced, refusalWords, relativeDay, statusTone, statusWord, type DraftMarker } from "./po-logic.js";
+import { dateWords, deliveryWord, draftOf, isPlaced, refusalWords, statusTone, statusWord, whenWords, type DraftMarker } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
 
 export type Tab = "orders" | "incoming";
@@ -76,10 +76,6 @@ function errorNote(model: DeskModel): TemplateResult {
 
 function pill(status: string): TemplateResult {
   return html`<span class="status status-${statusTone(status)}" data-status>${statusWord(status)}</span>`;
-}
-
-function dateOnly(stamp: string | undefined): string {
-  return stamp === undefined || stamp === "" ? "" : stamp.slice(0, 10);
 }
 
 // ---- the way in --------------------------------------------------------------------------------
@@ -162,7 +158,6 @@ function tiles(model: DeskModel): TemplateResult {
 function worklist(model: DeskModel): TemplateResult {
   const picked = model.picked;
   const count = picked === null ? 0 : 1;
-  const hasHot = model.shortfall.some((r) => r.projected_base < 0);
   return html`
     <section class="panel" aria-label="Reorder worklist" data-worklist>
       <div class="panel-head">
@@ -196,9 +191,6 @@ function worklist(model: DeskModel): TemplateResult {
               </table>
             </div>
           `}
-      ${hasHot
-        ? html`<p class="foot dim" data-k08-note>The highlighted row is the yard's K08 shortage: stock promised to customers that is neither on hand nor on order. A draft does not cover it; only a placed order does.</p>`
-        : html`<p class="foot dim" data-k08-note>A line stays on the worklist until an order is placed for it. A draft does not cover it.</p>`}
       ${errorNote(model)}
       <div class="actions end">
         <button type="button" class="btn btn-primary" data-action="draft" ?disabled=${picked === null || model.busy}>Draft PO (${count})</button>
@@ -416,7 +408,6 @@ function register(model: DeskModel): TemplateResult {
               </table>
             </div>
           `}
-      <p class="foot dim">Ordered, Partial and Received are states, never buttons: receiving sets them as stock lands.</p>
     </section>
   `;
 }
@@ -448,21 +439,17 @@ function incoming(model: DeskModel): TemplateResult {
               </table>
             </div>
           `}
-      <p class="foot dim">The yard plans around this list. A promised date is the buyer's statement; an order without one asks the vendor.</p>
       <p class="foot dim" data-bills-note>${refusalWords("post-bill", "Forbidden", 403)}</p>
     </section>
   `;
 }
 
 function incomingRow(model: DeskModel, po: PurchasingPO): TemplateResult {
-  const date = dateOnly(po.expected_at);
-  const rel = date === "" ? "" : relativeDay(date, model.today);
+  const words = whenWords(po.expected_at, model.today);
   return html`
     <tr data-incoming-row aria-current="${model.placedId === po.id ? "true" : "false"}">
       <td><span class="who">${po.po_no}</span><span class="small dim">${po.vendor_name}</span></td>
-      <td>${date === ""
-        ? html`<span class="nodate">no date</span>`
-        : html`${rel === "" ? nothing : html`<span class="who">${rel}</span>`}<span class="small dim" data-expected>${date}</span>`}</td>
+      <td>${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who" data-expected>${words}</span>`}</td>
       <td class="opt2">${deliveryWord(po.delivery_method)}</td>
       <td class="num opt2">${po.line_count}</td>
     </tr>
