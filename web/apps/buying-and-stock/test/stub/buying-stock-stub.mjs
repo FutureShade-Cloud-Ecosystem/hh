@@ -32,9 +32,19 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "inside-sales", role_code: "inside_sales", label: "Inside sales" },
 ];
 
 const USERS = {
+  "inside-sales": {
+    user_id: "de110000-0000-4000-9000-0000000000a2",
+    email: "inside.sales@hh-demo.invalid",
+    display_name: "Inside sales (demo)",
+    role_code: "inside_sales",
+    role_name: "Inside sales",
+    tier: 2,
+    scope: "BRANCH",
+  },
   "procurement-manager": {
     user_id: "de110000-0000-4000-9000-000000000008",
     email: "procurement.manager@hh-demo.invalid",
@@ -185,10 +195,10 @@ const GLS_STOCK_SEED = {
 };
 
 const GLS_PRODUCTS = [
-  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: {} },
-  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: {} },
-  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: {} },
-  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: {} },
+  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, list: 11_900, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: {} },
+  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, list: 7_900, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: {} },
+  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, list: 9_800, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: {} },
+  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, list: 3_200, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: {} },
 ];
 
 function seedStock() {
@@ -197,6 +207,13 @@ function seedStock() {
   }
 }
 seedStock();
+
+// One invented image slot for every trade product: a 1 by 1 transparent PNG, the bytes the image
+// read serves so the lookup's thumbs show a served picture and a leg can tell it from the fallback.
+const PRODUCT_IMAGE_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 const glsProduct = (n) => GLS_PRODUCTS.find((p) => p.n === n);
 const glsId = (n) => uuid("f", 100 + n);
@@ -299,6 +316,12 @@ function reset() {
       lines: s.lines.map((l) => ({ id: uuid("d", ++world.lineCounter), ...l })),
     });
   }
+  // What is coming in for the trade products (change 5 slice S4's coming-in table): one placed
+  // order buying the paver, promised in a few days. Not in the register the buyers' screen draws,
+  // which is the po world's own list above.
+  world.glsIncoming = [
+    { product: 1, no: "PO-PLM-0151", vendor: 5, branch: PLM, expected: dayOffset(4), qty: 240, received: 0, status: "ORDERED" },
+  ];
   resetInventoryWorld();
 }
 
@@ -544,6 +567,9 @@ function browseRow(p) {
   const buckets = Object.keys(p.stock);
   const onHand = buckets.reduce((sum, b) => sum + p.stock[b].onHand, 0);
   const reserved = buckets.reduce((sum, b) => sum + p.stock[b].allocated, 0);
+  // The branches whose record shows nothing available (change 5 slice S4): the core writes the
+  // names byte-absent when there are none, so the stub does the same.
+  const outAt = buckets.filter((b) => p.stock[b].onHand - p.stock[b].allocated <= 0).map(branchName);
   return {
     product_id: glsId(p.n),
     sku: p.sku,
@@ -564,6 +590,7 @@ function browseRow(p) {
     available_base: onHand - reserved,
     in_transit_base: 0,
     avg_cost_cents: p.cost,
+    ...(outAt.length > 0 ? { out_at_branches: outAt } : {}),
   };
 }
 
@@ -795,7 +822,7 @@ const MANAGE_MOVES = new Set([
   "sheet-approve",
   "sheet-post",
 ]);
-const SEAT_LEVEL = { procurement: 2, yard: 1, payables: 0 };
+const SEAT_LEVEL = { procurement: 2, yard: 1, payables: 0, sales: 0 };
 // The seat answers the token the caller carries (the sub names the demo
 // account, as the counts gate reads it); a test token with no sub sits at
 // the switch's seat.
@@ -803,6 +830,7 @@ function seatFor(req) {
   const sub = callerOf(req);
   if (sub.endsWith("000000000003")) return "yard";
   if (sub.endsWith("0000000000a1")) return "payables";
+  if (sub.endsWith("0000000000a2")) return "sales";
   return roleMode;
 }
 const seatPasses = (move, seat) => {
@@ -899,6 +927,24 @@ async function handle(req, res) {
     if (!account) return refuse(res, 404, "not found");
     return json(res, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
+  // One product's own record and its image, the two reads the contract words public (the catalogue
+  // and the picture a customer sees): served before the staff gate, as the core serves them. The
+  // image is the same invented slot for every trade product, one byte row, so a leg can see a
+  // served picture and the app's fallback stays honest for an id with none.
+  const productImage = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (method === "GET" && productImage) {
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productImage[1]);
+    if (gls === undefined) return refuse(res, 404, "not found");
+    res.writeHead(200, { "Content-Type": "image/png" });
+    res.end(PRODUCT_IMAGE_BYTES);
+    return;
+  }
+  const productOne = path.match(/^\/api\/v1\/products\/([^/]+)$/);
+  if (method === "GET" && productOne) {
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productOne[1]);
+    if (gls === undefined) return refuse(res, 404, "not found");
+    return json(res, { ...catalogueRow(gls), list_price_cents: gls.list, list_price_uom: gls.uom });
+  }
 
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
@@ -908,6 +954,48 @@ async function handle(req, res) {
     flags.dropNext = false;
     res.end = () => req.socket.destroy();
   }
+  // The role wall answers before ANY handler, the shared body the gate writes: the purchasing
+  // parts answer their own routes, so a wall behind them would never see the call. The moves map
+  // to the wall the core puts in front of each: the po_writers list on the order writes, the work
+  // level on receiving, the manage level on the rest.
+  const sheetPath = path.match(/^\/api\/v1\/counts\/sheets\/([^/]+)(\/(freeze|counts|approve|post|cancel))?$/);
+  const isSheetWrite = sheetPath !== null && sheetPath[3] !== undefined && method === "POST";
+  const moveOf = (p) => {
+    if (p === "/api/v1/inventory/receive") return "receive";
+    if (p === "/api/v1/inventory/nudge-procurement") return "nudge";
+    if (p === "/api/v1/inventory/reservations") return "reserve";
+    if (p === "/api/v1/inventory/reservations/release") return "release";
+    if (p === "/api/v1/inventory/reservations/expire") return "expire";
+    if (p === "/api/v1/inventory/allocation-policy") return "policy-put";
+    if (p === "/api/v1/inventory/transfers") return "transfer-create";
+    if (/^\/api\/v1\/inventory\/transfers\/[^/]+\/(ship|receive|cancel)$/.test(p)) return `transfer-${p.split("/").pop()}`;
+    if (p === "/api/v1/inventory/reorder-points") return "point-put";
+    if (p === "/api/v1/inventory/reorder-points/bootstrap") return "bootstrap";
+    if (p === "/api/v1/inventory/shortfall/create-po") return "po-writer";
+    // The order writes the core walls to the po_writers list (change 5 slice S4's sales fence):
+    // drafting, editing lines, placing, sending, promising and the delivery method.
+    if (p === "/api/v1/purchasing/pos") return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines$/.test(p)) return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines\/[^/]+$/.test(p)) return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/(transition|expected-date|delivery-method|send)$/.test(p)) return "po-writer";
+    // Receiving goods is work, not buying: the yard's move, the same wall the core's work level is.
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/receive$/.test(p)) return "receive";
+    if (p === "/api/v1/counts/sheets" && !isSheetWrite) return "sheet-create";
+    if (isSheetWrite) return `sheet-${sheetPath[3]}`;
+    return "";
+  };
+  const move = moveOf(path);
+  const seat = seatFor(req);
+  if (move !== "" && method !== "GET") {
+    if (move === "po-writer") {
+      // The po_writers list is the wall: the Procurement Manager, the General
+      // Manager and the super admin; every other role is refused at the gate.
+      if (seat !== "procurement") return json(res, { error: "Forbidden" }, 403);
+    } else if (!seatPasses(move, seat)) {
+      return json(res, { error: "Forbidden" }, 403);
+    }
+  }
+
   if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----
@@ -947,6 +1035,32 @@ async function handle(req, res) {
   if (method === "GET" && path === "/api/v1/purchasing/incoming") {
     const productId = url.searchParams.get("product_id");
     if (productId === null || productId === "") return refuse(res, 400, "product_id is required");
+    // The trade products' arrivals (change 5 slice S4's coming-in table), the same line shape the
+    // po world's answer carries; the two id spaces are disjoint, so a GLS id never falls through.
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productId);
+    if (gls !== undefined) {
+      const rows = world.glsIncoming
+        .filter((g) => g.product === gls.n)
+        .map((g) => {
+          const vendor = ALL_VENDORS.find((v) => v.n === g.vendor);
+          return {
+            po_id: glsId(40 + g.product),
+            po_no: g.no,
+            po_line_id: glsId(60 + g.product),
+            status: g.status,
+            vendor_id: uuid("a", vendor.n),
+            vendor_name: vendor.name,
+            branch_id: g.branch,
+            expected_at: g.expected,
+            qty_ordered_base: g.qty,
+            qty_received_base: g.received,
+            qty_outstanding_base: g.qty - g.received,
+            uom: gls.uom,
+            unit_cost_cents: gls.cost,
+          };
+        });
+      return json(res, { items: rows, next_cursor: null });
+    }
     const lines = [];
     for (const po of world.pos) {
       if (po.status === "RECEIVED" || po.status === "CLOSED" || po.status === "CANCELLED") continue;
@@ -1090,37 +1204,6 @@ async function handle(req, res) {
       row.at = NOW_ISO();
     }
     return json(res, transitPair(row.from, row.to, row));
-  }
-
-  const sheetPath = path.match(/^\/api\/v1\/counts\/sheets\/([^/]+)(\/(freeze|counts|approve|post|cancel))?$/);
-  const isSheetWrite = sheetPath !== null && sheetPath[3] !== undefined && method === "POST";
-  const moveOf = (p) => {
-    if (p === "/api/v1/inventory/receive") return "receive";
-    if (p === "/api/v1/inventory/nudge-procurement") return "nudge";
-    if (p === "/api/v1/inventory/reservations") return "reserve";
-    if (p === "/api/v1/inventory/reservations/release") return "release";
-    if (p === "/api/v1/inventory/reservations/expire") return "expire";
-    if (p === "/api/v1/inventory/allocation-policy") return "policy-put";
-    if (p === "/api/v1/inventory/transfers") return "transfer-create";
-    if (/^\/api\/v1\/inventory\/transfers\/[^/]+\/(ship|receive|cancel)$/.test(p)) return `transfer-${p.split("/").pop()}`;
-    if (p === "/api/v1/inventory/reorder-points") return "point-put";
-    if (p === "/api/v1/inventory/reorder-points/bootstrap") return "bootstrap";
-    if (p === "/api/v1/inventory/shortfall/create-po") return "po-writer";
-    if (p === "/api/v1/counts/sheets" && !isSheetWrite) return "sheet-create";
-    if (isSheetWrite) return `sheet-${sheetPath[3]}`;
-    return "";
-  };
-  // The role wall answers before any handler, the shared body the gate writes.
-  const move = moveOf(path);
-  const seat = seatFor(req);
-  if (move !== "" && method !== "GET") {
-    if (move === "po-writer") {
-      // The po_writers list is the wall: the Procurement Manager, the General
-      // Manager and the super admin; every other role is refused at the gate.
-      if (seat !== "procurement") return json(res, { error: "Forbidden" }, 403);
-    } else if (!seatPasses(move, seat)) {
-      return json(res, { error: "Forbidden" }, 403);
-    }
   }
 
   // Reservations: the list under the core's key, a hold through the policy.
