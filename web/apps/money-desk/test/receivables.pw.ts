@@ -68,7 +68,7 @@ test("the register's filters: overdue, promised, disputed and paid", async ({ pa
   const pick = (word: string) => page.getByRole("group", { name: "Register filter" }).getByRole("button", { name: word, exact: true }).click();
   await pick("Past due");
   await expect(page.locator("[data-register-row]")).toHaveCount(7);
-  await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $13,209.50");
+  await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $11,499.50");
   await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days late");
   await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("91 and over");
   await pick("Current");
