@@ -3768,6 +3768,27 @@ export type OrderChange = {
   lines: OrderChangeLine[];
   next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
 };
+export type OrderChangeQueueItem = {
+  id: string;
+  change_no: string;
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  status: "PENDING_YARD" | "PENDING_FINANCE" | "APPROVED" | "APPLIED" | "REJECTED" | "CANCELLED";
+  reason: string;
+  delta_cents: number;
+  finance_threshold_cents: number;
+  finance_required: boolean;
+  requested_by_role: string;
+  requested_at: string;
+  yard_ack_note?: string;
+  next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
+};
+export type OrderChangeQueuePage = {
+  items: OrderChangeQueueItem[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type OrderChangesResponse = {
   changes: OrderChange[];
 };

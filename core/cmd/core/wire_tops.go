@@ -37,6 +37,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/feedback"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
@@ -381,6 +382,15 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStockReserver(w5aStockReserver{svc: inventorySvc}).
 		WithPickState(w5aPickState{pool: pool}).
 		WithFinanceApprover(w5aFinanceApprover{svc: spine.glSvc})
+	// The change queue labels each requester by role (never by name); a nil pool (the wiring shape
+	// tests) leaves the labels blank.
+	if pool != nil {
+		roleLabels, err := erpidentity.NewStaffAuthorityResolver(pool)
+		if err != nil {
+			panic("order: change queue role labels refused to boot: " + err.Error())
+		}
+		orderSvc.WithRequesterRoles(roleLabels)
+	}
 	// Boot warning, the pin's: an unwired reservation seam turns the hold
 	// lane off silently (order's reservations fail open by design), so the
 	// silence is said out loud. Wired, it never fires.
