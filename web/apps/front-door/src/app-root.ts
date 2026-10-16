@@ -1,8 +1,8 @@
 // The front door: the demo box's first screen (HH-DEMO-1 D2). One element,
 // three states, one header.
 //
-//   picker      pre-auth: "Pick a role to walk the demo.", the nine live role
-//               cards, and the decided matrix's four other roles as coming
+//   picker      pre-auth: "Pick a role to walk the demo.", the live role
+//               cards, the contractor cards, and the decided matrix's other roles as coming
 //               rows that show their modules and never tap.
 //   home        post-auth: the role's modules as tiles. The box's live
 //               modules navigate (D1 wires the routes); the manager's two
@@ -52,6 +52,7 @@ import {
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import {
   COMING_ROLES,
+  comingHeading,
   LIVE_ROLES,
   contractorEntries,
   type ComingRole,
@@ -393,7 +394,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-danger);
       }
 
-      /* ── the coming list: one collapsed disclosure. The four coming
+      /* ── the coming list: one collapsed disclosure. The coming
          roles are honesty about scope, not a page of their own: closed they
          take one row, open they show today's list unchanged, chips muted
          as they ever were. ────────────────────────────────────────────── */
@@ -1286,12 +1287,13 @@ export class FrontDoorApp extends HHElement {
     `;
   }
 
-  /** The five roles that are coming, as the one collapsed disclosure both modes show. */
+  /** The roles that are coming, as the one collapsed disclosure both modes show; nothing when none are. */
   #comingList(): TemplateResult {
+    if (COMING_ROLES.length === 0) return html`${nothing}`;
     return html`
       <details class="coming-card" data-testid="coming-disclosure">
         <summary>
-          <span class="coming-heading">Four more roles are coming</span>
+          <span class="coming-heading">${comingHeading(COMING_ROLES.length)}</span>
           <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
         </summary>
         <ul class="coming" aria-label="Coming roles">

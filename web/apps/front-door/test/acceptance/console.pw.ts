@@ -257,7 +257,7 @@ test.describe("after sign in", () => {
   });
 
   test("a role this site has no screens for says so and offers no way in", async ({ page, baseURL }) => {
-    await serve(page, baseURL!, {}, { role: { role_code: "outside_sales", role_name: "Outside Sales" } });
+    await serve(page, baseURL!, {}, { role: { role_code: "platform_admin", role_name: "Platform admin" } });
     await page.goto("/");
     await signInAsPartner(page);
     await expect(page.getByTestId("entry-no-screens")).toBeVisible();
@@ -348,8 +348,8 @@ test.describe("the persona cards", () => {
     await expect(page.getByTestId("persona-cards")).toHaveCount(0);
     await signInAsPartner(page);
     await expect(page.getByTestId("persona-cards")).toBeVisible();
-    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(9);
-    await expect(page.getByTestId("coming-disclosure")).toBeVisible();
+    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(13);
+    await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
     await page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true }).click();
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true })).toContainText("Too many tries. Wait a moment, then tap again.");
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Yard Team", exact: true })).not.toContainText("Too many tries");
@@ -368,12 +368,15 @@ test.describe("the persona cards", () => {
     await serve(page, baseURL!, { personas: true, personasOpen: true, personaCaller: "public" });
     await page.goto("/");
     const publicCards = page.getByTestId("persona-cards").getByRole("button");
-    await expect(publicCards).toHaveCount(8);
+    await expect(publicCards).toHaveCount(10);
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
+    for (const name of ["General Manager", "HR"]) {
+      await expect(page.getByTestId("persona-cards").getByRole("button", { name, exact: true })).toHaveCount(0);
+    }
     await serve(page, baseURL!, { personas: true, personasOpen: false, personaCaller: "partner" });
     await page.goto("/");
     await signInAsPartner(page);
-    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(9);
+    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(13);
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(1);
   });
 

@@ -64,6 +64,10 @@ func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
 	plantedIDs[strings.ToLower(payRecUserID)] = true
 	plantedIDs[strings.ToLower(buyerUserID)] = true
 	plantedIDs[strings.ToLower(controllerUserID)] = true
+	plantedIDs[strings.ToLower(gmUserID)] = true
+	plantedIDs[strings.ToLower(hrUserID)] = true
+	plantedIDs[strings.ToLower(bmUserID)] = true
+	plantedIDs[strings.ToLower(osUserID)] = true
 	for _, p := range flows.Personas() {
 		plantedIDs[strings.ToLower(p.UserID)] = true
 	}

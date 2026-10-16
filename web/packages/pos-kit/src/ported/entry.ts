@@ -27,12 +27,7 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
  * so there is no third card either). Coming means coming: a disabled control
  * that drops its fill and goes grey, never a faded one.
  */
-export const COMING_ROLES: readonly string[] = [
-  "Outside Sales",
-  "Branch Manager",
-  "General Manager",
-  "HR",
-];
+export const COMING_ROLES: readonly string[] = [];
 
 export type FlowsState =
   | { kind: "loading" }
@@ -61,7 +56,11 @@ const FLOW_ICONS: Record<string, string> = {
   "payables-receivables": "lucide:landmark",
   "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
+  "general-manager": "lucide:shield-check",
+  hr: "lucide:users",
+  "branch-manager": "lucide:store",
   "logistics-manager": "lucide:route",
+  "outside-sales": "lucide:file-pen-line",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -70,7 +69,11 @@ const FLOW_BLURBS: Record<string, string> = {
   "payables-receivables": "Chase overdue accounts and work the bounced payments.",
   "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
+  "general-manager": "Decide what only leadership may decide.",
+  hr: "People, messages and the dealer's staff settings.",
+  "branch-manager": "Run the branch: the counter, quotes, dispatch and approvals.",
   "logistics-manager": "Build the day's loads and send the trucks out.",
+  "outside-sales": "Build quotes in the field.",
 };
 
 export const entryStyles = css`
@@ -268,7 +271,9 @@ export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResu
       )}
     </div>
     ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
-    ${copy.coming === false ? nothing : html`<section class="coming-card">
+    ${copy.coming === false || COMING_ROLES.length === 0
+      ? nothing
+      : html`<section class="coming-card">
       <h2 class="coming-heading">Coming</h2>
       <ul class="coming" aria-label="Coming roles">
         ${COMING_ROLES.map(
