@@ -261,10 +261,10 @@ function reminderRulesTable(om: OfficeModel): TemplateResult {
         <h3>Reminder rules</h3>
         <span class="pill pill-plain">${rules.phase === "ready" ? rules.items.length : 0} rules</span>
       </div>
-      ${rules.phase === "none" || rules.phase === "loading"
-        ? html`<p class="dim" role="status">Loading the rules.</p><div class="ghost"></div>`
-        : rules.phase === "error"
-          ? html`<p class="alert alert-error" role="alert" data-error>${rules.words}</p>`
+      ${rules.phase === "error"
+        ? html`<p class="alert alert-error" role="alert" data-error>${rules.words}</p>`
+        : rules.phase !== "ready"
+          ? html`<p class="dim" role="status">Loading the rules.</p><div class="ghost"></div>`
           : rules.items.length === 0
             ? html`<p class="dim" data-rules-empty>No reminder rule is set up yet. Five default rules belong in the office view.</p>`
             : html`
@@ -284,7 +284,7 @@ function reminderRulesTable(om: OfficeModel): TemplateResult {
                     </thead>
                     <tbody>
                       ${rules.items.map(
-                        (r) => reminderRuleRow(r, account?.customer_id ?? "", om.busy),
+                        (r: BillingReminderRule) => reminderRuleRow(r, account?.customer_id ?? "", om.busy),
                       )}
                     </tbody>
                   </table>

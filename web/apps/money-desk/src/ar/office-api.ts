@@ -184,9 +184,10 @@ export class OfficeApi {
 
   /** The cross-account Promises tab read. */
   promises(status?: readonly string[], customerId?: string): Promise<Result<BillingPromisePage>> {
+    const statusParam = status === undefined || status.length === 0 ? undefined : (status.join(",") as "OPEN" | "KEPT" | "BROKEN" | "CANCELLED" | "OPEN,KEPT");
     return staffBilling.billingListPromises(this.#client, {
       limit: 100,
-      ...(status === undefined || status.length === 0 ? {} : { status: status.join(",") }),
+      ...(statusParam === undefined ? {} : { status: statusParam }),
       ...(customerId === undefined || customerId === "" ? {} : { customer_id: customerId }),
     });
   }

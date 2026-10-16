@@ -3396,6 +3396,9 @@ export type MessagingMessagePost = {
   body: string;
   thread_root_id?: string;
 };
+export type MessagingMessageEdit = {
+  body: string;
+};
 export type MessagingAckRequest = {
   method?: "TAP" | "QUICK_REPLY" | "VOICE";
 };
