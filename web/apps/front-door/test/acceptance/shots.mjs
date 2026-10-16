@@ -85,7 +85,7 @@ async function walk(prefix, viewport, theme) {
   await page.screenshot({ path: join(outDir, `${prefix}front-door-03-sales-manager-home.png`) });
 
   // Switch role again, then the Yard Team's home: the live Yard Pick tile
-  // and House Messages under the coming-next word.
+  // and House Messages as a live tile.
   await page.getByRole("button", { name: "Switch role", exact: true }).click();
   await page.getByRole("button", { name: "Yard Team", exact: true }).waitFor();
   await page.getByRole("button", { name: "Yard Team", exact: true }).click();

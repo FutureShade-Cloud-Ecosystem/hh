@@ -1524,6 +1524,7 @@ export type SettingsSurfaceConfig = {
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
   business_zone?: string;
+  legacy_import_source?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;
@@ -2789,6 +2790,7 @@ export type InventoryBrowseRow = {
   available_base: number;
   in_transit_base: number;
   avg_cost_cents?: number;
+  out_at_branches?: string[];
 };
 export type InventoryFacetValue = {
   value: string;
@@ -3224,7 +3226,7 @@ export type LoadBatchView = {
 };
 export type MessagingChannel = {
   id: string;
-  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
+  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";
   branch_id?: string;
   slug?: string;
   name: string;
@@ -3248,6 +3250,13 @@ export type MessagingChannelCreate = {
 };
 export type MessagingDMCreate = {
   user_id: string;
+};
+export type MessagingGroupCreate = {
+  name?: string;
+  member_ids?: string[];
+};
+export type MessagingChannelRename = {
+  name: string;
 };
 export type MessagingChannelMember = {
   channel_id: string;
@@ -7477,6 +7486,23 @@ export type WarrantyPolicy = {
 export type WarrantyPolicyInput = {
   branch_id?: string;
   claim_threshold_cents: number;
+};
+export type WarrantyVendorAgreement = {
+  vendor_id: string;
+  vendor_no: string;
+  vendor_name: string;
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+  updated_at?: string;
+};
+export type WarrantyVendorAgreementInput = {
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+};
+export type WarrantyVendorAgreementPage = {
+  items: WarrantyVendorAgreement[];
 };
 export type WarrantyAddress = {
   line1?: string;

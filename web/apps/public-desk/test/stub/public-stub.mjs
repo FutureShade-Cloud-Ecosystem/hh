@@ -4,6 +4,7 @@
 // the core's, and nothing in the app imports this file. When the real routes
 // land, the page and this suite keep working against them unchanged, because
 // both speak only the contract's shapes:
+//   GET  /api/v1/tenant/config                -> TenantPublicConfig
 //   GET  /api/public/v1/quotes/{token}        -> QuotePublicView (410 gone, 404 unknown)
 //   POST /api/public/v1/quotes/{token}/accept -> QuoteAcceptanceResult (409 already accepted)
 //   GET  /api/v1/products/{id}/image          -> image bytes (the catalogue thumbnail read)
@@ -482,6 +483,18 @@ const server = createServer(async (request, response) => {
     if (url.searchParams.get("on") === "0") MULTI_TOKENS.delete(token);
     else MULTI_TOKENS.add(token);
     respondJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/tenant/config") {
+    respondJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
+    });
     return;
   }
 
