@@ -377,3 +377,32 @@ test("a record refused on a handed over or cancelled pick says what the picker m
   assert.equal(recordRefusalWords(`tasks: ${CORE_PICK_CANCELLED}`), "This pick was cancelled, so your record was not saved. Tell the counter.");
   assert.equal(recordRefusalWords("line 1: that is more than was ordered"), "line 1: that is more than was ordered", "other refusals keep the core's words");
 });
+
+// ---- a held card is never the cached word (row 2122, P2-1) ----
+
+test("a cached held card is released after the re-read: the server's ticket wins, and an unanswered read keeps the cached card", async () => {
+  const { rereadHeldPicks } = await import("../src/yard-logic.ts");
+  const pick = (id, held) => ({
+    task: { id, status: "QUEUED", claimed_by: "" },
+    ticket: { order_id: `o-${id}`, held_from_picking: held, hold_words: held ? "Balance due" : "", lines: [] },
+    shortages: [],
+    picked: [],
+  });
+  const cached = [pick("a", true), pick("b", false), pick("c", true), pick("d", true)];
+  const asked = [];
+  const answers = {
+    a: { ok: true, value: pick("a", false) }, // paid since: released
+    c: { ok: true, value: pick("c", true) }, // still held
+    d: { ok: false, status: 0, error: "offline" }, // unreachable: the cached card stays
+  };
+  const next = await rereadHeldPicks(cached, async (id) => {
+    asked.push(id);
+    return answers[id];
+  });
+  assert.deepEqual(asked.sort(), ["a", "c", "d"], "only the held cards are re-read");
+  assert.equal(next[0].ticket.held_from_picking, false, "the paid hold shows Claim again");
+  assert.equal(next[1], cached[1], "an unheld card is untouched");
+  assert.equal(next[2].ticket.held_from_picking, true);
+  assert.equal(next[3], cached[3], "offline the card still says held and the server's claim door decides");
+  assert.equal(next.length, cached.length);
+});

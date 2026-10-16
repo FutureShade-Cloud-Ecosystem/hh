@@ -489,10 +489,15 @@ export function writeCensus(program, sourceFiles) {
 }
 
 /** The census of the app's own src. */
+// The census of the src is computed once per file run: four tests read it and it costs a full type check each time.
+let srcRows = null;
 export function srcWriteCensus() {
-  const program = makeProgram();
-  const files = [...walk(srcDir, (name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))].sort().map((f) => program.getSourceFile(f));
-  return writeCensus(program, files);
+  if (srcRows === null) {
+    const program = makeProgram();
+    const files = [...walk(srcDir, (name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))].sort().map((f) => program.getSourceFile(f));
+    srcRows = writeCensus(program, files);
+  }
+  return srcRows;
 }
 
 /** The census of one piece of source text placed in the src, so it imports the real client and the real sender: what the census's own tests feed it. */
