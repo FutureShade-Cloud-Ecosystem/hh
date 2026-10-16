@@ -162,3 +162,7 @@ additions:
     reason: "The warranty claim threshold read (walk change 6): the effective org or branch policy the Manager Home Warranty board, the counter till's return sentence and Dealer Admin's Warranty page read; the ERP had no claim threshold at all; no ERP source route."
   - route: "PUT /api/v1/warranty/policy"
     reason: "The warranty claim threshold write (walk change 6): Dealer Admin's Warranty page sets the org default or one branch override in integer cents, and the change rides the audit spine with the old and new value; the ERP had no claim threshold at all; no ERP source route."
+  - route: "GET /api/v1/warranty/agreements"
+    reason: "The vendor warranty credit agreements read (walk change 6): every active vendor with its effective agreement (claim by claim, a periodic credit note, or a fixed allowance) the Manager Home Vendors and credits board and Dealer Admin's Warranty page read; the ERP recorded no per vendor credit terms; no ERP source route."
+  - route: "PUT /api/v1/warranty/agreements/{vendorID}"
+    reason: "The vendor warranty credit agreement write (walk change 6): Dealer Admin's Warranty page sets one vendor's kind, period and allowance percent, and each moved knob rides the audit spine with its old and new value; the ERP recorded no per vendor credit terms; no ERP source route."

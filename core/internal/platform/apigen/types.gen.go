@@ -8716,6 +8716,26 @@ type WarrantyPolicyInput struct {
 	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
 }
 
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
+}
+
 type WarrantyAddress struct {
 	Line1    *string `json:"line1,omitempty"`
 	City     *string `json:"city,omitempty"`
