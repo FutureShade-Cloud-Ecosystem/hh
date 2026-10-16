@@ -6,26 +6,27 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The nine live roles are the demo mint's own with their screens on the box
+- The thirteen live roles are the demo mint's own with their screens on the box
   (`inside_sales` to flow `sales`, `sales_manager` to flow `sales-manager`,
   `yard_manager` to flow `yard-manager`, `yard_team` to flow `yard-team`,
   `payables_receivables` to flow `payables-receivables`,
   `procurement_manager` to flow `procurement-manager`, `driver` to flow
-  `driver`, `financial_controller` to flow `financial-controller`, `logistics_manager`
-  to flow `logistics-manager`), labelled
+  `driver`, `financial_controller` to flow `financial-controller`, `general_manager` to
+  flow `general-manager`, `hr` to flow `hr`, `branch_manager` to flow `branch-manager`, `logistics_manager` to flow
+  `logistics-manager`, `outside_sales` to flow `outside-sales`), labelled
   on the cards the way the demo adapter's contract names them ("Sales",
   "Sales manager", "Yard manager", "Yard Team", "Payables and Receivables",
-  "Procurement manager", "Driver", "Financial Controller", "Logistics Manager"),
-  the same rule the
+  "Procurement manager", "Driver", "Financial Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"), the same rule the
   till's entry view follows. The yard manager's live module is Manager Home
   at `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`;
   the Money Desk at `/money-desk/` is the live module of Payables and
   Receivables and of the Financial Controller; the dispatch board at
   `/dispatch/` is the live module of the Logistics Manager and the yard manager's
   Dispatch tile.
-- The four other roles of ROLE-ACCESS-r3 stay visible as coming, each with
-  the modules the matrix gives it at work, manage or admin level, never
-  tappable. The catalog lives in `src/roles.ts`, distilled once from the
+- Every role of ROLE-ACCESS-r3 is live, so no coming row is drawn and the
+  coming disclosure does not render; a role the matrix adds later would sit
+  in `COMING_ROLES` first, shown with the modules the matrix gives it at
+  work, manage or admin level and never tappable. The catalog lives in `src/roles.ts`, distilled once from the
   decided record; the record itself is read only and is not carried here.
 - The sign-in path is the original demo's pattern (the role picker of
   `futurebuildai/hardscapeos_dibbits`, branch `Demo`, read only): one mint at
