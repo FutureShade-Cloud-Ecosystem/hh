@@ -354,7 +354,10 @@ test("no credential header rides any call, every call is a public route or the i
     expect(sighting.headerNames).not.toContain("x-org");
     const isPublic = sighting.path.startsWith("/api/public/v1/");
     const isImageRead = /^\/api\/v1\/products\/[^/]+\/image$/.test(sighting.path);
-    expect(isPublic || isImageRead).toBe(true);
+    // The tenant config read only names the browser tab's dealer title; it is
+    // a public GET (no credential, no token onward) the page fires once.
+    const isTenantTitleRead = sighting.method === "GET" && sighting.path === "/api/v1/tenant/config";
+    expect(isPublic || isImageRead || isTenantTitleRead).toBe(true);
   }
 
   const storage = await page.evaluate(() => ({

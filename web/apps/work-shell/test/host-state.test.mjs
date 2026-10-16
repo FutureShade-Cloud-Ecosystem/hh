@@ -46,11 +46,15 @@ test("signing in lands each role on its own app, with the switcher the profile g
   assert.equal(yard.currentAppId, "manager-home");
 });
 
-test("a role with no Work app signs in to an empty desk and lands nowhere", () => {
+test("a role holding one Work app signs in to that app, and a role with none lands nowhere", () => {
   const driver = signedIn(initialState(), session("driver"), apps);
   assert.equal(driver.phase, "desk");
-  assert.equal(driver.currentAppId, null);
-  assert.deepEqual(driver.apps, []);
+  assert.equal(driver.currentAppId, "house-messages");
+  assert.deepEqual(driver.apps.map((a) => a.id), ["house-messages"]);
+  const nobody = signedIn(initialState(), session("fb_operator"), apps);
+  assert.equal(nobody.phase, "desk");
+  assert.equal(nobody.currentAppId, null);
+  assert.deepEqual(nobody.apps, []);
 });
 
 test("opening an app the role holds changes the current app; one it does not hold changes nothing", () => {
@@ -77,7 +81,7 @@ test("a second person signing in after a Switch role starts clean: no app, no sw
   assert.equal(second.session.userId, "demo-account-yard_team");
   assert.deepEqual(
     second.apps.map((a) => a.id),
-    ["dispatch-board", "buying-and-stock"],
+    ["dispatch-board", "buying-and-stock", "house-messages"],
   );
   assert.equal(second.currentAppId, "buying-and-stock");
 });

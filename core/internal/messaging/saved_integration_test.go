@@ -73,11 +73,15 @@ func s5PlantChannel(t *testing.T, pool *pgxpool.Pool, kind, name, topic string, 
 	t.Helper()
 	ctx := context.Background()
 	slug := fmt.Sprintf("s5-%d", time.Now().UnixNano())
+	var slugArg any = slug
+	if kind == KindGroup {
+		slugArg = nil
+	}
 	var id string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, slug, name, topic)
 		VALUES ($1, $2, $3, $4)
-		RETURNING id::text`, kind, slug, name, topic).Scan(&id); err != nil {
+		RETURNING id::text`, kind, slugArg, name, topic).Scan(&id); err != nil {
 		t.Fatalf("plant %s channel: %v", kind, err)
 	}
 	for i, userID := range memberIDs {

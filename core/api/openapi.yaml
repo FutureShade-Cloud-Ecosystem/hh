@@ -12017,7 +12017,7 @@ paths:
       tags:
         - staff-messaging
       summary: Found a TEAM or TOPIC channel, idempotently on its slug
-      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM, APPROVAL and GROUP kinds are structural, system-provisioned or routed through their own doors (a group room goes through POST /api/v1/messaging/groups) and are refused with 400."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -12097,13 +12097,86 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/groups:
+    post:
+      operationId: messagingCreateGroup
+      tags:
+        - staff-messaging
+      summary: Start a group room with an optional name and any set of staffers
+      description: "A group is the change 7 ruling's named room: any staffer may start one, membership is explicit (never rule filled, like a direct message's), and the room spans branches, so the people named need reach no branch the caller holds. The name is optional: a group started with no name takes its members' display names as its name until a member renames it. The caller is seated as the group's owner and every named staffer as an explicit member; a staffer who is not active is refused with 403 and an id that names no staffer is 404. There is no convergence: every call starts a new group."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingGroupCreate"
+      responses:
+        "201":
+          description: The group room as started, the caller its owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/messaging/channels/{id}:
+    patch:
+      operationId: messagingRenameChannel
+      tags:
+        - staff-messaging
+      summary: Rename a group room; any member may, and a system line records it
+      description: "Renaming is the group room's own move (the change 7 ruling): any member of the group may rename it, the new name shows to every member through the ordinary channel reads, and the rename writes a system line naming who renamed the group and to what. A caller who is not a member is refused with 403, an unknown room is 404, an empty name is 400, and a room of any other kind (a direct message's name is its parties', a channel's name is its founders') refuses with 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelRename"
+      responses:
+        "200":
+          description: The renamed room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
       tags:
         - staff-messaging
       summary: Seat one staffer in a channel the caller belongs to
-      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A group room is the change 7 ruling's exception to the manager rule: any member may add any staffer by hand, of any branch (a group spans branches), and the fresh seat writes a system line naming who was added and by whom. A user who is not an active staffer is 404 or 403."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -25451,6 +25524,76 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           description: A negative threshold, or an unknown branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/warranty/agreements:
+    get:
+      operationId: warrantyListVendorAgreements
+      tags:
+        - staff-warranty
+      summary: List every active vendor's warranty credit agreement
+      description: "One row per active vendor, in vendor name order. A vendor the dealer never set answers the default claim_by_claim, with no period and no allowance: the default lives in the read alone."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - manager-home
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The vendor agreements, every active vendor in one read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreementPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/warranty/agreements/{vendorID}:
+    put:
+      operationId: warrantyUpsertVendorAgreement
+      tags:
+        - staff-warranty
+      summary: Write one vendor's warranty credit agreement
+      description: The path is the source of truth for which vendor the agreement belongs to. claim_by_claim clears the period and the allowance (the kind is the rule, the other two carry nothing on their own); a periodic credit note or a fixed allowance carries a standard month or quarter, and a fixed allowance carries its percent of the vendor's purchases as integer basis points. Each moved knob rides the audit spine with its old and new value; a save that moved nothing writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyVendorAgreementInput"
+      responses:
+        "200":
+          description: The stored agreement, the effective row read back
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: An unknown vendor, an off-vocabulary kind or period, or an out of range allowance
           content:
             application/json:
               schema:
@@ -38891,6 +39034,7 @@ components:
             - TOPIC
             - DM
             - APPROVAL
+            - GROUP
         branch_id:
           type: string
         slug:
@@ -38959,6 +39103,25 @@ components:
         user_id:
           type: string
           format: uuid
+    MessagingGroupCreate:
+      type: object
+      description: "One new group room. The name is optional (a group started with no name takes its members' display names until a member renames it) and so is the set: the caller is always a member and its owner, and each named staffer is seated as an explicit member. There is no convergence; every call starts a new group."
+      properties:
+        name:
+          type: string
+        member_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    MessagingChannelRename:
+      type: object
+      description: The group room's new name; a system line records who renamed it
+      required:
+        - name
+      properties:
+        name:
+          type: string
     MessagingChannelMember:
       type: object
       description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
@@ -54218,6 +54381,76 @@ components:
           format: int64
           minimum: 0
           description: The new threshold in integer cents, zero or more
+    WarrantyVendorAgreement:
+      type: object
+      description: "One vendor's effective warranty credit agreement: the stored row when the dealer set one, the default claim_by_claim when not. The period rides only for a periodic credit note or a fixed allowance; the allowance rides only for a fixed allowance, as integer basis points of the vendor's purchases in the period."
+      required:
+        - vendor_id
+        - vendor_no
+        - vendor_name
+        - agreement_kind
+        - allowance_bp
+      properties:
+        vendor_id:
+          type: string
+        vendor_no:
+          type: string
+          description: Joined from the vendor master for display
+        vendor_name:
+          type: string
+          description: Joined from the vendor master for display
+        agreement_kind:
+          type: string
+          enum:
+            - claim_by_claim
+            - periodic_credit_note
+            - fixed_allowance
+        period:
+          type: string
+          enum:
+            - monthly
+            - quarterly
+          description: The standard period the agreement runs on; absent for claim_by_claim
+        allowance_bp:
+          type: integer
+          description: The fixed allowance in basis points of the vendor's purchases; zero otherwise
+        updated_at:
+          type: string
+          format: date-time
+    WarrantyVendorAgreementInput:
+      type: object
+      description: One vendor's agreement write payload. claim_by_claim ignores a period or allowance that rides beside it and stores them cleared.
+      required:
+        - agreement_kind
+        - allowance_bp
+      properties:
+        agreement_kind:
+          type: string
+          enum:
+            - claim_by_claim
+            - periodic_credit_note
+            - fixed_allowance
+        period:
+          type: string
+          enum:
+            - monthly
+            - quarterly
+          description: Required for a periodic credit note or a fixed allowance
+        allowance_bp:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The fixed allowance in basis points; zero otherwise
+    WarrantyVendorAgreementPage:
+      type: object
+      description: Every active vendor with its effective agreement, in vendor name order
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarrantyVendorAgreement"
     WarrantyAddress:
       type: object
       description: The job-site (failure-location) address shape

@@ -185,6 +185,7 @@ func TestIntegrationSearch_ChannelsExcludeForeignPrivateRooms(t *testing.T) {
 	publicID := s5PlantChannel(t, pool, KindTopic, "S5Channel Public", "S5Channel topic", s5OutsiderID)
 	s5PlantChannel(t, pool, KindDM, "S5Channel Foreign DM", "", s5OutsiderID)
 	s5PlantChannel(t, pool, KindApproval, "S5Channel Foreign Approval", "", s5OutsiderID)
+	s5PlantChannel(t, pool, KindGroup, "S5Channel Foreign Group", "", s5OutsiderID)
 	memberDM := s5PlantChannel(t, pool, KindDM, "S5Channel Member DM", "", s5OutsiderID, s5CallerID)
 
 	body := s5Search(t, pool, s5CallerID, "/api/v1/messaging/search?q=s5channel&limit=50")
