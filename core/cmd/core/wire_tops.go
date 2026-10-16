@@ -465,6 +465,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
 		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewARWorklistHandler(billing.NewARWorklistService(billingRepo).WithZone(newDealerZone(pool)), log).
+		WithZone(newDealerZone(pool)).
+		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing
 	// predicate through dispatch's consumer-declared gate.

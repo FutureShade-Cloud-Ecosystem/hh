@@ -215,6 +215,7 @@ function reset(kind = "full") {
       payments: [],
     })),
     payments: [],
+    credits: [{ acct: 4, amount_cents: 12_500 }],
     holds: [],
     statements: new Map(),
     runs: new Map(),
@@ -232,6 +233,24 @@ function reset(kind = "full") {
     status: "OPEN",
     promised_by: "Accounts payable",
     note: "Cheque is being cut",
+    taken_at: NOW_ISO(),
+  };
+  world.invoices[2].promise = {
+    id: uuid("f", 3),
+    promised_cents: 50_000,
+    promised_date: dayOffset(-2),
+    status: "BROKEN",
+    promised_by: "Accounts payable",
+    note: "The promised transfer did not arrive",
+    taken_at: NOW_ISO(),
+  };
+  world.invoices[4].promise = {
+    id: uuid("f", 5),
+    promised_cents: 20_000,
+    promised_date: dayOffset(0),
+    status: "OPEN",
+    promised_by: "Accounts payable",
+    note: "Transfer is due today",
     taken_at: NOW_ISO(),
   };
   // One payment already bounced: it reopened the second invoice of the first account.
@@ -302,6 +321,77 @@ function c8BucketOf(days) {
   if (days <= 60) return { label: "31 to 60", key: "31_60" };
   if (days <= 90) return { label: "61 to 90", key: "61_90" };
   return { label: "91 and over", key: "90_PLUS" };
+}
+
+function worklist(q) {
+  const rows = [];
+  for (const a of ACCOUNTS) {
+    const open = world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0);
+    const openARCents = open.reduce((sum, i) => sum + i.balance_cents, 0);
+    const pastDueCents = open.filter((i) => i.late > 0).reduce((sum, i) => sum + i.balance_cents, 0);
+    const over60Cents = open.filter((i) => i.late > 60).reduce((sum, i) => sum + i.balance_cents, 0);
+    const unappliedCreditCents = world.credits.filter((c) => c.acct === a.n).reduce((sum, c) => sum + c.amount_cents, 0);
+    const promises = open.filter((i) => i.promise !== null && ["OPEN", "BROKEN"].includes(i.promise.status));
+    const brokenPromises = promises.filter((i) => i.promise.status === "BROKEN" || (i.promise.status === "OPEN" && i.promise.promised_date < dayOffset(0))).length;
+    const duePromises = promises.filter((i) => i.promise.status === "OPEN" && i.promise.promised_date === dayOffset(0)).length;
+    const openPromises = promises.filter((i) => i.promise.status === "OPEN").length;
+    const promisedCents = promises.filter((i) => i.promise.status === "OPEN").reduce((sum, i) => sum + i.promise.promised_cents, 0);
+    const nextDates = promises.filter((i) => i.promise.status === "OPEN").map((i) => i.promise.promised_date).sort();
+    if (openARCents === 0 && unappliedCreditCents === 0 && brokenPromises + duePromises + openPromises === 0) continue;
+    const onHold = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(a.n));
+    const creditHoldCandidate = onHold || (a.terms > 0 && a.limit > 0 && openARCents > a.limit) || over60Cents > 0;
+    const urgency = brokenPromises > 0 ? "broken_promise" : over60Cents > 0 ? "over_60" : duePromises > 0 ? "promise_due" : creditHoldCandidate ? "credit_hold" : unappliedCreditCents > 0 ? "credit" : pastDueCents > 0 ? "past_due" : "open";
+    const recommendedAction = ["broken_promise", "promise_due"].includes(urgency) ? "review_promise" : urgency === "credit_hold" ? "review_credit_hold" : urgency === "credit" ? "apply_credit" : ["over_60", "past_due"].includes(urgency) ? "record_payment" : "open_account";
+    const oldest = c8BucketOf(open.length === 0 ? 0 : Math.max(...open.map((i) => i.late)));
+    const row = {
+      customer_id: custId(a.n),
+      customer_name: a.name,
+      account_no: a.no,
+      branch_id: branchOf(a.n),
+      open_ar_cents: openARCents,
+      past_due_cents: pastDueCents,
+      over_60_cents: over60Cents,
+      available_credit_cents: Math.max(a.limit - openARCents, 0),
+      unapplied_credit_cents: unappliedCreditCents,
+      oldest_bucket: oldest.label,
+      oldest_bucket_key: oldest.key,
+      broken_promises: brokenPromises,
+      due_promises: duePromises,
+      open_promises: openPromises,
+      promised_cents: promisedCents,
+      on_hold: onHold,
+      credit_hold_candidate: creditHoldCandidate,
+      action_needed: urgency !== "open",
+      urgency,
+      recommended_action: recommendedAction,
+    };
+    if (nextDates.length > 0) row.next_promise_date = nextDates[0];
+    rows.push(row);
+  }
+  const summary = {
+    total_past_due_cents: rows.reduce((sum, r) => sum + r.past_due_cents, 0),
+    over_60_cents: rows.reduce((sum, r) => sum + r.over_60_cents, 0),
+    broken_promises: rows.reduce((sum, r) => sum + r.broken_promises, 0),
+    unapplied_credits_cents: rows.reduce((sum, r) => sum + r.unapplied_credit_cents, 0),
+  };
+  const counts = {
+    all_open: rows.length,
+    action_needed: rows.filter((r) => r.action_needed).length,
+    over_60: rows.filter((r) => r.over_60_cents > 0).length,
+    credit_hold: rows.filter((r) => r.credit_hold_candidate).length,
+  };
+  const rank = { broken_promise: 0, over_60: 1, promise_due: 2, credit_hold: 3, credit: 4, past_due: 5, open: 6 };
+  rows.sort((a, b) => rank[a.urgency] - rank[b.urgency] || b.past_due_cents - a.past_due_cents || b.over_60_cents - a.over_60_cents || a.customer_name.localeCompare(b.customer_name) || a.customer_id.localeCompare(b.customer_id));
+  const chip = q.get("chip") ?? "all";
+  const query = (q.get("q") ?? "").trim().toLowerCase();
+  const shown = rows.filter((r) => {
+    if (query !== "" && !`${r.customer_name} ${r.account_no} ${r.customer_id}`.toLowerCase().includes(query)) return false;
+    if (chip === "action_needed") return r.action_needed;
+    if (chip === "over_60") return r.over_60_cents > 0;
+    if (chip === "credit_hold") return r.credit_hold_candidate;
+    return true;
+  });
+  return { rows: shown, summary, counts, as_of: dayOffset(0) };
 }
 
 function registerRow(inv) {
@@ -650,6 +740,12 @@ async function handle(req, res) {
     if (body === null && (method === "POST" || method === "PUT")) return refuse(res, 400, "invalid_json");
     const answer = lienWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  if (method === "GET" && path === "/api/v1/billing/ar/worklist") {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const chip = q.get("chip") ?? "all";
+    if (!["all", "action_needed", "over_60", "credit_hold"].includes(chip)) return refuse(res, 400, "a worklist filter must be all, action_needed, over_60, or credit_hold");
+    return send(res, 200, worklist(q));
   }
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
   if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");

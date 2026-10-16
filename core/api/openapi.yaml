@@ -807,6 +807,63 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/billing/ar/worklist:
+    get:
+      operationId: billingGetARWorklist
+      tags:
+        - staff-billing
+      summary: Read the receivables collections worklist
+      description: Customers with open receivables, broken or due promises, or unapplied credits. Past due and over 60 figures come from the same S0 aging rows as the AR aging read. The summary and filter counts cover the whole worklist before q and chip narrow the returned rows.
+      x-addition: Change 8 collections worklist over the existing AR aging, promises, and credit memos; no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive customer name, account number, or customer id search
+          schema:
+            type: string
+        - name: chip
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - all
+              - action_needed
+              - over_60
+              - credit_hold
+            default: all
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The urgency-sorted worklist, its summary strip, and filter counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingARWorklistResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/ar/register:
     get:
       operationId: billingListRegister
@@ -28570,6 +28627,173 @@ components:
         as_of:
           type: string
           format: date-time
+    BillingARWorklistRow:
+      type: object
+      required:
+        - customer_id
+        - customer_name
+        - account_no
+        - branch_id
+        - open_ar_cents
+        - past_due_cents
+        - over_60_cents
+        - available_credit_cents
+        - unapplied_credit_cents
+        - oldest_bucket
+        - oldest_bucket_key
+        - broken_promises
+        - due_promises
+        - open_promises
+        - promised_cents
+        - on_hold
+        - credit_hold_candidate
+        - action_needed
+        - urgency
+        - recommended_action
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        account_no:
+          type: string
+        branch_id:
+          type: string
+        open_ar_cents:
+          type: integer
+          format: int64
+        past_due_cents:
+          type: integer
+          format: int64
+          description: Sum of the four S0 late buckets for this account
+        over_60_cents:
+          type: integer
+          format: int64
+          description: S0 days_60_to_90_cents plus days_90_plus_cents
+        available_credit_cents:
+          type: integer
+          format: int64
+        unapplied_credit_cents:
+          type: integer
+          format: int64
+          description: Positive sum of open credit memo balances for this account
+        oldest_bucket:
+          type: string
+          enum:
+            - Current
+            - 1 to 30
+            - 31 to 60
+            - 61 to 90
+            - 91 and over
+        oldest_bucket_key:
+          type: string
+          enum:
+            - CURRENT
+            - 1_30
+            - 31_60
+            - 61_90
+            - 90_PLUS
+        broken_promises:
+          type: integer
+          format: int32
+        due_promises:
+          type: integer
+          format: int32
+        open_promises:
+          type: integer
+          format: int32
+        promised_cents:
+          type: integer
+          format: int64
+        next_promise_date:
+          type:
+            - string
+            - "null"
+          format: date
+        on_hold:
+          type: boolean
+        credit_hold_candidate:
+          type: boolean
+        action_needed:
+          type: boolean
+        urgency:
+          type: string
+          enum:
+            - broken_promise
+            - over_60
+            - promise_due
+            - credit_hold
+            - credit
+            - past_due
+            - open
+        recommended_action:
+          type: string
+          enum:
+            - record_payment
+            - review_promise
+            - review_credit_hold
+            - apply_credit
+            - open_account
+    BillingARWorklistSummary:
+      type: object
+      required:
+        - total_past_due_cents
+        - over_60_cents
+        - broken_promises
+        - unapplied_credits_cents
+      properties:
+        total_past_due_cents:
+          type: integer
+          format: int64
+        over_60_cents:
+          type: integer
+          format: int64
+        broken_promises:
+          type: integer
+          format: int32
+        unapplied_credits_cents:
+          type: integer
+          format: int64
+    BillingARWorklistCounts:
+      type: object
+      required:
+        - all_open
+        - action_needed
+        - over_60
+        - credit_hold
+      properties:
+        all_open:
+          type: integer
+          format: int32
+        action_needed:
+          type: integer
+          format: int32
+        over_60:
+          type: integer
+          format: int32
+        credit_hold:
+          type: integer
+          format: int32
+    BillingARWorklistResponse:
+      type: object
+      required:
+        - rows
+        - summary
+        - counts
+        - as_of
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingARWorklistRow"
+        summary:
+          $ref: "#/components/schemas/BillingARWorklistSummary"
+        counts:
+          $ref: "#/components/schemas/BillingARWorklistCounts"
+        as_of:
+          type: string
+          format: date
     BillingReceiptInput:
       type: object
       description: A payment taken off-gateway against one invoice

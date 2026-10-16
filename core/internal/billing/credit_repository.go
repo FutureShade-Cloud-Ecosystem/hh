@@ -336,3 +336,91 @@ func (r *Repository) OrderDispatchFacts(ctx context.Context, orderID string) (Di
 	}
 	return f, nil
 }
+
+// WorklistFacts gathers unapplied credit memo balances and open/broken promise counts by customer
+// for the AR collections worklist.
+func (r *Repository) WorklistFacts(ctx context.Context, asOf time.Time, branchID string, reach BranchReach) (map[string]WorklistAccountFacts, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	day, err := r.clockAt(ctx, asOf)
+	if err != nil {
+		return nil, err
+	}
+	facts := map[string]WorklistAccountFacts{}
+
+	creditRows, err := r.pool.Query(ctx, `
+		SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text, ''),
+		       c.payment_terms_days, c.credit_limit_cents, COALESCE(SUM(-i.balance_cents), 0)
+		  FROM customers c
+		  JOIN invoices i ON i.customer_id = c.id
+		 WHERE i.status IN ('FINALIZED', 'PARTIALLY_PAID')
+		   AND i.doc_type = 'CREDIT_MEMO'
+		   AND i.balance_cents < 0
+		   AND ($1 = '' OR i.branch_id = $1::uuid)
+		   AND ($2::uuid[] IS NULL OR i.branch_id = ANY($2::uuid[]))
+		 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents`, branchID, reach.SQLArg())
+	if err != nil {
+		return nil, fmt.Errorf("billing: worklist credits: %w", err)
+	}
+	defer creditRows.Close()
+	for creditRows.Next() {
+		var account WorklistAccount
+		var cents int64
+		if err := creditRows.Scan(&account.CustomerID, &account.CustomerName, &account.AccountNo, &account.BranchID,
+			&account.TermsDays, &account.CreditLimitCents, &cents); err != nil {
+			return nil, fmt.Errorf("billing: scan worklist credit: %w", err)
+		}
+		fact := facts[account.CustomerID]
+		fact.Account = account
+		fact.UnappliedCreditCents = cents
+		facts[account.CustomerID] = fact
+	}
+	if err := creditRows.Err(); err != nil {
+		return nil, err
+	}
+
+	promiseRows, err := r.pool.Query(ctx, `
+		SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text, ''),
+		       c.payment_terms_days, c.credit_limit_cents,
+		       COUNT(*) FILTER (WHERE p.status = 'BROKEN' OR (p.status = 'OPEN' AND p.promised_date < $1::date)),
+		       COUNT(*) FILTER (WHERE p.status = 'OPEN' AND p.promised_date = $1::date),
+		       COUNT(*) FILTER (WHERE p.status = 'OPEN'),
+		       COALESCE(SUM(p.promised_cents) FILTER (WHERE p.status = 'OPEN'), 0),
+		       MIN(p.promised_date) FILTER (WHERE p.status = 'OPEN')
+		  FROM customers c
+		  JOIN ar_promises_to_pay p ON p.customer_id = c.id
+		  JOIN invoices i ON i.id = p.invoice_id
+		 WHERE p.status IN ('OPEN', 'BROKEN')
+		   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
+		   AND i.balance_cents > 0
+		   AND ($2 = '' OR i.branch_id = $2::uuid)
+		   AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+		 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents`, day, branchID, reach.SQLArg())
+	if err != nil {
+		return nil, fmt.Errorf("billing: worklist promises: %w", err)
+	}
+	defer promiseRows.Close()
+	for promiseRows.Next() {
+		var account WorklistAccount
+		var broken, due, open int
+		var promised int64
+		var next *time.Time
+		if err := promiseRows.Scan(&account.CustomerID, &account.CustomerName, &account.AccountNo, &account.BranchID,
+			&account.TermsDays, &account.CreditLimitCents, &broken, &due, &open, &promised, &next); err != nil {
+			return nil, fmt.Errorf("billing: scan worklist promise: %w", err)
+		}
+		fact := facts[account.CustomerID]
+		fact.Account = account
+		fact.BrokenPromises = broken
+		fact.DuePromises = due
+		fact.OpenPromises = open
+		fact.PromisedCents = promised
+		fact.NextPromiseDate = next
+		facts[account.CustomerID] = fact
+	}
+	if err := promiseRows.Err(); err != nil {
+		return nil, err
+	}
+	return facts, nil
+}

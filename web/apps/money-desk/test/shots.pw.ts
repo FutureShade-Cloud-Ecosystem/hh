@@ -46,7 +46,7 @@ for (const size of SIZES) {
 
       await page.locator("[data-register-row]", { hasText: "INV-1001" }).getByRole("button", { name: "Record payment" }).click();
       await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
-      await page.getByRole("button", { name: "Pick all open" }).click();
+      await page.getByRole("button", { name: "Apply oldest-first" }).click();
       const amount = page.locator("[data-field='receive-amount']");
       await amount.fill("5000");
       await amount.blur();

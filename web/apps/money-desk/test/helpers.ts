@@ -41,6 +41,7 @@ export async function openDesk(page: Page, request: APIRequestContext, who?: "co
   await page.goto("/");
   // The controller lands on the ledger; the receivables desk is one tap away.
   if (who === "controller") await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await page.getByRole("button", { name: "Register", exact: true }).click();
   await expect(page.locator("[data-card]")).toHaveCount(4);
 }
 

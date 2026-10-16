@@ -50,7 +50,7 @@ test("the desk opens on the register: four tiles, the rows overdue first, Needs 
   await expect(page.locator("[data-bounced-row]")).toHaveCount(1);
   await expect(page.locator("[data-need-hold]")).toHaveCount(2);
   await expect(page.locator("[data-need-paper]")).toHaveCount(1);
-  await expect(page.locator(".tab-later", { hasText: "Payables" })).toContainText("later");
+  await expect(page.getByRole("button", { name: "Holds & Policy", exact: true })).toBeVisible();
 });
 
 test("a tile filters the register to the accounts it counted, and clears", async ({ page, request }) => {
@@ -105,7 +105,7 @@ test("aging to payment applied: Record payment on a row opens the account with t
 test("one payment across two invoices: the server splits it oldest first and posts it as one payment", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   const amount = page.locator("[data-field='receive-amount']");
   await amount.fill("$5,000.00");
   await amount.blur();
@@ -123,7 +123,7 @@ test("one payment across two invoices: the server splits it oldest first and pos
 test("a preview answers while a payments writer is mid flight (the final route's preview draws no counter)", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   const amount = page.locator("[data-field='receive-amount']");
   await amount.fill("$5,000.00");
   await amount.blur();
@@ -151,7 +151,7 @@ type ApplyBody = { preview: boolean; idempotency_key: string; amount_cents: numb
 async function readyToPay(page: Page, request: Parameters<typeof openDesk>[1], reference: string): Promise<void> {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   const amount = page.locator("[data-field='receive-amount']");
   await amount.fill("$5,000.00");
   await amount.blur();
@@ -252,7 +252,7 @@ test("a lost answer then a changed cheque number sends the same key; the refusal
   });
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   await page.locator("[data-field='receive-amount']").fill("500.00");
   await expect(page.locator("[data-applied]")).toHaveText("$500.00 of $500.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 447");
@@ -708,9 +708,9 @@ test("a pick of more than 100 invoices is refused in the browser with the route'
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
-  // Pick all open: 101 invoices. The split area and the press read the route's own ceiling words, and
+  // Apply oldest-first: 101 invoices. The split area and the press read the route's own ceiling words, and
   // the browser is their source: no apply body naming over 100 invoices goes out, not even a preview's.
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   await expect(page.locator("[data-preview-error]")).toContainText("A received payment may name at most 100 invoices; record it as more than one payment");
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("A received payment may name at most 100 invoices; record it as more than one payment");
@@ -766,7 +766,7 @@ test("on a phone the unknown outcome message is in view and focused when it appe
   });
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
-  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.getByRole("button", { name: "Apply oldest-first" }).click();
   await page.locator("[data-field='receive-amount']").fill("100.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 447");
   await page.getByRole("button", { name: "Record payment" }).click();

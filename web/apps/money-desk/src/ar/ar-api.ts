@@ -18,6 +18,7 @@ import {
   type BillingApplyPaymentAnswer,
   type BillingApplyPaymentLine,
   type BillingARLanding,
+  type BillingARWorklistResponse,
   type BillingCreditHoldPage,
   type BillingInvoiceDetail,
   type BillingPromiseView,
@@ -58,6 +59,10 @@ export class ArApi {
 
   landing(): Promise<Result<BillingARLanding>> {
     return staffBilling.billingGetARLanding(this.#client);
+  }
+
+  worklist(opts: { chip?: "all" | "action_needed" | "over_60" | "credit_hold"; q?: string } = {}): Promise<Result<BillingARWorklistResponse>> {
+    return staffBilling.billingGetARWorklist(this.#client, opts);
   }
 
   aging(): Promise<Result<BillingAgingPage>> {
