@@ -17,13 +17,15 @@ async function draftTheGap(page: Page): Promise<void> {
 test("the way in with no handoff offers this role's own card", async ({ page, request }) => {
   await resetStub(request);
   await page.goto("/");
-  // The surface's three roles now hold cards here (the inventory and counts
-  // areas brought the yard manager and Payables and Receivables in), and the
-  // procurement manager's card is this app's landing role.
-  await expect(page.locator("[data-flow]")).toHaveCount(3);
+  // The surface's four roles now hold cards here (the inventory and counts
+  // areas brought the yard manager and Payables and Receivables in; the stock
+  // lookup brings Inside sales in, the read only seat), and the procurement
+  // manager's card is this app's landing role.
+  await expect(page.locator("[data-flow]")).toHaveCount(4);
   await expect(page.locator('[data-flow="procurement-manager"]')).toContainText("Procurement manager");
   await expect(page.locator('[data-flow="yard-manager"]')).toContainText("Yard manager");
   await expect(page.locator('[data-flow="payables-receivables"]')).toContainText("Payables and Receivables");
+  await expect(page.locator('[data-flow="inside-sales"]')).toContainText("Inside sales");
 });
 
 test("the header names the role as the reference does, and the theme control is a small button", async ({ page, request }) => {

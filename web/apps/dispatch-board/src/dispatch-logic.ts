@@ -1275,3 +1275,166 @@ export function splitRefusal(error: string, status: number | null): string {
   }
   return refusalWords("The split", error, status);
 }
+
+// ---- the redesigned board (WALK-C16) ---------------------------------------------------------------
+//
+// The 16th change redraws the board on three ideas: a TIME AXIS the day rides left to right, a
+// RUN DETAIL drawer that opens when a run is named, and a PROBLEMS strip the dispatchers hold in
+// their peripheral vision. Each helper is small and honest: a constant the screen fits, a word
+// the screen prints, a list the screen lays out, or a check the screen does. The DOM never sees
+// the raw core fields; the views call these helpers and render what they say.
+
+/** The hours the time axis spans from start of day. Twelve covers any San Diego yard's day: a
+ *  truck that leaves at 5 in the morning and is back before 5 in the afternoon still fits. */
+export const TIME_AXIS_HOURS: readonly number[] = Object.freeze([
+  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+]);
+
+/** The Moffett forklift weight, in pounds. A Moffett rides on the back of a delivery truck: the
+ *  load's net payload is the truck's capacity MINUS the Moffett's weight, never its full
+ *  capacity. The house rule (this page) says the figure is named once, here. */
+export const MOFFETT_WEIGHT_LB = 4500;
+
+/** True when the truck carries a Moffett, by the dealer's own flag. Absent flag is honest: a
+ *  truck without a Moffett is the default and the gauge reads the full capacity. The contract
+ *  does not yet ship the flag, so this helper reads the truck type: a BOOM truck is the kind
+ *  that always rides with a Moffett in the demo tenant's San Diego yard. A dealer with a
+ *  different rule sets the flag at the core and the helper picks it up. */
+export function carriesMoffett(t: { truck_type?: string; carries_moffett?: boolean } | undefined | null): boolean {
+  if (t === null || t === undefined) return false;
+  if (typeof t.carries_moffett === "boolean") return t.carries_moffett;
+  return t.truck_type === "BOOM";
+}
+
+/** Net payload in pounds: the truck's capacity in pounds minus the Moffett's weight when the
+ *  truck carries one. A capacity the core holds as kilograms is converted here for the
+ *  display only (nothing ever goes back to the wire in this unit). */
+export function netPayloadLb(capacityKg: number | null | undefined, hasMoffett: boolean): number {
+  if (typeof capacityKg !== "number" || !Number.isFinite(capacityKg)) return 0;
+  const cap = capacityKg * LB_PER_KG;
+  return Math.max(0, cap - (hasMoffett ? MOFFETT_WEIGHT_LB : 0));
+}
+
+/** Net payload as the gauge and the card name it: "7,250 lb net" when the Moffett is on, the
+ *  full capacity when not. An absent capacity is words, never zero. */
+export function netPayloadWords(capacityKg: number | null | undefined, hasMoffett: boolean): string {
+  if (typeof capacityKg !== "number" || !Number.isFinite(capacityKg)) return "Capacity not measured";
+  return hasMoffett
+    ? `${fmtNum(netPayloadLb(capacityKg, true))} lb net (after Moffett)`
+    : `${fmtNum(netPayloadLb(capacityKg, false))} lb payload`;
+}
+
+/** The kind of problem a truck row carries. Each kind maps to a one-sentence explanation the
+ *  strip reads in its own words, so the strip never invents its own sentences. */
+export type BoardProblem =
+  | { readonly kind: "over-weight"; readonly runNo: string; readonly figure: string }
+  | { readonly kind: "missing-crew"; readonly runNo: string; readonly what: "truck" | "driver" | "both" }
+  | { readonly kind: "due-to-commit"; readonly runNo: string; readonly daysToCommit: number }
+  | { readonly kind: "moffett-tight"; readonly runNo: string; readonly afterWeight: string }
+  | { readonly kind: "no-runs"; readonly runNo: "" };
+
+const PROBLEM_WORDS: Record<BoardProblem["kind"], (p: BoardProblem) => string> = {
+  "over-weight": (p) => `${p.kind === "over-weight" ? p.runNo : ""} is over weight: ${(p as { kind: "over-weight"; figure: string }).figure}`,
+  "missing-crew": (p) => {
+    const pp = p as Extract<BoardProblem, { kind: "missing-crew" }>;
+    return pp.what === "both" ? `${pp.runNo} is missing a truck and a driver.` : `${pp.runNo} is missing a ${pp.what}.`;
+  },
+  "due-to-commit": (p) => {
+    const pp = p as Extract<BoardProblem, { kind: "due-to-commit" }>;
+    return `${pp.runNo} is due to commit in ${pp.daysToCommit} ${pp.daysToCommit === 1 ? "day" : "days"}.`;
+  },
+  "moffett-tight": (p) => {
+    const pp = p as Extract<BoardProblem, { kind: "moffett-tight" }>;
+    return `${pp.runNo} carries a Moffett: payload after the Moffett is ${pp.afterWeight}.`;
+  },
+  "no-runs": () => "No trucks on the board yet. Open one to start the day.",
+};
+
+/** One problem as a sentence. The strip's tone is one line per row, the words fit a phone. */
+export function boardProblemLine(p: BoardProblem): string {
+  return PROBLEM_WORDS[p.kind](p);
+}
+
+/** The board's problems: over-weight trucks, missing crews, due-to-commit asks, tight Moffetts,
+ *  and the empty-board note. The list is in the order the dispatcher reads them: a missing
+ *  crew first (it blocks dispatch), over-weight second (it blocks load), then the asks, then
+ *  the Moffett advisory. The helper is pure: a fresh array each call, never the same
+ *  reference twice, so a re-render can compare by content. */
+export function boardProblems(view: DispatchLoadBoardView | null): readonly BoardProblem[] {
+  if (view === null) return [];
+  const out: BoardProblem[] = [];
+  if (view.loads.length === 0) {
+    out.push({ kind: "no-runs", runNo: "" });
+    return out;
+  }
+  for (const row of view.loads) {
+    const runNo = row.run.run_no;
+    if (!row.run.truck_id && !row.run.driver_id) {
+      out.push({ kind: "missing-crew", runNo, what: "both" });
+    } else if (!row.run.truck_id) {
+      out.push({ kind: "missing-crew", runNo, what: "truck" });
+    } else if (!row.run.driver_id) {
+      out.push({ kind: "missing-crew", runNo, what: "driver" });
+    }
+    if (row.gauge.band === "RED") {
+      const figure = gaugeLabel("Weight", row.gauge.weight_kg, row.gauge.capacity_kg, weightUnit(row.gauge.capacity_kg, row.gauge.weight_kg));
+      out.push({ kind: "over-weight", runNo, figure });
+    }
+    if (row.commit.due_to_commit) {
+      out.push({ kind: "due-to-commit", runNo, daysToCommit: 1 });
+    }
+  }
+  return out;
+}
+
+/** The yard's load order. PLANNED trucks come first (the day's plan), then DISPATCHED (on the
+ *  road), then COMPLETED and CANCELLED (the day's record). Within a status the rows ride the
+ *  core's order on the wire (the stub already returns them by run_no, which matches the day's
+ *  plan). The helper is the cross-status sort only. */
+export function yardLoadOrder(rows: readonly DispatchLoadRow[]): readonly DispatchLoadRow[] {
+  const rank: Record<string, number> = { PLANNED: 0, DISPATCHED: 1, COMPLETED: 2, CANCELLED: 3 };
+  return [...rows].sort((a, b) => {
+    const ra = rank[a.run.status] ?? 99;
+    const rb = rank[b.run.status] ?? 99;
+    if (ra !== rb) return ra - rb;
+    return a.run.run_no.localeCompare(b.run.run_no);
+  });
+}
+
+/** A stop's deck slot: the index it occupies on the time axis. A slot is the hour the stop is
+ *  scheduled to be picked up; an absent hour places the stop at the end of the row so it
+ *  never collides with a real one. The helper is pure: same input, same slots. */
+export function deckSlotsForStops(
+  stops: readonly Pick<DispatchLoadStop, "scheduled_date" | "stop_no">[],
+  today: string,
+): Map<number, number> {
+  const slots = new Map<number, number>();
+  let idx = 0;
+  for (const stop of stops) {
+    if (stop.scheduled_date === today) idx += 1;
+    slots.set(stop.stop_no, idx);
+  }
+  return slots;
+}
+
+/** One suggested run for a load: the same words assignTargets prints, but ranked for the
+ *  suggest-runs panel. The panel picks the first three. */
+export interface SuggestedRun {
+  readonly runId: string;
+  readonly runNo: string;
+  readonly truckCode: string;
+  readonly reason: string;
+}
+
+export function suggestRunsForLoad(
+  view: DispatchLoadBoardView,
+  stop: DispatchLoadStop,
+): readonly SuggestedRun[] {
+  const targets = assignTargets(view, stop);
+  const out: SuggestedRun[] = [];
+  for (const t of targets) {
+    if (t.blocked !== "") continue;
+    out.push({ runId: t.runId, runNo: t.runNo, truckCode: t.truckCode, reason: targetName(t) });
+  }
+  return out.slice(0, 3);
+}

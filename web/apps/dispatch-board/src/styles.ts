@@ -215,6 +215,45 @@ export const boardStyles = css`
   }
 
   .matrix p { max-width: 70ch; }
+
+  /* WALK-C16: the problems strip sits above the load board and disappears when nothing is wrong. */
+  .problems { background: var(--hh-card); border: 1px solid var(--hh-line); border-inline-start: 4px solid var(--hh-state-watch); border-radius: var(--hh-radius-card); padding: var(--hh-s-12) var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .problems-head { display: flex; align-items: baseline; gap: var(--hh-s-8); margin: 0 0 var(--hh-s-8); }
+  .problems-head h3 { font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hh-text-dim); }
+  .problem-list { display: flex; flex-direction: column; gap: var(--hh-s-4); }
+  .problem { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-4) 0; }
+  .problem.applied .problem-line { text-decoration: line-through; color: var(--hh-text-dim); }
+  .problem-line { flex: 1 1 auto; font-size: 14px; font-weight: 600; }
+
+  /* WALK-C16: the time axis the redesigned board draws. Hours across the top, one row per run,
+     stops laid out by stop_no. Each cell is a token-sized square, never a hand-rolled px. */
+  .time-axis { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-12); margin-bottom: var(--hh-s-16); overflow-x: auto; }
+  .time-axis-grid { display: grid; grid-template-columns: minmax(120px, 160px) repeat(12, minmax(48px, 1fr)); gap: var(--hh-s-4); min-width: 720px; }
+  .time-axis-row { display: contents; }
+  .time-axis-cell { display: flex; align-items: center; justify-content: center; min-height: 36px; padding: var(--hh-s-4); border-radius: var(--hh-radius-control); border: 1px dashed var(--hh-line); background: transparent; color: var(--hh-text-dim); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .time-axis-cell.head-run, .time-axis-cell.head-hour { border: 0; background: transparent; color: var(--hh-text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+  .time-axis-cell.has-stop { background: color-mix(in srgb, var(--hh-state-good) 18%, var(--hh-card)); color: var(--hh-text); border-color: var(--hh-state-good); border-style: solid; font-weight: 700; }
+  .time-axis-cell.axis-run { background: transparent; border: 0; color: var(--hh-text); font-family: var(--hh-font-mono); font-weight: 700; font-size: 14px; }
+
+  /* WALK-C16: the run-detail drawer. It opens beside the board on desktop and at the top on
+     phone, and never carries the same content twice. */
+  .run-detail { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .run-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-12); }
+  .run-detail .spacer { flex: 1; }
+
+  /* WALK-C16: the suggest-runs panel. The list is what the dispatcher reads to decide; no
+     suggestion carries its own sentence. */
+  .suggest { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-12) var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .suggest-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-8); }
+  .suggest .spacer { flex: 1; }
+  .suggest-list { display: flex; flex-direction: column; gap: var(--hh-s-4); }
+  .suggest-row { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(120px, 1fr) minmax(0, 2fr); gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-4) 0; align-items: baseline; }
+
+  /* WALK-C16: the live indicator. A small dot and one word: green when the board is ready,
+     amber while a read is in flight. */
+  .live { display: flex; align-items: center; gap: var(--hh-s-8); margin-bottom: var(--hh-s-12); color: var(--hh-text-dim); font-size: 13px; font-weight: 600; }
+  .live-dot { width: 10px; height: 10px; border-radius: var(--hh-radius-pill); background: var(--hh-state-good); display: inline-block; }
+  .live[data-busy="true"] .live-dot { background: var(--hh-state-watch); }
   .strip { display: none; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-16); margin: var(--hh-s-8) 0; color: var(--hh-text-dim); font-size: 14px; }
   .strip-cell strong { color: var(--hh-text); font-variant-numeric: tabular-nums; }
   .mob-tools { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); margin-bottom: var(--hh-s-8); }
