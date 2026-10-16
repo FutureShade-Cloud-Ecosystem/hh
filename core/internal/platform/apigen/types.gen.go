@@ -1833,14 +1833,15 @@ type SettingsWorkspaceSaveInput struct {
 }
 
 type SettingsSurfaceConfig struct {
-	SurfaceId    string                `json:"surface_id"`
-	Profile      string                `json:"profile"`
-	ItemsProfile *string               `json:"items_profile,omitempty"`
-	RoleItems    []SettingsItem        `json:"role_items"`
-	UserItems    []SettingsItem        `json:"user_items"`
-	Workspace    SettingsWorkspaceView `json:"workspace"`
-	Policy       *map[string]any       `json:"policy,omitempty"`
-	BusinessZone *string               `json:"business_zone,omitempty"`
+	SurfaceId          string                `json:"surface_id"`
+	Profile            string                `json:"profile"`
+	ItemsProfile       *string               `json:"items_profile,omitempty"`
+	RoleItems          []SettingsItem        `json:"role_items"`
+	UserItems          []SettingsItem        `json:"user_items"`
+	Workspace          SettingsWorkspaceView `json:"workspace"`
+	Policy             *map[string]any       `json:"policy,omitempty"`
+	BusinessZone       *string               `json:"business_zone,omitempty"`
+	LegacyImportSource *string               `json:"legacy_import_source,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
@@ -2793,11 +2794,7 @@ type BankRecAccount struct {
 	UnmatchedLines int32  `json:"unmatched_lines"`
 }
 
-type BankRecAccountPage struct {
-	Items      []BankRecAccount `json:"items"`
-	NextCursor *string          `json:"next_cursor,omitempty"`
-	Limit      *int32           `json:"limit,omitempty"`
-}
+type BankRecAccountList []BankRecAccount
 
 type BankRecStatementLine struct {
 	Id            string    `json:"id"`
@@ -2853,11 +2850,7 @@ type BankRecMatchSummary struct {
 	Matches   []BankRecMatch `json:"matches"`
 }
 
-type BankRecMatchPage struct {
-	Items      []BankRecMatch `json:"items"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
-	Limit      *int32         `json:"limit,omitempty"`
-}
+type BankRecMatchList []BankRecMatch
 
 type BankRecMatchInput struct {
 	Mode            string  `json:"mode"`
@@ -2879,7 +2872,13 @@ type BankRecUnmatchResult struct {
 }
 
 type BankRecRuleSpec struct {
-	Kind *string `json:"kind,omitempty"`
+	Kind            *string `json:"kind,omitempty"`
+	Target          *string `json:"target,omitempty"`
+	ToleranceCents  *int64  `json:"tolerance_cents,omitempty"`
+	DescriptorIlike *string `json:"descriptor_ilike,omitempty"`
+	DateWindowDays  *int32  `json:"date_window_days,omitempty"`
+	AllowFeeSplit   *bool   `json:"allow_fee_split,omitempty"`
+	FeeAccountCode  *string `json:"fee_account_code,omitempty"`
 	// The document permits additional properties beyond the fields above.
 }
 
@@ -2901,11 +2900,7 @@ type BankRecRuleInput struct {
 	Priority int32           `json:"priority"`
 }
 
-type BankRecMatchRulePage struct {
-	Items      []BankRecMatchRule `json:"items"`
-	NextCursor *string            `json:"next_cursor,omitempty"`
-	Limit      *int32             `json:"limit,omitempty"`
-}
+type BankRecMatchRuleList []BankRecMatchRule
 
 type BankRecReconciliation struct {
 	Id                    string     `json:"id"`
@@ -2926,11 +2921,7 @@ type BankRecReconInput struct {
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
 }
 
-type BankRecReconciliationPage struct {
-	Items      []BankRecReconciliation `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
-}
+type BankRecReconciliationList []BankRecReconciliation
 
 type IdentityPing struct {
 	Module string `json:"module"`
@@ -3114,7 +3105,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW", "FED_S87_GOODS_ON_RES", "FED_S87_SERVICE_RESERVE", "FED_BAND_MANAGEMENT", "FNT_PRODUCT", "TREATY_OR_SELF_GOV_REVIEW", "RELIEF_DECLINED_EVIDENCE".
 type TaxReasonCode string
 
 type TaxRate struct {
@@ -3127,10 +3118,8 @@ type TaxRate struct {
 	Notes         *string       `json:"notes,omitempty"`
 }
 
-type TaxRatePage struct {
-	Items      []TaxRate `json:"items"`
-	NextCursor *string   `json:"next_cursor,omitempty"`
-	Limit      *int32    `json:"limit,omitempty"`
+type TaxRateList struct {
+	Rates *[]TaxRate `json:"rates"`
 }
 
 // TaxProfileStatus is the document's enum: "ACTIVE", "PENDING", "RETIRED".
@@ -3148,10 +3137,12 @@ type TaxStatusCardProfile struct {
 	Notes               *string          `json:"notes,omitempty"`
 }
 
-type TaxStatusCardProfilePage struct {
-	Items      []TaxStatusCardProfile `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type TaxStatusCardProfileList struct {
+	Profiles *[]TaxStatusCardProfile `json:"profiles"`
+}
+
+type TaxPendingProfileList struct {
+	PendingProfiles []TaxStatusCardProfile `json:"pending_profiles"`
 }
 
 type TaxConfig struct {
@@ -3177,10 +3168,8 @@ type TaxEvidence struct {
 	AttestationStatus *string    `json:"attestation_status,omitempty"`
 }
 
-type TaxEvidencePage struct {
-	Items      []TaxEvidence `json:"items"`
-	NextCursor *string       `json:"next_cursor,omitempty"`
-	Limit      *int32        `json:"limit,omitempty"`
+type TaxEvidenceList struct {
+	Evidence *[]TaxEvidence `json:"evidence"`
 }
 
 type TaxEvidenceCapture struct {
@@ -3565,59 +3554,44 @@ type InventoryNudgeResult struct {
 	Note    string `json:"note"`
 }
 
-type InventoryOnHandPage struct {
-	Items      []InventoryOnHand `json:"items"`
-	NextCursor *string           `json:"next_cursor,omitempty"`
-	Limit      *int32            `json:"limit,omitempty"`
+type InventoryOnHandList struct {
+	OnHand []InventoryOnHand `json:"on_hand"`
 }
 
-type InventoryMovePage struct {
-	Items      []InventoryStockMove `json:"items"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryMoveList struct {
+	Moves []InventoryStockMove `json:"moves"`
 }
 
-type InventoryPendingFulfilmentPage struct {
-	Items      []InventoryPendingFulfilment `json:"items"`
-	NextCursor *string                      `json:"next_cursor,omitempty"`
-	Limit      *int32                       `json:"limit,omitempty"`
+type InventoryPendingFulfilmentList struct {
+	Pending []InventoryPendingFulfilment `json:"pending"`
 }
 
-type InventoryTransitDaysPairPage struct {
-	Items      []InventoryTransitDaysPair `json:"items"`
-	NextCursor *string                    `json:"next_cursor,omitempty"`
-	Limit      *int32                     `json:"limit,omitempty"`
+type InventoryTransitDaysPairList struct {
+	Pairs []InventoryTransitDaysPair `json:"pairs"`
 }
 
-type InventoryBranchStockPage struct {
-	Items      []InventoryBranchStock `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryBranchStockList struct {
+	Branches *[]InventoryBranchStock `json:"branches"`
 }
 
-type InventoryBrowsePage struct {
-	Items      []InventoryBrowseRow `json:"items"`
-	Facets     []InventoryFacet     `json:"facets"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryBrowseResult struct {
+	Rows   []InventoryBrowseRow `json:"rows"`
+	Facets *[]InventoryFacet    `json:"facets"`
+	Total  int32                `json:"total"`
+	Limit  int32                `json:"limit"`
+	Offset int32                `json:"offset"`
 }
 
-type InventoryReservationPage struct {
-	Items      []InventoryReservation `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryReservationList struct {
+	Reservations *[]InventoryReservation `json:"reservations"`
 }
 
-type InventoryTransferPage struct {
-	Items      []InventoryTransfer `json:"items"`
-	NextCursor *string             `json:"next_cursor,omitempty"`
-	Limit      *int32              `json:"limit,omitempty"`
+type InventoryTransferList struct {
+	Transfers *[]InventoryTransfer `json:"transfers"`
 }
 
-type InventoryInTransitLinePage struct {
-	Items      []InventoryInTransitLine `json:"items"`
-	NextCursor *string                  `json:"next_cursor,omitempty"`
-	Limit      *int32                   `json:"limit,omitempty"`
+type InventoryInTransitLineList struct {
+	Lines []InventoryInTransitLine `json:"lines"`
 }
 
 type InventoryShortfallPage struct {
@@ -3627,10 +3601,8 @@ type InventoryShortfallPage struct {
 	Limit           *int32                  `json:"limit,omitempty"`
 }
 
-type InventoryReorderPointPage struct {
-	Items      []InventoryReorderPoint `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
+type InventoryReorderPointList struct {
+	ReorderPoints *[]InventoryReorderPoint `json:"reorder_points"`
 }
 
 type InvCountSheet struct {
@@ -3878,6 +3850,15 @@ type MessagingChannelCreate struct {
 
 type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
+}
+
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
 }
 
 type MessagingChannelMember struct {
@@ -8716,6 +8697,26 @@ type WarrantyPolicy struct {
 type WarrantyPolicyInput struct {
 	BranchId            *string `json:"branch_id,omitempty"`
 	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
 }
 
 type WarrantyAddress struct {

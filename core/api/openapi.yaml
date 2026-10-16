@@ -7733,7 +7733,7 @@ paths:
       tags:
         - staff-gl
       summary: Static BisTrack GL reconciliation report for one fiscal period
-      description: Read-only reconciliation of the ERP books against the committed static BisTrack snapshot. month is required (a closing balance reconciles at one period end); the fixture path is fixed, never a caller input.
+      description: Read-only reconciliation of the ERP books against the committed static BisTrack snapshot. month is required (a closing balance reconciles at one period end); the fixture path is fixed, never a caller input. Served only where the dealer's configuration names a legacy import source (legacy_import_source on the surface config); a dealer with none gets a 404 sentence. The route keeps its path.
       x-role: requireAdmin
       x-access:
         surfaces:
@@ -7785,6 +7785,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The dealer's configuration names no legacy import source, so the check is off for it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/gl/periods:
     get:
       operationId: glListPeriods
@@ -8455,7 +8461,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecAccountPage"
+                $ref: "#/components/schemas/BankRecAccountList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8648,7 +8654,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchPage"
+                $ref: "#/components/schemas/BankRecMatchList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8680,7 +8686,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchRulePage"
+                $ref: "#/components/schemas/BankRecMatchRuleList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8752,7 +8758,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecReconciliationPage"
+                $ref: "#/components/schemas/BankRecReconciliationList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9422,7 +9428,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxRatePage"
+                $ref: "#/components/schemas/TaxRateList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9479,7 +9485,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxStatusCardProfileList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9538,7 +9544,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxPendingProfileList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9639,7 +9645,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxEvidencePage"
+                $ref: "#/components/schemas/TaxEvidenceList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9895,7 +9901,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryOnHandPage"
+                $ref: "#/components/schemas/InventoryOnHandList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -9936,7 +9942,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryMovePage"
+                $ref: "#/components/schemas/InventoryMoveList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -9970,7 +9976,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryPendingFulfilmentPage"
+                $ref: "#/components/schemas/InventoryPendingFulfilmentList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10036,7 +10042,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransitDaysPairPage"
+                $ref: "#/components/schemas/InventoryTransitDaysPairList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10107,7 +10113,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBranchStockPage"
+                $ref: "#/components/schemas/InventoryBranchStockList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10217,7 +10223,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBrowsePage"
+                $ref: "#/components/schemas/InventoryBrowseResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10255,7 +10261,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReservationPage"
+                $ref: "#/components/schemas/InventoryReservationList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10454,7 +10460,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransferPage"
+                $ref: "#/components/schemas/InventoryTransferList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -10657,7 +10663,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryInTransitLinePage"
+                $ref: "#/components/schemas/InventoryInTransitLineList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10723,7 +10729,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReorderPointPage"
+                $ref: "#/components/schemas/InventoryReorderPointList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -12011,7 +12017,7 @@ paths:
       tags:
         - staff-messaging
       summary: Found a TEAM or TOPIC channel, idempotently on its slug
-      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM, APPROVAL and GROUP kinds are structural, system-provisioned or routed through their own doors (a group room goes through POST /api/v1/messaging/groups) and are refused with 400."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -12091,13 +12097,86 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/groups:
+    post:
+      operationId: messagingCreateGroup
+      tags:
+        - staff-messaging
+      summary: Start a group room with an optional name and any set of staffers
+      description: "A group is the change 7 ruling's named room: any staffer may start one, membership is explicit (never rule filled, like a direct message's), and the room spans branches, so the people named need reach no branch the caller holds. The name is optional: a group started with no name takes its members' display names as its name until a member renames it. The caller is seated as the group's owner and every named staffer as an explicit member; a staffer who is not active is refused with 403 and an id that names no staffer is 404. There is no convergence: every call starts a new group."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingGroupCreate"
+      responses:
+        "201":
+          description: The group room as started, the caller its owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/messaging/channels/{id}:
+    patch:
+      operationId: messagingRenameChannel
+      tags:
+        - staff-messaging
+      summary: Rename a group room; any member may, and a system line records it
+      description: "Renaming is the group room's own move (the change 7 ruling): any member of the group may rename it, the new name shows to every member through the ordinary channel reads, and the rename writes a system line naming who renamed the group and to what. A caller who is not a member is refused with 403, an unknown room is 404, an empty name is 400, and a room of any other kind (a direct message's name is its parties', a channel's name is its founders') refuses with 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelRename"
+      responses:
+        "200":
+          description: The renamed room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
       tags:
         - staff-messaging
       summary: Seat one staffer in a channel the caller belongs to
-      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A group room is the change 7 ruling's exception to the manager rule: any member may add any staffer by hand, of any branch (a group spans branches), and the fresh seat writes a system line naming who was added and by whom. A user who is not an active staffer is 404 or 403."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -25309,6 +25388,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/warranty/agreements:
+    get:
+      operationId: warrantyListVendorAgreements
+      tags:
+        - staff-warranty
+      summary: List every active vendor's warranty credit agreement
+      description: "One row per active vendor, in vendor name order. A vendor the dealer never set answers the default claim_by_claim, with no period and no allowance: the default lives in the read alone."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - manager-home
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The vendor agreements, every active vendor in one read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreementPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/warranty/agreements/{vendorID}:
+    put:
+      operationId: warrantyUpsertVendorAgreement
+      tags:
+        - staff-warranty
+      summary: Write one vendor's warranty credit agreement
+      description: The path is the source of truth for which vendor the agreement belongs to. claim_by_claim clears the period and the allowance (the kind is the rule, the other two carry nothing on their own); a periodic credit note or a fixed allowance carries a standard month or quarter, and a fixed allowance carries its percent of the vendor's purchases as integer basis points. Each moved knob rides the audit spine with its old and new value; a save that moved nothing writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyVendorAgreementInput"
+      responses:
+        "200":
+          description: The stored agreement, the effective row read back
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: An unknown vendor, an off-vocabulary kind or period, or an out of range allowance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/warranty/claims:
     get:
       operationId: warrantyListClaims
@@ -32531,6 +32680,9 @@ components:
         business_zone:
           type: string
           description: The dealer's business day zone, an IANA name such as America/Los_Angeles. The apps name the dealer's day in it (the till's requested date, the quote desk's days left, the driver's runs) instead of compiling a zone in. Absent from an older core; the apps then read the Ontario dealer's America/Toronto.
+        legacy_import_source:
+          type: string
+          description: A short lowercase word naming the legacy system the dealer imports from. Present only for a dealer whose configuration names one; a surface draws the legacy import check only then. Absent means none.
     SettingsRoleItemsBody:
       type: object
       required:
@@ -35546,22 +35698,11 @@ components:
         unmatched_lines:
           type: integer
           format: int32
-    BankRecAccountPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecAccount"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecAccountList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecAccount"
     BankRecStatementLine:
       type: object
       description: One parsed bank line; amount_cents is signed (positive credit, negative debit)
@@ -35734,22 +35875,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BankRecMatch"
-    BankRecMatchPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatch"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatch"
     BankRecMatchInput:
       type: object
       description: mode auto (or empty) runs the matcher over a window and uses bank_account_id, from and to; mode manual pairs one line with one target and uses statement_line_id, target_type, target_ref_id and optionally amount_cents.
@@ -35805,7 +35935,7 @@ components:
             - unmatched
     BankRecRuleSpec:
       type: object
-      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance)."
+      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance). The core stores the whole object as written and returns it unchanged; the matcher reads the six fields below besides kind and ignores any other key."
       additionalProperties: true
       properties:
         kind:
@@ -35814,6 +35944,26 @@ components:
             - gateway_ref_exact
             - lodgement_ref_exact
             - descriptor_fuzzy
+        target:
+          type: string
+          description: What the matcher pairs a line with (PAYMENT or LODGEMENT in the seeded rules)
+        tolerance_cents:
+          type: integer
+          format: int64
+          description: Amount tolerance in cents; zero or absent means exact
+        descriptor_ilike:
+          type: string
+          description: The ILIKE pattern the line descriptor must satisfy (descriptor_fuzzy)
+        date_window_days:
+          type: integer
+          format: int32
+          description: Days either side of the line date a target may fall
+        allow_fee_split:
+          type: boolean
+          description: Whether the matcher may book a processor fee split
+        fee_account_code:
+          type: string
+          description: The GL account code a fee split books to
     BankRecMatchRule:
       type: object
       description: A match rule row plus its decoded spec
@@ -35868,22 +36018,11 @@ components:
         priority:
           type: integer
           format: int32
-    BankRecMatchRulePage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatchRule"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchRuleList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatchRule"
     BankRecReconciliation:
       type: object
       description: One per-account period reconciliation
@@ -35951,22 +36090,11 @@ components:
         statement_balance_cents:
           type: integer
           format: int64
-    BankRecReconciliationPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecReconciliation"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecReconciliationList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecReconciliation"
     IdentityPing:
       type: object
       description: The identity module liveness record
@@ -36447,7 +36575,7 @@ components:
           type: string
     TaxReasonCode:
       type: string
-      description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
+      description: "The tax decision reason vocabulary: the twelve codes the tax_decision_snapshot CHECK carries and the core accepts on a rate row."
       enum:
         - STD_ON_HST_13
         - STD_SALES_TAX
@@ -36455,6 +36583,12 @@ components:
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
         - MANUAL_TAX_REVIEW
+        - FED_S87_GOODS_ON_RES
+        - FED_S87_SERVICE_RESERVE
+        - FED_BAND_MANAGEMENT
+        - FNT_PRODUCT
+        - TREATY_OR_SELF_GOV_REVIEW
+        - RELIEF_DECLINED_EVIDENCE
     TaxRate:
       type: object
       description: One effective-dated rate row
@@ -36483,22 +36617,18 @@ components:
           format: date
         notes:
           type: string
-    TaxRatePage:
+    TaxRateList:
       type: object
+      description: The core writes this list under the key rates, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - rates
       properties:
-        items:
-          type: array
+        rates:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/TaxRate"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxProfileStatus:
       type: string
       enum:
@@ -36537,22 +36667,28 @@ components:
           $ref: "#/components/schemas/TaxProfileStatus"
         notes:
           type: string
-    TaxStatusCardProfilePage:
+    TaxStatusCardProfileList:
       type: object
+      description: The core writes this list under the key profiles, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - profiles
       properties:
-        items:
+        profiles:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/TaxStatusCardProfile"
+    TaxPendingProfileList:
+      type: object
+      description: The core writes the PENDING profiles under the key pending_profiles, with no cursor and no limit echo. An empty answer is [], never null.
+      required:
+        - pending_profiles
+      properties:
+        pending_profiles:
           type: array
           items:
             $ref: "#/components/schemas/TaxStatusCardProfile"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxConfig:
       type: object
       description: The engine-wide tax config; the org-default row has an empty branch_id
@@ -36614,22 +36750,18 @@ components:
         attestation_status:
           type: string
           description: A fixed banner value, not a stored column
-    TaxEvidencePage:
+    TaxEvidenceList:
       type: object
+      description: The core writes this list under the key evidence, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - evidence
       properties:
-        items:
-          type: array
+        evidence:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/TaxEvidence"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     TaxEvidenceCapture:
       type: object
       description: The capture request for status-card evidence
@@ -37789,156 +37921,122 @@ components:
           type: string
         note:
           type: string
-    InventoryOnHandPage:
+    InventoryOnHandList:
       type: object
+      description: The core writes this list under the key on_hand, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - on_hand
       properties:
-        items:
+        on_hand:
           type: array
           items:
             $ref: "#/components/schemas/InventoryOnHand"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryMovePage:
+    InventoryMoveList:
       type: object
+      description: The core writes this list under the key moves, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - moves
       properties:
-        items:
+        moves:
           type: array
           items:
             $ref: "#/components/schemas/InventoryStockMove"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryPendingFulfilmentPage:
+    InventoryPendingFulfilmentList:
       type: object
+      description: The core writes this list under the key pending, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - pending
       properties:
-        items:
+        pending:
           type: array
           items:
             $ref: "#/components/schemas/InventoryPendingFulfilment"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryTransitDaysPairPage:
+    InventoryTransitDaysPairList:
       type: object
+      description: The core writes this list under the key pairs, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - pairs
       properties:
-        items:
+        pairs:
           type: array
           items:
             $ref: "#/components/schemas/InventoryTransitDaysPair"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryBranchStockPage:
+    InventoryBranchStockList:
       type: object
+      description: The core writes this list under the key branches, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - branches
       properties:
-        items:
-          type: array
+        branches:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryBranchStock"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryBrowsePage:
+    InventoryBrowseResult:
       type: object
+      description: "The browse surface's single round trip, as the core writes it: the rows, the facets, the honest total before the limit, and the page the answer IS (limit and offset echo the service's clamping). It pages by offset, not by cursor, and answers no next_cursor. An empty page is [], never null; facets is null when no facet has a value."
       required:
-        - items
+        - rows
         - facets
+        - total
+        - limit
+        - offset
       properties:
-        items:
+        rows:
           type: array
           items:
             $ref: "#/components/schemas/InventoryBrowseRow"
         facets:
-          type: array
+          type:
+            - array
+            - "null"
           description: Facet counts for the current filter; a facet with no values is dropped
           items:
             $ref: "#/components/schemas/InventoryFacet"
-        next_cursor:
-          type:
-            - string
-            - "null"
+        total:
+          type: integer
+          format: int32
         limit:
           type: integer
           format: int32
-    InventoryReservationPage:
+        offset:
+          type: integer
+          format: int32
+    InventoryReservationList:
       type: object
+      description: The core writes this list under the key reservations, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - reservations
       properties:
-        items:
-          type: array
+        reservations:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryReservation"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryTransferPage:
+    InventoryTransferList:
       type: object
+      description: The core writes this list under the key transfers, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - transfers
       properties:
-        items:
-          type: array
+        transfers:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryTransfer"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
-    InventoryInTransitLinePage:
+    InventoryInTransitLineList:
       type: object
+      description: The core writes this list under the key lines, with no cursor and no limit echo. An empty answer is [], never null.
       required:
-        - items
+        - lines
       properties:
-        items:
+        lines:
           type: array
           items:
             $ref: "#/components/schemas/InventoryInTransitLine"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     InventoryShortfallPage:
       type: object
       required:
@@ -37959,22 +38057,18 @@ components:
         limit:
           type: integer
           format: int32
-    InventoryReorderPointPage:
+    InventoryReorderPointList:
       type: object
+      description: The core writes this list under the key reorder_points, with no cursor and no limit echo. The list is JSON null when nothing matches (the handler has no nil guard).
       required:
-        - items
+        - reorder_points
       properties:
-        items:
-          type: array
+        reorder_points:
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/InventoryReorderPoint"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
     InvCountSheet:
       type: object
       description: One snapshot-frozen cycle count; counted_by is the maker, approved_by the checker (must differ)
@@ -38633,6 +38727,7 @@ components:
             - TOPIC
             - DM
             - APPROVAL
+            - GROUP
         branch_id:
           type: string
         slug:
@@ -38701,6 +38796,25 @@ components:
         user_id:
           type: string
           format: uuid
+    MessagingGroupCreate:
+      type: object
+      description: "One new group room. The name is optional (a group started with no name takes its members' display names until a member renames it) and so is the set: the caller is always a member and its owner, and each named staffer is seated as an explicit member. There is no convergence; every call starts a new group."
+      properties:
+        name:
+          type: string
+        member_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    MessagingChannelRename:
+      type: object
+      description: The group room's new name; a system line records who renamed it
+      required:
+        - name
+      properties:
+        name:
+          type: string
     MessagingChannelMember:
       type: object
       description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
@@ -53960,6 +54074,76 @@ components:
           format: int64
           minimum: 0
           description: The new threshold in integer cents, zero or more
+    WarrantyVendorAgreement:
+      type: object
+      description: "One vendor's effective warranty credit agreement: the stored row when the dealer set one, the default claim_by_claim when not. The period rides only for a periodic credit note or a fixed allowance; the allowance rides only for a fixed allowance, as integer basis points of the vendor's purchases in the period."
+      required:
+        - vendor_id
+        - vendor_no
+        - vendor_name
+        - agreement_kind
+        - allowance_bp
+      properties:
+        vendor_id:
+          type: string
+        vendor_no:
+          type: string
+          description: Joined from the vendor master for display
+        vendor_name:
+          type: string
+          description: Joined from the vendor master for display
+        agreement_kind:
+          type: string
+          enum:
+            - claim_by_claim
+            - periodic_credit_note
+            - fixed_allowance
+        period:
+          type: string
+          enum:
+            - monthly
+            - quarterly
+          description: The standard period the agreement runs on; absent for claim_by_claim
+        allowance_bp:
+          type: integer
+          description: The fixed allowance in basis points of the vendor's purchases; zero otherwise
+        updated_at:
+          type: string
+          format: date-time
+    WarrantyVendorAgreementInput:
+      type: object
+      description: One vendor's agreement write payload. claim_by_claim ignores a period or allowance that rides beside it and stores them cleared.
+      required:
+        - agreement_kind
+        - allowance_bp
+      properties:
+        agreement_kind:
+          type: string
+          enum:
+            - claim_by_claim
+            - periodic_credit_note
+            - fixed_allowance
+        period:
+          type: string
+          enum:
+            - monthly
+            - quarterly
+          description: Required for a periodic credit note or a fixed allowance
+        allowance_bp:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The fixed allowance in basis points; zero otherwise
+    WarrantyVendorAgreementPage:
+      type: object
+      description: Every active vendor with its effective agreement, in vendor name order
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarrantyVendorAgreement"
     WarrantyAddress:
       type: object
       description: The job-site (failure-location) address shape

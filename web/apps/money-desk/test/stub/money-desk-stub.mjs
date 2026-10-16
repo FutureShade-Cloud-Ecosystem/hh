@@ -592,6 +592,11 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
+  if (method === "POST" && path === "/_stub/legacy-import") {
+    const body = await readBody(req);
+    const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   // The statements slice reads the books' periods paged (any page size but 100, two fiscal years); the ledger
   // slice reads a page of 100 (one year, closed and reopened by its own presses), so the two worlds share the route by that line.
   if (path.startsWith("/api/v1/finstmt/") || (path === "/api/v1/gl/periods" && method === "GET" && url.searchParams.has("limit") && url.searchParams.get("limit") !== "100")) {
@@ -609,7 +614,7 @@ async function handle(req, res) {
     }
     return send(res, answer.status, answer.body);
   }
-  if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/")) {
+  if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/") || path === "/api/v1/surfaces/money-desk/config") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));

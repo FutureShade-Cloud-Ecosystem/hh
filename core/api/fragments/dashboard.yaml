@@ -1904,6 +1904,12 @@ components:
             the dealer's day in it (the till's requested date, the quote desk's days left, the
             driver's runs) instead of compiling a zone in. Absent from an older core; the apps then
             read the Ontario dealer's America/Toronto.
+        legacy_import_source:
+          type: string
+          description: >-
+            A short lowercase word naming the legacy system the dealer imports from. Present only
+            for a dealer whose configuration names one; a surface draws the legacy import check
+            only then. Absent means none.
     SettingsRoleItemsBody:
       type: object
       required: [profile, items]

@@ -8,6 +8,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { InvCountLine, InvCountReasonCode, InvCountReconRun, InvCountSheet, InvCountSheetDetail, InvCountNegativeStockRow } from "@hardscapehouse/api-client";
 import { confirmCancelWords, confirmPostLines, confirmPostWords, entryState, reconStatusTone, reconStatusWord, reconcilePeriodWord, sheetScopeWord, sheetStatusTone, sheetStatusWord, signTone } from "./counts-logic.js";
 import { formatMoney, formatQty } from "../po/po-money.js";
+import { whenWords } from "../po/po-logic.js";
 
 export type CountsTab = "sheets" | "recon";
 
@@ -23,6 +24,8 @@ export interface CountsModel {
   readonly error: string;
   readonly notice: string;
   readonly branchNames: ReadonlyMap<string, string>;
+  /** Today, YYYY-MM-DD in the reader's own day: the stamps on screen read against it. */
+  readonly today: string;
   // The sheets list.
   readonly sheets: readonly InvCountSheet[];
   // The open sheet, with its lines, its summary and the reason picker's rows.
@@ -122,7 +125,7 @@ function sheetsPane(model: CountsModel): TemplateResult {
                         <td data-label="Branch">${model.branchNames.get(s.branch_id) ?? s.branch_id}</td>
                         <td data-label="Scope">${sheetScopeWord(s.scope)}</td>
                         <td data-label="Status">${statusPill(s.status)}</td>
-                        <td class="code" data-label="Frozen">${s.freeze_at === undefined ? html`<span class="dim">not yet</span>` : s.freeze_at.slice(0, 10)}</td>
+                        <td data-label="Frozen">${s.freeze_at === undefined ? html`<span class="dim">not yet</span>` : whenWords(s.freeze_at, model.today)}</td>
                         <td class="pick" data-label="Open">
                           <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-id=${s.id} ?disabled=${model.busy}>Open</button>
                         </td>

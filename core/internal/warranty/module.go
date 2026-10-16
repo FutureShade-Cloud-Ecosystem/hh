@@ -141,6 +141,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/warranty/policy", g.RequireStaff(h.staff(h.getPolicy)))
 	r.Handle("PUT /api/v1/warranty/policy", g.RequireAdmin(h.staff(h.putPolicy)))
 
+	// - walk change 6: the per vendor credit agreements. Read staff (Dealer Admin's Warranty page and
+	// Manager Home's Vendors and credits board), write admin (Dealer Admin sets them), the policy's
+	// split; the path sits beside the policy's, clear of /vendors/{vendorID}. -
+	r.Handle("GET /api/v1/warranty/agreements", g.RequireStaff(h.staff(h.listAgreements)))
+	r.Handle("PUT /api/v1/warranty/agreements/{vendorID}", g.RequireAdmin(h.staff(h.putAgreement)))
+
 	// - FR-2 claim capture + reads -
 	r.Handle("GET /api/v1/warranty/claims", g.RequireStaff(h.staff(h.listClaims)))
 	r.Handle("GET /api/v1/warranty/claims/{id}", g.RequireStaff(h.staff(h.getClaim)))

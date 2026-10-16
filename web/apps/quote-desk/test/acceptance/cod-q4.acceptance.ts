@@ -20,7 +20,18 @@ test("DEMO-PLM-Q4 converts through the guided surface with Will-call and the who
 
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
-  await expect(page.getByTestId("qb-list")).toBeVisible({ timeout: 30_000 });
+  // Assembled demo box: "/" is the front door picker, and the manager's role home shows the
+  // Quote Desk tile (the desk's adopt then rides the tab's session storage to /quote/).
+  // Standalone Quote Desk server: "/" lands straight on the desk list. Either way the test
+  // reaches qb-list with one wait: wait for whichever target mounts first, click through the
+  // tile if it's the box path, then assert the list.
+  const quoteDeskTile = page.getByRole("button", { name: "Quote Desk", exact: true });
+  const quoteList = page.getByTestId("qb-list");
+  await expect(quoteDeskTile.or(quoteList)).toBeVisible({ timeout: 30_000 });
+  if (await quoteDeskTile.isVisible().catch(() => false)) {
+    await quoteDeskTile.click();
+  }
+  await expect(quoteList).toBeVisible({ timeout: 30_000 });
   const row = page.getByTestId("qb-list-row").filter({ hasText: "DEMO-PLM-Q4" });
   await expect(row).toHaveCount(1, { timeout: 30_000 });
   await row.click();
