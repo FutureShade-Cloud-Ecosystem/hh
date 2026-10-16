@@ -283,7 +283,7 @@ test("the General Manager's area switch holds Liens and Compliance, and the cont
   const second = await page.context().newPage();
   await second.addInitScript(handoffFor, "controller");
   await second.goto("/");
-  await expect(second.locator("nav[aria-label='Money Desk areas'] button")).toHaveText(["Approvals and ledger", "Receivables", "Bank reconciliation", "Tax", "Liens", "Compliance"]);
+  await expect(second.locator("nav[aria-label='Money Desk areas'] button")).toHaveText(["Approvals and ledger", "Receivables", "Statements", "Bank reconciliation", "Tax", "Liens", "Compliance"]);
   await second.close();
 });
 

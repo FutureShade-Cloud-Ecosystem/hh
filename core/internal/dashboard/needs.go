@@ -60,6 +60,8 @@ const (
 	// purchase orders that landed short and are still partial.
 	NeedsOpenShortages        = "tasks.open_shortages"
 	NeedsReceivingDifferences = "purchasing.receiving_differences"
+	// The logistics manager's own source (0395): approvals they filed that are still pending.
+	NeedsFiledPending = "approvals.filed_pending"
 )
 
 // NeedsSourceMeta is one catalog entry: what the row SAYS and where it GOES. It carries nothing
@@ -133,6 +135,10 @@ var NeedsSourceCatalog = []NeedsSourceMeta{
 		Key: NeedsReceivingDifferences, What: "Receipts that landed short", Module: "purchasing",
 		Unit: "yard", Screen: "yard", View: "Receiving · short", Action: "Settle",
 	},
+	{
+		Key: NeedsFiledPending, What: "Approvals you filed", Module: "identity",
+		Unit: "admin", Screen: "approvals", View: "Filed by you", Action: "Track",
+	},
 }
 
 // NeedsSourceByKey indexes the catalog. Built once at init; never mutated.
@@ -191,12 +197,23 @@ var DefaultNeedsSources = map[string][]NeedsPolicy{
 	},
 }
 
-// yardManagerNeeds is the yard manager's own policy, the Go copy of 0381 §5. Stale picks keep the
-// yard shape's edges; the two new sources carry count edges only.
+// yardManagerNeeds is the yard manager's own policy, the Go copy of 0381 §5 as amended by 0395.
+// Committing a delivery date on a load being built comes first; stale picks keep the yard shape's
+// edges; the other sources carry count edges only.
 var yardManagerNeeds = []NeedsPolicy{
-	{SourceKey: NeedsOpenShortages, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
-	{SourceKey: NeedsStalePicks, Position: 1, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 60},
-	{SourceKey: NeedsReceivingDifferences, Position: 2, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsDueToCommit, Position: 0, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsOpenShortages, Position: 1, Visible: true, WarnAt: 1, StopAt: 5},
+	{SourceKey: NeedsStalePicks, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 60},
+	{SourceKey: NeedsReceivingDifferences, Position: 3, Visible: true, WarnAt: 1, StopAt: 3},
+}
+
+// logisticsManagerNeeds is the logistics manager's own policy, the Go copy of 0395 §2. The dock
+// shape's dispatch sources stay; the new source counts approvals they filed that are still pending.
+var logisticsManagerNeeds = []NeedsPolicy{
+	{SourceKey: NeedsUnassigned, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
+	{SourceKey: NeedsDueToCommit, Position: 1, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsStalePicks, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 60},
+	{SourceKey: NeedsFiledPending, Position: 3, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 }
 
 // procurementManagerNeeds is the procurement manager's own policy, the Go copy of 0392 §1: the
@@ -227,6 +244,8 @@ func defaultNeedsFor(profile string) []NeedsPolicy {
 	switch profile {
 	case ProfileManagerYard:
 		return yardManagerNeeds
+	case ProfileManagerLogistics:
+		return logisticsManagerNeeds
 	case ProfileManagerProcurement:
 		return procurementManagerNeeds
 	case ProfileManagerBranch:

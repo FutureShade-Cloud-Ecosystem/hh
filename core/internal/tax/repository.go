@@ -350,7 +350,8 @@ func (r *Repository) ListW4Snapshots(ctx context.Context, fromDate, toDate strin
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, order_id::text, COALESCE(order_line_id::text,''), tax_reason_code,
-		       rule_version, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated
+		       rule_version, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated,
+		       standard_rate_bps
 		FROM tax_decision_snapshot
 		WHERE rule_version = $1
 		  AND ($2 = '' OR created_at >= $2::date)
@@ -364,7 +365,8 @@ func (r *Repository) ListW4Snapshots(ctx context.Context, fromDate, toDate strin
 	for rows.Next() {
 		var s Snapshot
 		if err := rows.Scan(&s.ID, &s.OrderID, &s.OrderLineID, &s.ReasonCode, &s.RuleVersion,
-			&s.RateBps, &s.FullHSTCents, &s.OnCreditCents, &s.NetCollectedCents, &s.Automated); err != nil {
+			&s.RateBps, &s.FullHSTCents, &s.OnCreditCents, &s.NetCollectedCents, &s.Automated,
+			&s.StandardRateBps); err != nil {
 			return nil, fmt.Errorf("tax: scan snapshot: %w", err)
 		}
 		out = append(out, s)
@@ -396,11 +398,11 @@ func (r *Repository) InsertSnapshot(ctx context.Context, s Snapshot) (string, er
 	var id string
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO tax_decision_snapshot
-		  (order_id, order_line_id, tax_reason_code, rule_version, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated)
-		VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9)
+		  (order_id, order_line_id, tax_reason_code, rule_version, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, standard_rate_bps)
+		VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING id::text`,
 		s.OrderID, nullStr(s.OrderLineID), s.ReasonCode, s.RuleVersion, s.RateBps,
-		s.FullHSTCents, s.OnCreditCents, s.NetCollectedCents, s.Automated).Scan(&id)
+		s.FullHSTCents, s.OnCreditCents, s.NetCollectedCents, s.Automated, standardRateOrOntario(s.StandardRateBps)).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("tax: insert snapshot: %w", err)
 	}
@@ -424,4 +426,13 @@ func (r *Repository) CollectedHSTCents(ctx context.Context, year, month int) (in
 		return 0, fmt.Errorf("tax: collected hst: %w", err)
 	}
 	return total, nil
+}
+
+// standardRateOrOntario answers the standard rate a snapshot row is written with: a zero (a caller that
+// carries none) is the Ontario 13 percent, the column's default.
+func standardRateOrOntario(bps int) int {
+	if bps <= 0 {
+		return stdRateBps
+	}
+	return bps
 }

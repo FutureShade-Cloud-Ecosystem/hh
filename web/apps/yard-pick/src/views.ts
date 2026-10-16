@@ -35,6 +35,8 @@ import {
   nextAction,
   orderHandle,
   pickSummary,
+  isLocalLine,
+  RECORD_WAITING_WORDS,
   priorityWord,
   qtyLabel,
   qtyText,
@@ -377,6 +379,7 @@ function pullList(model: PickModel): TemplateResult {
     <section class="card" data-pull-list>
       <h3>Pull list · ${pick.ticket.lines.length} ${pick.ticket.lines.length === 1 ? "line" : "lines"}</h3>
       ${summary !== "" ? html`<p class="dim" data-pick-summary>${summary}</p>` : nothing}
+      ${pick.picked.some(isLocalLine) ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>` : nothing}
       <ul class="lines">${pick.ticket.lines.map((l) => lineRow(model, l, recorded.get(l.line_no)))}</ul>
     </section>
   `;

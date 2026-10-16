@@ -209,11 +209,11 @@ func TestIntegration_0381_TheOtherManagersKeepTheirShape(t *testing.T) {
 	}
 }
 
-// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the three sources the roadmap
-// names for the yard manager's Needs-you (open shortages raised by the yard team, stale picks,
-// receiving differences). The rows are policy; the adapters that count them land with the sources
-// themselves, and a source nobody has wired renders nothing (0201's posture), so this asserts the
-// DECLARATION, not the count.
+// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the sources the roadmap names
+// for the yard manager's Needs-you, 0381's three (open shortages raised by the yard team, stale
+// picks, receiving differences) with 0395's dispatch.due_to_commit leading them. The rows are
+// policy; the adapters that count them land with the sources themselves, and a source nobody has
+// wired renders nothing (0201's posture), so this asserts the DECLARATION, not the count.
 func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -234,9 +234,9 @@ func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 		}
 		got = append(got, key)
 	}
-	want := []string{"tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences"}
+	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
 	if len(got) != len(want) {
-		t.Fatalf("the yard manager declares %d needs sources (%v), want the three the roadmap names (%v)",
+		t.Fatalf("the yard manager declares %d needs sources (%v), want the four 0395 files (%v)",
 			len(got), got, want)
 	}
 	for i := range want {
@@ -369,6 +369,21 @@ func TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.
 func TestIntegration_0392_TheBranchManagerCommitsDeliveries(t *testing.T) {
 	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
 		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
+}
+
+// TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending pins the seeded rows of 2D gap 12:
+// the freight raise the logistics manager files and waits on surfaces as an "approvals you filed"
+// row. The existing dock-shape dispatch sources stay.
+func TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending(t *testing.T) {
+	wantKeys(t, "manager.logistics", needsOf(t, "manager.logistics"),
+		[]string{NeedsUnassigned, NeedsDueToCommit, NeedsStalePicks, NeedsFiledPending})
+}
+
+// TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit pins the seeded rows of 2D gap 11:
+// committing a delivery date on a load being built leads the yard manager's queue.
+func TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit(t *testing.T) {
+	wantKeys(t, "manager.yard", needsOf(t, "manager.yard"),
+		[]string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences})
 }
 
 // widgetsOf reads one profile's seeded widgets in order, and runs them through the write gate: a

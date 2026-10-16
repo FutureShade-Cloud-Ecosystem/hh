@@ -2033,9 +2033,11 @@ async function handle(req, res) {
     return json(res, { jobs });
   }
 
-  // ---- the exports (the workbook is a staff read; the messages export is RequireAdmin) ----
+  // ---- the exports (the audit workbook is RequireAdmin like the trail it mirrors; the messages export is RequireAdmin) ----
 
   if (req.method === "GET" && path === "/api/v1/exports/audit.xlsx") {
+    // Same gate as the audit read it mirrors, with the shared Forbidden body.
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
     // A double's workbook: the xlsx magic followed by filler. The route's
     // contract is the raw bytes, and the app never parses them.
     const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(1020, 7)]);

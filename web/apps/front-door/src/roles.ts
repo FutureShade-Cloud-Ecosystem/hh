@@ -5,15 +5,15 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The nine roles whose logins the demo mints and whose screens this box
+//   - The roles whose logins the demo mints and whose screens this box
 //     serves are LIVE: inside_sales, sales_manager, yard_manager, yard_team,
 //     payables_receivables, procurement_manager, driver,
-//     financial_controller and logistics_manager, labelled on the cards the
-//     way the demo adapter's contract names them ("Sales", "Sales manager",
-//     "Yard manager", "Yard Team", "Payables and Receivables", "Procurement
-//     manager", "Driver", "Financial Controller", "Logistics Manager" - the
-//     flows route's own labels, the same rule
-//     the till's entry view follows, so every name-based selector keeps
+//     financial_controller, logistics_manager and
+//     general_manager, labelled on the cards the
+//     way the demo adapter's contract names them ("Sales", "Sales manager", "Yard manager", "Yard
+//     Team", "Payables and Receivables", "Procurement manager", "Driver",
+//     "Financial Controller", "Logistics Manager", "General Manager" - the flows route's own
+//     labels, the same rule the till's entry view follows, so every name-based selector keeps
 //     reading exactly those words). The flow ids are the flows table's own:
 //     inside_sales -> "sales", sales_manager -> "sales-manager",
 //     yard_manager -> "yard-manager", yard_team -> "yard-team". Payables and
@@ -25,14 +25,21 @@
 //     "driver" and its one live module is HH Drive; the Financial
 //     Controller's flow is "financial-controller" and its one live module is
 //     the same Money Desk tile, on the same path; the Logistics Manager's
-//     flow is "logistics-manager" and its one live module is the dispatch
-//     board under /dispatch/, the same tile the yard manager opens. House
-//     Messages, which the matrix gives every one of the thirteen roles, is
-//     live for all nine under /messages/ (Sales holds it too).
-//   - The four others are COMING. Each shows the modules the matrix gives
-//     that role at work, manage or admin level, by the surfaces table's own
-//     names; read cells (and none) show nothing. A coming role is never
-//     tappable.
+//     flow is "logistics-manager" and its live modules are the dispatch board
+//     under /dispatch/, Manager Home and House Messages; the General Manager's
+//     flow is "general-manager" and its live modules are the Money Desk,
+//     Manager Home, House Messages and Dealer Admin; HR's flow is "hr" and
+//     both its tiles (House Messages, Dealer Admin) are live; the Branch
+//     Manager's flow is "branch-manager" and its tiles are the Counter Till,
+//     the Quote Desk, Dispatch and Load Building, Manager Home and House
+//     Messages (all live); Outside Sales' flow is "outside-sales" and its
+//     tiles are the Quote Desk and House Messages (both live). House Messages,
+//     which the matrix gives every one of the thirteen roles, is live for all
+//     thirteen under /messages/.
+//   - Any others are COMING (none today). Each shows the modules the matrix
+//     gives that role at work, manage or admin level, by the surfaces
+//     table's own names; read cells (and none) show nothing. A coming role is
+//     never tappable.
 //   - The manager's five tiles are the brief's own list: the two live
 //     modules of the box plus Manager Home, Dealer Admin and House Messages,
 //     the modules the matrix gives him at work or manage level, shown as the
@@ -98,7 +105,11 @@ export interface LiveRole {
     | "procurement_manager"
     | "driver"
     | "financial_controller"
-    | "logistics_manager";
+    | "logistics_manager"
+    | "general_manager"
+    | "hr"
+    | "branch_manager"
+    | "outside_sales";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -109,7 +120,11 @@ export interface LiveRole {
     | "procurement-manager"
     | "driver"
     | "financial-controller"
-    | "logistics-manager";
+    | "logistics-manager"
+    | "general-manager"
+    | "hr"
+    | "branch-manager"
+    | "outside-sales";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -209,35 +224,59 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:route",
     tiles: [DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "general_manager",
+    flow: "general-manager",
+    label: "General Manager",
+    line: "Decide what only leadership may decide, across both branches.",
+    icon: "lucide:shield-check",
+    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
+  },
+  {
+    id: "hr",
+    flow: "hr",
+    label: "HR",
+    line: "People, messages and the dealer's staff settings.",
+    icon: "lucide:users",
+    tiles: [HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
+  },
+  {
+    id: "branch_manager",
+    flow: "branch-manager",
+    label: "Branch Manager",
+    line: "Run the branch: the counter, quotes, dispatch and approvals.",
+    icon: "lucide:store",
+    tiles: [TILL_TILE, QUOTE_TILE, DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
+  {
+    id: "outside_sales",
+    flow: "outside-sales",
+    label: "Outside Sales",
+    line: "Build quotes in the field.",
+    icon: "lucide:file-pen-line",
+    tiles: [QUOTE_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
- * The four coming roles, in the till's entry view's own order, each with
- * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
- * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
- * HR's two are House Messages and Dealer Admin, and the matrix gives its
- * demo login nothing until the staff routes exist.
+ * The roles the decided matrix lists but this box does not mint yet. None is
+ * left: every role of ROLE-ACCESS-r3 is live (Outside Sales has no till,
+ * rows 363 and 364). The list and the disclosure that draws it stay, so a
+ * role the matrix adds later goes in here first and moves to LIVE_ROLES by
+ * the same steps.
  */
-export const COMING_ROLES: readonly ComingRole[] = [
-  { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
-  {
-    id: "branch_manager",
-    label: "Branch Manager",
-    modules: [
-      "Counter Till",
-      "Quote Desk",
-      "Dispatch and Load Building",
-      "Manager Home",
-      "House Messages",
-    ],
-  },
-  {
-    id: "general_manager",
-    label: "General Manager",
-    modules: ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"],
-  },
-  { id: "hr", label: "HR", modules: ["House Messages", "Dealer Admin"] },
-];
+export const COMING_ROLES: readonly ComingRole[] = [];
+
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+
+/**
+ * The coming disclosure's heading: the count of roles still coming, written
+ * out, so it moves as each role goes live and never carries a stale number.
+ */
+export function comingHeading(count: number): string {
+  const word = COUNT_WORDS[count] ?? String(count);
+  return count === 1 ? `${word} more role is coming` : `${word} more roles are coming`;
+}
 
 /**
  * The contractor roles: Summit Ridge Builders' five personas (the flows listing's rows of class

@@ -10,12 +10,16 @@
 // Dates are cut from the host's own day so no calendar literal is written.
 import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
+import { createOfficeWorld } from "./ar-office-world.mjs";
+import { createFinstmtWorld } from "./finstmt-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
+// The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
+const finstmtWorld = createFinstmtWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
 const bankrecWorld = createBankrecWorld();
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
@@ -24,6 +28,7 @@ const taxWorld = createTaxWorld();
 const lienWorld = createLienWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
+
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
@@ -171,8 +176,26 @@ let world;
 // the desk's typing answers at once while a writer is mid flight.
 let parkedApplyMs = 0;
 
+// The receivables office's world (AP contacts, reminders, the paper path, dispute, settings), answered by its own module.
+const officeWorld = createOfficeWorld({
+  isController: (req) => isController(req),
+  uuid: (kind, n) => uuid(kind, n),
+  accounts: () => ACCOUNTS.map((a) => ({ id: uuid("e", a.n), name: a.name, no: a.no })),
+  world: () => world,
+  acct: (n) => acct(n),
+  custId: (n) => custId(n),
+  invNumber: (inv) => invNumber(inv),
+  invById: (id) => invById(id),
+  dayOffset: (n) => dayOffset(n),
+  customerIdOfNo: (no) => uuid("e", ACCOUNTS.find((a) => a.no === no).n),
+  openInvoices: (customerId) =>
+    world.invoices.filter((i) => uuid("e", i.acct) === customerId && i.balance_cents > 0).map((i) => ({ id: i.id, invoice_no: i.invoice_no, late: i.late, balance_cents: i.balance_cents })),
+  taggedAccounts: () => ACCOUNTS.filter((a) => a.n !== 5).map((a) => ({ id: uuid("e", a.n), label: "Accounts payable desk" })),
+});
+
 function reset(kind = "full") {
   parkedApplyMs = 0;
+  officeWorld.reset(kind);
   const source = kind === "wide" ? [...INVOICES, ...WIDE_EXTRA] : INVOICES;
   world = {
     empty: kind === "empty",
@@ -185,12 +208,16 @@ function reset(kind = "full") {
       balance_cents: i.paid === true ? 0 : i.total,
       holdback_cents: i.holdback ?? 0,
       promise: null,
-      disputed: i.n === 4,
+      dispute:
+        i.n === 4
+          ? { id: uuid("7", 4), status: "OPEN", reason: "SHORT_DELIVERY", note: "Two pallets were short on the drop", amount_cents: 20_000, raised_at: NOW_ISO() }
+          : null,
       payments: [],
     })),
     payments: [],
     holds: [],
     statements: new Map(),
+    runs: new Map(),
     keys: new Map(),
     counter: 0,
   };
@@ -232,7 +259,7 @@ function reset(kind = "full") {
     ...extra,
   });
   world.holds.push(
-    hold(1, 1, "NSF", true, "Payment PAY-0001 came back from the bank", 2),
+    hold(1, 1, "NSF", true, "Payment PAY-0001 came back from the bank", 2, { src: uuid("c", 1) }),
     hold(2, 2, "AR_AGING", true, "Receivables are more than 90 days past due", 6),
     hold(3, 5, "CREDIT_LIMIT", false, "Balance is over the credit limit; override until the deposit clears", 1, {
       override_until: new Date(Date.now() + 5 * 86_400_000).toISOString(),
@@ -249,7 +276,7 @@ reset();
 
 function statusOf(inv) {
   if (inv.balance_cents === 0) return "PAID";
-  if (inv.disputed === true) return "DISPUTED";
+  if (inv.dispute !== null && inv.dispute.status === "OPEN") return "DISPUTED";
   const held = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(inv.acct));
   if (inv.late > 0) return "OVERDUE";
   if (held) return "CREDIT_HOLD";
@@ -288,7 +315,7 @@ function registerRow(inv) {
     status: statusOf(inv),
     days_overdue: Math.max(inv.late, 0),
     account_status: accountStatus(a.n),
-    disputed: inv.disputed === true,
+    disputed: inv.dispute !== null && inv.dispute.status === "OPEN",
     account: position(a.n),
   };
   if (inv.holdback_cents > 0) row.holdback_cents = inv.holdback_cents;
@@ -368,31 +395,10 @@ function landing() {
   });
   return {
     as_of: dayOffset(0),
-    policy: {
-      aging_warn_days: 60,
-      aging_escalate_days: 90,
-      reminder_cadence_days: 7,
-      reminder_max_per_cycle: 3,
-      black_hole_window_days: 45,
-      black_hole_min_sends: 3,
-      reminder_email_enabled: true,
-      reminder_sms_enabled: false,
-      untagged_fallback: "CONFIRM",
-      ar_tier: "BASE",
-    },
+    policy: officeWorld.policy(),
     cards,
     escalation_queue: queue,
-    paper_path: world.empty ? [] : [
-      {
-        flag_id: uuid("6", 1),
-        customer_id: custId(4),
-        customer_name: acct(4).name,
-        account_no: acct(4).no,
-        delivered_sends: 3,
-        window_days: 45,
-        raised_at: NOW_ISO(),
-      },
-    ],
+    paper_path: officeWorld.paperPath(),
     capabilities: {},
   };
 }
@@ -445,17 +451,9 @@ function detail(inv) {
     as_of: dayOffset(0),
   };
   if (inv.promise !== null) out.promise = inv.promise;
-  if (inv.disputed === true) {
-    out.dispute = {
-      id: uuid("7", inv.n ?? 1),
-      status: "OPEN",
-      reason: "SHORT_DELIVERY",
-      note: "Two pallets were short on the drop",
-      amount_cents: 20_000,
-      raised_at: NOW_ISO(),
-    };
-  }
+  if (inv.dispute !== null) out.dispute = inv.dispute;
   out.order_no = `SO-${2000 + invNumber(inv)}`;
+  out.order_id = uuid("o", invNumber(inv));
   return out;
 }
 
@@ -491,7 +489,7 @@ function bouncedPage() {
       method: p.method,
       amount_cents: p.amount_cents,
       reason: p.reason,
-      fee_cents: NSF_FEE,
+      fee_cents: p.fee_cents ?? NSF_FEE,
       fee_taxable: false,
       bounced_at: p.bounced_at,
     }));
@@ -508,7 +506,7 @@ function history(p) {
     status: p.status,
     amount_cents: p.amount_cents,
     received_at: p.received_at,
-    reversed: p.status === "BOUNCED",
+    reversed: p.status === "BOUNCED" || p.reversed === true,
     allocations: p.allocations.map((al) => {
       const inv = world.invoices.find((i) => invNumber(i) === al.invoice_n);
       return {
@@ -525,7 +523,7 @@ function history(p) {
 function holdsPage(status) {
   const items = world.holds
     .filter((h) => status === "" || h.status === status)
-    .map((h) => ({ ...h, customer_name: acctOfCust(h.customer_id)?.name }));
+    .map(({ src: _src, ...h }) => ({ ...h, customer_name: acctOfCust(h.customer_id)?.name }));
   return { items };
 }
 
@@ -536,6 +534,14 @@ function send(res, status, data) {
   res.end(JSON.stringify(data));
 }
 const refuse = (res, status, error) => send(res, status, { error });
+
+function readRaw(req) {
+  return new Promise((resolve) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => resolve(raw));
+  });
+}
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -561,14 +567,16 @@ async function handle(req, res) {
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     glWorld.reset();
+    finstmtWorld.reset();
     bankrecWorld.reset();
     taxWorld.reset();
     lienWorld.reset();
     return send(res, 200, { ok: true });
   }
+  if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : "full");
+    reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
@@ -584,6 +592,23 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
+  // The statements slice reads the books' periods paged (any page size but 100, two fiscal years); the ledger
+  // slice reads a page of 100 (one year, closed and reopened by its own presses), so the two worlds share the route by that line.
+  if (path.startsWith("/api/v1/finstmt/") || (path === "/api/v1/gl/periods" && method === "GET" && url.searchParams.has("limit") && url.searchParams.get("limit") !== "100")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const raw = method === "POST" || method === "PUT" ? await readRaw(req) : "";
+    const answer = finstmtWorld.handle(req, url, raw);
+    if (answer === null) return refuse(res, 404, "not found");
+    if (typeof answer.csv === "string") {
+      res.writeHead(answer.status, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="export.csv"' });
+      return res.end(answer.csv);
+    }
+    if (answer.status === 204) {
+      res.writeHead(204);
+      return res.end();
+    }
+    return send(res, answer.status, answer.body);
+  }
   if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/")) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
@@ -838,6 +863,7 @@ async function handle(req, res) {
     if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     p.status = "BOUNCED";
+    p.fee_cents = officeWorld.state().nsf.fee_cents;
     p.reason = String(body.reason ?? "");
     p.bounced_at = NOW_ISO();
     let reopened = 0;
@@ -854,13 +880,14 @@ async function handle(req, res) {
       auto_placed: true,
       reason: `Payment ${p.no} came back from the bank`,
       created_at: NOW_ISO(),
+      src: p.id,
     };
     const already = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === hold.customer_id);
     if (!already) world.holds.push(hold);
     return send(res, 200, {
       payment_id: p.id,
       customer_id: custId(p.acct),
-      fee_cents: NSF_FEE,
+      fee_cents: p.fee_cents,
       fee_taxable: false,
       reversed_cents: p.amount_cents,
       reopened_invoices: reopened,
@@ -880,6 +907,7 @@ async function handle(req, res) {
     const hold = world.holds.find((h) => h.id === m[1]);
     if (!hold) return refuse(res, 404, "not found");
     if (m[2] === "ar-release") {
+      if (hold.hold_kind === "NSF" || hold.status !== "ACTIVE") return refuse(res, 400, `billing: hold ${hold.id} is not an ACTIVE non-NSF hold, an NSF hold is released through the till's Tier-1 path, which enforces an authorization this module does not`);
       hold.status = "RELEASED";
       return send(res, 200, { ok: true });
     }
@@ -889,7 +917,22 @@ async function handle(req, res) {
   }
   if (method === "POST" && path === "/api/v1/ar/credit-sweep") {
     if (!isController(req)) return send(res, 403, { error: "Forbidden" });
-    return send(res, 200, { evaluated: ACCOUNTS.length, placed: 0, would_hold: 0, dry_run: false });
+    // The sweep (core credit_gate.go Evaluate): an account whose oldest open invoice is at the escalation edge and has no
+    // active hold would be held. While the automatic switch is off it only reports (dry_run, would_hold) and places nothing;
+    // with it on it places the hold.
+    const edge = officeWorld.policy().aging_escalate_days;
+    const due = ACCOUNTS.filter((a) => {
+      const open = world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0);
+      const aged = open.some((i) => i.late >= edge);
+      return aged && !world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(a.n));
+    });
+    const dry = !officeWorld.state().autoHold;
+    if (!dry) {
+      for (const a of due) {
+        world.holds.push({ id: uuid("d", 100 + world.holds.length), customer_id: custId(a.n), status: "ACTIVE", hold_kind: "AR_AGING", auto_placed: true, reason: `Receivables are more than ${edge} days past due`, created_at: NOW_ISO() });
+      }
+    }
+    return send(res, 200, { evaluated: ACCOUNTS.length, placed: dry ? 0 : due.length, would_hold: dry ? due.length : 0, dry_run: dry, ...(due.length === 0 ? {} : { customers: due.map((a) => custId(a.n)) }) });
   }
 
   if (method === "POST" && path === "/api/v1/ar/register/selection") {
@@ -904,9 +947,20 @@ async function handle(req, res) {
     return send(res, 200, { sent: body.invoice_ids.length, replayed: 0, tone: body.tone });
   }
 
+  // The statement run (core/internal/billing monthend_handler.go statementRun and statements.go GenerateRun): the body
+  // must be JSON, the as_of a calendar day, the mode MASS or INTERIM, and an INTERIM run names exactly one account.
+  // A created run answers 201 and is stored, so the run reads back by its id.
   if (method === "POST" && path === "/api/v1/ar/statement-runs") {
     const body = await readBody(req);
-    const targets = body?.customer_id ? ACCOUNTS.filter((a) => custId(a.n) === body.customer_id) : ACCOUNTS;
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body.as_of !== undefined && body.as_of !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.as_of))) return refuse(res, 400, "as_of must be YYYY-MM-DD");
+    const mode = body.mode === undefined || body.mode === "" ? "MASS" : body.mode;
+    if (mode !== "MASS" && mode !== "INTERIM") return refuse(res, 400, `billing: unknown statement mode "${mode}"`);
+    if (mode === "INTERIM" && !body.customer_id) return refuse(res, 400, "billing: an INTERIM run is for exactly one account");
+    const targets = body.customer_id ? ACCOUNTS.filter((a) => custId(a.n) === body.customer_id) : ACCOUNTS;
+    world.counter += 1;
+    const runId = uuid("9", world.counter);
+    const apTagged = (customerId) => officeWorld.state().apContacts.has(customerId);
     const statements = [];
     for (const a of targets) {
       const row = agingRows().find((r) => r.customer_id === custId(a.n));
@@ -914,7 +968,7 @@ async function handle(req, res) {
       world.counter += 1;
       const st = {
         id: uuid("8", world.counter),
-        run_id: uuid("9", world.counter),
+        run_id: runId,
         customer_id: custId(a.n),
         customer_name: a.name,
         as_of_date: dayOffset(0),
@@ -923,28 +977,38 @@ async function handle(req, res) {
         days_60_cents: row.days_60_cents,
         days_90_plus_cents: row.days_90_plus_cents,
         closing_balance_cents: row.total_cents,
-        delivery_status: "QUEUED",
+        delivery_status: apTagged(custId(a.n)) ? "QUEUED" : "NOT_QUEUED",
         created_at: NOW_ISO(),
       };
       world.statements.set(custId(a.n), st);
       statements.push(st);
     }
-    return send(res, 200, {
+    const queued = statements.filter((s) => s.delivery_status === "QUEUED").length;
+    const result = {
       run: {
-        id: uuid("9", 999),
-        mode: body?.mode ?? "MASS",
+        id: runId,
+        mode,
         as_of_date: dayOffset(0),
         status: "COMPLETED",
         generated_count: statements.length,
         queued_count: statements.length,
         created_at: NOW_ISO(),
+        finished_at: NOW_ISO(),
         notices_enabled: true,
-        notice_queued_count: statements.length,
-        notice_suppressed_count: 0,
+        notice_queued_count: queued,
+        notice_suppressed_count: statements.length - queued,
         notice_accounting_recorded: true,
       },
       statements,
-    });
+    };
+    world.runs.set(runId, result);
+    return send(res, 201, result);
+  }
+
+  m = path.match(/^\/api\/v1\/ar\/statement-runs\/([^/]+)$/);
+  if (m && method === "GET") {
+    const found = world.runs.get(m[1]);
+    return found === undefined ? refuse(res, 404, "not found") : send(res, 200, found);
   }
 
   if (method === "GET" && path === "/api/v1/ar/register/export") {
@@ -994,6 +1058,15 @@ async function handle(req, res) {
     return send(res, 200, { accounts: custs.size, generated: custs.size, run_ids });
   }
 
+  {
+    const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
+    const answer = officeWorld.handle(req, url, body);
+    if (answer !== null && answer.text !== undefined) {
+      res.writeHead(answer.status, { "Content-Type": answer.type, "Cache-Control": "no-store" });
+      return res.end(answer.text);
+    }
+    if (answer !== null) return send(res, answer.status, answer.body);
+  }
   return refuse(res, 404, "not found");
 }
 

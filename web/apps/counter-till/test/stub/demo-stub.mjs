@@ -95,6 +95,10 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
   { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
+  { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
+  { flow: "hr", role_code: "hr", label: "HR" },
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
+  { flow: "outside-sales", role_code: "outside_sales", label: "Outside Sales" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -142,6 +146,42 @@ const USERS = {
     display_name: "Yard persona (demo)",
     role_code: "yard_team",
     role_name: "Yard Team",
+    tier: 3,
+    scope: "BRANCH",
+  },
+  "general-manager": {
+    user_id: "demo-account-general-manager",
+    email: "general-manager@demo.invalid",
+    display_name: "General manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  hr: {
+    user_id: "demo-account-hr",
+    email: "hr@demo.invalid",
+    display_name: "HR (demo)",
+    role_code: "hr",
+    role_name: "HR",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  "branch-manager": {
+    user_id: "demo-account-branch-manager",
+    email: "branch-manager@demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "outside-sales": {
+    user_id: "demo-account-outside-sales",
+    email: "outside-sales@demo.invalid",
+    display_name: "Outside sales (demo)",
+    role_code: "outside_sales",
+    role_name: "Outside Sales",
     tier: 3,
     scope: "BRANCH",
   },
@@ -3834,6 +3874,7 @@ const server = createServer(async (request, response) => {
         automated: true,
         requires_evidence: false,
         evidence_satisfied: false,
+        tax_label: "HST",
       });
     });
     return;

@@ -36,6 +36,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -188,7 +189,12 @@ type StatementService struct {
 	outbox StatementOutbox
 	audit  audit.Recorder
 	clock  func() time.Time
+	zone   houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source: a statement run is cut at the dealer's own
+// calendar day. Nil keeps the Ontario dealer's.
+func (s *StatementService) WithZone(src houseday.Source) *StatementService { s.zone = src; return s }
 
 // NewStatementService builds the service.
 func NewStatementService(store statementStore) *StatementService {
@@ -225,7 +231,11 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}
-	asOf = houseClock(asOf)
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	asOf = houseClockIn(zone, asOf)
 
 	// The caller's branch reach (branch_reach.go). A caller who reaches one branch files its run under
 	// that branch, so the run can be read back by the same reach and no other.

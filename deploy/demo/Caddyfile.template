@@ -217,6 +217,18 @@ handle /quote.html {
 	file_server
 }
 
+# The front door's runtime configuration: its own exact handle, behind the same
+# phrase gate (the browser sends its authentication entry same origin), and no
+# try_files, so a file that is missing is a 404 and the page says "missing" and
+# never takes the page's own HTML for a damaged file.
+handle /config.json {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	file_server
+}
+
 handle {
 	basic_auth {
 		demo __GATE_HASH__
