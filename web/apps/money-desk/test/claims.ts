@@ -26,7 +26,7 @@ const CORE = "../../../core/cmd/core/";
 
 const PAYREC_CARD = { file: CARD, test: "the front door's Payables and Receivables card opens the Money Desk on the receivables landing" };
 const CONTROLLER_CARD = { file: CARD, test: "the front door's Financial Controller card opens the same Money Desk tile and lands on the ledger" };
-const PICKER = { file: FRONT_DOOR, test: "the picker renders the nine live cards and the four coming rows" };
+const PICKER = { file: FRONT_DOOR, test: "the picker renders the live cards and the coming rows" };
 const DESK_OPENS = { file: RECEIVABLES, test: "the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words" };
 const APPLY_SPLIT = { file: RECEIVABLES, test: "one payment across two invoices: the server splits it oldest first and posts it as one payment" };
 const BOUNCED_WORLD = { file: RECEIVABLES, test: "the bounced payment the demo world starts with: what happened, and a reminder sent from the queue" };
@@ -43,10 +43,9 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "other-cards": [
     { file: CARD, test: "the front door's Sales card offers no Money Desk tile" },
     { file: CARD, test: "the front door's Sales manager card offers no Money Desk tile" },
-    PICKER,
   ],
   "own-way-in": [{ file: RECEIVABLES, test: "the way in with no handoff offers the role cards" }],
-  "no-gm": [{ file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of nine" }],
+  "gm-tile": [{ file: FRONT_DOOR, test: "a General Manager sign in shows the matrix tiles, three live and one coming" }],
   "world-invoices": [{ file: `${CORE}demoworld_payables_receivables_test.go`, source: "want the 18 across the aging buckets" }],
   "world-bounce": [
     { file: `${CORE}demoseed_payables_receivables.go`, source: '{"B01", "I08", 12, 9, "Cheque returned by the bank, not sufficient funds", 4_500}' },
@@ -144,7 +143,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "liens-areas": [
     { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all six" },
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
-    { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of nine" },
+    { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of thirteen" },
   ],
   "liens-payrec-reads": [
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },

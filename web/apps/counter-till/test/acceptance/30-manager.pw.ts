@@ -198,12 +198,12 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
   expect([400, 422]).toContain(managerWrite.status);
-  // Sign out: the front door picker comes back, the manager's card on it
-  // and the four coming roles inside their disclosure.
+  // Sign out: the front door picker comes back with the manager's card on it
+  // and no coming roles.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  await page.getByTestId("coming-disclosure").getByText("Four more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
   // The picture holds both halves of the claim: the cards back on the entry
   // page, and the dispatch read the manager's bearer reaches, as the browser
   // shows the core's answer (the clerk's is the 403 asserted above).
