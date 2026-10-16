@@ -35,6 +35,20 @@ import {
   settleRefusalWords,
   slaRefusalWords,
   vendorRefusalWords,
+  defectBadge,
+  defectClaimLinkText,
+  defectEvidenceWord,
+  defectFilterWord,
+  defectHeadlines,
+  evidenceCountWord,
+  filteredDefects,
+  nextRequestHeadlineWord,
+  nextRequestPhrase,
+  nextRequestSubline,
+  thresholdDollars,
+  vendorAgreementWord,
+  vendorCreditHeadlines,
+  vendorPeriodWord,
 } from "../src/warranty-logic.ts";
 
 test("the phase vocabulary is the core's closed set, in board order, with the two exits last", () => {
@@ -222,4 +236,57 @@ test("a timeline event reads as its own sentence; the phase move names both ends
 test("the capture sheet states its own rules: who owns a captured claim, and what the date does", () => {
   assert.match(captureWords.owner, /whoever captures it/);
   assert.match(captureWords.backdate, /earlier day/);
+});
+
+// -- change 6 item 5: defects and vendor credits ---------------------------------------------------------
+
+test("defectBadge names the outcome the table column shows", () => {
+  assert.equal(defectBadge("CLAIM"), "Warranty claim");
+  assert.equal(defectBadge("SHRINKAGE"), "Shrinkage");
+});
+
+test("defectFilterWord names the chip's bucket text, an empty filter is All", () => {
+  assert.equal(defectFilterWord(""), "All");
+  assert.equal(defectFilterWord("CLAIM"), "Warranty claims");
+  assert.equal(defectFilterWord("SHRINKAGE"), "Shrinkage");
+});
+
+test("defectEvidenceWord and evidenceCountWord name the photo count in people words", () => {
+  const empty = { photo_ids: [] };
+  const one = { photo_ids: ["p1"] };
+  const three = { photo_ids: ["p1", "p2", "p3"] };
+  assert.equal(defectEvidenceWord(empty), "none");
+  assert.equal(defectEvidenceWord(one), "1 photo");
+  assert.equal(defectEvidenceWord(three), "3 photos");
+  assert.equal(evidenceCountWord(0), "none");
+  assert.equal(evidenceCountWord(1), "1 photo");
+  assert.equal(evidenceCountWord(4), "4 photos");
+});
+
+test("thresholdDollars rounds and never carries a raw currency symbol", () => {
+  assert.equal(thresholdDollars(5000), "50.00");
+  assert.equal(thresholdDollars(0), "0.00");
+});
+
+test("vendorAgreementWord names the three agreement kinds the boards show", () => {
+  assert.equal(vendorAgreementWord("CLAIM_BY_CLAIM"), "Claim by claim");
+  assert.equal(vendorAgreementWord("PERIODIC_CREDIT_NOTE"), "Periodic credit note");
+  assert.equal(vendorAgreementWord("FIXED_ALLOWANCE"), "Fixed damage allowance");
+});
+
+test("vendorPeriodWord names the period a vendor's credits roll into", () => {
+  assert.equal(vendorPeriodWord("EACH_CLAIM"), "Each claim");
+  assert.equal(vendorPeriodWord("MONTHLY"), "Monthly");
+  assert.equal(vendorPeriodWord("QUARTERLY"), "Quarterly");
+});
+
+test("nextRequestHeadlineWord names the days the chip shows on the home tab", () => {
+  assert.equal(nextRequestHeadlineWord(0), "Today");
+  assert.equal(nextRequestHeadlineWord(1), "Tomorrow");
+  assert.equal(nextRequestHeadlineWord(7), "7 days");
+});
+
+test("nextRequestSubline names the vendor and period the chip's second line carries", () => {
+  assert.match(nextRequestSubline("Northland Stone", "MONTHLY"), /Northland/);
+  assert.match(nextRequestSubline("", "MONTHLY"), /No vendor/);
 });
