@@ -413,3 +413,121 @@ export function refusalWords(what: string, error: string, status: number | null)
   if (status === 404) return "That is no longer there.";
   return `${what} was refused.`;
 }
+
+// ---- C2-C6 helpers -----------------------------------------------------------------------------
+
+export interface StaffMember {
+  readonly user_id: string;
+  readonly display_name: string;
+  readonly role_name: string;
+  readonly branch_name: string;
+}
+
+export function groupConversationSubtitle(memberCount: number, named?: boolean): string {
+  if (named) {
+    return `A named group, ${memberCount} people including you`;
+  }
+  return `A group direct message, ${memberCount} people including you`;
+}
+
+export function dmConversationPrompt(otherPersonName: string): { title: string; subtitle: string } {
+  return {
+    title: `This is the start of your conversation with ${otherPersonName}`,
+    subtitle: "Only the two of you see it. Photos and files you share here show under Files and photos.",
+  };
+}
+
+export function groupSystemCreatedMessage(groupName: string, addedNames: readonly string[]): string {
+  if (addedNames.length === 0) return `You created the group ${groupName}.`;
+  if (addedNames.length === 1) return `You created the group ${groupName} and added ${addedNames[0]}.`;
+  const allExceptLast = addedNames.slice(0, -1).join(", ");
+  const last = addedNames[addedNames.length - 1];
+  return `You created the group ${groupName} and added ${allExceptLast} and ${last}.`;
+}
+
+export function filterRoster(roster: readonly StaffMember[], query: string, meId?: string): StaffMember[] {
+  const q = query.trim().toLowerCase();
+  return roster.filter((member) => {
+    if (meId && member.user_id === meId) return false;
+    if (!q) return true;
+    return (
+      member.display_name.toLowerCase().includes(q) ||
+      member.role_name.toLowerCase().includes(q) ||
+      member.branch_name.toLowerCase().includes(q)
+    );
+  });
+}
+
+export interface ReactionItem {
+  readonly emoji: string;
+  readonly count: number;
+  readonly mine: boolean;
+  readonly users?: readonly string[];
+}
+
+export function toggleReactionList(
+  current: readonly ReactionItem[],
+  emoji: string,
+  userId: string
+): ReactionItem[] {
+  const existing = current.find((r) => r.emoji === emoji);
+  if (!existing) {
+    return [...current, { emoji, count: 1, mine: true, users: [userId] }];
+  }
+  const users = existing.users ?? [];
+  const had = users.includes(userId) || existing.mine;
+  if (had) {
+    const nextCount = existing.count - 1;
+    if (nextCount <= 0) {
+      return current.filter((r) => r.emoji !== emoji);
+    }
+    return current.map((r) =>
+      r.emoji === emoji
+        ? { emoji, count: nextCount, mine: false, users: users.filter((u) => u !== userId) }
+        : r
+    );
+  }
+  return current.map((r) =>
+    r.emoji === emoji
+      ? { emoji, count: existing.count + 1, mine: true, users: [...users, userId] }
+      : r
+  );
+}
+
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+export function canEditMessage(
+  message: Pick<Message, "author_id" | "kind" | "created_at" | "requires_ack">,
+  meId: string,
+  now: number
+): boolean {
+  if (message.author_id !== meId) return false;
+  if (message.kind !== "TEXT") return false;
+  if (message.requires_ack) return false;
+  const createdMs = Date.parse(message.created_at);
+  if (Number.isNaN(createdMs)) return false;
+  return now - createdMs <= TEN_MINUTES_MS;
+}
+
+export function formatMembershipRuleLine(rule: { roles?: readonly string[]; branch?: string; status?: string }): string {
+  const parts: string[] = [];
+  if (rule.roles && rule.roles.length > 0) {
+    parts.push(`Role ${rule.roles.join(", ")}`);
+  }
+  if (rule.branch) {
+    parts.push(`at ${rule.branch}`);
+  }
+  if (rule.status) {
+    parts.push(`Status ${rule.status}`);
+  }
+  return parts.join(" ");
+}
+
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  const mb = (bytes / (1024 * 1024)).toFixed(1);
+  return `${mb.endsWith(".0") ? mb.slice(0, -2) : mb} MB`;
+}
+

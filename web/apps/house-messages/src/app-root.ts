@@ -130,7 +130,7 @@ export class HouseMessagesApp extends HHElement {
   // listening on the shadow root keeps its real target.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
-    if (target instanceof HTMLTextAreaElement) this.#desk?.typed();
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) this.#desk?.typed(target);
   };
 
   connectedCallback(): void {
