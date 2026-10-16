@@ -300,7 +300,7 @@ func (h *C8WalkHandler) listReminderRules(w http.ResponseWriter, r *http.Request
 			DaysPastDue: x.DaysPastDue, MaxPerWindow: x.MaxPerWindow,
 			PaylinkURLTemplate: x.PaylinkURLTemplate, LastSentAt: x.LastSentAt,
 			AmountBroughtInCents: x.AmountBroughtInCents,
-			EnrolledCount: x.EnrolledCount, ExclusionCount: x.ExclusionCount,
+			EnrolledCount:        x.EnrolledCount, ExclusionCount: x.ExclusionCount,
 			UpdatedAt: x.UpdatedAt,
 		})
 	}
