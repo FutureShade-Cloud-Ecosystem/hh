@@ -37219,6 +37219,11 @@ components:
           type: integer
           format: int64
           description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
+        out_at_branches:
+          type: array
+          items:
+            type: string
+          description: The branches whose own stock record shows nothing available (on hand at or under what is reserved). The row is a roll-up, so a list line that says "Out at <branch>" reads the names here. Absent when the product is available at every branch that holds a record for it, and for a product with no stock record anywhere.
     InventoryFacetValue:
       type: object
       required:

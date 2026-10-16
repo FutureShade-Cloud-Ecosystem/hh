@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/no-signal.test.mjs test/sinks.test.mjs test/po-logic.test.mjs test/incoming-logic.test.mjs test/inventory-logic.test.mjs test/counts-logic.test.mjs test/stub-contract.test.mjs test/purch-money.test.mjs test/no-app-money.test.mjs test/landed-logic.test.mjs test/landed-contract.test.mjs test/vendors-logic.test.mjs test/vendors-contract.test.mjs test/purch-logic.test.mjs test/receiving-logic.test.mjs test/receiving-contract.test.mjs test/bills-logic.test.mjs test/bills-contract.test.mjs test/inventory-contract.test.mjs test/dealer-name.test.mjs && playwright test && playwright test -c test/acceptance.config.ts"
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/no-signal.test.mjs test/sinks.test.mjs test/po-logic.test.mjs test/incoming-logic.test.mjs test/lookup-logic.test.mjs test/inventory-logic.test.mjs test/counts-logic.test.mjs test/stub-contract.test.mjs test/purch-money.test.mjs test/no-app-money.test.mjs test/landed-logic.test.mjs test/landed-contract.test.mjs test/vendors-logic.test.mjs test/vendors-contract.test.mjs test/purch-logic.test.mjs test/receiving-logic.test.mjs test/receiving-contract.test.mjs test/bills-logic.test.mjs test/bills-contract.test.mjs test/inventory-contract.test.mjs test/dealer-name.test.mjs && playwright test && playwright test -c test/acceptance.config.ts"
   },
   "dependencies": {
     "@hardscapehouse/api-client": "0.0.0",
