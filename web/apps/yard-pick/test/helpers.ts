@@ -36,7 +36,7 @@ export async function resetStub(request: APIRequestContext): Promise<void> {
   if (!response.ok()) throw new Error(`stub reset failed: ${response.status()}`);
 }
 
-/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled). */
+/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled, change-decided). */
 export async function useScenario(request: APIRequestContext, name: string): Promise<void> {
   const response = await request.post("/_stub/scenario", { data: { name } });
   if (!response.ok()) throw new Error(`stub scenario failed: ${response.status()}`);

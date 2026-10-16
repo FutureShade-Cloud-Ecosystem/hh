@@ -48,19 +48,40 @@ export const dealerStyles = css`
   .surface-list {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-4);
+    gap: var(--hh-s-16);
     margin: 0;
-    padding: 0;
+    padding: var(--hh-s-16);
     list-style: none;
+    background: var(--hh-card);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-card);
+  }
+  .nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-4);
+  }
+  .nav-group-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-8) var(--hh-s-4);
+  }
+  .nav-group-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
   .surface-link {
     display: flex;
-    flex-direction: column;
-    gap: var(--hh-s-2);
+    align-items: center;
     width: 100%;
     text-align: start;
-    padding: var(--hh-s-12) var(--hh-s-16);
+    padding: var(--hh-s-8) var(--hh-s-12);
     border: 1px solid transparent;
+    border-left: 3px solid transparent;
     border-radius: var(--hh-radius-control);
     background: transparent;
     color: var(--hh-text);
@@ -70,19 +91,16 @@ export const dealerStyles = css`
     background: var(--hh-row-alt);
   }
   .surface-link[aria-current="true"] {
-    border-color: var(--hh-hairline);
-    background: var(--hh-card);
+    border-left-color: var(--hh-accent);
+    background: var(--hh-row-alt);
   }
   .surface-link .title {
-    font-size: var(--hh-s-16);
-    font-weight: 650;
+    font-size: 14px;
+    font-weight: 500;
   }
   .surface-link[aria-current="true"] .title {
-    color: var(--hh-accent-text);
-  }
-  .surface-link .blurb {
-    font-size: 14px;
-    color: var(--hh-text-dim);
+    color: var(--hh-text);
+    font-weight: 700;
   }
 
   /* -- the page's own head ---------------------------------------------------- */
@@ -621,5 +639,256 @@ export const dealerStyles = css`
     line-height: 1.4;
     color: var(--hh-text-dim);
     font-weight: 400;
+  }
+
+  /* -- change 11: staff register and invitation ------------------------------------- */
+
+  .person-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .initials-disc {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-row-alt);
+    border: 1px solid var(--hh-control-line);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--hh-text);
+    flex: none;
+  }
+  .staff-email {
+    font-size: 12px;
+  }
+  .staff-last-seen {
+    font-size: 13px;
+  }
+  .link-out-wrap {
+    margin-top: var(--hh-s-8);
+  }
+  .auth-note {
+    margin-bottom: var(--hh-s-16);
+  }
+  .invitation-type-toggle {
+    display: flex;
+    gap: var(--hh-s-8);
+    margin-bottom: var(--hh-s-16);
+  }
+  .btn-pill {
+    padding: var(--hh-s-4) var(--hh-s-16);
+    border-radius: var(--hh-radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid var(--hh-control-line);
+    background: transparent;
+    color: var(--hh-text);
+  }
+  .sign-in-method-box {
+    margin-top: var(--hh-s-16);
+    padding: var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-row-alt);
+    border: 1px solid var(--hh-hairline);
+  }
+  .sign-in-method-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+    margin-bottom: 4px;
+  }
+  .sign-in-method-val {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .staff-create-actions {
+    margin-top: var(--hh-s-16);
+    display: flex;
+    gap: var(--hh-s-8);
+  }
+  .badge-outline {
+    display: inline-block;
+    padding: 2px 8px;
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    font-size: 12px;
+  }
+  .badge-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--hh-radius-pill);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .badge-active {
+    background: color-mix(in srgb, var(--hh-success) 15%, transparent);
+    color: var(--hh-success);
+  }
+  .badge-invited {
+    background: color-mix(in srgb, var(--hh-accent-text) 15%, transparent);
+    color: var(--hh-accent-text);
+  }
+  .badge-disabled {
+    background: var(--hh-row-alt);
+    color: var(--hh-text-dim);
+  }
+
+  /* -- change 11: role matrix ---------------------------------------------------- */
+
+  .role-matrix-table th {
+    text-align: center;
+  }
+  .role-matrix-table td {
+    text-align: center;
+  }
+  .role-matrix-table .role-col {
+    text-align: start;
+  }
+  .matrix-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: var(--hh-radius-pill);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 48px;
+  }
+  .matrix-cell-full {
+    background: color-mix(in srgb, var(--hh-success) 15%, transparent);
+    color: var(--hh-success);
+  }
+  .matrix-cell-view {
+    background: color-mix(in srgb, var(--hh-accent-text) 15%, transparent);
+    color: var(--hh-accent-text);
+  }
+  .matrix-cell-none {
+    background: var(--hh-row-alt);
+    color: var(--hh-text-dim);
+  }
+  .matrix-legend {
+    margin-top: var(--hh-s-12);
+  }
+
+  /* -- change 11: delivery, sign in methods and warranty lists ---------------------- */
+
+  .list-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+  }
+  .pill-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-card);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-control);
+    gap: var(--hh-s-16);
+  }
+  .pill-name {
+    font-size: 14px;
+    min-width: 140px;
+  }
+  .pill-detail {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+  }
+  .pill-coverage {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    flex: 1;
+  }
+  .pill-fee {
+    font-size: 14px;
+    font-weight: 600;
+    text-align: right;
+  }
+  .pill-words {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pill-title {
+    font-size: 14px;
+  }
+  .pill-desc {
+    font-size: 13px;
+    color: var(--hh-text-dim);
+  }
+  .toggle-wrap {
+    display: flex;
+    align-items: center;
+  }
+  .toggle-switch {
+    width: 40px;
+    height: 24px;
+    border-radius: 12px;
+    background: var(--hh-control-line);
+    position: relative;
+    cursor: pointer;
+  }
+  .toggle-switch-on {
+    background: var(--hh-accent);
+  }
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--hh-card);
+    box-shadow: var(--hh-widget-shadow);
+  }
+  .toggle-switch-on .toggle-knob {
+    transform: translateX(16px);
+  }
+  .segmented-control {
+    display: inline-flex;
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    overflow: hidden;
+    background: var(--hh-row-alt);
+  }
+  .seg-btn {
+    padding: 4px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    color: var(--hh-text-dim);
+    cursor: pointer;
+    border-radius: 0;
+    min-height: 28px;
+  }
+  .seg-btn:hover {
+    color: var(--hh-text);
+  }
+  .seg-btn-active {
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-weight: 600;
+    box-shadow: var(--hh-widget-shadow);
+  }
+  .threshold-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+  }
+  .input-action-row {
+    display: flex;
+    gap: var(--hh-s-8);
+    max-width: 320px;
+    align-items: center;
+  }
+  .card-actions {
+    display: flex;
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-16);
   }
 `;

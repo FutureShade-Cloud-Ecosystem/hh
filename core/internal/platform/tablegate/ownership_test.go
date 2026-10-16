@@ -396,6 +396,7 @@ var ownedObjects = map[string]string{
 	"count_reason_codes":              "invcount",          // 0040_inventory_counts
 	"count_sheets":                    "invcount",          // 0040_inventory_counts
 	"credit_holds":                    "payments",          // 0035_nsf_credit_hold
+	"customer_ar_notes":               "billing",           // 0405_customer_ar_workspace
 	"customer_category_overrides":     "pricing",           // 0023_pricing
 	"customer_contacts":               "customer",          // 0006_customers
 	"customer_quote":                  "customerquote",     // 0214_new_entities_and_pricing

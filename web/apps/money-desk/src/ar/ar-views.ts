@@ -20,6 +20,7 @@ import type {
   BillingAgingRow,
   BillingARLanding,
   BillingCreditHold,
+  BillingCustomerWorkspace,
   BillingInvoiceDetail,
   BillingPaperPathEntry,
   BillingRegisterRow,
@@ -29,6 +30,7 @@ import type {
   TillInvoicePayments,
   TillPaymentHistory,
 } from "@hardscapehouse/api-client";
+import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
@@ -37,7 +39,11 @@ import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReve
 import { renderSettingsPanels } from "./office-settings-views.js";
 
 export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
-export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
+// C8 register filter chips. The legacy strings ("open", "overdue", "promised", "disputed", "paid")
+// stay valid for backward compatibility with every stored URL and every automation that already
+// names them.
+export type RegisterFilter = "all" | "past_due" | "current" | "on_hold"
+  | "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
 export type WorkChoice = "replacement" | "promise" | "reminder";
@@ -101,6 +107,22 @@ export interface DeskModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  // The customer account workspace (Change 8 S2 + S2M). workspace is the read payload
+  // from billingGetCustomerWorkspace; activeWorkspaceTab is the desktop / mobile
+  // workspace tab the operator last picked; workspaceCustomerId is the customer the
+  // workspace is currently showing (a back link clears all three).
+  readonly workspace: BillingCustomerWorkspace | null;
+  readonly workspaceCustomerId: string | null;
+  readonly activeWorkspaceTab: WorkspaceTab;
+  // The Place-a-hold draft (Change 8 S4): the operator's typed reason and the picked
+  // account id, so the form rerenders without losing state. The draft is empty when
+  // the panel has never been opened; the desk resets it on close.
+  readonly placeHoldDraft: { readonly customerId: string; readonly reason: string };
+  // The register summary the Place-a-hold pick-list reads from. A small slice of the
+  // register's customer list so the form has SOMETHING to pick without pulling every
+  // invoice of every account. The empty slice renders an empty select; the operator
+  // can still open the workspace from the Customer tab and place the hold there.
+  readonly registerSummary: readonly BillingRegisterRow[];
 }
 
 // ---- small parts -------------------------------------------------------------------------------
@@ -207,23 +229,68 @@ function tiles(model: DeskModel): TemplateResult {
   `;
 }
 
+// C8 register filter chips. "All" is every open document (excludes PAID), "Past due" is the overdue
+// subset, "Current" is the not-yet-past-due subset, "On hold" is the credit-hold subset. The chip
+// order is the order the screen reads them: All, then the three status slices an operator most
+// often wants to see one at a time.
 const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
-  { id: "open", word: "Open" },
-  { id: "overdue", word: "Overdue" },
-  { id: "promised", word: "Promised" },
-  { id: "disputed", word: "Disputed" },
-  { id: "paid", word: "Paid" },
+  { id: "all", word: "All" },
+  { id: "past_due", word: "Past due" },
+  { id: "current", word: "Current" },
+  { id: "on_hold", word: "On hold" },
 ];
+
+// isOpenRow is the shared "is this row one we still have to collect on" predicate. Both "all" and
+// "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
+// credit memos are excluded because they offset what is owed rather than what is due.
+function isOpenRow(r: BillingRegisterRow): boolean {
+  return r.status !== "PAID" && r.status !== "CREDIT";
+}
 
 function shownRows(model: DeskModel): BillingRegisterRow[] {
   const ids = model.cardFilter === null ? null : new Set(model.landing?.cards.find((c) => c.id === model.cardFilter)?.account_ids ?? []);
   let rows = model.rows.filter((r) => ids === null || ids.has(r.customer_id));
-  if (model.filter === "overdue") rows = rows.filter((r) => r.days_overdue > 0 && r.status !== "PAID");
-  else if (model.filter === "promised") rows = rows.filter((r) => typeof r.promised_date === "string" && r.promised_date !== "");
-  else if (model.filter === "disputed") rows = rows.filter((r) => r.disputed);
-  else if (model.filter === "paid") rows = rows.filter((r) => r.status === "PAID");
-  else rows = rows.filter((r) => r.status !== "PAID");
+  switch (model.filter) {
+    case "past_due":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      break;
+    case "current":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue === 0);
+      break;
+    case "on_hold":
+      rows = rows.filter((r) => isOpenRow(r) && r.account_status === "CREDIT_HOLD");
+      break;
+    case "all":
+      rows = rows.filter(isOpenRow);
+      break;
+    // Legacy chips: keep every old behaviour so a stored URL still works.
+    case "overdue":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      break;
+    case "promised":
+      rows = rows.filter((r) => isOpenRow(r) && typeof r.promised_date === "string" && r.promised_date !== "");
+      break;
+    case "disputed":
+      rows = rows.filter((r) => isOpenRow(r) && r.disputed);
+      break;
+    case "paid":
+      rows = rows.filter((r) => r.status === "PAID");
+      break;
+  }
   return rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
+}
+
+// pastDueSummary returns the "X of Y past due · $Z" line the register header renders when the
+// Past due chip is active. It is computed client-side from the currently loaded rows; a paginated
+// server reads the page from this same expression and the totals must agree. Returns null when the
+// chip is not the one currently active, so the summary does not bleed into other screens.
+function pastDueSummary(model: DeskModel): { pastDueCount: number; totalCount: number; pastDueCents: number } | null {
+  if (model.filter !== "past_due") return null;
+  const open = model.rows.filter(isOpenRow);
+  const pastDue = open.filter((r) => r.days_overdue > 0);
+  let cents = 0;
+  for (const r of pastDue) cents += r.balance_cents;
+  return { pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
 }
 
 export function shownInvoiceIds(model: DeskModel): string[] {
@@ -234,12 +301,24 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
   const overdue = r.days_overdue > 0 && r.status !== "PAID";
   const acct = model.aging.find((a) => a.customer_id === r.customer_id);
   const terms = acct === undefined ? "" : ` · Net ${acct.payment_terms_days}`;
+  // bucket_label is the C8 5-bucket label the server stamped for this row. When it is present
+  // (i.e. the row is past due) the pill sits next to the overdue line; when it is absent (the
+  // row is Current) we render nothing beside the due date so the column stays at one line.
+  const bucketLabel = typeof r.bucket_label === "string" && r.bucket_label !== "" ? r.bucket_label : "";
   return html`
     <tr data-register-row>
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
-      <td><span>${r.customer_name}</span><span class="dim small">${r.account_no}${terms}</span></td>
+      <td><span class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
-      <td class="nowrap ${overdue ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+      <td class="nowrap due-col">
+        <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
+        ${overdue
+          ? html`<div class="late-line" data-testid="overdue-line">
+              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} late</span>
+              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketLabel}</span>` : nothing}
+            </div>`
+          : nothing}
+      </td>
       <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
       <td class="num">${formatMoney(r.balance_cents)}</td>
       <td class="act">
@@ -255,6 +334,9 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
 
 function register(model: DeskModel): TemplateResult {
   const rows = shownRows(model);
+  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; null when
+  // a different chip is active so the header does not contradict the table below it.
+  const summary = pastDueSummary(model);
   return html`
     <section class="panel" aria-label="AR register">
       <div class="panel-head">
@@ -264,6 +346,11 @@ function register(model: DeskModel): TemplateResult {
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
+      ${summary === null
+        ? nothing
+        : html`<p class="dim small c8-summary" data-testid="c8-summary">
+            ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
+          </p>`}
       ${rows.length === 0
         ? html`<div class="empty"><strong>No invoices in this view.</strong><span class="dim">Nothing matches the filter.</span></div>`
         : html`
@@ -472,6 +559,37 @@ function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
   `;
 }
 
+/** The Place-a-hold panel (Change 8 S4). Manager-gated on the server: the form is the
+ *  same one every other workspace writer uses, the gate refuses every other role with the
+ *  server's own 403. The disabled placeholder the S2 scaffold left behind is gone, the
+ *  reason textarea is the only input that is required, and the cancel/close button keeps
+ *  the panel close to its previous shape.
+ */
+function placeHoldPanel(model: DeskModel): TemplateResult {
+  const draft = model.placeHoldDraft;
+  return html`
+    <section class="panel side" aria-label="Place a hold" data-hold-panel>
+      <div class="panel-head"><h2>Place a hold</h2></div>
+      <p class="note" data-place-words>Placing a hold by hand stops the account at the till, the gate and the portal. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
+      <fieldset class="held-form">
+        <label>Account<select data-field="place-hold-account">
+          <option data-id="">Pick an account</option>
+          ${model.registerSummary.map((r) => html`<option data-id="${r.customer_id}">${r.customer_name}</option>`)}
+        </select></label>
+        <label>Kind<input type="text" value="Manual" readonly /></label>
+        <label>Reason<textarea data-field="place-hold-reason" rows="3" placeholder="Why the account is held" maxlength="1024"></textarea></label>
+        <p class="label">What it blocks</p>
+        <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+      </fieldset>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="place-hold-go" ?disabled=${model.busy || draft.customerId === "" || draft.reason.trim() === ""}>Place hold</button>
+        <button type="button" class="btn btn-secondary" data-action="hold-close">Close</button>
+      </div>
+      <p class="ok-note" data-place-audited><b>Audited.</b> The hold carries your role, the reason and the time.</p>
+    </section>
+  `;
+}
+
 /** The payment a returned payment hold names, once the till's list has said it. */
 function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof nothing {
   const paymentId = model.office.tillHolds.get(holdId);
@@ -483,20 +601,23 @@ function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof not
 function holdsPanel(model: DeskModel): TemplateResult {
   const hold = model.holds.find((h) => h.id === model.selectedHoldId);
   if (model.holdPanel === "place-later") {
-    return html`
-      <section class="panel side" aria-label="Place a hold" data-hold-panel>
-        <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
-        <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
-        <fieldset class="held-form" disabled>
-          <label>Account<select><option>Pick an account</option></select></label>
-          <label>Kind<input type="text" value="Manual" readonly /></label>
-          <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
-          <p class="label">What it blocks</p>
-          <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
-        </fieldset>
-        <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
-      </section>
-    `;
+    if (!model.canLift) {
+      return html`
+        <section class="panel side" aria-label="Place a hold" data-hold-panel>
+          <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
+          <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
+          <fieldset class="held-form" disabled>
+            <label>Account<select><option>Pick an account</option></select></label>
+            <label>Kind<input type="text" value="Manual" readonly /></label>
+            <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
+            <p class="label">What it blocks</p>
+            <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+          </fieldset>
+          <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
+        </section>
+      `;
+    }
+    return placeHoldPanel(model);
   }
   if (hold === undefined) {
     return html`
@@ -850,5 +971,42 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
             <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>
           </div>
         `}
+  `;
+}
+
+// renderWorkspaceScreen is the second screen mode the desk offers: the customer
+// account workspace (Change 8 S2 desktop + S2M mobile). The back link clears the
+// workspace state and returns the operator to the page they came from; the screen
+// itself is delegated to ar-workspace.ts.
+//
+// Returns the loading tile while the read is in flight; the route is server-only
+// and we never fake the payload client-side, so a slow workspace read renders an
+// honest loading indicator and not a stale copy of a previous customer's data.
+export function renderWorkspaceScreen(model: DeskModel): TemplateResult {
+  if (model.workspace === null || model.workspaceCustomerId === null) {
+    return html`
+      <button type="button" class="link back" data-action="workspace-back">‹ Receivables</button>
+      <div class="head">
+        <h1>Account workspace</h1>
+        <p class="dim">Loading the workspace…</p>
+      </div>
+    `;
+  }
+  return html`
+    <button type="button" class="link back" data-action="workspace-back">‹ Receivables</button>
+    <div class="head">
+      <h1>Account workspace</h1>
+      <p class="dim">${model.workspace.header.name} · ${model.workspace.header.account_no}</p>
+    </div>
+    ${messages(model)}
+    ${renderWorkspace(
+      model.workspace,
+      model.activeWorkspaceTab,
+      () => {}, // tab change is handled by the desk press
+      () => {}, // apply credit is handled by the desk press
+      () => {}, // add note is handled by the desk press
+      () => {}, // quick action is handled by the desk press
+      false,
+    )}
   `;
 }

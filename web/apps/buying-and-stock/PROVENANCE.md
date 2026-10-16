@@ -10,10 +10,10 @@ role app template's shell, held to the procurement references in
 
 | What | Source path in the original app | Lands in | What changed |
 | --- | --- | --- | --- |
-| Reorder worklist (the shortfall grading, its columns, the worst first order) | `app/src/inventory-replenish.ts` | `worklist`, `worklistRow` in `src/po/po-views.ts` | One row picked at a time and drafted through the reorder PO route; the hot row is a negative projected position; low priority columns drop on narrow screens |
+| Reorder worklist (the shortfall grading, its columns, the worst first order) | `app/src/inventory-replenish.ts` | `worklist`, `worklistRow` in `src/po/po-views.ts` | One row picked at a time and drafted through the reorder PO route; the hot row is a negative projected position; one product column with the vendor under the name and the row's reasons beneath it (the drafted marker, the sales orders it holds up), per the board bs-purchase-orders-worklist; low priority columns drop on narrow screens |
 | PO register, order states and their words | `app/src/purchasing-console.ts` | `register`, `statusWord`, `statusTone` in `src/po/po-views.ts`, `src/po/po-logic.ts` | States are outline words, never buttons; no money is summed in the app |
 | New PO form and PO detail | `app/src/purchasing-console.ts` | `draftPanel` in `src/po/po-views.ts` | The draft starts from the shortfall row with the server's suggested quantity; Cancel draft, Save draft and Place order |
-| Incoming (what is on order, with the promised date) | `app/src/purchasing-console.ts` | `incoming`, `incomingWords` | A missing date reads "no date", never an invented one |
+| Incoming (what is on order, with the promised date) | `app/src/purchasing-console.ts` | the `src/incoming/` area (`incoming-desk.ts`, `incoming-views.ts`, `incoming-logic.ts`), its pill in `src/app-root.ts` | Its own top area per the board bs-incoming-arrivals: one row per placed order's line still to arrive (the register plus each order's own detail read, the core's incoming read answers for one product only), soonest promised first; a missing date reads "no date", never an invented one |
 | `formatQty` and the dollars formatter | the Counter Till's `_money-format` port in pos-kit | `src/po/po-money.ts` | Absent figures read as placeholders |
 | Visual references | `walkthrough-w4b/`, `walkthrough-w4c/`, `walkthrough-472/` | the screens | Rebuilt to HH's design system, light and brand |
 
@@ -23,7 +23,7 @@ home and count screens, same commit, same rule.
 
 | What | Source path in the original app | Lands in | What changed |
 | --- | --- | --- | --- |
-| The area bar (the sub-tab navigation over the stock spine) | `app/src/inventory-home.ts`, `app/src/inventory-console.ts` | the areas nav in `src/app-root.ts`, the tabs in `src/inventory/inventory-views.ts` | One switcher holds all seven areas (Purchase orders, Receiving, Vendors, Vendor bills, Landed cost, Inventory, Cycle counts); the list is `#newAreas` in `src/app-root.ts`, so an area adds one row |
+| The area bar (the sub-tab navigation over the stock spine) | `app/src/inventory-home.ts`, `app/src/inventory-console.ts` | the areas nav in `src/app-root.ts`, the tabs in `src/inventory/inventory-views.ts` | One switcher holds all eight areas (Purchase orders, Incoming, Receiving, Vendors, Vendor bills, Landed cost, Inventory, Cycle counts); the list is `#newAreas` in `src/app-root.ts`, so an area adds one row |
 | Stock lookup (the on-hand buckets, the move ledger, the graded empty state) | `app/src/inventory-on-hand.ts`, `app/src/inventory-stock-logic.ts` | the lookup pane in `src/inventory/inventory-views.ts` | The product picker is the catalogue select (by SKU and name), never a bare id field; the one-state-at-a-time rule (error before counts) is kept |
 | The move ledger's words | `app/src/inventory-logic.ts` | `moveTypeWord`, `moveDirectionWord` in `src/inventory/inventory-logic.ts` | One vocabulary matrix, honest degradation for an unmapped state |
 | Browse (rows, facets, the honest total) | `app/src/inventory-browse.ts` | the browse pane | Facets render as counted chips; the pager's echoed limit and offset are the server's |
@@ -63,7 +63,7 @@ holds that wall.
 
 | What | Source path in the original app | Lands in | What changed |
 | --- | --- | --- | --- |
-| The receiving queue (orders with something still to arrive) | `app/src/inventory-receiving.ts`, `app/src/purchasing-console.ts` | `queue` in `src/receiving/receiving-views.ts` | Soonest promised first, as the core orders it; the value open is the core's and is said to be hidden where the policy hides cost |
+| The receiving queue (orders with something still to arrive) | `app/src/inventory-receiving.ts`, `app/src/purchasing-console.ts` | `queue` in `src/receiving/receiving-views.ts` | Soonest promised first, as the core orders it; the Value open column is the managers' (change 5, R5): where the policy hides cost the column is not drawn at all |
 | Receive goods against an order | `app/src/inventory-receiving.ts` | `receiveBody`, `receiveConfirmWords`, `receiveBlock` | A per line count checked in the core's own words (including its over receipt sentence at four decimals), a confirm step naming every line, and no retry of a lost answer: the order is read again instead, because the receive carries no key |
 | Receipts and a landed cost attached to one | `app/src/landed-cost.ts` | `receiptPanel`, `attachBody`, `attachConfirmWords` | One landed cost per receipt, applied at once, behind a confirm step that lists each amount and adds none |
 | The order document and the send to the vendor | `app/src/purchasing-document-api.ts`, `app/src/purchasing-document-logic.ts` | `documentAndSends`, `sendOutcome` | The document downloads as a spreadsheet or to print; a send names the desk it goes to before it goes, asks for the fallback address only when the core says so, keeps one key for one attempt across every retry, and reads the delivery status because the request succeeds even when the delivery failed |
