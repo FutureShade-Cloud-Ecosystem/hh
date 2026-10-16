@@ -323,7 +323,9 @@ func TestIntegration_Reactions_Counts_Mine_And_System_Refusals(t *testing.T) {
 	target := "/api/v1/messaging/channels/" + chOffice + "/messages/" + post + "/reactions"
 
 	// Two members react with the same emoji; each reads count 2, mine true.
-	// The first member's replay lands once (the PUT is idempotent).
+	// The first member's replay lands once (the PUT is idempotent), so the
+	// first read is count 1 and the second, after both have reacted, is 2.
+	wantCount := 1
 	for i, actor := range []struct {
 		mux    *http.ServeMux
 		bearer string
@@ -349,9 +351,10 @@ func TestIntegration_Reactions_Counts_Mine_And_System_Refusals(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode reaction answer: %v", err)
 		}
-		if len(out.Reactions) != 1 || out.Reactions[0].Emoji != "👍" || out.Reactions[0].Count != 2 || !out.Reactions[0].Mine {
-			t.Fatalf("the reaction summary is not count 2, mine true: %+v", out.Reactions)
+		if len(out.Reactions) != 1 || out.Reactions[0].Emoji != "👍" || out.Reactions[0].Count != wantCount || !out.Reactions[0].Mine {
+			t.Fatalf("the reaction summary is not count %d, mine true: %+v", wantCount, out.Reactions)
 		}
+		wantCount = 2
 	}
 
 	// The stream read model carries the chip, and the remove drops exactly
