@@ -31,6 +31,100 @@ const (
 	KindGroup = "GROUP"
 )
 
+// Membership roles (mirror the msg_members CHECK on role).
+const (
+	// RoleMember is the manager-driven seat's role: a hand-added member who
+	// can read and post but does not manage the room (the OWNER pen is the
+	// founder's, the moderation matrix's, and nobody else's).
+	RoleMember = "MEMBER"
+	// RoleOwner is the room's founder and the manager wall's first line:
+	// an OWNER row manages the room's EXPLICIT seats and drops.
+	RoleOwner = "OWNER"
+)
+
+// Channel visibilities (mirror the msg_channels.visibility CHECK and DEFAULT
+// added in 0400). PUBLIC rooms list in the directory and accept any member
+// the branch and role model approves; PRIVATE rooms are wall-only (the room
+// owner or house messages admin hands members in, the audit row records the
+// reason).
+const (
+	VisibilityPublic  = "PUBLIC"
+	VisibilityPrivate = "PRIVATE"
+)
+
+// Auto-scope markers (mirror the msg_channels.auto_scope CHECK). Empty
+// (zero value, ” in SQL) means no automatic membership: the channel is
+// hand-built and the membership wall alone governs. BRANCH mirrors a
+// seeded yard room's auto-membership (the role and branch model derives
+// everyone granted that branch). GLOBAL mirrors the seeded office room
+// (every ACTIVE staff derives).
+const (
+	AutoScopeBranch = "BRANCH"
+	AutoScopeGlobal = "GLOBAL"
+)
+
+// AutoRoleAny is the sentinel the directory and rule write use to mean
+// "any role qualifies" (the asterisk the SQL reads as the wildcard).
+const AutoRoleAny = "*"
+
+// MembershipRule is the Settings > Membership rules read and write shape:
+// the channel's auto_scope marker (empty, BRANCH, or GLOBAL), the
+// auto_role code (a role code, "*" for any, or empty for hand-only), and
+// the channel's visibility flag (PUBLIC or PRIVATE). The admin's rule
+// write updates these three columns in one transaction and immediately
+// reconciles derived seats (the prune SyncMembership runs next call).
+type MembershipRule struct {
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
+// DirectoryEntry is one row of GET /api/v1/messaging/directory: a
+// PUBLIC, non-archived channel the caller can see, with the caller's
+// membership state on it. Joined=false and MembershipSource="" mean the
+// caller is not a member. Joined=true with source=DERIVED means the
+// role and branch model derived them in; Joined=true with source=EXPLICIT
+// means they hand-joined or were hand-added. MemberCount is the room's
+// current seat count (DERIVED + EXPLICIT).
+type DirectoryEntry struct {
+	ChannelID        string `json:"channel_id"`
+	Kind             string `json:"kind"`
+	BranchID         string `json:"branch_id,omitempty"`
+	Name             string `json:"name"`
+	Topic            string `json:"Topic"`
+	Slug             string `json:"slug,omitempty"`
+	Joined           bool   `json:"joined"`
+	MembershipSource string `json:"membership_source"`
+	MemberCount      int    `json:"member_count"`
+}
+
+// ChannelMemberEntry is one row of GET /api/v1/messaging/channels/{id}/members:
+// the channel's EXPLICIT members with the audit fields the Settings >
+// Membership rules "Added by hand" panel shows.
+type ChannelMemberEntry struct {
+	UserID      string    `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	AddedReason string    `json:"added_reason"`
+	AddedBy     string    `json:"added_by,omitempty"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+// MembershipRuleEntry is the collection read for GET /api/v1/messaging/membership-rules:
+// one channel's rule row plus the directory's read shape (the same name,
+// branch, kind the directory carries). The auto_scope and auto_role are
+// the rule write's payload; visibility is the room's settings panel.
+type MembershipRuleEntry struct {
+	ChannelID  string `json:"channel_id"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	BranchID   string `json:"branch_id,omitempty"`
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
 // Message kinds (mirror the msg_messages CHECK).
 const (
 	MsgText  = "TEXT"
@@ -174,13 +268,18 @@ const defaultRetentionMonths = 12
 // Channel is one conversation surface. UnreadCount / Mentioned / LatestAt are populated only in
 // the list-my-channels projection (they are per-caller, not intrinsic to the channel).
 type Channel struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	BranchID   string    `json:"branch_id,omitempty"`
-	Slug       string    `json:"slug,omitempty"`
-	Name       string    `json:"name"`
-	Topic      string    `json:"topic"`
-	Tier       string    `json:"tier"` // STANDARD | ESCALATION | FIREHOSE (0069)
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	BranchID string `json:"branch_id,omitempty"`
+	Slug     string `json:"slug,omitempty"`
+	Name     string `json:"name"`
+	Topic    string `json:"topic"`
+	Tier     string `json:"tier"` // STANDARD | ESCALATION | FIREHOSE (0069)
+	// Visibility is the change 7 ruling 7 hand: PUBLIC rooms list in the
+	// directory and accept any member the branch and role model approves;
+	// PRIVATE rooms are wall-only (the room owner or house messages admin
+	// hands members in, the audit row records the reason).
+	Visibility string    `json:"visibility"`
 	IsArchived bool      `json:"is_archived"`
 	CreatedAt  time.Time `json:"created_at"`
 	// Per-caller projection (list-my-channels only):
@@ -190,15 +289,21 @@ type Channel struct {
 }
 
 // ChannelMember is one membership row as the member-add surface returns it:
-// the channel, the member, their role in the room, and the membership's
-// source (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to
-// the role and branch model).
+// the channel, the member, their role in the room, the membership's source
+// (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to the
+// role and branch model), and the change 7 ruling 7 audit trail:
+// AddedReason / AddedBy capture the manager-driven seat's text reason and
+// the user id who wrote it. A DERIVED row's AddedReason is empty and
+// AddedBy is nil (the role and branch model owns the row; nothing was
+// added by hand).
 type ChannelMember struct {
-	ChannelID string    `json:"channel_id"`
-	UserID    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	Source    string    `json:"source"`
-	JoinedAt  time.Time `json:"joined_at"`
+	ChannelID   string    `json:"channel_id"`
+	UserID      string    `json:"user_id"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	JoinedAt    time.Time `json:"joined_at"`
+	AddedReason string    `json:"added_reason"`
+	AddedBy     string    `json:"added_by,omitempty"`
 }
 
 // Message is one post. AuthorID is empty for a system EVENT message. Ref carries {topic, entity,
@@ -221,13 +326,94 @@ type Message struct {
 	// All omitempty, so an ordinary post's payload stays byte-identical to before this feature.
 	// SupersededBy non-empty means this message was auto-resolved by a newer fact about the same record
 	// (the LAST-WRITE-WINS ruling), the bubble stops blocking and renders as superseded, never acked.
-	Priority     string     `json:"priority,omitempty"`
-	StateKey     string     `json:"state_key,omitempty"`
-	SupersededBy string     `json:"superseded_by,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-	EditedAt     *time.Time `json:"edited_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Priority     string              `json:"priority,omitempty"`
+	StateKey     string              `json:"state_key,omitempty"`
+	SupersededBy string              `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time          `json:"superseded_at,omitempty"`
+	EditedAt     *time.Time          `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time          `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time           `json:"created_at"`
+	Attachments  []MessageAttachment `json:"attachments,omitempty"`
+	// Reactions (change 7, slice S3) is the message's reaction summary, one
+	// row per emoji, ordered by the emoji's first reaction. Populated only on
+	// the read paths that stitch it (the message stream, the thread, the
+	// mentions view, and the reaction write answers); omitempty keeps every
+	// payload that predates the feature byte-identical, an unreacted message
+	// serializes exactly as before.
+	Reactions []ReactionCount `json:"reactions,omitempty"`
+}
+
+// MessageAttachment is one file or photo attached to a message or channel.
+type MessageAttachment struct {
+	ID             string    `json:"id"`
+	MessageID      *string   `json:"message_id,omitempty"`
+	ChannelID      *string   `json:"channel_id,omitempty"`
+	AttachmentID   *string   `json:"attachment_id,omitempty"`
+	Filename       string    `json:"filename"`
+	ContentType    string    `json:"content_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	StorageKey     string    `json:"storage_key,omitempty"`
+	Kind           string    `json:"kind"`
+	UploadedBy     *string   `json:"uploaded_by,omitempty"`
+	SenderName     string    `json:"sender_name,omitempty"`
+	AppwriteFileID string    `json:"appwrite_file_id,omitempty"`
+	Bucket         string    `json:"bucket,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ChannelAttachmentsResponse carries all photos and files shared in a room with member count.
+type ChannelAttachmentsResponse struct {
+	Photos      []MessageAttachment `json:"photos"`
+	Files       []MessageAttachment `json:"files"`
+	MemberCount int                 `json:"member_count"`
+}
+
+// ChannelAttachmentCreateInput is the payload to attach or upload a file or photo to a channel.
+type ChannelAttachmentCreateInput struct {
+	AttachmentID string  `json:"attachment_id"`
+	MessageID    *string `json:"message_id,omitempty"`
+	Filename     string  `json:"filename"`
+	ContentType  string  `json:"content_type,omitempty"`
+	SizeBytes    *int64  `json:"size_bytes,omitempty"`
+	Kind         string  `json:"kind,omitempty"`
+	StorageKey   string  `json:"storage_key,omitempty"`
+}
+
+// AttachmentMeta is the metadata resolved across the module boundary.
+type AttachmentMeta struct {
+	ID             string
+	AppwriteFileID string
+	Bucket         string
+	Kind           string
+	Mime           string
+	SizeBytes      int64
+}
+
+// ReactionCount is one emoji's line of a message's reaction summary (the
+// board's "Thanks 1" chip): the emoji, how many members reacted with it, and
+// whether the READER is one of them (Mine drives the chip's pressed state, so
+// it is answered per read, never stored).
+type ReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+// SeenByReader is one member the seen-by read names: who, and their display
+// name for the hover the board draws.
+type SeenByReader struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+}
+
+// SeenByReport is the seen-by read model (the board's "Seen 3"): the exact
+// count of the room's members whose read cursor stands at or past the
+// message's created_at, the author excepted, plus the readers themselves
+// (newest read first, capped at maxSeenByReaders names; the count stays
+// exact whatever the cap does).
+type SeenByReport struct {
+	Count   int            `json:"count"`
+	Readers []SeenByReader `json:"readers"`
 }
 
 // EventRef is the structured ref stored on an EVENT message.
@@ -283,6 +469,7 @@ type Caller struct {
 	RoleCode string
 	Scope    string // "GLOBAL" | "BRANCH"
 	Branches map[string]bool
+	OrgID    string
 }
 
 // IsGlobal reports whether the caller reaches every branch (GLOBAL scope).
@@ -452,4 +639,155 @@ type ExportMessage struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	EditedAt   *time.Time `json:"edited_at,omitempty"`
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+}
+
+// - Slice S7: per-person event class notification preferences and quiet hours (0401) -
+
+// Event categories. The closed 6-item set the board renders in board order; the CHECK in 0401
+// (msg_person_event_prefs.event_category) is the schema's copy of this list, so a value the code
+// does not know can never be stored (same text-plus-CHECK shape as 0157's msg_payment_notify_rules.rule).
+// Add, never reorder: a re-order breaks the surface's tab order; renames go through a CHECK + a new name.
+const (
+	EventCategoryOrdersReleasedAndBlocked = "orders_released_and_blocked"
+	EventCategoryStockReceived            = "stock_received"
+	EventCategoryCreditHoldsAndCreditOwed = "credit_holds_and_credit_owed"
+	EventCategoryDeliveriesScheduled      = "deliveries_scheduled"
+	EventCategoryPayments                 = "payments"
+	EventCategoryApprovalsWaitingOnMe     = "approvals_waiting_on_me"
+)
+
+// EventCategories is the closed set in board order. The handler renders from this list (NOT from
+// the SQL row's default), so a category that has no stored row appears in the response with the
+// default and the surface can label it. Kept beside the constants so the words the user reads and
+// the values the code stores cannot drift apart.
+var EventCategories = []string{
+	EventCategoryOrdersReleasedAndBlocked,
+	EventCategoryStockReceived,
+	EventCategoryCreditHoldsAndCreditOwed,
+	EventCategoryDeliveriesScheduled,
+	EventCategoryPayments,
+	EventCategoryApprovalsWaitingOnMe,
+}
+
+// EventCategoryLabel is the human name of a category, used by the prefs surface. Same rationale as
+// PaymentRuleLabel: the words a user reads and the values the code stores sit beside each other so
+// they cannot drift apart.
+func EventCategoryLabel(cat string) string {
+	switch cat {
+	case EventCategoryOrdersReleasedAndBlocked:
+		return "Orders released and blocked"
+	case EventCategoryStockReceived:
+		return "Stock received"
+	case EventCategoryCreditHoldsAndCreditOwed:
+		return "Credit holds and credit owed"
+	case EventCategoryDeliveriesScheduled:
+		return "Deliveries scheduled"
+	case EventCategoryPayments:
+		return "Payments"
+	case EventCategoryApprovalsWaitingOnMe:
+		return "Approvals waiting on me"
+	default:
+		return cat
+	}
+}
+
+// PersonEventPref is one user's answer for one event category (the msg_person_event_prefs row, 0401).
+// in_app is the "show in the hub" gate (badge + toast); push is the "raise a desktop notification"
+// gate that ShouldDeliverPush honors.
+type PersonEventPref struct {
+	UserID        string    `json:"user_id"`
+	EventCategory string    `json:"event_category"`
+	InApp         bool      `json:"in_app"`
+	Push          bool      `json:"push"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+// DefaultPersonEventPref returns the default applied when a user has no stored row for a category
+// (matches the brief's "defaults when a user has no stored row" list).
+func DefaultPersonEventPref(userID, category string) PersonEventPref {
+	return PersonEventPref{
+		UserID:        userID,
+		EventCategory: category,
+		InApp:         defaultInApp(category),
+		Push:          defaultPush(category),
+	}
+}
+
+// defaultInApp / defaultPush are the board-pinned defaults. Kept as funcs beside the category
+// constants so a "what does a user see on day one?" check is one line, and a new category adds the
+// default in one place, here.
+func defaultInApp(cat string) bool {
+	switch cat {
+	case EventCategoryPayments:
+		return false
+	default:
+		return true
+	}
+}
+func defaultPush(cat string) bool {
+	switch cat {
+	case EventCategoryStockReceived, EventCategoryDeliveriesScheduled, EventCategoryPayments:
+		return false
+	default:
+		return true
+	}
+}
+
+// normalizeEventCategory validates a category against the closed set (mirrors normalizeMode,
+// normalizeAckMethod). ok is false for anything outside EventCategories, so a bad client value is
+// a 400 at the service boundary, never a Postgres CHECK violation → 500.
+func normalizeEventCategory(cat string) (string, bool) {
+	for _, c := range EventCategories {
+		if c == cat {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// QuietHours is one user's quiet-hours row (the msg_quiet_hours row, 0401). start_local / end_local
+// are 24-hour HH:MM in the user's timezone; ActiveAt is the predicate that answers "is `now` in
+// the quiet window?" with overnight support. BypassUserIDs is the DM carve-out (ruling 8:
+// "DMs from these people still ring as drawn on the board").
+type QuietHours struct {
+	UserID        string    `json:"user_id"`
+	Enabled       bool      `json:"enabled"`
+	StartLocal    string    `json:"start_local"`
+	EndLocal      string    `json:"end_local"`
+	Timezone      string    `json:"timezone"`
+	BypassUserIDs []string  `json:"bypass_user_ids"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+// DefaultQuietHours returns the shipped quiet-hours state for a user with no stored row (matches
+// the msg_quiet_hours column defaults in 0401).
+func DefaultQuietHours(userID string) QuietHours {
+	return QuietHours{
+		UserID:        userID,
+		Enabled:       false,
+		StartLocal:    "18:00",
+		EndLocal:      "06:00",
+		Timezone:      "America/Los_Angeles",
+		BypassUserIDs: []string{},
+	}
+}
+
+// PersonEventPrefsPatch is the per-category upsert body. Category is required (the caller is
+// editing one row); in_app and push are optional, so a partial PUT preserves the user's other
+// choice (mirrors PrefsPatch's omitted-fields-keep-their-current-value rule).
+type PersonEventPrefsPatch struct {
+	Category string `json:"category"`
+	InApp    *bool  `json:"in_app,omitempty"`
+	Push     *bool  `json:"push,omitempty"`
+}
+
+// QuietHoursPatch is the quiet-hours upsert body. Every field optional; the service merges over
+// the current row. Timezone falls back to UTC on a bad value at the predicate boundary, so the
+// handler refuses bad timezones (400) before any row is written.
+type QuietHoursPatch struct {
+	Enabled       *bool    `json:"enabled,omitempty"`
+	StartLocal    *string  `json:"start_local,omitempty"`
+	EndLocal      *string  `json:"end_local,omitempty"`
+	Timezone      *string  `json:"timezone,omitempty"`
+	BypassUserIDs []string `json:"bypass_user_ids,omitempty"`
 }

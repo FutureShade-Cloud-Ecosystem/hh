@@ -215,7 +215,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithBranches(item5BranchDirectory{pool: pool}).
-		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+		WithVendorAddresses(item5VendorAddressBook{pool: pool}).
+		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
 	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// UNION-W4 and UNION-470: the inventory seams purchasing closes. The
@@ -240,6 +241,16 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
 	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
+
+	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
+	attachmentsRepo := attachments.NewRepository(pool)
+	messagingSvc.WithAttachmentChecker(attachmentsSeamAdapter{repo: attachmentsRepo})
+	attachments.NewHandler(attachmentsRepo, log).
+		WithRoomChecker(messagingRoomChecker{repo: messagingRepo}).
+		WithRoomMirror(messagingAttachmentMirror{svc: messagingSvc}).
+		WithUserLinker(link).
+		RegisterRoutes(r, g)
+
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -1559,6 +1570,110 @@ func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purcha
 	return v, nil
 }
 
+// w4cWarrantyCreditReader satisfies purchasing.WarrantyCreditReader over warranty_claims,
+// warranty_recovery_balances and warranty_claim_lines.
+type w4cWarrantyCreditReader struct{ pool *pgxpool.Pool }
+
+func (w w4cWarrantyCreditReader) OpenCreditForVendor(ctx context.Context, vendorID, branchID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT b.claim_id::text, b.claim_no::text, b.outstanding_cents,
+		       COALESCE(c.description, ''),
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = b.claim_id LIMIT 1)
+		  FROM warranty_recovery_balances b
+		  JOIN warranty_claims c ON c.id = b.claim_id
+		  LEFT JOIN vendors v ON v.id = b.vendor_id
+		 WHERE b.vendor_id = $1::uuid
+		   AND ($2 = '' OR b.branch_id = $2::uuid)
+		   AND b.outstanding_cents > 0
+		 ORDER BY b.accrued_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if err == nil {
+		if lineDesc != nil && *lineDesc != "" {
+			if credit.Description != "" {
+				s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+				credit.Summary = &s
+			} else {
+				credit.Description = *lineDesc
+			}
+		}
+		return &credit, nil
+	}
+
+	err = w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.vendor_id = $1::uuid
+		   AND ($2 = '' OR c.branch_id = $2::uuid)
+		   AND (c.outcome = 'VENDOR_CREDIT' OR c.phase IN ('SETTLEMENT', 'CLOSED'))
+		   AND COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents) > 0
+		 ORDER BY c.opened_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: open credit: %w", err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
+}
+
+func (w w4cWarrantyCreditReader) ClaimInfo(ctx context.Context, claimID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.id = $1::uuid`, claimID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: claim info %s: %w", claimID, err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
+}
+
 // item5BranchDirectory satisfies purchasing.BranchDirectory over
 // locations + system_settings, so the standardized PO document carries a
 // ship-to and the dealer's own name without purchasing learning either
@@ -1843,4 +1958,75 @@ func (a approvalNotifierAdapter) ApprovalDecided(ctx context.Context, n identity
 			"status":      n.Status,
 		})
 	}
+}
+
+// messagingRoomChecker adapts messaging.Repository to attachments.RoomMembershipChecker.
+type messagingRoomChecker struct {
+	repo *messaging.Repository
+}
+
+func (c messagingRoomChecker) IsRoomMember(ctx context.Context, roomID, userID string) (bool, error) {
+	return c.repo.IsMember(ctx, roomID, userID)
+}
+
+func (c messagingRoomChecker) RoomExists(ctx context.Context, roomID string) (bool, error) {
+	return c.repo.ChannelExists(ctx, roomID)
+}
+
+// messagingAttachmentMirror adapts messaging.Service to attachments.RoomAttachmentMirror.
+type messagingAttachmentMirror struct {
+	svc *messaging.Service
+}
+
+func (m messagingAttachmentMirror) MirrorAttachment(ctx context.Context, channelID string, att attachments.Attachment, role string) error {
+	meta := messaging.AttachmentMeta{
+		ID:             att.ID,
+		AppwriteFileID: att.AppwriteFileID,
+		Bucket:         att.Bucket,
+		Kind:           att.Kind,
+		Mime:           att.Mime,
+	}
+	if att.SizeBytes != nil {
+		meta.SizeBytes = *att.SizeBytes
+	}
+	return m.svc.MirrorRoomAttachment(ctx, channelID, meta, att.CreatedBy, "", role)
+}
+
+// attachmentsSeamAdapter adapts attachments.Repository to messaging.AttachmentChecker.
+type attachmentsSeamAdapter struct {
+	repo *attachments.Repository
+}
+
+func (a attachmentsSeamAdapter) VerifyRoomAttachment(ctx context.Context, orgID, attachmentID, channelID string) (*messaging.AttachmentMeta, error) {
+	m, err := a.repo.VerifyRoomAttachment(ctx, orgID, attachmentID, channelID)
+	if err != nil {
+		return nil, err
+	}
+	return &messaging.AttachmentMeta{
+		ID:             m.ID,
+		AppwriteFileID: m.AppwriteFileID,
+		Bucket:         m.Bucket,
+		Kind:           m.Kind,
+		Mime:           m.Mime,
+		SizeBytes:      m.SizeBytes,
+	}, nil
+}
+
+func (a attachmentsSeamAdapter) ResolveAttachmentMetas(ctx context.Context, orgID string, attachmentIDs []string) (map[string]messaging.AttachmentMeta, error) {
+	metas, err := a.repo.ResolveAttachmentMetas(ctx, orgID, attachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	res := make(map[string]messaging.AttachmentMeta, len(metas))
+	for k, v := range metas {
+		res[k] = messaging.AttachmentMeta{
+			ID:             v.ID,
+			AppwriteFileID: v.AppwriteFileID,
+			Bucket:         v.Bucket,
+			Kind:           v.Kind,
+			Mime:           v.Mime,
+			SizeBytes:      v.SizeBytes,
+		}
+	}
+	return res, nil
 }

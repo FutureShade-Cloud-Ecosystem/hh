@@ -24,6 +24,7 @@ type fakeStore struct {
 	slugs       map[string]string          // slug -> channelID
 	roomsBySlug map[string]Channel         // slug -> the room that holds it (the convergence the slug index carries)
 	yard        map[string]string          // branchID -> slug
+	archived    map[string]bool            // channelID -> already archived (rule 7's "Channel delete admins only" refusal)
 	// The membership walls' doubles:
 	facts         map[string]channelFactsRow // channelID -> kind/branch/auto_scope
 	memberRoles   map[string]string          // "channelID|userID" -> role
@@ -45,16 +46,22 @@ type fakeStore struct {
 	// Feature 1 (0071) doubles:
 	acks    map[string]Ack       // "messageID|userID" -> ack (upsert)
 	unacked map[string][]Message // userID -> un-acked forced-ack messages the poll returns
+	// Slice S7 (0401) doubles: per-person notification settings (event-category prefs + quiet hours).
+	personPrefs map[string]map[string]PersonEventPref // userID -> category -> stored pref
+	quietHours  map[string]QuietHours                 // userID -> stored quiet-hours row
 	// Approvals rail (0075) doubles:
-	approvalChannels map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
-	approvalCards    map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
-	approvalMsgs     []Message         // card inserts captured (count assertions)
-	approvalEchoes   map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
-	stamped          map[string]string // approvalID -> last status stamped
-	stampCalls       int               // StampApprovalStatus invocation count
-	displayNames     map[string]string // userID -> display name (decider name resolution)
-	savedRows        map[string]map[string]SavedMessage
-	roster           map[string][]StaffRosterRow
+	approvalChannels   map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
+	approvalCards      map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
+	approvalMsgs       []Message         // card inserts captured (count assertions)
+	approvalEchoes     map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
+	stamped            map[string]string // approvalID -> last status stamped
+	stampCalls         int               // StampApprovalStatus invocation count
+	displayNames       map[string]string // userID -> display name (decider name resolution)
+	savedRows          map[string]map[string]SavedMessage
+	roster             map[string][]StaffRosterRow
+	channelAttachments map[string][]MessageAttachment
+	memberCounts       map[string]int
+	singleMessages     map[string]Message
 	// Change 7 S4 doubles: the planted message rows the edit and delete
 	// walls read, and the writes the legs assert on.
 	editFacts       map[string]messageFacts // messageID -> the planted row (channel bound)
@@ -144,26 +151,32 @@ func (f *fakeStore) SearchChannels(_ context.Context, _, _, _ string, _ int) ([]
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members:       map[string]map[string]bool{},
-		exists:        map[string]bool{},
-		channels:      map[string][]Channel{},
-		messages:      map[string]MessagePage{},
-		threads:       map[string][]Message{},
-		unread:        map[string]UnreadCounts{},
-		slugs:         map[string]string{},
-		roomsBySlug:   map[string]Channel{},
-		yard:          map[string]string{},
-		facts:         map[string]channelFactsRow{},
-		memberRoles:   map[string]string{},
-		memberSources: map[string]string{},
-		userBranches:  map[string]map[string]bool{},
-		userGlobal:    map[string]bool{},
-		eventDup:      map[string]bool{},
-		prefs:         map[string]NotificationPrefs{},
-		tiers:         map[string]string{},
-		acks:          map[string]Ack{},
-		unacked:       map[string][]Message{},
-		roster:        map[string][]StaffRosterRow{},
+		members:            map[string]map[string]bool{},
+		exists:             map[string]bool{},
+		channels:           map[string][]Channel{},
+		messages:           map[string]MessagePage{},
+		threads:            map[string][]Message{},
+		unread:             map[string]UnreadCounts{},
+		slugs:              map[string]string{},
+		roomsBySlug:        map[string]Channel{},
+		yard:               map[string]string{},
+		archived:           map[string]bool{},
+		facts:              map[string]channelFactsRow{},
+		memberRoles:        map[string]string{},
+		memberSources:      map[string]string{},
+		userBranches:       map[string]map[string]bool{},
+		userGlobal:         map[string]bool{},
+		eventDup:           map[string]bool{},
+		prefs:              map[string]NotificationPrefs{},
+		tiers:              map[string]string{},
+		acks:               map[string]Ack{},
+		unacked:            map[string][]Message{},
+		personPrefs:        map[string]map[string]PersonEventPref{},
+		quietHours:         map[string]QuietHours{},
+		roster:             map[string][]StaffRosterRow{},
+		channelAttachments: map[string][]MessageAttachment{},
+		memberCounts:       map[string]int{},
+		singleMessages:     map[string]Message{},
 	}
 }
 
@@ -265,6 +278,32 @@ func (f *fakeStore) AckMessage(_ context.Context, _, messageID, userID, method s
 }
 func (f *fakeStore) UnackedRequiresAck(_ context.Context, userID string) ([]Message, error) {
 	return f.unacked[userID], nil
+}
+
+// Slice S7 (0401) store doubles: per-person notification settings. The fake stores the rows
+// exactly as the SQL would, so the service's merge-over-current logic is proven without a DB.
+func (f *fakeStore) GetPersonEventPrefsForUser(_ context.Context, userID string) (map[string]PersonEventPref, error) {
+	return f.personPrefs[userID], nil
+}
+func (f *fakeStore) UpsertPersonEventPref(_ context.Context, p PersonEventPref) (PersonEventPref, error) {
+	if f.personPrefs[p.UserID] == nil {
+		f.personPrefs[p.UserID] = map[string]PersonEventPref{}
+	}
+	f.personPrefs[p.UserID][p.EventCategory] = p
+	return p, nil
+}
+func (f *fakeStore) GetQuietHoursForUser(_ context.Context, userID string) (QuietHours, error) {
+	if q, ok := f.quietHours[userID]; ok {
+		return q, nil
+	}
+	return DefaultQuietHours(userID), nil // absent row is the shipped default (mirrors the SQL)
+}
+func (f *fakeStore) UpsertQuietHours(_ context.Context, q QuietHours) (QuietHours, error) {
+	if q.BypassUserIDs == nil {
+		q.BypassUserIDs = []string{} // never persist NULL; matches the SQL's COALESCE
+	}
+	f.quietHours[q.UserID] = q
+	return q, nil
 }
 
 // - Approvals rail (0075) fake store methods -
@@ -378,13 +417,13 @@ func (f *fakeStore) CreateDM(_ context.Context, aUserID, bUserID string) (Channe
 	return Channel{ID: "dm-" + aUserID + "-" + bUserID, Kind: KindDM}, true, nil
 }
 
-func (f *fakeStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
-	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
-		return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: src}, nil
+func (f *fakeStore) AddChannelMember(_ context.Context, in AddMemberInput) (ChannelMember, error) {
+	if src, ok := f.memberSources[in.ChannelID+"|"+in.UserID]; ok {
+		return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: "MEMBER", Source: src, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
 	}
-	f.setMember(channelID, userID)
-	f.memberSources[channelID+"|"+userID] = SourceExplicit
-	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
+	f.setMember(in.ChannelID, in.UserID)
+	f.memberSources[in.ChannelID+"|"+in.UserID] = SourceExplicit
+	return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: "MEMBER", Source: SourceExplicit, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
 }
 
 func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID string) error {
@@ -392,6 +431,34 @@ func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID str
 		delete(f.members[channelID], userID)
 		delete(f.memberSources, channelID+"|"+userID)
 	}
+	return nil
+}
+
+// SetChannelVisibility satisfies the new settings-panel route's store seam
+// (rule 7's "New channel admins only" hand on visibility); the fake
+// records the new value and answers the channel as it stands.
+func (f *fakeStore) SetChannelVisibility(_ context.Context, channelID, visibility string) (Channel, error) {
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return Channel{}, ErrBadVisibility
+	}
+	if f.exists[channelID] {
+		return Channel{ID: channelID, Visibility: visibility}, nil
+	}
+	return Channel{}, errNotFound
+}
+
+// ArchiveChannel satisfies the channel-delete route's store seam (rule 7's
+// "Channel delete admins only"): the fake records the archive, and a
+// re-archive on an already-archived channel answers ErrChannelArchived in
+// the same shape the live repository hands back.
+func (f *fakeStore) ArchiveChannel(_ context.Context, channelID string) error {
+	if f.archived[channelID] {
+		return ErrChannelArchived
+	}
+	if !f.exists[channelID] {
+		return errNotFound
+	}
+	f.archived[channelID] = true
 	return nil
 }
 
@@ -440,13 +507,17 @@ func (f *fakeStore) channelFacts(_ context.Context, channelID string) (channelFa
 		return facts, nil
 	}
 	if f.exists[channelID] {
-		return channelFactsRow{Kind: KindTeam}, nil
+		return channelFactsRow{Kind: KindTeam, Visibility: VisibilityPublic}, nil
 	}
 	return channelFactsRow{}, errNotFound
 }
 
 func (f *fakeStore) memberRole(_ context.Context, channelID, userID string) (string, error) {
 	return f.memberRoles[channelID+"|"+userID], nil
+}
+
+func (f *fakeStore) memberSource(_ context.Context, channelID, userID string) (string, error) {
+	return f.memberSources[channelID+"|"+userID], nil
 }
 
 func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string) (bool, error) {
@@ -460,6 +531,117 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 // the wall never asks it.
 func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+func (f *fakeStore) ListChannelAttachments(_ context.Context, channelID string) ([]MessageAttachment, error) {
+	return f.channelAttachments[channelID], nil
+}
+
+func (f *fakeStore) CountChannelMembers(_ context.Context, channelID string) (int, error) {
+	if f.memberCounts != nil {
+		if c, ok := f.memberCounts[channelID]; ok {
+			return c, nil
+		}
+	}
+	if f.members[channelID] != nil {
+		return len(f.members[channelID]), nil
+	}
+	return 0, nil
+}
+
+func (f *fakeStore) InsertChannelAttachment(_ context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	var uPtr *string
+	if uploadedBy != "" {
+		uPtr = &uploadedBy
+	}
+	sizeBytes := int64(0)
+	if in.SizeBytes != nil {
+		sizeBytes = *in.SizeBytes
+	}
+	att := MessageAttachment{
+		ID:           "att-" + in.AttachmentID,
+		ChannelID:    &channelID,
+		MessageID:    in.MessageID,
+		AttachmentID: &in.AttachmentID,
+		Filename:     in.Filename,
+		ContentType:  in.ContentType,
+		SizeBytes:    sizeBytes,
+		Kind:         in.Kind,
+		UploadedBy:   uPtr,
+		CreatedAt:    time.Now(),
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return att, nil
+}
+
+func (f *fakeStore) UpsertChannelAttachmentFromMirror(_ context.Context, channelID string, att MessageAttachment) error {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return nil
+}
+
+func (f *fakeStore) GetMessage(_ context.Context, messageID string) (Message, error) {
+	if f.singleMessages != nil {
+		if m, ok := f.singleMessages[messageID]; ok {
+			return m, nil
+		}
+	}
+	return Message{ID: messageID}, nil
+}
+
+// S6 directory + join + leave + membership-rule stubs.
+
+func (f *fakeStore) ListDirectory(_ context.Context, _ string, _ bool, _ map[string]bool) (map[string]DirectoryEntry, error) {
+	return map[string]DirectoryEntry{}, nil
+}
+
+func (f *fakeStore) ListChannelMembers(_ context.Context, _ string) ([]ChannelMemberEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetChannelRule(_ context.Context, channelID string) (MembershipRule, error) {
+	if !f.exists[channelID] {
+		return MembershipRule{}, errNotFound
+	}
+	return MembershipRule{Visibility: VisibilityPublic}, nil
+}
+
+func (f *fakeStore) SetChannelRule(_ context.Context, _ string, _ MembershipRule) error {
+	return nil
+}
+
+func (f *fakeStore) ListChannelRules(_ context.Context, _ string, _ bool, _ map[string]bool) ([]MembershipRuleEntry, error) {
+	return nil, nil
+}
+
+// - Change 7, slice S3 doubles: reactions, seen-by, mentions -
+// The base fake answers inertly (a message facts read is not-found, the
+// reaction writes land nowhere, the reads answer empty); the route double in
+// reactions_route_test.go overrides what a leg scripts.
+
+func (f *fakeStore) messageFacts(_ context.Context, _, _ string) (messageFactsRow, error) {
+	return messageFactsRow{}, errNotFound
+}
+
+func (f *fakeStore) AddReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) RemoveReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) reactionsForMessages(_ context.Context, _ []string, _ string) (map[string][]ReactionCount, error) {
+	return map[string][]ReactionCount{}, nil
+}
+
+func (f *fakeStore) MessageSeenBy(_ context.Context, _, _ string, _ time.Time) (SeenByReport, error) {
+	return SeenByReport{Readers: []SeenByReader{}}, nil
+}
+
+func (f *fakeStore) ListMentions(_ context.Context, _, _ string, _ int) (MessagePage, error) {
+	return MessagePage{Messages: []Message{}}, nil
 }
 
 // - change 7 S4: the edit and delete doubles -
