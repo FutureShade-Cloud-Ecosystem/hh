@@ -75,7 +75,7 @@ test("the register's filters: overdue, promised, disputed and paid", async ({ pa
   await expect(page.locator("[data-register-row]")).toHaveCount(2);
   await expect(page.locator("[data-testid='c8-summary']")).toHaveCount(0);
   await pick("On hold");
-  await expect(page.locator("[data-register-row]")).toHaveCount(3);
+  await expect(page.locator("[data-register-row]")).toHaveCount(6);
   await pick("All");
   await expect(page.locator("[data-register-row]")).toHaveCount(9);
 });
