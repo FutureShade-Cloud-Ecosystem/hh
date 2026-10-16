@@ -1,4 +1,4 @@
--- 0395: messaging group rooms (walk change 7 slice S2; the change 7 rulings 3 and 4, row 2139) —
+-- 0397: messaging group rooms (walk change 7 slice S2; the change 7 rulings 3 and 4, row 2139):
 -- one additive kind widening and one shape guard, no new tables.
 -- Owner: internal/messaging. Boards: Group DM, first message of a new group.
 --
