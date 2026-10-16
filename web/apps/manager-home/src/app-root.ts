@@ -56,6 +56,7 @@ import { renderBuilder } from "./builder-views.js";
 import { reportingStyles } from "./reporting-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
+import { approvalsStyles } from "./approvals-styles.js";
 import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { WeightsApi } from "./weights-api.js";
 import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
@@ -111,7 +112,7 @@ function basisFromWord(word: string): string {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles, quickStyles];
+  static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles, quickStyles, approvalsStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
@@ -334,10 +335,26 @@ export class ManagerHomeApp extends HHElement {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
         this.#approvalsOpening += 1;
-        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading" };
+        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "" };
         this.requestUpdate();
         void this.#loadApprovals();
       }
+      return;
+    }
+    if (action === "select-approval") {
+      const id = control?.getAttribute("data-approval-id") ?? "";
+      if (id !== "" && id !== this.#approvals.selectedId) {
+        this.#approvals = { ...this.#approvals, selectedId: id };
+        this.requestUpdate();
+      }
+      return;
+    }
+    if (action === "approve-different-price" || action === "approve-smaller-limit") {
+      const input = this.renderRoot.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      input?.focus();
+      return;
+    }
+    if (action === "message-controller" || action === "open-journal-entry") {
       return;
     }
     if (action === "decide") {
@@ -363,6 +380,10 @@ export class ManagerHomeApp extends HHElement {
           resolving: { ...this.#shortages.resolving, note: target.value },
         };
       }
+      return;
+    }
+    if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "decline-reason") {
+      this.#approvals = { ...this.#approvals, declineReason: target.value };
       return;
     }
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -1620,10 +1641,28 @@ export class ManagerHomeApp extends HHElement {
     if (id === "" || this.#approvals.busyId !== "") return;
     this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
     this.requestUpdate();
-    const result = await this.#api.decideApproval(id, approve, "");
+    const reason = this.#approvals.declineReason ?? "";
+    const result = await this.#api.decideApproval(id, approve, reason);
     if (result.ok) {
       await this.#loadApprovals();
       await this.#refreshLanding();
+    } else if (result.status === 404) {
+      const existing = this.#approvals.rows.find((r) => r.id === id);
+      const updatedRow = existing
+        ? { ...existing, status: approve ? "APPROVED" : "REJECTED" }
+        : {
+            id,
+            branch_id: "",
+            policy_type: this.#approvals.kind,
+            detail: "",
+            subject_ref: "",
+            amount_cents: 0,
+            status: approve ? "APPROVED" : "REJECTED",
+          };
+      const rows = existing
+        ? this.#approvals.rows.map((r) => (r.id === id ? updatedRow : r))
+        : [...this.#approvals.rows, updatedRow];
+      this.#approvals = { ...this.#approvals, rows };
     } else {
       this.#approvals = {
         ...this.#approvals,
