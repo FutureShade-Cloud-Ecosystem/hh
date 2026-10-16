@@ -128,6 +128,11 @@ func (f *fakeStore) RecordPickLocked(ctx context.Context, taskID, actorID string
 	if !ok {
 		return nil, ErrNotFound
 	}
+	// A pick record is a yard-pick measurement: only a PICK task carries one. Mirrors the
+	// real Repository's guard (FROM-PRINCIPAL row 2122 item 5).
+	if t.TaskType != TypePick {
+		return nil, ErrNotPickTask
+	}
 	if err := pickClosed(t.Status); err != nil {
 		return nil, err
 	}
