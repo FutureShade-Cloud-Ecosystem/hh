@@ -8,6 +8,10 @@
 
 const NOW_ISO = () => new Date().toISOString();
 
+// UUID regex used by the C8 walk's read paths (S5 Promises, S6 Payment policy, S8 Reminders) where
+// a phantom id is rejected without letting a FK constraint 500.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const DEFAULT_POLICY = {
   aging_warn_days: 60,
   aging_escalate_days: 90,
@@ -395,6 +399,20 @@ export function createOfficeWorld(ctx) {
       const items = w.sends.filter((s) => customer === "" || s.customer_id === customer).slice().reverse();
       return ok({ items });
     }
+    // Walk change 8 S8 / S5M: the office reminder rules table.
+    if (method === "GET" && path === "/api/v1/ar/reminders/rules") return ok({ rules: reminderRules() });
+    // Walk change 8 S8: re-enrol an exempt account into one rule.
+    if (method === "POST" && path === "/api/v1/ar/reminders/enrol") return enrolReminder(body);
+    // Walk change 8 S8: the inverse of enrol; the note is mandatory, refused 400 when missing.
+    if (method === "POST" && path === "/api/v1/ar/reminders/exempt") return exemptReminder(body);
+    // Walk change 8 S5: cross-account Promises tab read.
+    if (method === "GET" && path === "/api/v1/ar/promises") return ok({ rows: promisesFor(url.searchParams), next_cursor: null });
+    // Walk change 8 S6: read / write one account's payment policy.
+    m = path.match(/^\/api\/v1\/ar\/customers\/([^/]+)\/payment-policy$/);
+    if (m) {
+      if (method === "GET") return ok(accountPaymentPolicy(m[1]));
+      if (method === "PUT") return putAccountPaymentPolicy(m[1], body);
+    }
     if (method === "GET" && path === "/api/v1/ar/paper-path") return ok({ items: openFlags().map(paperEntry) });
     if (method === "POST" && path === "/api/v1/ar/paper-path/sweep") return sweep();
     let pp = path.match(/^\/api\/v1\/ar\/paper-path\/([^/]+)\/resolve$/);
@@ -457,6 +475,162 @@ export function createOfficeWorld(ctx) {
   }
 
   const openFlags = () => w.flags.filter((f) => f.status === "OPEN");
+
+  // ---- walk change 8 S5: cross-account Promises tab read ------------------------------------------------------
+
+  /** Promises augmented with customer name and invoice number (the Promises tab's display columns). */
+  function promisesFor(params) {
+    const status = (params.get("status") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const customerId = params.get("customer_id") ?? "";
+    const world = ctx.world();
+    const out = [];
+    for (const p of world.promises) {
+      if (status.length > 0 && !status.includes(p.status)) continue;
+      if (customerId !== "" && p.customer_id !== customerId) continue;
+      const acct = world.accounts.find((a) => a.id === p.customer_id);
+      const inv = world.invoices.find((i) => i.id === p.invoice_id);
+      out.push({
+        id: p.id,
+        customer_id: p.customer_id,
+        customer_name: acct?.name ?? "",
+        invoice_id: p.invoice_id,
+        invoice_no: inv !== undefined ? ctx.invNumber(inv) : "",
+        promised_cents: p.promised_cents,
+        promised_date: p.promised_date,
+        status: p.status,
+        promised_by: p.promised_by ?? "",
+        note: p.note ?? "",
+        taken_by: p.taken_by ?? "",
+        taken_at: p.taken_at ?? "",
+        settled_at: p.settled_at ?? null,
+      });
+    }
+    out.sort((a, b) => String(b.taken_at).localeCompare(String(a.taken_at)));
+    return out;
+  }
+
+  // ---- walk change 8 S6: account payment policy (read/upsert) -------------------------------------------------
+
+  /** Walk change 8 S6: one account's payment policy. Absent row -> house default (ach_first true,
+   * surcharge 240 bps, min 0). Backed by world.paymentPolicies if a row exists. */
+  function accountPaymentPolicy(customerId) {
+    const world = ctx.world();
+    const row = world.paymentPolicies[customerId];
+    if (row === undefined) {
+      return {
+        customer_id: customerId,
+        ach_first: true,
+        surcharge_rate_bps: 240,
+        min_ach_cents: 0,
+        updated_at: NOW_ISO(),
+      };
+    }
+    return row;
+  }
+
+  function putAccountPaymentPolicy(customerId, body) {
+    if (body === null) return refuse(400, "invalid_json");
+    const world = ctx.world();
+    if (world.accounts.find((a) => a.id === customerId) === undefined) return refuse(404, "not found");
+    const ach_first = body.ach_first === true;
+    const surcharge = Number(body.surcharge_rate_bps ?? 240);
+    if (!Number.isInteger(surcharge) || surcharge < 0 || surcharge > 10000) return refuse(400, "surcharge_rate_bps must be between 0 and 10000");
+    const min = Number(body.min_ach_cents ?? 0);
+    if (!Number.isFinite(min) || min < 0) return refuse(400, "min_ach_cents must be >= 0");
+    const row = {
+      customer_id: customerId,
+      ach_first,
+      surcharge_rate_bps: surcharge,
+      min_ach_cents: Math.trunc(min),
+      updated_at: NOW_ISO(),
+    };
+    world.paymentPolicies[customerId] = row;
+    return ok(row);
+  }
+
+  // ---- walk change 8 S8 / S5M: reminder rules + enrol / exempt ---------------------------------------------
+
+  /** Five default rules (mirrors the boards' pick) so the office never opens with an empty table. */
+  function reminderRules() {
+    const world = ctx.world();
+    if (world.reminderRules === undefined || world.reminderRules.length === 0) {
+      world.reminderRules = [
+        { id: "rr-current", code: "CURRENT", label: "On-the-day reminder", channel: "EMAIL", days_past_due: 0, max_per_window: 1, paylink_url_template: "/paylink/{token}", last_sent_at: null, amount_brought_in_cents: 0, enrolled_count: 0, exclusion_count: 0, updated_at: NOW_ISO() },
+        { id: "rr-30", code: "BUCKET_30", label: "Past 30 days", channel: "EMAIL", days_past_due: 30, max_per_window: 2, paylink_url_template: "/paylink/{token}", last_sent_at: null, amount_brought_in_cents: 0, enrolled_count: 0, exclusion_count: 0, updated_at: NOW_ISO() },
+        { id: "rr-60", code: "BUCKET_60", label: "Past 60 days", channel: "EMAIL", days_past_due: 60, max_per_window: 2, paylink_url_template: "/paylink/{token}", last_sent_at: null, amount_brought_in_cents: 0, enrolled_count: 0, exclusion_count: 0, updated_at: NOW_ISO() },
+        { id: "rr-90", code: "BUCKET_90", label: "Past 90 days", channel: "PHONE", days_past_due: 90, max_per_window: 1, paylink_url_template: "/paylink/{token}", last_sent_at: null, amount_brought_in_cents: 0, enrolled_count: 0, exclusion_count: 0, updated_at: NOW_ISO() },
+        { id: "rr-blackhole", code: "BLACK_HOLE", label: "Paper-path escalation", channel: "PHONE", days_past_due: 120, max_per_window: 1, paylink_url_template: "/paylink/{token}", last_sent_at: null, amount_brought_in_cents: 0, enrolled_count: 0, exclusion_count: 0, updated_at: NOW_ISO() },
+      ];
+    }
+    return world.reminderRules;
+  }
+
+  function ruleById(ruleId) {
+    return reminderRules().find((r) => r.id === ruleId);
+  }
+
+  function exclusionKey(customerId, ruleId) {
+    return `${customerId}:${ruleId}`;
+  }
+
+  function enrolReminder(body) {
+    if (body === null) return refuse(400, "invalid_json");
+    const customerId = String(body.customer_id ?? "");
+    const ruleId = String(body.rule_id ?? "");
+    if (!UUID_RE.test(customerId)) return refuse(400, "invalid customer_id");
+    if (!UUID_RE.test(ruleId)) return refuse(400, "invalid rule_id");
+    const world = ctx.world();
+    if (world.accounts.find((a) => a.id === customerId) === undefined) return refuse(404, "not found");
+    const rule = ruleById(ruleId);
+    if (rule === undefined) return refuse(404, "not found");
+    const wasExempt = world.exemptions.get(exclusionKey(customerId, ruleId)) === true;
+    if (wasExempt) {
+      world.exemptions.delete(exclusionKey(customerId, ruleId));
+      rule.exclusion_count = Math.max(0, (rule.exclusion_count ?? 0) - 1);
+    } else if (!world.exemptions.has(exclusionKey(customerId, ruleId))) {
+      // first-time enrol bumps the counter; idempotent repeats don't.
+      rule.enrolled_count = (rule.enrolled_count ?? 0) + 1;
+    }
+    world.exemptions.set(exclusionKey(customerId, ruleId), false);
+    rule.updated_at = NOW_ISO();
+    return ok({
+      customer_id: customerId,
+      rule_id: ruleId,
+      exempt: false,
+      note: String(body.note ?? ""),
+      enrolled_count: rule.enrolled_count,
+      exclusion_count: rule.exclusion_count,
+      updated_at: rule.updated_at,
+    });
+  }
+
+  function exemptReminder(body) {
+    if (body === null) return refuse(400, "invalid_json");
+    const customerId = String(body.customer_id ?? "");
+    const ruleId = String(body.rule_id ?? "");
+    const note = String(body.note ?? "").trim();
+    if (!UUID_RE.test(customerId)) return refuse(400, "invalid customer_id");
+    if (!UUID_RE.test(ruleId)) return refuse(400, "invalid rule_id");
+    if (note === "") return refuse(400, "note is required for exempt");
+    if (note.length > 300) return refuse(400, "note must be 300 characters or fewer");
+    const world = ctx.world();
+    if (world.accounts.find((a) => a.id === customerId) === undefined) return refuse(404, "not found");
+    const rule = ruleById(ruleId);
+    if (rule === undefined) return refuse(404, "not found");
+    const already = world.exemptions.get(exclusionKey(customerId, ruleId));
+    if (already !== true) rule.exclusion_count = (rule.exclusion_count ?? 0) + 1;
+    world.exemptions.set(exclusionKey(customerId, ruleId), true);
+    rule.updated_at = NOW_ISO();
+    return ok({
+      customer_id: customerId,
+      rule_id: ruleId,
+      exempt: true,
+      note,
+      enrolled_count: rule.enrolled_count,
+      exclusion_count: rule.exclusion_count,
+      updated_at: rule.updated_at,
+    });
+  }
 
   return { reset, handle, state: () => w, gate, ok, refuse, paperPath: () => openFlags().map(paperEntry), policy: () => w.landingPolicy };
 }

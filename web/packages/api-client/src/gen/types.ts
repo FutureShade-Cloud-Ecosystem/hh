@@ -377,6 +377,73 @@ export type BillingPromiseView = {
   taken_at: string;
   settled_at?: string | null;
 };
+export type BillingPromiseEnriched = {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  invoice_id: string;
+  invoice_no: string;
+  promised_cents: number;
+  promised_date: string;
+  status: "OPEN" | "KEPT" | "BROKEN" | "CANCELLED";
+  promised_by?: string;
+  note?: string;
+  taken_by?: string;
+  taken_at: string;
+  settled_at?: string | null;
+};
+export type BillingPromisePage = {
+  rows: BillingPromiseEnriched[];
+  next_cursor: string | null;
+};
+export type BillingAccountPaymentPolicy = {
+  customer_id: string;
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+  updated_at: string;
+};
+export type BillingAccountPaymentPolicyInput = {
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+};
+export type BillingReminderRule = {
+  id: string;
+  code: string;
+  label: string;
+  channel: "EMAIL" | "SMS" | "PHONE";
+  days_past_due: number;
+  max_per_window: number;
+  paylink_url_template: string;
+  last_sent_at: string | null;
+  amount_brought_in_cents: number;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at: string;
+};
+export type BillingReminderRulePage = {
+  rules: BillingReminderRule[];
+};
+export type BillingReminderEnrolInput = {
+  customer_id: string;
+  rule_id: string;
+  note?: string;
+};
+export type BillingReminderExemptInput = {
+  customer_id: string;
+  rule_id: string;
+  note: string;
+};
+export type BillingReminderEnrolResult = {
+  customer_id: string;
+  rule_id: string;
+  exempt: boolean;
+  note?: string;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at?: string;
+};
 export type BillingDisputeView = {
   id: string;
   status: "OPEN" | "RESOLVED";

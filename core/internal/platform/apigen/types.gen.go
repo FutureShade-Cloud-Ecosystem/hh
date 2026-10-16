@@ -448,6 +448,82 @@ type BillingPromiseView struct {
 	SettledAt     *time.Time `json:"settled_at,omitempty"`
 }
 
+type BillingPromiseEnriched struct {
+	Id            string     `json:"id"`
+	CustomerId    string     `json:"customer_id"`
+	CustomerName  string     `json:"customer_name"`
+	InvoiceId     string     `json:"invoice_id"`
+	InvoiceNo     string     `json:"invoice_no"`
+	PromisedCents int64      `json:"promised_cents"`
+	PromisedDate  time.Time  `json:"promised_date"`
+	Status        string     `json:"status"`
+	PromisedBy    *string    `json:"promised_by,omitempty"`
+	Note          *string    `json:"note,omitempty"`
+	TakenBy       *string    `json:"taken_by,omitempty"`
+	TakenAt       time.Time  `json:"taken_at"`
+	SettledAt     *time.Time `json:"settled_at,omitempty"`
+}
+
+type BillingPromisePage struct {
+	Rows       []BillingPromiseEnriched `json:"rows"`
+	NextCursor *string                  `json:"next_cursor"`
+}
+
+type BillingAccountPaymentPolicy struct {
+	CustomerId       string    `json:"customer_id"`
+	AchFirst         bool      `json:"ach_first"`
+	SurchargeRateBps int       `json:"surcharge_rate_bps"`
+	MinAchCents      int64     `json:"min_ach_cents"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type BillingAccountPaymentPolicyInput struct {
+	AchFirst         bool  `json:"ach_first"`
+	SurchargeRateBps int   `json:"surcharge_rate_bps"`
+	MinAchCents      int64 `json:"min_ach_cents"`
+}
+
+type BillingReminderRule struct {
+	Id                   string     `json:"id"`
+	Code                 string     `json:"code"`
+	Label                string     `json:"label"`
+	Channel              string     `json:"channel"`
+	DaysPastDue          int        `json:"days_past_due"`
+	MaxPerWindow         int        `json:"max_per_window"`
+	PaylinkUrlTemplate   string     `json:"paylink_url_template"`
+	LastSentAt           *time.Time `json:"last_sent_at"`
+	AmountBroughtInCents int64      `json:"amount_brought_in_cents"`
+	EnrolledCount        int        `json:"enrolled_count"`
+	ExclusionCount       int        `json:"exclusion_count"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type BillingReminderRulePage struct {
+	Rules []BillingReminderRule `json:"rules"`
+}
+
+type BillingReminderEnrolInput struct {
+	CustomerId string  `json:"customer_id"`
+	RuleId     string  `json:"rule_id"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type BillingReminderExemptInput struct {
+	CustomerId string `json:"customer_id"`
+	RuleId     string `json:"rule_id"`
+	Note       string `json:"note"`
+}
+
+type BillingReminderEnrolResult struct {
+	CustomerId     string     `json:"customer_id"`
+	RuleId         string     `json:"rule_id"`
+	Exempt         bool       `json:"exempt"`
+	Note           *string    `json:"note,omitempty"`
+	EnrolledCount  int        `json:"enrolled_count"`
+	ExclusionCount int        `json:"exclusion_count"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+}
+
 type BillingDisputeView struct {
 	Id          string     `json:"id"`
 	Status      string     `json:"status"`

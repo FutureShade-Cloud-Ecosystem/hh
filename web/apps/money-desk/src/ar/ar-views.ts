@@ -16,6 +16,7 @@
 // mark "later" reads as later in words here.
 import { html, nothing, type TemplateResult } from "lit";
 import type {
+  BillingAccountPaymentPolicy,
   BillingAgingRow,
   BillingARLanding,
   BillingCreditHold,
@@ -768,18 +769,32 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
   const answer = account.preview;
   const onHold = account.invoices.some((r) => r.account_status === "CREDIT_HOLD") || model.holds.some((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const stays = answer?.lines.filter((l) => l.outcome === "PART") ?? [];
+  // Walk change 8 S6: the policy from the office reads the take-a-payment panel's tender order.
+  // Missing row answer 200 with house default (ach_first true, surcharge 240 bps, min 0), so the
+  // panel never special-cases "no policy" and the order reads from one source.
+  const pol = model.office.paymentPolicy;
+  const tenderIds: PayMethod[] = pol !== null && pol.ach_first ? ["EFT", "CARD", "CASH", "CHEQUE"] : ["CARD", "EFT", "CASH", "CHEQUE"];
+  const tenderWords: Record<PayMethod, string> = { EFT: "EFT", CARD: "Card", CASH: "Cash", CHEQUE: "Cheque" };
+  const surchargeCents = computeSurchargeCents(pol, answer?.amount_cents ?? null);
+  const forcedEft = pol !== null && pol.min_ach_cents > 0 && (answer?.amount_cents ?? 0) > 0 && pol.min_ach_cents >= (answer?.amount_cents ?? 0);
   return html`
-    <section class="panel side" aria-label="Receive a payment" data-receive>
+    <section class="panel side" aria-label="Take a payment" data-receive>
       <div class="panel-head">
-        <h2>Receive a payment</h2>
+        <h2>Take a payment</h2>
         ${answer === null ? nothing : html`<span class="pill ${answer.unapplied_cents === 0 ? "pill-good" : "pill-watch"}" data-unapplied>unapplied ${formatMoney(answer.unapplied_cents)}</span>`}
       </div>
       <div class="two">
         <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
-      <p class="label gap">Method</p>
-      ${segmented("Method", [{ id: "CHEQUE", word: "Cheque" }, { id: "EFT", word: "EFT" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
+      <p class="label gap">Method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
+      ${segmented("Method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
+      ${pol !== null && pol.surcharge_rate_bps > 0 && account.method === "CARD" && surchargeCents > 0
+        ? html`<p class="alert alert-warn" role="status" data-card-surcharge>Card surcharge: ${formatMoney(surchargeCents)} at ${(pol.surcharge_rate_bps / 100).toFixed(2)}% (${pol.surcharge_rate_bps} bps).</p>`
+        : nothing}
+      ${forcedEft
+        ? html`<p class="alert alert-warn" role="status" data-ach-min>Below the policy minimum of ${formatMoney(pol!.min_ach_cents)}; EFT is the only tender.</p>`
+        : nothing}
       <div class="two gap">
         <label>Reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Cheque number or transfer reference" /></label>
         <label>Taken by<span class="ro" data-ro="taken-by"></span></label>
@@ -806,6 +821,15 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       <p class="dim small">One payment is one record: the server splits it across the picked invoices in one step. What shows afterwards is the server's balance.</p>
     </section>
   `;
+}
+
+// computeSurchargeCents answers the cards's surcharge line. The single source of truth is the
+// server's stored rate (surcharge_rate_bps); the maths is cents_x_bps / 10000 with a ceil so the
+// dealer never absorbs a partial cent.
+function computeSurchargeCents(pol: BillingAccountPaymentPolicy | null, amountCents: number | null): number {
+  if (pol === null || amountCents === null || amountCents <= 0) return 0;
+  if (pol.surcharge_rate_bps <= 0) return 0;
+  return Math.ceil((amountCents * pol.surcharge_rate_bps) / 10000);
 }
 
 function paymentList(model: DeskModel, account: AccountModel): TemplateResult {

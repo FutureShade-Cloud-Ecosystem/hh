@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditHold, BillingCreditHoldPage, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditHold, BillingCreditHoldPage, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -111,6 +111,38 @@ export async function billingDeleteAPContact(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingDeleteAPContact",
+  });
+}
+
+export async function billingGetAccountPaymentPolicy(
+  client: ApiClient,
+  customerID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<BillingAccountPaymentPolicy>> {
+  return client.request<BillingAccountPaymentPolicy>({
+    method: "GET",
+    path: "/api/v1/ar/customers/{customerID}/payment-policy",
+    pathParams: { customerID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetAccountPaymentPolicy",
+  });
+}
+
+export async function billingPutAccountPaymentPolicy(
+  client: ApiClient,
+  customerID: string | number,
+  body: BillingAccountPaymentPolicyInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingAccountPaymentPolicy>> {
+  return client.request<BillingAccountPaymentPolicy>({
+    method: "PUT",
+    path: "/api/v1/ar/customers/{customerID}/payment-policy",
+    pathParams: { customerID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingPutAccountPaymentPolicy",
   });
 }
 
@@ -346,6 +378,21 @@ export async function billingSendPaylink(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingSendPaylink",
+  });
+}
+
+export async function billingListPromises(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; status?: "OPEN" | "KEPT" | "BROKEN" | "CANCELLED" | "OPEN,KEPT"; customer_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<BillingPromisePage>> {
+  return client.request<BillingPromisePage>({
+    method: "GET",
+    path: "/api/v1/ar/promises",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingListPromises",
   });
 }
 
@@ -598,6 +645,49 @@ export async function billingListARReminders(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingListARReminders",
+  });
+}
+
+export async function billingEnrolReminder(
+  client: ApiClient,
+  body: BillingReminderEnrolInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingReminderEnrolResult>> {
+  return client.request<BillingReminderEnrolResult>({
+    method: "POST",
+    path: "/api/v1/ar/reminders/enrol",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingEnrolReminder",
+  });
+}
+
+export async function billingExemptReminder(
+  client: ApiClient,
+  body: BillingReminderExemptInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingReminderEnrolResult>> {
+  return client.request<BillingReminderEnrolResult>({
+    method: "POST",
+    path: "/api/v1/ar/reminders/exempt",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingExemptReminder",
+  });
+}
+
+export async function billingListReminderRules(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<BillingReminderRulePage>> {
+  return client.request<BillingReminderRulePage>({
+    method: "GET",
+    path: "/api/v1/ar/reminders/rules",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingListReminderRules",
   });
 }
 
