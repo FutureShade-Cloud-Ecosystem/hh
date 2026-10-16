@@ -1040,12 +1040,14 @@ export class CounterTillApp extends HHElement {
   }
 
   /**
-   * Sign out: the controller ends the mint (the adapter drops it) and wipes
-   * custody either way; the entry view with the cards comes back, because the
-   * flows answer is still held. A reload signs out too: the mint lives only
-   * in this tab's memory. The returns desk is blanked with the session: the
-   * till is the next person's, and no draft, refusal or receipt of the last
-   * one stays on it.
+   * Sign out: the controller ends the mint (the adapter drops it), wipes
+   * custody, and clears the front door handoff key in the tab's session
+   * storage; the entry view with the cards comes back, because the flows
+   * answer is still held. A reload in the same tab keeps the session: the
+   * mint stays where the front door put it (this tab's session storage) until
+   * Sign out, Switch role, or a refused session clears it. The returns desk
+   * is blanked with the session: the till is the next person's, and no draft,
+   * refusal or receipt of the last one stays on it.
    */
   async #signOut(): Promise<void> {
     if (this.#busy) return;
