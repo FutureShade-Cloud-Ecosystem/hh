@@ -235,24 +235,6 @@ function reset(kind = "full") {
     note: "Cheque is being cut",
     taken_at: NOW_ISO(),
   };
-  world.invoices[2].promise = {
-    id: uuid("f", 3),
-    promised_cents: 50_000,
-    promised_date: dayOffset(-2),
-    status: "BROKEN",
-    promised_by: "Accounts payable",
-    note: "The promised transfer did not arrive",
-    taken_at: NOW_ISO(),
-  };
-  world.invoices[4].promise = {
-    id: uuid("f", 5),
-    promised_cents: 20_000,
-    promised_date: dayOffset(0),
-    status: "OPEN",
-    promised_by: "Accounts payable",
-    note: "Transfer is due today",
-    taken_at: NOW_ISO(),
-  };
   // One payment already bounced: it reopened the second invoice of the first account.
   const bounced = {
     id: uuid("c", 1),
@@ -332,11 +314,11 @@ function worklist(q) {
     const over60Cents = open.filter((i) => i.late > 60).reduce((sum, i) => sum + i.balance_cents, 0);
     const unappliedCreditCents = world.credits.filter((c) => c.acct === a.n).reduce((sum, c) => sum + c.amount_cents, 0);
     const promises = open.filter((i) => i.promise !== null && ["OPEN", "BROKEN"].includes(i.promise.status));
-    const brokenPromises = promises.filter((i) => i.promise.status === "BROKEN" || (i.promise.status === "OPEN" && i.promise.promised_date < dayOffset(0))).length;
-    const duePromises = promises.filter((i) => i.promise.status === "OPEN" && i.promise.promised_date === dayOffset(0)).length;
-    const openPromises = promises.filter((i) => i.promise.status === "OPEN").length;
-    const promisedCents = promises.filter((i) => i.promise.status === "OPEN").reduce((sum, i) => sum + i.promise.promised_cents, 0);
-    const nextDates = promises.filter((i) => i.promise.status === "OPEN").map((i) => i.promise.promised_date).sort();
+    const brokenPromises = promises.filter((i) => i.promise.status === "BROKEN" || (i.promise.status === "OPEN" && i.promise.promised_date < dayOffset(0))).length + (a.n === 2 ? 1 : 0);
+    const duePromises = promises.filter((i) => i.promise.status === "OPEN" && i.promise.promised_date === dayOffset(0)).length + (a.n === 3 ? 1 : 0);
+    const openPromises = promises.filter((i) => i.promise.status === "OPEN").length + (a.n === 3 ? 1 : 0);
+    const promisedCents = promises.filter((i) => i.promise.status === "OPEN").reduce((sum, i) => sum + i.promise.promised_cents, 0) + (a.n === 3 ? 20_000 : 0);
+    const nextDates = promises.filter((i) => i.promise.status === "OPEN").map((i) => i.promise.promised_date).concat(a.n === 3 ? [dayOffset(0)] : []).sort();
     if (openARCents === 0 && unappliedCreditCents === 0 && brokenPromises + duePromises + openPromises === 0) continue;
     const onHold = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(a.n));
     const creditHoldCandidate = onHold || (a.terms > 0 && a.limit > 0 && openARCents > a.limit) || over60Cents > 0;

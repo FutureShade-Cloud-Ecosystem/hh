@@ -14,7 +14,7 @@ import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { sweepWords } from "./office-logic.js";
@@ -24,7 +24,6 @@ import {
   renderHome,
   renderLoadFailed,
   renderLoading,
-  renderRegisterHome,
   renderReminders,
   renderSettings,
   renderStatements,
@@ -37,7 +36,6 @@ import {
   type RightMode,
   type Tab,
   type WorkChoice,
-  type WorklistFilter,
 } from "./ar-views.js";
 
 export interface DeskHost {
@@ -61,9 +59,7 @@ export interface DeskWho {
   readonly userName: string;
 }
 
-function paymentMethodFor(method: PayMethod): PaymentMethod {
-  return method === "WIRE" ? "EFT" : method;
-}
+const METHODS: readonly PaymentMethod[] = ["CASH", "CARD", "CHEQUE", "EFT"];
 
 export class ArDesk {
   readonly #api: ArApi;
@@ -72,15 +68,8 @@ export class ArDesk {
 
   #phase: "loading" | "ready" | "error" = "loading";
   #loadError = "";
-  #tab: Tab = "worklist";
+  #tab: Tab = "receivables";
   #landing: DeskModel["landing"] = null;
-  #worklist: DeskModel["worklist"] = null;
-  #worklistFilter: WorklistFilter = "all";
-  #worklistQuery = "";
-  #worklistGeneration = 0;
-  #worklistTimer: ReturnType<typeof setTimeout> | undefined;
-  #paymentCustomerQuery = "";
-  #paymentFromMain = true;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
   #filter: RegisterFilter = "all";
@@ -157,16 +146,15 @@ export class ArDesk {
   async load(): Promise<void> {
     this.#phase = "loading";
     this.#host.repaint();
-    const [landing, worklist, aging, register, bounced, holds, branches] = await Promise.all([
+    const [landing, aging, register, bounced, holds, branches] = await Promise.all([
       this.#api.landing(),
-      this.#api.worklist(),
       this.#api.aging(),
       this.#api.register(),
       this.#api.bounced(),
       this.#api.holds(),
       this.#api.branches(),
     ]);
-    for (const read of [landing, worklist, aging, register, bounced, holds]) {
+    for (const read of [landing, aging, register, bounced, holds]) {
       if (!read.ok) {
         this.#phase = "error";
         this.#loadError = refusalWords("load", read.error, read.status);
@@ -175,7 +163,6 @@ export class ArDesk {
       }
     }
     if (landing.ok) this.#landing = landing.value;
-    if (worklist.ok) this.#worklist = worklist.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
     if (bounced.ok) this.#bounced = bounced.value.items;
@@ -188,38 +175,13 @@ export class ArDesk {
 
   /** The book after a write: cards, aging, register, queue and holds, quietly. */
   async #reloadBook(): Promise<void> {
-    const [landing, worklist, aging, register, bounced, holds] = await Promise.all([
-      this.#api.landing(),
-      this.#api.worklist({ chip: this.#worklistFilter, q: this.#worklistQuery }),
-      this.#api.aging(),
-      this.#api.register(),
-      this.#api.bounced(),
-      this.#api.holds(),
-    ]);
+    const [landing, aging, register, bounced, holds] = await Promise.all([this.#api.landing(), this.#api.aging(), this.#api.register(), this.#api.bounced(), this.#api.holds()]);
     if (landing.ok) this.#landing = landing.value;
-    if (worklist.ok) this.#worklist = worklist.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
     if (bounced.ok) this.#bounced = bounced.value.items;
     if (holds.ok) this.#holds = holds.value.items;
     await this.#refreshSelection();
-  }
-
-  async #refreshWorklist(): Promise<void> {
-    const generation = ++this.#worklistGeneration;
-    const result = await this.#api.worklist({ chip: this.#worklistFilter, q: this.#worklistQuery });
-    if (generation !== this.#worklistGeneration) return;
-    if (result.ok) {
-      this.#worklist = result.value;
-    } else {
-      this.#fail("load", result);
-    }
-    this.#host.repaint();
-  }
-
-  #scheduleWorklistRefresh(): void {
-    if (this.#worklistTimer !== undefined) clearTimeout(this.#worklistTimer);
-    this.#worklistTimer = setTimeout(() => void this.#refreshWorklist(), 250);
   }
 
   /** The count and the balance of the invoices in view: the server adds them, the app does not. */
@@ -287,53 +249,28 @@ export class ArDesk {
         void this.#refreshSelection().then(() => this.#host.repaint());
         this.#host.repaint();
         return true;
-      case "worklist-filter":
-        this.#worklistFilter = choice as WorklistFilter;
-        void this.#refreshWorklist();
-        return true;
       case "download-csv":
         void this.#downloadCsv();
         return true;
       case "open-picker":
-        this.#paymentFromMain = true;
-        this.#paymentCustomerQuery = "";
-        this.#account = null;
         this.#picker = true;
-        this.#reveal = "[data-payment-modal]";
         this.#host.repaint();
         return true;
       case "close-picker":
         this.#picker = false;
-        if (this.#paymentFromMain) this.#account = null;
-        this.#clearMessages();
         this.#host.repaint();
         return true;
       case "picker-go": {
-        const customerId = this.#host.field("picker-account");
-        const found = this.#aging.find((a) => a.customer_id === customerId);
+        const name = this.#host.field("picker-account");
+        const found = this.#aging.find((a) => a.customer_name === name) ?? this.#aging[0];
+        this.#picker = false;
         if (found !== undefined) void this.#openAccount(found.customer_id, null, "receive", "invoices");
         return true;
       }
-      case "payment-account": {
-        const customerId = attr("data-customer-id");
-        this.#paymentFromMain = this.#account === null;
-        this.#paymentCustomerQuery = this.#aging.find((a) => a.customer_id === customerId)?.customer_name ?? "";
-        this.#picker = true;
-        this.#reveal = "[data-payment-modal]";
-        void this.#openAccount(customerId, attr("data-invoice-id") || null, "receive", "invoices");
-        return true;
-      }
-      case "open-payment-modal":
-        this.#paymentFromMain = false;
-        this.#picker = true;
-        this.#reveal = "[data-payment-modal]";
-        this.#host.repaint();
-        return true;
       case "run-statements":
         void this.#runStatements(null);
         return true;
       case "open-account":
-        this.#picker = false;
         void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : "invoices");
         return true;
       case "back":
@@ -469,21 +406,9 @@ export class ArDesk {
 
   /** An input in a field the screen carries. Only the payment amount asks the server again as it changes. */
   input(control: Element): void {
-    const field = control.getAttribute("data-field");
-    if (field === "worklist-search") {
-      this.#worklistQuery = (control as HTMLInputElement).value;
-      this.#scheduleWorklistRefresh();
-      this.#host.repaint();
-      return;
-    }
-    if (field === "payment-customer-search") {
-      this.#paymentCustomerQuery = (control as HTMLInputElement).value;
-      this.#host.repaint();
-      return;
-    }
     const account = this.#account;
     if (account === null) return;
-    if (field === "receive-amount") {
+    if (control.getAttribute("data-field") === "receive-amount") {
       this.#account = { ...account, amountText: (control as HTMLInputElement).value };
       this.#schedulePreview();
       this.#host.repaint();
@@ -509,11 +434,8 @@ export class ArDesk {
       this.#reveal = "";
       this.#host.reveal(selector);
     }
-    this.#host.setField("worklist-search", this.#worklistQuery);
-    if (this.#picker) this.#host.setField("payment-customer-search", this.#paymentCustomerQuery);
     const account = this.#account;
     if (account === null) return;
-    if (this.#picker) this.#host.setField("picker-account", account.customerId);
     if (this.#fillPending) {
       this.#fillPending = false;
       this.#host.setField("receive-amount", account.amountText);
@@ -572,13 +494,13 @@ export class ArDesk {
   async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts"): Promise<void> {
     if (customerId === "") return;
     const row = this.#aging.find((a) => a.customer_id === customerId);
-    const workRow = this.#worklist?.rows.find((a) => a.customer_id === customerId);
     this.#clearMessages();
     this.#work = null;
+    this.#tab = "receivables";
     this.#account = {
       customerId,
-      name: row?.customer_name ?? workRow?.customer_name ?? "Account",
-      accountNo: row?.account_no ?? workRow?.account_no ?? "",
+      name: row?.customer_name ?? "Account",
+      accountNo: row?.account_no ?? "",
       terms: row?.payment_terms_days ?? null,
       branchName: "",
       invoices: [],
@@ -605,10 +527,8 @@ export class ArDesk {
       const first = register.value.items[0];
       const branch = this.#branches.find((b) => b.id === first?.branch_id)?.name.replace(/ \(demo\)$/, "") ?? "";
       this.#account = { ...this.#account, name: first?.customer_name ?? this.#account.name, accountNo: first?.account_no ?? this.#account.accountNo, branchName: branch, invoices: register.value.items };
-      const open = register.value.items.filter((r) => r.status !== "PAID" && r.status !== "CREDIT" && r.balance_cents > 0);
-      open.sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
-      const target = invoiceId === null ? open[0] : open.find((r) => r.id === invoiceId);
-      if (target !== undefined && right === "receive") {
+      const target = invoiceId === null ? undefined : register.value.items.find((r) => r.id === invoiceId);
+      if (target !== undefined && right === "receive" && target.balance_cents > 0) {
         this.#account = { ...this.#account, amountText: formatMoney(target.balance_cents), picked: [target.id] };
         this.#schedulePreview(0);
       }
@@ -639,9 +559,7 @@ export class ArDesk {
   }
 
   #openInvoices(): BillingRegisterRow[] {
-    return (this.#account?.invoices ?? [])
-      .filter((r) => r.status !== "PAID" && r.status !== "CREDIT")
-      .sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
+    return (this.#account?.invoices ?? []).filter((r) => r.status !== "PAID");
   }
 
   #togglePick(invoiceId: string): void {
@@ -697,7 +615,7 @@ export class ArDesk {
     }
     const answer = await this.#api.applyPayment({
       customerId: account.customerId,
-      method: paymentMethodFor(account.method),
+      method: METHODS.find((m) => m === account.method) ?? "CHEQUE",
       amountCents: cents,
       reference: "",
       invoiceIds: account.picked,
@@ -717,16 +635,16 @@ export class ArDesk {
     const cents = parseAmountToCents(account.amountText);
     const reference = this.#host.field("receive-reference").trim();
     if (cents === null || cents === 0) return this.#stopApply("Enter the amount received, such as $100.00.");
-    if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Apply oldest-first takes every open invoice.");
+    if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Pick all open takes every open invoice.");
     // The route's own ceiling, said here so the body is never sent: a pick over it is refused ahead of
     // the route's replay judgement, which would end a held key for a body the desk could refuse itself.
     // The guard is a stop before the wire, so the button and any held key are untouched by it.
     if (account.picked.length > MAX_APPLY_INVOICES) return this.#stopApply(pickCeilingWords(account.picked.length));
-    const method = paymentMethodFor(account.method);
-    if (paymentReferenceRequired(account.method) && reference === "") return this.#stopApply("Enter a check or transfer reference for Check, ACH, or Wire.");
+    if (reference === "") return this.#stopApply("Enter a reference, such as a cheque number.");
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
+    const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
     // A key already held is an earlier press whose outcome is still unknown.
     const heldKey = this.#payPins.get(account.customerId);
     const key = heldKey ?? newKey();
@@ -751,8 +669,6 @@ export class ArDesk {
         this.#notice = outcome.words;
         this.#reveal = "[data-notice]";
         await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
-        this.#picker = false;
-        if (this.#paymentFromMain) this.#account = null;
         this.#host.repaint();
         return;
       }
@@ -786,8 +702,6 @@ export class ArDesk {
     this.#reveal = "[data-notice]";
     this.#endApplyForm();
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
-    this.#picker = false;
-    if (this.#paymentFromMain) this.#account = null;
     this.#host.repaint();
   }
 
@@ -1032,10 +946,6 @@ export class ArDesk {
       takenBy: this.#who.userName,
       canLift: canLiftHolds(this.#who.roleCode),
       landing: this.#landing,
-      worklist: this.#worklist,
-      worklistFilter: this.#worklistFilter,
-      worklistQuery: this.#worklistQuery,
-      paymentCustomerQuery: this.#paymentCustomerQuery,
       aging: this.#aging,
       rows: this.#rows,
       filter: this.#filter,
@@ -1068,7 +978,6 @@ export class ArDesk {
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
-    if (model.tab === "register") return html`${renderRegisterHome(model)}`;
     return html`${renderHome(model)}`;
   }
 }

@@ -18,8 +18,6 @@ import { html, nothing, type TemplateResult } from "lit";
 import type {
   BillingAgingRow,
   BillingARLanding,
-  BillingARWorklistResponse,
-  BillingARWorklistRow,
   BillingCreditHold,
   BillingInvoiceDetail,
   BillingPaperPathEntry,
@@ -31,21 +29,20 @@ import type {
   TillPaymentHistory,
 } from "@hardscapehouse/api-client";
 import type { ApplyAnswer } from "./ar-api.js";
-import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, overpaymentPreview, relativeDay, rowMarks, worklistActionWord, type Mark } from "./ar-logic.js";
+import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
 import { renderSettingsPanels } from "./office-settings-views.js";
 
-export type Tab = "worklist" | "register" | "statements" | "holds" | "reminders" | "settings";
-export type WorklistFilter = "all" | "action_needed" | "over_60" | "credit_hold";
+export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
 // C8 register filter chips. The legacy strings ("open", "overdue", "promised", "disputed", "paid")
 // stay valid for backward compatibility with every stored URL and every automation that already
 // names them.
 export type RegisterFilter = "all" | "past_due" | "current" | "on_hold"
   | "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
-export type PayMethod = "CHEQUE" | "EFT" | "WIRE" | "CARD" | "CASH";
+export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
 export type WorkChoice = "replacement" | "promise" | "reminder";
 
 export interface AccountModel {
@@ -87,10 +84,6 @@ export interface DeskModel {
   readonly takenBy: string;
   readonly canLift: boolean;
   readonly landing: BillingARLanding | null;
-  readonly worklist: BillingARWorklistResponse | null;
-  readonly worklistFilter: WorklistFilter;
-  readonly worklistQuery: string;
-  readonly paymentCustomerQuery: string;
   readonly aging: readonly BillingAgingRow[];
   readonly rows: readonly BillingRegisterRow[];
   readonly filter: RegisterFilter;
@@ -116,7 +109,6 @@ export interface DeskModel {
 // ---- small parts -------------------------------------------------------------------------------
 
 function messages(model: DeskModel): TemplateResult {
-  if (model.picker) return html``;
   // tabindex lets the desk move focus to a message when it appears: role=alert announces it, and
   // focus puts a screen reader's reading position and the phone's viewport on it (a payment's
   // unknown outcome or refusal shows here, far above the Record payment button on a phone).
@@ -158,15 +150,11 @@ function segmented(label: string, items: readonly { id: string; word: string }[]
 function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
-    <nav class="tabs" aria-label="Receivables views">
-      ${tab("worklist", "Worklist")} ${tab("register", "Register")} ${tab("statements", "Statements")} ${tab("holds", "Holds & Policy")}
+    <nav class="tabs" aria-label="Money Desk views">
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
+      <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
     </nav>
   `;
-}
-
-function policyTabs(model: DeskModel): TemplateResult {
-  const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
-  return html`<nav class="tabs policy-tabs" aria-label="Holds and policy views">${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Policy")}</nav>`;
 }
 
 // ---- the way in --------------------------------------------------------------------------------
@@ -177,8 +165,8 @@ function frame(body: TemplateResult): TemplateResult {
     <div class="head">
       <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
-    <nav class="tabs" aria-label="Receivables views">
-      <span class="tab" aria-disabled="true">Worklist</span><span class="tab" aria-disabled="true">Register</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Holds & Policy</span>
+    <nav class="tabs" aria-label="Money Desk views">
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
     </nav>
     ${body}
   `;
@@ -448,125 +436,37 @@ function bouncedWork(model: DeskModel, work: BouncedWork): TemplateResult {
   `;
 }
 
-const WORKLIST_FILTERS: readonly { id: WorklistFilter; word: string }[] = [
-  { id: "all", word: "All open" },
-  { id: "action_needed", word: "Action needed today" },
-  { id: "over_60", word: "Over 60 days" },
-  { id: "credit_hold", word: "Credit hold candidates" },
-];
-
-function worklistStrip(model: DeskModel): TemplateResult {
-  const summary = model.worklist?.summary;
-  if (summary === undefined) return html``;
+function picker(model: DeskModel): TemplateResult {
   return html`
-    <dl class="worklist-strip" aria-label="Collections summary">
-      <div><dt>Total Past Due</dt><dd data-kpi="past-due">${formatMoney(summary.total_past_due_cents)}</dd></div>
-      <div><dt>Over 60 Days</dt><dd data-kpi="over-60">${formatMoney(summary.over_60_cents)}</dd></div>
-      <div><dt>Broken Promises</dt><dd data-kpi="broken-promises">${summary.broken_promises}</dd></div>
-      <div><dt>Unapplied Credits</dt><dd data-kpi="unapplied-credits">${formatMoney(summary.unapplied_credits_cents)}</dd></div>
-    </dl>
-  `;
-}
-
-function worklistPromise(row: BillingARWorklistRow): string {
-  if (row.broken_promises > 0) return `${row.broken_promises} broken`;
-  if (row.due_promises > 0) return "Due today";
-  if (row.open_promises > 0) return `${row.open_promises} open`;
-  return "None";
-}
-
-function worklistRowView(model: DeskModel, row: BillingARWorklistRow): TemplateResult {
-  const hold = row.recommended_action === "review_credit_hold" ? model.holds.find((h) => h.customer_id === row.customer_id && h.status === "ACTIVE") : undefined;
-  const action = row.recommended_action === "record_payment" ? "payment-account" : hold !== undefined ? "show-hold" : "open-account";
-  const right = row.recommended_action === "review_promise" ? "promise" : "receive";
-  return html`
-    <tr data-worklist-row data-customer-id="${row.customer_id}" data-urgency="${row.urgency}">
-      <td data-label="Account"><span class="who">${row.customer_name}</span><span class="dim small">${row.account_no} · Open ${formatMoney(row.open_ar_cents)}</span></td>
-      <td data-label="Past due" class="num"><b>${formatMoney(row.past_due_cents)}</b><span class="dim small">${row.oldest_bucket}</span></td>
-      <td data-label="Over 60 days" class="num">${formatMoney(row.over_60_cents)}</td>
-      <td data-label="Promise"><span class="marks">${row.broken_promises > 0 ? html`<span class="pill pill-stop">Broken</span>` : row.due_promises > 0 ? html`<span class="pill pill-watch">Due today</span>` : nothing}</span><span class="small">${worklistPromise(row)}</span></td>
-      <td data-label="Credit" class="num">${formatMoney(row.unapplied_credit_cents)}<span class="dim small">Available ${formatMoney(row.available_credit_cents)}</span></td>
-      <td data-label="Recommended action" class="act"><button type="button" class="btn btn-secondary small-btn" data-action="${action}" data-customer-id="${row.customer_id}" data-hold-id="${hold?.id ?? ""}" data-right="${right}">${worklistActionWord(row.recommended_action)}</button></td>
-      <td data-label="Open account" class="act"><button type="button" class="link" data-action="open-account" data-customer-id="${row.customer_id}" data-right="receive">Open account -&gt;</button></td>
-    </tr>
-  `;
-}
-
-function worklistPanel(model: DeskModel): TemplateResult {
-  if (model.worklist === null) return html`<section class="panel" aria-busy="true"><p class="dim" role="status">Loading the collections worklist.</p></section>`;
-  const rows = model.worklist.rows;
-  return html`
-    <section class="panel worklist-panel" aria-label="Collections worklist">
-      <div class="panel-head worklist-tools">
-        ${segmented("Worklist filter", WORKLIST_FILTERS, model.worklistFilter, "worklist-filter")}
-        <label class="worklist-search"><span class="visually-hidden">Search worklist</span><input type="search" data-field="worklist-search" placeholder="Search customer or account" autocomplete="off" /></label>
+    <section class="panel" aria-label="Record a payment" data-picker>
+      <div class="panel-head"><h3>Record a payment</h3><button type="button" class="btn btn-secondary small-btn" data-action="close-picker">Cancel</button></div>
+      <div class="inline-form">
+        <label>Account
+          <select data-field="picker-account">${model.aging.map((a) => html`<option>${a.customer_name}</option>`)}</select>
+        </label>
+        <button type="button" class="btn btn-primary" data-action="picker-go">Open account</button>
       </div>
-      ${rows.length === 0
-        ? html`<div class="empty"><strong>No accounts in this view.</strong><span class="dim">Try another filter or search.</span></div>`
-        : html`<div class="scroll"><table class="stack worklist-table"><thead><tr><th>Account</th><th class="num">Past due</th><th class="num">Over 60 days</th><th>Promise</th><th class="num">Credit</th><th>Recommended action</th><th><span class="visually-hidden">Open account</span></th></tr></thead><tbody>${rows.map((row) => worklistRowView(model, row))}</tbody></table></div>`}
     </section>
-  `;
-}
-
-function paymentCustomerPicker(model: DeskModel): TemplateResult {
-  const query = model.paymentCustomerQuery.trim().toLowerCase();
-  const current = model.account?.customerId ?? "";
-  const accounts = model.aging.filter((a) => query === "" || `${a.customer_name} ${a.account_no}`.toLowerCase().includes(query));
-  accounts.sort((a, b) => Number(a.customer_id !== current) - Number(b.customer_id !== current) || a.customer_name.localeCompare(b.customer_name));
-  return html`
-    <div class="payment-customer">
-      <label>Customer search<input type="search" data-field="payment-customer-search" placeholder="Search customer or account" autocomplete="off" /></label>
-      <label>Customer<select data-field="picker-account">${accounts.map((a) => html`<option data-id="${a.customer_id}">${a.customer_name} · ${a.account_no}</option>`)}</select></label>
-      <button type="button" class="btn btn-secondary" data-action="picker-go" ?disabled=${accounts.length === 0}>Open invoices</button>
-    </div>
-    ${accounts.length === 0 ? html`<p class="dim small" role="status">No accounts match this search.</p>` : nothing}
-  `;
-}
-
-function paymentModal(model: DeskModel): TemplateResult {
-  return html`
-    <div class="payment-backdrop">
-      <section class="payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title" data-payment-modal data-picker tabindex="-1">
-        <div class="payment-modal-head">
-          <div><h2 id="payment-modal-title">Record payment</h2><p class="dim">Choose the account, apply oldest first, and check the server's allocation.</p></div>
-          <button type="button" class="btn btn-secondary small-btn" data-action="close-picker">Close</button>
-        </div>
-        ${messages(model)}
-        ${paymentCustomerPicker(model)}
-        ${model.account === null ? html`<div class="empty"><strong>Choose a customer.</strong><span class="dim">The open invoice checklist appears here.</span></div>` : receivePanel(model, model.account)}
-      </section>
-    </div>
   `;
 }
 
 export function renderHome(model: DeskModel): TemplateResult {
   return html`
     <div class="head">
-      <div><h1>Receivables</h1><p class="dim">The collections worklist, with the accounts that need a person first.</p></div>
-      <div class="actions"><button type="button" class="btn btn-primary" data-action="open-picker">Record a payment</button><button type="button" class="btn btn-secondary" data-action="run-statements">Run statements</button></div>
+      <div>
+        <h1>Receivables</h1>
+        <p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="open-picker">Record a payment</button>
+        <button type="button" class="btn btn-secondary" data-action="run-statements">Run statements</button>
+      </div>
     </div>
-    ${tabsBar(model)} ${messages(model)}
-    ${worklistStrip(model)}
-    <div class="cols">
-      <div class="col-main">${worklistPanel(model)}</div>
-      <div class="col-side">${model.work === null ? nothing : bouncedWork(model, model.work)} ${needsYou(model)}</div>
-    </div>
-    ${model.picker ? paymentModal(model) : nothing}
-  `;
-}
-
-export function renderRegisterHome(model: DeskModel): TemplateResult {
-  return html`
-    <div class="head">
-      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
-      <div class="actions"><button type="button" class="btn btn-primary" data-action="open-picker">Record a payment</button><button type="button" class="btn btn-secondary" data-action="run-statements">Run statements</button></div>
-    </div>
-    ${tabsBar(model)} ${messages(model)}
+    ${tabsBar(model)} ${messages(model)} ${model.picker ? picker(model) : nothing}
     <div class="cols">
       <div class="col-main">${tiles(model)} ${register(model)}</div>
       <div class="col-side">${model.work === null ? nothing : bouncedWork(model, model.work)} ${needsYou(model)}</div>
     </div>
-    ${model.picker ? paymentModal(model) : nothing}
   `;
 }
 
@@ -611,7 +511,7 @@ export function renderReminders(model: DeskModel): TemplateResult {
     <div class="head">
       <div><h1>Reminders</h1><p class="dim">Chase an account's overdue invoice, see what has been sent, and work the accounts that ignore reminders. Everything leaves through the messaging sink and goes to the AP contact by its role.</p></div>
     </div>
-    ${tabsBar(model)} ${policyTabs(model)} ${messages(model)}
+    ${tabsBar(model)} ${messages(model)}
     ${renderRemindersPanels(model.office)}
   `;
 }
@@ -621,9 +521,9 @@ export function renderReminders(model: DeskModel): TemplateResult {
 export function renderSettings(model: DeskModel): TemplateResult {
   return html`
     <div class="head">
-      <div><h1>Policy</h1><p class="dim">The rules this desk runs on. Payables and Receivables reads them; the Financial Controller or the General Manager changes them, and every change is on the record.</p></div>
+      <div><h1>Settings</h1><p class="dim">The rules this desk runs on. Payables and Receivables reads them; the Financial Controller or the General Manager changes them, and every change is on the record.</p></div>
     </div>
-    ${tabsBar(model)} ${policyTabs(model)} ${messages(model)}
+    ${tabsBar(model)} ${messages(model)}
     ${renderSettingsPanels(model.office.settings, model.office.nowMs)}
   `;
 }
@@ -720,7 +620,7 @@ export function renderHolds(model: DeskModel): TemplateResult {
       <div><h1>Credit holds</h1><p class="dim">A hold stops release at the till, the gate and the portal. Lifting and overriding both carry a reason, and both are audited.</p></div>
       ${model.canLift ? nothing : html`<div class="actions"><button type="button" class="btn btn-secondary held" data-action="place-later" aria-disabled="true">Place a hold <span class="later">later</span></button></div>`}
     </div>
-    ${tabsBar(model)} ${policyTabs(model)}
+    ${tabsBar(model)}
     <div class="cols">
       <section class="panel col-main" aria-label="Credit holds">
         ${messages(model)}
@@ -793,7 +693,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
                   <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
-                  <td class="num">${paidRow || model.picker ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
+                  <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
                   <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
               `;
@@ -812,30 +712,14 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   `;
 }
 
-function paymentChecklist(model: DeskModel, account: AccountModel): TemplateResult {
-  const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
-  const rows = account.invoices.filter((r) => r.status !== "PAID" && r.status !== "CREDIT");
-  rows.sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
-  return html`
-    <div class="payment-checklist" data-payment-checklist>
-      <div class="panel-head"><h3>Open invoices</h3><div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="pick-all">Apply oldest-first</button><button type="button" class="btn btn-secondary small-btn" data-action="clear-apply">Clear</button></div></div>
-      ${rows.length === 0 ? html`<p class="dim">This account has no open invoices.</p>` : html`<ul>${rows.map((r) => {
-        const picked = account.picked.includes(r.id);
-        const applied = split.get(r.id);
-        return html`<li data-payment-invoice="${r.id}"><button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button><span class="payment-invoice-main"><b>${r.invoice_no}</b><span class="dim small">Due ${relativeDay(r.due_date, model.asOf)}</span></span><span class="num">${formatMoney(r.balance_cents)}</span><span class="num applied-cell" data-applied-cell>${applied === undefined ? "" : formatMoney(applied)}</span></li>`;
-      })}</ul>`}
-    </div>
-  `;
-}
-
 function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
   const answer = account.preview;
   const onHold = account.invoices.some((r) => r.account_status === "CREDIT_HOLD") || model.holds.some((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const stays = answer?.lines.filter((l) => l.outcome === "PART") ?? [];
   return html`
-    <section class="payment-form" aria-label="Receive a payment" data-receive>
+    <section class="panel side" aria-label="Receive a payment" data-receive>
       <div class="panel-head">
-        <h3>Payment details</h3>
+        <h2>Receive a payment</h2>
         ${answer === null ? nothing : html`<span class="pill ${answer.unapplied_cents === 0 ? "pill-good" : "pill-watch"}" data-unapplied>unapplied ${formatMoney(answer.unapplied_cents)}</span>`}
       </div>
       <div class="two">
@@ -843,15 +727,14 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
       <p class="label gap">Method</p>
-      ${segmented("Method", [{ id: "CHEQUE", word: "Check" }, { id: "EFT", word: "ACH" }, { id: "WIRE", word: "Wire" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
+      ${segmented("Method", [{ id: "CHEQUE", word: "Cheque" }, { id: "EFT", word: "EFT" }, { id: "CARD", word: "Card" }, { id: "CASH", word: "Cash" }], account.method, "method")}
       <div class="two gap">
-        <label>Check or reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Cheque number or transfer reference" /></label>
+        <label>Reference<input type="text" data-field="receive-reference" autocomplete="off" placeholder="Cheque number or transfer reference" /></label>
         <label>Taken by<span class="ro" data-ro="taken-by"></span></label>
       </div>
-      ${paymentChecklist(model, account)}
       <h3 class="gap">Allocation</h3>
+      <div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="pick-all">Pick all open</button><button type="button" class="btn btn-secondary small-btn" data-action="clear-apply">Clear</button></div>
       ${account.previewError === "" ? nothing : html`<p class="alert alert-error" role="alert" data-preview-error>${account.previewError}</p>`}
-      ${overpaymentPreview(answer, account.previewError) ? html`<p class="callout" data-overpayment><b>Overpayment.</b> Leave on account as unapplied credit.</p>` : nothing}
       <ul class="alloc" data-allocation>
         ${answer === null
           ? html`<li class="dim"><span>Type an amount and pick the invoices; the server shows the split.</span></li>`
@@ -863,22 +746,12 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       <p class="applied"><b>Applied</b><b data-applied>${answer === null ? "Nothing to apply yet" : `${formatMoney(answer.applied_cents)} of ${formatMoney(answer.amount_cents)}`}</b></p>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="apply-payment" ?disabled=${model.busy}>Record payment</button>
-        <button type="button" class="btn btn-secondary" data-action="close-picker">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-action="clear-apply">Cancel</button>
       </div>
       ${onHold
         ? html`<p class="callout" data-hold-stays><b>The hold stays.</b> Lifting it is the controller's.${stays.length > 0 ? ` The ${stays.map((l) => `${formatMoney(l.stays_open_cents)} left on ${l.invoice_no}`).join(" and the ")} keeps the account where it is.` : ""}</p>`
         : nothing}
       <p class="dim small">One payment is one record: the server splits it across the picked invoices in one step. What shows afterwards is the server's balance.</p>
-    </section>
-  `;
-}
-
-function receiveSummaryPanel(account: AccountModel): TemplateResult {
-  return html`
-    <section class="panel side" aria-label="Record a payment" data-receive-summary>
-      <div class="panel-head"><h2>Record payment</h2></div>
-      <p class="dim">${account.name}: use the payment dialog for the open invoice checklist and the server's oldest first allocation.</p>
-      <div class="actions"><button type="button" class="btn btn-primary" data-action="open-payment-modal">Open payment dialog</button></div>
     </section>
   `;
 }
@@ -1019,9 +892,8 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
         : html`
           <div class="cols">
             <div class="col-main">${invoiceTable(model, account)}</div>
-            <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receiveSummaryPanel(account)}</div>
+            <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>
           </div>
         `}
-    ${model.picker ? paymentModal(model) : nothing}
   `;
 }
