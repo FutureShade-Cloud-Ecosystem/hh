@@ -15,7 +15,8 @@
 // decimal, no raw ISO stamp reaches a screen. Anything this file cannot say
 // honestly is omitted by the view, never shown raw. Money is integer cents
 // from the core; this file formats it for a person and computes nothing.
-import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { formatDollars, plainDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import type { DefectClassification, DefectRow, VendorAgreementKind, VendorCreditPeriod, VendorCreditRow } from "./warranty-api.js";
 
 // -- the lifecycle vocabulary -------------------------------------------------------------------------
 
@@ -410,4 +411,144 @@ export const captureWords: Readonly<{ readonly owner: string; readonly backdate:
 /** The plain fallback for any unknown closed-set value: lowercased, separators opened out. */
 function plainly(value: string): string {
   return value.trim().toLowerCase().replace(/[_.-]+/g, " ").replace(/\s+/g, " ");
+}
+
+// -- change 6 item 5: defects and vendor credits --------------------------------------------------------------------
+
+/** The Result column on the Defects table: the bucket the line cost fell into. */
+export function defectBadge(classification: DefectClassification): string {
+  if (classification === "CLAIM") return "Warranty claim";
+  return "Shrinkage";
+}
+
+/** The Claim threshold tile's headline: integer cents to "X.YY" via the
+ *  money format, never carries a raw currency symbol. */
+export function thresholdDollars(cents: number): string {
+  return plainDollars(cents);
+}
+
+/** The three tile numbers on the Defects tab. */
+export interface DefectHeadlines {
+  readonly claims: number;
+  readonly shrinkage: number;
+  readonly claimCents: number;
+  readonly shrinkageCents: number;
+}
+
+export function defectHeadlines(defects: readonly DefectRow[], thresholdCents: number): DefectHeadlines {
+  void thresholdCents;
+  let claims = 0;
+  let shrinkage = 0;
+  let claimCents = 0;
+  let shrinkageCents = 0;
+  for (const row of defects) {
+    if (row.classification === "CLAIM") {
+      claims += 1;
+      claimCents += row.cost_cents;
+    } else {
+      shrinkage += 1;
+      shrinkageCents += row.cost_cents;
+    }
+  }
+  return { claims, shrinkage, claimCents, shrinkageCents };
+}
+
+/** The chip row applied to the table. Empty string = no filter (All). */
+export function filteredDefects(defects: readonly DefectRow[], classification: DefectClassification | ""): readonly DefectRow[] {
+  if (classification === "") return defects;
+  return defects.filter((row) => row.classification === classification);
+}
+
+/** The chip label on the Defects tab. */
+export function defectFilterWord(classification: DefectClassification | ""): string {
+  if (classification === "") return "All";
+  if (classification === "CLAIM") return "Warranty claims";
+  return "Shrinkage";
+}
+
+/** The Claim cell on the Defects table: the claim id for claim rows, "Logged" otherwise. */
+export function defectClaimLinkText(defect: DefectRow): string {
+  if (defect.classification === "CLAIM" && defect.claim_no !== "") return defect.claim_no;
+  return "Logged";
+}
+
+/** The agreement column on the Vendors and credits table. */
+export function vendorAgreementWord(kind: VendorAgreementKind): string {
+  if (kind === "CLAIM_BY_CLAIM") return "Claim by claim";
+  if (kind === "PERIODIC_CREDIT_NOTE") return "Periodic credit note";
+  return "Fixed damage allowance";
+}
+
+/** The period column on the Vendors and credits table. */
+export function vendorPeriodWord(period: VendorCreditPeriod): string {
+  if (period === "EACH_CLAIM") return "Each claim";
+  if (period === "MONTHLY") return "Monthly";
+  return "Quarterly";
+}
+
+/** The Next request column: "in N days" for the periodic vendors, "on each claim" for claim_by_claim. */
+export function nextRequestPhrase(row: VendorCreditRow): string {
+  if (row.period === "EACH_CLAIM") return "on each claim";
+  if (row.next_request_in_days <= 0) return "today";
+  if (row.next_request_in_days === 1) return "tomorrow";
+  return `in ${row.next_request_in_days} days`;
+}
+
+/** The three tile numbers on the Vendors and credits tab. */
+export interface VendorCreditHeadlines {
+  readonly creditCents: number;
+  readonly vendorCount: number;
+  readonly nextRequestInDays: number;
+  readonly nextRequestVendor: string;
+  readonly nextRequestPeriod: VendorCreditPeriod | "";
+  readonly claimsInPeriod: number;
+}
+
+export function vendorCreditHeadlines(rows: readonly VendorCreditRow[]): VendorCreditHeadlines {
+  let creditCents = 0;
+  let vendorCount = 0;
+  let claimsInPeriod = 0;
+  let nextIn = Number.POSITIVE_INFINITY;
+  let nextVendor = "";
+  let nextPeriod: VendorCreditPeriod | "" = "";
+  for (const row of rows) {
+    if (row.credit_cents > 0) {
+      creditCents += row.credit_cents;
+      vendorCount += 1;
+    }
+    claimsInPeriod += row.claims_in_period;
+    if (row.period !== "EACH_CLAIM" && row.next_request_in_days < nextIn) {
+      nextIn = row.next_request_in_days;
+      nextVendor = row.vendor_name;
+      nextPeriod = row.period;
+    }
+  }
+  if (!Number.isFinite(nextIn)) nextIn = 0;
+  return { creditCents, vendorCount, nextRequestInDays: nextIn, nextRequestVendor: nextVendor, nextRequestPeriod: nextPeriod, claimsInPeriod };
+}
+
+/** The Next credit note request tile's headline. */
+export function nextRequestHeadlineWord(inDays: number): string {
+  if (inDays <= 0) return "Today";
+  if (inDays === 1) return "Tomorrow";
+  return `${inDays} days`;
+}
+
+/** The Next credit note request tile's subline. */
+export function nextRequestSubline(vendorName: string, period: VendorCreditPeriod | ""): string {
+  const periodWord = period === "" ? "" : vendorPeriodWord(period).toLowerCase();
+  if (vendorName === "") return period === "" ? "No vendor" : `No vendor, ${periodWord}`;
+  return period === "" ? vendorName : `${vendorName}, ${periodWord}`;
+}
+
+/** The Evidence column on the Defects table: a people-readable count of photos. */
+export function evidenceCountWord(count: number): string {
+  if (count <= 0) return "none";
+  if (count === 1) return "1 photo";
+  return `${count} photos`;
+}
+
+/** The Evidence cell: count of photo ids on the defect row. */
+export function defectEvidenceWord(defect: DefectRow): string {
+  return evidenceCountWord(defect.photo_ids.length);
 }
