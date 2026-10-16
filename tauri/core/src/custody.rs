@@ -55,13 +55,22 @@ impl Address {
     pub fn console_session(profile_identifier: &str, project_id: &str) -> Result<Self, BadAddress> {
         let profile_ok = profile_identifier
             .strip_prefix(SERVICE_PREFIX)
-            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
+            .is_some_and(|p| {
+                !p.is_empty()
+                    && p.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            });
         let project_ok = (1..=36).contains(&project_id.len())
-            && project_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+            && project_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
         if !profile_ok || !project_ok {
             return Err(BadAddress);
         }
-        Ok(Self { service: profile_identifier.to_string(), account: format!("{ACCOUNT_PREFIX}{project_id}") })
+        Ok(Self {
+            service: profile_identifier.to_string(),
+            account: format!("{ACCOUNT_PREFIX}{project_id}"),
+        })
     }
 
     pub fn service(&self) -> &str {
@@ -90,7 +99,8 @@ pub struct KeyringCustody;
 #[cfg(target_os = "linux")]
 impl KeyringCustody {
     fn entry(address: &Address) -> Result<keyring::Entry, CustodyError> {
-        keyring::Entry::new(address.service(), address.account()).map_err(|_| CustodyError::KeychainUnavailable)
+        keyring::Entry::new(address.service(), address.account())
+            .map_err(|_| CustodyError::KeychainUnavailable)
     }
 }
 
@@ -105,7 +115,9 @@ impl Custody for KeyringCustody {
     }
 
     fn set(&self, address: &Address, value: &str) -> Result<(), CustodyError> {
-        Self::entry(address)?.set_password(value).map_err(|_| CustodyError::KeychainUnavailable)
+        Self::entry(address)?
+            .set_password(value)
+            .map_err(|_| CustodyError::KeychainUnavailable)
     }
 
     fn delete(&self, address: &Address) -> Result<(), CustodyError> {
@@ -150,18 +162,24 @@ impl<B: KeystoreBridge> BridgedCustody<B> {
 
 impl<B: KeystoreBridge> Custody for BridgedCustody<B> {
     fn get(&self, address: &Address) -> Result<Option<String>, CustodyError> {
-        self.0.get(address.service(), address.account()).map_err(|_| CustodyError::KeychainUnavailable)
+        self.0
+            .get(address.service(), address.account())
+            .map_err(|_| CustodyError::KeychainUnavailable)
     }
 
     fn set(&self, address: &Address, value: &str) -> Result<(), CustodyError> {
         if value.is_empty() {
             return Err(CustodyError::KeychainUnavailable);
         }
-        self.0.put(address.service(), address.account(), value).map_err(|_| CustodyError::KeychainUnavailable)
+        self.0
+            .put(address.service(), address.account(), value)
+            .map_err(|_| CustodyError::KeychainUnavailable)
     }
 
     fn delete(&self, address: &Address) -> Result<(), CustodyError> {
-        self.0.delete(address.service(), address.account()).map_err(|_| CustodyError::KeychainUnavailable)
+        self.0
+            .delete(address.service(), address.account())
+            .map_err(|_| CustodyError::KeychainUnavailable)
     }
 }
 
@@ -248,17 +266,29 @@ pub struct MemoryCustody {
 
 impl MemoryCustody {
     pub fn new() -> Self {
-        Self { entries: Mutex::new(HashMap::new()), available: true, writes_fail: false }
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            available: true,
+            writes_fail: false,
+        }
     }
 
     pub fn unavailable() -> Self {
-        Self { entries: Mutex::new(HashMap::new()), available: false, writes_fail: false }
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            available: false,
+            writes_fail: false,
+        }
     }
 
     /// Reads and deletes work, `set` fails closed (a keychain that locked
     /// between the read and the write).
     pub fn writes_fail() -> Self {
-        Self { entries: Mutex::new(HashMap::new()), available: true, writes_fail: true }
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            available: true,
+            writes_fail: true,
+        }
     }
 
     /// How many entries are held (tests assert a failed write stored nothing).
@@ -284,7 +314,12 @@ impl Default for MemoryCustody {
 impl Custody for MemoryCustody {
     fn get(&self, address: &Address) -> Result<Option<String>, CustodyError> {
         self.check()?;
-        Ok(self.entries.lock().expect("custody fake lock").get(address).cloned())
+        Ok(self
+            .entries
+            .lock()
+            .expect("custody fake lock")
+            .get(address)
+            .cloned())
     }
 
     fn set(&self, address: &Address, value: &str) -> Result<(), CustodyError> {
@@ -292,13 +327,19 @@ impl Custody for MemoryCustody {
         if self.writes_fail {
             return Err(CustodyError::KeychainUnavailable);
         }
-        self.entries.lock().expect("custody fake lock").insert(address.clone(), value.to_string());
+        self.entries
+            .lock()
+            .expect("custody fake lock")
+            .insert(address.clone(), value.to_string());
         Ok(())
     }
 
     fn delete(&self, address: &Address) -> Result<(), CustodyError> {
         self.check()?;
-        self.entries.lock().expect("custody fake lock").remove(address);
+        self.entries
+            .lock()
+            .expect("custody fake lock")
+            .remove(address);
         Ok(())
     }
 }
@@ -323,7 +364,10 @@ mod tests {
         assert!(Address::console_session("com.example.other", "proj-1").is_err());
         assert!(Address::console_session("ai.futurebuild.hh.", "proj-1").is_err());
         for bad in ["", "a b", "a:b", "a/b", "a\0b", &"x".repeat(37)] {
-            assert!(Address::console_session("ai.futurebuild.hh.field", bad).is_err(), "{bad:?}");
+            assert!(
+                Address::console_session("ai.futurebuild.hh.field", bad).is_err(),
+                "{bad:?}"
+            );
         }
     }
 
@@ -381,26 +425,46 @@ mod tests {
 
     impl KeystoreBridge for FakeBridge {
         fn put(&self, service: &str, account: &str, value: &str) -> Result<(), BridgeFailure> {
-            self.calls.lock().unwrap().push(format!("put {service} {account}"));
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("put {service} {account}"));
             if self.fail {
                 return Err(BridgeFailure);
             }
-            self.store.lock().unwrap().insert((service.into(), account.into()), value.into());
+            self.store
+                .lock()
+                .unwrap()
+                .insert((service.into(), account.into()), value.into());
             Ok(())
         }
         fn get(&self, service: &str, account: &str) -> Result<Option<String>, BridgeFailure> {
-            self.calls.lock().unwrap().push(format!("get {service} {account}"));
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("get {service} {account}"));
             if self.fail {
                 return Err(BridgeFailure);
             }
-            Ok(self.store.lock().unwrap().get(&(service.into(), account.into())).cloned())
+            Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .get(&(service.into(), account.into()))
+                .cloned())
         }
         fn delete(&self, service: &str, account: &str) -> Result<(), BridgeFailure> {
-            self.calls.lock().unwrap().push(format!("delete {service} {account}"));
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("delete {service} {account}"));
             if self.fail {
                 return Err(BridgeFailure);
             }
-            self.store.lock().unwrap().remove(&(service.into(), account.into()));
+            self.store
+                .lock()
+                .unwrap()
+                .remove(&(service.into(), account.into()));
             Ok(())
         }
     }
@@ -426,7 +490,10 @@ mod tests {
 
     #[test]
     fn a_failing_bridge_is_keychain_unavailable_on_every_operation_with_no_fallback() {
-        let c = BridgedCustody::new(FakeBridge { fail: true, ..Default::default() });
+        let c = BridgedCustody::new(FakeBridge {
+            fail: true,
+            ..Default::default()
+        });
         assert_eq!(c.get(&addr()), Err(CustodyError::KeychainUnavailable));
         assert_eq!(c.set(&addr(), "v1"), Err(CustodyError::KeychainUnavailable));
         assert_eq!(c.delete(&addr()), Err(CustodyError::KeychainUnavailable));
@@ -439,7 +506,10 @@ mod tests {
         // An empty value is never a session secret; it must not be stored as one.
         let c = BridgedCustody::new(FakeBridge::default());
         assert_eq!(c.set(&addr(), ""), Err(CustodyError::KeychainUnavailable));
-        assert!(c.bridge().calls.lock().unwrap().is_empty(), "it never reached the Keystore");
+        assert!(
+            c.bridge().calls.lock().unwrap().is_empty(),
+            "it never reached the Keystore"
+        );
     }
 
     // ---- the self check the Android debug leg runs --------------------------
@@ -450,7 +520,11 @@ mod tests {
         let a = Address::console_session("ai.futurebuild.hh.field", "custody-proof").unwrap();
         // First run: nothing there, so it stores the value and reads it back.
         assert_eq!(self_check(&c, &a), Ok(SelfCheck::Stored));
-        assert_eq!(c.snapshot_len(), 1, "the entry stays so the next launch can prove persistence");
+        assert_eq!(
+            c.snapshot_len(),
+            1,
+            "the entry stays so the next launch can prove persistence"
+        );
         // Second run (a restart): it finds the value, verifies it and deletes it.
         assert_eq!(self_check(&c, &a), Ok(SelfCheck::PersistedAndCleared));
         assert_eq!(c.snapshot_len(), 0);
@@ -467,7 +541,11 @@ mod tests {
         let c = MemoryCustody::new();
         c.set(&a, "some other value").unwrap();
         assert_eq!(self_check(&c, &a), Err("value"));
-        assert_eq!(c.snapshot_len(), 0, "a wrong value is removed so the next run starts clean");
+        assert_eq!(
+            c.snapshot_len(),
+            0,
+            "a wrong value is removed so the next run starts clean"
+        );
     }
 
     /// The real Secret Service on a desktop Linux session (not run by default:
@@ -490,7 +568,13 @@ mod tests {
 
     #[test]
     fn the_error_carries_a_code_and_no_input() {
-        assert_eq!(CustodyError::KeychainUnavailable.code(), "keychain_unavailable");
-        assert_eq!(format!("{:?}", CustodyError::KeychainUnavailable), "KeychainUnavailable");
+        assert_eq!(
+            CustodyError::KeychainUnavailable.code(),
+            "keychain_unavailable"
+        );
+        assert_eq!(
+            format!("{:?}", CustodyError::KeychainUnavailable),
+            "KeychainUnavailable"
+        );
     }
 }

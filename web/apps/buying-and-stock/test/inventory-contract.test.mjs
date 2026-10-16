@@ -7,10 +7,11 @@
 // to the generated wire descriptors, and every refusal sentence must appear
 // in the core's source. Where the core writes a list under its own key
 // (on_hand, moves, pending, branches, reservations, transfers, lines, pairs,
-// reorder_points) the descriptor declares items; the envelope here is held to
-// the core's own key, pinned to the core's source, and the rows are held to
-// the descriptor. The divergence is recorded in the report; the core, not the
-// contract fragment, is what a request meets.
+// reorder_points; browse under rows) the contract declares that same key, so
+// the whole envelope is held to the contract's list schema, the key is pinned
+// to the core's source, and the rows are held to their descriptor. The
+// contract moved to the core's keys (the shortfall precedent, the other way
+// round); the core is what a request meets.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { coreSourceOf, holds, refusedBy, startStub } from "./contract-kit.mjs";
@@ -57,8 +58,9 @@ const JUL = "e1000000-0000-4000-8000-000000000002";
 
 /** The core's envelope for a domain-keyed list: the key is the core's, and the core's
  * source really writes it (the write site is quoted, as the shortfall test pins items). */
-function domainKey(res, key, rowDescriptor) {
+function domainKey(res, key, rowDescriptor, listDescriptor) {
   assert.equal(res.status, 200);
+  holds(listDescriptor, res.json);
   assert.ok(Array.isArray(res.json[key]), `expected the list under "${key}"`);
   assert.ok(new RegExp(`"${key}":\\s+(rows|pairs|lines)`).test(coreSource), `the core no longer writes this list under the key ${key}`);
   for (const row of res.json.items ?? res.json[key]) holds(rowDescriptor, row);
@@ -92,7 +94,7 @@ test("the on-hand read answers under the core's on_hand key, and an unknown prod
   const paver = products.find((p) => p.sku === "GLS-PAV-60");
   const res = await call("GET", `/api/v1/inventory/on-hand?product_id=${paver.id}`);
   assert.ok(/"on_hand":\s+rows/.test(coreSource), "the core no longer writes the on-hand read under the key on_hand");
-  const rows = domainKey(res, "on_hand", "InventoryOnHand");
+  const rows = domainKey(res, "on_hand", "InventoryOnHand", "InventoryOnHandList");
   const home = rows.find((r) => r.branch_id === plm);
   assert.equal(home.on_hand_base, 400);
   assert.equal(home.available_base, 340);
@@ -108,7 +110,7 @@ test("the move ledger answers under the core's moves key, graded like the on-han
   const cap = products.find((p) => p.sku === "GLS-WALL-CAP");
   const res = await call("GET", `/api/v1/inventory/moves?product_id=${cap.id}`);
   assert.ok(/"moves":\s+rows/.test(coreSource), "the core no longer writes the move ledger under the key moves");
-  const rows = domainKey(res, "moves", "InventoryStockMove");
+  const rows = domainKey(res, "moves", "InventoryStockMove", "InventoryMoveList");
   assert.ok(rows.length > 0, "the seeded cap has ledger lines");
   const atJul = await call("GET", `/api/v1/inventory/moves?product_id=${cap.id}&branch_id=${jul}`);
   assert.ok(atJul.json.moves.every((m) => m.branch_id === jul));
@@ -119,7 +121,7 @@ test("branch stock answers the four buckets per branch under the core's branches
   const { plm, jul, products } = await world();
   const sand = products.find((p) => p.sku === "GLS-SAND-POLY");
   const res = await call("GET", `/api/v1/inventory/branch-stock?product_id=${sand.id}`);
-  const rows = domainKey(res, "branches", "InventoryBranchStock");
+  const rows = domainKey(res, "branches", "InventoryBranchStock", "InventoryBranchStockList");
   assert.equal(rows.length, 2, "the sand sits at both yards");
   const negative = rows.find((r) => r.branch_id === jul);
   assert.ok(negative.available_base < 0, "sold before receipt reads negative, by design");
@@ -131,7 +133,7 @@ test("branch stock answers the four buckets per branch under the core's branches
 test("pending fulfilment answers under the core's pending key", async () => {
   const res = await call("GET", "/api/v1/inventory/pending-fulfilment");
   assert.ok(/"pending":\s+rows/.test(coreSource), "the core no longer writes the pending read under the key pending");
-  const rows = domainKey(res, "pending", "InventoryPendingFulfilment");
+  const rows = domainKey(res, "pending", "InventoryPendingFulfilment", "InventoryPendingFulfilmentList");
   assert.equal(rows.length, 2);
   assert.ok(rows.every((r) => r.sale_type === "DELIVERED" || r.sale_type === "COLLECT_LATER"));
 });
@@ -141,6 +143,7 @@ test("pending fulfilment answers under the core's pending key", async () => {
 test("browse answers rows, facets, total and the echoed page", async () => {
   const res = await call("GET", "/api/v1/inventory/browse?text=paver");
   assert.equal(res.status, 200);
+  holds("InventoryBrowseResult", res.json);
   assert.ok(Array.isArray(res.json.rows), "browse writes its list under rows");
   assert.ok(coreSource.includes("json:\"rows\""), "the core no longer writes browse's list under the key rows");
   for (const row of res.json.rows) holds("InventoryBrowseRow", row);
@@ -159,7 +162,7 @@ test("browse answers rows, facets, total and the echoed page", async () => {
 test("transit days list every ordered pair under the core's pairs key, and the write is the admin gate", async () => {
   const { plm, jul } = await world();
   const res = await call("GET", "/api/v1/inventory/transit-days");
-  const pairs = domainKey(res, "pairs", "InventoryTransitDaysPair");
+  const pairs = domainKey(res, "pairs", "InventoryTransitDaysPair", "InventoryTransitDaysPairList");
   const coast = pairs.find((p) => p.from_branch_id === plm && p.to_branch_id === jul);
   assert.equal(coast.transit_days, 1);
   assert.equal(coast.configured, true);
@@ -180,7 +183,7 @@ test("transit days list every ordered pair under the core's pairs key, and the w
 test("reservations: the list under the core's key, a HARD hold written through the policy, release and expire", async () => {
   const { plm, products } = await world();
   const listed = await call("GET", "/api/v1/inventory/reservations");
-  const rows = domainKey(listed, "reservations", "InventoryReservation");
+  const rows = domainKey(listed, "reservations", "InventoryReservation", "InventoryReservationList");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].hold_mode, "HARD");
   const paver = products.find((p) => p.sku === "GLS-PAV-60");
@@ -234,7 +237,7 @@ test("allocation policy: the resolved default reads, and a branch policy upserts
 test("transfers: the list under the core's key, a draft raised, shipped with its eta, received", async () => {
   const { plm, jul, products } = await world();
   const listed = await call("GET", "/api/v1/inventory/transfers");
-  const rows = domainKey(listed, "transfers", "InventoryTransfer");
+  const rows = domainKey(listed, "transfers", "InventoryTransfer", "InventoryTransferList");
   for (const t of rows) for (const line of t.lines) holds("InventoryTransferLine", line);
   const inTransit = rows.find((t) => t.status === "IN_TRANSIT");
   assert.equal(inTransit.eta, later(2));
@@ -277,7 +280,7 @@ test("incoming transfers answer the truck for one product under the core's lines
   const cap = products.find((p) => p.sku === "GLS-WALL-CAP");
   const res = await call("GET", `/api/v1/inventory/incoming-transfers?product_id=${cap.id}`);
   assert.ok(/"lines":\s+lines/.test(coreSource), "the core no longer writes the incoming transfer read under the key lines");
-  const rows = domainKey(res, "lines", "InventoryInTransitLine");
+  const rows = domainKey(res, "lines", "InventoryInTransitLine", "InventoryInTransitLineList");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].to_branch_id, jul);
   assert.equal(rows[0].qty_base, 40);
@@ -313,7 +316,7 @@ test("receiving takes the outstanding units, and an over-receipt is refused in t
 test("reorder points list under the core's key, upsert and bootstrap; the nudge posts once per cycle", async () => {
   const { plm, products } = await world();
   const listed = await call("GET", `/api/v1/inventory/reorder-points?branch_id=${plm}`);
-  const rows = domainKey(listed, "reorder_points", "InventoryReorderPoint");
+  const rows = domainKey(listed, "reorder_points", "InventoryReorderPoint", "InventoryReorderPointList");
   assert.ok(rows.length >= 2);
   const dg = rows.find((r) => r.sku === "GLS-AGG-DG");
   assert.equal(dg.reorder_point_base, 10);
