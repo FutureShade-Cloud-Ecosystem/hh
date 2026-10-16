@@ -68,6 +68,9 @@ type store interface {
 	GetChannelRule(ctx context.Context, channelID string) (MembershipRule, error)
 	SetChannelRule(ctx context.Context, channelID string, rule MembershipRule) error
 	ListChannelRules(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) ([]MembershipRuleEntry, error)
+	// Slice S1: the New message picker's roster, the identity read-seam the
+	// repository's StaffRoster answers (active staff of one org, labels in).
+	StaffRoster(ctx context.Context, orgID string) ([]StaffRosterRow, error)
 	// Group rooms (walk change 7, slice S2, rulings 3 and 4): the create,
 	// the any-member seat with its system line, and the rename with its own.
 	CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error)

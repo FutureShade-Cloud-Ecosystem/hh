@@ -227,7 +227,7 @@ function lookupPane(model: InvModel): TemplateResult {
                   <tr>
                     <th>Branch</th>
                     <th class="num">On hand</th>
-                    <th class="num">Allocated</th>
+                    <th class="num">Reserved</th>
                     <th class="num">Available</th>
                     <th class="num">Average cost</th>
                   </tr>
@@ -238,7 +238,7 @@ function lookupPane(model: InvModel): TemplateResult {
                       <tr data-onhand-row>
                         <td data-label="Branch">${model.branchNames.get(r.branch_id) ?? r.branch_id}</td>
                         <td class="num" data-label="On hand">${formatQty(r.on_hand_base, "")}</td>
-                        <td class="num" data-label="Allocated">${formatQty(r.allocated_base, "")}</td>
+                        <td class="num" data-label="Reserved">${formatQty(r.allocated_base, "")}</td>
                         <td class="num ${r.available_base < 0 ? "stop" : ""}" data-label="Available">${formatQty(r.available_base, "")}</td>
                         <td class="num" data-label="Average cost">${formatMoney(r.avg_cost_cents)}</td>
                       </tr>
@@ -247,7 +247,7 @@ function lookupPane(model: InvModel): TemplateResult {
                 </tbody>
               </table>
             </div>
-            <p class="foot dim">Available is on hand minus allocated. A negative available is stock sold before its receipt, by design.</p>
+            <p class="foot dim">Available is on hand minus reserved. A negative available is stock sold before its receipt, by design.</p>
           `
         : nothing}
       ${model.moves.length > 0
