@@ -5,7 +5,7 @@
 // Julian sale refused, and beyond the till.
 // The Driver, yard manager, Yard Team and Financial Controller cards are live
 // on the front door, so the till's entry serves the two Counter Till roles
-// only: none of those rows is in the coming list.
+// only: none of those rows is in the till (no coming list is drawn).
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -47,12 +47,12 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: the picker, the four coming roles untapped, the yard manager, the yard team, the driver and the financial controller start at the front door, and the banner", async ({
+test("the way in: the picker with all thirteen live role cards and no coming list, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
   // The multi app image serves the front door at /: the picker names its own
-  // word and carries the nine live role cards, the till's two roles among
+  // word and carries the thirteen live role cards, the till's two roles among
   // them, and the demo badge states the box.
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   for (const role of [
@@ -65,20 +65,20 @@ test("the way in: the picker, the four coming roles untapped, the yard manager, 
     "Procurement manager",
     "Financial Controller",
     "Logistics Manager",
+    "General Manager",
+    "HR",
+    "Branch Manager",
+    "Outside Sales",
   ]) {
     await expect(page.getByRole("button", { name: role, exact: true })).toBeVisible();
   }
   const badge = page.getByRole("note");
   await expect(badge).toContainText("Demo");
-  // The coming roles: shown under their own disclosure, labelled Coming,
-  // and dead controls. Every live card starts at the front door, so none of
-  // the nine renders inside the coming list.
-  await page.getByTestId("coming-disclosure").getByText("Four more roles are coming").click();
-  for (const role of ["Outside Sales", "Branch Manager", "General Manager", "HR"]) {
-    const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
-    await expect(coming).toBeDisabled();
-  }
-  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "Logistics Manager"]) {
+  // No role is coming: every role of the matrix signs in at the front door,
+  // so the picker draws no coming disclosure and no coming list.
+  await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);

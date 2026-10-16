@@ -486,8 +486,8 @@ test("a persona session that ends at its expiry takes its id with it", async () 
 test("the public copy lists no admin persona card and refuses to enter one; the testers' copy lists every card", async () => {
   const open = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true, personaCaller: "public" } });
   const flows = open.session.personaRoles.map((role) => role.flow);
-  assert.equal(flows.includes("financial-controller"), false);
-  assert.equal(flows.length, LIVE_ROLES.length - 1);
+  for (const admin of ["financial-controller", "general-manager", "hr"]) assert.equal(flows.includes(admin), false);
+  assert.equal(flows.length, LIVE_ROLES.length - 3);
   await open.session.persona("financial-controller");
   assert.deepEqual(open.personaCalls, [], "the route is not even asked");
   assert.equal(open.session.phase, "signed-out");
