@@ -57,6 +57,7 @@ import {
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { baseStyles, button, chip, segmented, textInput, type ChipTone } from "@hardscapehouse/design-system/src/primitives.js";
 import { icon } from "@hardscapehouse/design-system/src/state-icons.js";
 import {
@@ -410,7 +411,7 @@ export class QdQuoteBuilder extends LitElement {
     // (the split is a change of view, never a teardown of the work in it).
     const route = this.route;
     // The page's own title, and (on a change of route, never on the first draw) the page's heading takes focus.
-    document.title = this.pageTitle();
+    applyTenantTitle(this.pageTitle());
     if (changed.has("route") && changed.get("route") !== undefined) void this.focusHeading();
     // The guided convert surface receives its facts the same way: the router names its quote.
     const convert = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("quote-convert");
@@ -588,7 +589,7 @@ export class QdQuoteBuilder extends LitElement {
 
   private readonly onQuoteRead = (event: CustomEvent<{ quoteId: string; quoteNo: string; ok: boolean }>): void => {
     this.lastRead = { id: event.detail.quoteId, no: event.detail.quoteNo, ok: event.detail.ok };
-    document.title = this.pageTitle();
+    applyTenantTitle(this.pageTitle());
     // The panels wait on this answer for their quote: the wiring pass hands it to them now.
     this.requestUpdate();
   };

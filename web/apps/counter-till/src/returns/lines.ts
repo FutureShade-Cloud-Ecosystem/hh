@@ -19,6 +19,14 @@ export interface CustomerLine {
   /** What the commit guard would still accept: the one quantity a draft is capped at. */
   qtyOpen: number;
   unitPriceCents: number;
+  /**
+   * The product's unit cost in integer cents (the dealer's costing basis, NOT the sell price). Walk
+   * change 6 item 4 feeds the manufacturer defect threshold sentence from this figure (it
+   * multiplies the picked quantity by it). The customer's lines read leaves it absent when the
+   * server's line row has no unit cost on it yet (older rows, manual entries); the drawer then
+   * refuses the sentence rather than guess.
+   */
+  unitCostCents: number | null;
   lineTotalCents: number;
   taxCents: number;
   moneyReturnedCents: number;
@@ -79,6 +87,20 @@ function readLine(raw: unknown): CustomerLine | null {
   const qtyReturned = quantity(r["qty_returned"]);
   const qtyOpen = quantity(r["qty_open"]);
   const unitPriceCents = cents(r["unit_price_cents"]);
+  // unit_cost_cents is OPTIONAL on the wire (older rows lack it); ABSENT stays null so the drawer
+  // can refuse its sentence rather than guess at zero. The contract enforces the field on new
+  // lines, so null is a legacy shape, never a fresh answer. A PRESENT but unsafe value (non
+  // integer, negative, or non numeric) refuses the whole read: a silently rounded figure is the
+  // exact defect the threshold sentence exists to prevent.
+  const rawUnitCost = r["unit_cost_cents"];
+  let unitCostCents: number | null;
+  if (rawUnitCost === undefined) {
+    unitCostCents = null;
+  } else if (typeof rawUnitCost === "number" && Number.isSafeInteger(rawUnitCost) && rawUnitCost >= 0) {
+    unitCostCents = rawUnitCost;
+  } else {
+    return null;
+  }
   const lineTotalCents = cents(r["line_total_cents"]);
   const taxCents = cents(r["tax_cents"]);
   const moneyReturnedCents = cents(r["money_returned_cents"]);
@@ -98,6 +120,7 @@ function readLine(raw: unknown): CustomerLine | null {
     qtyReturned,
     qtyOpen,
     unitPriceCents,
+    unitCostCents,
     lineTotalCents,
     taxCents,
     moneyReturnedCents,

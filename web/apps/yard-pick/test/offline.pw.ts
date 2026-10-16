@@ -64,6 +64,22 @@ async function pushedOps(request: import("@playwright/test").APIRequestContext, 
   return ops;
 }
 
+/** The rep's short pick notice for one order, once the drain applied the record. The offline strip says
+ * nothing as soon as the platform is back (bannerMode: only "offline" and the like speak) and the pending
+ * line leaves with the first local line, so neither says the outbox drained: the push is the fact, and
+ * the stub raises the notice while it applies the record op. Poll for it instead of reading once. */
+async function shortPickNotice(request: import("@playwright/test").APIRequestContext, orderNo: string): Promise<string> {
+  let body = "";
+  await expect
+    .poll(async () => {
+      const n = (await repNotices(request)).find((x) => x.topic === "yard.short_pick" && x.order_no === orderNo);
+      body = String((n as { body?: unknown } | undefined)?.body ?? "");
+      return body;
+    }, { message: `the rep's short pick notice for ${orderNo} (the record op was applied)` })
+    .not.toBe("");
+  return body;
+}
+
 function payloadOf(op: unknown): Record<string, unknown> {
   return ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
 }
@@ -216,13 +232,12 @@ test("offline, the pick record and a shortage report drain in order and land cle
   await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+  // The record landed: the rep was told, and the server's backorder figure shows.
+  expect(await shortPickNotice(request, "SO-1041")).toContain("44.0000 SQFT on backorder");
   const pushes = (await stubLog(request)).filter((c) => c.path.startsWith("/api/v1/sync/") && c.method === "POST");
   const scopes = pushes.map((c) => c.path.slice("/api/v1/sync/".length));
   expect(scopes.indexOf("pick_tasks")).toBeGreaterThanOrEqual(0);
   expect(scopes.indexOf("pick_tasks")).toBeLessThan(scopes.indexOf("shortages"));
-  // The record landed: the rep was told, and the server's backorder figure shows.
-  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
-  expect(notice?.body).toContain("44.0000 SQFT on backorder");
   await expect(page.locator("[data-line]", { hasText: "Flagstone" })).toContainText("44 SQFT on backorder");
   // Only the fields the core's doors admit rode the outbox, and no card came back.
   const ops = pushes.flatMap((c) => ((c.body as { ops?: Array<{ payload: Record<string, unknown> }> } | null)?.ops ?? []));
@@ -257,8 +272,7 @@ test("offline, a shortage reported before the record does not make the record co
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
   // The record applied: the rep was told, and no card came back for the device's own report.
-  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
-  expect(notice?.body).toContain("44.0000 SQFT on backorder");
+  expect(await shortPickNotice(request, "SO-1041")).toContain("44.0000 SQFT on backorder");
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });

@@ -337,6 +337,7 @@ test('the walk finds this package and names the workspace packages it must also 
       '@hardscapehouse/dispatch-board',
       '@hardscapehouse/drive-run',
       '@hardscapehouse/front-door',
+      '@hardscapehouse/house-messages',
       '@hardscapehouse/manager-home',
       '@hardscapehouse/money-desk',
       '@hardscapehouse/pro-field',

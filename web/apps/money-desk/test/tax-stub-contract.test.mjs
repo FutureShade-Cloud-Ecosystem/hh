@@ -256,7 +256,7 @@ test("creating a rate checks in the core's order and its words, and a good row f
   const blank = await ctl("POST", "/api/v1/tax/rates", { reason_code: "MANUAL_TAX_REVIEW", rate_bps: 775, effective_from: "2001-01-01" });
   assert.equal(blank.json.jurisdiction, "ON");
   assert.ok(coreSource.includes('jurisdictionON = "ON"'));
-  assert.deepEqual(LEGAL_REASONS.length, 11, "the lawful reason universe is the core's eleven");
+  assert.deepEqual(LEGAL_REASONS.length, 12, "the lawful reason universe is the core's twelve");
   for (const code of LEGAL_REASONS) assert.ok(coreSource.includes(`"${code}"`), `${code} is not in the core`);
 });
 

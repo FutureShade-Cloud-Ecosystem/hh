@@ -358,3 +358,40 @@ test("order of decisions: stale is decided before closed, and a blind record on 
   assert.equal(blind.status, "rejected");
   assert.match(blind.error, /this pick was cancelled, its record cannot change/);
 });
+
+// The pulled ticket's shape is the core's: every key of a pulled task's ticket is a json tag of the
+// core's PickTicket (core/internal/tasks/yard.go), and the one money figure, still_owed_cents, is held
+// out of the pull for every caller (the sync filter carries no role: syncscope.go attachTicketData),
+// the cost list included. The REST reads keep it for the cost list; the pull never does.
+function corePickTicketTags() {
+  const src = readFileSync(join(appDir, "..", "..", "..", "core", "internal", "tasks", "yard.go"), "utf8");
+  const body = src.slice(src.indexOf("type PickTicket struct"));
+  const block = body.slice(0, body.indexOf("\n}\n"));
+  return new Set([...block.matchAll(/json:"([a-z_]+)[,"]/g)].map((m) => m[1]));
+}
+
+test("the pulled ticket carries only the core's PickTicket keys, and no owed figure for any caller", async () => {
+  const tags = corePickTicketTags();
+  assert.ok(tags.has("order_id") && tags.has("still_owed_cents"), "the Go tags were read");
+  // The yard manager is on the cost list: the stub reads the persona from the token's sub.
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const managerToken = `${b64({ alg: "none" })}.${b64({ sub: "demo-account-yard-manager" })}.x`;
+  const callers = [headers, { ...headers, Authorization: `Bearer ${managerToken}` }];
+  let held = 0;
+  for (const h of callers) {
+    const res = await fetch(`${base}/api/v1/sync/pick_tasks?since=0&limit=200`, { headers: h });
+    const json = await res.json();
+    assert.ok(json.items.length > 0, "the stub world has pick tasks");
+    for (const item of json.items) {
+      const ticket = item.data.ticket;
+      assert.ok(ticket && typeof ticket === "object", `task ${item.id} carries a ticket`);
+      for (const key of Object.keys(ticket)) assert.ok(tags.has(key), `ticket key ${key} is not a core PickTicket tag`);
+      assert.ok(!("still_owed_cents" in ticket), "the pull drops the owed figure for every caller");
+      if (ticket.held_from_picking === true) {
+        held += 1;
+        assert.ok(ticket.hold_words, "the hold mark keeps its words");
+      }
+    }
+  }
+  assert.ok(held > 0, "the stub world has a held ticket to prove the drop on");
+});

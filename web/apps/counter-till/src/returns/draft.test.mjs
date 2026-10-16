@@ -19,6 +19,7 @@ function line(n, over = {}) {
     qty_returned: 0,
     qty_open: 10,
     unit_price_cents: 656,
+    unit_cost_cents: 410,
     line_total_cents: 6560,
     tax_cents: 853,
     money_returned_cents: 0,
@@ -225,3 +226,63 @@ test("a converted order with no live invoice reads with an empty invoice id, blo
   assert.equal(read[0].returnable, false);
   assert.equal(readCustomerLines(answer([order(16, { invoice_id: "" })])), null);
 });
+
+test("a unit cost on the wire reads as an integer cents figure on the line; an absent unit cost is null, never a guessed zero", () => {
+  const withCost = readCustomerLines(answer([order(16)]));
+  assert.ok(withCost !== null);
+  assert.equal(withCost[0].lines[0].unitCostCents, 410, "the line fixture carries an integer cents unit cost");
+  // A line that omits unit_cost_cents (legacy rows without the field) reads as null so the
+  // drawer can refuse its threshold sentence rather than guess at zero.
+  const legacy = order(16, { lines: [line(161, { unit_cost_cents: undefined })] });
+  const read = readCustomerLines(answer([legacy, order(11)]));
+  assert.ok(read !== null);
+  assert.equal(read[0].lines[0].unitCostCents, null, "absent unit cost stays null");
+  // A non integer or negative unit cost is refused so the threshold comparison cannot read a
+  // silently rounded figure.
+  const badInt = order(16, { lines: [line(161, { unit_cost_cents: 12.5 })] });
+  assert.equal(readCustomerLines(answer([badInt, order(11)])), null, "non integer unit cost refuses the whole read");
+  const negative = order(16, { lines: [line(161, { unit_cost_cents: -10 })] });
+  assert.equal(readCustomerLines(answer([negative, order(11)])), null, "negative unit cost refuses the whole read");
+});
+
+test("a manufacturer defect is one of the four dispositions and works like the other choices once a quantity is picked", () => {
+  const draft = new ReturnDraft(readCustomerLines(answer([order(16)])));
+  // MANUFACTURER_DEFECT is not a hard refusal like SCRAP: it is one of the four choices.
+  const picking = draft.setDisposition(uuid(161), "MANUFACTURER_DEFECT");
+  // Disposition on its own is allowed (the test in this file already covers the implicit qty = 1 path
+  // for RESTOCK); here the answer is the relaxed path that lets the drawer read it.
+  assert.equal(picking.ok, true, "manufacturer defect can be set on an unpicked line");
+  assert.equal(draft.dispositionOf(uuid(161)), "MANUFACTURER_DEFECT");
+  // Picking the disposition on an unpicked line picks one unit (the same implicit qty the other
+  // three dispositions take).
+  assert.equal(draft.qtyOf(uuid(161)), 1);
+  draft.setQty(uuid(161), "3");
+  assert.equal(draft.qtyOf(uuid(161)), 3);
+  // Ready when every picked line has a disposition; MANUFACTURER_DEFECT counts.
+  assert.equal(draft.ready, true);
+  // And it round trips the picked view: the screen lists the line and its disposition.
+  const picked = draft.pickedLines();
+  assert.equal(picked.length, 1);
+  assert.equal(picked[0].disposition, "MANUFACTURER_DEFECT");
+});
+
+test("manufacturer defect can mix with the other three on one credit note, every line carries its own disposition", () => {
+  const draft = new ReturnDraft(readCustomerLines(answer([order(16), order(11)])));
+  draft.setQty(uuid(161), "1");
+  draft.setQty(uuid(162), "2");
+  draft.setQty(uuid(111), "3");
+  draft.setDisposition(uuid(161), "RESTOCK");
+  draft.setDisposition(uuid(162), "MANUFACTURER_DEFECT");
+  draft.setDisposition(uuid(111), "NO_RETURN");
+  assert.equal(draft.ready, true);
+  assert.equal(draft.missingDispositions, 0);
+  assert.deepEqual(
+    draft.pickedLines().map((p) => [p.orderLineId, p.disposition]),
+    [
+      [uuid(161), "RESTOCK"],
+      [uuid(162), "MANUFACTURER_DEFECT"],
+      [uuid(111), "NO_RETURN"],
+    ],
+  );
+});
+

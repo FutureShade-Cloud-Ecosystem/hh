@@ -338,3 +338,7 @@ does by setting the property). The reviewers are asked to rule on whether those 
 | offline-panel.ts | QdOfflinePanel.#refresh | await | 3 | SAFE | Reads the outbox depth, the drafts waiting and the open cards from the device's store for the panel to draw. Not tied to a quote. | - | - |
 | offline-panel.ts | QdOfflinePanel.#onClick | void call | 2 | SAFE | The person's Withdraw on a draft that is waiting on this device, and Dismiss on a card they have read. Each acts on the device's store only. | - | - |
 | offline-reads.ts | answer | await | 1 | SAFE | The cached answer of the desk's quotes list, a read of the device's own copy. No quote is written and no money is read from anywhere but the copy's own rows. | - | - |
+| app-root.ts | QuoteDeskApp.#signOut | floating call | 1 | SAFE | Sets the tab title back to the neutral entry page title after sign out; it reads the cached public tenant config and touches no quote or session state. | - | - |
+| main.ts | (module) | floating call | 1 | SAFE | Sets the tab title once at startup from the cached public tenant config; no quote is open and no screen state is touched. | - | - |
+| quote-builder.ts | QdQuoteBuilder.updated | floating call | 1 | SAFE | Updates the tab title when the route changes; it reads the cached public tenant config and does not read or write any quote data. | - | - |
+| quote-builder.ts | QdQuoteBuilder.onQuoteRead | floating call | 1 | SAFE | Updates the tab title when a quote is read; it reads the cached public tenant config and does not affect the quote data. | - | - |

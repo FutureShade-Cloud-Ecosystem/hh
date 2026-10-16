@@ -6,8 +6,9 @@
 // the match rules, the reconciliations. Writes: import a statement, run the auto match, pair a line by hand, undo
 // a match, approve a rule version, open a month and sign it off.
 //
-// The core answers its lines list with the contract's page (items, next_cursor) and its other four lists with a
-// bare array where the contract says a page. A list is read as either (listOf) and anything else is not a list.
+// The core answers its lines list with the contract's page (items, next_cursor) and its other four lists (accounts,
+// matches, rules, reconciliations) with the bare array the contract now declares. A bare array is a list and
+// anything else, a page included, is not.
 //
 // None of these routes takes an idempotency key (the contract has none). What stands in for it: a re-import is
 // idempotent on the line hash, an auto match only sees still unmatched lines, opening a month is an upsert, and a
@@ -22,11 +23,11 @@ import {
   type BankRecMatchRule,
   type BankRecMatchSummary,
   type BankRecReconciliation,
+  type BankRecRuleSpec,
   type BankRecStatementLine,
   type GlJournal,
   type Result,
 } from "@hardscapehouse/api-client";
-import { listOf } from "./bankrec-logic.js";
 
 export type LineStatus = "UNMATCHED" | "MATCHED" | "EXCLUDED";
 export type TargetType = "PAYMENT" | "LODGEMENT" | "JOURNAL" | "GROUP";
@@ -38,10 +39,9 @@ export interface LinesPage {
 
 const PAGE = 50;
 
-function readList<T>(answer: Result<unknown>, what: string): Result<T[]> {
+function readList<T>(answer: Result<T[]>, what: string): Result<T[]> {
   if (!answer.ok) return answer;
-  const rows = listOf<T>(answer.value);
-  return rows === null ? { ok: false, error: `The ${what} were not readable.` } : { ok: true, value: rows };
+  return Array.isArray(answer.value) ? answer : { ok: false, error: `The ${what} were not readable.` };
 }
 
 export class BankrecApi {
@@ -98,9 +98,8 @@ export class BankrecApi {
     return readList<BankRecMatchRule>(await staffBankrec.bankrecListRules(this.#client), "match rules");
   }
 
-  createRule(code: string, name: string, priority: number, spec: Record<string, unknown>): Promise<Result<BankRecMatchRule>> {
-    // The contract types a spec by its kind alone; the core stores the whole object (decodeSpec reads the rest).
-    return staffBankrec.bankrecCreateRule(this.#client, { code, name, priority, spec: spec as { kind?: "gateway_ref_exact" | "lodgement_ref_exact" | "descriptor_fuzzy" } });
+  createRule(code: string, name: string, priority: number, spec: BankRecRuleSpec): Promise<Result<BankRecMatchRule>> {
+    return staffBankrec.bankrecCreateRule(this.#client, { code, name, priority, spec });
   }
 
   async reconciliations(accountId: string): Promise<Result<BankRecReconciliation[]>> {

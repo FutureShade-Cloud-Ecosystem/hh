@@ -119,7 +119,7 @@ const WRITES: Record<string, { what: string; who: string }> = {
   "close-period": { what: "close a period", who: "the Financial Controller or the General Manager" },
   reopen: { what: "reopen a period", who: "the Financial Controller" },
   "close-year": { what: "close the year", who: "the Financial Controller" },
-  bistrack: { what: "read the BisTrack check", who: "the Financial Controller" },
+  "legacy-import": { what: "read the legacy import check", who: "the Financial Controller" },
   export: { what: "take the export", who: "the Financial Controller" },
 };
 
@@ -293,7 +293,7 @@ export function tieWords(inTie: boolean, ageDays: number): string {
   return ageDays > 0 ? `Out of tie for ${ageDays} ${ageDays === 1 ? "day" : "days"}` : "Out of tie";
 }
 
-/** The BisTrack line source in words. */
+/** The legacy import line source in words (the wire word names the first dealer's system; the screen does not). */
 export function bisSourceWord(source: string): string {
-  return source === "BOTH" ? "In both books" : source === "ERP_ONLY" ? "Only in this ledger" : source === "BISTRACK_ONLY" ? "Only in BisTrack" : source;
+  return source === "BOTH" ? "In both books" : source === "ERP_ONLY" ? "Only in this ledger" : source === "BISTRACK_ONLY" ? "Only in the legacy import" : source;
 }

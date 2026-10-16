@@ -619,7 +619,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxRatePage"
+                $ref: "#/components/schemas/TaxRateList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -668,7 +668,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxStatusCardProfileList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -725,7 +725,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxPendingProfileList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -817,7 +817,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxEvidencePage"
+                $ref: "#/components/schemas/TaxEvidenceList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -1366,7 +1366,9 @@ components:
     # --- tax --------------------------------------------------------------------
     TaxReasonCode:
       type: string
-      description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
+      description: >-
+        The tax decision reason vocabulary: the twelve codes the
+        tax_decision_snapshot CHECK carries and the core accepts on a rate row.
       enum:
         - STD_ON_HST_13
         - STD_SALES_TAX
@@ -1374,6 +1376,12 @@ components:
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
         - MANUAL_TAX_REVIEW
+        - FED_S87_GOODS_ON_RES
+        - FED_S87_SERVICE_RESERVE
+        - FED_BAND_MANAGEMENT
+        - FNT_PRODUCT
+        - TREATY_OR_SELF_GOV_REVIEW
+        - RELIEF_DECLINED_EVIDENCE
 
     TaxRate:
       type: object
@@ -1392,15 +1400,17 @@ components:
         effective_to: { type: string, format: date }
         notes: { type: string }
 
-    TaxRatePage:
+    TaxRateList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key rates, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [rates]
       properties:
-        items:
-          type: array
+        rates:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/TaxRate" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxProfileStatus:
       type: string
@@ -1424,15 +1434,28 @@ components:
           $ref: "#/components/schemas/TaxProfileStatus"
         notes: { type: string }
 
-    TaxStatusCardProfilePage:
+    TaxStatusCardProfileList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key profiles, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [profiles]
       properties:
-        items:
+        profiles:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/TaxStatusCardProfile" }
+
+    TaxPendingProfileList:
+      type: object
+      description: >-
+        The core writes the PENDING profiles under the key pending_profiles,
+        with no cursor and no limit echo. An empty answer is [], never null.
+      required: [pending_profiles]
+      properties:
+        pending_profiles:
           type: array
           items: { $ref: "#/components/schemas/TaxStatusCardProfile" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxConfig:
       type: object
@@ -1476,15 +1499,17 @@ components:
           type: string
           description: A fixed banner value, not a stored column
 
-    TaxEvidencePage:
+    TaxEvidenceList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key evidence, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [evidence]
       properties:
-        items:
-          type: array
+        evidence:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/TaxEvidence" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxEvidenceCapture:
       type: object

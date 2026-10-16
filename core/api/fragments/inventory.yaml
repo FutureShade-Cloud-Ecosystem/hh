@@ -26,7 +26,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryOnHandPage"
+                $ref: "#/components/schemas/InventoryOnHandList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -58,7 +58,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryMovePage"
+                $ref: "#/components/schemas/InventoryMoveList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -85,7 +85,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryPendingFulfilmentPage"
+                $ref: "#/components/schemas/InventoryPendingFulfilmentList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -140,7 +140,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransitDaysPairPage"
+                $ref: "#/components/schemas/InventoryTransitDaysPairList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -203,7 +203,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBranchStockPage"
+                $ref: "#/components/schemas/InventoryBranchStockList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -297,7 +297,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBrowsePage"
+                $ref: "#/components/schemas/InventoryBrowseResult"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -330,7 +330,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReservationPage"
+                $ref: "#/components/schemas/InventoryReservationList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -510,7 +510,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransferPage"
+                $ref: "#/components/schemas/InventoryTransferList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -686,7 +686,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryInTransitLinePage"
+                $ref: "#/components/schemas/InventoryInTransitLineList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -752,7 +752,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReorderPointPage"
+                $ref: "#/components/schemas/InventoryReorderPointList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -1735,6 +1735,21 @@ components:
         draft_po_no:
           type: string
           description: The number of the draft named by draft_po_id; present with it, absent without it
+        short_order_nos:
+          type: array
+          items:
+            type: string
+          description: >-
+            The visible numbers of the open sales orders waiting on this product at this branch,
+            the orders the shortfall holds up, oldest first, at most three of them; how many more
+            wait rides beside them in short_order_more. Absent when the orders seam is unbound or
+            nothing waits on the row.
+        short_order_more:
+          type: integer
+          format: int32
+          description: >-
+            How many further open sales orders wait on this product beyond the three
+            short_order_nos names. Absent when there are none.
 
     InventoryReorderPoint:
       type: object
@@ -1857,91 +1872,109 @@ components:
         note: { type: string }
 
     # --- inventory page envelopes ---------------------------------------------
-    InventoryOnHandPage:
+    InventoryOnHandList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key on_hand, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [on_hand]
       properties:
-        items:
+        on_hand:
           type: array
           items: { $ref: "#/components/schemas/InventoryOnHand" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryMovePage:
+    InventoryMoveList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key moves, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [moves]
       properties:
-        items:
+        moves:
           type: array
           items: { $ref: "#/components/schemas/InventoryStockMove" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryPendingFulfilmentPage:
+    InventoryPendingFulfilmentList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key pending, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [pending]
       properties:
-        items:
+        pending:
           type: array
           items: { $ref: "#/components/schemas/InventoryPendingFulfilment" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryTransitDaysPairPage:
+    InventoryTransitDaysPairList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key pairs, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [pairs]
       properties:
-        items:
+        pairs:
           type: array
           items: { $ref: "#/components/schemas/InventoryTransitDaysPair" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryBranchStockPage:
+    InventoryBranchStockList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key branches, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [branches]
       properties:
-        items:
-          type: array
+        branches:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryBranchStock" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryBrowsePage:
+    InventoryBrowseResult:
       type: object
-      required: [items, facets]
+      description: >-
+        The browse surface's single round trip, as the core writes it: the
+        rows, the facets, the honest total before the limit, and the page the
+        answer IS (limit and offset echo the service's clamping). It pages by
+        offset, not by cursor, and answers no next_cursor. An empty page is
+        [], never null; facets is null when no facet has a value.
+      required: [rows, facets, total, limit, offset]
       properties:
-        items:
+        rows:
           type: array
           items: { $ref: "#/components/schemas/InventoryBrowseRow" }
         facets:
-          type: array
+          type: [array, "null"]
           description: Facet counts for the current filter; a facet with no values is dropped
           items: { $ref: "#/components/schemas/InventoryFacet" }
-        next_cursor: { type: [string, "null"] }
+        total: { type: integer, format: int32 }
         limit: { type: integer, format: int32 }
-    InventoryReservationPage:
+        offset: { type: integer, format: int32 }
+    InventoryReservationList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key reservations, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [reservations]
       properties:
-        items:
-          type: array
+        reservations:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryReservation" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryTransferPage:
+    InventoryTransferList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key transfers, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [transfers]
       properties:
-        items:
-          type: array
+        transfers:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryTransfer" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryInTransitLinePage:
+    InventoryInTransitLineList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key lines, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [lines]
       properties:
-        items:
+        lines:
           type: array
           items: { $ref: "#/components/schemas/InventoryInTransitLine" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
     InventoryShortfallPage:
       type: object
       required: [items, on_order_degraded]
@@ -1954,15 +1987,17 @@ components:
           description: True when no on-order reader is bound and every on_order_base is an unmeasured zero
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
-    InventoryReorderPointPage:
+    InventoryReorderPointList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key reorder_points, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [reorder_points]
       properties:
-        items:
-          type: array
+        reorder_points:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryReorderPoint" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     # --- invcount schemas ------------------------------------------------------
     InvCountSheet:
