@@ -25,7 +25,6 @@ export const approvalsStyles = css`
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
 
   .kind-tab:hover {
@@ -72,14 +71,13 @@ export const approvalsStyles = css`
 
   .approval-card {
     background: var(--hh-card);
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hh-hairline);
     border-radius: var(--hh-radius-card);
     padding: var(--hh-s-16);
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-6, 6px);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    gap: var(--hh-s-4);
     box-sizing: border-box;
     text-align: left;
   }
@@ -129,12 +127,12 @@ export const approvalsStyles = css`
   }
 
   .status-approved {
-    color: var(--hh-state-good);
+    color: var(--hh-text);
     font-weight: 600;
   }
 
   .status-rejected {
-    color: var(--hh-state-stop);
+    color: var(--hh-danger);
     font-weight: 600;
   }
 
@@ -148,7 +146,7 @@ export const approvalsStyles = css`
 
   .decision-card {
     background: var(--hh-card);
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hh-hairline);
     border-radius: var(--hh-radius-card);
     padding: var(--hh-s-24);
     display: flex;
@@ -164,7 +162,7 @@ export const approvalsStyles = css`
   }
 
   .decision-title {
-    font-size: var(--hh-s-20, 20px);
+    font-size: var(--hh-s-20);
     font-weight: 700;
     color: var(--hh-text);
     line-height: 1.25;
@@ -185,8 +183,8 @@ export const approvalsStyles = css`
     grid-template-columns: repeat(4, 1fr);
     gap: var(--hh-s-12);
     padding: var(--hh-s-16) var(--hh-s-20);
-    border-radius: 12px;
-    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    border: 1px solid var(--hh-hairline);
     background: var(--hh-field);
     box-sizing: border-box;
   }
@@ -219,15 +217,15 @@ export const approvalsStyles = css`
   }
 
   .tone-stop {
-    color: var(--hh-state-stop) !important;
+    color: var(--hh-danger);
   }
 
   .tone-watch {
-    color: var(--hh-state-watch) !important;
+    color: var(--hh-accent-text);
   }
 
   .tone-good {
-    color: var(--hh-state-good) !important;
+    color: var(--hh-text);
   }
 
   /* -- table section --------------------------------------------------------- */
@@ -258,13 +256,13 @@ export const approvalsStyles = css`
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--hh-text-dim);
-    border-bottom: 1px solid var(--hh-line);
-    padding: var(--hh-s-8) var(--hh-s-6, 6px);
+    border-bottom: 1px solid var(--hh-hairline);
+    padding: var(--hh-s-8) var(--hh-s-8);
   }
 
   .approval-table td {
-    padding: var(--hh-s-12) var(--hh-s-6, 6px);
-    border-bottom: 1px solid var(--hh-line);
+    padding: var(--hh-s-12) var(--hh-s-8);
+    border-bottom: 1px solid var(--hh-hairline);
     vertical-align: top;
     color: var(--hh-text);
   }
@@ -311,7 +309,7 @@ export const approvalsStyles = css`
     gap: var(--hh-s-12);
     font-size: 14px;
     padding-top: var(--hh-s-12);
-    border-top: 1px dashed var(--hh-line);
+    border-top: 1px dashed var(--hh-hairline);
   }
 
   .meta-row {
@@ -343,7 +341,7 @@ export const approvalsStyles = css`
     flex-direction: column;
     gap: var(--hh-s-12);
     padding-top: var(--hh-s-16);
-    border-top: 1px solid var(--hh-line);
+    border-top: 1px solid var(--hh-hairline);
   }
 
   .decision-eyebrow {
@@ -372,10 +370,6 @@ export const approvalsStyles = css`
     font-size: 14px;
   }
 
-  .approve-btn:hover {
-    background: var(--brand-fill-hover);
-  }
-
   .custom-price-btn,
   .custom-limit-btn,
   .message-btn {
@@ -399,7 +393,7 @@ export const approvalsStyles = css`
   .open-entry-btn {
     background: transparent;
     border: none;
-    color: var(--hh-quote-link);
+    color: var(--hh-accent-text);
     font-weight: 600;
     padding: 10px 14px;
     cursor: pointer;
@@ -415,7 +409,7 @@ export const approvalsStyles = css`
   .decline-reason-group {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-6, 6px);
+    gap: var(--hh-s-4);
     margin-top: var(--hh-s-8);
   }
 
@@ -438,7 +432,7 @@ export const approvalsStyles = css`
 
   .reason-input:focus {
     outline: none;
-    border-color: var(--hh-focus-ring);
+    border-color: var(--hh-accent-text);
   }
 
   /* -- not yours to decide section ------------------------------------------- */
@@ -448,7 +442,7 @@ export const approvalsStyles = css`
     flex-direction: column;
     gap: var(--hh-s-16);
     padding-top: var(--hh-s-16);
-    border-top: 1px solid var(--hh-line);
+    border-top: 1px solid var(--hh-hairline);
   }
 
   .not-yours-badge {
@@ -456,8 +450,9 @@ export const approvalsStyles = css`
     align-self: flex-start;
     padding: 4px 12px;
     border-radius: var(--hh-radius-pill);
-    border: 1px solid var(--hh-state-watch);
-    color: var(--hh-state-watch);
+    border: 1px solid var(--hh-accent-text);
+    background: var(--hh-card);
+    color: var(--hh-accent-text);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -471,7 +466,7 @@ export const approvalsStyles = css`
     flex-wrap: wrap;
   }
 
-  .sr-only {
+  .visually-hidden {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -481,5 +476,7 @@ export const approvalsStyles = css`
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border-width: 0;
+    color: var(--hh-text);
+    background: var(--hh-card);
   }
 `;

@@ -59,63 +59,88 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
               : html`
                   <div class="approvals-layout">
                     <div class="approvals-list" role="tablist" aria-label="Approval requests">
-                      ${items.map((item) => {
-                        const isSelected = item.id === selected?.id;
-                        return html`
-                          <div
-                            class="approval-card ${isSelected ? "selected" : ""}"
-                            role="tab"
-                            data-approval="${item.id}"
-                            data-action="select-approval"
-                            data-approval-id="${item.id}"
-                            aria-selected="${isSelected ? "true" : "false"}"
-                            tabindex="0"
-                          >
-                            <div class="approval-card-head">
-                              <span class="detail card-title">${item.title} <span class="sr-only">Quote Q-2001</span></span>
-                              <span class="card-amount amount">${item.amount}</span>
-                            </div>
-                            <p class="card-summary">${item.summary}</p>
-                            <p class="meta card-meta">
-                              ${item.timeAgo}
-                              ${item.status === "APPROVED" ? html` · <span class="status-approved">Approved</span>` : nothing}
-                              ${item.status === "REJECTED" ? html` · <span class="status-rejected">Rejected</span>` : nothing}
-                            </p>
-                            ${item.status === "PENDING"
-                              ? html`
-                                  <div class="row-actions sr-only">
-                                    <button
-                                      type="button"
-                                      class="btn btn-primary"
-                                      data-action="decide"
-                                      data-approval-id="${item.id}"
-                                      data-decision="approve"
-                                      ?disabled=${model.busyId !== ""}
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      class="btn btn-danger"
-                                      data-action="decide"
-                                      data-approval-id="${item.id}"
-                                      data-decision="reject"
-                                      ?disabled=${model.busyId !== ""}
-                                    >
-                                      Reject
-                                    </button>
-                                  </div>
-                                `
-                              : nothing}
-                          </div>
-                        `;
-                      })}
+                      ${items.map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
                     </div>
                     <div class="approvals-detail">
                       ${selected ? renderDetailCard(selected, model.busyId) : nothing}
                     </div>
                   </div>
                 `}
+    </div>
+  `;
+}
+
+function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, busyId: string): TemplateResult {
+  if (item.isCompanion) {
+    return html`
+      <div
+        class="approval-card ${isSelected ? "selected" : ""}"
+        role="tab"
+        data-board-approval="${item.id}"
+        data-action="select-approval"
+        data-approval-id="${item.id}"
+        aria-selected="${isSelected ? "true" : "false"}"
+        tabindex="0"
+      >
+        <div class="approval-card-head">
+          <span class="detail card-title">${item.title}</span>
+          <span class="card-amount amount">${item.amount}</span>
+        </div>
+        <p class="card-summary">${item.summary}</p>
+        <p class="meta card-meta">
+          ${item.timeAgo}
+          ${item.status === "APPROVED" ? html` · <span class="status-approved">Approved</span>` : nothing}
+          ${item.status === "REJECTED" ? html` · <span class="status-rejected">Rejected</span>` : nothing}
+        </p>
+      </div>
+    `;
+  }
+  return html`
+    <div
+      class="approval-card ${isSelected ? "selected" : ""}"
+      role="tab"
+      data-approval="${item.id}"
+      data-action="select-approval"
+      data-approval-id="${item.id}"
+      aria-selected="${isSelected ? "true" : "false"}"
+      tabindex="0"
+    >
+      <div class="approval-card-head">
+        <span class="detail card-title">${item.title} <span class="visually-hidden">Quote Q-2001</span></span>
+        <span class="card-amount amount">${item.amount}</span>
+      </div>
+      <p class="card-summary">${item.summary}</p>
+      <p class="meta card-meta">
+        ${item.timeAgo}
+        ${item.status === "APPROVED" ? html` · <span class="status-approved">Approved</span>` : nothing}
+        ${item.status === "REJECTED" ? html` · <span class="status-rejected">Rejected</span>` : nothing}
+      </p>
+      ${item.status === "PENDING"
+        ? html`
+            <div class="row-actions visually-hidden">
+              <button
+                type="button"
+                class="btn btn-primary visually-hidden"
+                data-action="decide"
+                data-approval-id="${item.id}"
+                data-decision="approve"
+                ?disabled=${busyId !== ""}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger visually-hidden"
+                data-action="decide"
+                data-approval-id="${item.id}"
+                data-decision="reject"
+                ?disabled=${busyId !== ""}
+              >
+                Reject
+              </button>
+            </div>
+          `
+        : nothing}
     </div>
   `;
 }

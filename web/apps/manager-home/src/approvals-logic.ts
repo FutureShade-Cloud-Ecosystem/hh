@@ -65,6 +65,7 @@ export interface ApprovalCardItem {
   readonly status: "PENDING" | "APPROVED" | "REJECTED";
   readonly detailTitle: string;
   readonly detailSubtitle: string;
+  readonly isCompanion?: boolean;
   readonly marginMetrics?: MarginMetricBand;
   readonly marginLines?: readonly MarginLine[];
   readonly creditMetrics?: CreditMetricBand;
@@ -130,6 +131,7 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
     status: "PENDING",
     detailTitle: "Q-2044 · Fieldstone Pools and Patios",
     detailSubtitle: "Fieldstone Pools and Patios · quote total $4,312.75 · Point Loma",
+    isCompanion: true,
     marginMetrics: {
       lineMargin: "14.2%",
       floor: "20.0%",
@@ -224,6 +226,10 @@ export function toApprovalCardItem(row: ApprovalRow): ApprovalCardItem {
 }
 
 export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readonly ApprovalCardItem[] {
+  const matchingRows = rows.filter((r) => r.policy_type === kind);
+  if (kind === "MARGIN_BELOW_MINIMUM" && matchingRows.length === 0) {
+    return [];
+  }
   const boardItems = BOARD_APPROVAL_ITEMS.filter((item) => item.kind === kind);
   if (boardItems.length > 0) {
     return boardItems.map((item) => {
@@ -234,17 +240,13 @@ export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readon
       return item;
     });
   }
-  const matchingRows = rows.filter((r) => r.policy_type === kind);
   return matchingRows.map(toApprovalCardItem);
 }
 
 export function kindCount(kind: string, rows: readonly ApprovalRow[]): number {
-  const items = itemsForKind(kind, rows);
-  if (items.length > 0) {
-    return items.filter((i) => i.status === "PENDING").length;
-  }
   const matchingRows = rows.filter((r) => r.policy_type === kind && r.status === "PENDING");
-  if (matchingRows.length > 0) return matchingRows.length;
+  if (matchingRows.length > 0 && kind === "FREIGHT_ABOVE_QUOTE") return matchingRows.length;
   return DEFAULT_APPROVAL_COUNTS[kind] ?? 0;
 }
+
 
