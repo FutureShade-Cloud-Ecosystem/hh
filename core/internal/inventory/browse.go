@@ -80,6 +80,21 @@ type BrowseRow struct {
 	AvailableBase float64 `json:"available_base"`
 	InTransitBase float64 `json:"in_transit_base"`
 	AvgCostCents  int64   `json:"avg_cost_cents,omitempty"`
+	// OutAtBranches names the branches whose own stock record shows nothing
+	// available (on hand at or under what is reserved). The row is a roll-up
+	// over every branch, so a list line that says "Out at <branch>" needs the
+	// names on the row: the per branch read is one call per product and a
+	// lookup list is one line per product (change 5 slice S4, ruling R1's
+	// Sales stock lookup). Byte-absent when the product is available at every
+	// branch that holds a record for it; absent too for a product with no
+	// stock record anywhere, which is out everywhere and is said in the
+	// caller's own words. The names are resolved through the branches module's
+	// seam (branch_name_seam.go), never read from its table here.
+	OutAtBranches []string `json:"out_at_branches,omitempty"`
+	// outAtBranchIDs holds the same branches as ids, as the browse query
+	// aggregated them from stock_balances, until the seam's names replace
+	// them. It never marshals.
+	outAtBranchIDs []string `json:"-"`
 }
 
 // FacetValue is one selectable value and how many products carry it under the current filter.
@@ -171,7 +186,16 @@ var facetFields = []struct{ Field, Column, Label string }{
 func (s *Service) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, error) {
 	f.Limit, f.Offset = browsePage(f.Limit, f.Offset)
 	f.Text = strings.TrimSpace(f.Text)
-	return s.repo.Browse(ctx, f)
+	res, err := s.repo.Browse(ctx, f)
+	if err != nil {
+		return BrowseResult{}, err
+	}
+	// The out-at names come through the branches seam (branch_name_seam.go); the read fails when a
+	// bound seam fails, never silently.
+	if err := s.attachOutAtBranches(ctx, res.Rows); err != nil {
+		return BrowseResult{}, err
+	}
+	return res, nil
 }
 
 // The page bounds, named rather than spelled inline so the frontend's STOCK_READ_LIMIT and the
@@ -298,7 +322,8 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		       p.color, p.finish, p.application,
 		       p.is_featured, p.is_special_order,
 		       COALESCE(bal.on_hand, 0), COALESCE(bal.reserved, 0),
-		       COALESCE(tr.qty, 0), COALESCE(cost.avg, 0)
+		       COALESCE(tr.qty, 0), COALESCE(cost.avg, 0),
+		       outat.ids
 		  FROM products p
 		  LEFT JOIN LATERAL (
 		      SELECT SUM(sb.on_hand_base) AS on_hand, SUM(sb.qty_reserved) AS reserved
@@ -320,6 +345,13 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		       WHERE pbc.product_id = p.id
 		         AND (`+branchParam+` = '' OR pbc.branch_id = `+branchParam+`::uuid)
 		  ) cost ON TRUE
+		  LEFT JOIN LATERAL (
+		      SELECT ARRAY_AGG(DISTINCT sb.branch_id::text ORDER BY sb.branch_id::text) AS ids
+		        FROM stock_balances sb
+		       WHERE sb.product_id = p.id
+		         AND sb.on_hand_base - sb.qty_reserved <= 0
+		         AND (`+branchParam+` = '' OR sb.branch_id = `+branchParam+`::uuid)
+		  ) outat ON TRUE
 		 WHERE `+where+`
 		 ORDER BY p.sku
 		 LIMIT `+limitParam+`
@@ -340,7 +372,8 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 			if err = rows.Scan(&b.ProductID, &b.SKU, &b.Name, &b.Manufacturer, &b.Collection,
 				&b.ColorFamily, &b.Texture, &b.ProductSize, &b.SoldBy,
 				&b.Color, &b.Finish, &b.Application, &b.IsFeatured, &b.IsSpecial,
-				&b.OnHandBase, &b.ReservedBase, &b.InTransitBase, &b.AvgCostCents); err != nil {
+				&b.OnHandBase, &b.ReservedBase, &b.InTransitBase, &b.AvgCostCents,
+				&b.outAtBranchIDs); err != nil {
 				return
 			}
 			b.AvailableBase = AvailableBase(b.OnHandBase, b.ReservedBase)

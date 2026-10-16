@@ -17,8 +17,8 @@
 // HH's tokens and this app's sheet. Money renders from the core's integer
 // cents through centsWords, and is computed nowhere.
 import { html, nothing, type TemplateResult } from "lit";
-import type { BoardColumn, Claim, ClaimEvent, ChecklistState, IntakePhoto, RecoveryBoardModel, RecoveryRow, ReportBundle, SettlementPosting, SlaAlert, SlaTarget, SlaTimer, VendorProfile } from "./warranty-api.js";
-import { WARRANTY_TABS, WARRANTY_TAB_TITLE, type ClaimsTab, type ClaimDetailModel, type RecoveryTab, type SlaTab, type VendorTab, type WarrantyModel } from "./warranty-desk.js";
+import type { BoardColumn, Claim, ClaimEvent, ChecklistState, DefectRow, IntakePhoto, RecoveryBoardModel, RecoveryRow, ReportBundle, SettlementPosting, SlaAlert, SlaTarget, SlaTimer, VendorCreditDetail, VendorCreditRow, VendorProfile } from "./warranty-api.js";
+import { WARRANTY_TABS, WARRANTY_TAB_TITLE, type ClaimEvidenceModel, type ClaimsTab, type ClaimDetailModel, type RecoveryTab, type SlaTab, type VendorTab, type WarrantyModel } from "./warranty-desk.js";
 import {
   CLAIM_CHANNELS,
   OUTCOMES,
@@ -32,11 +32,20 @@ import {
   centsWords,
   channelWord,
   checklistWords,
+  defectBadge,
+  defectEvidenceWord,
+  defectFilterWord,
+  defectHeadlines,
+  defectClaimLinkText,
   dollarsTyped,
   eventLine,
+  evidenceCountWord,
   hoursWords,
   legalMoves,
   moneyPathWord,
+  nextRequestHeadlineWord,
+  nextRequestPhrase,
+  nextRequestSubline,
   notifyWord,
   outcomeWord,
   pathStatusWord,
@@ -45,6 +54,10 @@ import {
   slaStateWord,
   sourceWord,
   stampWords,
+  thresholdDollars,
+  vendorAgreementWord,
+  vendorCreditHeadlines,
+  vendorPeriodWord,
   vendorStatusWord,
 } from "./warranty-logic.js";
 import { dateWords } from "./manager-logic.js";
@@ -70,7 +83,9 @@ export function renderWarranty(model: WarrantyModel): TemplateResult {
       <button type="button" class="kind-tab" data-action="w-scope" data-scope="all" aria-selected=${model.scopeAll ? "true" : "false"}>All branches</button>
       <button type="button" class="kind-tab" data-action="w-scope" data-scope="branch" aria-selected=${model.scopeAll ? "false" : "true"}>${model.branchName !== "" ? model.branchName : "Your branch"}</button>
     </div>
-    ${model.detail !== null
+    ${model.claimEvidence !== null
+      ? renderClaimEvidence(model.claimEvidence)
+      : model.detail !== null
       ? renderClaimDetail(model.detail, model.vendorOptions)
       : html`
           <div class="kind-tabs" role="tablist" aria-label="Warranty tabs">
@@ -91,6 +106,10 @@ function renderPane(model: WarrantyModel): TemplateResult {
       return renderBoardTab(model);
     case "claims":
       return renderClaimsTab(model.claims);
+    case "defects":
+      return renderDefectsTab(model.defects);
+    case "vendors-credits":
+      return renderVendorCreditsTab(model.vendorCredits);
     case "vendors":
       return renderVendorsTab(model.vendors);
     case "recovery":
@@ -854,6 +873,265 @@ function reportsBody(data: ReportBundle): TemplateResult {
 function fillClass(part: number, max: number): string {
   const share = max > 0 ? Math.round((part / max) * 20) * 5 : 0;
   return `w${Math.max(0, Math.min(100, share))}`;
+}
+
+// -- change 6 item 5: defects tab, claim-evidence drawer, vendors and credits tab -----------------------------
+
+/** The defects list: every line of damaged product the till returned, classified
+ *  by where the cost sat against the dealer threshold. Clicking a defect's claim
+ *  opens the claim-evidence drawer (see renderClaimEvidence), not the full claim
+ *  detail; the user reaches the full claim by opening it from the Claims tab. */
+function renderDefectsTab(state: { readonly phase: "loading" | "ready" | "error" | "refused"; readonly error: string; readonly refusal: string; readonly data: { readonly rows: readonly DefectRow[]; readonly threshold_cents: number; readonly filter: string } }): TemplateResult {
+  const filter = state.data.filter as "" | "CLAIM" | "SHRINKAGE";
+  const visible = filter === "" ? state.data.rows : state.data.rows.filter((row) => row.classification === filter);
+  const tiles = defectHeadlines(state.data.rows, state.data.threshold_cents);
+  return html`
+    <div class="tab-body">
+      <div class="tab-intro">
+        <p>Defects found on returns and in the yard. Each one is a warranty claim or shrinkage, and both are tracked.</p>
+      </div>
+      <div class="row-tiles three">
+        <div class="tile">
+          <span class="tile-title">Warranty claims</span>
+          <span class="tile-headline">${tiles.claims}</span>
+          <span class="tile-sub">${tiles.claimCents} at cost, over the threshold</span>
+        </div>
+        <div class="tile">
+          <span class="tile-title">Shrinkage</span>
+          <span class="tile-headline">${tiles.shrinkage}</span>
+          <span class="tile-sub">${tiles.shrinkageCents} at cost, under the threshold</span>
+        </div>
+        <div class="tile">
+          <span class="tile-title">Claim threshold</span>
+          <span class="tile-headline amount">${thresholdDollars(state.data.threshold_cents)}</span>
+          <span class="tile-sub">on the cost of the damaged product, set in Dealer Admin</span>
+        </div>
+      </div>
+      <div class="filter-row" role="group" aria-label="Filter defects">
+        ${(["", "CLAIM", "SHRINKAGE"] as const).map((kind) => html`
+          <button type="button" class="filter-chip" data-action="w-defects-filter" data-filter=${kind} aria-selected=${filter === kind ? "true" : "false"}>${defectFilterWord(kind)}</button>
+        `)}
+      </div>
+      ${state.phase === "loading" ? html`<p class="notice-line">Loading defects…</p>` : nothing}
+      ${state.phase === "refused" ? html`<p class="refusal-line">${state.refusal}</p>` : nothing}
+      ${state.phase === "error" && state.refusal === "" ? html`<p class="error-line">${state.error}</p>` : nothing}
+      ${state.phase === "ready" ? html`
+        ${visible.length === 0
+          ? html`<p class="empty-line">No defects match this filter.</p>`
+          : html`
+              <table class="defects-table">
+                <thead>
+                  <tr>
+                    <th>Return</th>
+                    <th>Customer</th>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Cost</th>
+                    <th>Lot or batch</th>
+                    <th>Evidence</th>
+                    <th>Vendor</th>
+                    <th>Result</th>
+                    <th>Claim</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${visible.map((row) => html`
+                    <tr>
+                      <td>${row.return_no}</td>
+                      <td>${row.customer_name}</td>
+                      <td>${row.product_text}</td>
+                      <td>${row.qty}</td>
+                      <td class="num amount">${centsWords(row.cost_cents)}</td>
+                      <td>${row.lot_or_batch !== "" ? row.lot_or_batch : NOT_ON_FILE}</td>
+                      <td>${defectEvidenceWord(row)}</td>
+                      <td>${row.vendor_name}</td>
+                      <td><span class="badge ${row.classification === "CLAIM" ? "warn" : "dim"}">${defectBadge(row.classification)}</span></td>
+                      <td>
+                        ${row.classification === "CLAIM"
+                          ? html`<button type="button" class="claim-link" data-action="w-defects-open-claim" data-defect-id=${row.id}>${defectClaimLinkText(row)}</button>`
+                          : html`<span class="dim">Logged</span>`}
+                      </td>
+                    </tr>
+                  `)}
+                </tbody>
+              </table>
+              <p class="footer-line">Cost over the dealer's claim threshold of ${thresholdDollars(state.data.threshold_cents)} becomes a warranty claim. Under it, the defect is logged as shrinkage.</p>
+            `}
+      ` : nothing}
+    </div>
+  `;
+}
+
+/** The claim-evidence drawer: one claim's photos, what happened, and the claim
+ *  rows the boards show. Opened from a defect's Claim cell on the Defects tab. */
+function renderClaimEvidence(model: ClaimEvidenceModel): TemplateResult {
+  return html`
+    <div class="drawer-shell">
+      <div class="drawer-back" data-action="w-evidence-close" aria-hidden="true"></div>
+      <div class="drawer-pane" role="dialog" aria-label="Claim evidence">
+        <div class="drawer-head">
+          <button type="button" class="btn btn-secondary back" data-action="w-evidence-close"><span class="chev" aria-hidden="true">‹</span>Back to defects</button>
+          <h2>Claim ${model.claimNo}</h2>
+          <span class="where">${model.customerName !== "" ? model.customerName : ""}</span>
+          <p class="page-sub">${model.productText}${model.vendorName !== "" ? ` - ${model.vendorName}` : ""}</p>
+        </div>
+        <div class="drawer-grid two">
+          <div class="claim-card">
+            <h3 class="block-title">Evidence</h3>
+            ${model.photoError !== "" ? html`<p class="error-line">${model.photoError}</p>` : nothing}
+            <div class="photo-row">
+              ${model.photos.length === 0
+                ? html`<p class="notice-line">No photos on this claim.</p>`
+                : model.photos.slice(0, 4).map((photo) => html`
+                    <div class="photo-frame" data-w-photo=${photo.id} role="img" aria-label=${photo.caption}></div>
+                  `)}
+            </div>
+            ${model.photos.length > 0 ? html`<p class="caption">Photos of the skid taken at the counter on return ${model.returnNo}.</p>` : nothing}
+            <h3 class="block-title">What happened</h3>
+            ${model.timeline.length === 0
+              ? html`<p class="notice-line">Nothing on the claim's history yet.</p>`
+              : html`
+                  <ul class="timeline">
+                    ${model.timeline.map((event) => html`
+                      <li class="timeline-row">
+                        <span class="dot" aria-hidden="true"></span>
+                        <p class="detail">${event.sentence}</p>
+                        <span class="timeline-when mono">${event.when}</span>
+                      </li>
+                    `)}
+                  </ul>
+                `}
+          </div>
+          <div class="claim-card">
+            <h3 class="block-title">The claim</h3>
+            <div class="claim-rows">
+              <div class="claim-row"><span>Return</span><span>${model.returnNo}</span></div>
+              <div class="claim-row"><span>Customer</span><span>${model.customerName}</span></div>
+              <div class="claim-row"><span>Product</span><span>${model.productText}</span></div>
+              <div class="claim-row"><span>Quantity</span><span>${model.quantityText}</span></div>
+              <div class="claim-row"><span>Cost of the damage</span><span class="amount">${centsWords(model.costCents)}</span></div>
+              <div class="claim-row"><span>Lot or batch</span><span>${model.lotOrBatch !== "" ? model.lotOrBatch : NOT_ON_FILE}</span></div>
+              <div class="claim-row"><span>Vendor</span><span>${model.vendorName}</span></div>
+              <div class="claim-row"><span>Agreement</span><span>${model.agreementSummary}</span></div>
+            </div>
+            ${model.statusBadge !== "" ? html`<span class="badge warn">${model.statusBadge}</span>` : nothing}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/** The Vendors and credits tab: each vendor's agreement, period, claims, the
+ *  credit owed and the next request, with a Request credit note action. */
+function renderVendorCreditsTab(state: { readonly phase: "loading" | "ready" | "error" | "refused"; readonly error: string; readonly refusal: string; readonly data: { readonly rows: readonly VendorCreditRow[]; readonly openVendorId: string; readonly openDetail: VendorCreditDetail | null; readonly openError: string; readonly requestingFor: string; readonly requestNotice: string; readonly requestError: string } }): TemplateResult {
+  const tiles = vendorCreditHeadlines(state.data.rows);
+  const openRow = state.data.rows.find((row) => row.vendor_id === state.data.openVendorId) ?? null;
+  return html`
+    <div class="tab-body">
+      <div class="tab-intro">
+        <p>What each vendor owes you for damaged product, by the agreement you have with them.</p>
+      </div>
+      <div class="row-tiles three">
+        <div class="tile">
+          <span class="tile-title">Credit owed</span>
+          <span class="tile-headline amount">${tiles.creditCents}</span>
+          <span class="tile-sub">across ${tiles.vendorCount} vendors, usable on the next purchase orders</span>
+        </div>
+        <div class="tile">
+          <span class="tile-title">Next credit note request</span>
+          <span class="tile-headline">${nextRequestHeadlineWord(tiles.nextRequestInDays)}</span>
+          <span class="tile-sub">${nextRequestSubline(tiles.nextRequestVendor, tiles.nextRequestPeriod)}</span>
+        </div>
+        <div class="tile">
+          <span class="tile-title">Claims in this period</span>
+          <span class="tile-headline">${tiles.claimsInPeriod}</span>
+          <span class="tile-sub">rolled into periodic requests, not one per return</span>
+        </div>
+      </div>
+      ${state.phase === "loading" ? html`<p class="notice-line">Loading vendors and credits…</p>` : nothing}
+      ${state.phase === "refused" ? html`<p class="refusal-line">${state.refusal}</p>` : nothing}
+      ${state.phase === "error" && state.refusal === "" ? html`<p class="error-line">${state.error}</p>` : nothing}
+      ${state.phase === "ready" ? html`
+        <div class="split-grid">
+          <div>
+            <h3 class="block-title">Vendors and their agreements</h3>
+            ${state.data.rows.length === 0
+              ? html`<p class="empty-line">No vendors carry an open credit yet.</p>`
+              : html`
+                  <table class="vc-table">
+                    <thead>
+                      <tr>
+                        <th>Vendor</th>
+                        <th>Agreement</th>
+                        <th>Period</th>
+                        <th>Claims</th>
+                        <th>Credit owed</th>
+                        <th>Next request</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${state.data.rows.map((row) => {
+                        const isOpen = row.vendor_id === state.data.openVendorId;
+                        return html`
+                          <tr class="vc-row ${isOpen ? "is-open" : ""}" data-action="w-vc-open" data-vendor-id=${row.vendor_id}>
+                            <td><button type="button" class="row-link" data-action="w-vc-open" data-vendor-id=${row.vendor_id}>${row.vendor_name}</button></td>
+                            <td>${vendorAgreementWord(row.agreement_kind)}</td>
+                            <td>${vendorPeriodWord(row.period)}</td>
+                            <td class="num">${row.claims_in_period}</td>
+                            <td class="num amount">${centsWords(row.credit_cents)}</td>
+                            <td>${nextRequestPhrase(row)}</td>
+                          </tr>
+                        `;
+                      })}
+                    </tbody>
+                  </table>
+                `}
+          </div>
+          <div class="vc-panel">
+            ${state.data.openVendorId === ""
+              ? html`<p class="empty-line">Pick a vendor on the left to see what they owe and the rolled claims.</p>`
+              : openRow === null
+              ? html`<p class="empty-line">Pick a vendor on the left.</p>`
+              : html`
+                  <h3 class="block-title">${openRow.vendor_name}</h3>
+                  <p class="agreement-line">${openRow.agreement_summary}</p>
+                  <h4 class="sub-title">Rolled into the next credit note request</h4>
+                  ${state.data.openError !== "" ? html`<p class="error-line">${state.data.openError}</p>` : state.data.openDetail === null
+                    ? html`<p class="notice-line">Loading the rolled claims…</p>`
+                    : state.data.openDetail.rolled_claims.length === 0
+                    ? html`<p class="empty-line">No claims are rolled into this request yet.</p>`
+                    : html`
+                        <ul class="rolled-claims">
+                          ${state.data.openDetail.rolled_claims.map((claim) => html`
+                            <li class="rolled-claim">
+                              <button type="button" class="claim-link" data-action="w-open-claim" data-claim-id=${claim.claim_id}>${claim.return_no}</button>
+                              <span class="rolled-product">${claim.product_text}</span>
+                              <span class="num amount">${centsWords(claim.cost_cents)}</span>
+                            </li>
+                          `)}
+                        </ul>
+                      `}
+                  <h4 class="sub-title">Evidence</h4>
+                  ${state.data.openDetail !== null && state.data.openDetail.photo_ids.length > 0
+                    ? html`
+                        <div class="photo-row evidence-row">
+                          ${state.data.openDetail.photo_ids.slice(0, 4).map((pid) => html`
+                            <div class="photo-frame" data-w-photo=${pid} role="img" aria-label="Evidence photo"></div>
+                          `)}
+                        </div>
+                      `
+                    : html`<p class="notice-line">No evidence photos on this request.</p>`}
+                  <button type="button" class="btn btn-primary full" data-action="w-vc-request" data-vendor-id=${openRow.vendor_id} ?disabled=${state.data.requestingFor === openRow.vendor_id}>${state.data.requestingFor === openRow.vendor_id ? "Requesting…" : "Request credit note"}</button>
+                  ${state.data.requestNotice !== "" ? html`<p class="notice-line">${state.data.requestNotice}</p>` : nothing}
+                  ${state.data.requestError !== "" ? html`<p class="error-line">${state.data.requestError}</p>` : nothing}
+                  <p class="footer-line">${state.data.openDetail !== null ? state.data.openDetail.credit_summary : ""}</p>
+                `}
+          </div>
+        </div>
+      ` : nothing}
+    </div>
+  `;
 }
 
 // -- the claim detail -------------------------------------------------------------------------------------------------
