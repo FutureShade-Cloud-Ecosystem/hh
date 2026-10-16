@@ -172,3 +172,6 @@ additions:
     reason: "The vendor warranty credit agreements read (walk change 6): every active vendor with its effective agreement (claim by claim, a periodic credit note, or a fixed allowance) the Manager Home Vendors and credits board and Dealer Admin's Warranty page read; the ERP recorded no per vendor credit terms; no ERP source route."
   - route: "PUT /api/v1/warranty/agreements/{vendorID}"
     reason: "The vendor warranty credit agreement write (walk change 6): Dealer Admin's Warranty page sets one vendor's kind, period and allowance percent, and each moved knob rides the audit spine with its old and new value; the ERP recorded no per vendor credit terms; no ERP source route."
+  - route: "GET /api/v1/messaging/people"
+    reason: "House Messages change 7, slice S1: the staffer readable roster the New message picker lists (id, display name, role label, branch label, is_me), every active staffer of the caller's org; the ERP's staff roster was manager only and the ERP had no picker."
+
