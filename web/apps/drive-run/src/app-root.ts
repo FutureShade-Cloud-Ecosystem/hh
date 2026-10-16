@@ -675,8 +675,13 @@ export class DriveRunApp extends HHElement {
     const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
     this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
     // Decided at send time: a photo picked on the proof screen is late once the
-    // signature has landed before it went up. Attaching twice is harmless.
-    if (late || (this.#findStop(stopId)?.stop.pod_received_by ?? "") !== "") {
+    // signature has landed before it went up. Attaching twice is harmless. A
+    // signature still queued in the outbox holds proof_waiting on the stop: the
+    // server has no proof to attach to yet (the queued attestation folds the
+    // photo in when it lands), so the attach is skipped and the refusal its
+    // direct door would answer is never shown.
+    const currentStop = this.#findStop(stopId)?.stop;
+    if ((late || (currentStop?.pod_received_by ?? "") !== "") && !currentStop?.proof_waiting) {
       const folded = await this.#drive.attachPhotos(stopId);
       if (!folded.ok) {
         this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
