@@ -78,12 +78,17 @@ func newC8World(t *testing.T) *c8World {
 		{"D75", 75, 14000},     // 75 days past due,  → 61 to 90
 		{"D95", 95, 15000},     // 95 days past due,  → 91 and over
 	}
+	repo := NewRepository(pool)
+	houseDay, err := repo.clockAt(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("resolve house day: %v", err)
+	}
 	var sum int64
 	for _, b := range band {
-		// Using UTC dates directly to be house-zone-stable in CI; agingSelect reads them in the
-		// house zone, so the day count is the same whichever zone the test runs in.
-		dueDate := time.Now().UTC().AddDate(0, 0, -b.daysAgo).Format("2006-01-02")
-		issueDate := time.Now().UTC().AddDate(0, 0, -b.daysAgo-30).Format("2006-01-02")
+		// Seed due_date against the dealer's house day (clockAt), which is the exact date
+		// agingSelect and registerSelect pass as $1::date.
+		dueDate := houseDay.AddDate(0, 0, -b.daysAgo).Format("2006-01-02")
+		issueDate := houseDay.AddDate(0, 0, -b.daysAgo-30).Format("2006-01-02")
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO invoices (invoice_no, customer_id, branch_id, order_id, status,
 			                       issue_date, due_date, subtotal_cents, tax_cents, total_cents,
@@ -106,7 +111,7 @@ func newC8World(t *testing.T) *c8World {
 	})
 
 	return &c8World{
-		repo:           NewRepository(pool),
+		repo:           repo,
 		customerID:     customerID,
 		branchID:       branchID,
 		orderID:        orderID,
@@ -189,6 +194,11 @@ func TestIntegration_ReconcileC8_BoundariesAreExclusiveAtDay30_60_90(t *testing.
 		t.Run(fmt.Sprintf("daysAgo=%d", c.daysAgo), func(t *testing.T) {
 			pool := intPool(t)
 			ctx := context.Background()
+			repo := NewRepository(pool)
+			houseDay, err := repo.clockAt(ctx, time.Now())
+			if err != nil {
+				t.Fatalf("resolve house day: %v", err)
+			}
 
 			var branchID string
 			if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type='BRANCH' LIMIT 1`).Scan(&branchID); err != nil {
@@ -202,8 +212,8 @@ func TestIntegration_ReconcileC8_BoundariesAreExclusiveAtDay30_60_90(t *testing.
 				suffix, branchID).Scan(&cust); err != nil {
 				t.Fatalf("seed customer: %v", err)
 			}
-			due := time.Now().UTC().AddDate(0, 0, -c.daysAgo).Format("2006-01-02")
-			issue := time.Now().UTC().AddDate(0, 0, -c.daysAgo-30).Format("2006-01-02")
+			due := houseDay.AddDate(0, 0, -c.daysAgo).Format("2006-01-02")
+			issue := houseDay.AddDate(0, 0, -c.daysAgo-30).Format("2006-01-02")
 			if _, err := pool.Exec(ctx,
 				`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 				                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
@@ -217,7 +227,7 @@ func TestIntegration_ReconcileC8_BoundariesAreExclusiveAtDay30_60_90(t *testing.
 				_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, cust)
 			})
 
-			rows, err := NewRepository(pool).AgingRows(ctx, time.Now(), 60, "")
+			rows, err := repo.AgingRows(ctx, time.Now(), 60, "")
 			if err != nil {
 				t.Fatalf("aging rows: %v", err)
 			}
