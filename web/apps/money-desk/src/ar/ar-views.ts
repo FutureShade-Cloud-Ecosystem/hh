@@ -307,7 +307,7 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
   return html`
     <tr data-register-row>
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
-      <td><button type="button" class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></button><span class="dim small">${r.account_no}${terms}</span></td>
+      <td><span class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
       <td class="nowrap due-col">
         <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
@@ -600,6 +600,22 @@ function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof not
 function holdsPanel(model: DeskModel): TemplateResult {
   const hold = model.holds.find((h) => h.id === model.selectedHoldId);
   if (model.holdPanel === "place-later") {
+    if (!model.canLift) {
+      return html`
+        <section class="panel side" aria-label="Place a hold" data-hold-panel>
+          <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
+          <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
+          <fieldset class="held-form" disabled>
+            <label>Account<select><option>Pick an account</option></select></label>
+            <label>Kind<input type="text" value="Manual" readonly /></label>
+            <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
+            <p class="label">What it blocks</p>
+            <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+          </fieldset>
+          <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
+        </section>
+      `;
+    }
     return placeHoldPanel(model);
   }
   if (hold === undefined) {
@@ -654,7 +670,7 @@ export function renderHolds(model: DeskModel): TemplateResult {
   return html`
     <div class="head">
       <div><h1>Credit holds</h1><p class="dim">A hold stops release at the till, the gate and the portal. Lifting and overriding both carry a reason, and both are audited.</p></div>
-      ${model.canLift ? html`<div class="actions"><button type="button" class="btn btn-secondary" data-action="place-later">Place a hold</button></div>` : nothing}
+      ${model.canLift ? nothing : html`<div class="actions"><button type="button" class="btn btn-secondary held" data-action="place-later" aria-disabled="true">Place a hold <span class="later">later</span></button></div>`}
     </div>
     ${tabsBar(model)}
     <div class="cols">

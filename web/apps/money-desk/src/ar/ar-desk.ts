@@ -413,13 +413,6 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "place-later":
-        // Manager-gated: the gate refuses every other role with the server's own 403.
-        // canLiftHolds is the matrix Money Desk at Administer and Manage (row 345).
-        if (!canLiftHolds(this.#who.roleCode)) {
-          this.#error = "Placing a hold by hand is held for managers; it shows up here for the controller or the general manager.";
-          this.#host.repaint();
-          return true;
-        }
         this.#holdPanel = "place-later";
         this.#clearMessages();
         this.#host.repaint();
