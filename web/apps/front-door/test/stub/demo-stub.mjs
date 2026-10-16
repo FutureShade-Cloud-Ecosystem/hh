@@ -62,6 +62,10 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
   { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
+  { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
+  { flow: "hr", role_code: "hr", label: "HR" },
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
+  { flow: "outside-sales", role_code: "outside_sales", label: "Outside Sales" },
 ];
 
 // Summit Ridge Builders' contractor personas, as the core's listing carries them (class "tenant"). The front
@@ -138,6 +142,33 @@ const USERS = {
     tier: 1,
     scope: "GLOBAL",
   },
+  "general-manager": {
+    user_id: "demo-account-general-manager",
+    email: "general-manager@demo.invalid",
+    display_name: "General manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  hr: {
+    user_id: "demo-account-hr",
+    email: "hr@demo.invalid",
+    display_name: "HR (demo)",
+    role_code: "hr",
+    role_name: "HR",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  "branch-manager": {
+    user_id: "demo-account-branch-manager",
+    email: "branch-manager@demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
   "logistics-manager": {
     user_id: "demo-account-logistics-manager",
     email: "logistics-manager@demo.invalid",
@@ -145,6 +176,15 @@ const USERS = {
     role_code: "logistics_manager",
     role_name: "Logistics Manager",
     tier: 2,
+    scope: "BRANCH",
+  },
+  "outside-sales": {
+    user_id: "demo-account-outside-sales",
+    email: "outside-sales@demo.invalid",
+    display_name: "Outside sales (demo)",
+    role_code: "outside_sales",
+    role_name: "Outside Sales",
+    tier: 3,
     scope: "BRANCH",
   },
   driver: {
