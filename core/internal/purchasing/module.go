@@ -392,7 +392,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// in the ERP the receiving worklist renders it to a yard that plans around it (core's worklist
 	// does not render the column yet; the DIB-573 read half is a recorded residual).
 	r.Handle("PUT /api/v1/purchasing/pos/{id}/delivery-method", g.RequireManager(h.staff(h.setDeliveryMethod)))
-	r.Handle("POST /api/v1/purchasing/pos/{id}/apply-warranty-credit", g.RequireStaff(h.staff(h.applyWarrantyCredit)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/apply-warranty-credit", g.RequireManager(h.staff(h.applyWarrantyCredit)))
 
 	r.Handle("GET /api/v1/purchasing/receiving", g.RequireStaff(h.staff(h.worklist)))
 	r.Handle("GET /api/v1/purchasing/receipts/{id}", g.RequireStaff(h.staff(h.getReceipt)))
