@@ -11,6 +11,57 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// StatementPreviewLine is one open-invoice row the C8 S3 statement preview lists. The bucket
+// label is derived server-side from days_overdue, never computed in the browser.
+type StatementPreviewLine struct {
+	InvoiceID    string    `json:"invoice_id"`
+	InvoiceNo    string    `json:"invoice_no"`
+	DueDate      time.Time `json:"due_date"`
+	BalanceCents int64     `json:"balance_cents"`
+	DaysOverdue  int       `json:"days_overdue"`
+	BucketLabel  string    `json:"bucket_label"`
+}
+
+// StatementPreviewAging is the 5-bucket breakdown the C8 S3 statement preview card carries.
+// The five buckets sum to OpenCents and the four late buckets sum to OverdueCents; both
+// checks happen at the handler, server-side, before the panel renders. ReconciliationToThePenny
+// is the predicate the handler asks.
+type StatementPreviewAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
+}
+
+// BillingStatementPreview is the wire shape the preview handler returns. Reconciles is the
+// server-side assertion (sum of buckets equals openCents and sum of late buckets equals
+// overdueCents) so a drift fails the read before the panel renders.
+type BillingStatementPreview struct {
+	Statement  Statement              `json:"statement"`
+	OpenLines  []StatementPreviewLine `json:"open_lines"`
+	Aging      StatementPreviewAging  `json:"aging"`
+	Reconciled bool                   `json:"reconciled"`
+}
+
+// PaylinkDeliveryRow is the row RecordPaylinkDelivery writes to ar_invoice_deliveries. The
+// invoice_id is optional (the URL is scoped to a customer; an unscoped URL pins to a whole
+// account), amount_cents is part of the URL token and the idempotency key, not a column on
+// ar_invoice_deliveries (0175), so it is consumed by the URL builder and not by SQL.
+type PaylinkDeliveryRow struct {
+	CustomerID  string
+	InvoiceID   *string
+	AmountCents *int64
+	Channel     string
+	Recipient   string
+	PaylinkURL  string
+	IdemKey     string
+	SentBy      string
+	SentAt      time.Time
+}
+
 // StatementLines returns the account's activity up to asOf, oldest first, with a running balance.
 //
 // It unions the two things a customer recognises on a statement, invoices they were billed and
@@ -341,4 +392,138 @@ func (r *Repository) LatestStatement(ctx context.Context, customerID string) (St
 		return Statement{}, false, fmt.Errorf("billing: latest statement: %w", err)
 	}
 	return s, true, nil
+}
+
+// PreviewStatement reads a single ar_statements row, asserting the row belongs to the
+// customer the URL named. A statement of a different customer is ErrNotFound, the same
+// posture customer_ar_read.go applies on its existence reads: no existence leak across
+// the account wall.
+//
+// The customers join is not necessary here: the row carries customer_id, and the predicate
+// `customer_id = $2::uuid` is the only filter. The read lives in statement_repository.go
+// because that file is the allowlisted owner of ar_statements; the customers predicate is
+// on the SAME row (the ar_statements row, billing's own).
+func (r *Repository) PreviewStatement(ctx context.Context, statementID, customerID string) (Statement, error) {
+	if r.pool == nil {
+		return Statement{}, errNoDB
+	}
+	var s Statement
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text, run_id::text, customer_id::text, as_of_date, current_cents, days_30_cents,
+		        days_60_cents, days_90_plus_cents, closing_balance_cents, '', delivery_status, created_at
+		   FROM ar_statements WHERE id = $1::uuid AND customer_id = $2::uuid`, statementID, customerID).
+		Scan(&s.ID, &s.RunID, &s.CustomerID, &s.AsOfDate, &s.CurrentCents, &s.Days30Cents,
+			&s.Days60Cents, &s.Days90PlusCents, &s.ClosingCents, &s.HTML, &s.DeliveryStatus, &s.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Statement{}, ErrNotFound
+		}
+		return Statement{}, fmt.Errorf("billing: read statement: %w", err)
+	}
+	return s, nil
+}
+
+// PreviewLines reads the open invoices the statement preview lists, with the days-overdue
+// figure derived from as_of (the statement's own date). The bucket label is computed
+// server-side from days_overdue by the handler, never in the browser.
+//
+// The query joins customers only via the customer_id predicate (customers.id is referenced
+// to scope, the row read is the invoices row, billing's own). The invoices table is
+// billing's own, declared in the allowlist for statement_repository.go's parent callers.
+func (r *Repository) PreviewLines(ctx context.Context, customerID string, asOf time.Time) ([]StatementPreviewLine, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT i.id::text, i.invoice_no::text, i.due_date, i.balance_cents,
+		        GREATEST(0, (($2::date - i.due_date))::int)
+		   FROM invoices i
+		  WHERE i.customer_id = $1::uuid
+		    AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+		    AND i.balance_cents > 0
+		    AND i.doc_type = 'INVOICE'
+		  ORDER BY i.due_date ASC, i.id::text ASC`, customerID, asOf)
+	if err != nil {
+		return nil, fmt.Errorf("billing: list statement preview lines: %w", err)
+	}
+	defer rows.Close()
+	out := []StatementPreviewLine{}
+	for rows.Next() {
+		var l StatementPreviewLine
+		if err := rows.Scan(&l.InvoiceID, &l.InvoiceNo, &l.DueDate, &l.BalanceCents, &l.DaysOverdue); err != nil {
+			return nil, fmt.Errorf("billing: scan statement preview line: %w", err)
+		}
+		l.BucketLabel = BucketForLabel(l.DaysOverdue)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// PreviewAging reads the 5-bucket aging for the preview, inside the customer_ar_read.go
+// discipline: the SAME five buckets the workspace and the AR console open with, no
+// re-bucketing. The handler reconciles to the penny: sum of buckets equals openCents and
+// sum of late buckets equals overdueCents.
+func (r *Repository) PreviewAging(ctx context.Context, customerID string) (StatementPreviewAging, error) {
+	if r.pool == nil {
+		return StatementPreviewAging{}, errNoDB
+	}
+	now, err := r.clockAt(ctx, time.Now())
+	if err != nil {
+		return StatementPreviewAging{}, err
+	}
+	today := now.UTC().Format("2006-01-02")
+	var a StatementPreviewAging
+	err = r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(CASE WHEN ($2::date - due_date) <= 0 THEN balance_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 1 AND 30 THEN balance_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 31 AND 60 THEN balance_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 61 AND 90 THEN balance_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN ($2::date - due_date) > 90 THEN balance_cents ELSE 0 END), 0),
+		        COALESCE(SUM(balance_cents), 0),
+		        COALESCE(SUM(CASE WHEN ($2::date - due_date) > 0 THEN balance_cents ELSE 0 END), 0)
+		   FROM invoices
+		  WHERE customer_id = $1::uuid
+		    AND status IN ('FINALIZED','PARTIALLY_PAID')
+		    AND balance_cents > 0
+		    AND doc_type = 'INVOICE'`, customerID, today).
+		Scan(&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days90Cents, &a.Days90PlusCents,
+			&a.OpenCents, &a.OverdueCents)
+	if err != nil {
+		return StatementPreviewAging{}, fmt.Errorf("billing: read statement preview aging: %w", err)
+	}
+	return a, nil
+}
+
+// RecordPaylinkDelivery writes the ar_invoice_deliveries row, idempotent on the
+// deterministic key. kind = STATEMENT is the existing 0175 bucket a paylink delivery
+// fits under: it is a notice about the customer's account state, and tone = ” satisfies
+// ar_invoice_deliveries_tone_is_reminder (0175).
+func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliveryRow) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	invoiceID := row.CustomerID
+	if row.InvoiceID != nil && *row.InvoiceID != "" {
+		invoiceID = *row.InvoiceID
+	}
+	var balanceCents int64
+	if row.AmountCents != nil && *row.AmountCents > 0 {
+		balanceCents = *row.AmountCents
+	}
+	var sentBy any
+	if row.SentBy != "" {
+		sentBy = row.SentBy
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO ar_invoice_deliveries
+		   (invoice_id, customer_id, invoice_no, kind, tone, channel, to_address,
+		    balance_cents, idempotency_key, sent_by, sent_at)
+		 VALUES ($1::uuid, $2::uuid, '', 'STATEMENT', '', $3, $4, $5, $6, $7::uuid, $8)
+		 ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING`,
+		invoiceID, row.CustomerID, row.Channel, row.Recipient,
+		balanceCents, row.IdemKey, sentBy, row.SentAt)
+	if err != nil {
+		return fmt.Errorf("billing: record paylink delivery: %w", err)
+	}
+	return nil
 }

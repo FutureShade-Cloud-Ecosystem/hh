@@ -1511,6 +1511,46 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: billingCreateHold
+      tags:
+        - staff-billing
+      summary: Place a manual credit hold by hand on an account
+      description: Manager-gated manual hold. Wraps Repository.PlaceHold with hold_kind = MANUAL and the caller's user id; no-op when an ACTIVE hold already exists (the ux_credit_holds_one_active index is the guarantee, not a read-then-write). Returns the ACTIVE hold the account now carries, whether the caller placed it or it was already there.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreateHoldRequest"
+      responses:
+        "200":
+          description: The hold is in place; the response carries the row, whether the caller placed it or it was already there
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditHold"
+        "201":
+          description: The hold was just placed by this call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditHold"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/ar/holds/{id}/override:
     post:
       operationId: billingOverrideHold
@@ -2521,6 +2561,82 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/payments/paylink:
+    post:
+      operationId: billingSendPaylink
+      tags:
+        - staff-billing
+      summary: Generate a deterministic dealer paylink for a customer and invoice
+      description: The C8 receivables paylink action. Returns a deterministic URL keyed on (customer_id, invoice_id?, amount_cents?, channel), records the delivery on ar_invoice_deliveries (kind=PAYLINK_NOTICE) and stamps a notice on ar_notice_log, and the next action returns {paylink_url, status, sent_at}. Channel is EMAIL (default) or SMS. The recipient snapshot rides the delivery row, exactly as the register's send paths do (0175).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingSendPaylinkRequest"
+      responses:
+        "200":
+          description: The paylink URL the customer can open, with delivery status and timestamp
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingSendPaylinkResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/billing/ar/customers/{customer_id}/statements/{statement_id}/preview:
+    get:
+      operationId: billingGetStatementPreview
+      tags:
+        - staff-billing
+      summary: Read a statement and its open lines for the C8 preview panel
+      description: "The artefact from ar_statements (the figure that went out the door, 0105's immutable statement rule) plus the customer's open lines and a 5-bucket aging breakdown. The 5-bucket breakdown reconciles to the penny: the five buckets sum to openCents and the four late buckets sum to overdueCents, both checked server-side so the panel cannot be served with numbers that do not add up."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: statement_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The statement preview payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatementPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/assist/commands:
     get:
       operationId: assistListCommands
@@ -30627,6 +30743,153 @@ components:
       properties:
         note:
           $ref: "#/components/schemas/BillingCustomerWorkspaceNote"
+    BillingCreateHoldRequest:
+      type: object
+      description: The POST body for billingCreateHold. customer_id is the account; reason is mandatory and bounded so a manager cannot place an ungrounded hold. hold_kind is fixed to MANUAL by the handler (the route never accepts a different kind, the policy rules).
+      required:
+        - customer_id
+        - reason
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Why the account is being held by hand. Mandatory; a hold without a reason is refused, the same posture billingOverrideHold takes.
+    BillingSendPaylinkRequest:
+      type: object
+      description: The POST body for billingSendPaylink. customer_id is required; invoice_id is optional and scopes the URL; amount_cents is optional and is the figure the URL pins to; channel is EMAIL (default) or SMS; recipient is a snapshot of where we sent the notice and rides the ar_invoice_deliveries row.
+      required:
+        - customer_id
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        amount_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
+          minimum: 0
+        channel:
+          type: string
+          enum:
+            - EMAIL
+            - SMS
+          default: EMAIL
+        recipient:
+          type: string
+    BillingSendPaylinkResult:
+      type: object
+      description: The paylink the customer can open, with the delivery status and the time the notice was stamped. paylink_url is deterministic on (customer_id, invoice_id, amount_cents, channel) so a repeated call lands on the same URL and the delivery row's idempotency_key is reused rather than spawning a second notice.
+      required:
+        - paylink_url
+        - status
+        - sent_at
+      properties:
+        paylink_url:
+          type: string
+          description: The deterministic dealer paylink URL
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - SENT
+        sent_at:
+          type: string
+          format: date-time
+    BillingStatementPreview:
+      type: object
+      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold."
+      required:
+        - statement
+        - open_lines
+        - aging
+        - reconciled
+      properties:
+        statement:
+          $ref: "#/components/schemas/BillingStatement"
+        open_lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingStatementPreviewLine"
+        aging:
+          $ref: "#/components/schemas/BillingStatementPreviewAging"
+        reconciled:
+          type: boolean
+    BillingStatementPreviewLine:
+      type: object
+      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser.
+      required:
+        - invoice_id
+        - invoice_no
+        - due_date
+        - balance_cents
+        - days_overdue
+        - bucket_label
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        due_date:
+          type: string
+          format: date
+        balance_cents:
+          type: integer
+          format: int64
+        days_overdue:
+          type: integer
+          format: int32
+        bucket_label:
+          type: string
+          enum:
+            - Current
+            - 1 to 30
+            - 31 to 60
+            - 61 to 90
+            - 91 and over
+    BillingStatementPreviewAging:
+      type: object
+      description: The 5-bucket breakdown the statement preview card carries. The five buckets sum to openCents and the four late buckets sum to overdueCents, both checked before the response is rendered (BillingStatementPreview.reconciled is true exactly when both hold).
+      required:
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_90_cents
+        - days_90_plus_cents
+        - open_cents
+        - overdue_cents
+      properties:
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        overdue_cents:
+          type: integer
+          format: int64
     AssistArgSpec:
       type: object
       required:

@@ -1051,6 +1051,51 @@ type BillingAddCustomerNoteResult struct {
 	Note BillingCustomerWorkspaceNote `json:"note"`
 }
 
+type BillingCreateHoldRequest struct {
+	CustomerId string `json:"customer_id"`
+	Reason     string `json:"reason"`
+}
+
+type BillingSendPaylinkRequest struct {
+	CustomerId  string  `json:"customer_id"`
+	InvoiceId   *string `json:"invoice_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
+	Channel     *string `json:"channel,omitempty"`
+	Recipient   *string `json:"recipient,omitempty"`
+}
+
+type BillingSendPaylinkResult struct {
+	PaylinkUrl string    `json:"paylink_url"`
+	Status     string    `json:"status"`
+	SentAt     time.Time `json:"sent_at"`
+}
+
+type BillingStatementPreview struct {
+	Statement  BillingStatement              `json:"statement"`
+	OpenLines  []BillingStatementPreviewLine `json:"open_lines"`
+	Aging      BillingStatementPreviewAging  `json:"aging"`
+	Reconciled bool                          `json:"reconciled"`
+}
+
+type BillingStatementPreviewLine struct {
+	InvoiceId    string `json:"invoice_id"`
+	InvoiceNo    string `json:"invoice_no"`
+	DueDate      string `json:"due_date"`
+	BalanceCents int64  `json:"balance_cents"`
+	DaysOverdue  int32  `json:"days_overdue"`
+	BucketLabel  string `json:"bucket_label"`
+}
+
+type BillingStatementPreviewAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`

@@ -156,6 +156,29 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	return out, rows.Err()
 }
 
+// CustomerExists is the tight existence check the C8 S4 manual hold handler and the C8 S3
+// paylink handler use to refuse a hold against an absent account or a paylink on nobody.
+// The check is one query against customers.id, the same row every other billing read goes
+// through. False on no-rows; anything else is a real error.
+//
+// The customers table is allowlisted for credit_repository.go already (see allowlist), so
+// the read lives here rather than in the handler. The handler does no SQL of its own.
+func (r *Repository) CustomerExists(ctx context.Context, customerID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var one int
+	err := r.pool.QueryRow(ctx,
+		`SELECT 1 FROM customers WHERE id = $1::uuid`, customerID).Scan(&one)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("billing: lookup customer: %w", err)
+	}
+	return true, nil
+}
+
 // PlaceHold inserts an ACTIVE credit hold, returning placed=false when the account already has one.
 //
 // The no-op-on-existing behaviour is what makes the nightly sweep idempotent, and it is enforced by

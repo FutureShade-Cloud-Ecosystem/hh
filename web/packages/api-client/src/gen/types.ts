@@ -913,6 +913,45 @@ export type BillingAddCustomerNoteInput = {
 export type BillingAddCustomerNoteResult = {
   note: BillingCustomerWorkspaceNote;
 };
+export type BillingCreateHoldRequest = {
+  customer_id: string;
+  reason: string;
+};
+export type BillingSendPaylinkRequest = {
+  customer_id: string;
+  invoice_id?: string | null;
+  amount_cents?: number | null;
+  channel?: "EMAIL" | "SMS";
+  recipient?: string;
+};
+export type BillingSendPaylinkResult = {
+  paylink_url: string;
+  status: "QUEUED" | "SENT";
+  sent_at: string;
+};
+export type BillingStatementPreview = {
+  statement: BillingStatement;
+  open_lines: BillingStatementPreviewLine[];
+  aging: BillingStatementPreviewAging;
+  reconciled: boolean;
+};
+export type BillingStatementPreviewLine = {
+  invoice_id: string;
+  invoice_no: string;
+  due_date: string;
+  balance_cents: number;
+  days_overdue: number;
+  bucket_label: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+};
+export type BillingStatementPreviewAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;

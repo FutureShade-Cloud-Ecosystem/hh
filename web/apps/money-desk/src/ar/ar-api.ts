@@ -20,12 +20,17 @@ import {
   type BillingApplyPaymentAnswer,
   type BillingApplyPaymentLine,
   type BillingARLanding,
+  type BillingCreateHoldRequest,
+  type BillingCreditHold,
   type BillingCreditHoldPage,
   type BillingCustomerWorkspace,
   type BillingInvoiceDetail,
   type BillingPromiseView,
   type BillingRegisterPage,
+  type BillingSendPaylinkRequest,
+  type BillingSendPaylinkResult,
   type BillingStatement,
+  type BillingStatementPreview,
   type Branch,
   type BillingEvaluationResult,
   type BillingHoldOverrideResult,
@@ -199,5 +204,28 @@ export class ArApi {
   // never lives here; this is a fact the next collections person picks up.
   addNote(customerId: string, body: BillingAddCustomerNoteInput): Promise<Result<BillingAddCustomerNoteResult>> {
     return staffBilling.billingAddCustomerNote(this.#client, customerId, body);
+  }
+
+  // Place a manual credit hold on an account by hand (Change 8 S4). Manager-gated:
+  // the gate refuses every non-manager role with the server's own 403, the refusal
+  // rides through the same Result channel every other call rides through.
+  createHold(input: BillingCreateHoldRequest): Promise<Result<BillingCreditHold>> {
+    return staffBilling.billingCreateHold(this.#client, input);
+  }
+
+  // Generate a deterministic dealer paylink (Change 8 S3). Staff-gated: the row
+  // lands on ar_invoice_deliveries (kind STATEMENT, tone PAYLINK_NOTICE) under a
+  // deterministic idempotency_key derived from (customer, invoice, amount, channel),
+  // so a repeated call lands on the same delivery row and the URL is the same URL.
+  sendPaylink(input: BillingSendPaylinkRequest): Promise<Result<BillingSendPaylinkResult>> {
+    return staffBilling.billingSendPaylink(this.#client, input);
+  }
+
+  // Read the C8 statement preview: the ar_statements artefact, the customer's
+  // open lines, and the 5-bucket aging. Reconciled is the server's assertion that
+  // the buckets add up to openCents and the late buckets add up to overdueCents;
+  // a drift makes the panel refuse to render.
+  statementPreview(customerId: string, statementId: string): Promise<Result<BillingStatementPreview>> {
+    return staffBilling.billingGetStatementPreview(this.#client, customerId, statementId);
   }
 }

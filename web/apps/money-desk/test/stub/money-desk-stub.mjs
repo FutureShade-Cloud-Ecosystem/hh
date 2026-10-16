@@ -215,9 +215,11 @@ function reset(kind = "full") {
       payments: [],
     })),
     payments: [],
+    holds: [],
     credit_memos: [],
     ap_contacts: new Map(),
-    statements: [],
+    statements: new Map(),
+    workspace_statements: [],
     runs: new Map(),
     keys: new Map(),
     notes: new Map(),
@@ -277,7 +279,7 @@ function reset(kind = "full") {
   );
   world.ap_contacts.set(custId(1), { name: "Maria Quinn", email: "ap@graniteedge.example", phone: "+1-555-0101" });
   world.ap_contacts.set(custId(2), { name: "Otis Bell", email: "ops@oakline.example", phone: "+1-555-0102" });
-  world.statements.push(
+  world.workspace_statements.push(
     { id: uuid("a", 700), run_id: uuid("a", 701), acct: 1, mode: "MASS", as_of: dayOffset(-30), closing: 728_140, delivery: "SENT", created_at: dayOffset(-30) },
     { id: uuid("a", 702), run_id: uuid("a", 703), acct: 1, mode: "INTERIM", as_of: dayOffset(-2), closing: 728_140, delivery: "QUEUED", created_at: dayOffset(-2) },
     { id: uuid("a", 704), run_id: uuid("a", 705), acct: 2, mode: "MASS", as_of: dayOffset(-30), closing: 345_500, delivery: "SENT", created_at: dayOffset(-30) },
@@ -288,11 +290,6 @@ const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 const invById = (id) => world.invoices.find((i) => i.id === id);
-// Free-text notes the workspace activity tab carries (customer_ar_notes, 0405).
-// world.notes is keyed by customer_id so the same account's notes accumulate across
-// sessions. Each row carries the same fields the server returns.
-if (!("notes" in world)) world.notes = new Map();
-reset();
 
 // workspaceFor builds the full workspace payload for one customer. The 5-bucket aging
 // is the same arithmetic the core uses; the five buckets sum to openCents and the
@@ -331,7 +328,7 @@ function workspaceFor(customerId) {
   const creditNotes = world.credit_memos
     .filter((m) => m.acct === a.n && m.status !== "VOID")
     .map(workspaceCredit);
-  const statements = (world.statements ?? []).filter((s) => s.acct === a.n).map(workspaceStatement);
+  const statements = (world.workspace_statements ?? []).filter((s) => s.acct === a.n).map(workspaceStatement);
   const notes = (world.notes.get(customerId) ?? []).map(workspaceNote);
   const activity = workspaceActivity(a);
   const aging = agingFor(a);
@@ -394,7 +391,7 @@ function emptyHeader(customerId) {
 }
 
 function workspaceInvoiceRow(inv) {
-  const bucket = bucketOf(inv.late);
+  const bucket = c8BucketOf(inv.late);
   return {
     id: inv.id,
     invoice_no: inv.invoice_no,
@@ -463,17 +460,17 @@ function workspaceNote(n) {
 // balances. The five buckets sum to openCents (the workspace reconciliation check
 // the server also enforces) and the four late buckets sum to overdueCents.
 function agingFor(a) {
-  const buckets = { current: 0, "1 to 30": 0, "31 to 60": 0, "61 to 90": 0, "91 and over": 0 };
+  const buckets = { Current: 0, "1 to 30": 0, "31 to 60": 0, "61 to 90": 0, "91 and over": 0 };
   let open = 0;
   let overdue = 0;
   for (const inv of world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0)) {
-    const b = bucketOf(inv.late);
+    const b = c8BucketOf(inv.late);
     buckets[b.label] = (buckets[b.label] ?? 0) + inv.balance_cents;
     open += inv.balance_cents;
     if (inv.late > 0) overdue += inv.balance_cents;
   }
   return {
-    current_cents: buckets.current,
+    current_cents: buckets.Current,
     days_30_cents: buckets["1 to 30"],
     days_60_cents: buckets["31 to 60"],
     days_90_cents: buckets["61 to 90"],
@@ -1190,6 +1187,108 @@ async function handle(req, res) {
 
   if (method === "GET" && path === "/api/v1/ar/holds") return send(res, 200, holdsPage(q.get("status") ?? ""));
 
+  // C8 S4: place a manual credit hold by hand. Manager-gated (the role gate refuses
+  // the call with 403 in production; the stub mirrors it with the same gate word).
+  if (method === "POST" && path === "/api/v1/ar/holds") {
+    if (!isController(req)) return send(res, 403, { error: "Forbidden" });
+    const body = await readBody(req);
+    const cid = String(body?.customer_id ?? "");
+    const reason = String(body?.reason ?? "").trim();
+    if (cid === "") return refuse(res, 400, "customer_id is required");
+    if (reason === "") return refuse(res, 400, "reason is required");
+    const acct = ACCOUNTS.find((a) => custId(a.n) === cid);
+    if (!acct) return refuse(res, 404, "no such customer");
+    const already = world.holds.find((h) => h.status === "ACTIVE" && h.customer_id === cid);
+    if (already) return send(res, 200, already);
+    const hold = {
+      id: uuid("h", 1000 + world.holds.length),
+      customer_id: cid,
+      customer_name: acct.name,
+      status: "ACTIVE",
+      hold_kind: "MANUAL",
+      auto_placed: false,
+      reason,
+      override_until: null,
+      override_reason: "",
+      created_at: NOW_ISO(),
+    };
+    world.holds.push(hold);
+    return send(res, 201, hold);
+  }
+
+  // C8 S3: send a paylink (the receivables reminder). Staff-gated; the stub gates it
+  // the same way every other reads route is gated, manager+staff carry it.
+  if (method === "POST" && path === "/api/v1/ar/payments/paylink") {
+    const body = await readBody(req);
+    const cid = String(body?.customer_id ?? "");
+    if (cid === "") return refuse(res, 400, "customer_id is required");
+    const acct = ACCOUNTS.find((a) => custId(a.n) === cid);
+    if (!acct) return refuse(res, 404, "no such customer");
+    const amount = Number.isFinite(Number(body?.amount_cents)) ? Number(body?.amount_cents) : 0;
+    const channel = String(body?.channel ?? "EMAIL").toUpperCase();
+    const invoice = body?.invoice_id ? String(body.invoice_id) : "";
+    const recipient = String(body?.recipient ?? "");
+    // The deterministic token mirrors the server's SHA-256-of-pipe-joined payload,
+    // truncated to 16 hex chars. The stub keeps the contract honest; the browser's
+    // deterministicPaylinkToken mirrors the same shape so the Copy URL action lands
+    // on the same URL a Send action would have produced.
+    const payload = [cid, invoice, amount > 0 ? String(amount) : "", channel].join("|");
+    const token = simpleHashHex(payload, 16);
+    const paylink_url = `/paylink/${token}`;
+    // Idempotent: a repeated call with the same tuple yields the same delivery row.
+    const idemKey = `paylink-${token}`;
+    if (!world.paylinks) world.paylinks = [];
+    const existing = world.paylinks.find((p) => p.idem_key === idemKey);
+    const sent_at = NOW_ISO();
+    if (!existing) {
+      world.paylinks.push({
+        id: uuid("p", 1000 + world.paylinks.length),
+        idem_key: idemKey,
+        customer_id: cid,
+        invoice_id: invoice || null,
+        amount_cents: amount > 0 ? amount : null,
+        channel,
+        recipient,
+        paylink_url,
+        sent_at,
+      });
+    }
+    return send(res, 200, { paylink_url, status: "QUEUED", sent_at });
+  }
+
+  // C8 S3: statement preview (artefact + open lines + 5-bucket aging). The stub
+  // computes the same five buckets the core computes, so a Drift shows up the same
+  // way the server would show it (reconciled = false).
+  m = path.match(/^\/api\/v1\/billing\/ar\/customers\/([^/]+)\/statements\/([^/]+)\/preview$/);
+  if (m && method === "GET") {
+    const cid = m[1];
+    const sid = m[2];
+    const acct = ACCOUNTS.find((a) => custId(a.n) === cid);
+    if (!acct) return refuse(res, 404, "no such customer");
+    const statement = (world.workspace_statements ?? []).find((s) => s.id === sid && s.acct === acct.n);
+    if (!statement) return refuse(res, 404, "no such statement for this customer");
+    const open = (world.invoices ?? []).filter(
+      (i) => i.acct === acct.n && (i.status === "FINALIZED" || i.status === "PARTIALLY_PAID") && i.balance_cents > 0 && i.doc_type !== "CREDIT_MEMO",
+    );
+    const aging = bucketsFor(open);
+    const sumBuckets = aging.current_cents + aging.days_30_cents + aging.days_60_cents + aging.days_90_cents + aging.days_90_plus_cents;
+    const sumLate = aging.days_30_cents + aging.days_60_cents + aging.days_90_cents + aging.days_90_plus_cents;
+    const reconciled = sumBuckets === aging.open_cents && sumLate === aging.overdue_cents;
+    return send(res, 200, {
+      statement,
+      open_lines: open.map((i) => ({
+        invoice_id: i.id,
+        invoice_no: invNumber(i),
+        due_date: i.due_date,
+        balance_cents: i.balance_cents,
+        days_overdue: Math.max(0, Math.round((Date.now() - Date.parse(i.due_date)) / 86_400_000)),
+        bucket_label: bucketLabel(Math.max(0, Math.round((Date.now() - Date.parse(i.due_date)) / 86_400_000))),
+      })),
+      aging,
+      reconciled,
+    });
+  }
+
   // The release, the override and the sweep are an administrator's: any other role is refused
   // with the gate's shared body.
   m = path.match(/^\/api\/v1\/ar\/holds\/([^/]+)\/(ar-release|override)$/);
@@ -1368,6 +1467,52 @@ const server = createServer((req, res) => {
 server.listen(port, () => {
   console.log(`money-desk-stub listening on ${port}`);
 });
+
+// --- Change 8 S3 + S4 + S3M stub helpers -------------------------------------------------------
+// Pure helpers used by the C8 paylink, statement preview and hold-by-hand routes. The
+// bucket derivation mirrors the server's INCLUSIVE-at-the-top-of-each-band bands (so
+// a balance exactly 30 days past due sits in "1 to 30", never "31 to 60"); the hash
+// is the same deterministic-pipe-joined-payload shape the core uses, so the stub and
+// the browser land on the same URL for the same tuple.
+
+function bucketLabel(days) {
+  if (days <= 0) return "Current";
+  if (days <= 30) return "1 to 30";
+  if (days <= 60) return "31 to 60";
+  if (days <= 90) return "61 to 90";
+  return "91 and over";
+}
+
+function bucketsFor(openInvoices) {
+  const a = { current_cents: 0, days_30_cents: 0, days_60_cents: 0, days_90_cents: 0, days_90_plus_cents: 0, open_cents: 0, overdue_cents: 0 };
+  const now = Date.now();
+  for (const i of openInvoices) {
+    a.open_cents += i.balance_cents;
+    const days = Math.max(0, Math.round((now - Date.parse(i.due_date)) / 86_400_000));
+    if (days > 0) a.overdue_cents += i.balance_cents;
+    if (days <= 0) a.current_cents += i.balance_cents;
+    else if (days <= 30) a.days_30_cents += i.balance_cents;
+    else if (days <= 60) a.days_60_cents += i.balance_cents;
+    else if (days <= 90) a.days_90_cents += i.balance_cents;
+    else a.days_90_plus_cents += i.balance_cents;
+  }
+  return a;
+}
+
+function simpleHashHex(payload, hexChars) {
+  // FNV-1a 32-bit; the token's role is determinism, not cryptographic secrecy, so the
+  // stub keeps the same shape the browser's deterministicPaylinkToken uses. Truncates
+  // to hexChars chars (the server uses 16).
+  let h1 = 0x811c9dc5;
+  let h2 = 0xdeadbeef;
+  for (let i = 0; i < payload.length; i++) {
+    const c = payload.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  const hex = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
+  return hex.slice(0, hexChars);
+}
 
 // A contract test that starts this stub ends it by closing the stub's standard input, never by a signal: with
 // ROLE_STUB_STDIN_EXIT set, the stub exits when that stream ends.
