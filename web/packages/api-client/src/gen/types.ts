@@ -3265,6 +3265,18 @@ export type MessagingChannelMember = {
   source: "DERIVED" | "EXPLICIT";
   joined_at: string;
 };
+export type MessagingPerson = {
+  user_id: string;
+  display_name: string;
+  role_label: string;
+  branch_label: string;
+  is_me: boolean;
+};
+export type MessagingPersonPage = {
+  items: MessagingPerson[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type MessagingMessage = {
   id: string;
   channel_id: string;

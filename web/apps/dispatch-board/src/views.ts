@@ -33,17 +33,26 @@ import {
   BOARD_COLUMNS,
   LOAD_VALUE_CHOICES,
   REOPEN_CHOICES,
+  TIME_AXIS_HOURS,
   TRUCK_TYPES,
   TRUCK_TYPE_LABEL,
+  boardProblemLine,
+  boardProblems,
+  carriesMoffett,
   capacityText,
+  deckSlotsForStops,
   driverLine,
   fleetStateWord,
+  gaugeLabel,
   historyRow,
+  netPayloadWords,
   policyRows,
+  suggestRunsForLoad,
   truckLine,
   volumeText,
   willCallLine,
   willCallWord,
+  yardLoadOrder,
   CARD_LABEL,
   CARD_ORDER,
   RUN_LABEL,
@@ -90,6 +99,7 @@ import {
   targetName,
   unloadableSummary,
   type Band,
+  type BoardProblem,
   type CardId,
 } from "./dispatch-logic.js";
 
@@ -162,6 +172,12 @@ export interface BoardModel {
   };
   /** A refusal that belongs to one truck's lane, shown in that lane. */
   readonly runError: { readonly id: string; readonly words: string } | null;
+  /** The run currently opened in the run-detail drawer, or empty when the drawer is closed. */
+  readonly selectedRunId: string;
+  /** The fix keys the dispatcher has marked applied on the current view. */
+  readonly appliedFixes: ReadonlySet<string>;
+  /** The stop the suggest-runs panel is open on, or empty when closed. */
+  readonly suggestStopId: string;
 }
 
 export type Span = "DAY" | "WEEK";
@@ -621,7 +637,8 @@ function loadCard(model: BoardModel, view: DispatchLoadBoardView, stop: Dispatch
           ? html`<select class="control pick" data-action="assign-pick" data-stop-id=${stop.id} aria-label=${`Put ${stop.order_no ?? "this load"} on a truck`}>
               <option data-run-id="">Put on a truck</option>
               ${targets.map((t) => html`<option data-run-id=${t.runId} ?disabled=${t.blocked !== ""}>${targetName(t)} · ${targetLine(t)}</option>`)}
-            </select>`
+            </select>
+            <button type="button" class="btn btn-secondary small-btn" data-action="suggest-open" data-stop-id=${stop.id} ?disabled=${model.busy}>Suggest runs</button>`
           : nothing}
         ${targets.length === 0 && !stop.run_id && stop.status === "READY" && editable && view.loads.length === 0
           ? html`<span class="small dim">No truck is open for this day. Open one first.</span>`
@@ -772,6 +789,139 @@ function bulkBar(model: BoardModel, view: DispatchLoadBoardView): TemplateResult
   `;
 }
 
+// ---- the redesigned board (WALK-C16) ---------------------------------------------------------------
+
+/** One fix line as the dispatcher sees it: the problem's sentence and a button that marks it
+ *  applied. Applied fixes stay struck through on the strip and are not drawn again until the
+ *  board is read. The strip never invents its own sentences: it reads boardProblemLine. */
+function fixLine(model: BoardModel, p: BoardProblem): TemplateResult {
+  const key = `${p.runNo}:${p.kind}`;
+  const applied = model.appliedFixes.has(key);
+  return html`
+    <li class="problem ${applied ? "applied" : ""}" data-problem-kind=${p.kind}>
+      <span class="problem-line" data-problem-line>${boardProblemLine(p)}</span>
+      <button type="button" class="link" data-action="apply-fix" data-fix-runno=${p.runNo} data-fix-kind=${p.kind} aria-pressed=${applied ? "true" : "false"}>${applied ? "Undo" : "Mark applied"}</button>
+    </li>
+  `;
+}
+
+/** The problems strip: a one-line-per-row list of what the day needs. The strip sits above the
+ *  board and disappears when there are none, so a clean day is silent. */
+function problemsStrip(model: BoardModel, view: DispatchLoadBoardView): TemplateResult | typeof nothing {
+  const problems = boardProblems(view);
+  if (problems.length === 0) return nothing;
+  return html`
+    <section class="problems" data-problems aria-label="What the day needs">
+      <h3 class="problems-head">What the day needs<span class="count">${problems.length}</span></h3>
+      <ul class="problem-list">${problems.map((p) => fixLine(model, p))}</ul>
+    </section>
+  `;
+}
+
+/** The time axis: hours across the top, a column per truck, stops placed by stop_no. The axis
+ *  is for the redesign board's time view: today only, twelve hours, one cell per slot. The view
+ *  never draws money of its own; the rows are the same trucks the load board has. */
+function timeAxisRow(view: DispatchLoadBoardView, model: BoardModel): TemplateResult {
+  const rows = yardLoadOrder(view.loads);
+  const day = view.date;
+  return html`
+    <div class="time-axis" data-time-axis>
+      <div class="time-axis-grid" role="grid" aria-label="Day time axis">
+        <div class="time-axis-head" role="row">
+          <div class="time-axis-cell head-run" role="columnheader">Run</div>
+          ${TIME_AXIS_HOURS.map((h) => html`<div class="time-axis-cell head-hour" role="columnheader">${h}</div>`)}
+        </div>
+        ${rows.map((row) => {
+          const slots = deckSlotsForStops(row.stops, day);
+          return html`
+            <div class="time-axis-row" role="row" data-axis-run-id=${row.run.id}>
+              <div class="time-axis-cell axis-run" role="rowheader">
+                <button type="button" class="link" data-action="select-run" data-run-id=${row.run.id} aria-pressed=${model.selectedRunId === row.run.id ? "true" : "false"}>${row.run.run_no}</button>
+              </div>
+              ${TIME_AXIS_HOURS.map((h) => {
+                const inHour = row.stops.some((s) => slots.has(s.stop_no) && Number(s.stop_no) === h + 1);
+                return html`<div class="time-axis-cell ${inHour ? "has-stop" : ""}" role="gridcell" data-hour=${h}></div>`;
+              })}
+            </div>
+          `;
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/** The run-detail drawer: opens when a run is named on the time axis or the load board. The
+ *  drawer shows the crew, the gauges, the net payload (with the Moffett figure when present),
+ *  and the load list, all in one column so it reads on a phone. */
+function runDetailDrawer(model: BoardModel, view: DispatchLoadBoardView): TemplateResult | typeof nothing {
+  if (model.selectedRunId === "") return nothing;
+  const row = view.loads.find((r) => r.run.id === model.selectedRunId);
+  if (row === undefined) return nothing;
+  const truck = view.loads.find((r) => r.run.id === model.selectedRunId)?.run.truck_id
+    ? model.trucks.find((t) => t.id === row.run.truck_id) ?? null
+    : null;
+  const hasMoffett = carriesMoffett(truck);
+  const g = row.gauge;
+  return html`
+    <aside class="run-detail" data-run-detail data-run-id=${row.run.id} aria-label="Run detail">
+      <header class="run-detail-head">
+        <h3>${row.run.run_no}</h3>
+        ${statusPill(row.run.status, RUN_LABEL[row.run.status] ?? row.run.status)}
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-secondary small-btn" data-action="run-close">Close</button>
+      </header>
+      <p class="small">${row.run.truck_code ?? "No truck"} · ${row.run.driver_name ?? "No driver"}</p>
+      <p class="small dim" data-run-payload>${netPayloadWords(g.capacity_kg, hasMoffett)}</p>
+      ${weightGauge(g.weight_kg, g.capacity_kg)}
+      ${typeof g.capacity_m3 === "number" ? gauge("Volume", typeof g.volume_m3 === "number" ? toCuYd(g.volume_m3) : null, toCuYd(g.capacity_m3), "cu yd") : nothing}
+      <ul class="loads">
+        ${row.stops.map(
+          (s) => html`<li class="run-detail-stop" data-stop-id=${s.id} data-order=${s.order_no ?? ""}>
+            <span class="order">${s.order_no ?? "Order"}</span>
+            <span class="small">stop ${s.stop_no}</span>
+          </li>`,
+        )}
+      </ul>
+    </aside>
+  `;
+}
+
+/** The suggest-runs panel: a list of runs the core would accept a load onto, drawn from
+ *  suggestRunsForLoad. The panel is opened from a load's card and closes with the same press. */
+function suggestedRunsPanel(model: BoardModel, view: DispatchLoadBoardView): TemplateResult | typeof nothing {
+  if (model.suggestStopId === "") return nothing;
+  const all: DispatchLoadStop[] = [...view.staging, ...view.loads.flatMap((r) => r.stops)];
+  const stop = all.find((s) => s.id === model.suggestStopId);
+  if (stop === undefined) return nothing;
+  const suggestions = suggestRunsForLoad(view, stop);
+  return html`
+    <section class="suggest" data-suggest aria-label="Suggested runs">
+      <header class="suggest-head">
+        <h3>Suggested runs for ${stop.order_no ?? "this load"}</h3>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-secondary small-btn" data-action="suggest-close">Close</button>
+      </header>
+      ${suggestions.length === 0
+        ? html`<p class="dim" data-suggest-empty>No truck can take it on this day. Open one or move the delivery.</p>`
+        : html`<ul class="suggest-list" data-suggest-list>
+            ${suggestions.map((s) => html`<li class="suggest-row" data-suggest-run-id=${s.runId}>
+              <strong>${s.runNo}</strong>
+              <span class="small">${s.truckCode}</span>
+              <span class="small dim">${s.reason}</span>
+            </li>`)}
+          </ul>`}
+    </section>
+  `;
+}
+
+/** The live view indicator: a small dot that goes amber while a reload is in flight, and a
+ *  reading line when the board is being read. The board does not keep its own clock: the dot
+ *  is the only signal, and it sits in the corner so the dispatcher can keep eyes on the work. */
+function liveView(model: BoardModel): TemplateResult {
+  const busy = model.loading || model.busy;
+  return html`<p class="live" data-live data-busy=${busy ? "true" : "false"}><span class="live-dot" aria-hidden="true"></span>${busy ? "Reading the board" : "Live"}</p>`;
+}
+
 function gapsPanel(model: BoardModel): TemplateResult {
   const gaps = model.gaps;
   if (gaps === null) return html``;
@@ -847,6 +997,7 @@ export function renderLoadBoard(model: BoardModel): TemplateResult {
   return html`
     ${quickCards(model, raw)}
     ${weekStrip(model)}
+    ${problemsStrip(model, view)}
     <div class="board-bar">
       <div class="segs" role="group" aria-label="Group the board">
         <button type="button" class="seg" data-action="axis" data-axis="TRUCK" aria-pressed=${model.axis === "TRUCK" ? "true" : "false"}>By truck</button>
@@ -876,6 +1027,9 @@ export function renderLoadBoard(model: BoardModel): TemplateResult {
             </div>
           </div>
         `}
+    ${timeAxisRow(view, model)}
+    ${runDetailDrawer(model, view)}
+    ${suggestedRunsPanel(model, view)}
     ${gapsPanel(model)}
   `;
 }
@@ -1293,6 +1447,7 @@ export function renderDesk(model: BoardModel): TemplateResult {
     </div>
     ${tabs(model)}
     ${toolbar(model)}
+    ${model.tab === "load" ? liveView(model) : nothing}
     ${renderMessages(model)}
     ${raiseCard(model)}
     ${model.loading

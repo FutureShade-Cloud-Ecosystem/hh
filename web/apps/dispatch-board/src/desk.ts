@@ -133,6 +133,12 @@ export class DispatchDesk {
   #formSeeded: string | null = null;
   // The sheet whose starting field values the screen has already been given.
   #sheetSeeded: string | null = null;
+  // The run currently opened in the run-detail drawer. Empty when the drawer is closed.
+  #selectedRunId = "";
+  // The list of "fix" lines the dispatcher has applied to the current view, kept in memory only.
+  #appliedFixes: ReadonlySet<string> = new Set();
+  // The suggest-runs panel is open on one load. Empty when the panel is closed.
+  #suggestStopId = "";
 
   constructor(api: DispatchApi, host: DeskHost) {
     this.#api = api;
@@ -260,6 +266,8 @@ export class DispatchDesk {
     this.#sheet = null;
     this.#trail = null;
     this.#sheetSeeded = null;
+    // Applied fixes ride only one view: a fresh board is honest about its own state.
+    this.#appliedFixes = new Set();
   }
 
   // ---- the model --------------------------------------------------------------------------------
@@ -300,6 +308,9 @@ export class DispatchDesk {
       historyFault: this.#historyFault,
       willCall: { order: this.#wcOrder, items: this.#wcItems, looked: this.#wcLooked, error: this.#wcError, minted: this.#wcMinted },
       runError: this.#runError,
+      selectedRunId: this.#selectedRunId,
+      appliedFixes: this.#appliedFixes,
+      suggestStopId: this.#suggestStopId,
     };
   }
 
@@ -401,6 +412,35 @@ export class DispatchDesk {
       }
       case "card-clear":
         this.#card = "";
+        this.#host.repaint();
+        return true;
+      case "select-run": {
+        const id = attr("data-run-id");
+        this.#selectedRunId = this.#selectedRunId === id ? "" : id;
+        this.#host.repaint();
+        return true;
+      }
+      case "run-close":
+        this.#selectedRunId = "";
+        this.#host.repaint();
+        return true;
+      case "apply-fix": {
+        const key = `${attr("data-fix-runno")}:${attr("data-fix-kind")}`;
+        const next = new Set(this.#appliedFixes);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        this.#appliedFixes = next;
+        this.#host.repaint();
+        return true;
+      }
+      case "suggest-open": {
+        const id = attr("data-stop-id");
+        this.#suggestStopId = this.#suggestStopId === id ? "" : id;
+        this.#host.repaint();
+        return true;
+      }
+      case "suggest-close":
+        this.#suggestStopId = "";
         this.#host.repaint();
         return true;
       case "span":
