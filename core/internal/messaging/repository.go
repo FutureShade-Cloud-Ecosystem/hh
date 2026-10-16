@@ -1452,7 +1452,7 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 // CreateGroup inserts one group room and seats its founding members in ONE
 // transaction: the caller as OWNER and every named staffer as an explicit
 // MEMBER, the feed bump committing with the room or not at all. There is no
-// convergence arm: a group carries no slug (migration 0395's shape guard), so
+// convergence arm: a group carries no slug (migration 0397's shape guard), so
 // every call starts a fresh room.
 func (r *Repository) CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error) {
 	if r.pool == nil {
