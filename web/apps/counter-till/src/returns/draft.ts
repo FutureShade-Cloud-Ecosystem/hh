@@ -5,15 +5,27 @@
 // of it; these refusals only keep an impossible request off the wire and say why in words.
 import type { CustomerLine, CustomerOrder } from "./lines.js";
 
-/** What happens to a returned line: back on the shelf, written off as damaged, or no goods back. */
-export type Disposition = "RESTOCK" | "DAMAGED" | "NO_RETURN";
+/**
+ * What happens to a returned line: back on the shelf, written off as damaged, no goods back, or
+ * flagged as a manufacturer defect to be sized against the warranty claim threshold. Walk change 6
+ * item 4 added MANUFACTURER_DEFECT: when chosen, the till's return drawer shows a one line
+ * threshold sentence ("Over the $50 claim threshold ($X at cost): this goes to a warranty claim." or
+ * the under-the-threshold variant), and the cost it compares is the line's quantity x unit cost.
+ */
+export type Disposition = "RESTOCK" | "DAMAGED" | "NO_RETURN" | "MANUFACTURER_DEFECT";
 
-export const DISPOSITIONS: readonly Disposition[] = ["RESTOCK", "DAMAGED", "NO_RETURN"];
+export const DISPOSITIONS: readonly Disposition[] = [
+  "RESTOCK",
+  "DAMAGED",
+  "NO_RETURN",
+  "MANUFACTURER_DEFECT",
+];
 
 export const DISPOSITION_WORDS: Record<Disposition, string> = {
   RESTOCK: "Return to stock",
   DAMAGED: "Refund, do not restock (damaged)",
   NO_RETURN: "Refund, nothing returned",
+  MANUFACTURER_DEFECT: "Manufacturer defect",
 };
 
 export type DraftAnswer = { ok: true } | { ok: false; words: string };
@@ -111,7 +123,10 @@ export class ReturnDraft {
   /** Choose what happens to a line. Choosing on an unpicked line picks one unit of it. */
   setDisposition(orderLineId: string, value: string): DraftAnswer {
     if (!DISPOSITIONS.includes(value as Disposition)) {
-      return { ok: false, words: "Choose return to stock, damaged, or nothing returned." };
+      return {
+        ok: false,
+        words: "Choose return to stock, damaged, nothing returned, or a manufacturer defect.",
+      };
     }
     if (this.qtyOf(orderLineId) === 0) {
       const picked = this.setQty(orderLineId, "1");

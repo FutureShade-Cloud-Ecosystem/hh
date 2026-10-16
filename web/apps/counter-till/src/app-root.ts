@@ -29,7 +29,7 @@ import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { ApiClient, staffFeedback, staffWarranty } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
   type FeedbackSender,
@@ -1121,6 +1121,7 @@ export class CounterTillApp extends HHElement {
       return;
     }
     this.#branch = branch.value;
+    this.#returns.claimThresholdCents = await this.#readClaimThresholdCents(this.#syncClient);
     // The branch facts the ported surface reads (the branch default, the yard
     // names beside stock): filled in place from the route's own answer, before
     // anything mounts.
@@ -1325,6 +1326,23 @@ export class CounterTillApp extends HHElement {
       }
       field.value = wanted;
     }
+  }
+
+  /**
+   * Read the dealer's warranty claim threshold once at sign in, for the Counter Till Return
+   * Drawer's manufacturer defect sentence. The 0396 seed is $50.00 (5000 cents); a refused read
+   * keeps that seed so the desk still reads in a coherent unit, never a fabricated zero that
+   * would mis-classify an over-threshold defect as shrinkage. The live policy read makes the
+   * claim threshold sentence agree with the core's `CostOverClaimThreshold` end to end.
+   */
+  async #readClaimThresholdCents(client: ApiClient): Promise<number> {
+    const FALLBACK_CENTS = 5000;
+    const branchId = this.#branch?.id;
+    const result = await staffWarranty.warrantyGetPolicy(client, branchId === undefined ? {} : { branch_id: branchId });
+    if (!result.ok) return FALLBACK_CENTS;
+    const threshold = result.value.claim_threshold_cents;
+    if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0) return FALLBACK_CENTS;
+    return Math.trunc(threshold);
   }
 
   /** The widget's sender rides the property, never a template binding (the

@@ -29,6 +29,20 @@ func (f *fakeStore) Exists(_ context.Context, id string) (bool, error) {
 	return false, nil
 }
 
+// Names answers off the same fixture list, the display name the list carries.
+func (f *fakeStore) Names(_ context.Context, ids []string) (map[string]string, error) {
+	names := make(map[string]string, len(ids))
+	for _, id := range ids {
+		for _, b := range f.list {
+			if b.ID == id {
+				names[id] = b.Name
+				break
+			}
+		}
+	}
+	return names, nil
+}
+
 // TestService_ListPassesThrough proves the service returns both branches from the store
 // unchanged (the list is a thin read seam).
 func TestService_ListPassesThrough(t *testing.T) {
