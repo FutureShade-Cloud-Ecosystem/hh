@@ -94,8 +94,11 @@ export class ArApi {
     return staffBranches.branchesList(this.#client);
   }
 
-  /** The register in one view; chip PAID with no filter reads every invoice, paid ones too. */
-  register(opts: { chip?: "OVERDUE" | "DISPUTED" | "PAID"; customerId?: string } = {}): Promise<Result<BillingRegisterPage>> {
+  /** The register in one view; chip PAID with no filter reads every invoice, paid ones too.
+   *  The C8 chip set (all / past_due / current / on_hold) sits alongside the legacy StatusX
+   *  names; an old URL using OVERDUE or DISPUTED still resolves the same way it always did.
+   */
+  register(opts: { chip?: "OVERDUE" | "DISPUTED" | "PAID" | "all" | "past_due" | "current" | "on_hold"; customerId?: string } = {}): Promise<Result<BillingRegisterPage>> {
     return staffBilling.billingListRegister(this.#client, {
       limit: 200,
       ...(opts.chip === undefined ? {} : { chip: opts.chip }),

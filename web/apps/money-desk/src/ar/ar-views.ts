@@ -36,7 +36,11 @@ import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReve
 import { renderSettingsPanels } from "./office-settings-views.js";
 
 export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
-export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
+// C8 register filter chips. The legacy strings ("open", "overdue", "promised", "disputed", "paid")
+// stay valid for backward compatibility with every stored URL and every automation that already
+// names them.
+export type RegisterFilter = "all" | "past_due" | "current" | "on_hold"
+  | "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
 export type WorkChoice = "replacement" | "promise" | "reminder";
@@ -206,23 +210,68 @@ function tiles(model: DeskModel): TemplateResult {
   `;
 }
 
+// C8 register filter chips. "All" is every open document (excludes PAID), "Past due" is the overdue
+// subset, "Current" is the not-yet-past-due subset, "On hold" is the credit-hold subset. The chip
+// order is the order the screen reads them: All, then the three status slices an operator most
+// often wants to see one at a time.
 const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
-  { id: "open", word: "Open" },
-  { id: "overdue", word: "Overdue" },
-  { id: "promised", word: "Promised" },
-  { id: "disputed", word: "Disputed" },
-  { id: "paid", word: "Paid" },
+  { id: "all", word: "All" },
+  { id: "past_due", word: "Past due" },
+  { id: "current", word: "Current" },
+  { id: "on_hold", word: "On hold" },
 ];
+
+// isOpenRow is the shared "is this row one we still have to collect on" predicate. Both "all" and
+// "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
+// credit memos are excluded because they offset what is owed rather than what is due.
+function isOpenRow(r: BillingRegisterRow): boolean {
+  return r.status !== "PAID" && r.status !== "CREDIT";
+}
 
 function shownRows(model: DeskModel): BillingRegisterRow[] {
   const ids = model.cardFilter === null ? null : new Set(model.landing?.cards.find((c) => c.id === model.cardFilter)?.account_ids ?? []);
   let rows = model.rows.filter((r) => ids === null || ids.has(r.customer_id));
-  if (model.filter === "overdue") rows = rows.filter((r) => r.days_overdue > 0 && r.status !== "PAID");
-  else if (model.filter === "promised") rows = rows.filter((r) => typeof r.promised_date === "string" && r.promised_date !== "");
-  else if (model.filter === "disputed") rows = rows.filter((r) => r.disputed);
-  else if (model.filter === "paid") rows = rows.filter((r) => r.status === "PAID");
-  else rows = rows.filter((r) => r.status !== "PAID");
+  switch (model.filter) {
+    case "past_due":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      break;
+    case "current":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue === 0);
+      break;
+    case "on_hold":
+      rows = rows.filter((r) => isOpenRow(r) && r.account_status === "CREDIT_HOLD");
+      break;
+    case "all":
+      rows = rows.filter(isOpenRow);
+      break;
+    // Legacy chips: keep every old behaviour so a stored URL still works.
+    case "overdue":
+      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      break;
+    case "promised":
+      rows = rows.filter((r) => isOpenRow(r) && typeof r.promised_date === "string" && r.promised_date !== "");
+      break;
+    case "disputed":
+      rows = rows.filter((r) => isOpenRow(r) && r.disputed);
+      break;
+    case "paid":
+      rows = rows.filter((r) => r.status === "PAID");
+      break;
+  }
   return rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
+}
+
+// pastDueSummary returns the "X of Y past due · $Z" line the register header renders when the
+// Past due chip is active. It is computed client-side from the currently loaded rows; a paginated
+// server reads the page from this same expression and the totals must agree. Returns null when the
+// chip is not the one currently active, so the summary does not bleed into other screens.
+function pastDueSummary(model: DeskModel): { pastDueCount: number; totalCount: number; pastDueCents: number } | null {
+  if (model.filter !== "past_due") return null;
+  const open = model.rows.filter(isOpenRow);
+  const pastDue = open.filter((r) => r.days_overdue > 0);
+  let cents = 0;
+  for (const r of pastDue) cents += r.balance_cents;
+  return { pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
 }
 
 export function shownInvoiceIds(model: DeskModel): string[] {
@@ -233,12 +282,24 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
   const overdue = r.days_overdue > 0 && r.status !== "PAID";
   const acct = model.aging.find((a) => a.customer_id === r.customer_id);
   const terms = acct === undefined ? "" : ` · Net ${acct.payment_terms_days}`;
+  // bucket_label is the C8 5-bucket label the server stamped for this row. When it is present
+  // (i.e. the row is past due) the pill sits next to the overdue line; when it is absent (the
+  // row is Current) we render nothing beside the due date so the column stays at one line.
+  const bucketLabel = typeof r.bucket_label === "string" && r.bucket_label !== "" ? r.bucket_label : "";
   return html`
     <tr data-register-row>
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
       <td><span>${r.customer_name}</span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
-      <td class="nowrap ${overdue ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+      <td class="nowrap due-col">
+        <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
+        ${overdue
+          ? html`<div class="late-line" data-testid="overdue-line">
+              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} late</span>
+              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketLabel}</span>` : nothing}
+            </div>`
+          : nothing}
+      </td>
       <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
       <td class="num">${formatMoney(r.balance_cents)}</td>
       <td class="act">
@@ -254,6 +315,9 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
 
 function register(model: DeskModel): TemplateResult {
   const rows = shownRows(model);
+  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; null when
+  // a different chip is active so the header does not contradict the table below it.
+  const summary = pastDueSummary(model);
   return html`
     <section class="panel" aria-label="AR register">
       <div class="panel-head">
@@ -263,6 +327,11 @@ function register(model: DeskModel): TemplateResult {
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
+      ${summary === null
+        ? nothing
+        : html`<p class="dim small c8-summary" data-testid="c8-summary">
+            ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
+          </p>`}
       ${rows.length === 0
         ? html`<div class="empty"><strong>No invoices in this view.</strong><span class="dim">Nothing matches the filter.</span></div>`
         : html`

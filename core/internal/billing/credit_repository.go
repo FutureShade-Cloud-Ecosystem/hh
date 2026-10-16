@@ -92,13 +92,20 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // fees, adjustments) are deliberately excluded from the BUCKETS because they have no due date to age
 // from; they are still visible in the tie-out via ARBalanceCents, which is the figure that has to
 // reconcile to the GL.
+//
+// The five C8 bucket columns (Current, Days30, Days60, Days60To90, Days90Plus) are mutually
+// exclusive at every day boundary, by construction: the upper bound of one band is exactly one
+// less than the lower bound of the next. The same projection feeds both the auto-hold rule and the
+// operator's aging summary, so a band total of 30 in the screen matches 30 in the rule and 30 in
+// the register's per-row bucket_label derivation, all from one expression.
 const agingSelect = `
 	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
 	       c.payment_terms_days, c.credit_limit_cents,
 	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date <= i.due_date), 0),
 	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
 	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 30 AND $1::date <= i.due_date + 60), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 60), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 60 AND $1::date <= i.due_date + 90), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 90), 0),
 	       COALESCE(SUM(i.balance_cents), 0),
 	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
@@ -140,7 +147,7 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 		var a AgingRow
 		if err := rows.Scan(&a.CustomerID, &a.CustomerName, &a.AccountNo, &a.BranchID,
 			&a.TermsDays, &a.CreditLimitCents,
-			&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days90PlusCents,
+			&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days60To90Cents, &a.Days90PlusCents,
 			&a.TotalCents, &a.PastBucketCents, &a.OnHold, &a.HoldKind); err != nil {
 			return nil, fmt.Errorf("billing: scan aging row: %w", err)
 		}

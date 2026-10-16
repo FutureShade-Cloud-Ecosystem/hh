@@ -235,6 +235,28 @@ export function rowMarks(row: { status: string; days_overdue: number; disputed: 
   return marks;
 }
 
+/** C8 5-bucket human label and machine key for a given days-overdue count. Mirrors the server's
+ * BucketLabelFor function in core/internal/billing/register_model.go. The two MUST agree at every
+ * boundary, otherwise the per-row pill on the register and the per-customer aging band card
+ * disagree about the same dollar, which is the failure mode this whole screen exists to prevent.
+ */
+export function bucketLabelFor(daysOverdue: number): { label: string; key: string } {
+  if (daysOverdue <= 0) return { label: "Current", key: "CURRENT" };
+  if (daysOverdue <= 30) return { label: "1 to 30", key: "1_30" };
+  if (daysOverdue <= 60) return { label: "31 to 60", key: "31_60" };
+  if (daysOverdue <= 90) return { label: "61 to 90", key: "61_90" };
+  return { label: "91 and over", key: "90_PLUS" };
+}
+
+/** "N days late" / "1 day late" phrasing for the due-column late line. "1" is a special case to
+ * keep the singular/plural agreement honest.
+ */
+export function daysLateWord(daysOverdue: number): string {
+  const n = Math.max(0, Math.floor(daysOverdue));
+  const unit = n === 1 ? "day" : "days";
+  return `${n} ${unit} late`;
+}
+
 /** What the server's split says about one invoice, in the references' words. */
 export function lineWords(line: { outcome: string; stays_open_cents: number }): string {
   if (line.outcome === "CLOSES") return "closes";

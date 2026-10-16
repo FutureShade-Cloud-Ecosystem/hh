@@ -319,7 +319,7 @@ export async function paymentsApplyReceived(
 
 export async function billingListRegister(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean; issued_from?: string; issued_to?: string },
+  opts?: { cursor?: string; limit?: number; q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT" | "all" | "past_due" | "current" | "on_hold"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean; issued_from?: string; issued_to?: string },
   call?: ApiCallOptions
 ): Promise<Result<BillingRegisterPage>> {
   return client.request<BillingRegisterPage>({

@@ -287,6 +287,8 @@ export type BillingRegisterRow = {
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
   status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
   days_overdue: number;
+  bucket_label?: "" | "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  bucket_key?: "" | "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
   account_status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
   disputed: boolean;
   promised_date?: string | null;

@@ -104,6 +104,20 @@ const receivablesStyles = css`
   td.act { text-align: end; }
   td.late { color: var(--hh-state-stop); font-weight: 700; }
   td > span.small, td > .small { display: block; }
+
+  /* Due column: due date on top, overdue + 5-bucket pill on a stacked second line. The overdue
+     age is the stop-state red, the bucket pill is a thin dashed outline so the two marks do not
+     compete for the same word; both come from the server's bucket_label and agree at every
+     boundary because they derive from one expression. */
+  td.due-col { white-space: nowrap; }
+  td.due-col .due-line { display: block; }
+  td.due-col .late-line { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); align-items: center; margin-top: 2px; }
+  td.due-col .late-age { color: var(--hh-state-stop); font-weight: 700; font-size: 12px; }
+  td.due-col .bucket-pill { display: inline-block; border: 1px dashed var(--hh-control-line); border-radius: var(--hh-radius-pill); padding: 0 var(--hh-s-8); font-size: 11px; letter-spacing: 0.04em; color: var(--hh-text-dim); background: var(--hh-row-alt); }
+
+  /* C8 summary line: "N of M past due · $X" rendered below the chip row when Past due is active.
+     Plain dim, tabular figures, sits inline with the panel foot so it does not push the table. */
+  .c8-summary { margin: 0 0 var(--hh-s-12); font-variant-numeric: tabular-nums; }
   tr[aria-current="true"] td { background: var(--hh-row-alt); }
   /* The selected row's ground is the row stripe, and the stop mark's colour does not hold AA text on
      it in brand (the visual review measured 4.01). The sheet's danger ink is the red tuned to be READ

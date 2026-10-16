@@ -348,6 +348,8 @@ type BillingRegisterRow struct {
 	StoredStatus  string                  `json:"stored_status"`
 	Status        string                  `json:"status"`
 	DaysOverdue   int32                   `json:"days_overdue"`
+	BucketLabel   *string                 `json:"bucket_label,omitempty"`
+	BucketKey     *string                 `json:"bucket_key,omitempty"`
 	AccountStatus string                  `json:"account_status"`
 	Disputed      bool                    `json:"disputed"`
 	PromisedDate  *time.Time              `json:"promised_date,omitempty"`
