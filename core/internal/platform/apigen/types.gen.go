@@ -3852,6 +3852,15 @@ type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
 }
 
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
+}
+
 type MessagingChannelMember struct {
 	ChannelId string    `json:"channel_id"`
 	UserId    string    `json:"user_id"`

@@ -3225,7 +3225,7 @@ export type LoadBatchView = {
 };
 export type MessagingChannel = {
   id: string;
-  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
+  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";
   branch_id?: string;
   slug?: string;
   name: string;
@@ -3249,6 +3249,13 @@ export type MessagingChannelCreate = {
 };
 export type MessagingDMCreate = {
   user_id: string;
+};
+export type MessagingGroupCreate = {
+  name?: string;
+  member_ids?: string[];
+};
+export type MessagingChannelRename = {
+  name: string;
 };
 export type MessagingChannelMember = {
   channel_id: string;
