@@ -39,11 +39,17 @@ export function symbolOf(node, sf) {
 }
 
 /** The program the checker types the src with: the app's own tsconfig, so a promise is known by its type and not by its name. */
+// Building the program is the slow part of every census test (seconds on a loaded runner, past bun's 5000 ms
+// default per test), and the callers only read it, so one test file builds it once and shares it.
+let sharedProgram = null;
 export function makeProgram() {
-  const configPath = join(appDir, "tsconfig.json");
-  const read = ts.readConfigFile(configPath, ts.sys.readFile);
-  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, appDir);
-  return ts.createProgram(parsed.fileNames, { ...parsed.options, noEmit: true });
+  if (sharedProgram === null) {
+    const configPath = join(appDir, "tsconfig.json");
+    const read = ts.readConfigFile(configPath, ts.sys.readFile);
+    const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, appDir);
+    sharedProgram = ts.createProgram(parsed.fileNames, { ...parsed.options, noEmit: true });
+  }
+  return sharedProgram;
 }
 
 /** True for a type that is, or may be, a promise (it has a then). */

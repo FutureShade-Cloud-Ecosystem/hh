@@ -73,6 +73,7 @@ type fakeStore struct {
 	intakeCfg  IntakeConfig
 	rateHits   map[string]int // "<bucket>|<windowRFC3339>" → hits
 	photos     map[string][]IntakePhoto
+	policy     policyRows       // walk change 6: keyed by branch_id, "" the org default row (the 0396 shape)
 	failOn     map[string]error // method name → forced error (unwired/broken-store paths)
 }
 

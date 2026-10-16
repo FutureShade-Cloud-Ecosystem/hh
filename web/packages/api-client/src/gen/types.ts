@@ -2942,6 +2942,8 @@ export type InventoryShortfallRow = {
   suggested_value_cents?: number;
   draft_po_id?: string;
   draft_po_no?: string;
+  short_order_nos?: string[];
+  short_order_more?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -7516,6 +7518,15 @@ export type WarrantyVendorProfilePage = {
   items: WarrantyVendorProfile[];
   next_cursor?: string | null;
   limit?: number;
+};
+export type WarrantyPolicy = {
+  branch_id?: string;
+  claim_threshold_cents: number;
+  updated_at?: string;
+};
+export type WarrantyPolicyInput = {
+  branch_id?: string;
+  claim_threshold_cents: number;
 };
 export type WarrantyAddress = {
   line1?: string;

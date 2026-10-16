@@ -5,11 +5,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { makeProgram } from "./await-census.mjs";
 import { srcWriteCensus, writeCensusOfText, writeMethods } from "./write-census.mjs";
+
+// Every test here builds or reads a TypeScript program (seconds each, more on a loaded runner), past bun's 5000 ms
+// default: give each an explicit limit that bun and node:test both honor.
+const SLOW = 60_000;
+const test = (name, fn) => nodeTest(name, { timeout: SLOW }, fn);
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
