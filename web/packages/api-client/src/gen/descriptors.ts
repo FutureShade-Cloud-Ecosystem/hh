@@ -525,6 +525,7 @@ export const SCHEMA_DESCRIPTORS = {
   "MessagingMessageList": {"k":"object","req":["messages"],"props":{"messages":{"k":"array","of":{"k":"ref","name":"MessagingMessage"}}}},
   "MessagingMessagePage": {"k":"object","req":["items"],"props":{"items":{"k":"array","of":{"k":"ref","name":"MessagingMessage"}},"next_cursor":{"k":"union","of":[{"k":"string"},{"k":"null"}]},"limit":{"k":"integer"}}},
   "MessagingMessagePost": {"k":"object","req":["body"],"props":{"body":{"k":"string"},"thread_root_id":{"k":"string"}}},
+  "MessagingMessageEdit": {"k":"object","req":["body"],"props":{"body":{"k":"string"}}},
   "MessagingAckRequest": {"k":"object","req":[],"props":{"method":{"k":"lit","v":["TAP","QUICK_REPLY","VOICE"]}}},
   "MessagingAck": {"k":"object","req":["message_id","user_id","method","acked_at"],"props":{"message_id":{"k":"string"},"user_id":{"k":"string"},"method":{"k":"lit","v":["TAP","QUICK_REPLY","VOICE"]},"acked_at":{"k":"string"}}},
   "MessagingAckProgress": {"k":"object","req":["message_id","required","acked","remaining","complete","acks"],"props":{"message_id":{"k":"string"},"required":{"k":"integer"},"acked":{"k":"integer"},"remaining":{"k":"integer"},"complete":{"k":"boolean"},"acks":{"k":"array","of":{"k":"ref","name":"MessagingAck"}}}},
