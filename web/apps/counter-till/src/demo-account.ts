@@ -12,12 +12,13 @@
 // token in private memory and NEVER reads a credential back from storage:
 // the mirror carries the profile alone, and a payload it cannot validate it
 // drops. So the handoff's one usable artifact is the front door's own key,
-// and the seam is exactly three moves, all this app's: read that key here,
-// hand the session to AuthController.adopt (custody takes the token into
-// private memory and rewrites the display mirror itself), and drop the key
-// in the same step. Nothing in the auth package changes, and nothing here
-// writes a token anywhere: the key is read and removed, never echoed or
-// logged.
+// and the seam is two moves, both this app's: read that key here (readFrontDoorHandoff
+// keeps it in this tab's session storage, so a reload and a sibling module visit stay signed
+// in as the same role, validated field by field), hand the session to AuthController.adopt
+// (custody takes the token into private memory and rewrites the display mirror itself), and
+// drop the key only on Sign out, Switch role, or a refused session (clearFrontDoorHandoff).
+// Nothing in the auth package changes, and nothing here writes a token anywhere: the key is
+// read and removed by name, never echoed or logged.
 //
 // THE STORAGE TOUCH RIDES THE ONE SANCTIONED HELPER. This app's committed
 // sink gate (test/sinks.test.mjs) keeps every word of a storage accessor out

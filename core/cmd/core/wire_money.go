@@ -33,6 +33,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -109,7 +110,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
-	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).RegisterRoutes(r, g)
+	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).

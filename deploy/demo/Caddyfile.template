@@ -151,6 +151,15 @@ handle /dealer-admin/* {
 	file_server
 }
 
+handle /messages/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /messages/index.html
+	file_server
+}
+
 # The Pro contractor apps (Pro Procurement, Pro Pay, Pro Field), each behind the same gate.
 handle /pro-procurement/* {
 	basic_auth {

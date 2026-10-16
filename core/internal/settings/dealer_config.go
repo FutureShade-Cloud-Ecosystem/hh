@@ -1,9 +1,9 @@
 package settings
 
 // dealer_config.go, the dealer's own configuration: the one seam every module reads the dealer's
-// currency, tax jurisdiction and business day zone through. The four keys live in system_settings
-// (migration 0014 planted currency, tax_region and hst_rate_bps; business_zone is new and absent
-// until a dealer sets it). settings owns that table, so settings owns the read and the write, and a
+// currency, country, tax jurisdiction and business day zone through. The five keys live in system_settings
+// (migration 0014 planted currency, tax_region and hst_rate_bps; business_zone and country are absent
+// until a dealer sets them). settings owns that table, so settings owns the read and the write, and a
 // consumer declares a narrow interface of its own and receives an adapter over DealerConfigReader
 // at the composition root; no consumer reads system_settings for these facts itself.
 //
@@ -36,6 +36,12 @@ const (
 	KeyHSTRateBps   = "hst_rate_bps"
 	KeyCountry      = "country"
 )
+
+// KeyLegacyImportSource is the optional system_settings key naming the legacy system a dealer imports
+// from (a short lowercase word such as the first dealer's). It is not part of DealerConfig: absent or
+// blank means the dealer has none, there is no default, and the dealer configuration's five key write
+// never creates it. No migration plants it; it is set for the dealers that have one.
+const KeyLegacyImportSource = "legacy_import_source"
 
 // The Ontario defaults an absent key answers.
 const (
@@ -207,6 +213,71 @@ func (r *DealerConfigReader) BusinessZone(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return c.BusinessZone, nil
+}
+
+var legacyImportShape = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// parseLegacyImportSource answers the stored source word, or "" for an absent, blank or malformed
+// value. bad, when set, is told of a malformed value so the reader can log the key.
+func parseLegacyImportSource(raw json.RawMessage, bad func()) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		if bad != nil {
+			bad()
+		}
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if !legacyImportShape.MatchString(s) {
+		if bad != nil {
+			bad()
+		}
+		return ""
+	}
+	return s
+}
+
+// LegacyImportSource is the dealer's legacy import source, uncached: "" when the key is absent, blank
+// or malformed (a malformed value is logged by key, never by value). A nil reader or pool answers "".
+func (r *DealerConfigReader) LegacyImportSource(ctx context.Context) (string, error) {
+	if r == nil || r.pool == nil {
+		return "", nil
+	}
+	var v []byte
+	err := r.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyLegacyImportSource).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return parseLegacyImportSource(json.RawMessage(v), func() {
+		r.log.Warn("settings: the legacy import source is malformed; treating the dealer as having none", "key", KeyLegacyImportSource)
+	}), nil
+}
+
+// WriteLegacyImportSourceTx validates and upserts the legacy import source on the caller's
+// transaction: the seam a dealer's configuration (and a test fixture) writes it through. A blank
+// source is refused; a dealer with none has no row.
+func WriteLegacyImportSourceTx(ctx context.Context, tx DealerConfigExecer, source string) error {
+	if !legacyImportShape.MatchString(source) {
+		return fmt.Errorf("settings: legacy import source must be a short lowercase word")
+	}
+	b, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+		 WHERE system_settings.value IS DISTINCT FROM EXCLUDED.value`, KeyLegacyImportSource, string(b))
+	return err
 }
 
 func (r *DealerConfigReader) read(ctx context.Context, q DealerConfigQuerier) (DealerConfig, error) {

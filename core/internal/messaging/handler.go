@@ -65,6 +65,14 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// membership write, the branch wall on a channel that names a branch.
 	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
 	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
+	// The group room (walk change 7, slice S2, rulings 3 and 4): any staffer
+	// starts a named group with any set of staffers, and any member renames
+	// it; the rename and the fresh seat write their system lines. The add
+	// rides the existing member route, whose service wall gives the group its
+	// any-member arm. Gated like the siblings: RequireStaff, house-messages
+	// work, the caller stamped from the verified staff context.
+	r.Handle("POST /api/v1/messaging/groups", g.RequireStaff(h.staff(h.createGroup)))
+	r.Handle("PATCH /api/v1/messaging/channels/{id}", g.RequireStaff(h.staff(h.renameChannel)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
 	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
@@ -240,6 +248,62 @@ func (h *Handler) createDM(w http.ResponseWriter, r *http.Request, caller guards
 	}
 	if created {
 		httpx.WriteJSON(w, http.StatusCreated, ch)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// createGroup starts a group room (walk change 7, slice S2, rulings 3 and 4):
+// the caller's own name and set are optional, the caller is seated as the
+// group's owner, and every named staffer as an explicit member.
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		Name      string   `json:"name"`
+		MemberIDs []string `json:"member_ids"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	for _, id := range req.MemberIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "member_ids must be valid UUIDs")
+			return
+		}
+	}
+	ch, err := h.svc.CreateGroup(r.Context(), c, GroupCreateInput{Name: req.Name, MemberIDs: req.MemberIDs})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, ch)
+}
+
+// renameChannel renames a group room: any member may, and the rename writes
+// its system line. A room of any other kind refuses with 409.
+func (h *Handler) renameChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	id, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	ch, err := h.svc.RenameGroup(r.Context(), c, id, req.Name)
+	if err != nil {
+		h.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ch)
@@ -834,6 +898,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusForbidden, "that staff member's role may not be seated in this room")
 	case errors.Is(err, ErrLastOwner):
 		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
+	case errors.Is(err, ErrNotGroupRoom):
+		httpx.Error(w, http.StatusConflict, "only a group room renames through this route")
 	case errors.Is(err, ErrNotInBranch):
 		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
 	case errors.Is(err, ErrBadDMTarget):
