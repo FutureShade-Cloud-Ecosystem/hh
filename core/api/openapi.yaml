@@ -1568,6 +1568,46 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: billingCreateHold
+      tags:
+        - staff-billing
+      summary: Place a manual credit hold by hand on an account
+      description: Manager-gated manual hold. Wraps Repository.PlaceHold with hold_kind = MANUAL and the caller's user id; no-op when an ACTIVE hold already exists (the ux_credit_holds_one_active index is the guarantee, not a read-then-write). Returns the ACTIVE hold the account now carries, whether the caller placed it or it was already there.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreateHoldRequest"
+      responses:
+        "200":
+          description: The hold is in place; the response carries the row, whether the caller placed it or it was already there
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditHold"
+        "201":
+          description: The hold was just placed by this call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditHold"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/ar/holds/{id}/override:
     post:
       operationId: billingOverrideHold
@@ -2504,6 +2544,156 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/billing/ar/customers/{customer_id}/workspace:
+    get:
+      operationId: billingGetCustomerWorkspace
+      tags:
+        - staff-billing
+      summary: Read the customer account workspace
+      description: "The customer account workspace in one read: header card with the 5-bucket aging, three invoice lists (open, closed, disputed), payments with running unapplied figure, credit notes, statements, notes, and the activity feed (last 10 across invoices, payments, credits, promises, disputes)."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The full workspace payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCustomerWorkspace"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/billing/ar/customers/{customer_id}/notes:
+    post:
+      operationId: billingAddCustomerNote
+      tags:
+        - staff-billing
+      summary: Add a collection note to a customer
+      description: Writes one customer_ar_notes row. Body is required and bounded to 4 KiB. Kind is NOTE (default), CALL, VISIT or EMAIL_RECEIVED. Pinned=true un-pins any prior pinned note on the same account first (the partial unique index 0405 declares refuses a second pinned row).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingAddCustomerNoteInput"
+      responses:
+        "201":
+          description: The saved note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAddCustomerNoteResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/payments/paylink:
+    post:
+      operationId: billingSendPaylink
+      tags:
+        - staff-billing
+      summary: Generate a deterministic dealer paylink for a customer and invoice
+      description: The C8 receivables paylink action. Returns a deterministic URL keyed on (customer_id, invoice_id?, amount_cents?, channel), records the delivery on ar_invoice_deliveries (kind=PAYLINK_NOTICE) and stamps a notice on ar_notice_log, and the next action returns {paylink_url, status, sent_at}. Channel is EMAIL (default) or SMS. The recipient snapshot rides the delivery row, exactly as the register's send paths do (0175).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingSendPaylinkRequest"
+      responses:
+        "200":
+          description: The paylink URL the customer can open, with delivery status and timestamp
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingSendPaylinkResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/billing/ar/customers/{customer_id}/statements/{statement_id}/preview:
+    get:
+      operationId: billingGetStatementPreview
+      tags:
+        - staff-billing
+      summary: Read a statement and its open lines for the C8 preview panel
+      description: "The artefact from ar_statements (the figure that went out the door, 0105's immutable statement rule) plus the customer's open lines and a 5-bucket aging breakdown. The 5-bucket breakdown reconciles to the penny: the five buckets sum to openCents and the four late buckets sum to overdueCents, both checked server-side so the panel cannot be served with numbers that do not add up."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: statement_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The statement preview payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatementPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/assist/commands:
     get:
       operationId: assistListCommands
@@ -30531,6 +30721,558 @@ components:
         note:
           type: string
           description: Mandatory; what the manager found at the processor
+    BillingCustomerWorkspaceHeader:
+      type: object
+      description: "The account card the customer workspace opens with: name, account code, status badge, credit limit, utilization bar, terms, primary AP contact, last payment and the 5-bucket aging. Reconciliation to the penny with S0 is checked at read time, so a drift fails the read rather than rendering a screen with figures that do not add up."
+      required:
+        - customer_id
+        - name
+        - account_no
+        - status
+        - terms_days
+        - credit_limit_cents
+        - open_cents
+        - available_credit_cents
+        - overdue_cents
+        - utilization_bps
+        - aging
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        account_no:
+          type: string
+        status:
+          type: string
+          enum:
+            - CURRENT
+            - CREDIT_APPROVED
+            - CREDIT_HOLD
+            - UNDER_REVIEW
+          description: CURRENT when nothing is owed past due and no hold; CREDIT_APPROVED when the account carries a balance inside terms; CREDIT_HOLD when the master on_hold bit is set; UNDER_REVIEW when an open dispute exists.
+        terms_days:
+          type: integer
+        credit_limit_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        available_credit_cents:
+          type: integer
+          format: int64
+        overdue_cents:
+          type: integer
+          format: int64
+        utilization_bps:
+          type: integer
+          description: OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
+        primary_ap_contact_name:
+          type: string
+        primary_ap_contact_email:
+          type: string
+        primary_ap_contact_phone:
+          type: string
+        last_payment_at:
+          type: string
+          format: date-time
+        last_payment_cents:
+          type: integer
+          format: int64
+        aging:
+          $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
+    BillingCustomerWorkspaceAging:
+      type: object
+      description: The 5-bucket aging breakdown the workspace overview tab opens with. The five buckets sum to OpenCents and the four late buckets sum to OverdueCents; the server checks the sum before returning the payload.
+      required:
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_90_cents
+        - days_90_plus_cents
+        - open_cents
+        - overdue_cents
+      properties:
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_90_cents:
+          type: integer
+          format: int64
+          description: 61 to 90 days past due
+        days_90_plus_cents:
+          type: integer
+          format: int64
+          description: 91 and over days past due
+        open_cents:
+          type: integer
+          format: int64
+        overdue_cents:
+          type: integer
+          format: int64
+    BillingCustomerWorkspaceInvoice:
+      type: object
+      description: One invoice row the workspace invoices tab carries. Three lists reach this shape (open, closed, disputed); the bucket label matches the 5-bucket header.
+      required:
+        - id
+        - invoice_no
+        - doc_type
+        - status
+        - issue_date
+        - due_date
+        - total_cents
+        - balance_cents
+        - days_overdue
+        - days_overdue_bucket
+        - is_disputed
+        - has_open_promise
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        doc_type:
+          type: string
+          enum:
+            - INVOICE
+            - CREDIT_MEMO
+        status:
+          type: string
+          enum:
+            - DRAFT
+            - FINALIZED
+            - PARTIALLY_PAID
+            - PAID
+            - VOID
+        issue_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        total_cents:
+          type: integer
+          format: int64
+        balance_cents:
+          type: integer
+          format: int64
+        days_overdue:
+          type: integer
+        days_overdue_bucket:
+          type: string
+          enum:
+            - Current
+            - 1 to 30
+            - 31 to 60
+            - 61 to 90
+            - 91 and over
+        is_disputed:
+          type: boolean
+        has_open_promise:
+          type: boolean
+    BillingCustomerWorkspacePayment:
+      type: object
+      description: One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero.
+      required:
+        - id
+        - payment_no
+        - received_at
+        - amount_cents
+        - method
+        - unapplied_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        received_at:
+          type: string
+          format: date-time
+        amount_cents:
+          type: integer
+          format: int64
+        method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - CHEQUE
+            - EFT
+            - OTHER
+        unapplied_cents:
+          type: integer
+          format: int64
+        branch_id:
+          type: string
+          format: uuid
+    BillingCustomerWorkspaceCreditNote:
+      type: object
+      description: One credit memo the workspace payments tab carries. Unapplied is the absolute value of balance_cents (a CREDIT_MEMO carries a negative balance); the inline Apply Credit Note modal binds this figure.
+      required:
+        - id
+        - memo_no
+        - issued_at
+        - amount_cents
+        - unapplied_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        memo_no:
+          type: string
+        issued_at:
+          type: string
+          format: date
+        amount_cents:
+          type: integer
+          format: int64
+        unapplied_cents:
+          type: integer
+          format: int64
+        reason:
+          type: string
+    BillingCustomerWorkspaceStatement:
+      type: object
+      description: One statement row from ar_statements the workspace statements tab carries. The closing_balance_cents is the figure that went out the door on that date, an immutable artefact per migration 0105.
+      required:
+        - id
+        - run_id
+        - mode
+        - as_of_date
+        - closing_balance_cents
+        - delivery_status
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum:
+            - MASS
+            - INTERIM
+        as_of_date:
+          type: string
+          format: date
+        closing_balance_cents:
+          type: integer
+          format: int64
+        delivery_status:
+          type: string
+          enum:
+            - NOT_QUEUED
+            - QUEUED
+            - SENT
+            - FAILED
+        created_at:
+          type: string
+          format: date-time
+    BillingCustomerWorkspaceNote:
+      type: object
+      description: One customer_ar_notes row the workspace activity tab carries. Pinned notes are the ones the workspace surfaces first (one per account, enforced by 0405's partial unique index).
+      required:
+        - id
+        - kind
+        - body
+        - pinned
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - NOTE
+            - CALL
+            - VISIT
+            - EMAIL_RECEIVED
+        body:
+          type: string
+          description: Free text, 1 to 4096 characters.
+        author_id:
+          type: string
+          format: uuid
+        author_name:
+          type: string
+        pinned:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    BillingCustomerWorkspaceActivity:
+      type: object
+      description: One AR subledger row the workspace activity feed renders (the same ARActivity the invoice detail timeline uses; one definition across the system).
+      required:
+        - kind
+        - amount_cents
+        - balance_after_cents
+        - occurred_at
+      properties:
+        kind:
+          type: string
+          enum:
+            - INVOICE
+            - PAYMENT
+            - CREDIT_MEMO
+            - ADJUSTMENT
+            - NSF
+            - WRITE_OFF
+        reference:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        balance_after_cents:
+          type: integer
+          format: int64
+        branch_id:
+          type: string
+          format: uuid
+        memo:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+    BillingCustomerWorkspace:
+      type: object
+      description: "The whole customer account workspace in one read: header card with 5-bucket aging, three invoice lists, payments, credit notes, statements, notes and the last 10 activity rows. Money is integer cents throughout."
+      required:
+        - header
+        - invoices_open
+        - invoices_closed
+        - invoices_disputed
+        - payments
+        - credit_notes
+        - statements
+        - notes
+        - activity
+        - as_of
+      properties:
+        header:
+          $ref: "#/components/schemas/BillingCustomerWorkspaceHeader"
+        invoices_open:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceInvoice"
+        invoices_closed:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceInvoice"
+        invoices_disputed:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceInvoice"
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspacePayment"
+        credit_notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceCreditNote"
+        statements:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceStatement"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceNote"
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCustomerWorkspaceActivity"
+        as_of:
+          type: string
+          format: date-time
+    BillingAddCustomerNoteInput:
+      type: object
+      description: The POST body for the workspace activity tab's "Add a note" writer. Body is required, bounded to 4 KiB; kind defaults to NOTE; pinned defaults to false.
+      required:
+        - body
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        kind:
+          type: string
+          enum:
+            - NOTE
+            - CALL
+            - VISIT
+            - EMAIL_RECEIVED
+        pinned:
+          type: boolean
+    BillingAddCustomerNoteResult:
+      type: object
+      description: The saved note returned by the workspace notes POST.
+      required:
+        - note
+      properties:
+        note:
+          $ref: "#/components/schemas/BillingCustomerWorkspaceNote"
+    BillingCreateHoldRequest:
+      type: object
+      description: The POST body for billingCreateHold. customer_id is the account; reason is mandatory and bounded so a manager cannot place an ungrounded hold. hold_kind is fixed to MANUAL by the handler (the route never accepts a different kind, the policy rules).
+      required:
+        - customer_id
+        - reason
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Why the account is being held by hand. Mandatory; a hold without a reason is refused, the same posture billingOverrideHold takes.
+    BillingSendPaylinkRequest:
+      type: object
+      description: The POST body for billingSendPaylink. customer_id is required; invoice_id is optional and scopes the URL; amount_cents is optional and is the figure the URL pins to; channel is EMAIL (default) or SMS; recipient is a snapshot of where we sent the notice and rides the ar_invoice_deliveries row.
+      required:
+        - customer_id
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        amount_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
+          minimum: 0
+        channel:
+          type: string
+          enum:
+            - EMAIL
+            - SMS
+          default: EMAIL
+        recipient:
+          type: string
+    BillingSendPaylinkResult:
+      type: object
+      description: The paylink the customer can open, with the delivery status and the time the notice was stamped. paylink_url is deterministic on (customer_id, invoice_id, amount_cents, channel) so a repeated call lands on the same URL and the delivery row's idempotency_key is reused rather than spawning a second notice.
+      required:
+        - paylink_url
+        - status
+        - sent_at
+      properties:
+        paylink_url:
+          type: string
+          description: The deterministic dealer paylink URL
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - SENT
+        sent_at:
+          type: string
+          format: date-time
+    BillingStatementPreview:
+      type: object
+      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold."
+      required:
+        - statement
+        - open_lines
+        - aging
+        - reconciled
+      properties:
+        statement:
+          $ref: "#/components/schemas/BillingStatement"
+        open_lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingStatementPreviewLine"
+        aging:
+          $ref: "#/components/schemas/BillingStatementPreviewAging"
+        reconciled:
+          type: boolean
+    BillingStatementPreviewLine:
+      type: object
+      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser.
+      required:
+        - invoice_id
+        - invoice_no
+        - due_date
+        - balance_cents
+        - days_overdue
+        - bucket_label
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        due_date:
+          type: string
+          format: date
+        balance_cents:
+          type: integer
+          format: int64
+        days_overdue:
+          type: integer
+          format: int32
+        bucket_label:
+          type: string
+          enum:
+            - Current
+            - 1 to 30
+            - 31 to 60
+            - 61 to 90
+            - 91 and over
+    BillingStatementPreviewAging:
+      type: object
+      description: The 5-bucket breakdown the statement preview card carries. The five buckets sum to openCents and the four late buckets sum to overdueCents, both checked before the response is rendered (BillingStatementPreview.reconciled is true exactly when both hold).
+      required:
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_90_cents
+        - days_90_plus_cents
+        - open_cents
+        - overdue_cents
+      properties:
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        overdue_cents:
+          type: integer
+          format: int64
     AssistArgSpec:
       type: object
       required:

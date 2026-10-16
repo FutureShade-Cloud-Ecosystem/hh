@@ -2,21 +2,10 @@
 // named. The app shell's left list reads this, and the router line in
 // app-root picks the view by the id.
 //
-// THE EXTENSION POINT. The next coder adds Pricing, Role configuration and
-// Deployment settings by landing a views file and adding one row here; no
-// other file in this app changes. A surface is an id, the words the list
-// shows, and the view function the app-root line calls for it.
-//
-// Today: Staff (the original's staff-roles.ts and staff-reset.ts), Hotkeys
-// (the original's platform-hotkeys.ts), Audit (the original's audit-log.ts),
-// Assist (the original's assist-admin.ts), Print jobs (the core's print
-// queue), Exports (the core's two export files), Catalog (the original's
-// product-edit.ts over the core's product writes), Platform keys (the
-// operator roster's read), Role configuration (the settings kit's surface
-// curation, no original screen), Deployment settings (the brand, the card
-// rail, the counter's policy, the walkthrough), and Pricing (the original's
-// pricing-admin.ts console and its sub screens, twelve tabs), each with its
-// PROVENANCE rows.
+// The groups follow the BOARDS FINAL layout:
+// PEOPLE: Staff, Roles, Sign in methods, Chat rules
+// BUSINESS: Pricing, Catalog, Delivery, Warranty
+// SYSTEM: Printing, Exports, Audit, Assistant, Keys, Deployment
 export interface SurfaceSpec {
   /** The id the list button, the router line and the tests name. */
   readonly id: string;
@@ -26,21 +15,46 @@ export interface SurfaceSpec {
   readonly blurb: string;
 }
 
-export const SURFACES: readonly SurfaceSpec[] = [
-  { id: "staff", title: "Staff", blurb: "The register, the roles, the branch grants, the reset links." },
-  { id: "hotkeys", title: "Hotkeys", blurb: "The keyboard rosters every dealer inherits, until they set their own." },
-  { id: "audit", title: "Audit", blurb: "Who changed what, when, where and why." },
-  { id: "assist", title: "Assist", blurb: "The assistant's month: who uses it, what it costs, what they may spend." },
-  { id: "printing", title: "Print jobs", blurb: "One document's print history: how often it printed, and by whom." },
-  { id: "exports", title: "Exports", blurb: "Two files, one call each: the audit workbook and the house's messages." },
-  { id: "catalog", title: "Catalog", blurb: "A product's words and its picture: find one, describe it, set its picture." },
-  { id: "keys", title: "Platform keys", blurb: "The platform's own keys and this dealer's overrides, read only." },
-  { id: "role-config", title: "Role configuration", blurb: "What each job shape sees on every surface, curated per role." },
-  { id: "deployment", title: "Deployment settings", blurb: "The brand, the card rail, the counter's policy, the walkthrough." },
-  { id: "pricing", title: "Pricing", blurb: "The margin floors, the rules, the ladders, the imports and the ledgers." },
-  { id: "warranty", title: "Warranty", blurb: "When a defect becomes a claim, and how each vendor credits it." },
+export interface SurfaceGroup {
+  readonly name: string;
+  readonly surfaces: readonly SurfaceSpec[];
+}
+
+export const SURFACE_GROUPS: readonly SurfaceGroup[] = [
+  {
+    name: "PEOPLE",
+    surfaces: [
+      { id: "staff", title: "Staff", blurb: "The register, the roles, the branch grants, the reset links." },
+      { id: "role-config", title: "Roles", blurb: "What each job shape sees on every surface, curated per role." },
+      { id: "sign-in-methods", title: "Sign in methods", blurb: "Google, Microsoft, email and password, and magic link, per dealer." },
+      { id: "chat-rules", title: "Chat rules", blurb: "House Messages channel membership by role and employment status." },
+    ],
+  },
+  {
+    name: "BUSINESS",
+    surfaces: [
+      { id: "pricing", title: "Pricing", blurb: "The margin floors, the rules, the ladders, the imports and the ledgers." },
+      { id: "catalog", title: "Catalog", blurb: "A product's words and its picture: find one, describe it, set its picture." },
+      { id: "delivery", title: "Delivery", blurb: "The trucks, the windows and the zones this dealer delivers with." },
+      { id: "warranty", title: "Warranty", blurb: "When a defect becomes a warranty claim, and how each vendor credits it." },
+    ],
+  },
+  {
+    name: "SYSTEM",
+    surfaces: [
+      { id: "printing", title: "Printing", blurb: "One document's print history: how often it printed, and by whom." },
+      { id: "exports", title: "Exports", blurb: "Two files, one call each: the audit workbook and the house's messages." },
+      { id: "audit", title: "Audit", blurb: "Who changed what, when, where and why." },
+      { id: "assist", title: "Assistant", blurb: "The assistant's month: who uses it, what it costs, what they may spend." },
+      { id: "keys", title: "Keys", blurb: "The platform's own keys and this dealer's overrides, read only." },
+      { id: "deployment", title: "Deployment", blurb: "The brand, the card rail, the counter's policy, the walkthrough." },
+      { id: "hotkeys", title: "Hotkeys", blurb: "The keyboard rosters every dealer inherits, until they set their own." },
+    ],
+  },
 ];
 
+export const SURFACES: readonly SurfaceSpec[] = SURFACE_GROUPS.flatMap((g) => g.surfaces);
+
 export function isSurfaceId(value: string): value is SurfaceSpec["id"] {
-  return SURFACES.some((s) => s.id === value);
+  return SURFACES.some((s) => s.id === value) || value === "roles" || value === "sign-in";
 }

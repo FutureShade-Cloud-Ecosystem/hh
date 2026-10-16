@@ -18,9 +18,13 @@ import {
   RESOLVE_WALL_NAMES,
   SHORT_REASONS,
   FORBIDDEN_BODY,
+  CHANGE_ACK_WALL,
+  ackDoneWords,
   actionDone,
   actionLabel,
   ageLabel,
+  canAcknowledge,
+  changeStatusWord,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -333,6 +337,40 @@ test("the role gate's bare Forbidden body is answered with the wall's plain word
   assert.equal(wallWords(RESOLVE_WALL_NAMES), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback", { wall: ["Yard Manager"] }), "That is not yours to settle. Only the Yard Manager may resolve a shortage.");
+});
+
+// ---- the changes waiting on the yard (change orders, stage 2) ----
+
+test("the yard's acknowledge is offered only when the server's next_actions name it", () => {
+  assert.equal(canAcknowledge({ next_actions: ["yard_ack", "reject", "cancel"] }), true);
+  assert.equal(canAcknowledge({ next_actions: ["reject", "cancel"] }), false);
+  // An absent list offers nothing, never everything: the till's own fail closed rule.
+  assert.equal(canAcknowledge({}), false);
+  assert.equal(canAcknowledge(null), false);
+  assert.equal(canAcknowledge(undefined), false);
+});
+
+test("a change's state reads in the words the till uses for the same states", () => {
+  assert.equal(changeStatusWord("PENDING_YARD"), "With yard");
+  assert.equal(changeStatusWord("PENDING_FINANCE"), "With finance");
+  assert.equal(changeStatusWord("APPROVED"), "Approved");
+  assert.equal(changeStatusWord("APPLIED"), "Applied");
+  assert.equal(changeStatusWord("REJECTED"), "Rejected");
+  assert.equal(changeStatusWord("CANCELLED"), "Withdrawn");
+  assert.equal(changeStatusWord("SOMETHING_ELSE"), "something else");
+});
+
+test("the acknowledgement's words name the next stage from the server's answer, never a figure", () => {
+  assert.equal(ackDoneWords({ status: "APPROVED" }), "Acknowledged. The change is approved and waits to be applied.");
+  assert.equal(ackDoneWords({ status: "PENDING_FINANCE" }), "Acknowledged. The change now waits on finance.");
+  assert.equal(ackDoneWords({ status: "APPLIED" }), "Acknowledged. Applied.");
+});
+
+test("the acknowledge wall names who may act, in the till's own shared sentence", () => {
+  assert.equal(CHANGE_ACK_WALL, "Only the yard team or the yard manager may acknowledge a change for the yard.");
+  assert.equal(yardError("Forbidden", 403, "fallback", { wallSentence: CHANGE_ACK_WALL }), CHANGE_ACK_WALL);
+  // Without the override the bare body keeps the shortage wall's words, as before.
+  assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
 });
 
 // ---- the pick record door's client rules (item 6c) ----

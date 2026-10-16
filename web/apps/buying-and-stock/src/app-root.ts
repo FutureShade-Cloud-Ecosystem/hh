@@ -29,6 +29,7 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import { IncomingDesk, SalesIncomingDesk } from "./incoming/incoming-desk.js";
 import { areaStyles } from "./area-styles.js";
 import { InventoryApi } from "./inventory/inventory-api.js";
 import { InventoryDesk } from "./inventory/inventory-desk.js";
@@ -46,7 +47,6 @@ import { VendorsApi } from "./vendors/vendors-api.js";
 import { VendorsDesk } from "./vendors/vendors-desk.js";
 import { LookupDesk } from "./lookup/lookup-desk.js";
 import { lookupStyles } from "./lookup/lookup-styles.js";
-import { IncomingDesk } from "./incoming/incoming-desk.js";
 import { stockLookupSeat } from "./lookup/lookup-logic.js";
 
 const DEMO_ORG = "hh-demo";
@@ -120,6 +120,7 @@ export class BuyingAndStockApp extends HHElement {
     const host = this.#deskHost();
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
+      { id: "incoming", label: "Incoming", desk: new IncomingDesk(new PoApi(this.#staffClient), host) },
       { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
       { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
       { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
@@ -133,7 +134,7 @@ export class BuyingAndStockApp extends HHElement {
     const host = this.#deskHost();
     return [
       { id: "lookup", label: "Stock lookup", desk: new LookupDesk(new InventoryApi(this.#staffClient), host, this.#custody.coreBaseUrl) },
-      { id: "incoming", label: "Incoming", desk: new IncomingDesk(new PoApi(this.#staffClient), host) },
+      { id: "incoming", label: "Incoming", desk: new SalesIncomingDesk(new PoApi(this.#staffClient), host) },
     ];
   }
 
