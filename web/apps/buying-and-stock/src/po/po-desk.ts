@@ -14,7 +14,7 @@ import type { AreaDesk } from "../purch/area.js";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
 import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { costCentsFromTyped, formatMoney, formatQty } from "./po-money.js";
-import { renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
+import { renderDesk, type DeskModel, type DraftModel } from "./po-views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -30,7 +30,6 @@ export class PoDesk implements AreaDesk {
   readonly #host: DeskHost;
 
   #phase: DeskModel["phase"] = "loading";
-  #tab: Tab = "orders";
   #shortfall: readonly InventoryShortfallRow[] = [];
   #orders: readonly PurchasingPO[] = [];
   #picked: string | null = null;
@@ -158,10 +157,6 @@ export class PoDesk implements AreaDesk {
       case "refresh":
         void this.#reload().then(() => this.#host.repaint());
         return true;
-      case "tab":
-        this.#tab = attr("data-tab-id") === "incoming" ? "incoming" : "orders";
-        this.#host.repaint();
-        return true;
       case "pick": {
         const id = attr("data-product-id");
         this.#picked = this.#picked === id ? null : id;
@@ -220,6 +215,9 @@ export class PoDesk implements AreaDesk {
         return true;
       case "cancel-draft":
         void this.#cancelDraft();
+        return true;
+      case "apply-warranty-credit":
+        void this.#applyWarrantyCredit();
         return true;
       default:
         return false;
@@ -465,6 +463,35 @@ export class PoDesk implements AreaDesk {
     this.#host.repaint();
   }
 
+  async #applyWarrantyCredit(): Promise<void> {
+    const draft = this.#draft;
+    if (draft === null || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+
+    const claimId = draft.po.open_warranty_credit?.claim_id;
+    const amountCents = draft.po.open_warranty_credit?.amount_cents;
+    const res = await this.#api.applyWarrantyCredit(draft.po.id, {
+      claim_id: claimId,
+      amount_cents: amountCents,
+    });
+    if (!res.ok) {
+      this.#fail("order", res);
+    } else {
+      this.#draft = { ...draft, po: res.value };
+      const idx = this.#orders.findIndex((o) => o.id === res.value.id);
+      if (idx >= 0) {
+        const nextOrders = [...this.#orders];
+        nextOrders[idx] = res.value;
+        this.#orders = nextOrders;
+      }
+      this.#notice = `Applied ${formatMoney(res.value.warranty_credit_applied_cents)} warranty credit to ${res.value.po_no}.`;
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
   /** The draft's date field changed: the words under it follow what was typed. */
   typed(name: string, text: string): void {
     if (name !== "expected") return;
@@ -500,7 +527,6 @@ export class PoDesk implements AreaDesk {
   render(): TemplateResult {
     return renderDesk({
       phase: this.#phase,
-      tab: this.#tab,
       shortfall: this.#shortfall,
       orders: this.#orders,
       picked: this.#picked,

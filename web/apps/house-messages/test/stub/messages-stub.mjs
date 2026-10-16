@@ -54,9 +54,9 @@ const USERS = {
   "payables-receivables": {
     user_id: "a0000000-0000-4000-9000-000000000003",
     email: "payables@hh-demo.invalid",
-    display_name: "Payables and Receivables (demo)",
+    display_name: "Priya Shah",
     role_code: "payables_receivables",
-    role_name: "Payables and Receivables",
+    role_name: "Dispatch",
     tier: 3,
     scope: "BRANCH",
   },
@@ -69,8 +69,45 @@ const USERS = {
     tier: 1,
     scope: "COMPANY",
   },
+  "elena-ruiz": {
+    user_id: "a0000000-0000-4000-9000-000000000005",
+    email: "elena@hh-demo.invalid",
+    display_name: "Elena Ruiz",
+    role_code: "driver",
+    role_name: "Driver",
+    tier: 3,
+    scope: "BRANCH",
+  },
+  "tom-alvarez": {
+    user_id: "a0000000-0000-4000-9000-000000000006",
+    email: "tom@hh-demo.invalid",
+    display_name: "Tom Alvarez",
+    role_code: "counter_sales",
+    role_name: "Counter Sales",
+    tier: 3,
+    scope: "BRANCH",
+  },
+  "marcus-webb": {
+    user_id: "a0000000-0000-4000-9000-000000000007",
+    email: "marcus@hh-demo.invalid",
+    display_name: "Marcus Webb",
+    role_code: "yard_staff",
+    role_name: "Yard staff",
+    tier: 3,
+    scope: "BRANCH",
+  },
 };
 const BY_ID = Object.fromEntries(Object.entries(USERS).map(([flow, u]) => [u.user_id, { flow, ...u }]));
+
+const ROSTER = [
+  { user_id: "a0000000-0000-4000-9000-000000000001", display_name: "Inside Sales (demo)", role_name: "Inside Sales", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000002", display_name: "Yard manager (demo)", role_name: "Yard Manager", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000003", display_name: "Priya Shah", role_name: "Dispatch", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000004", display_name: "General Manager (demo)", role_name: "General Manager", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000005", display_name: "Elena Ruiz", role_name: "Driver", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000006", display_name: "Tom Alvarez", role_name: "Counter Sales", branch_name: "Point Loma" },
+  { user_id: "a0000000-0000-4000-9000-000000000007", display_name: "Marcus Webb", role_name: "Yard staff", branch_name: "Point Loma" },
+];
 
 function mintToken(sub) {
   const part = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -155,6 +192,40 @@ function reset() {
       { id: "d0000000-0000-4000-9000-000000000002", customer_id: "e0000000-0000-4000-9000-000000000002", customer_name: "Fieldstone Pools and Patios", branch_id: BRANCH, channel_id: CH.house, first_at: at(40), last_at: at(40), message_count: 1 },
       { id: "d0000000-0000-4000-9000-000000000003", customer_id: "e0000000-0000-4000-9000-000000000003", customer_name: "Summit Ridge Builders", branch_id: BRANCH, channel_id: CH.house, first_at: at(300), last_at: at(280), message_count: 2, claimed_by: Y, claimed_by_name: "Yard manager (demo)", claimed_at: at(270) },
     ],
+    reactions: [],
+    saved: [],
+    membershipRules: [
+      { channel_id: CH.branch, channel_name: "Point Loma", joins_automatically: "Role All staff at Point Loma", leaves_automatically: "When status or role changes", visibility: "PUBLIC" },
+      { channel_id: CH.yard, channel_name: "Yard floor", joins_automatically: "Role Yard staff, Driver at Point Loma", leaves_automatically: "When status or role changes", visibility: "PUBLIC" },
+      { channel_id: CH.deliveries, channel_name: "Deliveries", joins_automatically: "Role Driver at Point Loma", leaves_automatically: "When status or role changes", visibility: "PUBLIC" },
+      { channel_id: CH.esc, channel_name: "Escalations", joins_automatically: "Role Manager, Admin at Point Loma", leaves_automatically: "When status or role changes", visibility: "PRIVATE" },
+      { channel_id: CH.house, channel_name: "House queue", joins_automatically: "Role Inside Sales, Yard Manager at Point Loma", leaves_automatically: "When status or role changes", visibility: "PUBLIC" },
+    ],
+    membersByHand: [
+      { channel_id: CH.yard, user_id: "a0000000-0000-4000-9000-000000000005", display_name: "Elena Ruiz", role_name: "Driver", added_by_name: "General Manager (demo)", added_reason: "Temporary cover for morning picks", joined_at: at(300) },
+    ],
+    eventClasses: [
+      { topic: "orders_released_and_blocked", name: "Orders released and blocked", description: "Credit releases and order holds" },
+      { topic: "stock_received", name: "Stock received", description: "PO receipts and staging notifications" },
+      { topic: "credit_holds_and_credit_owed", name: "Credit holds and credit owed", description: "Overdue balances and holds" },
+      { topic: "deliveries_scheduled", name: "Deliveries scheduled", description: "Truck dispatch and route updates" },
+      { topic: "payments", name: "Payments", description: "Customer payments received" },
+      { topic: "approvals_waiting_on_me", name: "Approvals waiting on me", description: "Price and credit overrides" },
+    ],
+    repAssignments: [
+      { id: "rep-001", customer_id: "e0000000-0000-4000-9000-000000000001", customer_name: "Ridgeview Outdoor Living", rep_id: S, rep_name: "Inside Sales (demo)", assigned_at: at(500) },
+      { id: "rep-002", customer_id: "e0000000-0000-4000-9000-000000000002", customer_name: "Fieldstone Pools and Patios", rep_id: Y, rep_name: "Yard manager (demo)", assigned_at: at(400) },
+    ],
+    attachments: [
+      { id: "att-001", channel_id: CH.yard, filename: "staging-bay-north.jpg", url: "/img/staging-bay.jpg", content_type: "image/jpeg", size_bytes: 840 * 1024, author_id: Y, author_name: "Yard manager (demo)", created_at: at(120), caption: "North bay clear for the noon delivery" },
+      { id: "att-002", channel_id: CH.yard, filename: "pallets-damage.jpg", url: "/img/pallets.jpg", content_type: "image/jpeg", size_bytes: 1200 * 1024, author_id: S, author_name: "Inside Sales (demo)", created_at: at(80), caption: "Shortage on Copperline coping" },
+      { id: "att-003", channel_id: CH.yard, filename: "Daily yard checklist.pdf", url: "/docs/checklist.pdf", content_type: "application/pdf", size_bytes: 142 * 1024, author_id: Y, author_name: "Yard manager (demo)", created_at: at(400) },
+      { id: "att-004", channel_id: CH.yard, filename: "Santa Fe delivery ticket.pdf", url: "/docs/ticket.pdf", content_type: "application/pdf", size_bytes: 2 * 1024 * 1024, author_id: S, author_name: "Inside Sales (demo)", created_at: at(210) },
+      { id: "att-005", channel_id: CH.branch, filename: "gate-whiteboard.jpg", url: "/img/whiteboard.jpg", content_type: "image/jpeg", size_bytes: 512 * 1024, author_id: S, author_name: "Inside Sales (demo)", created_at: at(90), caption: "Whiteboard notes" },
+      { id: "att-006", channel_id: CH.branch, filename: "Branch safety policy.pdf", url: "/docs/policy.pdf", content_type: "application/pdf", size_bytes: 256 * 1024, author_id: A, author_name: "General Manager (demo)", created_at: at(800) },
+    ],
+    quietHours: {},
+    userEventClasses: {},
   };
   const text = (channel, author, body, minutesAgo, extra = {}) => {
     const m = { id: id("b"), channel_id: channel, author_id: author, kind: "TEXT", body, created_at: at(minutesAgo), ...extra };
@@ -170,6 +241,8 @@ function reset() {
   text(CH.deliveries, Y, "Truck 04 to Julian leaves at 10:40. Load the polymeric sand last.", 150);
   text(CH.dm, Y, "Can you look at the Ridgeview quote before lunch?", 60);
   text(CH.dm, S, "On it.", 55);
+  text(CH.dm, Y, "Hey @Inside Sales check the pallet count please.", 40);
+  world.saved.push({ user_id: S, message_id: root.id, saved_at: at(100) });
   // A payment event that carries a figure the core sent, with the rules that routed it.
   world.messages.push({
     id: id("b"), channel_id: CH.pay, kind: "EVENT", body: "Payment received: $1,240.00 on order SO-1042 (ACH).", created_at: at(30),
@@ -196,6 +269,18 @@ function reset() {
 reset();
 
 // ---- helpers ------------------------------------------------------------------------------------
+
+function reactionListFor(msgId, uid) {
+  const map = new Map();
+  for (const r of (world.reactions ?? []).filter((x) => x.message_id === msgId)) {
+    if (!map.has(r.emoji)) map.set(r.emoji, { emoji: r.emoji, count: 0, mine: false, users: [] });
+    const item = map.get(r.emoji);
+    item.count += 1;
+    item.users.push(r.user_id);
+    if (r.user_id === uid) item.mine = true;
+  }
+  return [...map.values()];
+}
 
 const channelOf = (cid) => world.channels.find((c) => c.id === cid);
 const isMember = (ch, uid) => ch.members.includes(uid);
@@ -381,6 +466,105 @@ async function route(req, res, url) {
     return json(res, { ticket, expires_in_seconds: 60 });
   }
 
+  if (method === "GET" && rest === "roster") {
+    return json(res, { roster: ROSTER });
+  }
+
+  if (method === "POST" && rest === "dms") {
+    const body = await readBody(req);
+    if (body === null || !body.user_id) return fail(res, 400, "user_id required");
+    const targetUid = body.user_id;
+    const existing = world.channels.find((c) => c.kind === "DM" && isMember(c, uid) && isMember(c, targetUid));
+    if (existing) return json(res, channelView(uid, existing), 200);
+    const other = BY_ID[targetUid];
+    const otherName = other?.display_name ?? "Colleague";
+    const myName = nameOf(uid);
+    const newCh = {
+      id: id("c"),
+      kind: "DM",
+      slug: `dm-${uid.slice(0, 8)}-${targetUid.slice(0, 8)}`,
+      name: otherName,
+      topic: "",
+      tier: "STANDARD",
+      is_archived: false,
+      created_at: new Date().toISOString(),
+      members: [uid, targetUid],
+      dmNames: { [uid]: otherName, [targetUid]: myName },
+    };
+    world.channels.push(newCh);
+    return json(res, channelView(uid, newCh), 201);
+  }
+
+  if (method === "POST" && rest === "groups") {
+    const body = await readBody(req);
+    if (body === null) return fail(res, 400, "invalid_json");
+    const rawIds = Array.isArray(body.member_ids) ? body.member_ids : [];
+    const members = Array.from(new Set([uid, ...rawIds]));
+    const rawName = String(body.name ?? "").trim();
+    const groupName = rawName !== "" ? rawName : "Group direct message";
+    const newCh = {
+      id: id("c"),
+      kind: "GROUP",
+      slug: `group-${Date.now().toString(36)}`,
+      name: groupName,
+      topic: "",
+      tier: "STANDARD",
+      is_archived: false,
+      created_at: new Date().toISOString(),
+      members,
+    };
+    world.channels.push(newCh);
+    if (rawIds.length > 0) {
+      const addedNames = rawIds.map((id) => BY_ID[id]?.display_name ?? nameOf(id)).filter(Boolean);
+      let sysText = "";
+      if (addedNames.length === 1) {
+        sysText = `You created the group ${groupName} and added ${addedNames[0]}.`;
+      } else {
+        sysText = `You created the group ${groupName} and added ${addedNames.slice(0, -1).join(", ")} and ${addedNames.at(-1)}.`;
+      }
+      world.messages.push({
+        id: id("b"),
+        channel_id: newCh.id,
+        author_id: uid,
+        kind: "EVENT",
+        body: sysText,
+        created_at: new Date().toISOString(),
+      });
+    }
+    return json(res, channelView(uid, newCh), 201);
+  }
+
+  if (method === "POST" && rest === "channels") {
+    const body = await readBody(req);
+    if (body === null) return fail(res, 400, "invalid_json");
+    const name = String(body.name ?? "").trim();
+    if (name === "") return fail(res, 400, "channel name is required");
+    const kind = body.kind ?? "TOPIC";
+    const topic = String(body.topic ?? "").trim();
+    const slug = String(body.slug ?? "").trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const newCh = {
+      id: id("c"),
+      kind,
+      name,
+      topic,
+      slug,
+      tier: "STANDARD",
+      is_archived: false,
+      created_at: new Date().toISOString(),
+      members: [uid],
+      branch_id: body.branch_id ?? BRANCH,
+    };
+    world.channels.push(newCh);
+    world.membershipRules.push({
+      channel_id: newCh.id,
+      channel_name: name,
+      joins_automatically: "Role Yard staff at Point Loma",
+      leaves_automatically: "When status or role changes",
+      visibility: "PUBLIC",
+    });
+    return json(res, channelView(uid, newCh), 201);
+  }
+
   if (method === "GET" && rest === "channels") {
     const mine = world.channels.filter((c) => isMember(c, uid) && !c.is_archived).map((c) => channelView(uid, c));
     mine.sort((a, b) => ((b.latest_at ?? b.created_at) > (a.latest_at ?? a.created_at) ? 1 : -1));
@@ -397,6 +581,142 @@ async function route(req, res, url) {
   }
 
   if (method === "GET" && rest === "unacked") return json(res, { messages: unackedFor(uid) });
+
+  if (method === "GET" && rest === "mentions") {
+    const myName = nameOf(uid).toLowerCase();
+    const myRole = (BY_ID[uid]?.role_name ?? "").toLowerCase();
+    const rows = world.messages
+      .filter((m) => {
+        const ch = channelOf(m.channel_id);
+        if (!ch || !isMember(ch, uid)) return false;
+        const b = m.body.toLowerCase();
+        return b.includes("@" + myName) || (myRole !== "" && b.includes("@" + myRole)) || b.includes("@sales") || b.includes("@all");
+      })
+      .map((m) => ({
+        message: view(m),
+        channel_id: m.channel_id,
+        channel_name: channelOf(m.channel_id)?.name ?? "",
+      }));
+    return json(res, { mentions: rows });
+  }
+
+  if (method === "GET" && rest === "saved") {
+    const rows = (world.saved ?? [])
+      .filter((s) => s.user_id === uid)
+      .map((s) => {
+        const m = world.messages.find((x) => x.id === s.message_id);
+        if (!m) return null;
+        return {
+          message: view(m),
+          channel_id: m.channel_id,
+          channel_name: channelOf(m.channel_id)?.name ?? "",
+          saved_at: s.saved_at,
+        };
+      })
+      .filter(Boolean);
+    return json(res, { saved: rows });
+  }
+  const saveAction = /^saved\/([^/]+)$/.exec(rest);
+  if (saveAction) {
+    const msgId = saveAction[1];
+    if (method === "POST") {
+      if (!world.saved.some((s) => s.user_id === uid && s.message_id === msgId)) {
+        world.saved.push({ user_id: uid, message_id: msgId, saved_at: new Date().toISOString() });
+      }
+      return json(res, { status: "ok", saved: true });
+    }
+    if (method === "DELETE") {
+      world.saved = world.saved.filter((s) => !(s.user_id === uid && s.message_id === msgId));
+      return json(res, { status: "ok", saved: false });
+    }
+  }
+
+  if (method === "GET" && rest.startsWith("search")) {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase().trim();
+    if (q === "") return json(res, { query: "", messages: [], people: [], channels: [], files: [] });
+    const matchedMessages = world.messages
+      .filter((m) => {
+        const ch = channelOf(m.channel_id);
+        return ch && isMember(ch, uid) && m.body.toLowerCase().includes(q);
+      })
+      .map((m) => ({ message: view(m), channel_id: m.channel_id, channel_name: channelOf(m.channel_id)?.name ?? "" }));
+    const matchedPeople = ROSTER.filter((p) => p.display_name.toLowerCase().includes(q) || p.role_name.toLowerCase().includes(q) || p.branch_name.toLowerCase().includes(q));
+    const matchedChannels = world.channels.filter((c) => isMember(c, uid) && (c.name.toLowerCase().includes(q) || c.topic.toLowerCase().includes(q))).map((c) => channelView(uid, c));
+    const matchedFiles = (world.attachments ?? []).filter((a) => {
+      const ch = channelOf(a.channel_id);
+      return ch && isMember(ch, uid) && (a.filename.toLowerCase().includes(q) || (a.caption ?? "").toLowerCase().includes(q));
+    });
+    return json(res, { query: q, messages: matchedMessages, people: matchedPeople, channels: matchedChannels, files: matchedFiles });
+  }
+
+  if (method === "GET" && rest === "directory") {
+    const list = world.channels
+      .filter((c) => c.kind !== "DM" && c.kind !== "GROUP")
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        topic: c.topic,
+        member_count: c.members.length,
+        is_member: isMember(c, uid),
+        membership_source: c.id === CH.branch ? "DERIVED" : isMember(c, uid) ? "EXPLICIT" : "NONE",
+      }));
+    return json(res, { channels: list });
+  }
+
+  if (rest === "notification-settings") {
+    if (method === "GET") {
+      const quiet = world.quietHours[uid] ?? { enabled: false, start_time: "20:00", end_time: "07:00", timezone: "America/Los_Angeles" };
+      const events = world.userEventClasses[uid] ?? {
+        orders_released_and_blocked: { in_app: true, push: true },
+        stock_received: { in_app: true, push: false },
+        credit_holds_and_credit_owed: { in_app: true, push: true },
+        deliveries_scheduled: { in_app: true, push: false },
+        payments: { in_app: true, push: false },
+        approvals_waiting_on_me: { in_app: true, push: true },
+      };
+      return json(res, { quiet_hours: quiet, event_classes: events });
+    }
+    if (method === "PUT") {
+      const body = await readBody(req);
+      if (body?.quiet_hours) world.quietHours[uid] = body.quiet_hours;
+      if (body?.event_classes) world.userEventClasses[uid] = body.event_classes;
+      return json(res, {
+        quiet_hours: world.quietHours[uid] ?? { enabled: false, start_time: "20:00", end_time: "07:00", timezone: "America/Los_Angeles" },
+        event_classes: world.userEventClasses[uid] ?? {},
+      });
+    }
+  }
+
+  if (method === "GET" && rest === "membership-rules") {
+    return json(res, { rules: world.membershipRules ?? [] });
+  }
+  if (method === "GET" && rest === "members-by-hand") {
+    return json(res, { members: world.membersByHand ?? [] });
+  }
+  if (method === "GET" && rest === "event-classes") {
+    return json(res, { classes: world.eventClasses ?? [] });
+  }
+  const putEventClass = /^event-classes\/([^/]+)$/.exec(rest);
+  if (putEventClass && method === "PUT") {
+    const body = await readBody(req);
+    const item = world.eventClasses?.find((c) => c.topic === putEventClass[1]);
+    if (item && body) Object.assign(item, body);
+    return json(res, item ?? { topic: putEventClass[1] });
+  }
+  if (rest === "rep-assignments") {
+    if (method === "GET") return json(res, { assignments: world.repAssignments ?? [] });
+    if (method === "POST") {
+      const body = await readBody(req);
+      const row = { id: id("rep"), customer_id: body.customer_id ?? id("cust"), customer_name: body.customer_name ?? "Customer", rep_id: body.rep_id ?? uid, rep_name: nameOf(body.rep_id ?? uid), assigned_at: new Date().toISOString() };
+      world.repAssignments.push(row);
+      return json(res, row, 201);
+    }
+    if (method === "DELETE") {
+      const body = await readBody(req);
+      world.repAssignments = world.repAssignments.filter((a) => a.id !== body.id && a.customer_id !== body.customer_id);
+      return json(res, { status: "ok" });
+    }
+  }
 
   if (rest === "payment-rules") {
     const rules = { ONLINE: false, CROSS_BRANCH: false, OWN_ORDER: false, ...(world.paymentRules[uid] ?? {}) };
@@ -437,7 +757,156 @@ async function route(req, res, url) {
   if (!UUID.test(cid)) return fail(res, 404, "not found");
   const ch = channelOf(cid);
   if (!ch) return fail(res, 404, "not found");
+
+  if (method === "POST" && tail === "join") {
+    if (!isMember(ch, uid)) ch.members.push(uid);
+    return json(res, { status: "ok", is_member: true });
+  }
+
   if (!isMember(ch, uid)) return fail(res, 403, "not a channel member");
+
+  if (method === "POST" && tail === "leave") {
+    if (ch.id === CH.branch) return fail(res, 409, "Joined by rule, you stay");
+    ch.members = ch.members.filter((m) => m !== uid);
+    return json(res, { status: "ok", is_member: false });
+  }
+
+  if (method === "PATCH" && tail === "") {
+    const body = await readBody(req);
+    if (body === null || !body.name) return fail(res, 400, "name required");
+    ch.name = String(body.name).trim();
+    world.messages.push({
+      id: id("b"),
+      channel_id: ch.id,
+      author_id: uid,
+      kind: "EVENT",
+      body: `${nameOf(uid)} renamed the channel to ${ch.name}.`,
+      created_at: new Date().toISOString(),
+    });
+    return json(res, channelView(uid, ch));
+  }
+
+  if (method === "POST" && tail === "members") {
+    const body = await readBody(req);
+    if (!body?.user_id) return fail(res, 400, "user_id required");
+    if (!isMember(ch, body.user_id)) ch.members.push(body.user_id);
+    return json(res, { channel_id: ch.id, user_id: body.user_id, role: "MEMBER", source: "EXPLICIT", joined_at: new Date().toISOString() });
+  }
+  const remMember = /^members\/([^/]+)$/.exec(tail);
+  if (method === "DELETE" && remMember) {
+    ch.members = ch.members.filter((m) => m !== remMember[1]);
+    world.membersByHand = (world.membersByHand ?? []).filter((m) => !(m.channel_id === ch.id && m.user_id === remMember[1]));
+    return json(res, { status: "ok" });
+  }
+
+  if (method === "GET" && tail === "members-by-hand") {
+    return json(res, { members: (world.membersByHand ?? []).filter((m) => m.channel_id === ch.id) });
+  }
+  if (method === "POST" && tail === "members-by-hand") {
+    const body = await readBody(req);
+    const row = { channel_id: ch.id, user_id: body.user_id, display_name: nameOf(body.user_id), role_name: BY_ID[body.user_id]?.role_name ?? "Staff", added_by_name: nameOf(uid), added_reason: body.added_reason ?? "Added by hand", joined_at: new Date().toISOString() };
+    if (!isMember(ch, body.user_id)) ch.members.push(body.user_id);
+    world.membersByHand.push(row);
+    return json(res, row, 201);
+  }
+
+  if (method === "GET" && tail === "membership-rule") {
+    return json(res, { rule: world.membershipRules?.find((r) => r.channel_id === ch.id) ?? null });
+  }
+  if (method === "PUT" && tail === "membership-rule") {
+    const body = await readBody(req);
+    const existing = world.membershipRules?.find((r) => r.channel_id === ch.id);
+    if (existing && body) Object.assign(existing, body);
+    return json(res, { rule: existing ?? body });
+  }
+
+  if (method === "GET" && tail === "attachments") {
+    const list = (world.attachments ?? []).filter((a) => a.channel_id === ch.id);
+    return json(res, { attachments: list });
+  }
+  if (method === "POST" && tail === "attachments") {
+    const body = await readBody(req);
+    if (!body?.filename) return fail(res, 400, "filename required");
+    const isImage = body.filename.endsWith(".png") || body.filename.endsWith(".jpg") || body.filename.endsWith(".webp");
+    const att = {
+      id: id("att"),
+      channel_id: ch.id,
+      filename: body.filename,
+      content_type: body.content_type ?? (isImage ? "image/jpeg" : "application/pdf"),
+      size_bytes: body.size_bytes ?? (isImage ? 840 * 1024 : 142 * 1024),
+      author_id: uid,
+      author_name: nameOf(uid),
+      created_at: new Date().toISOString(),
+      caption: body.caption ?? "",
+      url: `/files/${body.filename}`,
+    };
+    world.attachments.push(att);
+    world.messages.push({
+      id: id("b"),
+      channel_id: ch.id,
+      author_id: uid,
+      kind: "TEXT",
+      body: body.caption ? `${body.caption} (${body.filename})` : `Attached: ${body.filename}`,
+      created_at: new Date().toISOString(),
+    });
+    return json(res, { attachment: att }, 201);
+  }
+
+  if (method === "GET" && tail === "reactions") {
+    const byMsg = {};
+    for (const msg of world.messages.filter((x) => x.channel_id === ch.id)) {
+      byMsg[msg.id] = reactionListFor(msg.id, uid);
+    }
+    return json(res, { reactions: byMsg });
+  }
+
+  const msgRoute = /^messages\/([^/]+)(?:\/(.*))?$/.exec(tail);
+  if (msgRoute) {
+    const [, msgId, msgTail = ""] = msgRoute;
+    if (msgTail === "" && method === "PATCH") {
+      const body = await readBody(req);
+      const target = world.messages.find((x) => x.id === msgId && x.channel_id === cid);
+      if (!target) return fail(res, 404, "not found");
+      if (target.author_id !== uid) return fail(res, 403, "not your message");
+      target.body = body.body;
+      target.edited_at = new Date().toISOString();
+      return json(res, view(target));
+    }
+    if (msgTail === "" && method === "DELETE") {
+      const target = world.messages.find((x) => x.id === msgId && x.channel_id === cid);
+      if (!target) return fail(res, 404, "not found");
+      if (target.author_id !== uid) return fail(res, 403, "not your message");
+      target.body = "This message was deleted";
+      target.deleted_at = new Date().toISOString();
+      return json(res, view(target));
+    }
+    if (msgTail === "reactions") {
+      if (method === "GET") return json(res, { reactions: reactionListFor(msgId, uid) });
+      if (method === "PUT") {
+        const body = await readBody(req);
+        const emoji = body?.emoji;
+        if (!emoji) return fail(res, 400, "emoji required");
+        const idx = world.reactions.findIndex((r) => r.message_id === msgId && r.user_id === uid && r.emoji === emoji);
+        if (idx >= 0) world.reactions.splice(idx, 1);
+        else world.reactions.push({ message_id: msgId, user_id: uid, emoji });
+        return json(res, { reactions: reactionListFor(msgId, uid) });
+      }
+      if (method === "DELETE") {
+        const emoji = url.searchParams.get("emoji");
+        world.reactions = world.reactions.filter((r) => !(r.message_id === msgId && r.user_id === uid && (!emoji || r.emoji === emoji)));
+        return json(res, { reactions: reactionListFor(msgId, uid) });
+      }
+    }
+    if (msgTail === "seen-by" && method === "GET") {
+      return json(res, {
+        count: 2,
+        readers: [
+          { user_id: uid, display_name: nameOf(uid), seen_at: new Date().toISOString() },
+          { user_id: "a0000000-0000-4000-9000-000000000002", display_name: "Yard manager (demo)", seen_at: new Date().toISOString() },
+        ],
+      });
+    }
+  }
 
   if (method === "GET" && tail === "messages") {
     const limitRaw = Number(url.searchParams.get("limit") ?? 0);

@@ -135,7 +135,7 @@ func TestIntegration_Credit_AgingBucketsFromDueDate(t *testing.T) {
 	}
 	// The buckets must sum to the total. A bucketing bug that loses a dollar is exactly the kind of
 	// thing a statement customer finds before we do.
-	if sum := got.CurrentCents + got.Days30Cents + got.Days60Cents + got.Days90PlusCents; sum != got.TotalCents {
+	if sum := got.CurrentCents + got.Days30Cents + got.Days60Cents + got.Days60To90Cents + got.Days90PlusCents; sum != got.TotalCents {
 		t.Fatalf("buckets sum to %d but the total is %d", sum, got.TotalCents)
 	}
 	// PastBucketCents is what the 60-day policy trigger reads: the 45- and 95-day invoices.

@@ -92,7 +92,7 @@ export function renderRoleConfig(model: RoleConfigModel): TemplateResult {
       <p class="page-sub">What each job shape sees on every surface, curated per role.</p>
     </header>
     ${model.phase === "loading"
-      ? html`<p class="notice-line" data-test="config-loading">Reading what every job shape sees on every surface… (${model.loaded} of ${model.total})</p>`
+      ? html`<p class="notice-line" data-test="config-loading">Reading what every job shape sees on every surface... (${model.loaded} of ${model.total})</p>`
       : nothing}
     ${model.phase === "refused" || model.phase === "error"
       ? html`
@@ -100,9 +100,91 @@ export function renderRoleConfig(model: RoleConfigModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-role-config">Try again</button></div>
         `
       : nothing}
+    ${model.phase === "ready" ? renderRoleMatrix() : nothing}
     ${model.phase === "ready" ? renderGrid(model) : nothing}
     ${model.phase === "ready" ? renderCatalog(model.roles) : nothing}
     ${model.editor !== null ? renderEditor(model.editor) : nothing}
+  `;
+}
+
+export interface RoleMatrixEntry {
+  readonly role: string;
+  readonly till: "Full" | "View" | "None";
+  readonly quotes: "Full" | "View" | "None";
+  readonly yard: "Full" | "View" | "None";
+  readonly drive: "Full" | "View" | "None";
+  readonly dispatch: "Full" | "View" | "None";
+  readonly buying: "Full" | "View" | "None";
+  readonly money: "Full" | "View" | "None";
+  readonly manager: "Full" | "View" | "None";
+  readonly messages: "Full" | "View" | "None";
+  readonly admin: "Full" | "View" | "None";
+}
+
+export const ROLE_MATRIX_ENTRIES: readonly RoleMatrixEntry[] = [
+  { role: "General Manager", till: "View", quotes: "View", yard: "View", drive: "View", dispatch: "Full", buying: "Full", money: "Full", manager: "Full", messages: "Full", admin: "Full" },
+  { role: "Financial Controller", till: "View", quotes: "View", yard: "None", drive: "None", dispatch: "None", buying: "Full", money: "Full", manager: "View", messages: "Full", admin: "None" },
+  { role: "Branch Manager", till: "Full", quotes: "Full", yard: "Full", drive: "View", dispatch: "Full", buying: "Full", money: "View", manager: "Full", messages: "Full", admin: "None" },
+  { role: "Sales Manager", till: "Full", quotes: "Full", yard: "None", drive: "None", dispatch: "View", buying: "View", money: "View", manager: "View", messages: "Full", admin: "None" },
+  { role: "Yard Manager", till: "None", quotes: "View", yard: "Full", drive: "View", dispatch: "Full", buying: "Full", money: "None", manager: "View", messages: "Full", admin: "None" },
+  { role: "Dispatcher", till: "None", quotes: "None", yard: "View", drive: "View", dispatch: "Full", buying: "None", money: "None", manager: "None", messages: "Full", admin: "None" },
+  { role: "Driver", till: "None", quotes: "None", yard: "None", drive: "Full", dispatch: "None", buying: "None", money: "None", manager: "None", messages: "Full", admin: "None" },
+  { role: "Inside Sales", till: "Full", quotes: "Full", yard: "None", drive: "None", dispatch: "None", buying: "View", money: "None", manager: "None", messages: "Full", admin: "None" },
+];
+
+function renderMatrixCell(level: "Full" | "View" | "None"): TemplateResult {
+  const mod = level === "Full" ? "matrix-cell-full" : level === "View" ? "matrix-cell-view" : "matrix-cell-none";
+  return html`<span class="matrix-pill ${mod}">${level}</span>`;
+}
+
+function renderRoleMatrix(): TemplateResult {
+  return html`
+    <section class="card" data-test="role-matrix-card">
+      <div class="card-head">
+        <h2 class="card-title">What each job shape sees</h2>
+      </div>
+      <div class="tablewrap">
+        <table class="role-matrix-table">
+          <thead>
+            <tr>
+              <th scope="col" class="role-col">Role</th>
+              <th scope="col">Till</th>
+              <th scope="col">Quotes</th>
+              <th scope="col">Yard</th>
+              <th scope="col">Drive</th>
+              <th scope="col">Dispatch</th>
+              <th scope="col">Buying</th>
+              <th scope="col">Money</th>
+              <th scope="col">Manager</th>
+              <th scope="col">Messages</th>
+              <th scope="col">Admin</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ROLE_MATRIX_ENTRIES.map(
+              (r) => html`
+                <tr>
+                  <th scope="row" class="role-col"><strong>${r.role}</strong></th>
+                  <td>${renderMatrixCell(r.till)}</td>
+                  <td>${renderMatrixCell(r.quotes)}</td>
+                  <td>${renderMatrixCell(r.yard)}</td>
+                  <td>${renderMatrixCell(r.drive)}</td>
+                  <td>${renderMatrixCell(r.dispatch)}</td>
+                  <td>${renderMatrixCell(r.buying)}</td>
+                  <td>${renderMatrixCell(r.money)}</td>
+                  <td>${renderMatrixCell(r.manager)}</td>
+                  <td>${renderMatrixCell(r.messages)}</td>
+                  <td>${renderMatrixCell(r.admin)}</td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p class="card-sub matrix-legend">
+        Full: sees the surface and can act. View: sees it, no actions. None: the surface is not shown to this role. Roles match the Staff register.
+      </p>
+    </section>
   `;
 }
 

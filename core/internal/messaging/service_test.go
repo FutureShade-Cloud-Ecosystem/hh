@@ -440,6 +440,31 @@ func (f *fakeStore) ListChannelRules(_ context.Context, _ string, _ bool, _ map[
 	return nil, nil
 }
 
+// - Change 7, slice S3 doubles: reactions, seen-by, mentions -
+// The base fake answers inertly (a message facts read is not-found, the
+// reaction writes land nowhere, the reads answer empty); the route double in
+// reactions_route_test.go overrides what a leg scripts.
+
+func (f *fakeStore) messageFacts(_ context.Context, _, _ string) (messageFactsRow, error) {
+	return messageFactsRow{}, errNotFound
+}
+
+func (f *fakeStore) AddReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) RemoveReaction(_ context.Context, _, _, _, _ string) error { return nil }
+
+func (f *fakeStore) reactionsForMessages(_ context.Context, _ []string, _ string) (map[string][]ReactionCount, error) {
+	return map[string][]ReactionCount{}, nil
+}
+
+func (f *fakeStore) MessageSeenBy(_ context.Context, _, _ string, _ time.Time) (SeenByReport, error) {
+	return SeenByReport{Readers: []SeenByReader{}}, nil
+}
+
+func (f *fakeStore) ListMentions(_ context.Context, _, _ string, _ int) (MessagePage, error) {
+	return MessagePage{Messages: []Message{}}, nil
+}
+
 // - change 7 S4: the edit and delete doubles -
 
 // messageFactsFor answers a planted row bound to its channel; a row of

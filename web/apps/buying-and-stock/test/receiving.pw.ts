@@ -216,11 +216,21 @@ test("a send whose answer was lost is the same attempt when pressed again, so th
   await expect(page.locator("[data-send-row]")).toHaveCount(1);
 });
 
-test("where the policy hides cost the screen says so and shows no price or value", async ({ page, request }) => {
+test("the manager's queue keeps the Value open column, as the ruling kept it", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
+  // Change 5, R5: the queue's Value open column is the managers'; where cost is visible it stays.
+  const heads = (await page.locator("[data-queue] th").allTextContents()).map((t) => t.trim());
+  expect(heads).toContain("Value open");
+  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toContainText("$");
+});
+
+test("where the policy hides cost the screen says so, shows no price or value, and draws no value column", async ({ page, request }) => {
+  await openArea(page, request, "Receiving");
+  // Change 5, R5: where the policy hides cost the column is not drawn at all, never a stub cell.
   await request.post("/_stub/flag", { data: { name: "costsHidden", value: true } });
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toHaveText("hidden");
+  await expect(page.locator("[data-queue] th", { hasText: "Value open" })).toHaveCount(0);
+  await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toHaveCount(0);
   await openOrder(page, "PO-PLM-141");
   await expect(page.locator("[data-costs-hidden]")).toContainText("Cost is hidden for your role by the purchasing policy");
   await expect(page.locator("[data-order-value]")).toHaveCount(0);

@@ -105,6 +105,14 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// staff-gated); GET the caller's un-acked forced-ack messages for the kiosk to poll.
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages/{msgID}/ack", g.RequireStaff(h.staff(h.ackMessage)))
 	r.Handle("GET /api/v1/messaging/unacked", g.RequireStaff(h.staff(h.unacked)))
+	// Change 7, slice S3: reactions on a person's message (ruling 6: none on EVENT, approval or any
+	// other system message, refused 409 at the service), the seen-by read (the board's "Seen N") and
+	// the mentions view (ruling 5: the messages naming the caller or the caller's role). The reaction
+	// PUT is idempotent; the DELETE names its emoji in the path and removes exactly that one.
+	r.Handle("PUT /api/v1/messaging/channels/{id}/messages/{msgID}/reactions", g.RequireStaff(h.staff(h.putReaction)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}", g.RequireStaff(h.staff(h.deleteReaction)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/messages/{msgID}/seen-by", g.RequireStaff(h.staff(h.seenBy)))
+	r.Handle("GET /api/v1/messaging/mentions", g.RequireStaff(h.staff(h.listMentions)))
 	// Feature A (0069): per-user notification prefs for a channel. Staff-gated, mirroring markRead.
 	r.Handle("GET /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.getNotifyPrefs)))
 	r.Handle("PUT /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.putNotifyPrefs)))
@@ -844,6 +852,116 @@ func (h *Handler) unacked(w http.ResponseWriter, r *http.Request, caller guards.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
+// - Change 7, slice S3: reactions, seen-by, mentions -
+
+// reactionPut is the reaction body: the emoji (or short word chip) to seat.
+type reactionPut struct {
+	Emoji string `json:"emoji"`
+}
+
+// putReaction seats the caller's reaction on one message and answers the
+// message's fresh summary. The service enforces membership, the channel
+// binding and ruling 6 (a system message is a 409).
+func (h *Handler) putReaction(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	var req reactionPut
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reactions, err := h.svc.AddReaction(r.Context(), c, channelID, messageID, req.Emoji)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if reactions == nil {
+		reactions = []ReactionCount{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reactions": reactions})
+}
+
+// deleteReaction removes the caller's one emoji from one message and answers
+// the fresh summary. The emoji rides the path (URL escaped by any HTTP client;
+// the mux hands the decoded segment to PathValue).
+func (h *Handler) deleteReaction(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	emoji := r.PathValue("emoji")
+	reactions, err := h.svc.RemoveReaction(r.Context(), c, channelID, messageID, emoji)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if reactions == nil {
+		reactions = []ReactionCount{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reactions": reactions})
+}
+
+// seenBy answers the board's "Seen N" for one message: the exact count of the
+// room's members past the message, the author excepted, plus the readers.
+func (h *Handler) seenBy(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	report, err := h.svc.MessageSeenBy(r.Context(), c, channelID, messageID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, report)
+}
+
+// listMentions serves the mentions view (ruling 5), cursor paginated like the
+// message stream it shares the page shape with.
+func (h *Handler) listMentions(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	cursor := r.URL.Query().Get("cursor")
+	limit := parseLimit(r.URL.Query().Get("limit"))
+	page, err := h.svc.ListMentions(r.Context(), c, cursor, limit)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
 // getNotifyPrefs returns the caller's notification prefs for a channel (defaults if unset). Mirrors
 // markRead: caller → pathUUID → service (membership-gated) → JSON.
 func (h *Handler) getNotifyPrefs(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -1138,6 +1256,13 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "malformed pagination cursor")
 	case errors.Is(err, ErrBadAckMethod):
 		httpx.Error(w, http.StatusBadRequest, "ack method must be one of TAP, QUICK_REPLY, VOICE")
+	// Change 7, slice S3: a reaction on a system message is a conflict with what the message IS (the
+	// caller may react to any person's post, just not this kind), and a bad emoji key is a client
+	// fault caught at the boundary so it never reaches the store.
+	case errors.Is(err, ErrReactionsNotAllowed):
+		httpx.Error(w, http.StatusConflict, "system messages cannot carry reactions")
+	case errors.Is(err, ErrBadReaction):
+		httpx.Error(w, http.StatusBadRequest, "reaction must be one emoji or a short word")
 	// DIB-269: refusing to mute an escalation channel is a CONFLICT with the channel's class, not a
 	// permission failure, the caller may edit their prefs, just not this one on this channel. 409 also
 	// lets the UI show the honest message ("this channel cannot be muted") instead of "forbidden".

@@ -115,7 +115,7 @@ test("the buying seats keep their areas, and the inventory lookup says Reserved"
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   const pills = page.locator("nav.areas button");
-  await expect(pills).toHaveCount(7);
+  await expect(pills).toHaveCount(8);
   await expect(page.locator("nav.areas")).not.toContainText("Stock lookup");
   // Ruling R6, one vocabulary: the manager's lookup pane reads Reserved, as every other surface does.
   await openInventory(page, request, "lookup");

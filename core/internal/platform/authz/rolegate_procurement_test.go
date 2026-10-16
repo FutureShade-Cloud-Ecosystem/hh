@@ -56,6 +56,7 @@ func TestProcurementManager_TheVendorMasterIsTheBuyersAlone(t *testing.T) {
 var poWriteOps = []string{
 	"purchasingCreatePO", "purchasingAddLine", "purchasingUpdateLine", "purchasingRemoveLine",
 	"purchasingTransitionPO", "purchasingSetExpectedDate", "purchasingSetDeliveryMethod", "purchasingSendPO",
+	"purchasingApplyWarrantyCredit",
 	"inventoryCreatePOFromShortfall", "inventoryReorderPO",
 }
 

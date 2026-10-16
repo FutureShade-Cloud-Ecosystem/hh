@@ -333,6 +333,40 @@ type Message struct {
 	EditedAt     *time.Time `json:"edited_at,omitempty"`
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
+	// Reactions (change 7, slice S3) is the message's reaction summary, one
+	// row per emoji, ordered by the emoji's first reaction. Populated only on
+	// the read paths that stitch it (the message stream, the thread, the
+	// mentions view, and the reaction write answers); omitempty keeps every
+	// payload that predates the feature byte-identical, an unreacted message
+	// serializes exactly as before.
+	Reactions []ReactionCount `json:"reactions,omitempty"`
+}
+
+// ReactionCount is one emoji's line of a message's reaction summary (the
+// board's "Thanks 1" chip): the emoji, how many members reacted with it, and
+// whether the READER is one of them (Mine drives the chip's pressed state, so
+// it is answered per read, never stored).
+type ReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+// SeenByReader is one member the seen-by read names: who, and their display
+// name for the hover the board draws.
+type SeenByReader struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+}
+
+// SeenByReport is the seen-by read model (the board's "Seen 3"): the exact
+// count of the room's members whose read cursor stands at or past the
+// message's created_at, the author excepted, plus the readers themselves
+// (newest read first, capped at maxSeenByReaders names; the count stays
+// exact whatever the cap does).
+type SeenByReport struct {
+	Count   int            `json:"count"`
+	Readers []SeenByReader `json:"readers"`
 }
 
 // EventRef is the structured ref stored on an EVENT message.

@@ -549,10 +549,18 @@ func scanMessages(rows pgx.Rows) ([]Message, error) {
 
 // InsertMessage writes a TEXT message (or reply) authored by userID. threadRootID is "" for a
 // top-level post. It validates the root belongs to the same channel (a reply can't jump channels).
+// The mention parse (change 7, slice S3, ruling 5) runs here, inside the insert's own transaction,
+// so EVERY person post through this path stores its mentions whether it arrived over REST or was
+// replayed by a test: the message row and its mention rows commit together or not at all.
 func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body, threadRootID string) (Message, error) {
 	if r.pool == nil {
 		return Message{}, errNoDB
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var rootArg any
 	if threadRootID != "" {
 		// The root must exist, be in THIS channel, and itself be a top-level message (one-level
@@ -561,7 +569,7 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 		// (errNotFound → HTTP 404), a reply can never itself become a thread root. This same check
 		// also rejects a cross-channel root as a hard integrity guard.
 		var ok bool
-		if err := r.pool.QueryRow(ctx,
+		if err := tx.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM msg_messages WHERE id = $1 AND channel_id = $2 AND thread_root_id IS NULL)`,
 			threadRootID, channelID).Scan(&ok); err != nil {
 			return Message{}, fmt.Errorf("validate thread root: %w", err)
@@ -572,13 +580,23 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 		rootArg = threadRootID
 	}
 	var m Message
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id)
 		VALUES ($1, $2, 'TEXT', $3, $4)
 		RETURNING id::text, channel_id::text, author_id::text, kind, body, COALESCE(thread_root_id::text,''), created_at`,
 		channelID, userID, body, rootArg).Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.Kind, &m.Body, &m.ThreadRootID, &m.CreatedAt)
 	if err != nil {
 		return Message{}, fmt.Errorf("insert message: %w", err)
+	}
+	men, err := parseBodyMentions(ctx, tx, channelID, body)
+	if err != nil {
+		return Message{}, err
+	}
+	if err := storeMentions(ctx, tx, m.ID, men); err != nil {
+		return Message{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, err
 	}
 	// Resolve the author's display name for the immediate echo (the stream shows it).
 	_ = r.pool.QueryRow(ctx, `SELECT COALESCE(display_name,'') FROM users WHERE id = $1`, userID).Scan(&m.AuthorName)
@@ -885,6 +903,289 @@ func canonicalRole(code string) string {
 		return canonical
 	}
 	return code
+}
+
+// - Reactions, mentions and the seen-by read (change 7, slice S3) -
+
+// dbQuerier is the least both the pool and an open transaction satisfy, so the
+// mention parse's reads and writes run inside whichever transaction the message
+// insert is already committed to (the REST insert and the sync create each hold
+// one; a bare pool read never needs this).
+type dbQuerier interface {
+	dbExecer
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// parseBodyMentions reads the mention candidates for one channel (its members
+// by display name and e-mail local part, the house's active roles by code and
+// name) and runs the parse (mentions.go, the syntax's one place). The users and
+// roles reads are the same identity-side joins the derived-membership rule and
+// the display-name resolutions in this file already run, read only. A failed
+// candidate read fails the insert: a mention stored wrong is a badge that
+// never rings, not a footnote.
+func parseBodyMentions(ctx context.Context, q dbQuerier, channelID string, body string) (MessageMentions, error) {
+	persons := []mentionPerson{}
+	rows, err := q.Query(ctx, `
+		SELECT mem.user_id::text, COALESCE(u.display_name,''), lower(split_part(u.email::text, '@', 1))
+		FROM msg_members mem
+		JOIN users u ON u.id = mem.user_id
+		WHERE mem.channel_id = $1`, channelID)
+	if err != nil {
+		return MessageMentions{}, fmt.Errorf("mention candidates: %w", err)
+	}
+	for rows.Next() {
+		var p mentionPerson
+		if err := rows.Scan(&p.ID, &p.Name, &p.EmailLocal); err != nil {
+			rows.Close()
+			return MessageMentions{}, fmt.Errorf("scan mention candidate: %w", err)
+		}
+		persons = append(persons, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return MessageMentions{}, fmt.Errorf("mention candidates: %w", err)
+	}
+	roles := []mentionRole{}
+	rrows, err := q.Query(ctx, `SELECT code::text, name FROM roles WHERE is_active = TRUE`)
+	if err != nil {
+		return MessageMentions{}, fmt.Errorf("mention role candidates: %w", err)
+	}
+	for rrows.Next() {
+		var ro mentionRole
+		if err := rrows.Scan(&ro.Code, &ro.Name); err != nil {
+			rrows.Close()
+			return MessageMentions{}, fmt.Errorf("scan mention role: %w", err)
+		}
+		roles = append(roles, ro)
+	}
+	rrows.Close()
+	if err := rrows.Err(); err != nil {
+		return MessageMentions{}, fmt.Errorf("mention role candidates: %w", err)
+	}
+	return parseMentions(body, persons, roles), nil
+}
+
+// storeMentions writes one message's parsed mention rows. Empty on both sides
+// (the ordinary post) writes nothing. The unique index is the idempotency
+// fence; the insert is plain because the parse never repeats a target.
+func storeMentions(ctx context.Context, q dbQuerier, messageID string, men MessageMentions) error {
+	if len(men.UserIDs) == 0 && len(men.RoleCodes) == 0 {
+		return nil
+	}
+	users := men.UserIDs
+	if users == nil {
+		users = []string{}
+	}
+	roleCodes := men.RoleCodes
+	if roleCodes == nil {
+		roleCodes = []string{}
+	}
+	_, err := q.Exec(ctx, `
+		INSERT INTO msg_mentions (message_id, user_id, role_code)
+		SELECT $1::uuid, u.uid::uuid, NULL::citext FROM unnest($2::text[]) AS u(uid)
+		UNION ALL
+		SELECT $1::uuid, NULL::uuid, c.code::citext FROM unnest($3::text[]) AS c(code)
+		ON CONFLICT (message_id, user_id, role_code) DO NOTHING`,
+		messageID, users, roleCodes)
+	if err != nil {
+		return fmt.Errorf("store mentions: %w", err)
+	}
+	return nil
+}
+
+// messageFactsRow is the reaction and seen-by walls' read of one message: its
+// kind (ruling 6: a reaction is none on EVENT, approval or other system
+// messages) and its author (the seen-by count excepts them).
+type messageFactsRow struct {
+	Kind      string
+	AuthorID  string
+	CreatedAt time.Time
+}
+
+// messageFacts reads one message's kind, author and created_at, bound to the
+// channel the caller named. A message absent, or present in ANOTHER channel,
+// is errNotFound either way (indistinguishable, so no cross-channel existence
+// leaks), the same channel-binding guard ListThread and AckMessage carry.
+func (r *Repository) messageFacts(ctx context.Context, channelID, messageID string) (messageFactsRow, error) {
+	if r.pool == nil {
+		return messageFactsRow{}, errNoDB
+	}
+	var f messageFactsRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT kind, COALESCE(author_id::text,''), created_at
+		FROM msg_messages WHERE id = $1 AND channel_id = $2`,
+		messageID, channelID).
+		Scan(&f.Kind, &f.AuthorID, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return messageFactsRow{}, errNotFound
+	}
+	if err != nil {
+		return messageFactsRow{}, fmt.Errorf("message facts: %w", err)
+	}
+	return f, nil
+}
+
+// AddReaction seats one (message, person, emoji) row. The INSERT's own
+// predicate is the fence's second wall: the source row exists only for a TEXT
+// message in THIS channel, so even a caller that skipped the service's kind
+// check writes nothing on a system message (ruling 6). Idempotent on the
+// primary key: a replayed add lands once and changes nothing.
+func (r *Repository) AddReaction(ctx context.Context, channelID, messageID, userID, emoji string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO msg_reactions (message_id, user_id, emoji)
+		SELECT m.id, $2, $3 FROM msg_messages m
+		WHERE m.id = $1 AND m.channel_id = $4 AND m.kind = 'TEXT'
+		ON CONFLICT (message_id, user_id, emoji) DO NOTHING`,
+		messageID, userID, emoji, channelID)
+	if err != nil {
+		return fmt.Errorf("add reaction: %w", err)
+	}
+	return nil
+}
+
+// RemoveReaction drops the caller's one emoji on one message, fenced to a TEXT
+// message in THIS channel the same way the add is (ruling 6 reads both ways: a
+// reaction the add refuses is one the delete cannot remove). Idempotent:
+// removing what is not there removes nothing and reports nothing.
+func (r *Repository) RemoveReaction(ctx context.Context, channelID, messageID, userID, emoji string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM msg_reactions re
+		USING msg_messages m
+		WHERE re.message_id = m.id AND m.id = $1 AND m.channel_id = $2 AND m.kind = 'TEXT'
+		  AND re.user_id = $3 AND re.emoji = $4`,
+		messageID, channelID, userID, emoji)
+	if err != nil {
+		return fmt.Errorf("remove reaction: %w", err)
+	}
+	return nil
+}
+
+// reactionsForMessages answers the reaction summary for a page of messages in
+// one round trip: per (message, emoji), the count, whether the READER is among
+// the reactors, ordered by the emoji's first reaction so the chips render in
+// the order they were given. The map holds a slice per reacted message; a
+// message with no reactions is absent, and the stitcher leaves its Reactions
+// nil so the payload keeps its pre-feature shape.
+func (r *Repository) reactionsForMessages(ctx context.Context, messageIDs []string, userID string) (map[string][]ReactionCount, error) {
+	out := map[string][]ReactionCount{}
+	if r.pool == nil {
+		return out, errNoDB
+	}
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT re.message_id::text, re.emoji, COUNT(*)::int, BOOL_OR(re.user_id = $2::uuid)
+		FROM msg_reactions re
+		WHERE re.message_id = ANY($1::uuid[])
+		GROUP BY re.message_id, re.emoji
+		ORDER BY re.message_id, MIN(re.created_at) ASC`,
+		messageIDs, userID)
+	if err != nil {
+		return nil, fmt.Errorf("reactions for messages: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID, emoji string
+		var count int
+		var mine bool
+		if err := rows.Scan(&messageID, &emoji, &count, &mine); err != nil {
+			return nil, fmt.Errorf("scan reaction: %w", err)
+		}
+		out[messageID] = append(out[messageID], ReactionCount{Emoji: emoji, Count: count, Mine: mine})
+	}
+	return out, rows.Err()
+}
+
+// maxSeenByReaders caps the seen-by readers list the report carries; the count
+// above it stays exact whatever the cap does (the board draws "Seen 3", the
+// hover names the readers, and a branch room's whole roster is a list, not a
+// page).
+const maxSeenByReaders = 50
+
+// MessageSeenBy answers the board's "Seen N" for one message: the room's
+// members whose read cursor stands at or past the message's created_at, the
+// author excepted (a person is never seen by themselves). Membership of the
+// room is the read's whole world, so no room but the caller's named one is
+// consulted; the author id arrives from messageFacts, empty for a system
+// message (everyone past it counts).
+func (r *Repository) MessageSeenBy(ctx context.Context, channelID, authorID string, at time.Time) (SeenByReport, error) {
+	if r.pool == nil {
+		return SeenByReport{}, errNoDB
+	}
+	var authorArg any
+	if authorID != "" {
+		authorArg = authorID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT mem.user_id::text, COALESCE(u.display_name,'')
+		FROM msg_members mem
+		LEFT JOIN users u ON u.id = mem.user_id
+		WHERE mem.channel_id = $1 AND mem.last_read_at >= $2
+		  AND ($3::uuid IS NULL OR mem.user_id <> $3::uuid)
+		ORDER BY mem.last_read_at DESC, mem.user_id ASC`,
+		channelID, at, authorArg)
+	if err != nil {
+		return SeenByReport{}, fmt.Errorf("message seen-by: %w", err)
+	}
+	defer rows.Close()
+	out := SeenByReport{Readers: []SeenByReader{}}
+	for rows.Next() {
+		var reader SeenByReader
+		if err := rows.Scan(&reader.UserID, &reader.DisplayName); err != nil {
+			return SeenByReport{}, fmt.Errorf("scan seen-by reader: %w", err)
+		}
+		out.Count++
+		if len(out.Readers) < maxSeenByReaders {
+			out.Readers = append(out.Readers, reader)
+		}
+	}
+	return out, rows.Err()
+}
+
+// ListMentions is the mentions view (ruling 5): every message in a room the
+// caller belongs to that names the caller, by person or by one of the caller's
+// own role codes, newest first, cursor paginated by the same (created_at, id)
+// keyset the message stream uses. Deleted messages never appear. Membership is
+// intrinsic to the read (the join), the same fence the feeds pull through.
+func (r *Repository) ListMentions(ctx context.Context, userID, cursor string, limit int) (MessagePage, error) {
+	if r.pool == nil {
+		return MessagePage{}, errNoDB
+	}
+	args := []any{userID, limit + 1}
+	cursorClause := ""
+	if cursor != "" {
+		ts, id, err := decodeCursor(cursor)
+		if err != nil {
+			return MessagePage{}, fmt.Errorf("bad cursor: %w", err)
+		}
+		cursorClause = " AND (m.created_at, m.id) < ($3::timestamptz, $4::uuid)"
+		args = append(args, ts, id)
+	}
+	q := `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''), 0,
+		       m.edited_at, m.deleted_at, m.created_at
+		FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.deleted_at IS NULL
+		  AND EXISTS (
+		        SELECT 1 FROM msg_mentions men
+		        WHERE men.message_id = m.id
+		          AND (men.user_id = $1
+		            OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		                       WHERE ur.user_id = $1 AND ro.code = men.role_code)))` + cursorClause + `
+		ORDER BY m.created_at DESC, m.id DESC
+		LIMIT $2`
+	return r.scanMessagePage(ctx, q, args, limit)
 }
 
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
@@ -2123,11 +2424,21 @@ func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key str
 
 // syncMessageCreate writes one offline post through the module's own rules
 // (membership, the same-channel thread root) stamping the client key; the
-// identity column stamps the seq. A refused precondition answers
-// errNotFound, exactly like the REST thread-root guard.
+// identity column stamps the seq. The mention parse runs on this path too
+// (ruling 5, the same rule the REST insert applies), inside the write's own
+// transaction, so an offline post names the same people its online twin would.
+// A refused precondition answers errNotFound, exactly like the REST thread-root
+// guard.
 func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID, body, threadRootID, key string) (string, int64, error) {
-	member, err := r.IsMember(ctx, channelID, authorID)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var member bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM msg_members WHERE channel_id = $1 AND user_id = $2)`,
+		channelID, authorID).Scan(&member); err != nil {
 		return "", 0, err
 	}
 	if !member {
@@ -2135,7 +2446,7 @@ func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID,
 	}
 	var id string
 	var seq int64
-	err = r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, idempotency_key)
 		SELECT $1, $2, 'TEXT', $3, NULLIF($4,'')::uuid, $5::uuid
 		WHERE $4 = '' OR EXISTS (
@@ -2148,6 +2459,16 @@ func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID,
 	}
 	if err != nil {
 		return "", 0, fmt.Errorf("sync message create: %w", err)
+	}
+	men, err := parseBodyMentions(ctx, tx, channelID, body)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := storeMentions(ctx, tx, id, men); err != nil {
+		return "", 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", 0, err
 	}
 	return id, seq, nil
 }

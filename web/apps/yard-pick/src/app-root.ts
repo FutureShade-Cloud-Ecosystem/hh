@@ -35,11 +35,13 @@ import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } fro
 import "@hardscapehouse/shell-chrome";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { YardApi, type YardPick, type YardRecordLine } from "./yard-api.js";
+import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import { YardOffline, bannerMode, openYardOfflineOpfs, type QueueAnswer } from "./yard-offline.js";
 import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
 import {
   RESOLVE_WALL_NAMES,
+  CHANGE_ACK_WALL,
+  ackDoneWords,
   actionDone,
   lineIsShort,
   pickSummary,
@@ -57,7 +59,7 @@ import {
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
-import { renderConflicts, renderEntry, renderPick, renderQueue, stalenessWords, type EntryView } from "./views.js";
+import { renderChanges, renderConflicts, renderEntry, renderPick, renderQueue, stalenessWords, type EntryView } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -104,7 +106,8 @@ export class YardPickApp extends HHElement {
   // means the host cannot carry a store: the app then behaves online as
   // today, over the direct api above, and the strip keeps quiet.
   #yardOffline: YardOffline | null = null;
-  #offlineBooted = false;
+  #offlineOpen: Promise<void> | null = null;
+  #worldGen = 0;
   #readOnlyTab = false;
   #syncState = "offline";
   #waiting = 0;
@@ -125,8 +128,20 @@ export class YardPickApp extends HHElement {
   #moreBehind = false;
   #nextCursor = "";
 
-  // The open pick.
-  #view: { kind: "queue" } | { kind: "pick"; id: string } | { kind: "conflicts" } = { kind: "queue" };
+  // The changes waiting on the yard: the list behind the landing's door, the
+  // door's count, and the open one. The count is the last read's answer as a
+  // word ("2", "50+" when a page came back full), null when nothing is known.
+  #view: { kind: "queue" } | { kind: "pick"; id: string } | { kind: "changes" } | { kind: "conflicts" } = { kind: "queue" };
+  #changes: YardChange[] = [];
+  #changesPhase: "loading" | "ready" | "error" = "loading";
+  #changesWaiting: string | null = null;
+  #moreChangesBehind = false;
+  #nextChangesCursor = "";
+  // The open change's sheet: the row's facts, the optional note, and the
+  // refusal's own line. A failed write keeps the sheet and says so in place.
+  #sheetChange: YardChange | null = null;
+  #changeNote = "";
+  #changeError = "";
   #pick: YardPick | null = null;
   #drafts = new Map<number, Draft>();
   #editing: number | null = null;
@@ -184,14 +199,42 @@ export class YardPickApp extends HHElement {
       if (flow !== "") void this.#chooseFlow(flow);
       return;
     }
+    if (action === "open-changes") {
+      this.#openChanges();
+      return;
+    }
+    if (action === "more-changes") {
+      void this.#loadChanges(false);
+      return;
+    }
+    if (action === "open-change") {
+      this.#openChange(control?.getAttribute("data-change-id") ?? "");
+      return;
+    }
+    if (action === "close-change-sheet") {
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "ack-change") {
+      void this.#ackChange();
+      return;
+    }
     if (action === "back") {
       this.#view = { kind: "queue" };
       this.#pick = null;
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
       this.#error = "";
       this.#notice = "";
       // Back re-reads the whole board: a pick that moved while it was open
-      // must not ride beside its own stale row.
+      // must not ride beside its own stale row. The waiting changes' count
+      // re-reads with it: a change answered elsewhere must not linger.
       void this.#loadQueue(true);
+      void this.#loadChangesCount();
       return;
     }
     if (action === "claim") {
@@ -340,6 +383,10 @@ export class YardPickApp extends HHElement {
         this.#resolveText = value;
         return;
       }
+      if (field === "change-note") {
+        this.#changeNote = value;
+        return;
+      }
       if (field === "stage-where") {
         this.#stageWhere = value;
         return;
@@ -475,7 +522,22 @@ export class YardPickApp extends HHElement {
       else if (name === "skid-note") value = this.#skidNote;
       else if (name === "stage-where") value = this.#stageWhere;
       else if (name === "resolution") value = this.#resolveText;
+      else if (name === "change-note") value = this.#changeNote;
       if (value !== null && field.value !== value) field.value = value;
+    }
+    // The change sheet takes the yard's attention when it opens: at phone
+    // width it draws above a list longer than the screen, so a lower row's
+    // tap or Enter must land on it, in view and in focus, not leave both on
+    // the row behind. Focus already inside the sheet (the note, the buttons,
+    // the heading this pass put there) is left alone.
+    const sheet = this.renderRoot.querySelector<HTMLElement>("[data-change-sheet]");
+    if (sheet !== null) {
+      const active = this.renderRoot instanceof ShadowRoot ? this.renderRoot.activeElement : document.activeElement;
+      if (!(active instanceof Node && sheet.contains(active))) {
+        sheet.scrollIntoView({ block: "start" });
+        const head = sheet.querySelector<HTMLElement>(".sheet-head");
+        if (head !== null) head.focus();
+      }
     }
   }
 
@@ -496,36 +558,42 @@ export class YardPickApp extends HHElement {
   // and the chrome fed from then on. A host that cannot carry a store leaves
   // the layer null and the app behaves online as today.
   async #bootOffline(): Promise<void> {
-    if (this.#offlineBooted || this.#me === "") return;
-    this.#offlineBooted = true;
-    const opened = await openYardOfflineOpfs({
-      dbName: "hh-yard-pick",
-      transport: apiClientTransport(this.#staffClient),
-      direct: this.#yard,
-      actorId: this.#me,
-      onChange: () => void this.#refreshOfflineChrome(),
-    });
-    // A second tab reads an empty cache: it keeps the online board and only
-    // says it is read only.
-    this.#readOnlyTab = opened.readOnly;
-    const layer = opened.layer;
-    if (layer === null) {
-      this.requestUpdate();
-      return;
+    if (this.#me === "") return;
+    if (this.#offlineOpen === null) {
+      this.#offlineOpen = (async () => {
+        const opened = await openYardOfflineOpfs({
+          dbName: "hh-yard-pick",
+          transport: apiClientTransport(this.#staffClient),
+          direct: this.#yard,
+          actorId: this.#me,
+          onChange: () => void this.#refreshOfflineChrome(),
+        });
+        // A second tab reads an empty cache: it keeps the online board and only
+        // says it is read only.
+        this.#readOnlyTab = opened.readOnly;
+        const layer = opened.layer;
+        if (layer === null) {
+          this.requestUpdate();
+          return;
+        }
+        this.#yardOffline = layer;
+        layer.runner.onState((state) => {
+          // The state is on the glass in this update, not behind the health read.
+          this.#syncState = state;
+          this.requestUpdate();
+          void this.#refreshOfflineChrome();
+          // A cycle came to rest with its pull landed: the open pick reads the
+          // server's row (a record the device queued shows the server's lines,
+          // not its own). The read runs even while a save or a shortage is still
+          // finishing: a cycle that rests in between would otherwise leave the
+          // device's queued lines on the glass after the server's row arrived.
+          if ((state === "idle" || state === "conflict") && this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
+        });
+      })();
     }
-    this.#yardOffline = layer;
-    layer.runner.onState((state) => {
-      // The state is on the glass in this update, not behind the health read.
-      this.#syncState = state;
-      this.requestUpdate();
-      void this.#refreshOfflineChrome();
-      // A cycle came to rest with its pull landed: the open pick reads the
-      // server's row (a record the device queued shows the server's lines,
-      // not its own). The read runs even while a save or a shortage is still
-      // finishing: a cycle that rests in between would otherwise leave the
-      // device's queued lines on the glass after the server's row arrived.
-      if ((state === "idle" || state === "conflict") && this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
-    });
+    await this.#offlineOpen;
+    const layer = this.#yardOffline;
+    if (layer === null || this.#sessions.current === null) return;
     await layer.setOnline(navigator.onLine);
     await layer.cycle();
     await this.#refreshOfflineChrome();
@@ -541,10 +609,13 @@ export class YardPickApp extends HHElement {
   // The branch the yard works: the branches this login may reach, the first
   // one the board opens on. A login that reaches none is told so, in words.
   async #loadWorld(): Promise<void> {
+    const gen = ++this.#worldGen;
     this.#phase = "loading";
     this.requestUpdate();
     await this.#bootOffline();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     const branches = await this.#yard.branches();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     if (!branches.ok) {
       this.#phase = "error";
       this.#error = yardError(branches.error, branches.status, "The yard did not load. Check your signal and try again.");
@@ -560,6 +631,87 @@ export class YardPickApp extends HHElement {
     this.#branchId = branches.value[0]?.id ?? "";
     this.#branchName = branches.value[0]?.name ?? "";
     await this.#loadQueue(true);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
+    void this.#loadChangesCount();
+  }
+
+  /** The landing door's count: one light read, the word the board shows ("2", "50+"). */
+  async #loadChangesCount(): Promise<void> {
+    const answer = await this.#yard.changeQueue("PENDING_YARD");
+    this.#changesWaiting = answer.ok
+      ? answer.value.nextCursor !== ""
+        ? `${answer.value.changes.length}+`
+        : String(answer.value.changes.length)
+      : null;
+    this.requestUpdate();
+  }
+
+  /** The changes view's list: one page at a time, oldest first, the server's order. */
+  async #loadChanges(reset: boolean): Promise<void> {
+    if (reset) this.#changesPhase = "loading";
+    this.requestUpdate();
+    const cursor = reset ? "" : this.#nextChangesCursor;
+    const answer = await this.#yard.changeQueue("PENDING_YARD", cursor);
+    if (answer.ok) {
+      this.#changes = reset ? answer.value.changes : [...this.#changes, ...answer.value.changes];
+      this.#nextChangesCursor = answer.value.nextCursor;
+      this.#moreChangesBehind = answer.value.nextCursor !== "";
+      this.#changesPhase = "ready";
+      this.#changesWaiting = this.#moreChangesBehind ? `${this.#changes.length}+` : String(this.#changes.length);
+      this.#error = "";
+    } else {
+      this.#changesPhase = this.#changes.length > 0 ? "ready" : "error";
+      this.#error = yardError(answer.error, answer.status, "The changes did not load. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  #openChanges(): void {
+    this.#view = { kind: "changes" };
+    // The door opens on a clean list: no sheet, note or refusal left over
+    // from whoever held the phone before this read.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
+    this.#error = "";
+    this.#notice = "";
+    this.#loadChanges(true);
+  }
+
+  #openChange(changeId: string): void {
+    const change = this.#changes.find((c) => c.id === changeId);
+    if (change === undefined) return;
+    this.#sheetChange = change;
+    this.#changeNote = "";
+    this.#changeError = "";
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+  }
+
+  /** The yard's word on a change: acknowledge, with the optional note. A
+   *  refusal keeps the sheet and shows the server's own sentence in place;
+   *  a landed acknowledgement moves the row out of the yard's stage and
+   *  names the next stage from the server's answer. */
+  async #ackChange(): Promise<void> {
+    const change = this.#sheetChange;
+    if (change === null || this.#busy) return;
+    this.#busy = true;
+    this.#changeError = "";
+    this.requestUpdate();
+    const answer = await this.#yard.acknowledgeChange(change.id, this.#changeNote);
+    this.#busy = false;
+    if (answer.ok) {
+      this.#notice = ackDoneWords(answer.value);
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      await this.#loadChanges(true);
+    } else {
+      this.#changeError = yardError(answer.error, answer.status, "The acknowledgement did not go through. Check your signal and try again.", {
+        wallSentence: CHANGE_ACK_WALL,
+      });
+    }
+    this.requestUpdate();
   }
 
   async #loadQueue(reset: boolean): Promise<void> {
@@ -960,6 +1112,7 @@ export class YardPickApp extends HHElement {
   }
 
   #onSignOut(): void {
+    this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";
     this.#picks = [];
@@ -969,6 +1122,16 @@ export class YardPickApp extends HHElement {
     this.#notice = "";
     this.#view = { kind: "queue" };
     this.#pick = null;
+    this.#changes = [];
+    this.#changesPhase = "loading";
+    this.#changesWaiting = null;
+    this.#moreChangesBehind = false;
+    this.#nextChangesCursor = "";
+    // The shared phone changes hands here: the open sheet, its typed note and
+    // its refusal line belong to the person who left, never to the next one.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
     clearFrontDoorHandoff();
     if (this.#custody.mode === "console") {
       this.#entryView = entryUnavailable();
@@ -1013,6 +1176,19 @@ export class YardPickApp extends HHElement {
         skidReason: this.#skidReason,
       });
     }
+    if (this.#view.kind === "changes") {
+      return renderChanges({
+        phase: this.#changesPhase,
+        changes: this.#changes,
+        moreBehind: this.#moreChangesBehind,
+        busy: this.#busy,
+        error: this.#error,
+        notice: this.#notice,
+        sheet: this.#sheetChange,
+        sheetNote: this.#changeNote,
+        sheetError: this.#changeError,
+      });
+    }
     return renderQueue({
       phase: this.#phase,
       branchName: this.#branchName,
@@ -1021,6 +1197,7 @@ export class YardPickApp extends HHElement {
       error: this.#error,
       notice: this.#notice,
       moreBehind: this.#moreBehind,
+      changesWaiting: this.#changesWaiting,
       staleness: this.#yardOffline !== null ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null }) : "",
       conflicts: this.#openCards.length,
     });
