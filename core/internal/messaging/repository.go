@@ -499,7 +499,11 @@ func (r *Repository) ListThread(ctx context.Context, channelID, rootID string) (
 		return nil, fmt.Errorf("list thread: %w", err)
 	}
 	defer rows.Close()
-	return scanMessages(rows)
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return nil, err
+	}
+	return r.populateMessageAttachments(ctx, msgs)
 }
 
 // scanMessagePage runs the given keyset query (which selects limit+1 rows) and splits the extra row
@@ -521,6 +525,10 @@ func (r *Repository) scanMessagePage(ctx context.Context, q string, args []any, 
 		// rows share a created_at (no split group, no skipped row).
 		page.NextCursor = encodeCursor(msgs[limit-1])
 		msgs = msgs[:limit]
+	}
+	msgs, err = r.populateMessageAttachments(ctx, msgs)
+	if err != nil {
+		return MessagePage{}, err
 	}
 	page.Messages = msgs
 	return page, nil
@@ -2754,6 +2762,253 @@ func (r *Repository) ArchiveChannelOlderThan(ctx context.Context, channelID stri
 		return 0, fmt.Errorf("archive channel: %w", err)
 	}
 	return int(ct.RowsAffected()), nil
+}
+
+func (r *Repository) populateMessageAttachments(ctx context.Context, msgs []Message) ([]Message, error) {
+	if r.pool == nil || len(msgs) == 0 {
+		return msgs, nil
+	}
+	msgIDs := make([]string, len(msgs))
+	for i, m := range msgs {
+		msgIDs[i] = m.ID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id::text, a.message_id::text, a.channel_id::text, a.attachment_id::text,
+		       a.filename, a.content_type, a.size_bytes, COALESCE(a.storage_key, ''),
+		       a.kind, a.uploaded_by::text,
+		       COALESCE(u.display_name, ''),
+		       a.created_at
+		FROM msg_attachments a
+		LEFT JOIN users u ON u.id = a.uploaded_by
+		WHERE a.message_id::text = ANY($1)
+		ORDER BY a.created_at ASC, a.id ASC`, msgIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load message attachments: %w", err)
+	}
+	defer rows.Close()
+
+	attMap := make(map[string][]MessageAttachment)
+	for rows.Next() {
+		var a MessageAttachment
+		var mid, cid, aid, uid *string
+		if err := rows.Scan(&a.ID, &mid, &cid, &aid, &a.Filename, &a.ContentType, &a.SizeBytes,
+			&a.StorageKey, &a.Kind, &uid, &a.SenderName, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan message attachment: %w", err)
+		}
+		a.MessageID = mid
+		a.ChannelID = cid
+		a.AttachmentID = aid
+		a.UploadedBy = uid
+		if mid != nil {
+			attMap[*mid] = append(attMap[*mid], a)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range msgs {
+		if atts, ok := attMap[msgs[i].ID]; ok {
+			msgs[i].Attachments = atts
+		}
+	}
+	return msgs, nil
+}
+
+// ListChannelAttachments returns all attachments shared in a room, ordered newest first.
+func (r *Repository) ListChannelAttachments(ctx context.Context, channelID string) ([]MessageAttachment, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id::text, a.message_id::text, a.channel_id::text, a.attachment_id::text,
+		       a.filename, a.content_type, a.size_bytes, COALESCE(a.storage_key, ''),
+		       a.kind, a.uploaded_by::text,
+		       COALESCE(u.display_name, mu.display_name, ''),
+		       a.created_at
+		FROM msg_attachments a
+		LEFT JOIN users u ON u.id = a.uploaded_by
+		LEFT JOIN msg_messages m ON m.id = a.message_id
+		LEFT JOIN users mu ON mu.id = m.author_id
+		WHERE a.channel_id = $1::uuid OR (a.channel_id IS NULL AND m.channel_id = $1::uuid)
+		ORDER BY a.created_at DESC, a.id DESC`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list channel attachments: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]MessageAttachment, 0)
+	for rows.Next() {
+		var a MessageAttachment
+		var mid, cid, aid, uid *string
+		if err := rows.Scan(&a.ID, &mid, &cid, &aid, &a.Filename, &a.ContentType, &a.SizeBytes,
+			&a.StorageKey, &a.Kind, &uid, &a.SenderName, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan channel attachment: %w", err)
+		}
+		a.MessageID = mid
+		a.ChannelID = cid
+		a.AttachmentID = aid
+		a.UploadedBy = uid
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// CountChannelMembers returns the count of members in a channel.
+func (r *Repository) CountChannelMembers(ctx context.Context, channelID string) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var count int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*)::int FROM msg_members WHERE channel_id = $1::uuid`, channelID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count channel members: %w", err)
+	}
+	return count, nil
+}
+
+// InsertChannelAttachment inserts one attachment item for a channel.
+func (r *Repository) InsertChannelAttachment(ctx context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if r.pool == nil {
+		return MessageAttachment{}, errNoDB
+	}
+	kind := in.Kind
+	if kind == "" {
+		kind = "document"
+	}
+	contentType := in.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	var sizeBytes int64
+	if in.SizeBytes != nil {
+		sizeBytes = *in.SizeBytes
+	}
+
+	var uArg any
+	if uploadedBy != "" {
+		if _, err := uuid.Parse(uploadedBy); err == nil {
+			uArg = uploadedBy
+		}
+	}
+
+	var mArg any
+	if in.MessageID != nil && *in.MessageID != "" {
+		if _, err := uuid.Parse(*in.MessageID); err == nil {
+			mArg = *in.MessageID
+		}
+	}
+
+	var a MessageAttachment
+	var mid, cid, aid, uid *string
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_attachments (
+			channel_id, message_id, attachment_id, filename, content_type, size_bytes, storage_key, kind, uploaded_by, created_at
+		) VALUES (
+			$1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8,
+			(SELECT id FROM users WHERE id = $9::uuid),
+			now()
+		)
+		ON CONFLICT (channel_id, attachment_id) WHERE attachment_id IS NOT NULL
+		DO UPDATE SET filename = EXCLUDED.filename,
+		              content_type = EXCLUDED.content_type,
+		              size_bytes = EXCLUDED.size_bytes,
+		              kind = EXCLUDED.kind
+		RETURNING id::text, message_id::text, channel_id::text, attachment_id::text,
+		          filename, content_type, size_bytes, COALESCE(storage_key, ''),
+		          kind, uploaded_by::text,
+		          COALESCE((SELECT COALESCE(u.display_name, '') FROM users u WHERE u.id = msg_attachments.uploaded_by), ''),
+		          created_at`,
+		channelID, mArg, in.AttachmentID, in.Filename, contentType, sizeBytes, in.StorageKey, kind, uArg,
+	)
+	if err := row.Scan(&a.ID, &mid, &cid, &aid, &a.Filename, &a.ContentType, &a.SizeBytes,
+		&a.StorageKey, &a.Kind, &uid, &a.SenderName, &a.CreatedAt); err != nil {
+		return MessageAttachment{}, fmt.Errorf("insert channel attachment: %w", err)
+	}
+	a.MessageID = mid
+	a.ChannelID = cid
+	a.AttachmentID = aid
+	a.UploadedBy = uid
+	return a, nil
+}
+
+// UpsertChannelAttachmentFromMirror mirrors an attachment link to msg_attachments.
+func (r *Repository) UpsertChannelAttachmentFromMirror(ctx context.Context, channelID string, att MessageAttachment) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	kind := att.Kind
+	if kind == "" {
+		kind = "document"
+	}
+	contentType := att.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	var uArg any
+	if att.UploadedBy != nil && *att.UploadedBy != "" {
+		if _, err := uuid.Parse(*att.UploadedBy); err == nil {
+			uArg = *att.UploadedBy
+		}
+	}
+
+	createdAt := att.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO msg_attachments (
+			channel_id, attachment_id, filename, content_type, size_bytes, kind, uploaded_by, created_at
+		) VALUES (
+			$1::uuid, $2::uuid, $3, $4, $5, $6,
+			(SELECT id FROM users WHERE id = $7::uuid),
+			$8
+		)
+		ON CONFLICT (channel_id, attachment_id) WHERE attachment_id IS NOT NULL
+		DO UPDATE SET filename = EXCLUDED.filename,
+		              content_type = EXCLUDED.content_type,
+		              size_bytes = EXCLUDED.size_bytes,
+		              kind = EXCLUDED.kind`,
+		channelID, att.AttachmentID, att.Filename, contentType, att.SizeBytes, kind, uArg, createdAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert channel attachment from mirror: %w", err)
+	}
+	return nil
+}
+
+// GetMessage loads one message by ID.
+func (r *Repository) GetMessage(ctx context.Context, messageID string) (Message, error) {
+	if r.pool == nil {
+		return Message{}, errNoDB
+	}
+	var m Message
+	var ref []byte
+	row := r.pool.QueryRow(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''), 0,
+		       m.edited_at, m.deleted_at, m.created_at
+		FROM msg_messages m
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.id = $1::uuid`, messageID)
+	if err := row.Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.AuthorName, &m.Kind, &m.Body,
+		&ref, &m.ThreadRootID, &m.ReplyCount, &m.EditedAt, &m.DeletedAt, &m.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, ErrNotFound
+		}
+		return Message{}, fmt.Errorf("get message: %w", err)
+	}
+	if len(ref) > 0 && string(ref) != "{}" {
+		m.Ref = json.RawMessage(ref)
+	}
+	if m.DeletedAt != nil {
+		m.Body = ""
+	}
+	return m, nil
+}
+
+// ChannelExists reports whether a channel exists.
+func (r *Repository) ChannelExists(ctx context.Context, channelID string) (bool, error) {
+	return r.channelExists(ctx, channelID)
 }
 
 // - Slice S7: per-person notification settings (event-category toggles + quiet hours), 0401 -

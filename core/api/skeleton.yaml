@@ -1023,6 +1023,10 @@ components:
         deleted_at:
           type: [string, "null"]
           format: date-time
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentLink"
 
     AttachmentCreate:
       type: object
@@ -1050,7 +1054,7 @@ components:
         attachment_id: { type: string, format: uuid }
         owner_kind:
           type: string
-          enum: [order, plan, stop, receiving, quote]
+          enum: [order, plan, stop, receiving, quote, channel]
         owner_id: { type: string, format: uuid }
         role:
           type: string

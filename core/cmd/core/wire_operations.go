@@ -241,6 +241,16 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
 	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
+
+	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
+	attachmentsRepo := attachments.NewRepository(pool)
+	messagingSvc.WithAttachmentChecker(attachmentsSeamAdapter{repo: attachmentsRepo})
+	attachments.NewHandler(attachmentsRepo, log).
+		WithRoomChecker(messagingRoomChecker{repo: messagingRepo}).
+		WithRoomMirror(messagingAttachmentMirror{svc: messagingSvc}).
+		WithUserLinker(link).
+		RegisterRoutes(r, g)
+
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -1948,4 +1958,75 @@ func (a approvalNotifierAdapter) ApprovalDecided(ctx context.Context, n identity
 			"status":      n.Status,
 		})
 	}
+}
+
+// messagingRoomChecker adapts messaging.Repository to attachments.RoomMembershipChecker.
+type messagingRoomChecker struct {
+	repo *messaging.Repository
+}
+
+func (c messagingRoomChecker) IsRoomMember(ctx context.Context, roomID, userID string) (bool, error) {
+	return c.repo.IsMember(ctx, roomID, userID)
+}
+
+func (c messagingRoomChecker) RoomExists(ctx context.Context, roomID string) (bool, error) {
+	return c.repo.ChannelExists(ctx, roomID)
+}
+
+// messagingAttachmentMirror adapts messaging.Service to attachments.RoomAttachmentMirror.
+type messagingAttachmentMirror struct {
+	svc *messaging.Service
+}
+
+func (m messagingAttachmentMirror) MirrorAttachment(ctx context.Context, channelID string, att attachments.Attachment, role string) error {
+	meta := messaging.AttachmentMeta{
+		ID:             att.ID,
+		AppwriteFileID: att.AppwriteFileID,
+		Bucket:         att.Bucket,
+		Kind:           att.Kind,
+		Mime:           att.Mime,
+	}
+	if att.SizeBytes != nil {
+		meta.SizeBytes = *att.SizeBytes
+	}
+	return m.svc.MirrorRoomAttachment(ctx, channelID, meta, att.CreatedBy, "", role)
+}
+
+// attachmentsSeamAdapter adapts attachments.Repository to messaging.AttachmentChecker.
+type attachmentsSeamAdapter struct {
+	repo *attachments.Repository
+}
+
+func (a attachmentsSeamAdapter) VerifyRoomAttachment(ctx context.Context, orgID, attachmentID, channelID string) (*messaging.AttachmentMeta, error) {
+	m, err := a.repo.VerifyRoomAttachment(ctx, orgID, attachmentID, channelID)
+	if err != nil {
+		return nil, err
+	}
+	return &messaging.AttachmentMeta{
+		ID:             m.ID,
+		AppwriteFileID: m.AppwriteFileID,
+		Bucket:         m.Bucket,
+		Kind:           m.Kind,
+		Mime:           m.Mime,
+		SizeBytes:      m.SizeBytes,
+	}, nil
+}
+
+func (a attachmentsSeamAdapter) ResolveAttachmentMetas(ctx context.Context, orgID string, attachmentIDs []string) (map[string]messaging.AttachmentMeta, error) {
+	metas, err := a.repo.ResolveAttachmentMetas(ctx, orgID, attachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	res := make(map[string]messaging.AttachmentMeta, len(metas))
+	for k, v := range metas {
+		res[k] = messaging.AttachmentMeta{
+			ID:             v.ID,
+			AppwriteFileID: v.AppwriteFileID,
+			Bucket:         v.Bucket,
+			Kind:           v.Kind,
+			Mime:           v.Mime,
+			SizeBytes:      v.SizeBytes,
+		}
+	}
+	return res, nil
 }

@@ -50,14 +50,17 @@ type fakeStore struct {
 	personPrefs map[string]map[string]PersonEventPref // userID -> category -> stored pref
 	quietHours  map[string]QuietHours                 // userID -> stored quiet-hours row
 	// Approvals rail (0075) doubles:
-	approvalChannels map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
-	approvalCards    map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
-	approvalMsgs     []Message         // card inserts captured (count assertions)
-	approvalEchoes   map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
-	stamped          map[string]string // approvalID -> last status stamped
-	stampCalls       int               // StampApprovalStatus invocation count
-	displayNames     map[string]string // userID -> display name (decider name resolution)
-	roster           map[string][]StaffRosterRow
+	approvalChannels   map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
+	approvalCards      map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
+	approvalMsgs       []Message         // card inserts captured (count assertions)
+	approvalEchoes     map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
+	stamped            map[string]string // approvalID -> last status stamped
+	stampCalls         int               // StampApprovalStatus invocation count
+	displayNames       map[string]string // userID -> display name (decider name resolution)
+	roster             map[string][]StaffRosterRow
+	channelAttachments map[string][]MessageAttachment
+	memberCounts       map[string]int
+	singleMessages     map[string]Message
 	// Change 7 S4 doubles: the planted message rows the edit and delete
 	// walls read, and the writes the legs assert on.
 	editFacts       map[string]messageFacts // messageID -> the planted row (channel bound)
@@ -67,29 +70,32 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members:       map[string]map[string]bool{},
-		exists:        map[string]bool{},
-		channels:      map[string][]Channel{},
-		messages:      map[string]MessagePage{},
-		threads:       map[string][]Message{},
-		unread:        map[string]UnreadCounts{},
-		slugs:         map[string]string{},
-		roomsBySlug:   map[string]Channel{},
-		yard:          map[string]string{},
-		archived:      map[string]bool{},
-		facts:         map[string]channelFactsRow{},
-		memberRoles:   map[string]string{},
-		memberSources: map[string]string{},
-		userBranches:  map[string]map[string]bool{},
-		userGlobal:    map[string]bool{},
-		eventDup:      map[string]bool{},
-		prefs:         map[string]NotificationPrefs{},
-		tiers:         map[string]string{},
-		acks:          map[string]Ack{},
-		unacked:       map[string][]Message{},
-		personPrefs:   map[string]map[string]PersonEventPref{},
-		quietHours:    map[string]QuietHours{},
-		roster:        map[string][]StaffRosterRow{},
+		members:            map[string]map[string]bool{},
+		exists:             map[string]bool{},
+		channels:           map[string][]Channel{},
+		messages:           map[string]MessagePage{},
+		threads:            map[string][]Message{},
+		unread:             map[string]UnreadCounts{},
+		slugs:              map[string]string{},
+		roomsBySlug:        map[string]Channel{},
+		yard:               map[string]string{},
+		archived:           map[string]bool{},
+		facts:              map[string]channelFactsRow{},
+		memberRoles:        map[string]string{},
+		memberSources:      map[string]string{},
+		userBranches:       map[string]map[string]bool{},
+		userGlobal:         map[string]bool{},
+		eventDup:           map[string]bool{},
+		prefs:              map[string]NotificationPrefs{},
+		tiers:              map[string]string{},
+		acks:               map[string]Ack{},
+		unacked:            map[string][]Message{},
+		personPrefs:        map[string]map[string]PersonEventPref{},
+		quietHours:         map[string]QuietHours{},
+		roster:             map[string][]StaffRosterRow{},
+		channelAttachments: map[string][]MessageAttachment{},
+		memberCounts:       map[string]int{},
+		singleMessages:     map[string]Message{},
 	}
 }
 
@@ -444,6 +450,67 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 // the wall never asks it.
 func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+func (f *fakeStore) ListChannelAttachments(_ context.Context, channelID string) ([]MessageAttachment, error) {
+	return f.channelAttachments[channelID], nil
+}
+
+func (f *fakeStore) CountChannelMembers(_ context.Context, channelID string) (int, error) {
+	if f.memberCounts != nil {
+		if c, ok := f.memberCounts[channelID]; ok {
+			return c, nil
+		}
+	}
+	if f.members[channelID] != nil {
+		return len(f.members[channelID]), nil
+	}
+	return 0, nil
+}
+
+func (f *fakeStore) InsertChannelAttachment(_ context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	var uPtr *string
+	if uploadedBy != "" {
+		uPtr = &uploadedBy
+	}
+	sizeBytes := int64(0)
+	if in.SizeBytes != nil {
+		sizeBytes = *in.SizeBytes
+	}
+	att := MessageAttachment{
+		ID:           "att-" + in.AttachmentID,
+		ChannelID:    &channelID,
+		MessageID:    in.MessageID,
+		AttachmentID: &in.AttachmentID,
+		Filename:     in.Filename,
+		ContentType:  in.ContentType,
+		SizeBytes:    sizeBytes,
+		Kind:         in.Kind,
+		UploadedBy:   uPtr,
+		CreatedAt:    time.Now(),
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return att, nil
+}
+
+func (f *fakeStore) UpsertChannelAttachmentFromMirror(_ context.Context, channelID string, att MessageAttachment) error {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return nil
+}
+
+func (f *fakeStore) GetMessage(_ context.Context, messageID string) (Message, error) {
+	if f.singleMessages != nil {
+		if m, ok := f.singleMessages[messageID]; ok {
+			return m, nil
+		}
+	}
+	return Message{ID: messageID}, nil
 }
 
 // S6 directory + join + leave + membership-rule stubs.

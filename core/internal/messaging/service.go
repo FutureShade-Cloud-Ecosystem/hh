@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
@@ -96,6 +98,12 @@ type store interface {
 	memberRole(ctx context.Context, channelID, userID string) (string, error)
 	memberSource(ctx context.Context, channelID, userID string) (string, error)
 	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
+	// Room attachments (0403, S8)
+	ListChannelAttachments(ctx context.Context, channelID string) ([]MessageAttachment, error)
+	CountChannelMembers(ctx context.Context, channelID string) (int, error)
+	InsertChannelAttachment(ctx context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error)
+	UpsertChannelAttachmentFromMirror(ctx context.Context, channelID string, att MessageAttachment) error
+	GetMessage(ctx context.Context, messageID string) (Message, error)
 	// Change 7, slice S3: the reaction walls and write, the reaction summary
 	// stitch, the seen-by read, the mentions view.
 	messageFacts(ctx context.Context, channelID, messageID string) (messageFactsRow, error)
@@ -106,15 +114,28 @@ type store interface {
 	ListMentions(ctx context.Context, userID, cursor string, limit int) (MessagePage, error)
 }
 
+// AttachmentChecker is the injected seam to verify and resolve attachments from the attachments module.
+type AttachmentChecker interface {
+	VerifyRoomAttachment(ctx context.Context, orgID, attachmentID, channelID string) (*AttachmentMeta, error)
+	ResolveAttachmentMetas(ctx context.Context, orgID string, attachmentIDs []string) (map[string]AttachmentMeta, error)
+}
+
 // Service holds the messaging business rules. It depends only on the store seam (its own tables +
 // the identity read-seam) and the optional realtime hub, no other module is imported, honouring
 // the modular-monolith boundary.
 type Service struct {
-	repo store
-	rt   realtime
+	repo              store
+	rt                realtime
+	attachmentChecker AttachmentChecker
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The rollup's day,
 	// the day a routine event is filed under, is the dealer's own calendar day.
 	zone houseday.Source
+}
+
+// WithAttachmentChecker attaches the attachment checker seam.
+func (s *Service) WithAttachmentChecker(c AttachmentChecker) *Service {
+	s.attachmentChecker = c
+	return s
 }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
@@ -154,6 +175,8 @@ var (
 	// ErrBadAckMethod is an ack whose method is not one of the msg_acks CHECK values (client fault). The
 	// handler maps it to HTTP 400, caught at the service boundary so it never reaches the DB CHECK.
 	ErrBadAckMethod = errors.New("messaging: unknown ack method")
+	// ErrBadAttachment is an invalid room attachment payload (client fault). The handler maps it to HTTP 400.
+	ErrBadAttachment = errors.New("messaging: invalid attachment payload")
 	// ErrBadReaction is a reaction whose emoji is empty past the trim or longer than the cap
 	// (client fault). The handler maps it to HTTP 400, caught here so it never reaches the store.
 	ErrBadReaction = errors.New("messaging: reaction must be one emoji or a short word")
@@ -206,6 +229,7 @@ func (s *Service) GetMessages(ctx context.Context, c Caller, channelID, cursor s
 	if page.Messages == nil {
 		page.Messages = []Message{}
 	}
+	s.populateMessagePageAttachments(ctx, c.OrgID, page.Messages)
 	return page, nil
 }
 
@@ -228,6 +252,7 @@ func (s *Service) GetThread(ctx context.Context, c Caller, channelID, rootID str
 	if replies == nil {
 		replies = []Message{}
 	}
+	s.populateMessagePageAttachments(ctx, c.OrgID, replies)
 	return replies, nil
 }
 
@@ -821,6 +846,190 @@ func looksLikeCleartextID(s string) bool {
 	return false
 }
 
+func (s *Service) populateMessagePageAttachments(ctx context.Context, orgID string, msgs []Message) {
+	if s.attachmentChecker == nil || len(msgs) == 0 {
+		return
+	}
+	var aidList []string
+	for _, m := range msgs {
+		for _, a := range m.Attachments {
+			if a.AttachmentID != nil && *a.AttachmentID != "" {
+				aidList = append(aidList, *a.AttachmentID)
+			}
+		}
+	}
+	if len(aidList) == 0 {
+		return
+	}
+	metas, err := s.attachmentChecker.ResolveAttachmentMetas(ctx, orgID, aidList)
+	if err != nil || metas == nil {
+		return
+	}
+	for i := range msgs {
+		for j := range msgs[i].Attachments {
+			if msgs[i].Attachments[j].AttachmentID != nil {
+				if meta, ok := metas[*msgs[i].Attachments[j].AttachmentID]; ok {
+					msgs[i].Attachments[j].AppwriteFileID = meta.AppwriteFileID
+					msgs[i].Attachments[j].Bucket = meta.Bucket
+					if msgs[i].Attachments[j].SizeBytes == 0 && meta.SizeBytes > 0 {
+						msgs[i].Attachments[j].SizeBytes = meta.SizeBytes
+					}
+					if msgs[i].Attachments[j].ContentType == "" && meta.Mime != "" {
+						msgs[i].Attachments[j].ContentType = meta.Mime
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetChannelAttachments returns the photos, files, and member count for a room.
+func (s *Service) GetChannelAttachments(ctx context.Context, c Caller, channelID string) (ChannelAttachmentsResponse, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+	atts, err := s.repo.ListChannelAttachments(ctx, channelID)
+	if err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+	count, err := s.repo.CountChannelMembers(ctx, channelID)
+	if err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+
+	if s.attachmentChecker != nil && len(atts) > 0 {
+		var aidList []string
+		for _, a := range atts {
+			if a.AttachmentID != nil && *a.AttachmentID != "" {
+				aidList = append(aidList, *a.AttachmentID)
+			}
+		}
+		if len(aidList) > 0 {
+			metas, err := s.attachmentChecker.ResolveAttachmentMetas(ctx, c.OrgID, aidList)
+			if err == nil && metas != nil {
+				for i := range atts {
+					if atts[i].AttachmentID != nil {
+						if meta, ok := metas[*atts[i].AttachmentID]; ok {
+							atts[i].AppwriteFileID = meta.AppwriteFileID
+							atts[i].Bucket = meta.Bucket
+							if atts[i].SizeBytes == 0 && meta.SizeBytes > 0 {
+								atts[i].SizeBytes = meta.SizeBytes
+							}
+							if atts[i].ContentType == "" && meta.Mime != "" {
+								atts[i].ContentType = meta.Mime
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	photos := make([]MessageAttachment, 0)
+	files := make([]MessageAttachment, 0)
+	for _, a := range atts {
+		if a.Kind == "photo" {
+			photos = append(photos, a)
+		} else {
+			files = append(files, a)
+		}
+	}
+
+	return ChannelAttachmentsResponse{
+		Photos:      photos,
+		Files:       files,
+		MemberCount: count,
+	}, nil
+}
+
+// CreateChannelAttachment links an attachment to a channel or message.
+func (s *Service) CreateChannelAttachment(ctx context.Context, c Caller, channelID string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return MessageAttachment{}, err
+	}
+	if strings.TrimSpace(in.Filename) == "" {
+		return MessageAttachment{}, ErrBadAttachment
+	}
+	if _, err := uuid.Parse(in.AttachmentID); err != nil {
+		return MessageAttachment{}, ErrBadAttachment
+	}
+	if in.MessageID != nil && *in.MessageID != "" {
+		if _, err := uuid.Parse(*in.MessageID); err != nil {
+			return MessageAttachment{}, ErrBadAttachment
+		}
+		msg, err := s.repo.GetMessage(ctx, *in.MessageID)
+		if err != nil {
+			return MessageAttachment{}, ErrNotFound
+		}
+		if msg.ChannelID != channelID {
+			return MessageAttachment{}, ErrNotFound
+		}
+	}
+	var meta *AttachmentMeta
+	if s.attachmentChecker != nil {
+		m, err := s.attachmentChecker.VerifyRoomAttachment(ctx, c.OrgID, in.AttachmentID, channelID)
+		if err != nil {
+			return MessageAttachment{}, ErrNotFound
+		}
+		meta = m
+		if in.ContentType == "" && m.Mime != "" {
+			in.ContentType = m.Mime
+		}
+		if in.SizeBytes == nil && m.SizeBytes > 0 {
+			in.SizeBytes = &m.SizeBytes
+		}
+		if in.Kind == "" && m.Kind != "" {
+			if m.Kind == "photo" {
+				in.Kind = "photo"
+			} else {
+				in.Kind = "document"
+			}
+		}
+	}
+
+	att, err := s.repo.InsertChannelAttachment(ctx, channelID, c.UserID, in)
+	if err != nil {
+		return MessageAttachment{}, err
+	}
+	if meta != nil {
+		att.AppwriteFileID = meta.AppwriteFileID
+		att.Bucket = meta.Bucket
+	}
+	return att, nil
+}
+
+// MirrorRoomAttachment mirrors an attachment link to msg_attachments.
+func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, meta AttachmentMeta, uploadedBy, filename, role string) error {
+	name := filename
+	if name == "" {
+		if role != "" {
+			name = role
+		} else {
+			name = meta.AppwriteFileID
+		}
+	}
+	kind := "document"
+	if meta.Kind == "photo" {
+		kind = "photo"
+	}
+	var uPtr *string
+	if uploadedBy != "" {
+		uPtr = &uploadedBy
+	}
+	attID := meta.ID
+	att := MessageAttachment{
+		ChannelID:    &channelID,
+		AttachmentID: &attID,
+		Filename:     name,
+		ContentType:  meta.Mime,
+		SizeBytes:    meta.SizeBytes,
+		Kind:         kind,
+		UploadedBy:   uPtr,
+		CreatedAt:    time.Now(),
+	}
+	return s.repo.UpsertChannelAttachmentFromMirror(ctx, channelID, att)
+}
+
 // - Slice S7: per-person notification settings (event-category toggles + quiet hours), 0401 -
 
 // NotificationSettings is the envelope the GET /notification-settings route returns: the closed
@@ -844,7 +1053,7 @@ type NotificationSettingsPatch struct {
 }
 
 // ErrBadQuietHours is a quiet-hours field that failed HH:MM or timezone validation (caller fault
-// → 400). Surfaced so the handler can map it without writing a Postgres CHECK violation → 500.
+// -> 400). Surfaced so the handler can map it without writing a Postgres CHECK violation -> 500.
 var ErrBadQuietHours = errors.New("messaging: invalid quiet-hours field")
 
 // GetNotificationSettings returns the caller's full notification-settings envelope, ALWAYS the
@@ -874,7 +1083,7 @@ func (s *Service) GetNotificationSettings(ctx context.Context, c Caller) (Notifi
 
 // SetNotificationSettings upserts the caller's notification-settings envelope. event_prefs is
 // optional; quiet_hours is optional; both may be sent in the same PUT. Validation is at the
-// service boundary (ErrBadQuietHours / ErrBadEventCategory → 400) so a bad value never reaches the
+// service boundary (ErrBadQuietHours / ErrBadEventCategory -> 400) so a bad value never reaches the
 // SQL CHECKs. Each category row is merged over the caller's CURRENT stored values so a partial
 // PUT does not silently coerce an omitted toggle. Returns the full updated envelope.
 //
