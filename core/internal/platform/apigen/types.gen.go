@@ -3998,6 +3998,10 @@ type MessagingMessagePost struct {
 	ThreadRootId *string `json:"thread_root_id,omitempty"`
 }
 
+type MessagingMessageEdit struct {
+	Body string `json:"body"`
+}
+
 type MessagingAckRequest struct {
 	Method *string `json:"method,omitempty"`
 }
@@ -4420,6 +4424,29 @@ type OrderChange struct {
 	AppliedAt             *string           `json:"applied_at,omitempty"`
 	Lines                 []OrderChangeLine `json:"lines"`
 	NextActions           []string          `json:"next_actions"`
+}
+
+type OrderChangeQueueItem struct {
+	Id                    string   `json:"id"`
+	ChangeNo              string   `json:"change_no"`
+	OrderId               string   `json:"order_id"`
+	OrderNo               string   `json:"order_no"`
+	BranchId              string   `json:"branch_id"`
+	Status                string   `json:"status"`
+	Reason                string   `json:"reason"`
+	DeltaCents            int64    `json:"delta_cents"`
+	FinanceThresholdCents int64    `json:"finance_threshold_cents"`
+	FinanceRequired       bool     `json:"finance_required"`
+	RequestedByRole       string   `json:"requested_by_role"`
+	RequestedAt           string   `json:"requested_at"`
+	YardAckNote           *string  `json:"yard_ack_note,omitempty"`
+	NextActions           []string `json:"next_actions"`
+}
+
+type OrderChangeQueuePage struct {
+	Items      []OrderChangeQueueItem `json:"items"`
+	NextCursor *string                `json:"next_cursor,omitempty"`
+	Limit      *int32                 `json:"limit,omitempty"`
 }
 
 type OrderChangesResponse struct {
