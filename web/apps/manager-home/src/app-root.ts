@@ -76,6 +76,7 @@ import {
   renderReceiving,
   renderShortages,
   type ApprovalsModel,
+  type BranchMode,
   type EntryView,
   type LandingModel,
   type ReceivingModel,
@@ -284,6 +285,24 @@ export class ManagerHomeApp extends HHElement {
     }
     if (action === "quick-save") {
       void this.#saveQuick(control?.getAttribute("data-action-id") ?? "");
+      return;
+    }
+    if (action === "toggle-branch") {
+      const mode = control?.getAttribute("data-mode");
+      if (mode === "combined" || mode === "split") {
+        this.#setBranchMode(mode);
+      }
+      return;
+    }
+    if (action === "qa-action") {
+      this.#runQuickAction(control?.getAttribute("data-qa") ?? "");
+      return;
+    }
+    if (action === "need-action") {
+      this.#runNeedAction(
+        control?.getAttribute("data-target-view") ?? "",
+        control?.getAttribute("data-target-ref") ?? "",
+      );
       return;
     }
     if (action === "back") {
@@ -677,12 +696,19 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // The landing: the profile's widgets in the profile's order, their numbers,
-  // and the needs-you queue. One failure words the error; the needs ride the
-  // widget whose measure is needs.you.
+  // and the needs-you queue, alongside the WALK-C10 branch KPIs, deliveries
+  // runs, and ranked money-at-stake needs.
   async #loadLanding(): Promise<void> {
-    this.#landing = { ...this.#landing, phase: "loading", error: "" };
+    this.#landing = { ...this.#landing, phase: "loading", error: "", notice: "" };
     this.requestUpdate();
-    const [needs, widgets] = await Promise.all([this.#api.needs(), this.#api.widgets()]);
+    const branchId = this.#branch?.id ?? "";
+    const [needs, widgets, kpis, deliveries, stakeNeeds] = await Promise.all([
+      this.#api.needs(),
+      this.#api.widgets(),
+      this.#api.readLandingKpis(branchId),
+      this.#api.readLandingDeliveries(branchId),
+      this.#api.readLandingNeeds(branchId),
+    ]);
     if (!needs.ok || !widgets.ok) {
       const failureError = !needs.ok ? needs.error : !widgets.ok ? widgets.error : "";
       this.#landing = {
@@ -713,6 +739,50 @@ export class ManagerHomeApp extends HHElement {
       error: "",
       canOpenReporting: canOpenReporting(this.#tier),
       unsourcedNeeds: weighed.unsourced,
+      branchMode: this.#landing.branchMode ?? "combined",
+      kpis: kpis.ok ? kpis.value : [],
+      deliveries: deliveries.ok ? deliveries.value : null,
+      stakeNeeds: stakeNeeds.ok ? stakeNeeds.value : [],
+      notice: "",
+    };
+    this.requestUpdate();
+  }
+
+  #setBranchMode(mode: BranchMode): void {
+    this.#landing = { ...this.#landing, branchMode: mode };
+    this.requestUpdate();
+  }
+
+  #runQuickAction(qa: string): void {
+    if (qa === "approve-credit-hold" || qa === "approve-margin") {
+      this.#openView("approvals");
+      return;
+    }
+    if (qa === "issue-warranty") {
+      this.#openView("warranty");
+      return;
+    }
+    if (qa === "message-branch") {
+      this.#landing = {
+        ...this.#landing,
+        notice: "Messaging opens in the Messages app; it is not on this box yet.",
+      };
+      this.requestUpdate();
+    }
+  }
+
+  #runNeedAction(targetView: string, targetRef: string): void {
+    if (targetView === "approvals") {
+      this.#openView("approvals");
+      return;
+    }
+    if (targetView === "warranty") {
+      this.#openView("warranty");
+      return;
+    }
+    this.#landing = {
+      ...this.#landing,
+      notice: `Escalation (${targetRef}) opens in the Messages app; it is not on this box yet.`,
     };
     this.requestUpdate();
   }
