@@ -59,6 +59,7 @@ test("goods are received behind a confirm step, the order moves to Partial, then
   await expect(page.locator("[data-receipt-row]")).toHaveCount(1);
   await expect(page.locator("[data-receipt-row]")).toContainText("PO-PLM-136/R1");
   await expect(page.locator("[data-receipt-row]")).toContainText("$100.00");
+  await expect(page.locator("[data-receipt-row] td[data-label='Received']")).toHaveText("today");
   await expect(recv(page)).toHaveValue("");
   await expect(page.locator("[data-queue-row]", { hasText: "PO-PLM-136" })).toContainText("Partial");
 
@@ -181,6 +182,7 @@ test("a send goes to the tagged desk behind a confirm step and the history keeps
   await expect(page.locator("[data-send-row]")).toHaveCount(1);
   await expect(page.locator("[data-send-row]")).toContainText("Tagged ordering contact");
   await expect(page.locator("[data-send-row]")).toContainText("Delivered");
+  await expect(page.locator("[data-send-row] td[data-label='Sent']")).toHaveText("today");
 });
 
 test("with nobody tagged the fallback address is asked for, and a delivery that fails is said plainly", async ({ page, request }) => {
