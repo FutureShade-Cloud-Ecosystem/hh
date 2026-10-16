@@ -144,6 +144,18 @@ export class DriveApi {
     return houseDay(now);
   }
 
+  /**
+   * The dealer's day with whether this call's config read actually served a zone. The offline
+   * layer persists the served zone into the store and never a failed read's fallback: a cold
+   * start with no signal then restores the last served zone instead of the Ontario default.
+   */
+  async servedDealersDay(now: Date = new Date()): Promise<{ day: string; served: boolean }> {
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS });
+    const served = config.ok;
+    if (config.ok) serveHouseZoneFrom(config.value);
+    return { day: houseDay(now), served };
+  }
+
   /** The runs assigned to this login on one day. The day is the dealer's, named by the caller. */
   async myRuns(day: string): Promise<Result<DriverRun[]>> {
     const answer = await staffDispatch.dispatchListMyRuns(this.#client, { date: day });

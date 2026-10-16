@@ -40,8 +40,10 @@ paths:
         BRANCH room) is never answered here. Slugs in the system namespaces
         (dm-, rep-, approvals-, chosen or derived) are refused with 400. A
         channel naming a branch the caller does not reach is refused with
-        403; BRANCH, DM and APPROVAL kinds are structural or
-        system-provisioned and are refused with 400.
+        403; BRANCH, DM, APPROVAL and GROUP kinds are structural,
+        system-provisioned or routed through their own doors (a group room
+        goes through POST /api/v1/messaging/groups) and are refused with
+        400.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -117,6 +119,85 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/messaging/groups:
+    post:
+      operationId: messagingCreateGroup
+      tags: [staff-messaging]
+      summary: Start a group room with an optional name and any set of staffers
+      description: >-
+        A group is the change 7 ruling's named room: any staffer may start
+        one, membership is explicit (never rule filled, like a direct
+        message's), and the room spans branches, so the people named need
+        reach no branch the caller holds. The name is optional: a group
+        started with no name takes its members' display names as its name
+        until a member renames it. The caller is seated as the group's owner
+        and every named staffer as an explicit member; a staffer who is not
+        active is refused with 403 and an id that names no staffer is 404.
+        There is no convergence: every call starts a new group.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingGroupCreate"
+      responses:
+        "201":
+          description: The group room as started, the caller its owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}:
+    patch:
+      operationId: messagingRenameChannel
+      tags: [staff-messaging]
+      summary: Rename a group room; any member may, and a system line records it
+      description: >-
+        Renaming is the group room's own move (the change 7 ruling): any
+        member of the group may rename it, the new name shows to every
+        member through the ordinary channel reads, and the rename writes a
+        system line naming who renamed the group and to what. A caller who
+        is not a member is refused with 403, an unknown room is 404, an
+        empty name is 400, and a room of any other kind (a direct message's
+        name is its parties', a channel's name is its founders') refuses
+        with 409.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelRename"
+      responses:
+        "200":
+          description: The renamed room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
@@ -133,8 +214,11 @@ paths:
         role matrix gives Admin on house-messages (the general manager),
         everyone else is 403; and on a room whose membership the branch
         model derives, a target who reaches neither the room's branch nor
-        every branch is 403. A user who is not an active staffer is 404 or
-        403.
+        every branch is 403. A group room is the change 7 ruling's exception
+        to the manager rule: any member may add any staffer by hand, of any
+        branch (a group spans branches), and the fresh seat writes a system
+        line naming who was added and by whom. A user who is not an active
+        staffer is 404 or 403.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -1093,7 +1177,7 @@ components:
         id: { type: string, format: uuid }
         kind:
           type: string
-          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL]
+          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL, GROUP]
         branch_id: { type: string }
         slug: { type: string }
         name: { type: string }
@@ -1140,6 +1224,27 @@ components:
       required: [user_id]
       properties:
         user_id: { type: string, format: uuid }
+
+    MessagingGroupCreate:
+      type: object
+      description: >-
+        One new group room. The name is optional (a group started with no
+        name takes its members' display names until a member renames it) and
+        so is the set: the caller is always a member and its owner, and each
+        named staffer is seated as an explicit member. There is no
+        convergence; every call starts a new group.
+      properties:
+        name: { type: string }
+        member_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MessagingChannelRename:
+      type: object
+      description: The group room's new name; a system line records who renamed it
+      required: [name]
+      properties:
+        name: { type: string }
 
     MessagingChannelMember:
       type: object

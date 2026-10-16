@@ -15,7 +15,17 @@ import type {
   DispatchLoadBoardView,
   DispatchLoadOutcome,
   DispatchLoadRow,
+  DispatchDriver,
+  DispatchFreightRaiseView,
   DispatchLoadStop,
+  DispatchPolicy,
+  DispatchPolicyChange,
+  DispatchScanLoad,
+  DispatchScanTrail,
+  DispatchScheduleInput,
+  DispatchSplitInput,
+  DispatchSplitResult,
+  DispatchTruck,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
 
@@ -745,3 +755,523 @@ export function refusalWords(what: string, error: string, status: number | null)
   return `${what} was refused.`;
 }
 
+
+// ---- the schedule form (part B) --------------------------------------------------------------------
+
+/** What the schedule form holds, every field as the text the person typed. */
+export interface ScheduleFields {
+  readonly order: string;
+  readonly date: string;
+  readonly window: string;
+  readonly contact: string;
+  readonly phone: string;
+  readonly address: string;
+  readonly city: string;
+  readonly postal: string;
+  readonly lat: string;
+  readonly lon: string;
+  readonly instructions: string;
+}
+
+/**
+ * The form's own check, before the core is asked: an order, a day that has not gone, and the
+ * coordinates in a pair. Whether the order exists, is confirmed, is in this yard or is already
+ * scheduled is the core's to say, and its sentence is shown as it comes.
+ */
+export function validateSchedule(f: Pick<ScheduleFields, "order" | "date" | "lat" | "lon">, today: string): string {
+  if (f.order.trim() === "") return "Enter an order number, like the one on the paperwork, or paste the order id.";
+  const date = f.date.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "Pick a delivery date.";
+  if (date < today) return "That date has passed. A delivery cannot be promised for a day that has gone.";
+  const lat = f.lat.trim();
+  const lon = f.lon.trim();
+  if ((lat === "") !== (lon === "")) return "Give both coordinates, or neither.";
+  if (lat === "") return "";
+  const la = Number(lat);
+  const lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return "Coordinates are numbers, like 32.7157 and -117.1611.";
+  if (la < -90 || la > 90) return "Latitude is between -90 and 90.";
+  if (lo < -180 || lo > 180) return "Longitude is between -180 and 180.";
+  return "";
+}
+
+/**
+ * The wire body. The date is asked for, never promised: a load is committed by putting it on a
+ * truck, so this form never asks for COMMITTED. The measurements stay unmeasured (null); the core
+ * stamps the load's value from the order, so no figure rides this body.
+ */
+export function scheduleBody(f: ScheduleFields): DispatchScheduleInput {
+  const num = (text: string): number | null => (text.trim() === "" ? null : Number(text));
+  return {
+    order_id: f.order.trim(),
+    scheduled_date: f.date.trim(),
+    time_window: f.window.trim(),
+    contact_name: f.contact.trim(),
+    contact_phone: f.phone.trim(),
+    address_line: f.address.trim(),
+    city: f.city.trim(),
+    postal_code: f.postal.trim(),
+    latitude: num(f.lat),
+    longitude: num(f.lon),
+    instructions: f.instructions.trim(),
+    commit_state: "REQUESTED",
+    requested_date: "",
+    weight_kg: null,
+    volume_m3: null,
+    pallet_positions: null,
+  };
+}
+
+export function scheduleNotice(stop: { order_no?: string; scheduled_date: string }): string {
+  return `${stop.order_no ?? "The order"} scheduled for ${formatDayHeading(stop.scheduled_date)}. It is a request until it is on a truck.`;
+}
+
+/** A refused schedule in words. A missing order is the same answer for a number that never existed and one at another yard. */
+export function scheduleRefusal(error: string, status: number | null): string {
+  if (status === 404) return "No order matches that number at this yard. Check the number on the paperwork.";
+  return refusalWords("Scheduling it", error, status);
+}
+
+// ---- the trucks and drivers registry (part B) --------------------------------------------------------
+
+export const TRUCK_TYPES = ["FLATBED", "BOOM", "DUMP", "PICKUP", "TRAILER"] as const;
+export const TRUCK_TYPE_LABEL: Record<string, string> = {
+  FLATBED: "Flatbed",
+  BOOM: "Boom truck",
+  DUMP: "Dump truck",
+  PICKUP: "Pickup",
+  TRAILER: "Trailer",
+};
+
+export interface TruckFields {
+  readonly code: string;
+  readonly name: string;
+  readonly type: string;
+  /** Pounds, as typed. */
+  readonly capacity: string;
+  /** Cubic yards, as typed. */
+  readonly volume: string;
+  readonly pallets: string;
+}
+
+export interface DriverFields {
+  readonly name: string;
+  readonly phone: string;
+  readonly licence: string;
+  /** A staff login id, or empty for a driver with no login. */
+  readonly login: string;
+}
+
+export const fleetStateWord = (active: boolean): string => (active ? "In use" : "Out of use");
+
+/** The capacity as the edit sheet shows it: whole pounds. Empty when the core holds none. */
+export function capacityText(kg: number | null | undefined): string {
+  return typeof kg === "number" && Number.isFinite(kg) ? String(Math.round(kg * LB_PER_KG)) : "";
+}
+
+/** The volume as the edit sheet shows it: cubic yards to a tenth. Empty when the core holds none. */
+export function volumeText(m3: number | null | undefined): string {
+  return typeof m3 === "number" && Number.isFinite(m3) ? String(Math.round(m3 * CUYD_PER_M3 * 10) / 10) : "";
+}
+
+/** A typed figure back to the wire's unit. A figure left exactly as shown is the stored figure, so saving never drifts it. */
+function wireFigure(typed: string, shown: string, original: number | null | undefined, toWire: (v: number) => number): number | null {
+  const text = typed.trim();
+  if (text === "") return null;
+  if (typeof original === "number" && text === shown) return original;
+  return Math.round(toWire(Number(text)) * 100) / 100;
+}
+
+export function validateTruck(f: TruckFields): string {
+  if (f.code.trim() === "") return "A truck needs a code, like Truck 05.";
+  if (!(TRUCK_TYPES as readonly string[]).includes(f.type)) return "Pick a truck type.";
+  const cap = f.capacity.trim();
+  if (cap !== "") {
+    if (!Number.isFinite(Number(cap))) return "Capacity is a number of pounds, like 20000.";
+    if (Number(cap) < 0) return "Capacity cannot be negative.";
+  }
+  const vol = f.volume.trim();
+  if (vol !== "") {
+    if (!Number.isFinite(Number(vol))) return "Volume is a number of cubic yards, like 10.";
+    if (Number(vol) < 0) return "Volume cannot be negative.";
+  }
+  const pal = f.pallets.trim();
+  if (pal !== "" && !/^\d+$/.test(pal)) return "Pallet positions are a whole number, like 8.";
+  return "";
+}
+
+/** The whole row for the core's create or rewrite. The rewrite is absolute, so every field rides it. */
+export function truckBody(f: TruckFields, base: DispatchTruck | undefined, branchId: string, active?: boolean): DispatchTruck {
+  const pal = f.pallets.trim();
+  return {
+    id: base?.id ?? "",
+    branch_id: base?.branch_id ?? branchId,
+    code: f.code.trim(),
+    name: f.name.trim(),
+    truck_type: f.type as DispatchTruck["truck_type"],
+    capacity_kg: wireFigure(f.capacity, capacityText(base?.capacity_kg), base?.capacity_kg, (lb) => lb / LB_PER_KG),
+    capacity_m3: wireFigure(f.volume, volumeText(base?.capacity_m3), base?.capacity_m3, (cy) => cy / CUYD_PER_M3),
+    pallet_positions: pal === "" ? null : Number(pal),
+    is_active: active ?? base?.is_active ?? true,
+  };
+}
+
+/** A truck's capacities in the yard's units. An unmeasured truck says so, since the board draws no gauge for it. */
+export function truckLine(t: Pick<DispatchTruck, "capacity_kg" | "capacity_m3" | "pallet_positions">): string[] {
+  const out: string[] = [];
+  if (typeof t.capacity_kg === "number") out.push(fmtWeight(t.capacity_kg));
+  if (typeof t.capacity_m3 === "number") out.push(`${fmtNum(toCuYd(t.capacity_m3))} cu yd`);
+  if (typeof t.pallet_positions === "number") out.push(`${t.pallet_positions} pallet positions`);
+  return out.length > 0 ? out : ["Capacity not measured"];
+}
+
+const USER_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function validateDriver(f: DriverFields): string {
+  if (f.name.trim() === "") return "A driver needs a name.";
+  const login = f.login.trim();
+  if (login !== "" && !USER_ID_SHAPE.test(login)) return "A staff login id is a long id with dashes. Leave it empty for a driver with no login.";
+  return "";
+}
+
+export function driverBody(f: DriverFields, base: DispatchDriver | undefined, branchId: string, active?: boolean): DispatchDriver {
+  return {
+    id: base?.id ?? "",
+    branch_id: base?.branch_id ?? branchId,
+    name: f.name.trim(),
+    phone: f.phone.trim(),
+    licence_class: f.licence.trim(),
+    user_id: f.login.trim(),
+    is_active: active ?? base?.is_active ?? true,
+  };
+}
+
+export function driverLine(d: Pick<DispatchDriver, "licence_class" | "phone" | "user_id">): string[] {
+  return [
+    d.licence_class ? `Licence ${d.licence_class}` : "No licence on file",
+    d.phone ? d.phone : "No phone",
+    d.user_id ? "Has a staff login" : "No staff login",
+  ];
+}
+
+// ---- will call (part B) -------------------------------------------------------------------------------
+
+/** What a rack tag's three states are called at the counter, as against what the column stores. */
+export const WILL_CALL_LABEL: Record<string, string> = {
+  ACTIVE: "Live",
+  CONFIRMED: "Collected",
+  REVOKED: "Cancelled",
+};
+
+/** A state in the counter's words. An unmapped state comes back as itself, lowercased, never as an invented phrase. */
+export function willCallWord(status: string): string {
+  return WILL_CALL_LABEL[status] ?? status.toLowerCase().replace(/_/g, " ");
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** One code in a sentence: how long it is good, who collected, or that it was cancelled. */
+export function willCallLine(w: { status: string; expires_at: string; collected_by?: string }): string {
+  if (w.status === "ACTIVE") return `Good until ${shortDate(w.expires_at)}`;
+  if (w.status === "CONFIRMED") return w.collected_by ? `Collected by ${w.collected_by}` : "Collected";
+  if (w.status === "REVOKED") return "Cancelled before it was used";
+  return willCallWord(w.status);
+}
+
+export function validateOrderRef(order: string): string {
+  return order.trim() === "" ? "Enter an order number, like the one on the paperwork, or paste the order id." : "";
+}
+
+/** A refused pickup code in words. The same answer comes for a number that never existed and one at another yard. */
+export function willCallRefusal(error: string, status: number | null): string {
+  if (status === 404) return "No order matches that number at this yard. Check the number on the paperwork.";
+  return refusalWords("The pickup code", error, status);
+}
+
+export function willCallNotice(minted: { order_no?: string; expires_at: string }): string {
+  return `Pickup code made for ${minted.order_no ?? "the order"}, good until ${shortDate(minted.expires_at)}. It is shown once: print the tag now.`;
+}
+
+// ---- the dispatch rules (part B) --------------------------------------------------------------------------
+
+/** Each knob named the way the controls and the history name it, the unit riding the name when the value is a bare number. */
+export const DISPATCH_RULE_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  commit_prompt_hours: "Prompt to commit, hours ahead",
+  reopen_policy: "Who may reopen a committed load",
+  load_value_visibility: "Who sees a load's dollar value",
+  commit_horizon_weeks: "How far the board plans, in weeks",
+  working_view_days: "How far the daily view reaches, in days",
+  freight_split_mode: "How freight is split across loads",
+  driver_session_hours: "How long a driver stays signed in, in hours",
+});
+
+export interface PolicyChoice {
+  readonly value: string;
+  readonly label: string;
+}
+
+export const REOPEN_CHOICES: readonly PolicyChoice[] = Object.freeze([
+  { value: "ANYONE", label: "Anyone who could have committed it" },
+  { value: "MANAGER", label: "A dispatch manager" },
+  { value: "NOBODY", label: "Nobody, a commitment is final" },
+]);
+
+export const LOAD_VALUE_CHOICES: readonly PolicyChoice[] = Object.freeze([
+  { value: "MANAGER_UP", label: "Managers and above" },
+  { value: "ALL_STAFF", label: "Every staff member" },
+  { value: "HIDDEN", label: "Nobody" },
+]);
+
+const FREIGHT_SPLIT_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  EVEN: "Evenly across the loads",
+  MANUAL: "By hand, per load",
+});
+
+const VALUE_WORDS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  reopen_policy: Object.fromEntries(REOPEN_CHOICES.map((c) => [c.value, c.label])),
+  load_value_visibility: Object.fromEntries(LOAD_VALUE_CHOICES.map((c) => [c.value, c.label])),
+  freight_split_mode: FREIGHT_SPLIT_WORDS,
+});
+
+/** A stored value in words. An unmapped value comes back as itself, lowercased, never as an invented phrase. */
+function valueWord(field: string, value: string): string {
+  const mapped = VALUE_WORDS[field]?.[value];
+  if (mapped !== undefined) return mapped;
+  return /^\d+$/.test(value) ? value : value.toLowerCase().replace(/_/g, " ");
+}
+
+export interface PolicyRow {
+  readonly key: keyof DispatchPolicy;
+  readonly label: string;
+  readonly word: string;
+  readonly note: string;
+}
+
+const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** The rules as the read-out draws them: the name, the value with its unit, and the one sentence that keeps a rule from being confused with its neighbour. */
+export function policyRows(p: DispatchPolicy): PolicyRow[] {
+  return [
+    { key: "commit_prompt_hours", label: "Prompt to commit", word: count(p.commit_prompt_hours, "hour", "hours"), note: "How far ahead of a delivery the board asks for the date to be committed." },
+    { key: "reopen_policy", label: "Who may reopen a committed load", word: valueWord("reopen_policy", p.reopen_policy), note: "A committed load is a promise. This says who may take it back." },
+    { key: "load_value_visibility", label: "Who sees a load's dollar value", word: valueWord("load_value_visibility", p.load_value_visibility), note: "A figure the core is told not to send is not on the board at all." },
+    { key: "commit_horizon_weeks", label: "How far the board plans", word: count(p.commit_horizon_weeks, "week", "weeks"), note: "How far ahead a delivery may be promised." },
+    { key: "working_view_days", label: "How far the daily view reaches", word: count(p.working_view_days, "day", "days"), note: "How many days the daily board shows from its date. It is not how far ahead a delivery may be promised." },
+    { key: "freight_split_mode", label: "How freight is split across loads", word: valueWord("freight_split_mode", p.freight_split_mode), note: "Set with the freight split, not here." },
+    { key: "driver_session_hours", label: "How long a driver stays signed in", word: count(p.driver_session_hours, "hour", "hours"), note: "A company rule: it is read from the dealer's default, so it is set by the dealer's administrators, not for one yard." },
+  ];
+}
+
+export interface PolicyFields {
+  readonly prompt: string;
+  readonly reopen: string;
+  readonly visibility: string;
+  readonly horizon: string;
+  readonly view: string;
+}
+
+/** The form's own check: whole numbers only. The bounds live in one place, the core's, and its words are what the person reads. */
+export function validatePolicyFields(f: PolicyFields): string {
+  const whole = (text: string): boolean => /^\d+$/.test(text.trim());
+  if (!whole(f.prompt)) return "Hours ahead is a whole number, like 48.";
+  if (!whole(f.horizon)) return "Weeks is a whole number, like 4.";
+  if (!whole(f.view)) return "Days is a whole number, like 14.";
+  return "";
+}
+
+/** The whole policy for the core's absolute write: the five edited knobs, the other two as they were, the yard it is for. */
+export function policyBody(f: PolicyFields, base: DispatchPolicy, branchId: string): DispatchPolicy {
+  return {
+    branch_id: branchId,
+    commit_prompt_hours: Number(f.prompt.trim()),
+    reopen_policy: f.reopen as DispatchPolicy["reopen_policy"],
+    load_value_visibility: f.visibility as DispatchPolicy["load_value_visibility"],
+    commit_horizon_weeks: Number(f.horizon.trim()),
+    working_view_days: Number(f.view.trim()),
+    freight_split_mode: base.freight_split_mode,
+    driver_session_hours: base.driver_session_hours,
+  };
+}
+
+/** A refused rule: the core's sentence with its column names turned into the rules' names. A bare Forbidden is the setters list. */
+export function policyRefusal(error: string, status: number | null): string {
+  if (status === 403 && /^forbidden\.?$/i.test(plainSentence(error))) {
+    return "You can read the dispatch rules, but your dealer names who may change them.";
+  }
+  let words = refusalWords("Saving the rules", error, status);
+  const names: Record<string, string> = { ...DISPATCH_RULE_WORDS, cost_visibility: DISPATCH_RULE_WORDS.load_value_visibility ?? "" };
+  for (const [key, name] of Object.entries(names)) words = words.split(key).join(name);
+  return words;
+}
+
+export interface HistoryRow {
+  readonly rule: string;
+  readonly was: string;
+  readonly now: string;
+  readonly who: string;
+  readonly when: string;
+}
+
+/** One change in the same words the controls use. A field the screen has no words for reads as itself. */
+export function historyRow(c: DispatchPolicyChange): HistoryRow {
+  const when = c.when ? new Date(c.when) : null;
+  return {
+    rule: DISPATCH_RULE_WORDS[c.field] ?? c.field.replace(/_/g, " "),
+    was: valueWord(c.field, c.before),
+    now: valueWord(c.field, c.after),
+    who: c.who && c.who.trim() !== "" ? c.who : "Somebody",
+    when: when !== null && !Number.isNaN(when.getTime())
+      ? when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      : "",
+  };
+}
+
+/** Why the trail is not on screen. The trail is a manager's; every other fault is the core's own sentence. */
+export function historyFaultWords(error: string, status: number | null): string {
+  if (status === 403) return "Managers read the change history. It is not shown to this login.";
+  return refusalWords("The change history", error, status);
+}
+
+// ---- the manifest and the scan trail (part B) ------------------------------------------------------------
+
+export function manifestRefusal(error: string, status: number | null): string {
+  if (status === 403) return "That run belongs to another yard. Its manifest is not available here.";
+  if (status === 404) return "There is no such run.";
+  return refusalWords("The manifest", error, status);
+}
+
+export function manifestNotice(runNo: string): string {
+  return `Manifest for ${runNo} sent to the printer window, and the print is recorded.`;
+}
+
+/** The five checkpoints a pallet passes, in order. Mirrors the core's sequence. */
+export const SCAN_SEQUENCE = ["RECEIVED", "YARD", "PICKED", "IN_TRANSIT", "DELIVERED"] as const;
+
+const STAGE_LABEL: Record<string, string> = {
+  RECEIVED: "Received",
+  YARD: "In the yard",
+  PICKED: "Picked",
+  IN_TRANSIT: "On the road",
+  DELIVERED: "Delivered",
+};
+
+/** A stage in plain words. An unmapped stage comes back as itself, lowercased, never as an invented phrase. */
+export function scanStageLabel(stage: string): string {
+  return STAGE_LABEL[stage] ?? stage.toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * The one line answering "where is this order". It says all delivered only when the core does:
+ * an order of three pallets with two delivered is not a delivered order, and a summary that rounds up
+ * is the most dangerous sentence this screen could print.
+ */
+export function trailSummary(trail: DispatchScanTrail | null | undefined): string {
+  if (!trail || trail.loads.length === 0) return "No scans yet";
+  const n = trail.loads.length;
+  const noun = n === 1 ? "load" : "loads";
+  if (trail.complete) return `${n} ${noun}, all delivered`;
+  const delivered = trail.loads.filter((l) => l.furthest === "DELIVERED").length;
+  return `${delivered} of ${n} ${noun} delivered`;
+}
+
+/** One pallet's line: how far it got, whether it was signed for, and when it was last scanned. */
+export function scanLoadLine(l: DispatchScanLoad): string {
+  const when = new Date(l.last_scanned_at);
+  const parts = [scanStageLabel(l.furthest).toLowerCase()];
+  if (l.pod_signature_ref) parts.push("signed for");
+  if (!Number.isNaN(when.getTime())) {
+    parts.push(`last scanned ${when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
+  }
+  return `${l.load_ref}: ${parts.join(", ")}`;
+}
+
+// ---- split freight (part C) ------------------------------------------------------------------------------
+//
+// Money rules, from the state note: a figure is drawn only if the core sent it; cents are integers end
+// to end; a typed amount becomes cents by its digits, never through a float; the board computes no
+// share, no total and no difference (the core divides, checks the sum and subtracts).
+
+/** Typed dollars to integer cents by digits. "" is nothing typed (null); anything that is not dollars and cents is undefined. */
+export function dollarsToCents(text: string): number | null | undefined {
+  const t = text.trim().replace(/^\$/, "");
+  if (t === "") return text.trim() === "" ? null : undefined;
+  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(t)) return undefined;
+  const [whole = "0", frac = ""] = t.replace(/,/g, "").split(".");
+  return Number(whole) * 100 + Number(frac.padEnd(2, "0"));
+}
+
+/** Integer cents as dollars, by integer arithmetic. */
+export function centsText(cents: number): string {
+  const neg = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100).toLocaleString("en-US");
+  return `${neg}$${whole}.${String(abs % 100).padStart(2, "0")}`;
+}
+
+export interface SplitFields {
+  readonly loads: string;
+  /** The order's whole freight after the split, dollars, optional (empty keeps it as it is). */
+  readonly freight: string;
+  /** Each truck's share by hand, dollars, comma separated, optional. */
+  readonly amounts: string;
+}
+
+const shares = (text: string): string[] => text.split(",").map((p) => p.trim()).filter((p, i, all) => !(p === "" && all.length === 1));
+
+/** The form's own check: a whole number of trucks and amounts that are dollars. The bounds and the sum are the core's. */
+export function validateSplit(f: SplitFields): string {
+  if (!/^\d+$/.test(f.loads.trim())) return "Trucks is a whole number, like 2.";
+  if (dollarsToCents(f.freight) === undefined) return "The freight is dollars and cents, like 150.00.";
+  if (f.amounts.trim() !== "" && shares(f.amounts).some((p) => typeof dollarsToCents(p) !== "number")) return "Each share is dollars and cents, like 100.00, separated by commas.";
+  return "";
+}
+
+export function splitBody(f: SplitFields, orderId: string): DispatchSplitInput {
+  const body: DispatchSplitInput = { order_id: orderId, loads: Number(f.loads.trim()) };
+  const freight = dollarsToCents(f.freight);
+  if (typeof freight === "number") body.freight_cents = freight;
+  if (f.amounts.trim() !== "") body.amounts = shares(f.amounts).map((p) => dollarsToCents(p) as number);
+  return body;
+}
+
+/** What the core did, from what it sent: the order's freight and each truck's share only where a figure came. */
+export function splitNotice(r: DispatchSplitResult): string {
+  const n = r.loads.length;
+  const trucks = `${n} ${n === 1 ? "truck" : "trucks"}`;
+  if (r.parked) return "Nothing changed. The new freight is waiting for approval; the loads and the freight are as they were.";
+  const each = r.loads.map((l) => l.freight_cents);
+  const known = each.length > 0 && each.every((c): c is number => typeof c === "number");
+  if (n === 1) return typeof r.freight_cents === "number" ? `Freight ${centsText(r.freight_cents)} on 1 truck.` : "Freight on 1 truck.";
+  if (!known) return `Freight split across ${trucks}.`;
+  return `Freight ${centsText(r.freight_cents)} split across ${trucks}: ${(each as number[]).map(centsText).join(", ")}.`;
+}
+
+const RAISE_WORD: Record<string, string> = { PARKED: "Waiting for approval", APPLIED: "Approved and applied", REFUSED: "Refused" };
+
+export function raiseStateWord(state: string): string {
+  return RAISE_WORD[state] ?? state.toLowerCase().replace(/_/g, " ");
+}
+
+/** A parked ask's lines. The figures ride only when the core sent them; an absent figure is absent. */
+export function raiseLine(v: DispatchFreightRaiseView): string[] {
+  const who = v.customer_name ? ` for ${v.customer_name}` : "";
+  const out = [`${v.order_no ?? "The order"}${who}`, `${v.loads} ${v.loads === 1 ? "truck" : "trucks"}, asked by ${v.asked_by}`];
+  const m = v.money;
+  if (m) {
+    out.push(`Quoted ${centsText(m.quoted_freight_cents)}, charged now ${centsText(m.current_freight_cents)}, asked for ${centsText(m.proposed_freight_cents)}`);
+    out.push(`${centsText(m.delta_cents)} above the quote`);
+  }
+  return out;
+}
+
+/** A refused split in the core's own words. A lost reply is not a refusal: asking the same again is safe, because the core converges. */
+export function splitRefusal(error: string, status: number | null): string {
+  if (status === null || status === 0) {
+    return "The board could not reach the server, so it may or may not have gone through. Read the load again, then ask again: asking again is safe.";
+  }
+  return refusalWords("The split", error, status);
+}
