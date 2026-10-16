@@ -3943,6 +3943,10 @@ type MessagingMessagePost struct {
 	ThreadRootId *string `json:"thread_root_id,omitempty"`
 }
 
+type MessagingMessageEdit struct {
+	Body string `json:"body"`
+}
+
 type MessagingAckRequest struct {
 	Method *string `json:"method,omitempty"`
 }
