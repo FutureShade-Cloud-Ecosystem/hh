@@ -135,6 +135,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("PUT /api/v1/warranty/vendors/{vendorID}", g.RequireAdmin(h.staff(h.upsertVendorProfile)))
 	r.Handle("POST /api/v1/warranty/vendors/{vendorID}/overrides", g.RequireAdmin(h.staff(h.addOverride)))
 
+	// - walk change 6: the claim threshold policy. Read staff (the till and Manager Home read the
+	// threshold; the board tiles and the return sentence answer from it), write admin (Dealer Admin's
+	// Warranty page), the counter policy's split. -
+	r.Handle("GET /api/v1/warranty/policy", g.RequireStaff(h.staff(h.getPolicy)))
+	r.Handle("PUT /api/v1/warranty/policy", g.RequireAdmin(h.staff(h.putPolicy)))
+
 	// - FR-2 claim capture + reads -
 	r.Handle("GET /api/v1/warranty/claims", g.RequireStaff(h.staff(h.listClaims)))
 	r.Handle("GET /api/v1/warranty/claims/{id}", g.RequireStaff(h.staff(h.getClaim)))
