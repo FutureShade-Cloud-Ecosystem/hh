@@ -23,9 +23,11 @@ use crate::custody::{BridgeFailure, KeystoreBridge};
 
 /// The Kotlin class, by its binary name.
 const CLASS_NAME: &str = "ai.futurebuild.hh.field.KeystoreCustody";
-const STRINGS3_VOID: &str = "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V";
+const STRINGS3_VOID: &str =
+    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V";
 const STRINGS2_VOID: &str = "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V";
-const STRINGS2_STRING: &str = "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+const STRINGS2_STRING: &str =
+    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
 
 pub struct JniKeystore;
 
@@ -47,10 +49,17 @@ fn with_class<T>(
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
     let result = (|| {
-        let loader = env.call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+            .l()?;
         let name = env.new_string(CLASS_NAME)?;
         let class = env
-            .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&name)])?
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&name)],
+            )?
             .l()?;
         f(&mut env, &context, &JClass::from(class))
     })();
@@ -60,7 +69,11 @@ fn with_class<T>(
     result.map_err(|_| BridgeFailure)
 }
 
-fn strings<'a>(env: &mut JNIEnv<'a>, service: &str, account: &str) -> jni::errors::Result<(JString<'a>, JString<'a>)> {
+fn strings<'a>(
+    env: &mut JNIEnv<'a>,
+    service: &str,
+    account: &str,
+) -> jni::errors::Result<(JString<'a>, JString<'a>)> {
     Ok((env.new_string(service)?, env.new_string(account)?))
 }
 
@@ -73,7 +86,12 @@ impl KeystoreBridge for JniKeystore {
                 class,
                 "put",
                 STRINGS3_VOID,
-                &[JValue::Object(context), JValue::Object(&service), JValue::Object(&account), JValue::Object(&value)],
+                &[
+                    JValue::Object(context),
+                    JValue::Object(&service),
+                    JValue::Object(&account),
+                    JValue::Object(&value),
+                ],
             )?;
             Ok(())
         })
@@ -87,7 +105,11 @@ impl KeystoreBridge for JniKeystore {
                     class,
                     "get",
                     STRINGS2_STRING,
-                    &[JValue::Object(context), JValue::Object(&service), JValue::Object(&account)],
+                    &[
+                        JValue::Object(context),
+                        JValue::Object(&service),
+                        JValue::Object(&account),
+                    ],
                 )?
                 .l()?;
             if found.is_null() {
@@ -105,7 +127,11 @@ impl KeystoreBridge for JniKeystore {
                 class,
                 "delete",
                 STRINGS2_VOID,
-                &[JValue::Object(context), JValue::Object(&service), JValue::Object(&account)],
+                &[
+                    JValue::Object(context),
+                    JValue::Object(&service),
+                    JValue::Object(&account),
+                ],
             )?;
             Ok(())
         })

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { TaxConfig, TaxEvidence, TaxEvidenceCapture, TaxEvidencePage, TaxRate, TaxRatePage, TaxRecomputeRequest, TaxRecomputeResult, TaxReconReport, TaxReliefEligibility, TaxStatusCardProfile, TaxStatusCardProfilePage } from "./types.js";
+import type { TaxConfig, TaxEvidence, TaxEvidenceCapture, TaxEvidenceList, TaxPendingProfileList, TaxRate, TaxRateList, TaxRecomputeRequest, TaxRecomputeResult, TaxReconReport, TaxReliefEligibility, TaxStatusCardProfile, TaxStatusCardProfileList } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -41,8 +41,8 @@ export async function taxListEvidence(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; order_id?: string; profile_id?: string },
   call?: ApiCallOptions
-): Promise<Result<TaxEvidencePage>> {
-  return client.request<TaxEvidencePage>({
+): Promise<Result<TaxEvidenceList>> {
+  return client.request<TaxEvidenceList>({
     method: "GET",
     path: "/api/v1/tax/evidence",
     query: opts,
@@ -118,8 +118,8 @@ export async function taxListProfiles(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number },
   call?: ApiCallOptions
-): Promise<Result<TaxStatusCardProfilePage>> {
-  return client.request<TaxStatusCardProfilePage>({
+): Promise<Result<TaxStatusCardProfileList>> {
+  return client.request<TaxStatusCardProfileList>({
     method: "GET",
     path: "/api/v1/tax/profiles",
     query: opts,
@@ -148,8 +148,8 @@ export async function taxListRates(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number },
   call?: ApiCallOptions
-): Promise<Result<TaxRatePage>> {
-  return client.request<TaxRatePage>({
+): Promise<Result<TaxRateList>> {
+  return client.request<TaxRateList>({
     method: "GET",
     path: "/api/v1/tax/rates",
     query: opts,
@@ -208,8 +208,8 @@ export async function taxReviewQueue(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number },
   call?: ApiCallOptions
-): Promise<Result<TaxStatusCardProfilePage>> {
-  return client.request<TaxStatusCardProfilePage>({
+): Promise<Result<TaxPendingProfileList>> {
+  return client.request<TaxPendingProfileList>({
     method: "GET",
     path: "/api/v1/tax/review-queue",
     query: opts,

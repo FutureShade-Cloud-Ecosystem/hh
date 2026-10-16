@@ -116,17 +116,19 @@ fn check_statement(sql: &str) -> Result<(), String> {
 fn lock_down(conn: &rusqlite::Connection, own_control: Arc<AtomicBool>) {
     use rusqlite::hooks::{AuthAction, Authorization};
     conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_ATTACHED, 0);
-    conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
-        AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
-        AuthAction::Transaction { .. } | AuthAction::Savepoint { .. } => {
-            if own_control.load(Ordering::SeqCst) {
-                Authorization::Allow
-            } else {
-                Authorization::Deny
+    conn.authorizer(Some(
+        move |ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
+            AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
+            AuthAction::Transaction { .. } | AuthAction::Savepoint { .. } => {
+                if own_control.load(Ordering::SeqCst) {
+                    Authorization::Allow
+                } else {
+                    Authorization::Deny
+                }
             }
-        }
-        _ => Authorization::Allow,
-    }));
+            _ => Authorization::Allow,
+        },
+    ));
 }
 
 /// The store: one SQLite connection behind a mutex, so a batch holds the
@@ -141,7 +143,10 @@ impl Store {
     fn wrap(conn: rusqlite::Connection) -> Self {
         let own_control = Arc::new(AtomicBool::new(false));
         lock_down(&conn, own_control.clone());
-        Self { conn: Arc::new(Mutex::new(conn)), own_control }
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            own_control,
+        }
     }
 
     /// The module's own BEGIN, COMMIT or ROLLBACK: the only way transaction
@@ -178,11 +183,16 @@ impl Store {
     /// adapter maps `run` by ignoring the rows and `all` by taking them.
     pub fn run(&self, sql: &str, params: Vec<SqlValue>) -> Result<Vec<SqlRow>, String> {
         check_statement(sql)?;
-        let conn = self.conn.lock().map_err(|_| "the store's connection is poisoned".to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "the store's connection is poisoned".to_string())?;
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let columns: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
         let mut rows = stmt
-            .query(rusqlite::params_from_iter(params.into_iter().map(rusqlite::types::Value::from)))
+            .query(rusqlite::params_from_iter(
+                params.into_iter().map(rusqlite::types::Value::from),
+            ))
             .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -208,7 +218,10 @@ impl Store {
         for s in &statements {
             check_statement(&s.sql)?;
         }
-        let conn = self.conn.lock().map_err(|_| "the store's connection is poisoned".to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "the store's connection is poisoned".to_string())?;
         if !conn.is_autocommit() {
             return Err(self.reject_open_transaction(&conn, "batch refused"));
         }
@@ -219,7 +232,9 @@ impl Store {
             let result = conn
                 .execute(
                     &s.sql,
-                    rusqlite::params_from_iter(s.params.into_iter().map(rusqlite::types::Value::from)),
+                    rusqlite::params_from_iter(
+                        s.params.into_iter().map(rusqlite::types::Value::from),
+                    ),
                 )
                 .map_err(|e| e.to_string());
             if let Err(e) = result {
@@ -256,10 +271,16 @@ mod tests {
     fn run_creates_inserts_and_reads_back() {
         let store = store();
         store
-            .run("CREATE TABLE t (id INTEGER PRIMARY KEY, note TEXT NOT NULL)", vec![])
+            .run(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, note TEXT NOT NULL)",
+                vec![],
+            )
             .expect("create runs");
         let rows = store
-            .run("INSERT INTO t (note) VALUES ($1)", vec![SqlValue::Text("row-1".into())])
+            .run(
+                "INSERT INTO t (note) VALUES ($1)",
+                vec![SqlValue::Text("row-1".into())],
+            )
             .expect("insert runs");
         assert!(rows.is_empty(), "an insert returns no rows");
         let rows = store
@@ -273,7 +294,9 @@ mod tests {
     #[test]
     fn run_binds_the_seams_value_kinds() {
         let store = store();
-        store.run("CREATE TABLE v (t TEXT, i INTEGER, f REAL, n TEXT)", vec![]).expect("create");
+        store
+            .run("CREATE TABLE v (t TEXT, i INTEGER, f REAL, n TEXT)", vec![])
+            .expect("create");
         store
             .run(
                 "INSERT INTO v (t, i, f, n) VALUES ($1, $2, $3, $4)",
@@ -285,7 +308,9 @@ mod tests {
                 ],
             )
             .expect("insert");
-        let rows = store.run("SELECT t, i, f, n FROM v", vec![]).expect("select");
+        let rows = store
+            .run("SELECT t, i, f, n FROM v", vec![])
+            .expect("select");
         assert_eq!(rows[0].get("t"), Some(&SqlValue::Text("s".into())));
         assert_eq!(rows[0].get("i"), Some(&SqlValue::Integer(7)));
         assert_eq!(rows[0].get("f"), Some(&SqlValue::Real(1.5)));
@@ -295,7 +320,9 @@ mod tests {
     #[test]
     fn the_store_reads_pragma_table_info_like_the_store_package_does() {
         let store = store();
-        store.run("CREATE TABLE outbox (id TEXT PRIMARY KEY)", vec![]).expect("create");
+        store
+            .run("CREATE TABLE outbox (id TEXT PRIMARY KEY)", vec![])
+            .expect("create");
         let rows = store
             .run("SELECT name FROM pragma_table_info('outbox')", vec![])
             .expect("the table valued pragma works");
@@ -306,7 +333,10 @@ mod tests {
     fn atomic_applies_every_statement_or_none() {
         let store = store();
         store
-            .run("CREATE TABLE a (id INTEGER PRIMARY KEY, note TEXT NOT NULL)", vec![])
+            .run(
+                "CREATE TABLE a (id INTEGER PRIMARY KEY, note TEXT NOT NULL)",
+                vec![],
+            )
             .expect("create");
         let good = SqlStatement {
             sql: "INSERT INTO a (note) VALUES ($1)".into(),
@@ -325,7 +355,12 @@ mod tests {
     #[test]
     fn atomic_holds_together_and_orders_the_batch() {
         let store = store();
-        store.run("CREATE TABLE b (id INTEGER PRIMARY KEY, note TEXT NOT NULL)", vec![]).expect("create");
+        store
+            .run(
+                "CREATE TABLE b (id INTEGER PRIMARY KEY, note TEXT NOT NULL)",
+                vec![],
+            )
+            .expect("create");
         let statements: Vec<SqlStatement> = (0..5)
             .map(|i| SqlStatement {
                 sql: "INSERT INTO b (note) VALUES ($1)".into(),
@@ -333,7 +368,9 @@ mod tests {
             })
             .collect();
         store.atomic(statements).expect("the batch applies");
-        let rows = store.run("SELECT note FROM b ORDER BY id", vec![]).expect("select");
+        let rows = store
+            .run("SELECT note FROM b ORDER BY id", vec![])
+            .expect("select");
         let notes: Vec<&SqlValue> = rows.iter().map(|r| r.get("note").unwrap()).collect();
         assert_eq!(
             notes,
@@ -355,7 +392,9 @@ mod tests {
             "attach database '/tmp/escape.db' as esc",
             "  DETACH esc",
         ] {
-            let err = store.run(sql, vec![]).expect_err("the statement is refused");
+            let err = store
+                .run(sql, vec![])
+                .expect_err("the statement is refused");
             assert!(err.contains("refused"), "{sql}: {err}");
         }
         let err = store
@@ -368,7 +407,8 @@ mod tests {
     }
 
     fn escape_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("hh-store-escape-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hh-store-escape-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir
@@ -381,8 +421,12 @@ mod tests {
     fn no_form_of_attach_or_vacuum_into_escapes_the_fixed_file() {
         let dir = escape_dir("p1");
         let store = Store::open_path(&dir.join("store.sqlite3")).expect("the file store opens");
-        store.run("CREATE TABLE secret (note TEXT)", vec![]).expect("create");
-        store.run("INSERT INTO secret (note) VALUES ('row')", vec![]).expect("insert");
+        store
+            .run("CREATE TABLE secret (note TEXT)", vec![])
+            .expect("create");
+        store
+            .run("INSERT INTO secret (note) VALUES ('row')", vec![])
+            .expect("insert");
         let target = |name: &str| dir.join(name).display().to_string();
         let forms = [
             format!("ATTACH DATABASE '{}' AS esc", target("plain.db")),
@@ -394,13 +438,28 @@ mod tests {
         ];
         for sql in &forms {
             assert!(store.run(sql, vec![]).is_err(), "run must refuse: {sql}");
-            let batch = vec![SqlStatement { sql: sql.clone(), params: vec![] }];
+            let batch = vec![SqlStatement {
+                sql: sql.clone(),
+                params: vec![],
+            }];
             assert!(store.atomic(batch).is_err(), "atomic must refuse: {sql}");
         }
-        for name in ["plain.db", "comment.db", "newline.db", "mixed.db", "vacuum.db", "vacuum-comment.db"] {
-            assert!(!dir.join(name).exists(), "{name} was created: the store escaped its file");
+        for name in [
+            "plain.db",
+            "comment.db",
+            "newline.db",
+            "mixed.db",
+            "vacuum.db",
+            "vacuum-comment.db",
+        ] {
+            assert!(
+                !dir.join(name).exists(),
+                "{name} was created: the store escaped its file"
+            );
         }
-        let databases = store.run("SELECT name FROM pragma_database_list", vec![]).expect("list");
+        let databases = store
+            .run("SELECT name FROM pragma_database_list", vec![])
+            .expect("list");
         assert_eq!(databases.len(), 1, "only main is attached: {databases:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -438,30 +497,52 @@ mod tests {
     #[test]
     fn a_commit_inside_an_atomic_cannot_split_the_batch() {
         let store = store();
-        store.run("CREATE TABLE a (note TEXT NOT NULL)", vec![]).expect("create");
+        store
+            .run("CREATE TABLE a (note TEXT NOT NULL)", vec![])
+            .expect("create");
         let insert = |note: &str| SqlStatement {
             sql: "INSERT INTO a (note) VALUES ($1)".into(),
             params: vec![SqlValue::Text(note.into())],
         };
-        let bad = SqlStatement { sql: "INSERT INTO a (no_such_column) VALUES (1)".into(), params: vec![] };
+        let bad = SqlStatement {
+            sql: "INSERT INTO a (no_such_column) VALUES (1)".into(),
+            params: vec![],
+        };
         for control in TRANSACTION_CONTROL {
-            let control = SqlStatement { sql: control.into(), params: vec![] };
-            let result = store.atomic(vec![insert("one"), control.clone(), insert("two"), bad.clone()]);
+            let control = SqlStatement {
+                sql: control.into(),
+                params: vec![],
+            };
+            let result = store.atomic(vec![
+                insert("one"),
+                control.clone(),
+                insert("two"),
+                bad.clone(),
+            ]);
             assert!(result.is_err(), "{}: the batch must fail", control.sql);
             let rows = store.run("SELECT note FROM a", vec![]).expect("select");
-            assert!(rows.is_empty(), "{}: the first half committed: {rows:?}", control.sql);
+            assert!(
+                rows.is_empty(),
+                "{}: the first half committed: {rows:?}",
+                control.sql
+            );
         }
     }
 
     #[test]
     fn transaction_control_through_run_is_refused_and_cannot_wedge_the_store() {
         let store = store();
-        store.run("CREATE TABLE w (note TEXT)", vec![]).expect("create");
+        store
+            .run("CREATE TABLE w (note TEXT)", vec![])
+            .expect("create");
         for sql in TRANSACTION_CONTROL {
             assert!(store.run(sql, vec![]).is_err(), "run must refuse: {sql}");
             // The store still takes an atomic batch right after.
             store
-                .atomic(vec![SqlStatement { sql: "INSERT INTO w (note) VALUES ('ok')".into(), params: vec![] }])
+                .atomic(vec![SqlStatement {
+                    sql: "INSERT INTO w (note) VALUES ('ok')".into(),
+                    params: vec![],
+                }])
                 .unwrap_or_else(|e| panic!("after {sql} the store is wedged: {e}"));
         }
         let rows = store.run("SELECT note FROM w", vec![]).expect("select");
@@ -470,7 +551,10 @@ mod tests {
 
     #[test]
     fn a_file_store_keeps_its_data_across_connections() {
-        let path = std::env::temp_dir().join(format!("hh-field-store-test-{}.sqlite3", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hh-field-store-test-{}.sqlite3",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         {
             let store = Store::open_path(&path).expect("the file store opens");

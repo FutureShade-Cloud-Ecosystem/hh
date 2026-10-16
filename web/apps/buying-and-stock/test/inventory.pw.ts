@@ -34,6 +34,7 @@ test("the stock lookup answers the per-branch buckets and the ledger for the pav
   await expect(plmRow).toContainText("340");
   await expect(page.locator("[data-move-row]").first()).toBeVisible();
   await expect(page.locator("[data-lookup]").locator("[data-move-row]").first()).toContainText("Receipt");
+  await expect(page.locator("[data-lookup]").locator("[data-move-row]").first().locator("td[data-label='When']")).toHaveText("today");
 });
 
 test("a product that has never moved says so plainly, never as a fault", async ({ page, request }) => {
