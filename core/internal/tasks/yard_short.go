@@ -48,6 +48,13 @@ var ErrOrderRefused = errors.New("tasks: the order cannot take that pick")
 // rejection.
 var ErrPickClosed = errors.New("tasks: this pick is closed, its record cannot change")
 
+// ErrNotPickTask is a pick record or skid count submitted against a task that is not a PICK task (for
+// example a NEED_WEIGHT, DISPATCH, or OTHER task). The yard handlers, syncpick, and the fake store all
+// refuse it before the order is told, because a pick record or a skid count on a non-PICK row would
+// reprice an order line that nobody asked the yard to move. → 409, and through sync that op's
+// rejection.
+var ErrNotPickTask = errors.New("tasks: this is not a pick task")
+
 // pickClosedError is ErrPickClosed with the status in the words.
 type pickClosedError struct{ status string }
 
@@ -210,6 +217,13 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	task, err := s.store.GetTask(ctx, in.TaskID)
 	if err != nil {
 		return YardSkidResult{}, err
+	}
+	// A skid count is a yard-pick measurement: only a PICK task carries one. Recording a skid count
+	// against a NEED_WEIGHT / DISPATCH / OTHER task would reprice an order line nobody asked the
+	// yard to move (FROM-PRINCIPAL row 2122 item 5 / REVIEW-YS-opus section 4: the demo's NEED_WEIGHT
+	// task on DEMO-PLM-O14 lost $8.02 to a stray pick record). Refuse before the order is told.
+	if task.TaskType != TypePick {
+		return YardSkidResult{}, ErrNotPickTask
 	}
 	change := YardSkidChange{
 		OrderID: task.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
