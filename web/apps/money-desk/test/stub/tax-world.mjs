@@ -40,6 +40,7 @@ export const IDS = {
 // only with evidence attached (core evidenceGatedReasons).
 export const LEGAL_REASONS = [
   "STD_ON_HST_13",
+  "STD_SALES_TAX",
   "ON_FN_POS_8",
   "FED_S87_GOODS_ON_RES",
   "FED_S87_VENDOR_DELIVERY",

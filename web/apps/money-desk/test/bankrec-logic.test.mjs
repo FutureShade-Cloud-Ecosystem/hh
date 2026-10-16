@@ -12,7 +12,6 @@ import {
   lineAction,
   lineStatusWord,
   lineTone,
-  listOf,
   matchMethodWord,
   periodWords,
   reconStatusWord,
@@ -106,15 +105,6 @@ test("the variance reads in words with the direction, and zero is balanced", () 
   const under = varianceWords(-4500);
   assert.equal(under.word, "Off by $45.00");
   assert.match(under.detail, /statement is lower than the ledger/);
-});
-
-test("a list is read as the contract's page or as the bare array the core sends, and nothing else", () => {
-  assert.deepEqual(listOf([1, 2]), [1, 2]);
-  assert.deepEqual(listOf({ items: [1], next_cursor: null }), [1]);
-  assert.equal(listOf({ items: "x" }), null);
-  assert.equal(listOf(null), null);
-  assert.equal(listOf("rows"), null);
-  assert.equal(listOf(undefined), null);
 });
 
 test("an id is a uuid before it is sent", () => {

@@ -246,6 +246,53 @@ var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
 // which is the apply that adds the quotes.
 var qwTaskRepairColumns = []string{"org_id", "seq", "row_version"}
 
+// qwOrderRepColumns are the only columns the order rep repair (repairDemoOrderReps) moves on an
+// open yard-branch order: the salesperson it stamps, the updated_at it writes, and the row version
+// (xmin) any update changes. The repair needs the Sales login, which the populate provisions after
+// the first apply, so it lands on the same apply that adds the quotes.
+var qwOrderRepColumns = []string{"salesperson_id", "updated_at", "row_version"}
+
+// qwOrderRepIDs are the open demo orders of the yard branch (the second by code order), the rows
+// the order rep repair addresses. Asked of the database with the repair's own predicate, so a plan
+// change that moves the set moves the exception with it.
+func qwOrderRepIDs(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+		SELECT id FROM orders
+		 WHERE metadata->>'demo_seed' = $1
+		   AND branch_id = (SELECT id FROM locations ORDER BY code OFFSET 1 LIMIT 1)
+		   AND status = ANY($2::text[]) ORDER BY id`, demoMarker, demoOpenOrderStatuses)
+	if err != nil {
+		t.Fatalf("reading the rep repair's rows: %v", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// qwFingerprintOrdersRep fingerprints the orders table the way qwFingerprint does (the contractor
+// world's orders are added by the same apply, so they are kept out), but with the rep repair's rows
+// kept in and only qwOrderRepColumns removed from those rows alone.
+func qwFingerprintOrdersRep(t *testing.T, ctx context.Context, pool *pgxpool.Pool, except, cols []string) string {
+	t.Helper()
+	var sum string
+	if err := pool.QueryRow(ctx, `
+		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		          FROM (SELECT *, xmin::text AS row_version FROM orders`+qwWithoutContractor("orders")+`) r) s`,
+		except, cols).Scan(&sum); err != nil {
+		t.Fatalf("fingerprint orders: %v", err)
+	}
+	return sum
+}
+
 // qwDemoTaskIDs are the plan's own task ids, the rows the task sync repair addresses.
 func qwDemoTaskIDs() []string {
 	ids := make([]string, 0, len(demoTasks))
@@ -386,6 +433,17 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NULL`, taskIDs); n != len(taskIDs) {
 		t.Fatalf("%d of %d demo tasks enter the second apply unstamped, want all of them", n, len(taskIDs))
 	}
+	// The order rep repair is the last named mover: every open yard-branch demo order enters this
+	// apply with no salesperson and leaves it with the Sales persona, with only qwOrderRepColumns
+	// moved. A fresh apply's orders are all NULL (the first apply runs before the populate), so the
+	// guard is the repair's own scope arriving empty-handed, not an assumption.
+	orderRepIDs := qwOrderRepIDs(t, ctx, pool)
+	if len(orderRepIDs) == 0 {
+		t.Fatal("no open yard-branch demo orders for the rep repair to address")
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM orders WHERE id = ANY($1::uuid[]) AND salesperson_id IS NOT NULL`, orderRepIDs); n != 0 {
+		t.Fatalf("%d of %d rep repair rows already carry a salesperson before the apply", n, len(orderRepIDs))
+	}
 	fingerprint := func() map[string]string {
 		out := map[string]string{}
 		for _, table := range qwOtherWorldTables {
@@ -395,6 +453,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 			}
 			if table == "tasks" {
 				out[table] = qwFingerprintStamped(t, ctx, pool, table, taskIDs, qwTaskRepairColumns)
+				continue
+			}
+			if table == "orders" {
+				out[table] = qwFingerprintOrdersRep(t, ctx, pool, orderRepIDs, qwOrderRepColumns)
 				continue
 			}
 			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
@@ -432,6 +494,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
 		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {
 		t.Errorf("the task sync repair left %d of %d demo tasks on their feed, want all of them", n, len(taskIDs))
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM orders WHERE id = ANY($1::uuid[]) AND salesperson_id = $2`,
+		orderRepIDs, qwSalesUserID); n != len(orderRepIDs) {
+		t.Errorf("the order rep repair left %d of %d open yard-branch orders on the Sales persona, want all of them", n, len(orderRepIDs))
 	}
 	census := map[string]int{"quotes": 5, "quote_lines": 10, "quote_share_links": 3, "quote_acceptances": 2,
 		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 2 + 2}

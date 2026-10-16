@@ -620,8 +620,12 @@ type taskSpec struct {
 }
 
 // The open PICK tasks (QUEUED, PUSHED) sit where the yard team can reach them: branch 1, the Point
-// Loma main yard the demo populate converges the yard persona onto, with their orders (O05, O06,
-// O07), because a task's branch is its order's branch. K03 (O01) stays at branch 0 so the other
+// Loma main yard the demo populate converges the yard persona onto, with their orders (O03, O05,
+// O06, O07), because a task's branch is its order's branch. K06 (O03) is one of the four: O03
+// already sits at Point Loma with a Point Loma ticket (SP12 on R7), so re-statusing its pick from
+// ACCEPTED to QUEUED gives Point Loma its fourth open pick without moving an order, splitting a
+// stop, or seeding a new row a day (the day-keyed options the review named would pile a task a day
+// onto the queue), and ACCEPTED stays covered by K05. K03 (O01) stays at branch 0 so the other
 // branch's view still holds an open pick. The stops, runs and scans of O05 to O07 stay where they
 // were: dispatch reads an order through a LEFT JOIN with no branch fence.
 var demoTasks = []taskSpec{
@@ -630,7 +634,7 @@ var demoTasks = []taskSpec{
 	{"K03", "O01", 0, "PICK", "PUSHED", "URGENT", 9, 0, "", "", 4, ""},
 	{"K04", "O05", 1, "PICK", "PUSHED", "NORMAL", 26, 0, "", "", 20, ""},
 	{"K05", "O02", 0, "PICK", "ACCEPTED", "NORMAL", 3, 0, "", "", 0, ""},
-	{"K06", "O03", 1, "PICK", "ACCEPTED", "LOW", 4, 0, "", "", 0, ""},
+	{"K06", "O03", 1, "PICK", "QUEUED", "LOW", 4, 0, "", "", 0, ""},
 	{"K07", "O08", 1, "PICK", "IN_PROGRESS", "NORMAL", 1, 0, "", "", 0, ""},
 	{"K08", "O12", 1, "PICK", "IN_PROGRESS", "HIGH", 2, 0, "", "", 0, ""},
 	{"K09", "O04", 1, "PICK", "IN_PROGRESS", "NORMAL", 6, 1, "", "", 0, ""},

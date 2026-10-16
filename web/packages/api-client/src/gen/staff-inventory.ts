@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { InventoryAllocationPolicy, InventoryBootstrapRequest, InventoryBootstrapResult, InventoryBranchStockPage, InventoryBrowsePage, InventoryCreatePOFromShortfallRequest, InventoryCreatePOResult, InventoryCreateTransferInput, InventoryExpireResult, InventoryInTransitLinePage, InventoryMovePage, InventoryNudgeRequest, InventoryNudgeResult, InventoryOnHandPage, InventoryPendingFulfilmentPage, InventoryReceiptResult, InventoryReceiveRequest, InventoryReleaseRequest, InventoryReleaseResult, InventoryReorderPoint, InventoryReorderPointPage, InventoryReorderRequest, InventoryReorderResult, InventoryReservationPage, InventoryReserveInput, InventoryReserveResult, InventorySetTransitDaysInput, InventoryShipTransferRequest, InventoryShortfallPage, InventoryTransfer, InventoryTransferPage, InventoryTransitDaysPair, InventoryTransitDaysPairPage } from "./types.js";
+import type { InventoryAllocationPolicy, InventoryBootstrapRequest, InventoryBootstrapResult, InventoryBranchStockList, InventoryBrowseResult, InventoryCreatePOFromShortfallRequest, InventoryCreatePOResult, InventoryCreateTransferInput, InventoryExpireResult, InventoryInTransitLineList, InventoryMoveList, InventoryNudgeRequest, InventoryNudgeResult, InventoryOnHandList, InventoryPendingFulfilmentList, InventoryReceiptResult, InventoryReceiveRequest, InventoryReleaseRequest, InventoryReleaseResult, InventoryReorderPoint, InventoryReorderPointList, InventoryReorderRequest, InventoryReorderResult, InventoryReservationList, InventoryReserveInput, InventoryReserveResult, InventorySetTransitDaysInput, InventoryShipTransferRequest, InventoryShortfallPage, InventoryTransfer, InventoryTransferList, InventoryTransitDaysPair, InventoryTransitDaysPairList } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -41,8 +41,8 @@ export async function inventoryBranchStock(
   client: ApiClient,
   opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryBranchStockPage>> {
-  return client.request<InventoryBranchStockPage>({
+): Promise<Result<InventoryBranchStockList>> {
+  return client.request<InventoryBranchStockList>({
     method: "GET",
     path: "/api/v1/inventory/branch-stock",
     query: opts,
@@ -56,8 +56,8 @@ export async function inventoryBrowse(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; text?: string; branch_id?: string; color_family?: string; texture?: string; product_size?: string; sold_by?: string; manufacturer?: string; collection?: string; color?: string; finish?: string; application?: string; is_featured?: boolean; is_special_order?: boolean; in_stock_only?: boolean },
   call?: ApiCallOptions
-): Promise<Result<InventoryBrowsePage>> {
-  return client.request<InventoryBrowsePage>({
+): Promise<Result<InventoryBrowseResult>> {
+  return client.request<InventoryBrowseResult>({
     method: "GET",
     path: "/api/v1/inventory/browse",
     query: opts,
@@ -71,8 +71,8 @@ export async function inventoryListIncomingTransfers(
   client: ApiClient,
   opts: { cursor?: string; limit?: number; product_id: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryInTransitLinePage>> {
-  return client.request<InventoryInTransitLinePage>({
+): Promise<Result<InventoryInTransitLineList>> {
+  return client.request<InventoryInTransitLineList>({
     method: "GET",
     path: "/api/v1/inventory/incoming-transfers",
     query: opts,
@@ -86,8 +86,8 @@ export async function inventoryListMoves(
   client: ApiClient,
   opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryMovePage>> {
-  return client.request<InventoryMovePage>({
+): Promise<Result<InventoryMoveList>> {
+  return client.request<InventoryMoveList>({
     method: "GET",
     path: "/api/v1/inventory/moves",
     query: opts,
@@ -116,8 +116,8 @@ export async function inventoryOnHand(
   client: ApiClient,
   opts: { cursor?: string; limit?: number; product_id: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryOnHandPage>> {
-  return client.request<InventoryOnHandPage>({
+): Promise<Result<InventoryOnHandList>> {
+  return client.request<InventoryOnHandList>({
     method: "GET",
     path: "/api/v1/inventory/on-hand",
     query: opts,
@@ -131,8 +131,8 @@ export async function inventoryListPendingFulfilment(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; branch_id?: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryPendingFulfilmentPage>> {
-  return client.request<InventoryPendingFulfilmentPage>({
+): Promise<Result<InventoryPendingFulfilmentList>> {
+  return client.request<InventoryPendingFulfilmentList>({
     method: "GET",
     path: "/api/v1/inventory/pending-fulfilment",
     query: opts,
@@ -176,8 +176,8 @@ export async function inventoryListReorderPoints(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; branch_id?: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryReorderPointPage>> {
-  return client.request<InventoryReorderPointPage>({
+): Promise<Result<InventoryReorderPointList>> {
+  return client.request<InventoryReorderPointList>({
     method: "GET",
     path: "/api/v1/inventory/reorder-points",
     query: opts,
@@ -221,8 +221,8 @@ export async function inventoryListReservations(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; branch_id?: string; product_id?: string },
   call?: ApiCallOptions
-): Promise<Result<InventoryReservationPage>> {
-  return client.request<InventoryReservationPage>({
+): Promise<Result<InventoryReservationList>> {
+  return client.request<InventoryReservationList>({
     method: "GET",
     path: "/api/v1/inventory/reservations",
     query: opts,
@@ -309,8 +309,8 @@ export async function inventoryListTransfers(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; branch_id?: string; status?: "DRAFT" | "IN_TRANSIT" | "RECEIVED" | "CANCELLED" },
   call?: ApiCallOptions
-): Promise<Result<InventoryTransferPage>> {
-  return client.request<InventoryTransferPage>({
+): Promise<Result<InventoryTransferList>> {
+  return client.request<InventoryTransferList>({
     method: "GET",
     path: "/api/v1/inventory/transfers",
     query: opts,
@@ -401,8 +401,8 @@ export async function inventoryListTransitDays(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number },
   call?: ApiCallOptions
-): Promise<Result<InventoryTransitDaysPairPage>> {
-  return client.request<InventoryTransitDaysPairPage>({
+): Promise<Result<InventoryTransitDaysPairList>> {
+  return client.request<InventoryTransitDaysPairList>({
     method: "GET",
     path: "/api/v1/inventory/transit-days",
     query: opts,
