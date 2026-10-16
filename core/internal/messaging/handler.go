@@ -57,12 +57,12 @@ func (h *Handler) WithStreamTickets(secret string) *Handler {
 // convention. There is otherwise no manager/admin split in P1 (channel-admin tooling is deferred).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
-	// The house's own founding and membership routes (every role at Work on
-	// house-messages, the general manager at Admin, the roleconfig document's
-	// cells): create a TEAM/TOPIC channel (idempotent on its slug), open a DM
-	// with one colleague (found or created once), seat and drop explicit
-	// members. The walls are the module's existing ones: assertMember on every
-	// membership write, the branch wall on a channel that names a branch.
+	// The house's own founding and membership routes. Founding is the
+	// admins' pen now (change 7, ruling A: the boards' New channel is for
+	// admins only); DMs stay every role's, and the membership walls are the
+	// module's existing ones: assertMember on every membership write, the
+	// owner or matrix admin pen on the seats, the branch wall on a channel
+	// that names a branch.
 	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
 	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
@@ -776,6 +776,10 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusForbidden, "that staff member's role may not be seated in this room")
 	case errors.Is(err, ErrLastOwner):
 		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
+	// The founding gate (change 7, ruling A): founding is the admins' pen,
+	// a permission answer, never a validation one.
+	case errors.Is(err, ErrNotChannelAdmin):
+		httpx.Error(w, http.StatusForbidden, "only a house messages admin may found a channel")
 	case errors.Is(err, ErrNotInBranch):
 		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
 	case errors.Is(err, ErrBadDMTarget):
