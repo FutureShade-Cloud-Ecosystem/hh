@@ -79,24 +79,17 @@ func groupSystemLines(t *testing.T, channelID string) []string {
 	return out
 }
 
-// groupListContains answers whether the caller's channel list carries the room
-// (the reads treat a group like any channel the caller is in).
-func groupListContains(t *testing.T, mux *http.ServeMux, bearer, channelID string) bool {
+// groupListContains answers whether the caller's channel list carries the
+// room, read through the repository's plain SELECT: the handler's list
+// resyncs the caller's derived membership, and this file must leave no row
+// a later test's fresh-seat assumption stands on.
+func groupListContains(t *testing.T, userID, channelID string) bool {
 	t.Helper()
-	rec := adminDo(t, mux, bearer, http.MethodGet, "/api/v1/messaging/channels", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list channels: %d %s", rec.Code, rec.Body.String())
+	chans, err := NewRepository(intPool(t)).ListChannelsForUser(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("list channels for %s: %v", userID, err)
 	}
-	var list struct {
-		Channels []struct {
-			ID   string `json:"id"`
-			Kind string `json:"kind"`
-		} `json:"channels"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
-		t.Fatalf("decode channel list: %v", err)
-	}
-	for _, ch := range list.Channels {
+	for _, ch := range chans {
 		if ch.ID == channelID {
 			if ch.Kind != "GROUP" {
 				t.Fatalf("the room lists with kind %q, want GROUP", ch.Kind)
@@ -112,9 +105,7 @@ func groupListContains(t *testing.T, mux *http.ServeMux, bearer, channelID strin
 func TestIntegration_Group_Create_WithName_ListedToMembersOnly(t *testing.T) {
 	ctx := context.Background()
 	samMux, samBearer := groupRoutesAs(t, uSamRivera, groupFrontline)
-	caseyMux, caseyBearer := groupRoutesAs(t, uCaseyDoyle, groupFrontline)
 	outsider := uatInsideSalesID(ctx, t, intPool(t))
-	outMux, outBearer := groupRoutesAs(t, outsider, groupFrontline)
 
 	ch, failed := groupCreate(t, samMux, samBearer,
 		`{"name":"Patio crew","member_ids":["`+uCaseyDoyle+`"]}`)
@@ -145,10 +136,10 @@ func TestIntegration_Group_Create_WithName_ListedToMembersOnly(t *testing.T) {
 
 	// The reads treat the group like a channel the caller is in: listed to
 	// both members, never to a staffer outside it.
-	if !groupListContains(t, samMux, samBearer, id) || !groupListContains(t, caseyMux, caseyBearer, id) {
+	if !groupListContains(t, uSamRivera, id) || !groupListContains(t, uCaseyDoyle, id) {
 		t.Fatalf("a member's channel list misses the group")
 	}
-	if groupListContains(t, outMux, outBearer, id) {
+	if groupListContains(t, outsider, id) {
 		t.Fatalf("an outsider's channel list carries the group")
 	}
 }
@@ -179,8 +170,7 @@ func TestIntegration_Group_AnyMemberAdds_AcrossBranches_SystemLine(t *testing.T)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a plain member's cross branch add: %d %s", rec.Code, rec.Body.String())
 	}
-	alexMux, alexBearer := groupRoutesAs(t, uAlexMorgan, groupManager)
-	if !groupListContains(t, alexMux, alexBearer, id) {
+	if !groupListContains(t, uAlexMorgan, id) {
 		t.Fatalf("the added staffer's channel list misses the group")
 	}
 
@@ -223,7 +213,7 @@ func TestIntegration_Group_AnyMemberRenames_SystemLine(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &renamed); err != nil || renamed["name"] != "Patio crew and drivers" {
 		t.Fatalf("the rename answer does not carry the new name: %v", renamed)
 	}
-	if !groupListContains(t, samMux, samBearer, id) {
+	if !groupListContains(t, uSamRivera, id) {
 		t.Fatalf("the founder's channel list misses the renamed group")
 	}
 	// The name shows to every member: the other member's list carries the
