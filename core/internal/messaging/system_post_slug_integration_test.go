@@ -127,6 +127,8 @@ func TestIntegration_CreateChannel_Counter_And_Drivers_Families_Are_Reserved(t *
 	ctx := context.Background()
 	pool := intPool(t)
 	svc := NewService(NewRepository(pool))
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `
 			DELETE FROM msg_channels
@@ -143,7 +145,7 @@ func TestIntegration_CreateChannel_Counter_And_Drivers_Families_Are_Reserved(t *
 		{"drivers chosen mixed", CreateChannelInput{Kind: KindTeam, Name: "x", Slug: "DrIvErS-0-Mine", BranchID: branchTrenton}},
 		{"drivers name derived", CreateChannelInput{Kind: KindTopic, Name: "Drivers 0 mine"}},
 	} {
-		if _, _, err := svc.CreateChannel(ctx, samCaller(), f.in); !errors.Is(err, ErrReservedSlug) {
+		if _, _, err := svc.CreateChannel(ctx, adminCaller(), f.in); !errors.Is(err, ErrReservedSlug) {
 			t.Fatalf("%s: founding must be refused as a reserved system family, got %v", f.what, err)
 		}
 	}
