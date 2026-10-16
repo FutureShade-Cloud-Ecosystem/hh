@@ -172,6 +172,8 @@ export const boardStyles = css`
   /* The inline sheet. */
   .sheet { margin-top: var(--hh-s-12); padding: var(--hh-s-12); background: var(--hh-row-alt); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); display: grid; gap: var(--hh-s-8); }
   .sheet h4 { margin: 0; color: var(--hh-text); font-size: 14px; letter-spacing: 0; text-transform: none; }
+  .sheet-grid .wide { grid-column: 1 / -1; }
+  .raise { border-inline-start: 4px solid var(--hh-state-watch); }
   .sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-8); }
   .sheet .alert { margin: 0; }
   label { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; }
@@ -181,7 +183,77 @@ export const boardStyles = css`
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
   .theme-btn:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
 
+  /* The schedule form: two columns of fields, the long ones across; one column at 700 and under. */
+  .sched-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12) var(--hh-s-16); }
+  .sched-form .wide { grid-column: 1 / -1; }
+  .sched-form .alert, .sched-form p { margin: 0; }
+
+  /* The scan trail: five stages in one row per pallet; reached ones are filled and the furthest is ringed, so it reads in greyscale. */
+  .trail-summary { margin: 0 0 var(--hh-s-8); font-weight: 700; font-size: 18px; }
+  .trail-load { margin: var(--hh-s-8) 0; }
+  .spine { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--hh-s-4); }
+  .stage { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: var(--hh-s-4); font-size: 12px; font-weight: 600; border: 1px dashed var(--hh-control-line); border-radius: var(--hh-radius-control); color: var(--hh-text-dim); overflow-wrap: normal; }
+  .stage.reached { border-style: solid; border-color: var(--hh-text); background: var(--hh-card); color: var(--hh-text); }
+  .stage[data-furthest="true"] { outline: 3px solid var(--hh-text); outline-offset: 1px; font-weight: 700; }
+
+  /* The rules: a name, its value in words, and the one sentence that keeps it apart from its neighbour. */
+  .rules { display: grid; gap: var(--hh-s-12); }
+  .rules li { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) minmax(0, 2fr); gap: var(--hh-s-4) var(--hh-s-16); align-items: baseline; padding-bottom: var(--hh-s-12); border-bottom: 1px solid var(--hh-line); }
+  .rules li:last-child { border-bottom: 0; padding-bottom: 0; }
+  .rule-name { font-weight: 600; }
+
+  /* Will call: the order box beside its two buttons, and the one time tag. */
+  .wc-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-12) var(--hh-s-16); align-items: end; }
+  .wc-form .actions { margin-top: 0; }
+  .tag { border: 2px solid var(--hh-text); }
+  .tag .once { margin: 0 0 var(--hh-s-12); }
+  .tag-order { margin: 0; font-family: var(--hh-font-mono); font-weight: 700; font-size: 20px; }
+  .tag-code { margin: var(--hh-s-8) 0; font-family: var(--hh-font-mono); font-size: 22px; font-weight: 700; letter-spacing: 0.04em; word-break: break-all; }
+  @media print {
+    .tabs, .toolbar, .head, .alert, [data-willcall], [data-wc-codes], .tag .actions { display: none; }
+    .tag { border: 0; }
+  }
+
   .matrix p { max-width: 70ch; }
+
+  /* WALK-C16: the problems strip sits above the load board and disappears when nothing is wrong. */
+  .problems { background: var(--hh-card); border: 1px solid var(--hh-line); border-inline-start: 4px solid var(--hh-state-watch); border-radius: var(--hh-radius-card); padding: var(--hh-s-12) var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .problems-head { display: flex; align-items: baseline; gap: var(--hh-s-8); margin: 0 0 var(--hh-s-8); }
+  .problems-head h3 { font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hh-text-dim); }
+  .problem-list { display: flex; flex-direction: column; gap: var(--hh-s-4); }
+  .problem { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-4) 0; }
+  .problem.applied .problem-line { text-decoration: line-through; color: var(--hh-text-dim); }
+  .problem-line { flex: 1 1 auto; font-size: 14px; font-weight: 600; }
+
+  /* WALK-C16: the time axis the redesigned board draws. Hours across the top, one row per run,
+     stops laid out by stop_no. Each cell is a token-sized square, never a hand-rolled px. */
+  .time-axis { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-12); margin-bottom: var(--hh-s-16); overflow-x: auto; }
+  .time-axis-grid { display: grid; grid-template-columns: minmax(120px, 160px) repeat(12, minmax(48px, 1fr)); gap: var(--hh-s-4); min-width: 720px; }
+  .time-axis-row { display: contents; }
+  .time-axis-cell { display: flex; align-items: center; justify-content: center; min-height: 36px; padding: var(--hh-s-4); border-radius: var(--hh-radius-control); border: 1px dashed var(--hh-line); background: transparent; color: var(--hh-text-dim); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .time-axis-cell.head-run, .time-axis-cell.head-hour { border: 0; background: transparent; color: var(--hh-text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+  .time-axis-cell.has-stop { background: color-mix(in srgb, var(--hh-state-good) 18%, var(--hh-card)); color: var(--hh-text); border-color: var(--hh-state-good); border-style: solid; font-weight: 700; }
+  .time-axis-cell.axis-run { background: transparent; border: 0; color: var(--hh-text); font-family: var(--hh-font-mono); font-weight: 700; font-size: 14px; }
+
+  /* WALK-C16: the run-detail drawer. It opens beside the board on desktop and at the top on
+     phone, and never carries the same content twice. */
+  .run-detail { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .run-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-12); }
+  .run-detail .spacer { flex: 1; }
+
+  /* WALK-C16: the suggest-runs panel. The list is what the dispatcher reads to decide; no
+     suggestion carries its own sentence. */
+  .suggest { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-12) var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .suggest-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-8); }
+  .suggest .spacer { flex: 1; }
+  .suggest-list { display: flex; flex-direction: column; gap: var(--hh-s-4); }
+  .suggest-row { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(120px, 1fr) minmax(0, 2fr); gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-4) 0; align-items: baseline; }
+
+  /* WALK-C16: the live indicator. A small dot and one word: green when the board is ready,
+     amber while a read is in flight. */
+  .live { display: flex; align-items: center; gap: var(--hh-s-8); margin-bottom: var(--hh-s-12); color: var(--hh-text-dim); font-size: 13px; font-weight: 600; }
+  .live-dot { width: 10px; height: 10px; border-radius: var(--hh-radius-pill); background: var(--hh-state-good); display: inline-block; }
+  .live[data-busy="true"] .live-dot { background: var(--hh-state-watch); }
   .strip { display: none; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-16); margin: var(--hh-s-8) 0; color: var(--hh-text-dim); font-size: 14px; }
   .strip-cell strong { color: var(--hh-text); font-variant-numeric: tabular-nums; }
   .mob-tools { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); margin-bottom: var(--hh-s-8); }
@@ -195,10 +267,11 @@ export const boardStyles = css`
     .board { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 700px) {
+    .rules li { grid-template-columns: minmax(0, 1fr); }
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
     .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .columns, .status-lanes, .sheet-grid { grid-template-columns: minmax(0, 1fr); }
+    .columns, .status-lanes, .sheet-grid, .sched-form, .wc-form { grid-template-columns: minmax(0, 1fr); }
     .strip { display: flex; }
     .col.none { display: none; }
     .did-not .count { margin-inline-start: var(--hh-s-8); }
@@ -213,6 +286,8 @@ export const boardStyles = css`
     .stack td::before { content: attr(data-label); display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; }
   }
   @media (max-width: 520px) {
+    .spine { gap: var(--hh-s-2); }
+    .stage { font-size: 10px; padding: var(--hh-s-2); letter-spacing: -0.01em; }
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
     h1 { font-size: 24px; }
     .actions .btn, .actions select { flex: 1 1 140px; }
