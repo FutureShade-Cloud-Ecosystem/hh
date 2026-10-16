@@ -401,6 +401,7 @@ export class CountsDesk {
       error: this.#error,
       notice: this.#notice,
       branchNames: this.#branchNames,
+      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
       sheets: this.#sheets,
       detail: this.#detail,
       reasons: this.#reasons,

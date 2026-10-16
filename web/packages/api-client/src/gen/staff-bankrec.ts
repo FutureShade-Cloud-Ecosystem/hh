@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BankRecAccountPage, BankRecImportInput, BankRecImportResult, BankRecMatchInput, BankRecMatchPage, BankRecMatchRule, BankRecMatchRulePage, BankRecMatchSummary, BankRecReconInput, BankRecReconciliation, BankRecReconciliationPage, BankRecRuleInput, BankRecStatementLinePage, BankRecUnmatchInput, BankRecUnmatchResult } from "./types.js";
+import type { BankRecAccountList, BankRecImportInput, BankRecImportResult, BankRecMatchInput, BankRecMatchList, BankRecMatchRule, BankRecMatchRuleList, BankRecMatchSummary, BankRecReconInput, BankRecReconciliation, BankRecReconciliationList, BankRecRuleInput, BankRecStatementLinePage, BankRecUnmatchInput, BankRecUnmatchResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -11,8 +11,8 @@ export async function bankrecListAccounts(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number },
   call?: ApiCallOptions
-): Promise<Result<BankRecAccountPage>> {
-  return client.request<BankRecAccountPage>({
+): Promise<Result<BankRecAccountList>> {
+  return client.request<BankRecAccountList>({
     method: "GET",
     path: "/api/v1/bankrec/accounts",
     query: opts,
@@ -73,8 +73,8 @@ export async function bankrecListMatches(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; statement_line_id?: string },
   call?: ApiCallOptions
-): Promise<Result<BankRecMatchPage>> {
-  return client.request<BankRecMatchPage>({
+): Promise<Result<BankRecMatchList>> {
+  return client.request<BankRecMatchList>({
     method: "GET",
     path: "/api/v1/bankrec/matches",
     query: opts,
@@ -88,8 +88,8 @@ export async function bankrecListReconciliations(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; bank_account_id?: string },
   call?: ApiCallOptions
-): Promise<Result<BankRecReconciliationPage>> {
-  return client.request<BankRecReconciliationPage>({
+): Promise<Result<BankRecReconciliationList>> {
+  return client.request<BankRecReconciliationList>({
     method: "GET",
     path: "/api/v1/bankrec/reconciliations",
     query: opts,
@@ -133,8 +133,8 @@ export async function bankrecListRules(
   client: ApiClient,
   opts?: { cursor?: string; limit?: number; live?: boolean },
   call?: ApiCallOptions
-): Promise<Result<BankRecMatchRulePage>> {
-  return client.request<BankRecMatchRulePage>({
+): Promise<Result<BankRecMatchRuleList>> {
+  return client.request<BankRecMatchRuleList>({
     method: "GET",
     path: "/api/v1/bankrec/rules",
     query: opts,

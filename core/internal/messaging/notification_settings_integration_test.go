@@ -38,7 +38,7 @@ func clearPersonPrefs(t *testing.T, pool *pgxpool.Pool, userIDs ...string) {
 
 // The closed 6-item category set is what the GET renders. The CHECK is the schema's copy of the
 // code's EventCategories, so the SQL refuses a foreign value (a separate unit test pins the
-// 400-side refusal; this test pins the schema-level refusal — defence in depth).
+// 400-side refusal; this test pins the schema-level refusal, defence in depth).
 func TestIntegration_NotificationSettings_CategorySetMatchesCode(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()

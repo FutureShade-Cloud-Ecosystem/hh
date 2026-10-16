@@ -132,12 +132,6 @@ function holds(schemaName, value) {
   assert.deepEqual(undeclared(value, descriptor), [], `${schemaName} carries fields the contract does not declare`);
 }
 
-/** A rule fits the contract; its spec carries more than the contract types (the core stores the whole object). */
-function holdsRule(rule) {
-  assert.deepEqual(validateValue(rule, SCHEMA_DESCRIPTORS.BankRecMatchRule), [], "BankRecMatchRule does not fit the contract");
-  assert.deepEqual(undeclared(rule, SCHEMA_DESCRIPTORS.BankRecMatchRule).filter((p) => !p.startsWith("value.spec.")), [], "a rule carries fields the contract does not declare");
-}
-
 function refused(res, status, fragment) {
   assert.equal(res.status, status);
   holds("Error", res.json);
@@ -159,8 +153,8 @@ test("the accounts answer a bare array, as the core writes them, and each accoun
   const res = await ctl("GET", "/api/v1/bankrec/accounts");
   assert.equal(res.status, 200);
   assert.ok(Array.isArray(res.json), "the core's handler writes the array itself");
-  assert.ok(handlerSource.includes("httpx.WriteJSON(w, http.StatusOK, accts)"), "the core's accounts handler no longer writes a bare array: bring the stub and the app's reader in step");
-  res.json.forEach((a) => holds("BankRecAccount", a));
+  assert.ok(handlerSource.includes("httpx.WriteJSON(w, http.StatusOK, accts)"), "the core's accounts handler no longer writes a bare array: bring the stub and the contract in step");
+  holds("BankRecAccountList", res.json);
   assert.equal(res.json.length, 3);
   const operating = res.json.find((a) => a.id === IDS.operating);
   assert.equal(operating.unmatched_lines, 7);
@@ -271,7 +265,7 @@ test("a manual match pairs a line to a payment or a journal, the refusals come i
   assert.equal(history.status, 200);
   assert.ok(Array.isArray(history.json), "the core's handler writes the array itself");
   assert.ok(handlerSource.includes("httpx.WriteJSON(w, http.StatusOK, matches)"));
-  history.json.forEach((m) => holds("BankRecMatch", m));
+  holds("BankRecMatchList", history.json);
   assert.equal(history.json.length, 1);
   refused(await ctl("GET", "/api/v1/bankrec/matches"), 400, "statement_line_id is required");
 });
@@ -301,13 +295,13 @@ test("the rules answer a bare array, a new version retires the old, and the spec
   assert.equal(list.status, 200);
   assert.ok(Array.isArray(list.json));
   assert.ok(handlerSource.includes("httpx.WriteJSON(w, http.StatusOK, items)"));
-  list.json.forEach(holdsRule);
+  holds("BankRecMatchRuleList", list.json);
   assert.equal(list.json.length, 3);
   assert.ok(list.json.every((r) => r.status === "APPROVED" && r.version === 1));
   assert.equal(list.json.find((r) => r.code === "run-settlement-fuzzy").spec.allow_fee_split, true);
   const next = await ctl("POST", "/api/v1/bankrec/rules", { code: "run-settlement-fuzzy", name: "Batch settlement, wider window", priority: 30, spec: { kind: "descriptor_fuzzy", target: "PAYMENT", descriptor_ilike: "%RUN%", date_window_days: 5, allow_fee_split: true, fee_account_code: "6300" } });
   assert.equal(next.status, 201);
-  holdsRule(next.json);
+  holds("BankRecMatchRule", next.json);
   assert.equal(next.json.version, 2);
   assert.equal(next.json.supersedes_rule_id, IDS.ruleBatch);
   const all = (await ctl("GET", "/api/v1/bankrec/rules")).json;
@@ -341,7 +335,7 @@ test("a month opens with the ledger balance and the variance, a zero balance is 
   const stale = (await ctl("GET", `/api/v1/bankrec/reconciliations?bank_account_id=${IDS.operating}`)).json;
   assert.ok(Array.isArray(stale), "the core's handler writes the array itself");
   assert.ok(handlerSource.includes("httpx.WriteJSON(w, http.StatusOK, items)"));
-  stale.forEach((r) => holds("BankRecReconciliation", r));
+  holds("BankRecReconciliationList", stale);
   assert.equal(stale[0].variance_cents, zero.json.variance_cents, "the stored variance is a snapshot until the month is opened again");
   const fresh = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
   assert.equal(fresh.json.variance_cents, 0, "the cheque and the fee were booked by journals before matching, so the ledger reaches the statement once the rest is matched");

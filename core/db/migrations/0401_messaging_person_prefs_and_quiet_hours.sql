@@ -1,4 +1,4 @@
--- 0401: walk change 7, slice S7 — per-person notification preferences
+-- 0401: walk change 7, slice S7: per-person notification preferences
 --       (event-class toggles + quiet hours) and the desktop-push gate.
 -- Owner: internal/messaging. Follows 0157 (per-user rules, decisions not defaults) and 0069
 -- (notification prefs additive, non-breaking).
@@ -100,7 +100,7 @@ CREATE TABLE msg_quiet_hours (
 -- per user; ON DELETE CASCADE).
 
 -- GATED (do NOT build here):
---   * per-DOW quiet schedules ("quiet Sat–Sun"). The board draws one window a day; widening to a
+--   * per-DOW quiet schedules ("quiet Sat to Sun"). The board draws one window a day; widening to a
 --     per-DOW schedule is a real request and a column-add, deliberately left for the user-led follow
 --     up rather than built.
 --   * a per-channel quiet override ("never quiet #alerts-all"). The TierEscalation / TierFirehose

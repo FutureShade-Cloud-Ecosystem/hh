@@ -27,6 +27,7 @@ test("the area opens on the landed costs already captured, with the counts besid
   await expect(rows.first()).toContainText("By value");
   await expect(rows.first()).toContainText("$480.00");
   await expect(rows.first()).toContainText("$35.50");
+  await expect(rows.first().locator("td[data-label='Captured']")).toHaveText("today");
   await expect(page.locator("[data-tile='drafts']")).toContainText("0");
   await expect(page.locator("[data-tile='applied']")).toContainText("1");
   await expect(page.locator("nav.areas").getByRole("button", { name: "Landed cost" })).toHaveAttribute("aria-current", "true");
