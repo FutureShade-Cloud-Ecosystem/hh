@@ -520,8 +520,10 @@ export class YardPickApp extends HHElement {
       void this.#refreshOfflineChrome();
       // A cycle came to rest with its pull landed: the open pick reads the
       // server's row (a record the device queued shows the server's lines,
-      // not its own).
-      if ((state === "idle" || state === "conflict") && this.#view.kind === "pick" && !this.#busy) void this.#refreshPick().then(() => this.requestUpdate());
+      // not its own). The read runs even while a save or a shortage is still
+      // finishing: a cycle that rests in between would otherwise leave the
+      // device's queued lines on the glass after the server's row arrived.
+      if ((state === "idle" || state === "conflict") && this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
     });
     await layer.setOnline(navigator.onLine);
     await layer.cycle();

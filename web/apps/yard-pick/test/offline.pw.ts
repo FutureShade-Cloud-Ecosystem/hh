@@ -221,8 +221,12 @@ test("offline, the pick record and a shortage report drain in order and land cle
   expect(scopes.indexOf("pick_tasks")).toBeGreaterThanOrEqual(0);
   expect(scopes.indexOf("pick_tasks")).toBeLessThan(scopes.indexOf("shortages"));
   // The record landed: the rep was told, and the server's backorder figure shows.
-  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
-  expect(notice?.body).toContain("44.0000 SQFT on backorder");
+  await expect
+    .poll(async () => {
+      const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
+      return notice?.body ?? "";
+    })
+    .toContain("44.0000 SQFT on backorder");
   await expect(page.locator("[data-line]", { hasText: "Flagstone" })).toContainText("44 SQFT on backorder");
   // Only the fields the core's doors admit rode the outbox, and no card came back.
   const ops = pushes.flatMap((c) => ((c.body as { ops?: Array<{ payload: Record<string, unknown> }> } | null)?.ops ?? []));
@@ -252,13 +256,25 @@ test("offline, a shortage reported before the record does not make the record co
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
+  // Both marks of the saved record are on the glass before the word goes
+  // online: the queued line shows as waiting, and the banner counts both
+  // waiting writes. The banner alone can land while the save is still
+  // finishing, so going online on it alone races the record out the door.
+  await expect(page.locator("[data-pick-pending]")).toContainText("Waiting to send");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+  // The server's backorder line is on the glass: the cycle pulled the
+  // server's row, so the stub read below cannot run ahead of the record.
+  await expect(page.locator("[data-line]", { hasText: "Flagstone" })).toContainText("44 SQFT on backorder");
   // The record applied: the rep was told, and no card came back for the device's own report.
-  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
-  expect(notice?.body).toContain("44.0000 SQFT on backorder");
+  await expect
+    .poll(async () => {
+      const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
+      return notice?.body ?? "";
+    })
+    .toContain("44.0000 SQFT on backorder");
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
