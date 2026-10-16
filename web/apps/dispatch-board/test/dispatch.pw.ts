@@ -338,6 +338,98 @@ test("the day board at 390 keeps empty stages to one strip", async ({ page, requ
   await expect(run1.locator("[data-strip]")).toContainText("2 ready");
 });
 
+// WALK-C16: the redesigned board's new surfaces. Time axis, run-detail drawer, problems strip,
+// suggest-runs panel, live indicator, no money or freight on the default load tab, and the
+// 44px control minimum at every new shape.
+
+test("the problems strip names what the day needs in its own words, and a fix line runs once applied", async ({ page, request }) => {
+  await openBoard(page, request);
+  await expect(page.locator("[data-problems]")).toBeVisible();
+  // RUN-PLM-2 is the truck the stub leaves without a driver, so a missing-crew problem rides it.
+  const problem = page.locator("[data-problems] li.problem[data-problem-kind='missing-crew']", { hasText: "RUN-PLM-2" });
+  await expect(problem).toBeVisible();
+  await expect(problem).toContainText(/missing a (driver|truck|driver)/);
+  await problem.locator("button[data-action='apply-fix']").click();
+  await expect(problem).toHaveClass(/applied/);
+  await expect(problem.locator("[data-problem-line]")).toHaveCSS("text-decoration", /line-through/);
+});
+
+test("the time axis lays out the twelve hours and one row per planned run, all on tokens", async ({ page, request }) => {
+  await openBoard(page, request);
+  await expect(page.locator("[data-time-axis]")).toBeVisible();
+  const headHours = page.locator("[data-time-axis] .head-hour");
+  await expect(headHours).toHaveCount(12);
+  await expect(headHours.first()).toHaveText("5");
+  await expect(headHours.nth(11)).toHaveText("16");
+  const rows = page.locator("[data-time-axis] [data-axis-run-id]");
+  await expect(rows.first()).toBeVisible();
+});
+
+test("the run-detail drawer opens when a run is named on the time axis and closes again", async ({ page, request }) => {
+  await openBoard(page, request);
+  await expect(page.locator("[data-run-detail]")).toHaveCount(0);
+  await page.locator("[data-time-axis] [data-action='select-run']").first().click();
+  await expect(page.locator("[data-run-detail]")).toBeVisible();
+  await expect(page.locator("[data-run-payload]")).toBeVisible();
+  await page.locator("[data-run-detail] [data-action='run-close']").click();
+  await expect(page.locator("[data-run-detail]")).toHaveCount(0);
+});
+
+test("the suggest-runs panel opens from a load, lists at most three trucks, and closes again", async ({ page, request }) => {
+  await openBoard(page, request);
+  await expect(page.locator("[data-suggest]")).toHaveCount(0);
+  // The first staging load has targets; pick the first one's open-suggest press.
+  await page.locator("li.load [data-action='suggest-open']").first().click();
+  await expect(page.locator("[data-suggest]")).toBeVisible();
+  const rows = page.locator("[data-suggest-list] [data-suggest-run-id]");
+  expect(await rows.count()).toBeLessThanOrEqual(3);
+  await page.locator("[data-suggest] [data-action='suggest-close']").click();
+  await expect(page.locator("[data-suggest]")).toHaveCount(0);
+});
+
+test("the live indicator reads 'Live' when the board is ready and 'Reading the board' while busy", async ({ page, request }) => {
+  await openBoard(page, request);
+  const live = page.locator("[data-live]");
+  await expect(live).toHaveAttribute("data-busy", "false");
+  await expect(live).toContainText("Live");
+  await page.route("**/api/v1/dispatch/loadboard?*", async (route) => {
+    await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(live).toHaveAttribute("data-busy", "true");
+  await expect(live).toContainText("Reading");
+});
+
+test("the default load tab never draws money or the words freight or value", async ({ page, request }) => {
+  await openBoard(page, request);
+  // The redesigned board still reads no money of its own when the core sends none: the existing
+  // test holds, and the problems strip / time axis / run detail do not introduce $ or freight.
+  await expect(page.locator("main")).not.toContainText(/\$\d/);
+  await expect(page.locator("main")).not.toContainText(/freight|value/i);
+});
+
+for (const size of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+  test(`the redesigned surface labels never scroll sideways and every control on it is at least 44 px at ${size.width} px`, async ({ page, request }) => {
+    await page.setViewportSize(size);
+    await openBoard(page, request);
+    await expect(page.locator("[data-time-axis]")).toBeVisible();
+    await expect(page.locator("[data-problems]")).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    const short = await page.evaluate(() => {
+      const root = document.querySelector("dispatch-board-app")?.shadowRoot;
+      const out: string[] = [];
+      root?.querySelectorAll("button:not(.box):not(.link), select, input").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && r.height < 43.5 && !el.classList.contains("theme-btn")) out.push(`${el.tagName} ${el.textContent?.trim().slice(0, 20)} ${Math.round(r.height)}`);
+      });
+      return out;
+    });
+    expect(short, JSON.stringify(short)).toEqual([]);
+  });
+}
+
 test("the 390 header is one compact band: the theme and feedback buttons ride the page", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openBoard(page, request);

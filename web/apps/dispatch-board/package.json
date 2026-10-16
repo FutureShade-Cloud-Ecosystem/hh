@@ -9,7 +9,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "acceptance": "playwright test --config test/acceptance.config.ts",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/logic.test.mjs test/stub-contract.test.mjs && playwright test"
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/logic.test.mjs test/print.test.mjs test/stub-contract.test.mjs && playwright test"
   },
   "dependencies": {
     "@hardscapehouse/api-client": "0.0.0",

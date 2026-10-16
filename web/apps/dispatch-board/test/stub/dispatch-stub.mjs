@@ -95,7 +95,7 @@ const JULIAN = {
 };
 let manyBranches = false;
 
-const POLICY = {
+const DEFAULT_POLICY = {
   branch_id: BRANCH,
   commit_prompt_hours: 48,
   reopen_policy: "MANAGER",
@@ -105,6 +105,9 @@ const POLICY = {
   freight_split_mode: "EVEN",
   driver_session_hours: 12,
 };
+let POLICY = { ...DEFAULT_POLICY };
+// The policy trail the settings screen reads: one row per knob that moved, newest first.
+let policyTrail = [];
 
 function seedWorld() {
   const trucks = [
@@ -181,13 +184,36 @@ function seedWorld() {
     stop(9, { order_no: "ORD-0009", customer_name: "Summit Ridge Builders", run_id: runs[3].id, stop_no: 1, address_line: "4410 Torrey Pines Road", city: "La Jolla", postal_code: "92037", weight_kg: 2900, status: "EN_ROUTE", commit_state: "COMMITTED", committed_at: `${TODAY}T05:50:00Z`, requested_date: TODAY }),
     stop(10, { order_no: "ORD-0010", customer_name: "Ridgeview Outdoor Living", run_id: runs[3].id, stop_no: 2, address_line: "8 Santa Fe Court", city: "San Diego", postal_code: "92106", weight_kg: null, status: "LOADED", commit_state: "COMMITTED", committed_at: `${TODAY}T05:51:00Z`, requested_date: TODAY }),
   ];
-  return { trucks, drivers, runs, stops, seq: { run: 5, resched: 1 } };
+  // Orders the counter can hand to dispatch, by the number on the paperwork. ORD-0040 and ORD-0043 are
+  // confirmed and not yet scheduled; the rest of the stops above hold their own orders.
+  const orders = [
+    { id: "0a000001-0000-4000-9000-000000000040", order_no: "ORD-0040", customer_name: "Cedar Court Homeowner", status: "CONFIRMED", fulfilment: "DELIVERY" },
+    { id: "0a000001-0000-4000-9000-000000000041", order_no: "ORD-0041", customer_name: "Harbor View Landscaping", status: "DRAFT", fulfilment: "WILL_CALL" },
+    { id: "0a000001-0000-4000-9000-000000000042", order_no: "ORD-0042", customer_name: "Mesa Stoneworks", status: "CANCELLED", fulfilment: "WILL_CALL" },
+    { id: "0a000001-0000-4000-9000-000000000043", order_no: "ORD-0043", customer_name: "Coastline Patios", status: "CONFIRMED", fulfilment: "DELIVERY" },
+    // Will call: staged and ready for a tag, never picked, held for the balance, and one with its history.
+    { id: "0a000001-0000-4000-9000-000000000044", order_no: "ORD-0044", customer_name: "Bayside Pavers", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED" },
+    { id: "0a000001-0000-4000-9000-000000000045", order_no: "ORD-0045", customer_name: "Pine Hill Supply", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "NONE" },
+    { id: "0a000001-0000-4000-9000-000000000046", order_no: "ORD-0046", customer_name: "Eastlake Masonry", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED", held: true },
+    { id: "0a000001-0000-4000-9000-000000000047", order_no: "ORD-0047", customer_name: "Terrace Landscape Co", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED" },
+  ];
+  const pickups = [
+    { id: "9c000001-0000-4000-9000-000000000001", order_id: orders[7].id, branch_id: BRANCH, status: "CONFIRMED", expires_at: `${addDays(TODAY, 9)}T18:00:00Z`, collected_by: "Pickup contact (demo)", confirmed_at: `${TODAY}T10:00:00Z`, created_at: `${addDays(TODAY, -2)}T09:00:00Z` },
+    { id: "9c000001-0000-4000-9000-000000000002", order_id: orders[7].id, branch_id: BRANCH, status: "REVOKED", expires_at: `${addDays(TODAY, 8)}T18:00:00Z`, created_at: `${addDays(TODAY, -3)}T09:00:00Z` },
+  ];
+  // Freight per order, in cents: what it charges now and what the customer was quoted (null: never quoted).
+  const freight = {
+    [stops[3].order_id]: { current: 30000, quoted: 30000 },
+    [stops[4].order_id]: { current: 10000, quoted: 10000 },
+    [stops[5].order_id]: { current: 20000, quoted: null },
+  };
+  return { trucks, drivers, runs, stops, orders, pickups, freight, raises: [], shares: {}, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10, job: 10, raise: 1, split: 60 } };
 }
 
 let world = seedWorld();
 // What a test arms: the next write's refusal, the caller's reopen right, and a hold's amount.
 let armed = null;
-let caller = { can_reopen: true, can_commit: true };
+let caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true, can_see_value: true };
 let holdAmount = false;
 const HOLD_STOP = "5a000001-0000-4000-9000-000000000005";
 
@@ -345,7 +371,7 @@ function loadBoard(date) {
       committed: day.filter((s) => s.commit_state === "COMMITTED").length,
       due: waiting.filter((s) => s.commit_state !== "COMMITTED" && s.scheduled_date <= addDays(TODAY, 2)).length,
     },
-    trucks: world.trucks.map(truckView),
+    trucks: world.trucks.filter((t) => t.is_active).map(truckView),
     loads,
     staging,
   };
@@ -411,6 +437,96 @@ function assertChangeable(res, stop) {
   return true;
 }
 
+// The order reference the way the core's resolver grades and resolves it. Returns the order, or sends the refusal.
+function resolveOrder(res, raw) {
+  const ref = typeof raw === "string" ? raw.trim() : "";
+  if (ref === "") {
+    fail(res, 400, "enter an order number (like #SO-TRT-1041) or an order id");
+    return null;
+  }
+  const bare = ref.replace(/^#/, "");
+  if (!/^[A-Za-z0-9_-]+$/.test(bare) || !/[0-9]/.test(bare)) {
+    fail(res, 400, `"${ref}" is not an order number, enter a number like #SO-TRT-1041, or paste the order id`);
+    return null;
+  }
+  const order = world.orders.find((o) => o.order_no === bare || o.id === ref) ?? world.stops.map((s) => ({ id: s.order_id, order_no: s.order_no, customer_name: s.customer_name, status: "CONFIRMED", fulfilment: "DELIVERY" })).find((o) => o.order_no === bare || o.id === ref);
+  if (!order) {
+    fail(res, 404, "dispatch: not found");
+    return null;
+  }
+  return order;
+}
+
+function manifestHtml(run) {
+  const rows = stopsOnRun(run.id)
+    .map((s) => `<tr><td>${s.stop_no}</td><td>${s.order_no}</td><td>${s.customer_name}</td><td>${s.address_line || "-"}</td></tr>`)
+    .join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Run manifest ${run.run_no}</title></head><body><h1>Run manifest ${run.run_no}</h1><table>${rows}</table></body></html>`;
+}
+
+// The scan trail an order has: ORD-0012 has two pallets, one still in the yard and one delivered and signed for.
+function trailFor(orderId) {
+  const stop = world.stops.find((s) => s.order_id === orderId);
+  if (!stop) return null;
+  const at = (hh) => `${TODAY}T${hh}:00:00Z`;
+  const cp = (n, load, checkpoint, hh, extra) => ({ id: `ca000001-0000-4000-9000-0000000000${n}`, branch_id: BRANCH, order_id: orderId, load_ref: load, checkpoint, scanned_at: at(hh), ...extra });
+  if (stop.order_no !== "ORD-0012") return { order_id: orderId, checkpoints: [], loads: [], complete: false };
+  const checkpoints = [
+    cp(10, "PLT-0012-A", "RECEIVED", "06"),
+    cp(11, "PLT-0012-A", "YARD", "07"),
+    cp(12, "PLT-0012-A", "PICKED", "08"),
+    cp(13, "PLT-0012-B", "RECEIVED", "06"),
+    cp(14, "PLT-0012-B", "DELIVERED", "09", { pod_signature_ref: "sig-demo" }),
+  ];
+  return {
+    order_id: orderId,
+    checkpoints,
+    loads: [
+      { load_ref: "PLT-0012-A", reached: ["RECEIVED", "YARD", "PICKED"], furthest: "PICKED", last_scanned_at: at("08") },
+      { load_ref: "PLT-0012-B", reached: ["RECEIVED", "DELIVERED"], furthest: "DELIVERED", pod_signature_ref: "sig-demo", last_scanned_at: at("09") },
+    ],
+    complete: false,
+  };
+}
+
+const usd = (cents) => `${cents < 0 ? "-" : ""}$${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
+
+function evenSplit(total, n) {
+  const base = Math.floor(total / n);
+  const rem = total % n;
+  return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0));
+}
+
+function raiseView(r) {
+  const out = {
+    id: r.id,
+    order_id: r.order_id,
+    order_no: r.order_no,
+    customer_name: r.customer_name,
+    branch_id: BRANCH,
+    loads: r.loads,
+    asked_by: "a dispatch manager",
+    asked_at: r.asked_at,
+    state: r.state,
+    approval_id: r.approval_id,
+  };
+  // The figures ride only for a caller the load value policy lets see them: absent by type, no key.
+  if (caller.can_see_value) {
+    out.money = { quoted_freight_cents: r.quoted, current_freight_cents: r.current, proposed_freight_cents: r.proposed, delta_cents: r.proposed - r.quoted };
+  }
+  return out;
+}
+
+function splitLoads(orderId) {
+  return world.stops.filter((s) => s.order_id === orderId && s.status !== "CANCELLED").sort((a, b) => (a.load_seq ?? 1) - (b.load_seq ?? 1));
+}
+
+function splitView(s) {
+  const out = stopView(s);
+  if (typeof world.shares[s.id] === "number") out.freight_cents = world.shares[s.id];
+  return out;
+}
+
 function refuseIfArmed(res, method, path) {
   if (armed === null) return false;
   if (armed.path !== undefined && !(armed.exact === true ? path === armed.path : path.includes(armed.path))) return false;
@@ -432,7 +548,9 @@ async function route(req, res, url) {
   if (path === "/_stub/reset") {
     world = seedWorld();
     armed = null;
-    caller = { can_reopen: true, can_commit: true };
+    caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true, can_see_value: true };
+    POLICY = { ...DEFAULT_POLICY };
+    policyTrail = [];
     holdAmount = false;
     manyBranches = false;
     return json(res, { ok: true });
@@ -451,6 +569,12 @@ async function route(req, res, url) {
   }
   if (path === "/_stub/branches" && method === "POST") {
     manyBranches = Boolean((await readBody(req)).many);
+    return json(res, { ok: true });
+  }
+  if (path === "/_stub/raise" && method === "POST") {
+    const b = await readBody(req);
+    const r = world.raises.find((x) => x.id === b.id);
+    if (r) r.state = b.state;
     return json(res, { ok: true });
   }
   if (path === "/_stub/world") {
@@ -490,8 +614,10 @@ async function route(req, res, url) {
       const date = validDate(q("date")) ? q("date") : TODAY;
       return json(res, yard ? { branch_id: OTHER_BRANCH, date, runs: [], stops: [], unassigned: [] } : dayBoard(date));
     }
-    if (rest === "trucks") return json(res, { items: yard ? [] : world.trucks.map(truckView), limit: 50 });
-    if (rest === "drivers") return json(res, { items: yard ? [] : world.drivers, limit: 50 });
+    // A retired truck or driver leaves the pick lists and stays in the registry (include_inactive).
+    const withInactive = q("include_inactive") === "true";
+    if (rest === "trucks") return json(res, { items: yard ? [] : world.trucks.filter((t) => withInactive || t.is_active).map(truckView), limit: 50 });
+    if (rest === "drivers") return json(res, { items: yard ? [] : world.drivers.filter((d) => withInactive || d.is_active), limit: 50 });
     if (rest === "loadboard/gaps") {
       const items = [
         { stop_id: stopOf("5a000001-0000-4000-9000-000000000002").id, order_no: "ORD-0030", sku: "PVR-CBL-60", description: "Copperline cobble paver, 60 mm", qty_needed: 480, qty_on_hand: 310, qty_short: 170, uom: "sq ft" },
@@ -515,6 +641,34 @@ async function route(req, res, url) {
       }
       return json(res, { items, limit: 60 });
     }
+    let m1 = /^runs\/([^/]+)\/manifest$/.exec(rest);
+    if (m1) {
+      const run = runOf(m1[1]);
+      if (!run) return fail(res, 404, "dispatch: not found");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(manifestHtml(run));
+    }
+    if (rest === "scan-trail") {
+      if (q("order_id") === "") return fail(res, 400, "order_id is required");
+      const trail = trailFor(q("order_id"));
+      return trail === null ? fail(res, 404, "dispatch: not found") : json(res, trail);
+    }
+    let m2 = /^freight-raises\/([^/]+)$/.exec(rest);
+    if (m2) {
+      const raise = world.raises.find((r) => r.id === m2[1]);
+      return raise ? json(res, raiseView(raise)) : fail(res, 404, "dispatch: not found");
+    }
+    if (rest === "policy") return json(res, POLICY);
+    if (rest === "policy/history") {
+      if (!caller.can_manage) return fail(res, 403, "Forbidden");
+      return json(res, { items: policyTrail });
+    }
+    if (rest === "will-call") {
+      const order = resolveOrder(res, q("order_id"));
+      if (order === null) return;
+      const items = world.pickups.filter((w) => w.order_id === order.id).map((w) => ({ ...w }));
+      return json(res, { items, limit: 50 });
+    }
     let m = /^runs\/([^/]+)\/payment-holds$/.exec(rest);
     if (m) {
       const run = runOf(m[1]);
@@ -525,13 +679,255 @@ async function route(req, res, url) {
     return fail(res, 404, "not found");
   }
 
-  if (method !== "POST") return fail(res, 404, "not found");
+  if (method !== "POST" && method !== "PUT") return fail(res, 404, "not found");
   const body = await readBody(req);
   if (body === null) return fail(res, 400, "bad request");
 
+  if (rest === "policy" && method === "PUT") {
+    if (!caller.can_manage || !caller.can_set_policy) return fail(res, 403, "Forbidden");
+    const int = (v) => (Number.isInteger(v) ? v : 0);
+    const next = {
+      branch_id: BRANCH,
+      commit_prompt_hours: int(body.commit_prompt_hours),
+      reopen_policy: body.reopen_policy || "MANAGER",
+      load_value_visibility: body.load_value_visibility || "MANAGER_UP",
+      commit_horizon_weeks: int(body.commit_horizon_weeks) || 8,
+      working_view_days: int(body.working_view_days) || 14,
+      freight_split_mode: body.freight_split_mode || "EVEN",
+      driver_session_hours: int(body.driver_session_hours) || 12,
+    };
+    if (next.commit_prompt_hours < 0 || next.commit_prompt_hours > 336) return fail(res, 422, "dispatch: commit_prompt_hours must be between 0 and 336");
+    if (!["ANYONE", "MANAGER", "NOBODY"].includes(next.reopen_policy)) return fail(res, 422, "dispatch: reopen_policy must be ANYONE, MANAGER or NOBODY");
+    if (!["MANAGER_UP", "ALL_STAFF", "HIDDEN"].includes(next.load_value_visibility)) return fail(res, 422, "dispatch: cost_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+    if (next.commit_horizon_weeks < 1 || next.commit_horizon_weeks > 26) return fail(res, 422, "dispatch: commit_horizon_weeks must be between 1 and 26");
+    if (next.working_view_days < 1 || next.working_view_days > 90) return fail(res, 422, "dispatch: working_view_days must be between 1 and 90");
+    if (!["EVEN", "MANUAL"].includes(next.freight_split_mode)) return fail(res, 422, "dispatch: freight_split_mode must be EVEN or MANUAL");
+    if (next.driver_session_hours < 1 || next.driver_session_hours > 168) return fail(res, 422, "dispatch: driver_session_hours must be between 1 and 168");
+    const moved = [];
+    for (const field of ["commit_prompt_hours", "reopen_policy", "load_value_visibility", "commit_horizon_weeks", "working_view_days", "freight_split_mode", "driver_session_hours"]) {
+      if (String(POLICY[field]) !== String(next[field])) moved.push({ field, before: String(POLICY[field]), after: String(next[field]), who: "Logistics Manager", when: `${TODAY}T18:00:00Z` });
+    }
+    policyTrail = [...moved, ...policyTrail];
+    POLICY = next;
+    return json(res, POLICY);
+  }
+
+  // ---- the registry: the role gate answers a bare Forbidden below the manage level
+  if ((rest === "trucks" || rest === "drivers" || /^(trucks|drivers)\/[^/]+$/.test(rest)) && (method === "POST" || method === "PUT")) {
+    if (!caller.can_manage) return fail(res, 403, "Forbidden");
+    const isTruck = rest.startsWith("trucks");
+    const existing = (isTruck ? world.trucks : world.drivers).find((r) => r.id === rest.split("/")[1]);
+    if (method === "PUT" && !existing) return fail(res, 404, "not found");
+    if (method === "POST" && body.branch_id !== BRANCH) return fail(res, 400, "dispatch: no branch with that id");
+    if (method === "PUT" && body.branch_id !== existing.branch_id) {
+      return fail(res, 400, isTruck ? "dispatch: a truck's branch does not move; retire it here and register it at the other yard" : "dispatch: a driver's branch does not move; retire them here and register them at the other yard");
+    }
+    if (isTruck) {
+      const code = String(body.code ?? "").trim();
+      if (code === "") return fail(res, 400, "dispatch: a truck needs a code");
+      const type = String(body.truck_type || "FLATBED").toUpperCase();
+      if (!["FLATBED", "BOOM", "DUMP", "PICKUP", "TRAILER"].includes(type)) return fail(res, 400, `dispatch: unknown truck_type "${type}"`);
+      if (typeof body.capacity_kg === "number" && body.capacity_kg < 0) return fail(res, 400, "dispatch: capacity_kg must not be negative");
+      if (world.trucks.some((t) => t.code === code && t.id !== existing?.id)) return fail(res, 409, "dispatch: a truck with that code already exists at this branch");
+      const row = {
+        id: existing?.id ?? `t0000001-0000-4000-9000-0000000000${String(world.seq.truck++).padStart(2, "0")}`,
+        branch_id: BRANCH,
+        code,
+        name: String(body.name ?? ""),
+        truck_type: type,
+        capacity_kg: body.capacity_kg ?? null,
+        capacity_m3: body.capacity_m3 ?? null,
+        pallet_positions: body.pallet_positions ?? null,
+        is_active: method === "POST" ? true : body.is_active !== false,
+      };
+      if (existing) Object.assign(existing, row);
+      else world.trucks.push(row);
+      return method === "POST" ? json(res, { id: row.id }, 201) : json(res, truckView(row));
+    }
+    const name = String(body.name ?? "").trim();
+    if (name === "") return fail(res, 400, "dispatch: a driver needs a name");
+    const login = String(body.user_id ?? "");
+    if (login !== "" && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(login)) {
+      return fail(res, 400, "dispatch: user_id must be a user id, or left out for a driver with no login");
+    }
+    const row = {
+      id: existing?.id ?? `d0000001-0000-4000-9000-0000000000${String(world.seq.driver++).padStart(2, "0")}`,
+      branch_id: BRANCH,
+      name,
+      phone: String(body.phone ?? ""),
+      licence_class: String(body.licence_class ?? ""),
+      is_active: method === "POST" ? true : body.is_active !== false,
+    };
+    if (login !== "") row.user_id = login;
+    if (existing) {
+      delete existing.user_id;
+      Object.assign(existing, row);
+    } else world.drivers.push(row);
+    return method === "POST" ? json(res, { id: row.id }, 201) : json(res, row);
+  }
+
+  if (method !== "POST") return fail(res, 404, "not found");
+
+  let m0;
   // ---- the auto assign seam: the core build answers 501 and says what would answer it
   if (rest === "auto-assign") {
     return fail(res, 501, "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime");
+  }
+
+  if (rest === "freight-split") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
+    if (!caller.can_see_value) return fail(res, 403, "dispatch: forbidden");
+    const loads = Number(body.loads);
+    if (!(loads >= 1 && loads <= 10)) return fail(res, 422, "dispatch: an order goes out on between 1 and 10 loads");
+    const existing = splitLoads(order.id);
+    if (existing.length === 0) return fail(res, 409, "dispatch: schedule this order for delivery before splitting its freight");
+    if (existing.length > loads) return fail(res, 409, `dispatch: this order is already on ${existing.length} loads, cancel one before splitting into ${loads}`);
+    for (const st of existing) {
+      if (st.commit_state === "COMMITTED" && !caller.can_reopen) return fail(res, 409, `dispatch: ${st.order_no} is committed, reopen it first, or ask a dispatch manager to`);
+    }
+    let fr = world.freight[order.id];
+    const proposal = body.freight_cents === undefined || body.freight_cents === null ? null : Number(body.freight_cents);
+    if (!fr) {
+      if (proposal === null) return fail(res, 409, "dispatch: this order carries no freight to split");
+      fr = { current: 0, quoted: null };
+    }
+    const current = fr.current;
+    const proposed = proposal === null ? current : proposal;
+    if (proposed < 0) return fail(res, 422, "dispatch: freight cannot be negative");
+    if (proposed < current) return fail(res, 422, `dispatch: this order's freight is ${usd(current)}, lowering it is a credit note, not a split`);
+    let amounts = evenSplit(proposed, loads);
+    let override = false;
+    if (Array.isArray(body.amounts) && body.amounts.length > 0) {
+      if (body.amounts.length !== loads) return fail(res, 422, `dispatch: the split has ${body.amounts.length} amounts and the order is on ${loads} loads`);
+      if (body.amounts.some((a) => a < 0)) return fail(res, 422, "dispatch: a load's freight cannot be negative");
+      const sum = body.amounts.reduce((a, b) => a + b, 0);
+      if (sum !== proposed) return fail(res, 422, `dispatch: the split comes to ${usd(sum)} and the order's freight is ${usd(proposed)}, they have to match`);
+      amounts = body.amounts;
+      override = true;
+    }
+    // The gate: a raise above the quote that nobody has agreed to parks, and nothing is written.
+    if (fr.quoted !== null && proposed > fr.quoted && proposed > current) {
+      const parked = world.raises.find((r) => r.order_id === order.id && r.state === "PARKED");
+      const same = (r) => r.proposed === proposed && r.loads === loads && JSON.stringify(r.amounts ?? []) === JSON.stringify(body.amounts ?? []);
+      if (parked && !same(parked)) return fail(res, 409, "dispatch: a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
+      const raise = parked ?? {
+        id: `fa000001-0000-4000-9000-0000000000${String(world.seq.raise++).padStart(2, "0")}`,
+        order_id: order.id,
+        order_no: order.order_no,
+        customer_name: order.customer_name,
+        loads,
+        asked_at: `${TODAY}T08:00:00Z`,
+        state: "PARKED",
+        approval_id: `ab000001-0000-4000-9000-0000000000${String(world.seq.raise).padStart(2, "0")}`,
+        quoted: fr.quoted,
+        current,
+        proposed,
+        amounts: body.amounts,
+      };
+      if (!parked) world.raises.push(raise);
+      return json(res, { order_id: order.id, freight_cents: current, override: false, loads: existing.map(splitView), parked: raiseView(raise) });
+    }
+    const parent = existing[0];
+    while (existing.length < loads) {
+      const n = world.seq.split++;
+      const copy = { ...parent, id: `5a000001-0000-4000-9000-0000000000${n}`, run_id: "", stop_no: 0, status: "READY", commit_state: "REQUESTED", committed_at: null };
+      world.stops.push(copy);
+      existing.push(copy);
+    }
+    existing.forEach((st, i) => {
+      st.load_seq = i + 1;
+      st.load_count = loads;
+      world.shares[st.id] = amounts[i];
+    });
+    world.freight[order.id] = { current: proposed, quoted: fr.quoted };
+    return json(res, { order_id: order.id, freight_cents: proposed, override, loads: existing.map(splitView) });
+  }
+
+  if (rest === "will-call") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
+    if (order.fulfilment !== "WILL_CALL") return fail(res, 409, `dispatch: this is ${order.fulfilment === "DELIVERY" ? "a delivery" : "a counter pickup"}, not will-call, a rack tag prints only for a will-call order`);
+    if (order.status === "DRAFT") return fail(res, 409, "dispatch: confirm the order before printing a pickup code");
+    if (order.status === "CANCELLED" || order.status === "CLOSED") return fail(res, 409, order.status === "CANCELLED" ? "dispatch: this order was cancelled" : "dispatch: this order is already closed");
+    if (order.pick === "NONE") return fail(res, 409, "dispatch: nothing has been picked for this order yet, it is in the yard's queue, and the tag prints once the pick is staged");
+    if (order.held) return fail(res, 409, "dispatch: This order cannot reach picking until the balance is paid.");
+    if (world.pickups.some((w) => w.order_id === order.id && w.status === "ACTIVE")) {
+      return fail(res, 409, "dispatch: this order already has a live pickup code, revoke it before printing another");
+    }
+    const n = world.seq.pickup++;
+    const row = {
+      id: `9c000001-0000-4000-9000-0000000000${String(n).padStart(2, "0")}`,
+      order_id: order.id,
+      branch_id: BRANCH,
+      status: "ACTIVE",
+      expires_at: `${addDays(TODAY, Number(body.ttl_hours) > 0 ? Math.ceil(Number(body.ttl_hours) / 24) : 14)}T18:00:00Z`,
+      created_at: `${TODAY}T08:00:00Z`,
+    };
+    world.pickups.push(row);
+    const token = Buffer.from(`${row.id}-${n}-stub-pickup-token-0000`).toString("base64url");
+    res.setHeader("Cache-Control", "no-store");
+    return json(res, { ...row, token }, 201);
+  }
+
+  m0 = /^will-call\/([^/]+)\/revoke$/.exec(rest);
+  if (m0) {
+    if (!caller.can_manage) return fail(res, 403, "Forbidden");
+    if (!/^[0-9a-f]{8}-/.test(m0[1])) return fail(res, 404, "dispatch: not found");
+    const row = world.pickups.find((w) => w.id === m0[1]);
+    if (!row) return fail(res, 404, "dispatch: not found");
+    if (row.status !== "ACTIVE") return fail(res, 409, `dispatch: this pickup code is already ${row.status.toLowerCase()}`);
+    row.status = "REVOKED";
+    return json(res, { status: "REVOKED" });
+  }
+
+  if (rest === "stops") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
+    const date = typeof body.scheduled_date === "string" ? body.scheduled_date.trim() : "";
+    if (date === "") return fail(res, 400, "dispatch: scheduled_date is required (YYYY-MM-DD)");
+    if (!validDate(date)) return fail(res, 400, "dispatch: scheduled_date must be YYYY-MM-DD");
+    if ((body.latitude === null || body.latitude === undefined) !== (body.longitude === null || body.longitude === undefined)) {
+      return fail(res, 400, "dispatch: latitude and longitude must be given together");
+    }
+    if (order.status === "DRAFT") return fail(res, 409, "dispatch: confirm the order before scheduling a delivery for it");
+    if (order.status === "CANCELLED" || order.status === "CLOSED") return fail(res, 409, `dispatch: order is ${order.status} and cannot be scheduled`);
+    const live = world.stops.find((s) => s.order_id === order.id && s.status !== "CANCELLED");
+    if (live) return fail(res, 409, `dispatch: this order already has a delivery scheduled for ${live.scheduled_date}`);
+    if (date > addDays(TODAY, POLICY.commit_horizon_weeks * 7) || date < addDays(TODAY, -1)) {
+      return fail(res, 422, `dispatch: ${date} is outside the ${POLICY.commit_horizon_weeks}-week planning horizon`);
+    }
+    const n = world.seq.stop++;
+    const stop = {
+      id: `5a000001-0000-4000-9000-0000000000${n}`,
+      branch_id: BRANCH,
+      order_id: order.id,
+      order_no: order.order_no,
+      customer_name: order.customer_name,
+      run_id: "",
+      stop_no: 0,
+      scheduled_date: date,
+      status: "READY",
+      time_window: body.time_window ?? "",
+      contact_name: body.contact_name ?? "",
+      contact_phone: body.contact_phone ?? "",
+      address_line: body.address_line ?? "",
+      city: body.city ?? "",
+      postal_code: body.postal_code ?? "",
+      latitude: body.latitude ?? null,
+      longitude: body.longitude ?? null,
+      instructions: body.instructions ?? "",
+      photo_count: 0,
+      created_at: `${TODAY}T08:00:00Z`,
+      weight_kg: null,
+      volume_m3: null,
+      pallet_positions: null,
+      requested_date: typeof body.requested_date === "string" && body.requested_date !== "" ? body.requested_date : date,
+      commit_state: "REQUESTED",
+      committed_at: null,
+    };
+    world.stops.push(stop);
+    return json(res, stopView(stop), 201);
   }
 
   if (rest === "runs") {
@@ -644,6 +1040,12 @@ async function route(req, res, url) {
       for (const s of moved) s.scheduled_date = body.to_date;
       return json(res, { entity_type: "delivery_run", entity_id: run.id, from_date: from, to_date: body.to_date, stops_moved: moved.length, reschedule_id: `rs000001-0000-4000-9000-00000000000${world.seq.resched++}`, run: runView(run) });
     }
+  }
+
+  m = /^runs\/([^/]+)\/manifest\/print$/.exec(rest);
+  if (m) {
+    if (!runOf(m[1])) return fail(res, 404, "dispatch: not found");
+    return json(res, { job_id: `pj000001-0000-4000-9000-0000000000${String(world.seq.job++).padStart(2, "0")}`, doc_type: "DELIVERY_DOC" }, 201);
   }
 
   m = /^stops\/([^/]+)\/(assign|commit|status|reopen|reschedule)$/.exec(rest);
