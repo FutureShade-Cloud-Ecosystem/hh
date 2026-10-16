@@ -58,6 +58,8 @@ test("L-cost: cost is hidden for the role as the decided matrix says (PR 275)", 
   expect(productId, "the branch's browse answers at least one product").toBeTruthy();
   const onHand = await staff(page, "GET", `/api/v1/inventory/on-hand?product_id=${productId}`);
   expect(onHand.status).toBe(200);
+  const onHandRows = (onHand.body.on_hand ?? []) as unknown[];
+  expect(onHandRows.length, "on-hand answers at least one row for the browsed product").toBeGreaterThan(0);
   const seen = JSON.stringify(onHand.body).toLowerCase();
   expect(seen).not.toMatch(/avg_cost_cents|unit_cost_cents|suggested_value_cents/);
 });
