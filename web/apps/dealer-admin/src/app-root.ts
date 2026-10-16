@@ -71,7 +71,11 @@ import {
   effectiveVerdict,
   type PlatformHotkeyView,
 } from "./hotkey-logic.js";
-import { SURFACES, isSurfaceId } from "./surfaces.js";
+import { SURFACE_GROUPS, SURFACES, isSurfaceId } from "./surfaces.js";
+import { renderDelivery } from "./views-delivery.js";
+import { renderSignInMethods } from "./views-sign-in-methods.js";
+import { renderChatRules } from "./views-chat-rules.js";
+import { renderWarranty } from "./views-warranty.js";
 import { dealerStyles } from "./styles.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
@@ -348,7 +352,9 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     if (action === "open-surface") {
-      const surface = control?.getAttribute("data-surface") ?? "";
+      let surface = control?.getAttribute("data-surface") ?? "";
+      if (surface === "roles") surface = "role-config";
+      if (surface === "sign-in") surface = "sign-in-methods";
       if (isSurfaceId(surface)) {
         this.#surface = surface;
         // A surface loads its own reads the first time it is opened.
@@ -1803,22 +1809,30 @@ export class DealerAdminApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
-  // The app's own left list: one row per registry surface.
+  // The app's own left list: grouped navigation rail per Change 11 boards.
   private renderSurfaceList(): TemplateResult {
     return html`
       <nav class="surface-list" aria-label="Dealer Admin surfaces">
-        ${SURFACES.map(
-          (s) => html`
-            <button
-              type="button"
-              class="surface-link"
-              data-action="open-surface"
-              data-surface=${s.id}
-              aria-current=${this.#surface === s.id ? "true" : "false"}
-            >
-              <span class="title">${s.title}</span>
-              <span class="blurb">${s.blurb}</span>
-            </button>
+        ${SURFACE_GROUPS.map(
+          (group) => html`
+            <div class="nav-group">
+              <div class="nav-group-title">${group.name}</div>
+              <div class="nav-group-items">
+                ${group.surfaces.map(
+                  (s) => html`
+                    <button
+                      type="button"
+                      class="surface-link"
+                      data-action="open-surface"
+                      data-surface=${s.id}
+                      aria-current=${this.#surface === s.id ? "true" : "false"}
+                    >
+                      <span class="title">${s.title}</span>
+                    </button>
+                  `,
+                )}
+              </div>
+            </div>
           `,
         )}
       </nav>
@@ -1834,9 +1848,13 @@ export class DealerAdminApp extends HHElement {
     }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
-    if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
+    if (this.#surface === "role-config" || this.#surface === "roles") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
     if (this.#surface === "pricing") return renderPricing(this.#pricing.model);
+    if (this.#surface === "delivery") return renderDelivery();
+    if (this.#surface === "warranty") return renderWarranty();
+    if (this.#surface === "sign-in-methods" || this.#surface === "sign-in") return renderSignInMethods();
+    if (this.#surface === "chat-rules") return renderChatRules();
     return renderStaff(this.#staff);
   }
 
