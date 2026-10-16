@@ -228,6 +228,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// Change 5 slice S3: the shortfall row names the sales orders it holds up, read through the
 	// order module's seam (the 0008 tables' sole reader) rather than any second look at them.
 	inventorySvc.WithShortOrderReader(invShortOrders{svc: orderSvc})
+	// Change 5 slice S4: the browse row names the branches it is out of, read through the branches
+	// module's seam (the branch rows' owner) rather than any second look at them.
+	inventorySvc.WithBranchNameReader(invBranchNames{svc: branches.NewService(branches.NewRepository(pool))})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -1733,6 +1736,14 @@ func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, product
 // invShortOrders satisfies inventory.ShortOrderReader over the order module's open-order numbers
 // read: the sales orders a shortfall row names, oldest first. Numbers and ids only cross the seam;
 // the orders tables stay this module's alone.
+// invBranchNames satisfies inventory.BranchNameReader over the branches module's name read: the
+// stock lookup's out-at line. Ids cross the seam; the branch table stays this module's alone.
+type invBranchNames struct{ svc *branches.Service }
+
+func (a invBranchNames) BranchNames(ctx context.Context, ids []string) (map[string]string, error) {
+	return a.svc.BranchNames(ctx, ids)
+}
+
 type invShortOrders struct{ svc *order.Service }
 
 func (a invShortOrders) OpenOrdersFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.ShortOrder, error) {

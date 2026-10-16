@@ -2802,6 +2802,7 @@ export type InventoryBrowseRow = {
   available_base: number;
   in_transit_base: number;
   avg_cost_cents?: number;
+  out_at_branches?: string[];
 };
 export type InventoryFacetValue = {
   value: string;

@@ -3310,25 +3310,26 @@ type InventoryBranchStock struct {
 }
 
 type InventoryBrowseRow struct {
-	ProductId      string  `json:"product_id"`
-	Sku            string  `json:"sku"`
-	Name           string  `json:"name"`
-	Manufacturer   string  `json:"manufacturer"`
-	Collection     string  `json:"collection"`
-	ColorFamily    string  `json:"color_family"`
-	Texture        string  `json:"texture"`
-	ProductSize    string  `json:"product_size"`
-	SoldBy         string  `json:"sold_by"`
-	Color          string  `json:"color"`
-	Finish         string  `json:"finish"`
-	Application    string  `json:"application"`
-	IsFeatured     bool    `json:"is_featured"`
-	IsSpecialOrder bool    `json:"is_special_order"`
-	OnHandBase     float64 `json:"on_hand_base"`
-	ReservedBase   float64 `json:"reserved_base"`
-	AvailableBase  float64 `json:"available_base"`
-	InTransitBase  float64 `json:"in_transit_base"`
-	AvgCostCents   *int64  `json:"avg_cost_cents,omitempty"`
+	ProductId      string    `json:"product_id"`
+	Sku            string    `json:"sku"`
+	Name           string    `json:"name"`
+	Manufacturer   string    `json:"manufacturer"`
+	Collection     string    `json:"collection"`
+	ColorFamily    string    `json:"color_family"`
+	Texture        string    `json:"texture"`
+	ProductSize    string    `json:"product_size"`
+	SoldBy         string    `json:"sold_by"`
+	Color          string    `json:"color"`
+	Finish         string    `json:"finish"`
+	Application    string    `json:"application"`
+	IsFeatured     bool      `json:"is_featured"`
+	IsSpecialOrder bool      `json:"is_special_order"`
+	OnHandBase     float64   `json:"on_hand_base"`
+	ReservedBase   float64   `json:"reserved_base"`
+	AvailableBase  float64   `json:"available_base"`
+	InTransitBase  float64   `json:"in_transit_base"`
+	AvgCostCents   *int64    `json:"avg_cost_cents,omitempty"`
+	OutAtBranches  *[]string `json:"out_at_branches,omitempty"`
 }
 
 type InventoryFacetValue struct {
