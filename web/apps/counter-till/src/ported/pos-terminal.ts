@@ -2214,7 +2214,7 @@ export class HosPosTerminal extends LitElement {
       opacity: 1;
       cursor: not-allowed;
     }
-    /* ── Change 8: Account Check & Three Ways Forward ── */
+    /* -- Change 8: Account Check & Three Ways Forward -- */
     .pos-account-check {
       display: flex;
       flex-direction: column;
@@ -2226,12 +2226,12 @@ export class HosPosTerminal extends LitElement {
       border: 2px solid;
     }
     .pos-account-check.good {
-      border-color: var(--hos-success, #1b7a43);
-      background: var(--hos-field, #f4faf5);
+      border-color: var(--hos-success);
+      background: var(--hos-field);
     }
     .pos-account-check.blocked {
-      border-color: var(--hos-safety-red, #b82323);
-      background: #fdf4f4;
+      border-color: var(--hos-safety-red);
+      background: var(--hos-field);
     }
     .pos-account-check-head {
       display: flex;
@@ -2245,10 +2245,10 @@ export class HosPosTerminal extends LitElement {
       line-height: 1.25;
     }
     .pos-account-check.good .pos-account-check-title {
-      color: var(--hos-success, #1b7a43);
+      color: var(--hos-success);
     }
     .pos-account-check.blocked .pos-account-check-title {
-      color: var(--hos-safety-red, #b82323);
+      color: var(--hos-safety-red);
     }
     .pos-account-check-body {
       display: flex;
@@ -2259,7 +2259,7 @@ export class HosPosTerminal extends LitElement {
       margin: 0;
       font-size: 13px;
       line-height: 1.35;
-      color: var(--hos-text, #1e293b);
+      color: var(--hos-text);
     }
     .pos-account-fields {
       display: grid;
@@ -2276,22 +2276,22 @@ export class HosPosTerminal extends LitElement {
     .pos-account-field label {
       font-size: 12px;
       font-weight: 600;
-      color: var(--hos-text, #1e293b);
+      color: var(--hos-text);
     }
     .pos-account-field input {
       height: 42px;
       padding: 8px 12px;
-      border: 1px solid var(--hos-line, #cbd5e1);
+      border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-control, 8px);
       font-size: 14px;
       font-family: inherit;
-      color: var(--hos-text, #1e293b);
-      background: var(--hos-field, #fff);
+      color: var(--hos-text);
+      background: var(--hos-field);
       outline: none;
       box-sizing: border-box;
     }
     .pos-account-field input:focus {
-      border-color: var(--hos-stone-amber, #d97706);
+      border-color: var(--hos-stone-amber);
     }
     .pos-ways-grid {
       display: grid;
@@ -2314,38 +2314,38 @@ export class HosPosTerminal extends LitElement {
       gap: 4px;
       text-align: left;
       padding: 12px 14px;
-      background: var(--hos-slate-warm, #f8fafc);
-      border: 1px solid var(--hos-line, #cbd5e1);
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-card, 12px);
       cursor: pointer;
       font-family: inherit;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
     .pos-way-card:hover {
-      border-color: var(--hos-stone-amber, #d97706);
+      border-color: var(--hos-stone-amber);
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     }
     .pos-way-card.active {
-      border-color: var(--hos-stone-amber, #d97706);
-      background: var(--hos-field, #fff);
-      box-shadow: 0 0 0 2px var(--hos-stone-amber, #d97706);
+      border-color: var(--hos-stone-amber);
+      background: var(--hos-field);
+      box-shadow: 0 0 0 2px var(--hos-stone-amber);
     }
     .pos-way-title {
       font-size: 13px;
       font-weight: 700;
-      color: var(--hos-text, #1e293b);
+      color: var(--hos-text);
       line-height: 1.25;
     }
     .pos-way-sub {
       font-size: 12px;
       font-weight: 600;
-      color: var(--hos-text-dim, #64748b);
+      color: var(--hos-text-dim);
       line-height: 1.25;
     }
     .pos-way-body {
       font-size: 11px;
       font-weight: 400;
-      color: var(--hos-text-dim, #64748b);
+      color: var(--hos-text-dim);
       line-height: 1.35;
     }
     /* ── Round 15: the payment step in the boards' two columns (00 and 01). The stepper draws the sale
