@@ -15,6 +15,10 @@ import { fileURLToPath } from "node:url";
 
 const stubPort = process.env.ROLE_STUB_PORT ?? "4969";
 const appPort = process.env.ROLE_APP_PORT ?? "4968";
+// The box's inotify slots are shared with every other lane's dev servers, and when they are all
+// taken a dev server dies at startup (EMFILE on the first watch). ROLE_VITE_NO_WATCH=1 starts the
+// server watching nothing, which a headless leg run never needs; the default watches as always.
+const noWatch = process.env.ROLE_VITE_NO_WATCH === "1";
 
 export default defineConfig(({ mode }) => ({
   resolve:
@@ -32,6 +36,7 @@ export default defineConfig(({ mode }) => ({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    ...(noWatch ? { watch: { ignored: "**" } } : {}),
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,

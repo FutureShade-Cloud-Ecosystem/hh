@@ -267,6 +267,28 @@ export class DriveOffline {
     return (await this.store.outbox.health()).waiting;
   }
 
+  /** The dealer's business zone, as the surface config read last served it:
+   * a small metadata table beside the scopes, so a fully offline cold start
+   * reads the run sheet on the zone the last online session held instead of
+   * the Ontario default. Nothing here is a credential or a user's word: it is
+   * the dealer's own IANA zone name from the config read. */
+  async saveZone(zone: string): Promise<void> {
+    await this.#sql.run("CREATE TABLE IF NOT EXISTS _drive_meta (key TEXT PRIMARY KEY, value TEXT)", []);
+    await this.#sql.run(
+      "INSERT INTO _drive_meta (key, value) VALUES ('business_zone', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      [zone],
+    );
+  }
+
+  /** The zone the last served read stored, or null when none has been (an
+   * empty or absent value reads as none, so a cleared zone restores nothing). */
+  async readZone(): Promise<string | null> {
+    await this.#sql.run("CREATE TABLE IF NOT EXISTS _drive_meta (key TEXT PRIMARY KEY, value TEXT)", []);
+    const rows = await this.#sql.all<{ value: string }>("SELECT value FROM _drive_meta WHERE key = 'business_zone'", []);
+    const value = rows[0]?.value ?? "";
+    return value !== "" ? value : null;
+  }
+
   async stalls(): Promise<OutboxStall[]> {
     return (await this.store.outbox.health()).stalls;
   }

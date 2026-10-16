@@ -49,6 +49,7 @@ import {
   type InventorySetTransitDaysInput,
   type InventoryNudgeResult,
   type InventoryCreatePOResult,
+  type Product,
   type ProductPage,
   type PurchasingIncomingLinePage,
   type PurchasingPOPage,
@@ -133,6 +134,11 @@ export class InventoryApi {
   /** The active catalogue: the pickers' lists. */
   products(): Promise<Result<ProductPage>> {
     return staffProduct.productList(this.#client, { active: true, limit: 200 });
+  }
+
+  /** One product's own record: the list price and the sale unit the stock lookup's header reads. */
+  product(id: string): Promise<Result<Product>> {
+    return staffProduct.productGet(this.#client, id);
   }
 
   onHand(productId: string): Promise<Result<InventoryOnHandList>> {
