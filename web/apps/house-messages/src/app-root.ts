@@ -53,6 +53,7 @@ export class HouseMessagesApp extends HHElement {
   // The desk (src/desk.ts): its state, its reads, its presses. The fields it reads are looked up in
   // this element's own shadow root. Built once a session is adopted, dropped on sign out.
   #desk: MessagesDesk | null = null;
+  #callerRole: { roleCode?: string; tier?: number } | null = null;
 
   #newDesk(): MessagesDesk | null {
     const session = this.#sessions.current;
@@ -67,6 +68,7 @@ export class HouseMessagesApp extends HHElement {
         timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (handle) => window.clearTimeout(handle as number) },
       },
       session.user.userId,
+      this.#callerRole,
     );
   }
 
@@ -148,6 +150,7 @@ export class HouseMessagesApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#callerRole = { roleCode: handoff.session.roleCode, tier: handoff.session.tier };
         clearFrontDoorHandoff();
         this.#startDesk();
       }
@@ -198,6 +201,7 @@ export class HouseMessagesApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#callerRole = { roleCode: result.value.roleCode, tier: result.value.identity?.tier };
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         this.#startDesk();
       } else {
@@ -212,6 +216,7 @@ export class HouseMessagesApp extends HHElement {
   #onSignOut(): void {
     this.#desk?.dispose();
     this.#desk = null;
+    this.#callerRole = null;
     this.#sessions.clear();
     clearFrontDoorHandoff();
     void this.loadFlows();
