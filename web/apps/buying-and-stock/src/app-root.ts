@@ -29,6 +29,7 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import { IncomingDesk } from "./incoming/incoming-desk.js";
 import { areaStyles } from "./area-styles.js";
 import { InventoryApi } from "./inventory/inventory-api.js";
 import { InventoryDesk } from "./inventory/inventory-desk.js";
@@ -110,6 +111,7 @@ export class BuyingAndStockApp extends HHElement {
     };
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
+      { id: "incoming", label: "Incoming", desk: new IncomingDesk(new PoApi(this.#staffClient), host) },
       { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
       { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
       { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
