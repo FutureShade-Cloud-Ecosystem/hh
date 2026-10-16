@@ -32,6 +32,11 @@ export default defineConfig(({ mode }) => ({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    // A workstation whose inotify table is full refuses every new watcher
+    // (EMFILE) and the dev server dies on boot. ROLE_WATCH_POLLING=1 asks the
+    // watcher to poll instead: slower, and it never touches inotify. CI and a
+    // healthy workstation never set it and never pay the polling cost.
+    ...(process.env.ROLE_WATCH_POLLING === "1" ? { watch: { usePolling: true } } : {}),
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,
