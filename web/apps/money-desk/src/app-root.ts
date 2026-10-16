@@ -321,13 +321,30 @@ export class MoneyDeskApp extends HHElement {
         },
         setField: (name, value, key) => {
           const scope = key === undefined ? "" : `[data-key="${key}"]`;
-          const found = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]${scope}`);
+          const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`);
+          if (found instanceof HTMLSelectElement && [...found.options].some((o) => o.hasAttribute("data-id"))) {
+            // A select whose options carry ids takes the option that names the value.
+            const at = [...found.options].findIndex((o) => o.getAttribute("data-id") === value);
+            if (at >= 0 && found.selectedIndex !== at) found.selectedIndex = at;
+            return;
+          }
           if (found !== null) {
             if (found.value !== value) found.value = value;
             return;
           }
           const plain = this.renderRoot.querySelector<HTMLElement>(`[data-ro="${name}"]`);
           if (plain !== null && plain.textContent !== value) plain.textContent = value;
+        },
+        mountDocument: (selector, text) => {
+          // The invoice document is the core's own HTML: it is shown in a frame with every permission withheld, never
+          // set into this page, and the slot holds nothing else.
+          const slot = this.renderRoot.querySelector<HTMLElement>(selector);
+          if (slot === null) return;
+          const frame = document.createElement("iframe");
+          frame.setAttribute("sandbox", "");
+          frame.title = "Invoice document";
+          frame.srcdoc = text;
+          slot.replaceChildren(frame);
         },
         download: (text, filename) => {
           const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));

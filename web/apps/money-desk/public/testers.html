@@ -72,7 +72,7 @@
 
 <h2>Receivables: bounced payments, statements and holds</h2>
 <p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
-<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
+<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF and the Activity tab are marked later. The Contacts tab holds the account's AP contact.</p>
 <p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
 <p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: there is no path for it yet.</p>
 <p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
@@ -103,6 +103,26 @@
 <p data-claim="policy">The Policy tab reads the approval threshold, the month the fiscal year starts and the cost basis. Changing the policy is not on this screen.</p>
 <p data-claim="reader">Payables and Receivables opens the Ledger area beside Receivables and reads the journals, chart, trial balance, periods, tie out and policy. Every write is held, with words naming who may do it.</p>
 
+<h2>Receivables office: statement runs and AP contacts</h2>
+<p data-claim="office-run">After a statement run the Statements tab shows the run read back from the server: its kind, the number of statements, how many went to the messaging sink and how many did not, one row per account with its total due and a delivery word, and one line saying a statement with a balance is queued as a text to the account's consented number when notices are on. No address or number is shown.</p>
+<p data-claim="office-contact">An account's Contacts tab tags, replaces or removes its AP contact, which reminders go to. It says what is on file in words and never shows the address or number back. Saving replaces the whole contact, a contact with neither an email nor a phone is refused before anything is sent, and removing asks a second time.</p>
+
+<h2>Receivables office: reminders and the paper path</h2>
+<p data-claim="office-reminders">The Reminders tab sends a reminder for one invoice of one account by email or text, and says before it is sent what would go and to which contact by its role. On the base plan the screen says reminders are part of accelerated AR and a press shows the server's own sentence. A resend carries a watermark with the days past due. When nobody is tagged for AP, the account's own address is used only after you confirm it. A lost answer is sent again with the same key and is recorded once. Nothing leaves except through the messaging sink, and no address or number is drawn.</p>
+<p data-claim="office-paper">The paper path lists the accounts that were sent several reminders and opened none. Run the sweep raises new flags, and a flag closes as moved to paper or dismissed only with a note saying why. The Needs you list on the receivables home follows.</p>
+
+<h2>Receivables office: an invoice and a reversed payment</h2>
+<p data-claim="office-invoice">An open invoice can be sent to the account's contact through the messaging sink, and says so without showing an address. An account with no contact email is refused in the server's words. View the document opens the invoice in a frame that can run nothing, and closes again.</p>
+<p data-claim="office-dispute">Open a dispute asks for a reason and an amount in dollars that is not above the balance, and refuses anything else before it is sent. An open dispute shows on the invoice and on the register as disputed, and closes with an outcome: paid, credited, written off or withdrawn. Closing records how it ended and moves no money.</p>
+<p data-claim="office-reverse">A payment taken in error is reversed from its invoice with a reason, which is required. The invoice is owing what it was and the payment shows a reversal entry. A payment that has been reversed is refused a second time in the server's words. A returned cheque is still Mark bounced.</p>
+
+<h2>Receivables office: settings and holds</h2>
+<p data-claim="office-settings">The Settings tab shows the receivables rules (where an account turns overdue, late and escalated, how often it is reminded, the paper path window, the plan), the register settings and the history of rule changes. Payables and Receivables can read the rules; the boxes are held for it and say that changing them is for the Financial Controller or the General Manager. The controller's changes are checked before they are sent, saved, and listed in the history with what each rule was and became.</p>
+<p data-claim="office-fee">The returned payment fee is typed in dollars and a fee with more than two decimals is refused before it is sent. The next payment marked bounced is charged the fee that was saved.</p>
+<p data-claim="office-autohold">The automatic credit hold switch is the controller's. It says in words whether the switch is on, what it would hold, and that the thresholds are read only. Turning it on or off asks a second time and takes a reason. When the server has no way to change it, the screen shows it and offers no button.</p>
+<p data-claim="office-nsf-hold">A hold that a returned payment placed names that payment, and the controller lifts it with a reason through the till's own path, which the receivables release refuses.</p>
+<p data-claim="office-sweep">Run the sweep says what it did. While automatic holds are off it only reports how many accounts it would hold and places none, and says that is why. Once they are on it places the holds and says how many.</p>
+<p data-claim="office-dispatch">On an open invoice, Can the order go out asks the credit gate and says either that nothing on the account stops the order or why it is stopped, in the server's words.</p>
 <h2>Statements</h2>
 <p data-claim="stmt-area">The Financial Controller has an area called Statements, beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It opens on the income statement for the latest fiscal year the books hold.</p>
 <p data-claim="stmt-periods">Years and periods come from the books' own list and are named as the books name them: a fiscal year, or a numbered period of it, each marked closed or still open. No calendar month is written on the screen.</p>

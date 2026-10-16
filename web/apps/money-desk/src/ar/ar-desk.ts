@@ -16,12 +16,16 @@ import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import { OfficeDesk, type OfficeHost } from "./office-desk.js";
+import { sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
   renderHome,
   renderLoadFailed,
   renderLoading,
+  renderReminders,
+  renderSettings,
   renderStatements,
   shownInvoiceIds,
   type AccountModel,
@@ -45,6 +49,8 @@ export interface DeskHost {
   readonly setField: (name: string, value: string, key?: string) => void;
   /** Hands text to the person as a file. */
   readonly download: (text: string, filename: string) => void;
+  /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame with no scripts. */
+  readonly mountDocument: (selector: string, text: string) => void;
 }
 
 export interface DeskWho {
@@ -92,6 +98,8 @@ export class ArDesk {
   // never sees it. The route refuses a changed body under a spent key in words, so a lost answer can never post
   // the same money twice, and a payment on another account never touches this one's key.
   readonly #payPins: HeldKeys;
+  /** The office: statement run read back, AP contacts, reminders, dispute, settings (office-desk.ts). */
+  readonly #office: OfficeDesk;
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -100,7 +108,38 @@ export class ArDesk {
     this.#host = host;
     this.#who = who;
     this.#payPins = new HeldKeys(who.userId);
+    const officeHost: OfficeHost = {
+      repaint: () => host.repaint(),
+      reveal: (selector) => {
+        this.#reveal = selector;
+      },
+      field: (name, key) => host.field(name, key),
+      setField: (name, value, key) => host.setField(name, value, key),
+      notice: (words) => {
+        this.#error = "";
+        this.#notice = words;
+        host.repaint();
+      },
+      error: (words) => {
+        this.#notice = "";
+        this.#error = words;
+        host.repaint();
+      },
+      reloadAccount: async () => {
+        await this.#reloadAccount();
+        host.repaint();
+      },
+      mountDocument: (selector, text) => host.mountDocument(selector, text),
+      accounts: () => this.#aging,
+      policy: () => this.#landing?.policy ?? null,
+      reloadBook: async () => {
+        await this.#reloadBook();
+        host.repaint();
+      },
+    };
+    this.#office = new OfficeDesk(api.office(), officeHost, who);
   }
+
 
   // ---- loads ----------------------------------------------------------------------------------
 
@@ -232,16 +271,18 @@ export class ArDesk {
         void this.#runStatements(null);
         return true;
       case "open-account":
-        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : "invoices");
+        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : "invoices");
         return true;
       case "back":
         this.#account = null;
+        this.#office.invoiceChanged(null);
         this.#clearMessages();
         void this.#reloadBook().then(() => this.#host.repaint());
         this.#host.repaint();
         return true;
       case "sub":
-        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : "invoices" };
+        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
+        if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
         this.#clearMessages();
         this.#host.repaint();
         this.#afterFill();
@@ -328,6 +369,7 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "show-hold":
+        void this.#office.openHolds();
         this.#tab = "holds";
         this.#selectedHoldId = attr("data-hold-id");
         this.#holdPanel = "about";
@@ -358,7 +400,7 @@ export class ArDesk {
         void this.#runSweep();
         return true;
       default:
-        return false;
+        return this.#office.press(control);
     }
   }
 
@@ -375,6 +417,7 @@ export class ArDesk {
 
   /** A change (the field is left): the amount reads back as money, formatted only. */
   change(control: Element): void {
+    if (this.#office.change(control)) return;
     if (control.getAttribute("data-field") !== "receive-amount" || this.#account === null) return;
     const cents = parseAmountToCents((control as HTMLInputElement).value);
     if (cents === null) return;
@@ -385,6 +428,7 @@ export class ArDesk {
 
   /** After each paint: a message the desk asked to bring into view, then the fills and read only fields. */
   afterRender(): void {
+    this.#office.afterRender();
     if (this.#reveal !== "") {
       const selector = this.#reveal;
       this.#reveal = "";
@@ -423,6 +467,9 @@ export class ArDesk {
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
+    if (tab === "reminders") await this.#office.openReminders();
+    if (tab === "settings") await this.#office.openSettings();
+    if (tab === "holds") await this.#office.openHolds();
   }
 
   async #loadPaid(): Promise<void> {
@@ -444,7 +491,7 @@ export class ArDesk {
 
   // ---- an account -------------------------------------------------------------------------------
 
-  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement"): Promise<void> {
+  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts"): Promise<void> {
     if (customerId === "") return;
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
@@ -490,12 +537,14 @@ export class ArDesk {
     this.#host.repaint();
     if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
     await this.#loadStatement(customerId);
+    if (sub === "contacts") await this.#office.ensureContact(customerId);
   }
 
   async #selectInvoice(invoiceId: string): Promise<void> {
     if (this.#account === null || invoiceId === "") return;
     this.#clearMessages();
     this.#account = { ...this.#account, selectedInvoiceId: invoiceId, right: "invoice", detail: null, payments: null, bounceFor: null };
+    this.#office.invoiceChanged(invoiceId);
     this.#host.repaint();
     await this.#reloadInvoice();
     this.#host.repaint();
@@ -806,6 +855,7 @@ export class ArDesk {
       this.#notice = `Statements run: ${r.generated_count} ${r.generated_count === 1 ? "account" : "accounts"} with an open balance.`;
     }
     for (const st of run.value.statements) this.#statements.set(st.customer_id, st);
+    void this.#office.showRun(r.id);
     if (this.#account !== null) {
       const own = run.value.statements.find((s) => s.customer_id === this.#account?.customerId);
       if (own !== undefined) this.#account = { ...this.#account, statement: own };
@@ -854,7 +904,9 @@ export class ArDesk {
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
-    const result = this.#liftChoice === "lift" ? await this.#api.releaseHold(id, reason) : await this.#api.overrideHold(id, reason);
+    // A hold a returned payment placed is lifted through the till's path: the billing release refuses it.
+    const nsf = this.#holds.find((h) => h.id === id)?.hold_kind === "NSF";
+    const result = this.#liftChoice === "override" ? await this.#api.overrideHold(id, reason) : nsf ? await this.#office.releaseNsfHold(id, reason) : await this.#api.releaseHold(id, reason);
     this.#busy = false;
     if (!result.ok) {
       this.#fail("release-hold", result);
@@ -877,7 +929,7 @@ export class ArDesk {
     const result = await this.#api.sweep();
     if (!result.ok) this.#fail("release-hold", result);
     else {
-      this.#notice = `The sweep checked ${result.value.evaluated} accounts and placed ${result.value.placed} ${result.value.placed === 1 ? "hold" : "holds"}.`;
+      this.#notice = sweepWords(result.value);
       await this.#reloadBook();
     }
     this.#host.repaint();
@@ -910,6 +962,7 @@ export class ArDesk {
       holdPanel: this.#holdPanel,
       liftChoice: this.#liftChoice,
       account: this.#account,
+      office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
@@ -922,6 +975,8 @@ export class ArDesk {
     const model = this.#model();
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
+    if (model.tab === "reminders") return html`${renderReminders(model)}`;
+    if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
   }
