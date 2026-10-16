@@ -42,6 +42,9 @@ type fakeStore struct {
 	// Feature 1 (0071) doubles:
 	acks    map[string]Ack       // "messageID|userID" -> ack (upsert)
 	unacked map[string][]Message // userID -> un-acked forced-ack messages the poll returns
+	// Slice S7 (0401) doubles: per-person notification settings (event-category prefs + quiet hours).
+	personPrefs map[string]map[string]PersonEventPref // userID -> category -> stored pref
+	quietHours  map[string]QuietHours                 // userID -> stored quiet-hours row
 	// Approvals rail (0075) doubles:
 	approvalChannels map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
 	approvalCards    map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
@@ -73,6 +76,8 @@ func newFakeStore() *fakeStore {
 		tiers:         map[string]string{},
 		acks:          map[string]Ack{},
 		unacked:       map[string][]Message{},
+		personPrefs:   map[string]map[string]PersonEventPref{},
+		quietHours:    map[string]QuietHours{},
 	}
 }
 
@@ -169,6 +174,32 @@ func (f *fakeStore) AckMessage(_ context.Context, _, messageID, userID, method s
 }
 func (f *fakeStore) UnackedRequiresAck(_ context.Context, userID string) ([]Message, error) {
 	return f.unacked[userID], nil
+}
+
+// Slice S7 (0401) store doubles: per-person notification settings. The fake stores the rows
+// exactly as the SQL would, so the service's merge-over-current logic is proven without a DB.
+func (f *fakeStore) GetPersonEventPrefsForUser(_ context.Context, userID string) (map[string]PersonEventPref, error) {
+	return f.personPrefs[userID], nil
+}
+func (f *fakeStore) UpsertPersonEventPref(_ context.Context, p PersonEventPref) (PersonEventPref, error) {
+	if f.personPrefs[p.UserID] == nil {
+		f.personPrefs[p.UserID] = map[string]PersonEventPref{}
+	}
+	f.personPrefs[p.UserID][p.EventCategory] = p
+	return p, nil
+}
+func (f *fakeStore) GetQuietHoursForUser(_ context.Context, userID string) (QuietHours, error) {
+	if q, ok := f.quietHours[userID]; ok {
+		return q, nil
+	}
+	return DefaultQuietHours(userID), nil // absent row is the shipped default (mirrors the SQL)
+}
+func (f *fakeStore) UpsertQuietHours(_ context.Context, q QuietHours) (QuietHours, error) {
+	if q.BypassUserIDs == nil {
+		q.BypassUserIDs = []string{} // never persist NULL; matches the SQL's COALESCE
+	}
+	f.quietHours[q.UserID] = q
+	return q, nil
 }
 
 // - Approvals rail (0075) fake store methods -

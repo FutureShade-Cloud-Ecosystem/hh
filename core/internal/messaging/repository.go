@@ -2054,3 +2054,117 @@ func (r *Repository) ArchiveChannelOlderThan(ctx context.Context, channelID stri
 	}
 	return int(ct.RowsAffected()), nil
 }
+
+// - Slice S7: per-person notification settings (event-category toggles + quiet hours), 0401 -
+
+// GetPersonEventPrefsForUser returns the STORED rows for one user (absent category → absent key),
+// so the service can layer the per-category defaults (DefaultPersonEventPref) over the map and
+// render the full closed set in board order. An empty user (never visited the surface) reads as a
+// nil map; no error.
+func (r *Repository) GetPersonEventPrefsForUser(ctx context.Context, userID string) (map[string]PersonEventPref, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT user_id::text, event_category, in_app, push, updated_at
+		FROM msg_person_event_prefs WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get person event prefs: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]PersonEventPref{}
+	for rows.Next() {
+		var p PersonEventPref
+		if err := rows.Scan(&p.UserID, &p.EventCategory, &p.InApp, &p.Push, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan person event pref: %w", err)
+		}
+		out[p.EventCategory] = p
+	}
+	return out, rows.Err()
+}
+
+// UpsertPersonEventPref upserts ONE user's answer for ONE category (insert or update). Returns
+// the persisted row. The service pre-validates the category against the closed set; an invalid
+// value is a 400 at the boundary and never reaches the SQL CHECK.
+func (r *Repository) UpsertPersonEventPref(ctx context.Context, p PersonEventPref) (PersonEventPref, error) {
+	if r.pool == nil {
+		return PersonEventPref{}, errNoDB
+	}
+	out := PersonEventPref{}
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_person_event_prefs (user_id, event_category, in_app, push, updated_at)
+		VALUES ($1, $2, $3, $4, now())
+		ON CONFLICT (user_id, event_category) DO UPDATE
+		  SET in_app = EXCLUDED.in_app,
+		      push = EXCLUDED.push,
+		      updated_at = now()
+		RETURNING user_id::text, event_category, in_app, push, updated_at`,
+		p.UserID, p.EventCategory, p.InApp, p.Push).
+		Scan(&out.UserID, &out.EventCategory, &out.InApp, &out.Push, &out.UpdatedAt)
+	if err != nil {
+		return PersonEventPref{}, fmt.Errorf("upsert person event pref: %w", err)
+	}
+	return out, nil
+}
+
+// GetQuietHoursForUser returns the stored quiet-hours row for one user. Absent row → the shipped
+// defaults (DefaultQuietHours), never an error. The whole 0301r ABI for "user with no row" is the
+// same as 0069's NotificationPrefs default; the brief's "filling defaults" clause leans on it.
+func (r *Repository) GetQuietHoursForUser(ctx context.Context, userID string) (QuietHours, error) {
+	if r.pool == nil {
+		return QuietHours{}, errNoDB
+	}
+	out := DefaultQuietHours(userID)
+	var stored bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT user_id::text, enabled, start_local, end_local, timezone,
+		       COALESCE(bypass_user_ids, '{}'::uuid[]), updated_at,
+		       (user_id IS NOT NULL)
+		FROM msg_quiet_hours WHERE user_id = $1`, userID).
+		Scan(&out.UserID, &out.Enabled, &out.StartLocal, &out.EndLocal, &out.Timezone,
+			&out.BypassUserIDs, &out.UpdatedAt, &stored)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DefaultQuietHours(userID), nil // absent row is the shipped default
+		}
+		return QuietHours{}, fmt.Errorf("get quiet hours: %w", err)
+	}
+	return out, nil
+}
+
+// UpsertQuietHours writes one user's quiet-hours row (insert or update), bumping updated_at. The
+// service pre-validates the HH:MM strings against hhmmRegex and the timezone against
+// time.LoadLocation; a bad value is a 400 at the boundary and never reaches the SQL CHECKs.
+//
+// bypass_user_ids is a []string of UUIDs; an empty list means "no carve-outs" (the shipped
+// behaviour). The repository casts it to a UUID[] server-side so the empty list serializes as
+// '{}' rather than as NULL.
+func (r *Repository) UpsertQuietHours(ctx context.Context, q QuietHours) (QuietHours, error) {
+	if r.pool == nil {
+		return QuietHours{}, errNoDB
+	}
+	bypass := q.BypassUserIDs
+	if bypass == nil {
+		bypass = []string{}
+	}
+	out := QuietHours{}
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_quiet_hours (user_id, enabled, start_local, end_local, timezone, bypass_user_ids, updated_at)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid[], now())
+		ON CONFLICT (user_id) DO UPDATE
+		  SET enabled = EXCLUDED.enabled,
+		      start_local = EXCLUDED.start_local,
+		      end_local = EXCLUDED.end_local,
+		      timezone = EXCLUDED.timezone,
+		      bypass_user_ids = EXCLUDED.bypass_user_ids,
+		      updated_at = now()
+		RETURNING user_id::text, enabled, start_local, end_local, timezone,
+		          COALESCE(bypass_user_ids, '{}'::uuid[]), updated_at`,
+		q.UserID, q.Enabled, q.StartLocal, q.EndLocal, q.Timezone, bypass).
+		Scan(&out.UserID, &out.Enabled, &out.StartLocal, &out.EndLocal, &out.Timezone,
+			&out.BypassUserIDs, &out.UpdatedAt)
+	if err != nil {
+		return QuietHours{}, fmt.Errorf("upsert quiet hours: %w", err)
+	}
+	return out, nil
+}

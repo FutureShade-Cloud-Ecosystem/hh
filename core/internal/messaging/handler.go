@@ -108,6 +108,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// same class as the per-channel mode above, not an admin knob like the event classes.
 	r.Handle("GET /api/v1/messaging/payment-rules", g.RequireStaff(h.staff(h.getPaymentRules)))
 	r.Handle("PUT /api/v1/messaging/payment-rules/{rule}", g.RequireStaff(h.staff(h.putPaymentRule)))
+	// Slice S7 (0401): the caller's notification-settings envelope (event-category toggles + quiet
+	// hours). Staff-gated and self-scoped, mirroring the payment-rules' "the user id comes from the
+	// verified StaffContext, never from the path or the body" rule. Both routes are work-level
+	// (the surface writes to it), per the brief's "work and field" access.
+	r.Handle("GET /api/v1/messaging/notification-settings", g.RequireStaff(h.staff(h.getNotificationSettings)))
+	r.Handle("PUT /api/v1/messaging/notification-settings", g.RequireStaff(h.staff(h.putNotificationSettings)))
 }
 
 // caller builds the messaging Caller from the identity StaffContext stamped by RequireStaff. ok is
@@ -526,6 +532,48 @@ func (h *Handler) putPaymentRule(w http.ResponseWriter, r *http.Request, caller 
 	httpx.WriteJSON(w, http.StatusOK, prefs)
 }
 
+// getNotificationSettings returns the caller's notification-settings envelope (event-category
+// toggles + quiet hours). Self-scoped: c.UserID comes from the verified StaffContext (the route
+// has no path/body id), so there is no route through which one staffer can read another's
+// notification choices. The envelope always carries the closed 6-category set in board order with
+// defaults filled, and the user's quiet-hours row with shipped defaults when no row exists.
+func (h *Handler) getNotificationSettings(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	settings, err := h.svc.GetNotificationSettings(r.Context(), c)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, settings)
+}
+
+// putNotificationSettings upserts the caller's notification-settings envelope. event_prefs is
+// optional, quiet_hours is optional, both may be sent in the same PUT. Per-category fields are
+// pointers so an omitted field keeps the caller's current value on the upsert (the
+// omitted-fields-keep-their-current-value rule). Validation (unknown category → 400, bad HH:MM →
+// 400, bad timezone → 400) is at the service boundary so a bad value never reaches the SQL CHECK.
+func (h *Handler) putNotificationSettings(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body NotificationSettingsPatch
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	settings, err := h.svc.SetNotificationSettings(r.Context(), c, body)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, settings)
+}
+
 func (h *Handler) unread(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	c, ok := h.caller(r)
 	if !ok {
@@ -751,6 +799,16 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	// Postgres as a CHECK violation → 500.
 	case errors.Is(err, ErrBadPaymentRule):
 		httpx.Error(w, http.StatusBadRequest, "rule must be one of ONLINE, CROSS_BRANCH, OWN_ORDER")
+	// Slice S7 (0401): the same shape for the new pref surface. Caught at the boundary so a bad
+	// value never reaches the SQL CHECK.
+	case errors.Is(err, ErrBadEventCategory):
+		httpx.Error(w, http.StatusBadRequest, "category must be one of the six closed event categories")
+	case errors.Is(err, ErrBadHHMM):
+		httpx.Error(w, http.StatusBadRequest, "time must be in HH:MM 24-hour form")
+	case errors.Is(err, ErrBadTimezone):
+		httpx.Error(w, http.StatusBadRequest, "unknown timezone")
+	case errors.Is(err, ErrBadQuietHours):
+		httpx.Error(w, http.StatusBadRequest, "invalid quiet-hours field")
 	case errors.Is(err, ErrBadMode):
 		httpx.Error(w, http.StatusBadRequest, "mode must be one of ALL, MENTIONS, MUTED")
 	// The founding and membership refusals: the branch wall is the caller's

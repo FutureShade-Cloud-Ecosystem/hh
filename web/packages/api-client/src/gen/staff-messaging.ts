@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotificationSettings, MessagingNotificationSettingsPatch, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -307,6 +307,34 @@ export async function messagingInboundCustomer(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingInboundCustomer",
+  });
+}
+
+export async function messagingGetNotificationSettings(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<MessagingNotificationSettings>> {
+  return client.request<MessagingNotificationSettings>({
+    method: "GET",
+    path: "/api/v1/messaging/notification-settings",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingGetNotificationSettings",
+  });
+}
+
+export async function messagingPutNotificationSettings(
+  client: ApiClient,
+  body: MessagingNotificationSettingsPatch,
+  call?: ApiCallOptions
+): Promise<Result<MessagingNotificationSettings>> {
+  return client.request<MessagingNotificationSettings>({
+    method: "PUT",
+    path: "/api/v1/messaging/notification-settings",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingPutNotificationSettings",
   });
 }
 

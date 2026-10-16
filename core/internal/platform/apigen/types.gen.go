@@ -4043,6 +4043,48 @@ type MessagingPaymentRulePut struct {
 	Enabled bool `json:"enabled"`
 }
 
+type MessagingPersonEventPref struct {
+	UserId        string     `json:"user_id"`
+	EventCategory string     `json:"event_category"`
+	InApp         bool       `json:"in_app"`
+	Push          bool       `json:"push"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type MessagingPersonEventPrefPut struct {
+	Category string `json:"category"`
+	InApp    *bool  `json:"in_app,omitempty"`
+	Push     *bool  `json:"push,omitempty"`
+}
+
+type MessagingQuietHours struct {
+	UserId        string     `json:"user_id"`
+	Enabled       bool       `json:"enabled"`
+	StartLocal    string     `json:"start_local"`
+	EndLocal      string     `json:"end_local"`
+	Timezone      string     `json:"timezone"`
+	BypassUserIds []string   `json:"bypass_user_ids"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type MessagingQuietHoursPut struct {
+	Enabled       *bool     `json:"enabled,omitempty"`
+	StartLocal    *string   `json:"start_local,omitempty"`
+	EndLocal      *string   `json:"end_local,omitempty"`
+	Timezone      *string   `json:"timezone,omitempty"`
+	BypassUserIds *[]string `json:"bypass_user_ids,omitempty"`
+}
+
+type MessagingNotificationSettings struct {
+	EventPrefs []MessagingPersonEventPref `json:"event_prefs"`
+	QuietHours MessagingQuietHours        `json:"quiet_hours"`
+}
+
+type MessagingNotificationSettingsPatch struct {
+	EventPrefs *[]MessagingPersonEventPrefPut `json:"event_prefs,omitempty"`
+	QuietHours *MessagingQuietHoursPut        `json:"quiet_hours,omitempty"`
+}
+
 type MessagingRepAssignment struct {
 	Id           string    `json:"id"`
 	CustomerId   string    `json:"customer_id"`

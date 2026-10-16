@@ -162,3 +162,7 @@ additions:
     reason: "The warranty claim threshold read (walk change 6): the effective org or branch policy the Manager Home Warranty board, the counter till's return sentence and Dealer Admin's Warranty page read; the ERP had no claim threshold at all; no ERP source route."
   - route: "PUT /api/v1/warranty/policy"
     reason: "The warranty claim threshold write (walk change 6): Dealer Admin's Warranty page sets the org default or one branch override in integer cents, and the change rides the audit spine with the old and new value; the ERP had no claim threshold at all; no ERP source route."
+  - route: "GET /api/v1/messaging/notification-settings"
+    reason: "Walk change 7 slice S7: the caller's full notification-settings envelope (closed 6-item event-category set + quiet hours row), self-scoped by the verified staff identity; the ERP had no per-person notification ledger; no ERP source route."
+  - route: "PUT /api/v1/messaging/notification-settings"
+    reason: "Walk change 7 slice S7: the partial-upsert write for the caller's notification-settings envelope, validation at the service boundary (unknown category, bad HH:MM, bad timezone all 400) so a bad value never reaches the SQL CHECK; the ERP had no per-person notification ledger; no ERP source route."

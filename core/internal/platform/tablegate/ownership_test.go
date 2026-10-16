@@ -461,6 +461,8 @@ var ownedObjects = map[string]string{
 	"msg_message_archive":             "messaging",         // 0070_messaging_retention_archive
 	"msg_messages":                    "messaging",         // 0050_messaging_core
 	"msg_notification_prefs":          "messaging",         // 0069_messaging_notif_prefs_and_tiers
+	"msg_person_event_prefs":          "messaging",         // 0401_messaging_person_prefs_and_quiet_hours
+	"msg_quiet_hours":                 "messaging",         // 0401_messaging_person_prefs_and_quiet_hours
 	"msg_payment_notify_rules":        "messaging",         // 0157_msg_payment_notify_rules
 	"msg_retention_policy":            "messaging",         // 0070_messaging_retention_archive
 	"msg_unread_effective":            "messaging",         // 0137_msg_notification_modes

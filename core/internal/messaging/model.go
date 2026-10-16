@@ -448,3 +448,154 @@ type ExportMessage struct {
 	EditedAt   *time.Time `json:"edited_at,omitempty"`
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
+
+// - Slice S7: per-person event class notification preferences and quiet hours (0401) -
+
+// Event categories. The closed 6-item set the board renders in board order; the CHECK in 0401
+// (msg_person_event_prefs.event_category) is the schema's copy of this list, so a value the code
+// does not know can never be stored (same text-plus-CHECK shape as 0157's msg_payment_notify_rules.rule).
+// Add, never reorder: a re-order breaks the surface's tab order; renames go through a CHECK + a new name.
+const (
+	EventCategoryOrdersReleasedAndBlocked = "orders_released_and_blocked"
+	EventCategoryStockReceived            = "stock_received"
+	EventCategoryCreditHoldsAndCreditOwed = "credit_holds_and_credit_owed"
+	EventCategoryDeliveriesScheduled      = "deliveries_scheduled"
+	EventCategoryPayments                 = "payments"
+	EventCategoryApprovalsWaitingOnMe     = "approvals_waiting_on_me"
+)
+
+// EventCategories is the closed set in board order. The handler renders from this list (NOT from
+// the SQL row's default), so a category that has no stored row appears in the response with the
+// default and the surface can label it. Kept beside the constants so the words the user reads and
+// the values the code stores cannot drift apart.
+var EventCategories = []string{
+	EventCategoryOrdersReleasedAndBlocked,
+	EventCategoryStockReceived,
+	EventCategoryCreditHoldsAndCreditOwed,
+	EventCategoryDeliveriesScheduled,
+	EventCategoryPayments,
+	EventCategoryApprovalsWaitingOnMe,
+}
+
+// EventCategoryLabel is the human name of a category, used by the prefs surface. Same rationale as
+// PaymentRuleLabel: the words a user reads and the values the code stores sit beside each other so
+// they cannot drift apart.
+func EventCategoryLabel(cat string) string {
+	switch cat {
+	case EventCategoryOrdersReleasedAndBlocked:
+		return "Orders released and blocked"
+	case EventCategoryStockReceived:
+		return "Stock received"
+	case EventCategoryCreditHoldsAndCreditOwed:
+		return "Credit holds and credit owed"
+	case EventCategoryDeliveriesScheduled:
+		return "Deliveries scheduled"
+	case EventCategoryPayments:
+		return "Payments"
+	case EventCategoryApprovalsWaitingOnMe:
+		return "Approvals waiting on me"
+	default:
+		return cat
+	}
+}
+
+// PersonEventPref is one user's answer for one event category (the msg_person_event_prefs row, 0401).
+// in_app is the "show in the hub" gate (badge + toast); push is the "raise a desktop notification"
+// gate that ShouldDeliverPush honors.
+type PersonEventPref struct {
+	UserID        string    `json:"user_id"`
+	EventCategory string    `json:"event_category"`
+	InApp         bool      `json:"in_app"`
+	Push          bool      `json:"push"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+// DefaultPersonEventPref returns the default applied when a user has no stored row for a category
+// (matches the brief's "defaults when a user has no stored row" list).
+func DefaultPersonEventPref(userID, category string) PersonEventPref {
+	return PersonEventPref{
+		UserID:        userID,
+		EventCategory: category,
+		InApp:         defaultInApp(category),
+		Push:          defaultPush(category),
+	}
+}
+
+// defaultInApp / defaultPush are the board-pinned defaults. Kept as funcs beside the category
+// constants so a "what does a user see on day one?" check is one line, and a new category adds the
+// default in one place, here.
+func defaultInApp(cat string) bool {
+	switch cat {
+	case EventCategoryPayments:
+		return false
+	default:
+		return true
+	}
+}
+func defaultPush(cat string) bool {
+	switch cat {
+	case EventCategoryStockReceived, EventCategoryDeliveriesScheduled, EventCategoryPayments:
+		return false
+	default:
+		return true
+	}
+}
+
+// normalizeEventCategory validates a category against the closed set (mirrors normalizeMode,
+// normalizeAckMethod). ok is false for anything outside EventCategories, so a bad client value is
+// a 400 at the service boundary, never a Postgres CHECK violation → 500.
+func normalizeEventCategory(cat string) (string, bool) {
+	for _, c := range EventCategories {
+		if c == cat {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// QuietHours is one user's quiet-hours row (the msg_quiet_hours row, 0401). start_local / end_local
+// are 24-hour HH:MM in the user's timezone; ActiveAt is the predicate that answers "is `now` in
+// the quiet window?" with overnight support. BypassUserIDs is the DM carve-out (ruling 8:
+// "DMs from these people still ring as drawn on the board").
+type QuietHours struct {
+	UserID        string    `json:"user_id"`
+	Enabled       bool      `json:"enabled"`
+	StartLocal    string    `json:"start_local"`
+	EndLocal      string    `json:"end_local"`
+	Timezone      string    `json:"timezone"`
+	BypassUserIDs []string  `json:"bypass_user_ids"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+// DefaultQuietHours returns the shipped quiet-hours state for a user with no stored row (matches
+// the msg_quiet_hours column defaults in 0401).
+func DefaultQuietHours(userID string) QuietHours {
+	return QuietHours{
+		UserID:        userID,
+		Enabled:       false,
+		StartLocal:    "18:00",
+		EndLocal:      "06:00",
+		Timezone:      "America/Los_Angeles",
+		BypassUserIDs: []string{},
+	}
+}
+
+// PersonEventPrefsPatch is the per-category upsert body. Category is required (the caller is
+// editing one row); in_app and push are optional, so a partial PUT preserves the user's other
+// choice (mirrors PrefsPatch's omitted-fields-keep-their-current-value rule).
+type PersonEventPrefsPatch struct {
+	Category string `json:"category"`
+	InApp    *bool  `json:"in_app,omitempty"`
+	Push     *bool  `json:"push,omitempty"`
+}
+
+// QuietHoursPatch is the quiet-hours upsert body. Every field optional; the service merges over
+// the current row. Timezone falls back to UTC on a bad value at the predicate boundary, so the
+// handler refuses bad timezones (400) before any row is written.
+type QuietHoursPatch struct {
+	Enabled       *bool    `json:"enabled,omitempty"`
+	StartLocal    *string  `json:"start_local,omitempty"`
+	EndLocal      *string  `json:"end_local,omitempty"`
+	Timezone      *string  `json:"timezone,omitempty"`
+	BypassUserIDs []string `json:"bypass_user_ids,omitempty"`
+}
