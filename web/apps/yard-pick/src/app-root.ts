@@ -45,6 +45,7 @@ import {
   pickSummary,
   pickQueuedWords,
   qtyText,
+  rereadHeldPicks,
   recordBlockedReason,
   shortOf,
   shortPickWords,
@@ -578,6 +579,12 @@ export class YardPickApp extends HHElement {
         this.#phase = "ready";
         this.#error = "";
         this.#queueStaleness = answer.staleness;
+        this.requestUpdate();
+        // The device's held word is not the last word: re-read each held card from the server, so a
+        // hold cleared since the pull releases the card (see rereadHeldPicks).
+        const base = this.#picks;
+        const fresh = await rereadHeldPicks(base, (id) => this.#yard.pick(id));
+        if (this.#picks === base && fresh.some((p, i) => p !== base[i])) this.#picks = fresh;
       } else {
         this.#phase = this.#picks.length > 0 ? "ready" : "error";
         this.#error = yardError(answer.error, answer.status, "The board did not load. Check your signal and try again.");
