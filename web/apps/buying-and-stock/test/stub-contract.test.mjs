@@ -155,6 +155,14 @@ test("the shortfall worklist: the contract's key, and each row in the contract's
   assert.equal(gap.projected_base, -40);
   assert.equal(gap.on_order_base, 0);
   assert.ok(res.json.items.every((r) => r.short_base > 0), "a listed row is always short");
+  // The order numbers the core adds to the row (change 5 slice S3): at most three, oldest first,
+  // with the count of the rest; a row nothing waits on carries neither key.
+  const turf = res.json.items.find((r) => r.sku === "DBS-RYMAR-TURF");
+  assert.deepEqual(turf.short_order_nos, ["SO-3305", "SO-3311", "SO-3312"]);
+  assert.equal(turf.short_order_more, 2);
+  const stone = res.json.items.find((r) => r.sku === "DBS-AGG-34CLEAR");
+  assert.equal(stone.short_order_nos, undefined);
+  assert.equal(stone.short_order_more, undefined);
 });
 
 test("the shortfall read is fenced to the caller's reach, in the core's words", async () => {

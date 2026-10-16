@@ -37580,6 +37580,15 @@ components:
         draft_po_no:
           type: string
           description: The number of the draft named by draft_po_id; present with it, absent without it
+        short_order_nos:
+          type: array
+          items:
+            type: string
+          description: The visible numbers of the open sales orders waiting on this product at this branch, the orders the shortfall holds up, oldest first, at most three of them; how many more wait rides beside them in short_order_more. Absent when the orders seam is unbound or nothing waits on the row.
+        short_order_more:
+          type: integer
+          format: int32
+          description: How many further open sales orders wait on this product beyond the three short_order_nos names. Absent when there are none.
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row

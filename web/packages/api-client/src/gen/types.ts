@@ -2942,6 +2942,8 @@ export type InventoryShortfallRow = {
   suggested_value_cents?: number;
   draft_po_id?: string;
   draft_po_no?: string;
+  short_order_nos?: string[];
+  short_order_more?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
