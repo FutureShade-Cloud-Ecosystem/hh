@@ -1060,13 +1060,4 @@ var allowlist = []allowlistEntry{
 		tables: []string{"users", "vendors"},
 		reason: "the recovery board joins the vendor and staff names the recovery rows show, read only",
 	},
-	{
-		module: "warranty",
-		file:   "core/internal/warranty/repository_agreement.go",
-		tables: []string{"vendors"},
-		// the 0404 agreements read LEFT JOINs the vendor master for the number
-		// and name each agreement row shows, the same reach the 0053 vendor
-		// profile read carries beside it.
-		reason: "the vendor credit agreements read joins the vendor master's number and name the agreement rows show, read only",
-	},
 }
