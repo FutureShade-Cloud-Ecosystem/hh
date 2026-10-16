@@ -460,8 +460,9 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		}
 		// The needs queue answers on the same profile. In the seeded world nothing
 		// at Trenton is unassigned, due to commit or stale, so the queue is empty
-		// and says so; what the profile carries is its three dock sources, read
-		// from the policy table.
+		// and says so; what the profile carries is its three dock sources and
+		// the approvals the person filed and still waits on (migration 0395, the
+		// freight raise the role's duty names), read from the policy table.
 		var needs struct {
 			Profile string `json:"profile"`
 			Rows    []struct {
@@ -488,9 +489,9 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 			sources = append(sources, key)
 		}
 		rows.Close()
-		want := []string{"dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks"}
+		want := []string{"dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks", "approvals.filed_pending"}
 		if strings.Join(sources, ",") != strings.Join(want, ",") {
-			t.Errorf("the profile's needs sources are %v, want the dock's %v", sources, want)
+			t.Errorf("the profile's needs sources are %v, want the dock's three and the filed approvals %v", sources, want)
 		}
 
 		// L-card: the card's bearer reaches the surfaces the role holds: the
