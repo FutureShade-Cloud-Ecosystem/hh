@@ -105,7 +105,8 @@ export class YardPickApp extends HHElement {
   // means the host cannot carry a store: the app then behaves online as
   // today, over the direct api above, and the strip keeps quiet.
   #yardOffline: YardOffline | null = null;
-  #offlineBooted = false;
+  #offlineOpen: Promise<void> | null = null;
+  #worldGen = 0;
   #readOnlyTab = false;
   #syncState = "offline";
   #waiting = 0;
@@ -556,34 +557,40 @@ export class YardPickApp extends HHElement {
   // and the chrome fed from then on. A host that cannot carry a store leaves
   // the layer null and the app behaves online as today.
   async #bootOffline(): Promise<void> {
-    if (this.#offlineBooted || this.#me === "") return;
-    this.#offlineBooted = true;
-    const opened = await openYardOfflineOpfs({
-      dbName: "hh-yard-pick",
-      transport: apiClientTransport(this.#staffClient),
-      direct: this.#yard,
-      actorId: this.#me,
-      onChange: () => void this.#refreshOfflineChrome(),
-    });
-    // A second tab reads an empty cache: it keeps the online board and only
-    // says it is read only.
-    this.#readOnlyTab = opened.readOnly;
-    const layer = opened.layer;
-    if (layer === null) {
-      this.requestUpdate();
-      return;
+    if (this.#me === "") return;
+    if (this.#offlineOpen === null) {
+      this.#offlineOpen = (async () => {
+        const opened = await openYardOfflineOpfs({
+          dbName: "hh-yard-pick",
+          transport: apiClientTransport(this.#staffClient),
+          direct: this.#yard,
+          actorId: this.#me,
+          onChange: () => void this.#refreshOfflineChrome(),
+        });
+        // A second tab reads an empty cache: it keeps the online board and only
+        // says it is read only.
+        this.#readOnlyTab = opened.readOnly;
+        const layer = opened.layer;
+        if (layer === null) {
+          this.requestUpdate();
+          return;
+        }
+        this.#yardOffline = layer;
+        layer.runner.onState((state) => {
+          // The state is on the glass in this update, not behind the health read.
+          this.#syncState = state;
+          this.requestUpdate();
+          void this.#refreshOfflineChrome();
+          // A cycle came to rest with its pull landed: the open pick reads the
+          // server's row (a record the device queued shows the server's lines,
+          // not its own).
+          if ((state === "idle" || state === "conflict") && this.#view.kind === "pick" && !this.#busy) void this.#refreshPick().then(() => this.requestUpdate());
+        });
+      })();
     }
-    this.#yardOffline = layer;
-    layer.runner.onState((state) => {
-      // The state is on the glass in this update, not behind the health read.
-      this.#syncState = state;
-      this.requestUpdate();
-      void this.#refreshOfflineChrome();
-      // A cycle came to rest with its pull landed: the open pick reads the
-      // server's row (a record the device queued shows the server's lines,
-      // not its own).
-      if ((state === "idle" || state === "conflict") && this.#view.kind === "pick" && !this.#busy) void this.#refreshPick().then(() => this.requestUpdate());
-    });
+    await this.#offlineOpen;
+    const layer = this.#yardOffline;
+    if (layer === null || this.#sessions.current === null) return;
     await layer.setOnline(navigator.onLine);
     await layer.cycle();
     await this.#refreshOfflineChrome();
@@ -599,10 +606,13 @@ export class YardPickApp extends HHElement {
   // The branch the yard works: the branches this login may reach, the first
   // one the board opens on. A login that reaches none is told so, in words.
   async #loadWorld(): Promise<void> {
+    const gen = ++this.#worldGen;
     this.#phase = "loading";
     this.requestUpdate();
     await this.#bootOffline();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     const branches = await this.#yard.branches();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     if (!branches.ok) {
       this.#phase = "error";
       this.#error = yardError(branches.error, branches.status, "The yard did not load. Check your signal and try again.");
@@ -618,6 +628,7 @@ export class YardPickApp extends HHElement {
     this.#branchId = branches.value[0]?.id ?? "";
     this.#branchName = branches.value[0]?.name ?? "";
     await this.#loadQueue(true);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     void this.#loadChangesCount();
   }
 
@@ -1092,6 +1103,7 @@ export class YardPickApp extends HHElement {
   }
 
   #onSignOut(): void {
+    this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";
     this.#picks = [];
