@@ -14,11 +14,14 @@ import {
   staffBranches,
   staffTill,
   type ApiClient,
+  type BillingAddCustomerNoteInput,
+  type BillingAddCustomerNoteResult,
   type BillingAgingPage,
   type BillingApplyPaymentAnswer,
   type BillingApplyPaymentLine,
   type BillingARLanding,
   type BillingCreditHoldPage,
+  type BillingCustomerWorkspace,
   type BillingInvoiceDetail,
   type BillingPromiseView,
   type BillingRegisterPage,
@@ -183,5 +186,18 @@ export class ArApi {
 
   releaseHold(holdId: string, reason: string): Promise<Result<{ ok: boolean }>> {
     return staffBilling.billingReleaseHold(this.#client, holdId, { reason });
+  }
+
+  // The customer account workspace (Change 8 S2 + S2M): one round trip the panel
+  // renders in one paint. The 5-bucket aging the workspace opens with is the AR
+  // console's own read; the workspace handler does not re-bucket.
+  workspace(customerId: string): Promise<Result<BillingCustomerWorkspace>> {
+    return staffBilling.billingGetCustomerWorkspace(this.#client, customerId);
+  }
+
+  // Add a free-text collection note on customer_ar_notes (0405). Outbound copy
+  // never lives here; this is a fact the next collections person picks up.
+  addNote(customerId: string, body: BillingAddCustomerNoteInput): Promise<Result<BillingAddCustomerNoteResult>> {
+    return staffBilling.billingAddCustomerNote(this.#client, customerId, body);
   }
 }
