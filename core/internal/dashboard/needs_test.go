@@ -227,6 +227,43 @@ func TestNoNeedsStoreFallsBackToTheShippedPolicy(t *testing.T) {
 	}
 }
 
+// 0395: the logistics manager's fallback carries the approvals they filed that are still pending.
+func TestDefaultNeedsForLogisticsIncludesFiledPending(t *testing.T) {
+	rows := defaultNeedsFor(ProfileManagerLogistics)
+	var keys []string
+	for _, r := range rows {
+		keys = append(keys, r.SourceKey)
+	}
+	want := []string{NeedsUnassigned, NeedsDueToCommit, NeedsStalePicks, NeedsFiledPending}
+	if len(keys) != len(want) {
+		t.Fatalf("logistics manager needs %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("logistics manager source %d is %q, want %q", i, keys[i], want[i])
+		}
+	}
+}
+
+// 0395: the yard manager's fallback carries dispatch.due_to_commit, because committing a delivery
+// date on a load being built is one of their top jobs.
+func TestDefaultNeedsForYardIncludesDueToCommit(t *testing.T) {
+	rows := defaultNeedsFor(ProfileManagerYard)
+	var keys []string
+	for _, r := range rows {
+		keys = append(keys, r.SourceKey)
+	}
+	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
+	if len(keys) != len(want) {
+		t.Fatalf("yard manager needs %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("yard manager source %d is %q, want %q", i, keys[i], want[i])
+		}
+	}
+}
+
 func TestTheTotalCountsEveryRowRatherThanTheFirstFew(t *testing.T) {
 	policy := make([]NeedsPolicy, 0, len(NeedsSourceCatalog))
 	s := needsService(t, nil)
