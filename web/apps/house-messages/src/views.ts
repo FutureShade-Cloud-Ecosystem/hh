@@ -372,7 +372,7 @@ function renderMessageBody(msg: Message, c: ConvoModel): TemplateResult {
   if (c.editingMessageId === msg.id) {
     return html`
       <div class="edit-box">
-        <textarea data-field="edit-body" rows="2">${msg.body}</textarea>
+        <textarea data-field="edit-body" data-initial=${msg.body} rows="2"></textarea>
         <div class="edit-actions">
           <button type="button" class="btn btn-primary small-btn" data-action="save-edit" data-id=${msg.id} data-channel=${msg.channel_id}>Save</button>
           <button type="button" class="btn btn-secondary small-btn" data-action="cancel-edit">Cancel</button>
@@ -884,7 +884,7 @@ function renderNewMessageModal(m: Model): TemplateResult | typeof nothing {
           ${count >= 2
             ? html`
               <label><strong>Group name (optional)</strong></label>
-              <input type="text" data-field="group-name" placeholder="e.g. Saturday runs" value=${modal.groupName} />
+              <input type="text" data-field="group-name" placeholder="e.g. Saturday runs" data-value=${modal.groupName} />
             `
             : nothing}
           <div class="roster-list" data-roster-list>
@@ -897,7 +897,7 @@ function renderNewMessageModal(m: Model): TemplateResult | typeof nothing {
                   data-person-id=${p.user_id}
                   aria-selected=${modal.selectedIds.has(p.user_id) ? "true" : "false"}
                 >
-                  <input type="checkbox" ?checked=${modal.selectedIds.has(p.user_id)} tabindex="-1" />
+                  <span class="check-indicator" role="checkbox" aria-checked=${modal.selectedIds.has(p.user_id) ? "true" : "false"}>${modal.selectedIds.has(p.user_id) ? "\u2713" : ""}</span>
                   <span class="avatar avatar-sm">${initialsOf(p.display_name)}</span>
                   <span><strong>${p.display_name}</strong> \u00b7 <span class="dim small">${p.role_name} (${p.branch_name})</span></span>
                 </button>
@@ -930,9 +930,9 @@ function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
         </div>
         <div class="modal-body">
           <label><strong>Channel name</strong></label>
-          <input type="text" data-field="channel-name" placeholder="e.g. yard-julian-receiving" value=${modal.name} />
+          <input type="text" data-field="channel-name" placeholder="e.g. yard-julian-receiving" data-value=${modal.name} />
           <label><strong>Purpose (topic)</strong></label>
-          <input type="text" data-field="channel-purpose" placeholder="What arrives at the dock..." value=${modal.topic} />
+          <input type="text" data-field="channel-purpose" placeholder="What arrives at the dock..." data-value=${modal.topic} />
           <label><strong>Visibility</strong></label>
           <div class="segs">
             <button type="button" class="seg" data-action="set-channel-visibility" data-vis="PUBLIC" aria-pressed="true">Public</button>
@@ -1322,8 +1322,8 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
                 (ev) => html`
                   <tr>
                     <td><strong>${ev.label}</strong></td>
-                    <td><input type="checkbox" ?checked=${settings?.event_classes[ev.id]?.in_app ?? true} data-action="toggle-event-notif" data-event=${ev.id} data-channel="in_app" /></td>
-                    <td><input type="checkbox" ?checked=${settings?.event_classes[ev.id]?.push ?? false} data-action="toggle-event-notif" data-event=${ev.id} data-channel="push" /></td>
+                    <td><button type="button" class="check-btn" role="checkbox" aria-checked=${(settings?.event_classes[ev.id]?.in_app ?? true) ? "true" : "false"} data-action="toggle-event-notif" data-event=${ev.id} data-channel="in_app">${(settings?.event_classes[ev.id]?.in_app ?? true) ? "\u2713" : ""}</button></td>
+                    <td><button type="button" class="check-btn" role="checkbox" aria-checked=${(settings?.event_classes[ev.id]?.push ?? false) ? "true" : "false"} data-action="toggle-event-notif" data-event=${ev.id} data-channel="push">${(settings?.event_classes[ev.id]?.push ?? false) ? "\u2713" : ""}</button></td>
                   </tr>
                 `,
               )}
@@ -1339,11 +1339,11 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
           <div style="display: flex; gap: 16px; margin-top: 8px;">
             <div>
               <label class="dim small">Start time</label>
-              <input type="time" value="${quiet?.start_time ?? "20:00"}" data-field="quiet-start" />
+              <input type="time" value="20:00" data-value=${quiet?.start_time ?? "20:00"} data-field="quiet-start" />
             </div>
             <div>
               <label class="dim small">End time</label>
-              <input type="time" value="${quiet?.end_time ?? "07:00"}" data-field="quiet-end" />
+              <input type="time" value="07:00" data-value=${quiet?.end_time ?? "07:00"} data-field="quiet-end" />
             </div>
             <div>
               <label class="dim small">Timezone</label>

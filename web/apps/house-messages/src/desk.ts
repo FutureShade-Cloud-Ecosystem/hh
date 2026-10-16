@@ -730,19 +730,19 @@ export class MessagesDesk {
       this.#host.repaint();
       return;
     }
+    if (target?.getAttribute("data-field") === "edit-body") {
+      return;
+    }
     if (target?.getAttribute("data-field") === "group-name") {
       this.#newGroupName = target.value;
-      this.#host.repaint();
       return;
     }
     if (target?.getAttribute("data-field") === "channel-name") {
       this.#newChannelName = target.value;
-      this.#host.repaint();
       return;
     }
     if (target?.getAttribute("data-field") === "channel-purpose") {
       this.#newChannelTopic = target.value;
-      this.#host.repaint();
       return;
     }
     const field = this.#field();
@@ -1219,7 +1219,7 @@ export class MessagesDesk {
       case "toggle-event-notif": {
         const eventTopic = control.getAttribute("data-event") ?? "";
         const notifChan = control.getAttribute("data-channel") ?? "in_app";
-        const isChecked = (control as HTMLInputElement).checked;
+        const isChecked = control.getAttribute("aria-checked") !== "true";
         void this.#toggleEventNotif(eventTopic, notifChan, isChecked);
         return true;
       }
