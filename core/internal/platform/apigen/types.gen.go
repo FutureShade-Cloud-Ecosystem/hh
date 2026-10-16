@@ -3852,6 +3852,15 @@ type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
 }
 
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
+}
+
 type MessagingChannelMember struct {
 	ChannelId string    `json:"channel_id"`
 	UserId    string    `json:"user_id"`
@@ -8688,6 +8697,26 @@ type WarrantyPolicy struct {
 type WarrantyPolicyInput struct {
 	BranchId            *string `json:"branch_id,omitempty"`
 	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
 }
 
 type WarrantyAddress struct {

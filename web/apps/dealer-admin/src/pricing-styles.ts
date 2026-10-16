@@ -179,7 +179,7 @@ export const pricingStyles = css`
     border-radius: var(--hh-radius-pill);
     font-size: 11px;
     font-weight: 700;
-    background: var(--hh-chip);
+    background: var(--hh-row-alt);
     color: var(--hh-text-dim);
   }
   .badge-cod {

@@ -652,13 +652,14 @@ export const dealerStyles = css`
     width: 32px;
     height: 32px;
     border-radius: var(--hh-radius-pill);
-    background: var(--hh-chip);
+    background: var(--hh-row-alt);
+    border: 1px solid var(--hh-control-line);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
     font-size: 12px;
-    color: var(--hh-chipink);
+    color: var(--hh-text);
     flex: none;
   }
   .staff-email {
@@ -733,7 +734,7 @@ export const dealerStyles = css`
     color: var(--hh-accent-text);
   }
   .badge-disabled {
-    background: var(--hh-chip);
+    background: var(--hh-row-alt);
     color: var(--hh-text-dim);
   }
 
@@ -766,7 +767,7 @@ export const dealerStyles = css`
     color: var(--hh-accent-text);
   }
   .matrix-cell-none {
-    background: var(--hh-chip);
+    background: var(--hh-row-alt);
     color: var(--hh-text-dim);
   }
   .matrix-legend {

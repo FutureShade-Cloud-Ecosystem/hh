@@ -4,7 +4,7 @@
 // (mirrored here so the test never imports the app's own code), the staff
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
-import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
+import { expect, test as base, type Page, type Request, type TestInfo } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -413,10 +413,12 @@ export async function openCounterTill(page: Page): Promise<void> {
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
   const card = page.getByRole("button", { name: role, exact: true });
-  if (!(await card.isVisible().catch(() => false))) {
-    const switchRole = page.getByRole("button", { name: "Switch role", exact: true });
-    if (await switchRole.isVisible().catch(() => false)) await switchRole.click();
-  }
+  const switchRole = page.getByRole("button", { name: "Switch role", exact: true });
+  // Wait for either the role card or the Switch role button to appear before deciding which
+  // path we're on; the front door's async boot can race the navigation, and an instant
+  // isVisible() right after goto() would read the pre-boot document.
+  await expect(card.or(switchRole)).toBeVisible();
+  if (await switchRole.isVisible().catch(() => false)) await switchRole.click();
   await expect(card).toBeVisible();
   await tapRoleCard(page, role);
   await openCounterTill(page);
@@ -573,28 +575,35 @@ function shotDir(testInfo: TestInfo): string {
  * goes idle while the mint paces the tap, so the till's own reads fire after
  * the only idle the document will ever report).
  */
-type InFlight = { count: number };
+type InFlight = { requests: Set<Request> };
 const inFlight = new WeakMap<Page, InFlight>();
 
 function trackInFlight(page: Page): void {
   if (inFlight.has(page)) return;
-  const state: InFlight = { count: 0 };
+  const state: InFlight = { requests: new Set<Request>() };
   inFlight.set(page, state);
-  page.on("request", () => {
-    state.count += 1;
+  page.on("request", (req) => {
+    state.requests.add(req);
   });
-  page.on("requestfinished", () => {
-    state.count = Math.max(0, state.count - 1);
+  page.on("requestfinished", (req) => {
+    state.requests.delete(req);
   });
-  page.on("requestfailed", () => {
-    state.count = Math.max(0, state.count - 1);
+  page.on("requestfailed", (req) => {
+    state.requests.delete(req);
   });
   // A navigation strands whatever the leaving document had in flight (the
   // core's answers race a goto, and an aborted fetch does not always raise
-  // its terminal event): the new document starts its own count from zero,
+  // its terminal event): the new document starts its own set from empty,
   // so the stranded reads must not hold the settled word against it.
+  // The count-based version of this tracker dropped every request id on
+  // navigation, but the same fires for same-document hash navigations
+  // (#/returns); a request started before the navigation whose terminal
+  // event then subtracts from the new count could let settle resolve
+  // early. Tracking the requests themselves (by Request) means each one's
+  // start and finish are matched exactly, regardless of how the framing
+  // changed in between.
   page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) state.count = 0;
+    if (frame === page.mainFrame()) state.requests.clear();
   });
 }
 
@@ -622,7 +631,7 @@ export async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   await expect(page.getByText(/\bLoading\b/)).toHaveCount(0);
   await expect
-    .poll(() => inFlight.get(page)?.count ?? 0, { intervals: [100], timeout: 15_000 })
+    .poll(() => inFlight.get(page)?.requests.size ?? 0, { intervals: [100], timeout: 15_000 })
     .toBe(0);
   // Row 955: Returns is its own surface at #/returns, and the sale surface
   // (the flow stepper, the session bar's answer) is hidden while it is up
