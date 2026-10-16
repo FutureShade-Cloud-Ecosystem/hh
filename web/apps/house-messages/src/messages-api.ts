@@ -225,7 +225,7 @@ export class MessagesApi {
   }
 
   addMember(channelId: string, userId: string): Promise<Result<MessagingChannelMember>> {
-    return staffMessaging.messagingAddChannelMember(this.#client, channelId, { user_id: userId });
+    return staffMessaging.messagingAddChannelMember(this.#client, channelId, { user_id: userId, role: "MEMBER" });
   }
 
   removeMember(channelId: string, userId: string): Promise<Result<{ status: "ok" }>> {
