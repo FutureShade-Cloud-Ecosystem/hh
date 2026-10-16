@@ -5756,6 +5756,10 @@ export type PurchasingPO = {
   delivery_method?: "PICKUP" | "DELIVERY" | "UNKNOWN";
   subtotal_cents?: number;
   subtotal_cad_cents?: number;
+  warranty_credit_applied_cents?: number;
+  warranty_claim_id?: string | null;
+  warranty_claim_no?: string | null;
+  net_total_cents?: number;
   created_at: string;
   updated_at: string;
 };
@@ -5774,7 +5778,20 @@ export type PurchasingPOLine = {
   line_total_cents?: number;
   billed_cents?: number;
 };
-export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[] };
+export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[]; open_warranty_credit?: PurchasingOpenWarrantyCredit };
+export type PurchasingApplyWarrantyCreditRequest = {
+  claim_id?: string;
+  amount_cents?: number;
+};
+export type PurchasingOpenWarrantyCredit = {
+  claim_id: string;
+  claim_no: string;
+  amount_cents: number;
+  description: string;
+  summary?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+};
 export type PurchasingReceipt = {
   id: string;
   po_id: string;

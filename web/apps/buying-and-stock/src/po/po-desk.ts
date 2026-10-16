@@ -221,6 +221,9 @@ export class PoDesk implements AreaDesk {
       case "cancel-draft":
         void this.#cancelDraft();
         return true;
+      case "apply-warranty-credit":
+        void this.#applyWarrantyCredit();
+        return true;
       default:
         return false;
     }
@@ -460,6 +463,35 @@ export class PoDesk implements AreaDesk {
       await this.#reload();
     } else {
       this.#fail("order", cancelled);
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  async #applyWarrantyCredit(): Promise<void> {
+    const draft = this.#draft;
+    if (draft === null || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+
+    const claimId = draft.po.open_warranty_credit?.claim_id;
+    const amountCents = draft.po.open_warranty_credit?.amount_cents;
+    const res = await this.#api.applyWarrantyCredit(draft.po.id, {
+      claim_id: claimId,
+      amount_cents: amountCents,
+    });
+    if (!res.ok) {
+      this.#fail("order", res);
+    } else {
+      this.#draft = { ...draft, po: res.value };
+      const idx = this.#orders.findIndex((o) => o.id === res.value.id);
+      if (idx >= 0) {
+        const nextOrders = [...this.#orders];
+        nextOrders[idx] = res.value;
+        this.#orders = nextOrders;
+      }
+      this.#notice = `Applied ${formatMoney(res.value.warranty_credit_applied_cents)} warranty credit to ${res.value.po_no}.`;
     }
     this.#busy = false;
     this.#host.repaint();

@@ -18,6 +18,10 @@ import {
   statusWord,
   validateExpectedDate,
   whenWords,
+  openWarrantyCreditStripText,
+  applyWarrantyCreditButtonText,
+  appliedWarrantyCreditLabel,
+  totalDueVendorLabel,
 } from "../src/po/po-logic.ts";
 import { costCentsFromTyped, formatMoney, formatQty } from "../src/po/po-money.ts";
 
@@ -163,4 +167,45 @@ test("the promised date reads as words with its days from today", () => {
   assert.equal(dateWords("2031-03-04", "2025-01-01"), "Tuesday 4 March 2031");
   assert.equal(dateWords("2031-02-30", "2031-02-27"), "");
   assert.equal(dateWords("", "2031-02-27"), "");
+});
+
+test("open warranty credit strip text names amount, claim number and description", () => {
+  assert.equal(
+    openWarrantyCreditStripText({
+      claim_no: "WCL-104",
+      amount_cents: 26400,
+      description: "8 pieces of Paver 60mm Slate",
+    }),
+    "Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)",
+  );
+  assert.equal(
+    openWarrantyCreditStripText({
+      claim_no: "WCL-104",
+      amount_cents: 26400,
+    }),
+    "Open warranty credit · $264.00 from WCL-104",
+  );
+  assert.equal(
+    openWarrantyCreditStripText({
+      amount_cents: 26400,
+    }),
+    "Open warranty credit · $264.00",
+  );
+});
+
+test("apply warranty credit button text formats the amount to apply", () => {
+  assert.equal(applyWarrantyCreditButtonText(26400), "Apply $264.00 to this PO");
+  assert.equal(applyWarrantyCreditButtonText(null), "Apply (no figure) to this PO");
+});
+
+test("applied warranty credit label names the claim number when present", () => {
+  assert.equal(appliedWarrantyCreditLabel("WCL-104"), "Warranty credit applied · WCL-104");
+  assert.equal(appliedWarrantyCreditLabel(null), "Warranty credit applied");
+  assert.equal(appliedWarrantyCreditLabel(undefined), "Warranty credit applied");
+});
+
+test("total due vendor label names the vendor when present", () => {
+  assert.equal(totalDueVendorLabel("Alcli (demo)"), "Total due to Alcli (demo)");
+  assert.equal(totalDueVendorLabel(null), "Total due to vendor");
+  assert.equal(totalDueVendorLabel(undefined), "Total due to vendor");
 });

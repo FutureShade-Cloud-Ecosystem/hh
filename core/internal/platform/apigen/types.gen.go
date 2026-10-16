@@ -6666,23 +6666,27 @@ type PurchasingVendorMaster struct {
 }
 
 type PurchasingPO struct {
-	Id               string             `json:"id"`
-	PoNo             string             `json:"po_no"`
-	VendorId         string             `json:"vendor_id"`
-	VendorName       string             `json:"vendor_name"`
-	BranchId         string             `json:"branch_id"`
-	Status           PurchasingPOStatus `json:"status"`
-	ExpectedAt       *string            `json:"expected_at,omitempty"`
-	OrderedAt        *time.Time         `json:"ordered_at,omitempty"`
-	Notes            string             `json:"notes"`
-	LineCount        int32              `json:"line_count"`
-	Currency         PurchasingCurrency `json:"currency"`
-	FxRate           float64            `json:"fx_rate"`
-	DeliveryMethod   *string            `json:"delivery_method,omitempty"`
-	SubtotalCents    *int64             `json:"subtotal_cents,omitempty"`
-	SubtotalCadCents *int64             `json:"subtotal_cad_cents,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
+	Id                         string             `json:"id"`
+	PoNo                       string             `json:"po_no"`
+	VendorId                   string             `json:"vendor_id"`
+	VendorName                 string             `json:"vendor_name"`
+	BranchId                   string             `json:"branch_id"`
+	Status                     PurchasingPOStatus `json:"status"`
+	ExpectedAt                 *string            `json:"expected_at,omitempty"`
+	OrderedAt                  *time.Time         `json:"ordered_at,omitempty"`
+	Notes                      string             `json:"notes"`
+	LineCount                  int32              `json:"line_count"`
+	Currency                   PurchasingCurrency `json:"currency"`
+	FxRate                     float64            `json:"fx_rate"`
+	DeliveryMethod             *string            `json:"delivery_method,omitempty"`
+	SubtotalCents              *int64             `json:"subtotal_cents,omitempty"`
+	SubtotalCadCents           *int64             `json:"subtotal_cad_cents,omitempty"`
+	WarrantyCreditAppliedCents *int64             `json:"warranty_credit_applied_cents,omitempty"`
+	WarrantyClaimId            *string            `json:"warranty_claim_id,omitempty"`
+	WarrantyClaimNo            *string            `json:"warranty_claim_no,omitempty"`
+	NetTotalCents              *int64             `json:"net_total_cents,omitempty"`
+	CreatedAt                  time.Time          `json:"created_at"`
+	UpdatedAt                  time.Time          `json:"updated_at"`
 }
 
 type PurchasingPOLine struct {
@@ -6703,8 +6707,24 @@ type PurchasingPOLine struct {
 
 type PurchasingPODetail struct {
 	PurchasingPO
-	Lines    []PurchasingPOLine  `json:"lines"`
-	Receipts []PurchasingReceipt `json:"receipts"`
+	Lines              []PurchasingPOLine            `json:"lines"`
+	Receipts           []PurchasingReceipt           `json:"receipts"`
+	OpenWarrantyCredit *PurchasingOpenWarrantyCredit `json:"open_warranty_credit,omitempty"`
+}
+
+type PurchasingApplyWarrantyCreditRequest struct {
+	ClaimId     *string `json:"claim_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
+}
+
+type PurchasingOpenWarrantyCredit struct {
+	ClaimId     string  `json:"claim_id"`
+	ClaimNo     string  `json:"claim_no"`
+	AmountCents int64   `json:"amount_cents"`
+	Description string  `json:"description"`
+	Summary     *string `json:"summary,omitempty"`
+	VendorId    *string `json:"vendor_id,omitempty"`
+	VendorName  *string `json:"vendor_name,omitempty"`
 }
 
 type PurchasingReceipt struct {

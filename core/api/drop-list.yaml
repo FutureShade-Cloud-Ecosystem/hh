@@ -170,3 +170,5 @@ additions:
     reason: "The vendor warranty credit agreements read (walk change 6): every active vendor with its effective agreement (claim by claim, a periodic credit note, or a fixed allowance) the Manager Home Vendors and credits board and Dealer Admin's Warranty page read; the ERP recorded no per vendor credit terms; no ERP source route."
   - route: "PUT /api/v1/warranty/agreements/{vendorID}"
     reason: "The vendor warranty credit agreement write (walk change 6): Dealer Admin's Warranty page sets one vendor's kind, period and allowance percent, and each moved knob rides the audit spine with its old and new value; the ERP recorded no per vendor credit terms; no ERP source route."
+  - route: "POST /api/v1/purchasing/pos/{id}/apply-warranty-credit"
+    reason: "Buying and Stock change 5 slices S5 and S6: applies an open vendor warranty credit against a draft purchase order without changing line unit costs (ruling R3, capped at order subtotal); the ERP had no PO warranty credit application; no ERP source route."

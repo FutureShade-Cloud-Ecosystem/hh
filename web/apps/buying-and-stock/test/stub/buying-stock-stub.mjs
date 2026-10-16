@@ -163,6 +163,18 @@ const GLS_VENDORS = [
 
 const ALL_VENDORS = [...VENDORS, ...GLS_VENDORS];
 
+const VENDOR_WARRANTY_CREDITS = {
+  [uuid("a", 1)]: {
+    claim_id: "c1000000-0000-4000-8000-000000000104",
+    claim_no: "WCL-104",
+    amount_cents: 26400,
+    description: "8 pieces of Paver 60mm Slate",
+    summary: "8 pieces of Paver 60mm Slate",
+    vendor_id: uuid("a", 1),
+    vendor_name: "Alcli (demo)",
+  },
+};
+
 // The managed lines: what the worklist grades. Quantities are base units.
 const PRODUCTS = [
   { n: 1, sku: "DBS-RYMAR-TURF", name: "Rymar Artificial Turf 40mm", uom: "pc", vendor: 4, onHand: 1200, reserved: 900, point: 600, reorderQty: 600, multiple: 600, cost: 3100, lead: 7 },
@@ -461,6 +473,9 @@ function lineView(l, n) {
 
 function poView(po) {
   const vendor = ALL_VENDORS.find((v) => v.n === po.vendor);
+  const subtotal = po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0);
+  const applied = po.warranty_credit_applied_cents ?? 0;
+  const netTotal = po.net_total_cents ?? Math.max(0, subtotal - applied);
   const view = {
     id: po.id,
     po_no: po.no,
@@ -476,9 +491,13 @@ function poView(po) {
     ...(flags.costsHidden
       ? {}
       : {
-          subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
-          subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+          subtotal_cents: subtotal,
+          subtotal_cad_cents: subtotal,
+          warranty_credit_applied_cents: applied,
+          net_total_cents: netTotal,
         }),
+    ...(po.warranty_claim_id !== undefined && po.warranty_claim_id !== null ? { warranty_claim_id: po.warranty_claim_id } : {}),
+    ...(po.warranty_claim_no !== undefined && po.warranty_claim_no !== null ? { warranty_claim_no: po.warranty_claim_no } : {}),
     created_at: po.created,
     updated_at: po.created,
   };
@@ -488,7 +507,21 @@ function poView(po) {
 }
 
 function poDetail(po) {
-  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: purch.receiptsFor(po.id) };
+  const detail = {
+    ...poView(po),
+    lines: po.lines.map((l, i) => lineView(l, i + 1)),
+    receipts: purch.receiptsFor(po.id),
+  };
+  const credit = VENDOR_WARRANTY_CREDITS[detail.vendor_id];
+  if (credit && po.status === "DRAFT") {
+    if (po.warranty_claim_id === credit.claim_id || (po.warranty_credit_applied_cents ?? 0) === 0) {
+      detail.open_warranty_credit = credit;
+      if (po.warranty_claim_id === credit.claim_id && !detail.warranty_claim_no) {
+        detail.warranty_claim_no = credit.claim_no;
+      }
+    }
+  }
+  return detail;
 }
 
 // ---- inventory and counts view helpers -------------------------------------------------------------
@@ -977,7 +1010,7 @@ async function handle(req, res) {
     if (p === "/api/v1/purchasing/pos") return "po-writer";
     if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines$/.test(p)) return "po-writer";
     if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines\/[^/]+$/.test(p)) return "po-writer";
-    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/(transition|expected-date|delivery-method|send)$/.test(p)) return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/(transition|expected-date|delivery-method|send|apply-warranty-credit)$/.test(p)) return "po-writer";
     // Receiving goods is work, not buying: the yard's move, the same wall the core's work level is.
     if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/receive$/.test(p)) return "receive";
     if (p === "/api/v1/counts/sheets" && !isSheetWrite) return "sheet-create";
@@ -1833,6 +1866,32 @@ async function handle(req, res) {
       po.method = body.delivery_method;
       return json(res, poDetail(po));
     }
+  }
+  const applyCredit = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/apply-warranty-credit$/);
+  if (applyCredit && method === "POST") {
+    const po = world.pos.find((p) => p.id === applyCredit[1]);
+    if (po === undefined) return refuse(res, 404, "not found");
+    if (po.status !== "DRAFT") return refuse(res, 409, `cannot apply warranty credit to a ${po.status} purchase order`);
+    const subtotal = po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0);
+    if (subtotal <= 0) return refuse(res, 400, "cannot apply warranty credit to an order with no lines or zero total");
+
+    const body = (await readBody(req)) ?? {};
+    const vendorId = uuid("a", po.vendor);
+    const credit = VENDOR_WARRANTY_CREDITS[vendorId];
+    if (!credit || credit.amount_cents <= 0) {
+      return refuse(res, 400, `vendor ${vendorId} has no open warranty credit`);
+    }
+
+    let creditToApply = credit.amount_cents;
+    if (body.amount_cents !== undefined && body.amount_cents > 0) {
+      creditToApply = body.amount_cents;
+    }
+    const applied = Math.min(creditToApply, subtotal);
+    po.warranty_credit_applied_cents = applied;
+    po.warranty_claim_id = credit.claim_id;
+    po.warranty_claim_no = credit.claim_no;
+    po.net_total_cents = Math.max(0, subtotal - applied);
+    return json(res, poDetail(po));
   }
   const line = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines\/([^/]+)$/);
   if (line && (method === "DELETE" || method === "PUT")) {

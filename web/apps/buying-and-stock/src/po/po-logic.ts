@@ -15,6 +15,7 @@ import type {
   PurchasingPO,
   PurchasingPOPage,
 } from "@hardscapehouse/api-client";
+import { formatMoney } from "./po-money.js";
 
 // ---- the shapes the core really writes ------------------------------------------------------------
 
@@ -222,4 +223,39 @@ export function dateWords(date: string, today: string): string {
   const words = `${DAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
   const rel = relativeDay(check.date, today);
   return rel === "" ? words : `${words} (${rel})`;
+}
+
+// ---- warranty credit words -------------------------------------------------------------------------
+
+export interface OpenWarrantyCreditShape {
+  claim_id?: string;
+  claim_no?: string;
+  amount_cents?: number;
+  description?: string;
+  summary?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+}
+
+/**
+ * Words for the credit strip:
+ * "Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)"
+ */
+export function openWarrantyCreditStripText(credit: OpenWarrantyCreditShape): string {
+  const amountStr = formatMoney(credit.amount_cents);
+  const claim = credit.claim_no ? ` from ${credit.claim_no}` : "";
+  const desc = credit.description ? ` (${credit.description})` : "";
+  return `Open warranty credit · ${amountStr}${claim}${desc}`;
+}
+
+export function applyWarrantyCreditButtonText(amountCents: number | null | undefined): string {
+  return `Apply ${formatMoney(amountCents)} to this PO`;
+}
+
+export function appliedWarrantyCreditLabel(claimNo?: string | null): string {
+  return claimNo ? `Warranty credit applied · ${claimNo}` : "Warranty credit applied";
+}
+
+export function totalDueVendorLabel(vendorName?: string | null): string {
+  return vendorName ? `Total due to ${vendorName}` : "Total due to vendor";
 }
