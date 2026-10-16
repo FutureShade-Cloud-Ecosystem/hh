@@ -57,13 +57,23 @@ type store interface {
 	// Channel create, DM create, membership writes (the house's own surfaces).
 	CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error)
 	CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error)
-	AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error)
+	AddChannelMember(ctx context.Context, in AddMemberInput) (ChannelMember, error)
 	RemoveChannelMember(ctx context.Context, channelID, userID string) error
+	// Settings panel (rule 7): visibility write and channel archive.
+	SetChannelVisibility(ctx context.Context, channelID, visibility string) (Channel, error)
+	ArchiveChannel(ctx context.Context, channelID string) error
+	// S6 directory + join + leave + membership-rule reads/writes.
+	ListDirectory(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) (map[string]DirectoryEntry, error)
+	ListChannelMembers(ctx context.Context, channelID string) ([]ChannelMemberEntry, error)
+	GetChannelRule(ctx context.Context, channelID string) (MembershipRule, error)
+	SetChannelRule(ctx context.Context, channelID string, rule MembershipRule) error
+	ListChannelRules(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) ([]MembershipRuleEntry, error)
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)
 	userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error)
 	memberRole(ctx context.Context, channelID, userID string) (string, error)
+	memberSource(ctx context.Context, channelID, userID string) (string, error)
 	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
 }
 

@@ -268,7 +268,7 @@ func (r *Repository) ListChannelsForUser(ctx context.Context, userID string) ([]
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), COALESCE(ch.slug::text,''),
-		       ch.name, ch.topic, ch.tier, ch.is_archived, ch.created_at,
+		       ch.name, ch.topic, ch.tier, ch.visibility, ch.is_archived, ch.created_at,
 		       COALESCE(us.unread_count,0), COALESCE(us.mentioned,FALSE), us.latest_at
 		FROM msg_members mem
 		JOIN msg_channels ch ON ch.id = mem.channel_id
@@ -285,7 +285,7 @@ func (r *Repository) ListChannelsForUser(ctx context.Context, userID string) ([]
 		var c Channel
 		var latest *time.Time
 		if err := rows.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-			&c.IsArchived, &c.CreatedAt, &c.UnreadCount, &c.Mentioned, &latest); err != nil {
+			&c.Visibility, &c.IsArchived, &c.CreatedAt, &c.UnreadCount, &c.Mentioned, &latest); err != nil {
 			return nil, fmt.Errorf("scan channel: %w", err)
 		}
 		c.LatestAt = latest
@@ -1078,13 +1078,16 @@ func clampExport(n int) int {
 
 // channelCols is the channel projection the create paths return (the same
 // columns ListChannelsForUser selects, minus the per-caller unread legs).
+// visibility is the change 7 ruling 7 hand: a PUBLIC/PRIVATE flag every
+// row reads the same way (the migration's DEFAULT 'PUBLIC' and CHECK
+// (visibility IN ('PUBLIC','PRIVATE'))).
 const channelCols = `id::text, kind, COALESCE(branch_id::text,''), COALESCE(slug::text,''),
-	name, topic, tier, is_archived, created_at`
+	name, topic, tier, visibility, is_archived, created_at`
 
 func scanChannel(row pgx.Row) (Channel, error) {
 	var c Channel
 	if err := row.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-		&c.IsArchived, &c.CreatedAt); err != nil {
+		&c.Visibility, &c.IsArchived, &c.CreatedAt); err != nil {
 		return Channel{}, err
 	}
 	return c, nil
@@ -1138,6 +1141,15 @@ func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, o
 			return Channel{}, false, errNotFound
 		}
 	}
+	// Visibility defaults to PUBLIC: the migration's DEFAULT 'PUBLIC' would
+	// land there on its own, but writing the value here keeps the channel's
+	// own row the answer the create's RETURNING scans back (a row the
+	// migration's default touched later, through a trigger, would still
+	// answer correctly here, but the inserted value is the contract).
+	visibility := strings.ToUpper(strings.TrimSpace(in.Visibility))
+	if visibility == "" {
+		visibility = VisibilityPublic
+	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return Channel{}, false, err
@@ -1145,13 +1157,13 @@ func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, o
 	defer func() { _ = tx.Rollback(ctx) }()
 	var c Channel
 	err = tx.QueryRow(ctx, `
-		INSERT INTO msg_channels (kind, branch_id, slug, name, topic, tier)
-		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 'STANDARD')
+		INSERT INTO msg_channels (kind, branch_id, slug, name, topic, tier, visibility, auto_scope, auto_role)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 'STANDARD', $6, NULLIF($7, ''), NULLIF($8, ''))
 		ON CONFLICT (slug) DO NOTHING
 		RETURNING `+channelCols,
-		in.Kind, in.BranchID, in.Slug, in.Name, in.Topic).
+		in.Kind, in.BranchID, in.Slug, in.Name, in.Topic, visibility, in.AutoScope, in.AutoRole).
 		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-			&c.IsArchived, &c.CreatedAt)
+			&c.Visibility, &c.IsArchived, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The slug already holds a room (a row returned by DO NOTHING is
 		// always a fresh insert, so no row means the conflict arm). Report
@@ -1247,13 +1259,13 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 	defer func() { _ = tx.Rollback(ctx) }()
 	var c Channel
 	err = tx.QueryRow(ctx, `
-		INSERT INTO msg_channels (kind, slug, name, topic, tier)
-		VALUES ('DM', $1, $2, '', 'STANDARD')
+		INSERT INTO msg_channels (kind, slug, name, topic, tier, visibility)
+		VALUES ('DM', $1, $2, '', 'STANDARD', 'PUBLIC')
 		ON CONFLICT (slug) DO NOTHING
 		RETURNING `+channelCols,
 		dmPairSlug(aUserID, bUserID), aName+", "+bName).
 		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
-			&c.IsArchived, &c.CreatedAt)
+			&c.Visibility, &c.IsArchived, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The pair's slug already holds a row (only a committed row can
 		// hold it, so it is visible here). A room of another kind squatting
@@ -1298,13 +1310,15 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 }
 
 // channelFactsRow is the membership walls' read of one room: its kind
-// (DM and APPROVAL rooms have fixed membership), its branch and its
+// (DM and APPROVAL rooms have fixed membership), its branch, its
 // auto_scope (a BRANCH-scoped room's membership belongs to the branch
-// model, so a target it would not derive in is refused).
+// model, so a target it would not derive in is refused), and the room's
+// visibility flag (rule 7's PRIVATE check refuses a self-join).
 type channelFactsRow struct {
 	Kind        string
 	BranchID    string
 	AutoScope   string
+	Visibility  string
 	MemberRoles []string
 }
 
@@ -1317,9 +1331,9 @@ func (r *Repository) channelFacts(ctx context.Context, channelID string) (channe
 	}
 	var f channelFactsRow
 	err := r.pool.QueryRow(ctx, `
-		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,''), COALESCE(member_roles, '{}')
+		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,''), visibility, COALESCE(member_roles, '{}')
 		FROM msg_channels WHERE id = $1`, channelID).
-		Scan(&f.Kind, &f.BranchID, &f.AutoScope, &f.MemberRoles)
+		Scan(&f.Kind, &f.BranchID, &f.AutoScope, &f.Visibility, &f.MemberRoles)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return channelFactsRow{}, errNotFound
 	}
@@ -1347,6 +1361,28 @@ func (r *Repository) memberRole(ctx context.Context, channelID, userID string) (
 		return "", fmt.Errorf("member role: %w", err)
 	}
 	return role, nil
+}
+
+// memberSource reads one member row's source flag. The leave channel's
+// "Joined by rule, you stay" wall answers on EXPLICIT vs DERIVED: a
+// DERIVED row belongs to the role and branch model and is never
+// hand-removable. An absent row reads as an empty source; the membership
+// wall has already refused a caller with no row by the time this runs.
+func (r *Repository) memberSource(ctx context.Context, channelID, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var source string
+	err := r.pool.QueryRow(ctx,
+		`SELECT source FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&source)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("member source: %w", err)
+	}
+	return source, nil
 }
 
 // userReachesBranch reports whether one user reaches a branch: granted it,
@@ -1390,14 +1426,30 @@ func (r *Repository) userHoldsAnyRole(ctx context.Context, userID string, codes 
 // (idempotent). An already-seated member answers the row AS IT STANDS: the
 // insert's conflict arm writes nothing, so a DERIVED row is never
 // rewritten to EXPLICIT (a rewritten row would become hand-removable,
-// contradicting the DERIVED removal refusal). The unknown-user and
-// inactive-user refusals run before anything is written.
-func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error) {
+// contradicting the DERIVED removal refusal), and an EXPLICIT row keeps
+// the added_reason / added_by it already carries (a re-seat never overwrites
+// the manager's audit trail). The unknown-user and inactive-user refusals
+// run before anything is written.
+//
+// The added_reason / added_by columns are the change 7 ruling 7 hand: a
+// fresh seat writes the manager's text reason and the user id who added
+// them, and a re-seat reads them back whatever they are. A DERIVED row's
+// read-back is the empty reason and NULL adder (the role and branch model
+// owns the row).
+func (r *Repository) AddChannelMember(ctx context.Context, in AddMemberInput) (ChannelMember, error) {
 	if r.pool == nil {
 		return ChannelMember{}, errNoDB
 	}
-	if err := r.userActive(ctx, userID); err != nil {
+	if err := r.userActive(ctx, in.UserID); err != nil {
 		return ChannelMember{}, err
+	}
+	// The room's settings panel always writes MEMBER (an OWNER is the
+	// room's founder and is not hand-assignable here), and the repository
+	// never seats an OWNER. An empty role is normalised before the write:
+	// the migration's CHECK (role IN ('MEMBER','OWNER')) would refuse the
+	// empty string otherwise.
+	if in.Role == "" {
+		in.Role = RoleMember
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -1405,22 +1457,32 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var m ChannelMember
+	var addedBy *string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO msg_members (channel_id, user_id, role, source)
-		VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
+		INSERT INTO msg_members (channel_id, user_id, role, source, added_reason, added_by)
+		VALUES ($1, $2, $3, 'EXPLICIT', $4, NULLIF($5,'')::uuid)
 		ON CONFLICT (channel_id, user_id) DO NOTHING
-		RETURNING channel_id::text, user_id::text, role, source, joined_at`,
-		channelID, userID).
-		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+		RETURNING channel_id::text, user_id::text, role, source, joined_at,
+		          added_reason, added_by::text`,
+		in.ChannelID, in.UserID, in.Role, in.AddedReason, in.AddedBy).
+		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt,
+			&m.AddedReason, &addedBy)
+	if addedBy != nil {
+		m.AddedBy = *addedBy
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Already seated (and the fresh arm of a live caller is the only
 		// other way to reach this point with no row): answer the row as it
-		// stands, whatever its source.
+		// stands, whatever its source. A DERIVED row carries no audit
+		// fields; an EXPLICIT row carries whatever the manager wrote when
+		// they first seated it.
 		err = tx.QueryRow(ctx, `
-			SELECT channel_id::text, user_id::text, role, source, joined_at
+			SELECT channel_id::text, user_id::text, role, source, joined_at,
+			       added_reason, COALESCE(added_by::text,'')
 			FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
-			channelID, userID).
-			Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+			in.ChannelID, in.UserID).
+			Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt,
+				&m.AddedReason, &m.AddedBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ChannelMember{}, errNotFound // no such channel
 		}
@@ -1438,13 +1500,96 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	// through the channels feed, and the bump commits with the seat or not
 	// at all. The read-back arm (an already-seated member) changed nothing
 	// and bumps nothing.
-	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+	if err := r.bumpChannelSeq(ctx, tx, in.ChannelID); err != nil {
 		return ChannelMember{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ChannelMember{}, err
 	}
 	return m, nil
+}
+
+// SetChannelVisibility updates one room's visibility PUBLIC/PRIVATE. An
+// invalid value is refused (the migration's CHECK is the canonical enum;
+// the route handler that asked for it has already cleaned its input). The
+// row and the visibility write share one transaction with the channel-feed
+// bump: a device holding a cursor past the room's stamped seq must see the
+// room's new visibility on its next channels feed, and the bump commits
+// with the write or not at all.
+func (r *Repository) SetChannelVisibility(ctx context.Context, channelID, visibility string) (Channel, error) {
+	if r.pool == nil {
+		return Channel{}, errNoDB
+	}
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return Channel{}, ErrBadVisibility
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	err = tx.QueryRow(ctx, `
+		UPDATE msg_channels SET visibility = $2 WHERE id = $1
+		RETURNING `+channelCols, channelID, visibility).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+			&c.Visibility, &c.IsArchived, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Channel{}, errNotFound
+	}
+	if err != nil {
+		return Channel{}, fmt.Errorf("set visibility: %w", err)
+	}
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return Channel{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, err
+	}
+	return c, nil
+}
+
+// ArchiveChannel flips one room's is_archived to true (a soft delete: the
+// row stays, the channel leaves every list). An already-archived row
+// answers ErrChannelArchived: the manager wall already wrote the truth,
+// and a second archive is not a keep-state the route answers. The archive
+// and its channel-feed bump share one transaction, mirroring the seat and
+// the visibility write's discipline (a device holding a cursor past the
+// room's stamped seq must see the room leave on its next sync, and the
+// bump commits with the archive or not at all).
+func (r *Repository) ArchiveChannel(ctx context.Context, channelID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The pre-update read answers whether the row was already archived
+	// before this call: the UPDATE's RETURNING would be the fresh value
+	// (always TRUE after the write), so the refusal needs the old one.
+	var wasArchived bool
+	if err := tx.QueryRow(ctx,
+		`SELECT is_archived FROM msg_channels WHERE id = $1 FOR UPDATE`, channelID).
+		Scan(&wasArchived); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("archive channel precheck: %w", err)
+	}
+	if wasArchived {
+		_ = tx.Rollback(ctx)
+		return ErrChannelArchived
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE msg_channels SET is_archived = TRUE WHERE id = $1`, channelID); err != nil {
+		return fmt.Errorf("archive channel: %w", err)
+	}
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // RemoveChannelMember drops one member row. A DERIVED row is refused
@@ -2053,4 +2198,206 @@ func (r *Repository) ArchiveChannelOlderThan(ctx context.Context, channelID stri
 		return 0, fmt.Errorf("archive channel: %w", err)
 	}
 	return int(ct.RowsAffected()), nil
+}
+
+// - S6 directory + join + leave + membership-rule -
+
+// ListDirectory is the change 7 ruling 7 directory read: every PUBLIC,
+// non-archived TEAM, TOPIC or BRANCH channel the caller can see, with
+// the caller's own membership state (joined bool, source DERIVED/EXPLICIT,
+// member_count). DM, APPROVAL, and GROUP rooms are excluded (the
+// directory is the team's hand-built rooms, not the system namespaces).
+//
+// The branch reach wall: a branch-scoped caller (Sam, granted Trenton)
+// only sees a branch room whose branch_id they reach, and they always see
+// a no-branch room (the reach-broad pass every BRANCH channel does on
+// every staff). A GLOBAL caller sees every branch.
+func (r *Repository) ListDirectory(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) (map[string]DirectoryEntry, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	// Build the branch reach predicate from the caller's grant set. A
+	// GLOBAL caller is short-circuited to TRUE; a branch-scoped caller
+	// matches the channel's branch_id against their grant set.
+	if isGlobal {
+		branches = map[string]bool{}
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), ch.name, ch.topic,
+		       COALESCE(ch.slug::text,''), ch.visibility,
+		       COALESCE(mem.source, ''), COALESCE((SELECT count(*) FROM msg_members mc WHERE mc.channel_id = ch.id), 0)
+		FROM msg_channels ch
+		LEFT JOIN msg_members mem ON mem.channel_id = ch.id AND mem.user_id = $1::uuid
+		WHERE ch.kind IN ('TEAM', 'TOPIC', 'BRANCH')
+		  AND ch.is_archived = FALSE
+		  AND ch.visibility = 'PUBLIC'
+		  AND (ch.branch_id IS NULL
+		       OR ch.branch_id::text = ANY($2::text[])
+		       OR $3 = TRUE)
+		ORDER BY ch.name ASC`, userID, branchKeys(branches), isGlobal)
+	if err != nil {
+		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]DirectoryEntry)
+	for rows.Next() {
+		var (
+			id, kind, branchID, name, topic, slug, visibility, source string
+			memberCount                                               int
+		)
+		if err := rows.Scan(&id, &kind, &branchID, &name, &topic, &slug, &visibility, &source, &memberCount); err != nil {
+			return nil, fmt.Errorf("scan directory row: %w", err)
+		}
+		_ = visibility
+		out[id] = DirectoryEntry{
+			ChannelID:        id,
+			Kind:             kind,
+			BranchID:         branchID,
+			Name:             name,
+			Topic:            topic,
+			Slug:             slug,
+			Joined:           source != "",
+			MembershipSource: source,
+			MemberCount:      memberCount,
+		}
+	}
+	return out, rows.Err()
+}
+
+// ListChannelMembers returns the channel's membership rows with the
+// audit fields the Settings > Membership rules "Added by hand" panel
+// shows. The membership wall has already run; the caller is in the room.
+// The display name is the staff row's display_name (cosmetic, not the
+// audit pair the column carries).
+func (r *Repository) ListChannelMembers(ctx context.Context, channelID string) ([]ChannelMemberEntry, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.user_id::text, COALESCE(u.display_name,''), m.role, m.source,
+		       m.added_reason, COALESCE(m.added_by::text,''), m.joined_at
+		FROM msg_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.channel_id = $1::uuid
+		ORDER BY (m.role = 'OWNER') DESC, m.joined_at ASC`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list channel members: %w", err)
+	}
+	defer rows.Close()
+	var out []ChannelMemberEntry
+	for rows.Next() {
+		var e ChannelMemberEntry
+		if err := rows.Scan(&e.UserID, &e.DisplayName, &e.Role, &e.Source,
+			&e.AddedReason, &e.AddedBy, &e.JoinedAt); err != nil {
+			return nil, fmt.Errorf("scan channel member: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// GetChannelRule returns the channel's rule row (auto_scope, auto_role,
+// visibility) for the membership-rule read route.
+func (r *Repository) GetChannelRule(ctx context.Context, channelID string) (MembershipRule, error) {
+	if r.pool == nil {
+		return MembershipRule{}, errNoDB
+	}
+	var r0 MembershipRule
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(auto_scope,''), COALESCE(auto_role,''), visibility
+		 FROM msg_channels WHERE id = $1::uuid`, channelID).
+		Scan(&r0.AutoScope, &r0.AutoRole, &r0.Visibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MembershipRule{}, errNotFound
+	}
+	if err != nil {
+		return MembershipRule{}, fmt.Errorf("get channel rule: %w", err)
+	}
+	return r0, nil
+}
+
+// SetChannelRule updates the channel's auto_scope, auto_role, and
+// visibility in one transaction. The brief asks for an immediate
+// reconciliation: the rule write owns the prune's predicate by
+// rewriting the columns the qualify check reads. The next
+// SyncMembership call reconciles the seats (the prune's predicate
+// runs against the freshly written columns).
+func (r *Repository) SetChannelRule(ctx context.Context, channelID string, rule MembershipRule) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	ct, err := tx.Exec(ctx, `
+		UPDATE msg_channels
+		   SET auto_scope = NULLIF($2, ''),
+		       auto_role = NULLIF($3, ''),
+		       visibility = $4
+		 WHERE id = $1::uuid`, channelID, rule.AutoScope, rule.AutoRole, rule.Visibility)
+	if err != nil {
+		return fmt.Errorf("set channel rule: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		_ = tx.Rollback(ctx)
+		return errNotFound
+	}
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ListChannelRules is the collection read for GET /api/v1/messaging/membership-rules:
+// every channel's rule row the caller can see, scoped the same way as
+// the directory (PUBLIC, non-archived, branch-reach wall). The caller
+// is the staff reading the rules panel; the route is staff-gated.
+func (r *Repository) ListChannelRules(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) ([]MembershipRuleEntry, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if isGlobal {
+		branches = map[string]bool{}
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ch.id::text, ch.name, ch.kind, COALESCE(ch.branch_id::text,''),
+		       COALESCE(ch.auto_scope,''), COALESCE(ch.auto_role,''), ch.visibility
+		FROM msg_channels ch
+		WHERE ch.kind IN ('TEAM', 'TOPIC', 'BRANCH')
+		  AND ch.is_archived = FALSE
+		  AND ch.visibility = 'PUBLIC'
+		  AND (ch.branch_id IS NULL
+		       OR ch.branch_id::text = ANY($1::text[])
+		       OR $2 = TRUE)
+		ORDER BY ch.name ASC`, branchKeys(branches), isGlobal)
+	if err != nil {
+		return nil, fmt.Errorf("list channel rules: %w", err)
+	}
+	defer rows.Close()
+	var out []MembershipRuleEntry
+	for rows.Next() {
+		var e MembershipRuleEntry
+		if err := rows.Scan(&e.ChannelID, &e.Name, &e.Kind, &e.BranchID,
+			&e.AutoScope, &e.AutoRole, &e.Visibility); err != nil {
+			return nil, fmt.Errorf("scan channel rule: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// branchKeys returns the keys of a branch reach map (slice form, for an
+// ANY() postgres parameter). A nil or empty map returns an empty slice;
+// the SQL's NULLIF on the empty branch_id arms the no-branch channel
+// to read on its own predicate.
+func branchKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if m[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }

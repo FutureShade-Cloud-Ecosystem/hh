@@ -49,7 +49,7 @@ func TestIntegration_AddMember_Bumps_The_Channels_Feed_Seq(t *testing.T) {
 	}
 
 	// The owner seats Casey; the seat is the ONLY change to the room.
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestIntegration_RemoveMember_Refreshes_The_Room_Row(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 	var before int64
@@ -201,7 +201,7 @@ func TestIntegration_AddMember_RolledBack_Seat_Leaves_Seq_Unmoved(t *testing.T) 
 		t.Fatalf("create probe trigger: %v", err)
 	}
 
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err == nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err == nil {
 		t.Fatalf("the seat's commit must fail under the probe trigger")
 	}
 	var after int64
@@ -242,7 +242,7 @@ func TestIntegration_RemoveMember_Failed_Bump_Leaves_The_Member_Seated(t *testin
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 	var before int64

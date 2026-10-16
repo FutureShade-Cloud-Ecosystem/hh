@@ -26,6 +26,100 @@ const (
 	KindApproval = "APPROVAL"
 )
 
+// Membership roles (mirror the msg_members CHECK on role).
+const (
+	// RoleMember is the manager-driven seat's role: a hand-added member who
+	// can read and post but does not manage the room (the OWNER pen is the
+	// founder's, the moderation matrix's, and nobody else's).
+	RoleMember = "MEMBER"
+	// RoleOwner is the room's founder and the manager wall's first line:
+	// an OWNER row manages the room's EXPLICIT seats and drops.
+	RoleOwner = "OWNER"
+)
+
+// Channel visibilities (mirror the msg_channels.visibility CHECK and DEFAULT
+// added in 0400). PUBLIC rooms list in the directory and accept any member
+// the branch and role model approves; PRIVATE rooms are wall-only (the room
+// owner or house messages admin hands members in, the audit row records the
+// reason).
+const (
+	VisibilityPublic  = "PUBLIC"
+	VisibilityPrivate = "PRIVATE"
+)
+
+// Auto-scope markers (mirror the msg_channels.auto_scope CHECK). Empty
+// (zero value, ” in SQL) means no automatic membership: the channel is
+// hand-built and the membership wall alone governs. BRANCH mirrors a
+// seeded yard room's auto-membership (the role and branch model derives
+// everyone granted that branch). GLOBAL mirrors the seeded office room
+// (every ACTIVE staff derives).
+const (
+	AutoScopeBranch = "BRANCH"
+	AutoScopeGlobal = "GLOBAL"
+)
+
+// AutoRoleAny is the sentinel the directory and rule write use to mean
+// "any role qualifies" (the asterisk the SQL reads as the wildcard).
+const AutoRoleAny = "*"
+
+// MembershipRule is the Settings > Membership rules read and write shape:
+// the channel's auto_scope marker (empty, BRANCH, or GLOBAL), the
+// auto_role code (a role code, "*" for any, or empty for hand-only), and
+// the channel's visibility flag (PUBLIC or PRIVATE). The admin's rule
+// write updates these three columns in one transaction and immediately
+// reconciles derived seats (the prune SyncMembership runs next call).
+type MembershipRule struct {
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
+// DirectoryEntry is one row of GET /api/v1/messaging/directory: a
+// PUBLIC, non-archived channel the caller can see, with the caller's
+// membership state on it. Joined=false and MembershipSource="" mean the
+// caller is not a member. Joined=true with source=DERIVED means the
+// role and branch model derived them in; Joined=true with source=EXPLICIT
+// means they hand-joined or were hand-added. MemberCount is the room's
+// current seat count (DERIVED + EXPLICIT).
+type DirectoryEntry struct {
+	ChannelID        string `json:"channel_id"`
+	Kind             string `json:"kind"`
+	BranchID         string `json:"branch_id,omitempty"`
+	Name             string `json:"name"`
+	Topic            string `json:"Topic"`
+	Slug             string `json:"slug,omitempty"`
+	Joined           bool   `json:"joined"`
+	MembershipSource string `json:"membership_source"`
+	MemberCount      int    `json:"member_count"`
+}
+
+// ChannelMemberEntry is one row of GET /api/v1/messaging/channels/{id}/members:
+// the channel's EXPLICIT members with the audit fields the Settings >
+// Membership rules "Added by hand" panel shows.
+type ChannelMemberEntry struct {
+	UserID      string    `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	AddedReason string    `json:"added_reason"`
+	AddedBy     string    `json:"added_by,omitempty"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+// MembershipRuleEntry is the collection read for GET /api/v1/messaging/membership-rules:
+// one channel's rule row plus the directory's read shape (the same name,
+// branch, kind the directory carries). The auto_scope and auto_role are
+// the rule write's payload; visibility is the room's settings panel.
+type MembershipRuleEntry struct {
+	ChannelID  string `json:"channel_id"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	BranchID   string `json:"branch_id,omitempty"`
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
 // Message kinds (mirror the msg_messages CHECK).
 const (
 	MsgText  = "TEXT"
@@ -169,13 +263,18 @@ const defaultRetentionMonths = 12
 // Channel is one conversation surface. UnreadCount / Mentioned / LatestAt are populated only in
 // the list-my-channels projection (they are per-caller, not intrinsic to the channel).
 type Channel struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	BranchID   string    `json:"branch_id,omitempty"`
-	Slug       string    `json:"slug,omitempty"`
-	Name       string    `json:"name"`
-	Topic      string    `json:"topic"`
-	Tier       string    `json:"tier"` // STANDARD | ESCALATION | FIREHOSE (0069)
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	BranchID string `json:"branch_id,omitempty"`
+	Slug     string `json:"slug,omitempty"`
+	Name     string `json:"name"`
+	Topic    string `json:"topic"`
+	Tier     string `json:"tier"` // STANDARD | ESCALATION | FIREHOSE (0069)
+	// Visibility is the change 7 ruling 7 hand: PUBLIC rooms list in the
+	// directory and accept any member the branch and role model approves;
+	// PRIVATE rooms are wall-only (the room owner or house messages admin
+	// hands members in, the audit row records the reason).
+	Visibility string    `json:"visibility"`
 	IsArchived bool      `json:"is_archived"`
 	CreatedAt  time.Time `json:"created_at"`
 	// Per-caller projection (list-my-channels only):
@@ -185,15 +284,21 @@ type Channel struct {
 }
 
 // ChannelMember is one membership row as the member-add surface returns it:
-// the channel, the member, their role in the room, and the membership's
-// source (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to
-// the role and branch model).
+// the channel, the member, their role in the room, the membership's source
+// (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to the
+// role and branch model), and the change 7 ruling 7 audit trail:
+// AddedReason / AddedBy capture the manager-driven seat's text reason and
+// the user id who wrote it. A DERIVED row's AddedReason is empty and
+// AddedBy is nil (the role and branch model owns the row; nothing was
+// added by hand).
 type ChannelMember struct {
-	ChannelID string    `json:"channel_id"`
-	UserID    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	Source    string    `json:"source"`
-	JoinedAt  time.Time `json:"joined_at"`
+	ChannelID   string    `json:"channel_id"`
+	UserID      string    `json:"user_id"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	JoinedAt    time.Time `json:"joined_at"`
+	AddedReason string    `json:"added_reason"`
+	AddedBy     string    `json:"added_by,omitempty"`
 }
 
 // Message is one post. AuthorID is empty for a system EVENT message. Ref carries {topic, entity,

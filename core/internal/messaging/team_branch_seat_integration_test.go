@@ -48,7 +48,7 @@ func TestIntegration_TeamNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing.
 
 	// A Kingston only staffer is refused, in the shared body's words, and
 	// is not seated.
-	if _, err := svc.AddMember(ctx, gm, trentonTeam.ID, uCaseyDoyle); !errors.Is(err, ErrTargetNotInBranch) {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: trentonTeam.ID, UserID: uCaseyDoyle}); !errors.Is(err, ErrTargetNotInBranch) {
 		t.Fatalf("a Kingston target in a Trenton TEAM must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, trentonTeam.ID, uCaseyDoyle); ok {
@@ -57,14 +57,14 @@ func TestIntegration_TeamNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing.
 
 	// A Trenton staffer is still seatable by the owner.
 	uat := uatInsideSalesID(ctx, t, pool)
-	if _, err := svc.AddMember(ctx, gm, trentonTeam.ID, uat); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: trentonTeam.ID, UserID: uat}); err != nil {
 		t.Fatalf("a Trenton target in a Trenton TEAM: %v", err)
 	}
 
 	// A TEAM that really spans branches is founded without naming one, and
 	// seats anyone the owner may reach (unchanged).
 	spanning := found("ruling-89-spanning-team", "")
-	if _, err := svc.AddMember(ctx, gm, spanning.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: spanning.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("a TEAM without a branch must seat a Kingston staffer: %v", err)
 	}
 }
@@ -91,7 +91,7 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, topic.ID)
 	})
 
-	if _, err := svc.AddMember(ctx, sam, topic.ID, uCaseyDoyle); !errors.Is(err, ErrTargetNotInBranch) {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: topic.ID, UserID: uCaseyDoyle}); !errors.Is(err, ErrTargetNotInBranch) {
 		t.Fatalf("a Kingston target in a Trenton TOPIC must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, topic.ID, uCaseyDoyle); ok {
@@ -108,7 +108,7 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, open.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, open.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: open.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("a TOPIC without a branch must seat a Kingston staffer: %v", err)
 	}
 }

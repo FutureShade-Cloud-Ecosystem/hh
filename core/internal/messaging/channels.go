@@ -14,6 +14,7 @@ package messaging
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -66,18 +67,65 @@ var (
 	// ErrLastOwner: a removal may never drop a channel's last OWNER row; a
 	// room without an owner is nobody's to manage.
 	ErrLastOwner = errors.New("messaging: a channel keeps its owner")
+	// ErrChannelArchived: the room is already archived; a re-delete is not a
+	// keep-state the route answers (it is already what the manager wall asked
+	// for the first time).
+	ErrChannelArchived = errors.New("messaging: channel is already archived")
+	// ErrBadVisibility: the visibility value is not one the migration's CHECK
+	// permits; a route handler that hands a value outside PUBLIC/PRIVATE
+	// refuses in shape the controller already laid down.
+	ErrBadVisibility = errors.New("messaging: visibility must be PUBLIC or PRIVATE")
+	// ErrPrivateRoom: a self-join is refused on a PRIVATE room (admin-or-owner
+	// hand-add only; the directory hides it).
+	ErrPrivateRoom = errors.New("messaging: a private channel is hand-add only")
+	// ErrCannotJoin: the channel's kind or member_roles list keeps a
+	// caller out of the join path (DM, APPROVAL, GROUP, money rooms the
+	// caller does not hold a listed role for).
+	ErrCannotJoin = errors.New("messaging: this channel does not accept self-joins")
+	// ErrAdminOnly: the caller is not a house messages admin, the rule
+	// write's wall.
+	ErrAdminOnly = errors.New("messaging: only a house messages admin may change this rule")
 )
 
 // CreateChannelInput is one caller-founded channel. Slug is optional; an
 // empty slug is derived from the name, so the same founding twice converges
 // on one channel (the idempotent create). BranchID is optional and only
-// meaningful for a TEAM scoped to one yard.
+// meaningful for a TEAM scoped to one yard. Visibility is the change 7
+// ruling 7 hand: an empty value defaults to PUBLIC (the room's settings
+// panel default, the moderation skill's rule #2 starting point); PRIVATE
+// is a wall around hand-added only and lists only via membership.
+// AutoScope and AutoRole carry the membership-rule fields an admin may
+// plant on create (a seeded yard channel sets AutoScope=BRANCH +
+// AutoRole=AutoRoleAny; an admin's "office" channel sets
+// AutoScope=GLOBAL + AutoRole=AutoRoleAny). Empty AutoScope + empty
+// AutoRole means no automatic membership (the channel is hand-only, the
+// membership wall alone governs).
 type CreateChannelInput struct {
-	Kind     string
-	Name     string
-	Topic    string
-	Slug     string
-	BranchID string
+	Kind       string
+	Name       string
+	Topic      string
+	Slug       string
+	BranchID   string
+	Visibility string
+	AutoScope  string
+	AutoRole   string
+}
+
+// AddMemberInput is one manager-driven seat: the channel, the member, the
+// role the room gives them (always MEMBER; an OWNER is the room's founder
+// and is not hand-assignable here), and the change 7 ruling 7 audit trail.
+// AddedReason is the manager's text reason the staff member reads in the
+// row audit (a brief line that names the run, the swap, the project); an
+// empty value lands as the migration's DEFAULT ” and is what the row reads
+// back. AddedBy is the user id of the manager who wrote the row; an empty
+// value lands NULL (the rare empty-add-by seat, the column's NULL is its
+// own keep-state).
+type AddMemberInput struct {
+	ChannelID   string
+	UserID      string
+	Role        string
+	AddedReason string
+	AddedBy     string
 }
 
 // CreateChannel founds a TEAM or TOPIC channel idempotently (same slug, same
@@ -185,23 +233,28 @@ func (s *Service) CreateDM(ctx context.Context, c Caller, otherUserID string) (C
 //
 // An already-seated member is a no-op that answers the row as it stands: a
 // DERIVED row is never rewritten to EXPLICIT (a rewritten row would become
-// hand-removable, contradicting the DERIVED removal refusal).
-func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID string) (ChannelMember, error) {
-	if err := s.assertMember(ctx, c, channelID); err != nil {
+// hand-removable, contradicting the DERIVED removal refusal), and an
+// EXPLICIT row keeps the added_reason / added_by it already carries (a
+// re-seat never overwrites the manager's audit trail). The added_reason /
+// added_by fields are the change 7 ruling 7 hand: the repository writes
+// them on the fresh arm and reads them back whatever they are on the
+// re-seat arm.
+func (s *Service) AddMember(ctx context.Context, c Caller, in AddMemberInput) (ChannelMember, error) {
+	if err := s.assertMember(ctx, c, in.ChannelID); err != nil {
 		return ChannelMember{}, err
 	}
-	facts, err := s.repo.channelFacts(ctx, channelID)
+	facts, err := s.repo.channelFacts(ctx, in.ChannelID)
 	if err != nil {
 		return ChannelMember{}, err
 	}
 	if facts.Kind == KindDM || facts.Kind == KindApproval {
 		return ChannelMember{}, ErrMembershipFixed
 	}
-	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
+	if err := s.assertMembershipManager(ctx, c, in.ChannelID); err != nil {
 		return ChannelMember{}, err
 	}
 	if facts.BranchID != "" {
-		reaches, err := s.repo.userReachesBranch(ctx, userID, facts.BranchID)
+		reaches, err := s.repo.userReachesBranch(ctx, in.UserID, facts.BranchID)
 		if err != nil {
 			return ChannelMember{}, err
 		}
@@ -210,7 +263,7 @@ func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID str
 		}
 	}
 	if len(facts.MemberRoles) > 0 {
-		holds, err := s.repo.userHoldsAnyRole(ctx, userID, facts.MemberRoles)
+		holds, err := s.repo.userHoldsAnyRole(ctx, in.UserID, facts.MemberRoles)
 		if err != nil {
 			return ChannelMember{}, err
 		}
@@ -218,7 +271,56 @@ func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID str
 			return ChannelMember{}, ErrTargetNotInRoom
 		}
 	}
-	return s.repo.AddChannelMember(ctx, channelID, userID)
+	if in.Role == "" {
+		// The room's settings panel always writes MEMBER (an OWNER is the
+		// room's founder and is not hand-assignable here). The repository
+		// already refuses an unknown role via its CHECK (role IN
+		// ('MEMBER','OWNER')).
+		in.Role = RoleMember
+	}
+	return s.repo.AddChannelMember(ctx, in)
+}
+
+// SetVisibility is the change 7 ruling 7 hand on the room's settings
+// panel: the manager flips PUBLIC/PRIVATE and the row answers with the
+// new value. The wall is the same one membership management carries:
+// the room's OWNER row, or a role the matrix gives Admin on
+// house-messages, and nobody else (a plain member holds no such pen).
+// An invalid value (anything outside the migration's CHECK) is refused
+// in words before the write runs.
+func (s *Service) SetVisibility(ctx context.Context, c Caller, channelID, visibility string) error {
+	visibility = strings.ToUpper(strings.TrimSpace(visibility))
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return ErrBadVisibility
+	}
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return err
+	}
+	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
+		return err
+	}
+	if _, err := s.repo.SetChannelVisibility(ctx, channelID, visibility); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteChannel is the change 7 ruling 7 hand on the room's settings
+// panel: the manager archives the room and the room leaves every
+// list-my-channels read. The wall is the same one membership management
+// carries: the room's OWNER row, or a role the matrix gives Admin on
+// house-messages, and nobody else. An already-archived room answers
+// ErrChannelArchived: the manager wall already wrote the truth, and a
+// second archive is not a keep-state the route answers. The repository
+// owns the archive's row update and feed bump.
+func (s *Service) DeleteChannel(ctx context.Context, c Caller, channelID string) error {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return err
+	}
+	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
+		return err
+	}
+	return s.repo.ArchiveChannel(ctx, channelID)
 }
 
 // RemoveMember drops one EXPLICIT member row. The walls are AddMember's
@@ -256,4 +358,148 @@ func (s *Service) assertMembershipManager(ctx context.Context, c Caller, channel
 		return nil
 	}
 	return ErrNotChannelOwner
+}
+
+// ListDirectory is the change 7 ruling 7 directory: the caller reads the
+// PUBLIC, non-archived rooms (TEAM, TOPIC, BRANCH) the directory's
+// branch wall lets them see, with the caller's own membership state
+// (joined bool, source DERIVED/EXPLICIT, member_count). PRIVATE rooms do
+// not appear (the wall sits behind the visibility filter). DM and
+// APPROVAL channels do not appear (the directory is non-PROVAL with the
+// system namespaces; the brief says TEAM, TOPIC, BRANCH only).
+func (s *Service) ListDirectory(ctx context.Context, c Caller) (map[string]DirectoryEntry, error) {
+	return s.repo.ListDirectory(ctx, c.UserID, c.IsGlobal(), c.Branches)
+}
+
+// JoinChannel is the change 7 ruling 7 self-join: a staffer who reaches
+// the channel's branch may join a PUBLIC TEAM or TOPIC channel. The
+// seat is EXPLICIT MEMBER (idempotent: an already-seated caller
+// re-joins as a no-op, never a downgrade of DERIVED or OWNER). The
+// walls, in order:
+//   - the room must exist and not be archived (the repository answers);
+//   - the room must be PUBLIC, never private (PRIVATE rooms are
+//     hand-add only, admin-or-owner; a self-join is refused);
+//   - the room must accept self-joins: not DM, not APPROVAL, not a
+//     money room whose member_roles list the caller does not hold;
+//   - the caller must reach the room's branch (or every branch, when
+//     the room names no branch).
+func (s *Service) JoinChannel(ctx context.Context, c Caller, channelID string) (ChannelMember, error) {
+	facts, err := s.repo.channelFacts(ctx, channelID)
+	if err != nil {
+		return ChannelMember{}, err
+	}
+	if facts.Kind == KindDM || facts.Kind == KindApproval {
+		return ChannelMember{}, ErrCannotJoin
+	}
+	if facts.Visibility == VisibilityPrivate {
+		return ChannelMember{}, ErrPrivateRoom
+	}
+	if facts.BranchID != "" && !c.IsGlobal() && !c.Branches[facts.BranchID] {
+		return ChannelMember{}, ErrTargetNotInBranch
+	}
+	if len(facts.MemberRoles) > 0 {
+		holds, herr := s.repo.userHoldsAnyRole(ctx, c.UserID, facts.MemberRoles)
+		if herr != nil {
+			return ChannelMember{}, herr
+		}
+		if !holds {
+			return ChannelMember{}, ErrTargetNotInRoom
+		}
+	}
+	return s.repo.AddChannelMember(ctx, AddMemberInput{
+		ChannelID: channelID,
+		UserID:    c.UserID,
+		Role:      RoleMember,
+		AddedBy:   c.UserID,
+	})
+}
+
+// LeaveChannel is the change 7 ruling 7 self-leave: a caller may leave
+// a channel whose seat is EXPLICIT MEMBER. The walls:
+//   - the room must accept leaves: not DM, not APPROVAL (the room's
+//     system-managed membership is fixed; ErrMembershipFixed);
+//   - the caller's seat must not be DERIVED (the role and branch model
+//     owns the row; ErrDerivedMember, the "Joined by rule, you stay"
+//     wall the brief names);
+//   - the caller must not be the room's last OWNER (ErrLastOwner;
+//     removing the last owner leaves the room without management).
+func (s *Service) LeaveChannel(ctx context.Context, c Caller, channelID string) error {
+	facts, err := s.repo.channelFacts(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	if facts.Kind == KindDM || facts.Kind == KindApproval {
+		return ErrMembershipFixed
+	}
+	// A caller without a row cannot leave a room they are not in.
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return err
+	}
+	source, err := s.repo.memberSource(ctx, channelID, c.UserID)
+	if err != nil {
+		return err
+	}
+	if source == SourceDerived {
+		return ErrDerivedMember
+	}
+	return s.repo.RemoveChannelMember(ctx, channelID, c.UserID)
+}
+
+// ListExplicitMembers is the read side of the Settings > Membership
+// rules panel: every EXPLICIT member row of the channel, with the
+// audit fields the panel shows. The caller must hold a row in the
+// room (the membership wall). DERIVED rows are listed too: the panel
+// names "Joined by rule" rows alongside "Added by hand", and the two
+// stay readable in one list.
+func (s *Service) ListExplicitMembers(ctx context.Context, c Caller, channelID string) ([]ChannelMemberEntry, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListChannelMembers(ctx, channelID)
+}
+
+// GetMembershipRule is the read side of the membership-rule route: the
+// room's auto_scope, auto_role, and visibility. The caller must be in
+// the room (the rule is a room-shared read; the directory is the room
+// list, the rule is the room's settings).
+func (s *Service) GetMembershipRule(ctx context.Context, c Caller, channelID string) (MembershipRule, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return MembershipRule{}, err
+	}
+	return s.repo.GetChannelRule(ctx, channelID)
+}
+
+// UpdateMembershipRule is the change 7 ruling 7 rule write: an admin
+// flips a room's auto_scope, auto_role, and visibility, and the next
+// SyncMembership reconciles the derived seats (the prune runs the same
+// qualifies predicate the rule itself carries). The wall is admin-only:
+// only a role the role matrix gives Admin on house-messages may write
+// a room's rule (ErrAdminOnly otherwise). An invalid visibility or an
+// invalid auto_scope is refused before the write runs.
+func (s *Service) UpdateMembershipRule(ctx context.Context, c Caller, channelID string, r MembershipRule) (MembershipRule, error) {
+	if !houseMessagesAdmin(c) {
+		return MembershipRule{}, ErrAdminOnly
+	}
+	visibility := strings.ToUpper(strings.TrimSpace(r.Visibility))
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return MembershipRule{}, ErrBadVisibility
+	}
+	r.Visibility = visibility
+	autoScope := strings.ToUpper(strings.TrimSpace(r.AutoScope))
+	if autoScope != "" && autoScope != AutoScopeBranch && autoScope != AutoScopeGlobal {
+		return MembershipRule{}, fmt.Errorf("messaging: auto_scope must be empty, BRANCH or GLOBAL")
+	}
+	r.AutoScope = autoScope
+	if err := s.repo.SetChannelRule(ctx, channelID, r); err != nil {
+		return MembershipRule{}, err
+	}
+	return s.repo.GetChannelRule(ctx, channelID)
+}
+
+// ListMembershipRules is the read side of the membership-rules
+// collection route: every channel's rule the caller can see. The
+// collection is the directory's rule view, scoped the same way (the
+// caller's branch reach, PUBLIC visibility).
+func (s *Service) ListMembershipRules(ctx context.Context, c Caller) ([]MembershipRuleEntry, error) {
+	return s.repo.ListChannelRules(ctx, c.UserID, c.IsGlobal(), c.Branches)
 }
