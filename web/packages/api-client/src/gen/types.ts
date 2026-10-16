@@ -1524,6 +1524,7 @@ export type SettingsSurfaceConfig = {
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
   business_zone?: string;
+  legacy_import_source?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;

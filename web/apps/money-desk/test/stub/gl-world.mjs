@@ -101,6 +101,9 @@ const accountRows = () =>
 
 function fresh() {
   return {
+    // The dealer's legacy import source, as the surface config serves it. The first dealer names its
+    // legacy system; "" is a dealer with none (the demo tenant), whose check is off.
+    legacyImport: "bistrack",
     accounts: accountRows(),
     periods: periodRows(),
     // The first time the AR tie-out was seen out of tie, by branch key; the core persists it (gl_tieout_state).
@@ -656,6 +659,8 @@ export function createGlWorld() {
       if (refused !== null) return refused;
       const bad = badBranch(url);
       if (bad !== null) return bad;
+      // The core's order: the guard, the branch, then the dealer's legacy import source.
+      if (world.legacyImport === "") return say(404, "the legacy import check is not enabled for this dealer");
       const year = Number(url.searchParams.get("year") ?? FY) || FY;
       const month = Number(url.searchParams.get("month") ?? 0) || 0;
       const tolerance = Number(url.searchParams.get("tolerance_cents") ?? 0) || 0;
@@ -727,8 +732,27 @@ export function createGlWorld() {
       reset();
       return { status: 200, body: { ok: true } };
     }
+    if (req.method === "POST" && path === "/_stub/legacy-import") {
+      world.legacyImport = String(JSON.parse(bodyText || "{}").source ?? "");
+      return { status: 200, body: { ok: true, source: world.legacyImport } };
+    }
     if (req.method === "GET" && path === "/api/v1/branches") return { status: 200, body: branches() };
     const caller = callerOf(req);
+    // The surface config read the desk makes for the dealer's legacy import source. The source field
+    // is absent, not empty, for a dealer with none, as the core's omitempty field is.
+    if (req.method === "GET" && path === "/api/v1/surfaces/money-desk/config") {
+      return {
+        status: 200,
+        body: {
+          surface_id: "money-desk",
+          profile: caller.level === "admin" ? "admin" : "manager",
+          role_items: [],
+          user_items: [],
+          workspace: { split_pct: 50, arrangement: "PRIMARY_LEFT", primary_collapsed: false, secondary_collapsed: false, cost_hidden: false, source: "dealer" },
+          ...(world.legacyImport === "" ? {} : { legacy_import_source: world.legacyImport }),
+        },
+      };
+    }
     if (req.method === "GET" && path === "/api/v1/staff/approvals") {
       const wanted = url.searchParams.get("status");
       const rows = world.approvals.filter((a) => (wanted === null || wanted === "" || a.status === wanted) && (caller.global || a.branch_id === IDS.pointLoma));

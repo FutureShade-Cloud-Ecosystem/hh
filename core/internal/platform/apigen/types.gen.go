@@ -1833,14 +1833,15 @@ type SettingsWorkspaceSaveInput struct {
 }
 
 type SettingsSurfaceConfig struct {
-	SurfaceId    string                `json:"surface_id"`
-	Profile      string                `json:"profile"`
-	ItemsProfile *string               `json:"items_profile,omitempty"`
-	RoleItems    []SettingsItem        `json:"role_items"`
-	UserItems    []SettingsItem        `json:"user_items"`
-	Workspace    SettingsWorkspaceView `json:"workspace"`
-	Policy       *map[string]any       `json:"policy,omitempty"`
-	BusinessZone *string               `json:"business_zone,omitempty"`
+	SurfaceId          string                `json:"surface_id"`
+	Profile            string                `json:"profile"`
+	ItemsProfile       *string               `json:"items_profile,omitempty"`
+	RoleItems          []SettingsItem        `json:"role_items"`
+	UserItems          []SettingsItem        `json:"user_items"`
+	Workspace          SettingsWorkspaceView `json:"workspace"`
+	Policy             *map[string]any       `json:"policy,omitempty"`
+	BusinessZone       *string               `json:"business_zone,omitempty"`
+	LegacyImportSource *string               `json:"legacy_import_source,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
