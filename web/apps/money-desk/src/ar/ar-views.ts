@@ -298,7 +298,7 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
   return html`
     <tr data-register-row>
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
-      <td><button type="button" class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></button><span class="dim small">${r.account_no}${terms}</span></td>
+      <td><span class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
       <td class="nowrap due-col">
         <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
