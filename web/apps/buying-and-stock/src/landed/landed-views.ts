@@ -15,8 +15,9 @@ import type {
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
-import { areaHead, checkBox, confirmBox, dateOnly, emptyState, errorNote, loadFailed, loadingNote, noticeBox, pill, segs } from "../purch/purch-views.js";
+import { areaHead, checkBox, confirmBox, emptyState, errorNote, loadFailed, loadingNote, noticeBox, pill, segs } from "../purch/purch-views.js";
 import { formatMoney, formatQty } from "../purch/purch-money.js";
+import { whenWords } from "../po/po-logic.js";
 import { BASES, basisFigure, basisWord, confirmWords, retroCandidates, retroLines, statusTone, statusWord, type Action } from "./landed-logic.js";
 
 export type LandedView = "list" | "capture" | "detail";
@@ -56,6 +57,8 @@ export interface LandedModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  /** Today, YYYY-MM-DD in the reader's own day: the stamps on screen read against it. */
+  readonly today: string;
 }
 
 const FILTERS: readonly { id: string; word: string }[] = [
@@ -73,9 +76,9 @@ function orderOption(po: PurchasingPO): string {
 /** The option text the order picker lists for an order; the desk resolves the typed text back through it. */
 export const orderOptionText = orderOption;
 
-/** The option text the "follows" picker lists for an applied landed cost. */
-export function priorOptionText(p: LandedCost): string {
-  return `${p.po_ref} · ${basisWord(p.allocation_basis)} · ${dateOnly(p.created_at)}`;
+/** The option text the "follows" picker lists for an applied landed cost; the desk resolves the typed text back through it. */
+export function priorOptionText(p: LandedCost, today: string): string {
+  return `${p.po_ref} · ${basisWord(p.allocation_basis)} · ${whenWords(p.created_at, today)}`;
 }
 
 // ---- the list ------------------------------------------------------------------------------------
@@ -126,7 +129,7 @@ function listRow(model: LandedModel, lc: LandedCost): TemplateResult {
       <td class="num" data-label="Freight">${formatMoney(lc.freight_cad_cents)}</td>
       <td class="num" data-label="Duty">${formatMoney(lc.duty_cad_cents)}</td>
       <td class="num" data-label="Handling">${formatMoney(lc.handling_cad_cents)}</td>
-      <td class="opt2" data-label="Captured">${dateOnly(lc.created_at)}</td>
+      <td class="opt2" data-label="Captured">${whenWords(lc.created_at, model.today)}</td>
     </tr>
   `;
 }
@@ -241,7 +244,7 @@ function capture(model: LandedModel): TemplateResult {
               <label>The landed cost it follows
                 <select data-field="lc-retro-of" data-lc-retro-of>
                   <option>Pick a landed cost</option>
-                  ${priors.map((p) => html`<option>${priorOptionText(p)}</option>`)}
+                  ${priors.map((p) => html`<option>${priorOptionText(p, model.today)}</option>`)}
                 </select>
                 ${cap.po !== null && priors.length === 0 ? html`<span class="dim" data-no-priors>This order has no applied landed cost to follow.</span>` : nothing}
               </label>
@@ -375,7 +378,7 @@ function detailView(model: LandedModel, detail: DetailModel): TemplateResult {
           <dt>Handling</dt><dd>${formatMoney(doc.handling_cad_cents)}${usd ? html` <span class="dim">(USD ${formatMoney(doc.handling_cents)})</span>` : nothing}</dd>
           ${usd ? html`<dt>Exchange rate</dt><dd>${doc.fx_rate}</dd>` : nothing}
           ${retro ? html`<dt>Follows</dt><dd>Late freight on an applied landed cost</dd>` : nothing}
-          <dt>Captured</dt><dd>${dateOnly(doc.created_at)}</dd>
+          <dt>Captured</dt><dd>${whenWords(doc.created_at, model.today)}</dd>
         </dl>
       </div>
       ${doc.status === "DRAFT"

@@ -82,14 +82,16 @@ test("the screen tells the yard the same story in the server's words", async ({ 
   await staff(page, "POST", `/api/v1/tasks/${id}/accept`);
   const detail = await staff(page, "GET", `/api/v1/yard/picks/${id}`);
   const first = detail.body.ticket.lines[0];
-  await page.getByRole("button", { name: "Start picking" }).waitFor({ state: "attached" }).catch(() => {});
   await page.reload();
-  await page.locator("[data-pick-card]", { hasText: "Claimed by you" }).first().getByRole("button", { name: "Open" }).click();
-  await page.getByRole("button", { name: "Start picking" }).click();
+  await page.locator("[data-pick-card]", { hasText: detail.body.ticket.order_no }).first().getByRole("button", { name: "Open" }).click();
+  // The accept above already put the pick in Picking, so the start button is there only for a pick not yet started.
+  await page.locator("[data-line]").first().waitFor();
+  const start = page.getByRole("button", { name: "Start picking" });
+  if (await start.isVisible()) await start.click();
   await page.locator("[data-line]").first().locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Take one off" }).click();
-  await page.getByLabel(/Why line \d+ is short/).selectOption("NOT_IN_YARD");
+  await page.locator('[data-reason-group="line"] [data-reason="NOT_IN_YARD"]').click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("on backorder and the order's rep has been told");
 });

@@ -225,6 +225,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
 	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
 	inventorySvc.WithDraftPOReader(invDraftPOs{svc: purchasingSvc})
+	// Change 5 slice S3: the shortfall row names the sales orders it holds up, read through the
+	// order module's seam (the 0008 tables' sole reader) rather than any second look at them.
+	inventorySvc.WithShortOrderReader(invShortOrders{svc: orderSvc})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -303,6 +306,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		}
 	}
 	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if pool != nil {
+		// The pull carries each task's ticket, built by the same feed the REST door reads.
+		pickSync.WithPickSource(newDispatchPickSource(pool, orderRepo, log))
+	}
 	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -1723,6 +1730,23 @@ func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, product
 	out := make([]inventory.DraftPO, len(rows))
 	for i, r := range rows {
 		out[i] = inventory.DraftPO{ProductID: r.ProductID, BranchID: r.BranchID, POID: r.POID, PONo: r.PONo}
+	}
+	return out, nil
+}
+
+// invShortOrders satisfies inventory.ShortOrderReader over the order module's open-order numbers
+// read: the sales orders a shortfall row names, oldest first. Numbers and ids only cross the seam;
+// the orders tables stay this module's alone.
+type invShortOrders struct{ svc *order.Service }
+
+func (a invShortOrders) OpenOrdersFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.ShortOrder, error) {
+	rows, err := a.svc.OpenSaleOrdersFor(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.ShortOrder, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.ShortOrder{ProductID: r.ProductID, BranchID: r.BranchID, OrderID: r.OrderID, OrderNo: r.OrderNo}
 	}
 	return out, nil
 }
