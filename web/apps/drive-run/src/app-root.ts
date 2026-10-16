@@ -21,7 +21,7 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
-import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseDay, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
@@ -456,10 +456,16 @@ export class DriveRunApp extends HHElement {
     this.requestUpdate();
     await this.#bootOffline();
     if (this.#driveOffline !== null) {
+      // A cold start with no signal reads the store on the zone the last
+      // online session served, never on the Ontario default: the stored zone
+      // is restored before the day is named. A config read that fails below
+      // never serves anything, so it cannot overwrite the restored zone.
+      const storedZone = await this.#driveOffline.readZone();
+      if (storedZone !== null) serveHouseZoneFrom({ business_zone: storedZone });
       // The store answers at once on the last served zone (the default until one is served);
       // the zone is refreshed on the side and never holds the run sheet.
       const day = houseDay();
-      const zoneDay = this.#drive.dealersDay();
+      const zoneDay = this.#drive.servedDealersDay();
       // The run sheet reads answer from the store, with the scope's staleness.
       const answer: RunsAnswer = await this.#driveOffline.runs(day);
       if (answer.ok) {
@@ -475,7 +481,12 @@ export class DriveRunApp extends HHElement {
         });
       }
       this.requestUpdate();
-      void zoneDay.then((served) => this.#rereadOnZone(day, served));
+      void zoneDay.then(({ day: servedDay, served }) => {
+        // A read that served persists the zone (a dealer's zone change is
+        // stored at the next read); a failed read stores nothing.
+        if (served) void this.#driveOffline?.saveZone(houseZone());
+        return this.#rereadOnZone(day, servedDay);
+      });
       return;
     }
     const result = await this.#drive.myRuns(await this.#drive.dealersDay());
@@ -696,11 +707,16 @@ export class DriveRunApp extends HHElement {
   async #refreshRuns(): Promise<void> {
     if (this.#driveOffline !== null) {
       const day = houseDay();
-      const zoneDay = this.#drive.dealersDay();
+      const zoneDay = this.#drive.servedDealersDay();
       const answer = await this.#driveOffline.runs(day);
       if (answer.ok) this.#runs = answer.value.runs;
       await this.#refreshOfflineChrome();
-      void zoneDay.then((served) => this.#rereadOnZone(day, served));
+      void zoneDay.then(({ day: servedDay, served }) => {
+        // A read that served keeps the stored zone current (a dealer's zone
+        // change is stored at the next read); a failed read stores nothing.
+        if (served) void this.#driveOffline?.saveZone(houseZone());
+        return this.#rereadOnZone(day, servedDay);
+      });
       return;
     }
     const result = await this.#drive.myRuns(await this.#drive.dealersDay());
