@@ -486,6 +486,51 @@ type BillingInvoiceDetail struct {
 	AsOf          time.Time              `json:"as_of"`
 }
 
+type BillingARWorklistRow struct {
+	CustomerId           string  `json:"customer_id"`
+	CustomerName         string  `json:"customer_name"`
+	AccountNo            string  `json:"account_no"`
+	BranchId             string  `json:"branch_id"`
+	OpenArCents          int64   `json:"open_ar_cents"`
+	PastDueCents         int64   `json:"past_due_cents"`
+	Over60Cents          int64   `json:"over_60_cents"`
+	AvailableCreditCents int64   `json:"available_credit_cents"`
+	UnappliedCreditCents int64   `json:"unapplied_credit_cents"`
+	OldestBucket         string  `json:"oldest_bucket"`
+	OldestBucketKey      string  `json:"oldest_bucket_key"`
+	BrokenPromises       int32   `json:"broken_promises"`
+	DuePromises          int32   `json:"due_promises"`
+	OpenPromises         int32   `json:"open_promises"`
+	PromisedCents        int64   `json:"promised_cents"`
+	NextPromiseDate      *string `json:"next_promise_date,omitempty"`
+	OnHold               bool    `json:"on_hold"`
+	CreditHoldCandidate  bool    `json:"credit_hold_candidate"`
+	ActionNeeded         bool    `json:"action_needed"`
+	Urgency              string  `json:"urgency"`
+	RecommendedAction    string  `json:"recommended_action"`
+}
+
+type BillingARWorklistSummary struct {
+	TotalPastDueCents     int64 `json:"total_past_due_cents"`
+	Over60Cents           int64 `json:"over_60_cents"`
+	BrokenPromises        int32 `json:"broken_promises"`
+	UnappliedCreditsCents int64 `json:"unapplied_credits_cents"`
+}
+
+type BillingARWorklistCounts struct {
+	AllOpen      int32 `json:"all_open"`
+	ActionNeeded int32 `json:"action_needed"`
+	Over60       int32 `json:"over_60"`
+	CreditHold   int32 `json:"credit_hold"`
+}
+
+type BillingARWorklistResponse struct {
+	Rows    []BillingARWorklistRow   `json:"rows"`
+	Summary BillingARWorklistSummary `json:"summary"`
+	Counts  BillingARWorklistCounts  `json:"counts"`
+	AsOf    string                   `json:"as_of"`
+}
+
 type BillingReceiptInput struct {
 	Method         string `json:"method"`
 	AmountCents    int64  `json:"amount_cents"`

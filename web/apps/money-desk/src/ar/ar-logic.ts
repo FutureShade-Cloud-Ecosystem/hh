@@ -276,3 +276,22 @@ export function holdMarks(hold: { auto_placed: boolean; override_until?: string 
 export function canLiftHolds(roleCode: string): boolean {
   return roleCode === "financial_controller" || roleCode === "general_manager";
 }
+
+export function paymentReferenceRequired(method: string): boolean {
+  return ["CHEQUE", "EFT", "WIRE"].includes(method.trim().toUpperCase());
+}
+
+export function worklistActionWord(action: string): string {
+  switch (action) {
+    case "record_payment": return "Record payment";
+    case "review_promise": return "Review promise";
+    case "review_credit_hold": return "Review credit hold";
+    case "apply_credit": return "Review credit";
+    default: return "Open account";
+  }
+}
+
+export function overpaymentPreview(answer: { unapplied_cents: number } | null, previewError: string): boolean {
+  if (answer !== null && answer.unapplied_cents > 0) return true;
+  return previewError.toLowerCase().includes("can take at most");
+}

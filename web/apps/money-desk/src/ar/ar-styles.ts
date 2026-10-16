@@ -178,9 +178,46 @@ const receivablesStyles = css`
   .strip dd { margin: var(--hh-s-4) 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
   .overdue-note { background: var(--hh-row-alt); border-inline-start: 4px solid var(--hh-state-stop); border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); }
 
+  .worklist-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--hh-s-12); margin: 0 0 var(--hh-s-16); }
+  .worklist-strip > div { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); box-shadow: var(--hh-elev-1); }
+  .worklist-strip dt { color: var(--hh-text-dim); font-size: 12px; font-weight: 700; }
+  .worklist-strip dd { margin: var(--hh-s-4) 0 0; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .worklist-tools { align-items: end; }
+  .worklist-search { min-width: min(280px, 100%); flex: 1 1 280px; }
+  .worklist-table td { vertical-align: top; }
+  .worklist-table td.num > span { display: block; }
+  .policy-tabs { margin-top: calc(-1 * var(--hh-s-8)); }
+  .payment-backdrop { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: var(--hh-s-24); background: color-mix(in srgb, var(--hh-text) 42%, transparent); }
+  .payment-modal { width: min(1040px, 100%); max-height: calc(100dvh - 48px); overflow: auto; box-sizing: border-box; background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-24); box-shadow: var(--hh-elev-1); }
+  .payment-modal:focus { outline: none; }
+  .payment-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--hh-s-16); margin-bottom: var(--hh-s-16); }
+  .payment-modal-head p { margin-top: var(--hh-s-4); }
+  .payment-customer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--hh-s-12); align-items: end; padding-bottom: var(--hh-s-16); margin-bottom: var(--hh-s-16); border-bottom: 1px solid var(--hh-line); }
+  .payment-form { min-width: 0; }
+  .payment-checklist { margin: var(--hh-s-16) 0; }
+  .payment-checklist ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); }
+  .payment-checklist li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--hh-s-12); padding: var(--hh-s-8) var(--hh-s-12); border-bottom: 1px solid var(--hh-line); }
+  .payment-checklist li:last-child { border-bottom: 0; }
+  .payment-invoice-main { display: grid; gap: 2px; min-width: 0; }
+
   @media (max-width: 1100px) {
     .cols { grid-template-columns: minmax(0, 1fr); }
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 720px) {
+    .worklist-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .worklist-tools { align-items: stretch; }
+    table.worklist-table thead { display: none; }
+    table.worklist-table, table.worklist-table tbody { display: block; }
+    table.worklist-table tr { display: grid; gap: var(--hh-s-8); margin-bottom: var(--hh-s-12); padding: var(--hh-s-12); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); background: var(--hh-card); box-shadow: var(--hh-elev-1); }
+    table.worklist-table tbody td { display: grid; grid-template-columns: minmax(104px, 32%) minmax(0, 1fr); gap: var(--hh-s-8); padding: 0; border: 0; text-align: start; white-space: normal; }
+    table.worklist-table tbody td::before { content: attr(data-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    table.worklist-table td.num > span { display: inline; }
+    .payment-backdrop { padding: 0; align-items: stretch; }
+    .payment-modal { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; padding: var(--hh-s-16); }
+    .payment-customer { grid-template-columns: minmax(0, 1fr); }
+    .payment-checklist li { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .payment-checklist li > .applied-cell { grid-column: 2 / 4; text-align: start; }
   }
   @media (max-width: 520px) {
     table.stack thead { display: none; }

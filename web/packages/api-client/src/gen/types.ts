@@ -413,6 +413,47 @@ export type BillingInvoiceDetail = {
   last_contact_at?: string | null;
   as_of: string;
 };
+export type BillingARWorklistRow = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  branch_id: string;
+  open_ar_cents: number;
+  past_due_cents: number;
+  over_60_cents: number;
+  available_credit_cents: number;
+  unapplied_credit_cents: number;
+  oldest_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  oldest_bucket_key: "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
+  broken_promises: number;
+  due_promises: number;
+  open_promises: number;
+  promised_cents: number;
+  next_promise_date?: string | null;
+  on_hold: boolean;
+  credit_hold_candidate: boolean;
+  action_needed: boolean;
+  urgency: "broken_promise" | "over_60" | "promise_due" | "credit_hold" | "credit" | "past_due" | "open";
+  recommended_action: "record_payment" | "review_promise" | "review_credit_hold" | "apply_credit" | "open_account";
+};
+export type BillingARWorklistSummary = {
+  total_past_due_cents: number;
+  over_60_cents: number;
+  broken_promises: number;
+  unapplied_credits_cents: number;
+};
+export type BillingARWorklistCounts = {
+  all_open: number;
+  action_needed: number;
+  over_60: number;
+  credit_hold: number;
+};
+export type BillingARWorklistResponse = {
+  rows: BillingARWorklistRow[];
+  summary: BillingARWorklistSummary;
+  counts: BillingARWorklistCounts;
+  as_of: string;
+};
 export type BillingReceiptInput = {
   method: "CASH" | "CARD" | "CHEQUE" | "EFT";
   amount_cents: number;
