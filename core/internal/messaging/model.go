@@ -220,9 +220,56 @@ type Message struct {
 	StateKey     string     `json:"state_key,omitempty"`
 	SupersededBy string     `json:"superseded_by,omitempty"`
 	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-	EditedAt     *time.Time `json:"edited_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	EditedAt     *time.Time          `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time          `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time           `json:"created_at"`
+	Attachments  []MessageAttachment `json:"attachments,omitempty"`
+}
+
+// MessageAttachment is one file or photo attached to a message or channel.
+type MessageAttachment struct {
+	ID             string    `json:"id"`
+	MessageID      *string   `json:"message_id,omitempty"`
+	ChannelID      *string   `json:"channel_id,omitempty"`
+	AttachmentID   *string   `json:"attachment_id,omitempty"`
+	Filename       string    `json:"filename"`
+	ContentType    string    `json:"content_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	StorageKey     string    `json:"storage_key,omitempty"`
+	Kind           string    `json:"kind"`
+	UploadedBy     *string   `json:"uploaded_by,omitempty"`
+	SenderName     string    `json:"sender_name,omitempty"`
+	AppwriteFileID string    `json:"appwrite_file_id,omitempty"`
+	Bucket         string    `json:"bucket,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ChannelAttachmentsResponse carries all photos and files shared in a room with member count.
+type ChannelAttachmentsResponse struct {
+	Photos      []MessageAttachment `json:"photos"`
+	Files       []MessageAttachment `json:"files"`
+	MemberCount int                 `json:"member_count"`
+}
+
+// ChannelAttachmentCreateInput is the payload to attach or upload a file or photo to a channel.
+type ChannelAttachmentCreateInput struct {
+	AttachmentID string  `json:"attachment_id"`
+	MessageID    *string `json:"message_id,omitempty"`
+	Filename     string  `json:"filename"`
+	ContentType  string  `json:"content_type,omitempty"`
+	SizeBytes    *int64  `json:"size_bytes,omitempty"`
+	Kind         string  `json:"kind,omitempty"`
+	StorageKey   string  `json:"storage_key,omitempty"`
+}
+
+// AttachmentMeta is the metadata resolved across the module boundary.
+type AttachmentMeta struct {
+	ID             string
+	AppwriteFileID string
+	Bucket         string
+	Kind           string
+	Mime           string
+	SizeBytes      int64
 }
 
 // EventRef is the structured ref stored on an EVENT message.
@@ -278,6 +325,7 @@ type Caller struct {
 	RoleCode string
 	Scope    string // "GLOBAL" | "BRANCH"
 	Branches map[string]bool
+	OrgID    string
 }
 
 // IsGlobal reports whether the caller reaches every branch (GLOBAL scope).

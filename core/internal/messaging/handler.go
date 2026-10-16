@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -69,6 +70,8 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/attachments", g.RequireStaff(h.staff(h.listChannelAttachments)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/attachments", g.RequireStaff(h.staff(h.createChannelAttachment)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/read", g.RequireStaff(h.staff(h.markRead)))
 	// Feature 1 (0071): forced-ack. POST an ack for one message (mirrors markRead: channel-scoped,
@@ -121,11 +124,19 @@ func (h *Handler) caller(r *http.Request) (Caller, bool) {
 	for b := range sc.Branches {
 		branches[b] = true
 	}
+	var orgID string
+	if scope, ok := authz.StaffScopeFrom(r.Context()); ok {
+		orgID = scope.OrgID
+	}
+	if orgID == "" {
+		orgID = r.Header.Get("X-Org")
+	}
 	return Caller{
 		UserID:   sc.UserID,
 		RoleCode: sc.RoleCode,
 		Scope:    string(sc.Scope),
 		Branches: branches,
+		OrgID:    orgID,
 	}, true
 }
 
@@ -790,10 +801,53 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "customer_id is required")
 	case errors.Is(err, ErrBadAssignSource):
 		httpx.Error(w, http.StatusBadRequest, "source must be one of MANUAL, CLAIM, IMPORT")
+	case errors.Is(err, ErrBadAttachment):
+		httpx.Error(w, http.StatusBadRequest, "invalid attachment payload")
 	case errors.Is(err, errNoDB):
 		httpx.Error(w, http.StatusServiceUnavailable, "database unavailable")
 	default:
 		h.log.Error("messaging: internal error", "method", r.Method, "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+func (h *Handler) listChannelAttachments(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	res, err := h.svc.GetChannelAttachments(r.Context(), c, channelID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) createChannelAttachment(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in ChannelAttachmentCreateInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&in); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	res, err := h.svc.CreateChannelAttachment(r.Context(), c, channelID, in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
 }

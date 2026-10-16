@@ -50,6 +50,9 @@ type fakeStore struct {
 	stamped          map[string]string // approvalID -> last status stamped
 	stampCalls       int               // StampApprovalStatus invocation count
 	displayNames     map[string]string // userID -> display name (decider name resolution)
+	channelAttachments map[string][]MessageAttachment
+	memberCounts       map[string]int
+	singleMessages     map[string]Message
 }
 
 func newFakeStore() *fakeStore {
@@ -73,6 +76,9 @@ func newFakeStore() *fakeStore {
 		tiers:         map[string]string{},
 		acks:          map[string]Ack{},
 		unacked:       map[string][]Message{},
+		channelAttachments: map[string][]MessageAttachment{},
+		memberCounts:       map[string]int{},
+		singleMessages:     map[string]Message{},
 	}
 }
 
@@ -324,6 +330,67 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 // the wall never asks it.
 func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+func (f *fakeStore) ListChannelAttachments(_ context.Context, channelID string) ([]MessageAttachment, error) {
+	return f.channelAttachments[channelID], nil
+}
+
+func (f *fakeStore) CountChannelMembers(_ context.Context, channelID string) (int, error) {
+	if f.memberCounts != nil {
+		if c, ok := f.memberCounts[channelID]; ok {
+			return c, nil
+		}
+	}
+	if f.members[channelID] != nil {
+		return len(f.members[channelID]), nil
+	}
+	return 0, nil
+}
+
+func (f *fakeStore) InsertChannelAttachment(_ context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	var uPtr *string
+	if uploadedBy != "" {
+		uPtr = &uploadedBy
+	}
+	sizeBytes := int64(0)
+	if in.SizeBytes != nil {
+		sizeBytes = *in.SizeBytes
+	}
+	att := MessageAttachment{
+		ID:           "att-" + in.AttachmentID,
+		ChannelID:    &channelID,
+		MessageID:    in.MessageID,
+		AttachmentID: &in.AttachmentID,
+		Filename:     in.Filename,
+		ContentType:  in.ContentType,
+		SizeBytes:    sizeBytes,
+		Kind:         in.Kind,
+		UploadedBy:   uPtr,
+		CreatedAt:    time.Now(),
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return att, nil
+}
+
+func (f *fakeStore) UpsertChannelAttachmentFromMirror(_ context.Context, channelID string, att MessageAttachment) error {
+	if f.channelAttachments == nil {
+		f.channelAttachments = map[string][]MessageAttachment{}
+	}
+	f.channelAttachments[channelID] = append([]MessageAttachment{att}, f.channelAttachments[channelID]...)
+	return nil
+}
+
+func (f *fakeStore) GetMessage(_ context.Context, messageID string) (Message, error) {
+	if f.singleMessages != nil {
+		if m, ok := f.singleMessages[messageID]; ok {
+			return m, nil
+		}
+	}
+	return Message{ID: messageID}, nil
 }
 
 // svcWith builds a service over a fake store (bypassing the *Repository constructor).
