@@ -12097,7 +12097,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-<<<<<<< HEAD
   /api/v1/messaging/people:
     get:
       operationId: messagingListPeople
@@ -12105,15 +12104,6 @@ paths:
         - staff-messaging
       summary: List the org's active staff for the New message picker
       description: "The staffer readable roster the New message picker lists: every active staffer of the caller's org, each with a display name, a role label (the role catalog's display name, never the code) and a branch label. The shape carries no email, no phone, no permission or cost field and no tier. The caller is on the list, flagged is_me. The wall follows the direct message rule: a direct message names no branch, so the picker reaches every branch's staff of the org, exactly the people a direct message may be opened with, less the holders of the platform SUPER_ADMIN role, who are no dealer's staffer and are never listed (the direct message route itself still opens one by id). Ordered by display name then id; cursor paginated."
-=======
-  /api/v1/messaging/groups:
-    post:
-      operationId: messagingCreateGroup
-      tags:
-        - staff-messaging
-      summary: Start a group room with an optional name and any set of staffers
-      description: "A group is the change 7 ruling's named room: any staffer may start one, membership is explicit (never rule filled, like a direct message's), and the room spans branches, so the people named need reach no branch the caller holds. The name is optional: a group started with no name takes its members' display names as its name until a member renames it. The caller is seated as the group's owner and every named staffer as an explicit member; a staffer who is not active is refused with 403 and an id that names no staffer is 404. There is no convergence: every call starts a new group."
->>>>>>> origin/main
       x-role: requireStaff
       x-access:
         surfaces:
@@ -12121,7 +12111,6 @@ paths:
         level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
-<<<<<<< HEAD
         - name: q
           in: query
           required: false
@@ -12137,7 +12126,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessagingPersonPage"
-=======
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/messaging/groups:
+    post:
+      operationId: messagingCreateGroup
+      tags:
+        - staff-messaging
+      summary: Start a group room with an optional name and any set of staffers
+      description: "A group is the change 7 ruling's named room: any staffer may start one, membership is explicit (never rule filled, like a direct message's), and the room spans branches, so the people named need reach no branch the caller holds. The name is optional: a group started with no name takes its members' display names as its name until a member renames it. The caller is seated as the group's owner and every named staffer as an explicit member; a staffer who is not active is refused with 403 and an id that names no staffer is 404. There is no convergence: every call starts a new group."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
       requestBody:
         required: true
         content:
@@ -12151,15 +12159,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessagingChannel"
->>>>>>> origin/main
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-<<<<<<< HEAD
-=======
         "404":
           $ref: "#/components/responses/NotFound"
   /api/v1/messaging/channels/{id}:
@@ -12200,7 +12205,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
->>>>>>> origin/main
   /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
