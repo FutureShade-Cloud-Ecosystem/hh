@@ -20,7 +20,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["dispatch", join("platform", "httpx")]
+const coreSource = ["dispatch", "settings", join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -312,4 +312,246 @@ test("the refusals carry the core's statuses, envelope and sentences", async () 
   const anon = await fetch(`${base}/api/v1/dispatch/loadboard`);
   assert.equal(anon.status, 401);
   holds("Error", await anon.json());
+});
+
+test("scheduling a delivery: the order resolves by its number, the stop fits the contract, and every refusal is the core's sentence", async () => {
+  await reset();
+  const today = (await world()).today;
+  const tomorrow = new Date(`${today}T12:00:00`);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const day = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+  const input = (over) => ({
+    order_id: "ORD-0040", scheduled_date: day, time_window: "AM", contact_name: "", contact_phone: "", address_line: "12 Cedar Court", city: "Julian", postal_code: "92036",
+    latitude: null, longitude: null, instructions: "", commit_state: "REQUESTED", requested_date: "", weight_kg: null, volume_m3: null, pallet_positions: null, ...over,
+  });
+  const made = await call("POST", "/api/v1/dispatch/stops", input());
+  assert.equal(made.status, 201);
+  holds("DispatchStop", made.json);
+  assert.equal(made.json.order_no, "ORD-0040");
+  assert.equal(made.json.commit_state, "REQUESTED");
+  assert.equal(made.json.requested_date, day);
+  assert.equal(made.json.status, "READY");
+  const board = await call("GET", `/api/v1/dispatch/board?date=${day}`);
+  assert.ok(board.json.unassigned.some((s) => s.order_no === "ORD-0040"), "the new stop is on that day's board, not on a truck");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0040" })), 409, "this order already has a delivery scheduled for");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: " " })), 400, "enter an order number (like #SO-TRT-1041) or an order id");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "banana" })), 400, "is not an order number, enter a number like #SO-TRT-1041, or paste the order id");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-9999" })), 404, "not found");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0041" })), 409, "confirm the order before scheduling a delivery for it");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0042" })), 409, "cannot be scheduled");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "" })), 400, "scheduled_date is required (YYYY-MM-DD)");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "soon" })), 400, "scheduled_date must be YYYY-MM-DD");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "2099-01-01" })), 422, "planning horizon");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", latitude: 32.7 })), 400, "latitude and longitude must be given together");
+});
+
+test("the registry: trucks and drivers are created and rewritten, retired and brought back, and every answer fits the contract", async () => {
+  await reset();
+  const branch = (await call("GET", "/api/v1/branches")).json[0].id;
+  const truckIn = (over) => ({ id: "", branch_id: branch, code: "Truck 05", name: "Truck 05, stake body", truck_type: "FLATBED", capacity_kg: 5000, is_active: true, ...over });
+  const made = await call("POST", "/api/v1/dispatch/trucks", truckIn());
+  assert.equal(made.status, 201);
+  holds("DispatchCreatedRef", made.json);
+  const listed = await call("GET", "/api/v1/dispatch/trucks");
+  assert.equal(listed.json.items.length, 5);
+  holds("DispatchTruckPage", listed.json);
+  const row = listed.json.items.find((t) => t.id === made.json.id);
+  const renamed = await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, name: "Truck 05, longer deck", capacity_kg: 6000, capacity_m3: 9, pallet_positions: 8 });
+  assert.equal(renamed.status, 200);
+  holds("DispatchTruck", renamed.json);
+  assert.equal(renamed.json.name, "Truck 05, longer deck");
+  assert.equal(renamed.json.capacity_m3, 9);
+  const retired = await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...renamed.json, is_active: false });
+  assert.equal(retired.json.is_active, false);
+  assert.equal((await call("GET", "/api/v1/dispatch/trucks")).json.items.length, 4, "a retired truck leaves the pick list");
+  const all = await call("GET", "/api/v1/dispatch/trucks?include_inactive=true");
+  assert.equal(all.json.items.length, 5, "the registry still lists it");
+  holds("DispatchTruckPage", all.json);
+  const driverIn = (over) => ({ id: "", branch_id: branch, name: "Driver D (demo)", phone: "619-555-0144", licence_class: "B", is_active: true, ...over });
+  const driver = await call("POST", "/api/v1/dispatch/drivers", driverIn());
+  assert.equal(driver.status, 201);
+  holds("DispatchCreatedRef", driver.json);
+  const drivers = await call("GET", "/api/v1/dispatch/drivers?include_inactive=true");
+  holds("DispatchDriverPage", drivers.json);
+  const drow = drivers.json.items.find((d) => d.id === driver.json.id);
+  const linked = await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, { ...drow, user_id: "d0200000-0000-4000-9000-000000000001", is_active: false });
+  assert.equal(linked.status, 200);
+  holds("DispatchDriver", linked.json);
+  assert.equal(linked.json.user_id, "d0200000-0000-4000-9000-000000000001");
+  assert.equal((await call("GET", "/api/v1/dispatch/drivers")).json.items.length, 3);
+  // The core's sentences.
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: " " })), 400, "a truck needs a code");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 06", truck_type: "SPACESHIP" })), 400, "unknown truck_type");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 06", capacity_kg: -1 })), 400, "capacity_kg must not be negative");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 01" })), 409, "a truck with that code already exists at this branch");
+  refused(await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, code: "Truck 01" }), 409, "a truck with that code already exists at this branch");
+  refused(await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, branch_id: "other" }), 400, "a truck's branch does not move");
+  refused(await call("POST", "/api/v1/dispatch/drivers", driverIn({ name: " " })), 400, "a driver needs a name");
+  refused(await call("POST", "/api/v1/dispatch/drivers", driverIn({ user_id: "not-an-id" })), 400, "user_id must be a user id, or left out for a driver with no login");
+  refused(await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, { ...drow, branch_id: "other" }), 400, "a driver's branch does not move");
+  // Below the manage level the role gate answers a bare Forbidden on the writes and still serves the reads.
+  await post("/_stub/caller", { can_manage: false });
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 07" })), 403, "Forbidden");
+  refused(await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, drow), 403, "Forbidden");
+  assert.equal((await call("GET", "/api/v1/dispatch/trucks")).status, 200);
+});
+
+test("will call: a code is minted once, listed without its token, cancelled once, and every refusal is the core's sentence", async () => {
+  await reset();
+  const mint = (order) => call("POST", "/api/v1/dispatch/will-call", { order_id: order, ttl_hours: 0 });
+  const minted = await mint("ORD-0044");
+  assert.equal(minted.status, 201);
+  holds("DispatchMintedPickup", minted.json);
+  assert.equal(minted.json.status, "ACTIVE");
+  assert.ok(minted.json.token.length >= 32, "the raw token rides the mint answer");
+  const listed = await call("GET", "/api/v1/dispatch/will-call?order_id=ORD-0044");
+  assert.equal(listed.status, 200);
+  holds("DispatchWillCallPage", listed.json);
+  assert.equal(listed.json.items.length, 1);
+  assert.equal("token" in listed.json.items[0], false, "the list never carries a token");
+  const history = await call("GET", "/api/v1/dispatch/will-call?order_id=ORD-0047");
+  holds("DispatchWillCallPage", history.json);
+  assert.deepEqual(history.json.items.map((w) => w.status).sort(), ["CONFIRMED", "REVOKED"]);
+  refused(await mint("ORD-0044"), 409, "this order already has a live pickup code, revoke it before printing another");
+  const revoked = await call("POST", `/api/v1/dispatch/will-call/${minted.json.id}/revoke`);
+  assert.equal(revoked.status, 200);
+  holds("DispatchWillCallRevokeResult", revoked.json);
+  refused(await call("POST", `/api/v1/dispatch/will-call/${minted.json.id}/revoke`), 409, "this pickup code is already");
+  refused(await call("POST", "/api/v1/dispatch/will-call/not-an-id/revoke"), 404, "not found");
+  refused(await mint("ORD-0043"), 409, "not will-call, a rack tag prints only for a will-call order");
+  refused(await mint("ORD-0041"), 409, "confirm the order before printing a pickup code");
+  refused(await mint("ORD-0042"), 409, "this order was cancelled");
+  refused(await mint("ORD-0045"), 409, "nothing has been picked for this order yet");
+  refused(await mint("ORD-0046"), 409, "This order cannot reach picking until the balance is paid.");
+  refused(await mint("ORD-9999"), 404, "not found");
+  refused(await mint(" "), 400, "enter an order number (like #SO-TRT-1041) or an order id");
+  refused(await mint("banana"), 400, "is not an order number");
+  refused(await call("GET", "/api/v1/dispatch/will-call?order_id=ORD-9999"), 404, "not found");
+  await post("/_stub/caller", { can_manage: false });
+  refused(await call("POST", `/api/v1/dispatch/will-call/${history.json.items[0].id}/revoke`), 403, "Forbidden");
+  assert.equal((await mint("ORD-0044")).status, 201, "minting is work, not manage");
+});
+
+test("the dispatch rules: read, rewritten, each change recorded with who and when, and every refusal is the core's sentence", async () => {
+  await reset();
+  const branch = (await call("GET", "/api/v1/branches")).json[0].id;
+  const read = await call("GET", `/api/v1/dispatch/policy?branch_id=${branch}`);
+  assert.equal(read.status, 200);
+  holds("DispatchPolicy", read.json);
+  const empty = await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`);
+  holds("DispatchPolicyChangePage", empty.json);
+  assert.deepEqual(empty.json.items, []);
+  const saved = await call("PUT", "/api/v1/dispatch/policy", { ...read.json, branch_id: branch, commit_prompt_hours: 24, reopen_policy: "ANYONE" });
+  assert.equal(saved.status, 200);
+  holds("DispatchPolicy", saved.json);
+  assert.equal(saved.json.commit_prompt_hours, 24);
+  const board = await call("GET", "/api/v1/dispatch/loadboard");
+  assert.equal(board.json.policy.reopen_policy, "ANYONE", "the board reads the rule the screen just saved");
+  const trail = await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`);
+  holds("DispatchPolicyChangePage", trail.json);
+  assert.deepEqual(trail.json.items.map((c) => [c.field, c.before, c.after]).sort(), [["commit_prompt_hours", "48", "24"], ["reopen_policy", "MANAGER", "ANYONE"]]);
+  assert.ok(trail.json.items.every((c) => c.who && c.when), "every change carries who and when");
+  const same = await call("PUT", "/api/v1/dispatch/policy", { ...saved.json, branch_id: branch });
+  assert.equal(same.status, 200);
+  assert.equal((await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`)).json.items.length, 2, "saving nothing new records nothing");
+  const put = (over) => call("PUT", "/api/v1/dispatch/policy", { ...saved.json, branch_id: branch, ...over });
+  refused(await put({ commit_prompt_hours: 999 }), 422, "commit_prompt_hours must be between 0 and 336");
+  refused(await put({ reopen_policy: "EVERYONE" }), 422, "reopen_policy must be ANYONE, MANAGER or NOBODY");
+  refused(await put({ load_value_visibility: "SOME" }), 422, "cost_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+  refused(await put({ commit_horizon_weeks: 99 }), 422, "commit_horizon_weeks must be between 1 and 26");
+  refused(await put({ working_view_days: 200 }), 422, "working_view_days must be between 1 and 90");
+  refused(await put({ driver_session_hours: 500 }), 422, "driver_session_hours must be between 1 and");
+  refused(await put({ freight_split_mode: "ODD" }), 422, "freight_split_mode must be EVEN or MANUAL");
+  // A manager who is not on the setters list meets the wall; the read stays open and the trail is a manager's.
+  await post("/_stub/caller", { can_set_policy: false });
+  refused(await put({ commit_prompt_hours: 12 }), 403, "Forbidden");
+  assert.equal((await call("GET", `/api/v1/dispatch/policy?branch_id=${branch}`)).status, 200);
+  await post("/_stub/caller", { can_set_policy: true, can_manage: false });
+  refused(await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`), 403, "Forbidden");
+});
+
+test("the manifest and the scan trail: a run's document, a print recorded, an order's pallets by stage, and the core's sentences", async () => {
+  await reset();
+  const { stop, run } = await ids();
+  const doc = await fetch(`${base}/api/v1/dispatch/runs/${run("RUN-PLM-1").id}/manifest`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
+  assert.equal(doc.status, 200);
+  assert.match(doc.headers.get("content-type") ?? "", /^text\/html/);
+  assert.equal(doc.headers.get("cache-control"), "no-store", "a manifest is a point in time document");
+  const markup = await doc.text();
+  assert.ok(markup.includes("Run manifest RUN-PLM-1"));
+  assert.ok(markup.includes("ORD-0012"));
+  const printed = await call("POST", `/api/v1/dispatch/runs/${run("RUN-PLM-1").id}/manifest/print`);
+  assert.equal(printed.status, 201);
+  holds("DispatchPrintJobRef", printed.json);
+  assert.equal(printed.json.doc_type, "DELIVERY_DOC");
+  refused(await call("GET", "/api/v1/dispatch/runs/00000000-0000-4000-9000-000000000000/manifest"), 404, "not found");
+  refused(await call("POST", "/api/v1/dispatch/runs/00000000-0000-4000-9000-000000000000/manifest/print"), 404, "not found");
+  const trail = await call("GET", `/api/v1/dispatch/scan-trail?order_id=${stop("ORD-0012").order_id}`);
+  assert.equal(trail.status, 200);
+  holds("DispatchScanTrail", trail.json);
+  assert.equal(trail.json.complete, false);
+  assert.equal(trail.json.loads.length, 2);
+  assert.deepEqual(trail.json.loads.map((l) => l.furthest).sort(), ["DELIVERED", "PICKED"]);
+  const quiet = await call("GET", `/api/v1/dispatch/scan-trail?order_id=${stop("ORD-0029").order_id}`);
+  holds("DispatchScanTrail", quiet.json);
+  assert.deepEqual(quiet.json.loads, []);
+  refused(await call("GET", "/api/v1/dispatch/scan-trail"), 400, "order_id is required");
+  refused(await call("GET", "/api/v1/dispatch/scan-trail?order_id=00000000-0000-4000-9000-000000000000"), 404, "not found");
+});
+
+test("split freight: an ordinary split applies, a raise above the quote parks and converges, the card reads back, and every refusal is the core's sentence", async () => {
+  await reset();
+  const { stop } = await ids();
+  const split = (order, over) => call("POST", "/api/v1/dispatch/freight-split", { order_id: stop(order).order_id, loads: 2, ...over });
+  // ORD-0012: freight 300.00 quoted at 300.00. Dividing it is the ordinary work and never gates.
+  const done = await split("ORD-0012", {});
+  assert.equal(done.status, 200);
+  holds("DispatchSplitResult", done.json);
+  assert.equal(done.json.parked, undefined);
+  assert.equal(done.json.freight_cents, 30000);
+  assert.deepEqual(done.json.loads.map((l) => l.freight_cents), [15000, 15000]);
+  assert.deepEqual(done.json.loads.map((l) => l.load_seq), [1, 2]);
+  const again = await split("ORD-0012", {});
+  assert.equal(again.status, 200, "the same ask twice leaves the same rows");
+  assert.equal(again.json.loads.length, 2);
+  const odd = await split("ORD-0012", { loads: 3 });
+  assert.deepEqual(odd.json.loads.map((l) => l.freight_cents), [10000, 10000, 10000]);
+  const hand = await split("ORD-0012", { loads: 3, amounts: [20000, 5000, 5000] });
+  assert.equal(hand.json.override, true);
+  // ORD-0014: freight 100.00 quoted at 100.00. Asking 150.00 is a rise nobody has agreed to: it parks.
+  const parked = await split("ORD-0014", { freight_cents: 15000 });
+  assert.equal(parked.status, 200);
+  holds("DispatchSplitResult", parked.json);
+  assert.equal(parked.json.parked.state, "PARKED");
+  assert.equal(parked.json.freight_cents, 10000, "a parked ask leaves the charge as it was");
+  assert.equal(parked.json.loads.length, 1, "no truck is minted at ask time");
+  assert.deepEqual(parked.json.parked.money, { quoted_freight_cents: 10000, current_freight_cents: 10000, proposed_freight_cents: 15000, delta_cents: 5000 });
+  const twin = await split("ORD-0014", { freight_cents: 15000 });
+  assert.equal(twin.json.parked.id, parked.json.parked.id, "an identical re-ask converges on the one parked raise");
+  refused(await split("ORD-0014", { freight_cents: 16000 }), 409, "a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
+  const card = await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`);
+  assert.equal(card.status, 200);
+  holds("DispatchFreightRaiseView", card.json);
+  await post("/_stub/raise", { id: parked.json.parked.id, state: "APPLIED" });
+  assert.equal((await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`)).json.state, "APPLIED");
+  // ORD-0021 was never quoted: nothing to be above, so a raise applies.
+  const free = await split("ORD-0021", { freight_cents: 25000 });
+  assert.equal(free.json.parked, undefined);
+  assert.equal(free.json.freight_cents, 25000);
+  // The core's sentences.
+  refused(await split("ORD-0029", {}), 409, "this order carries no freight to split");
+  refused(await split("ORD-0012", { loads: 11 }), 422, "an order goes out on between 1 and");
+  refused(await split("ORD-0012", { loads: 1 }), 409, "cancel one before splitting into");
+  refused(await split("ORD-0012", { loads: 3, amounts: [1, 2] }), 422, "amounts and the order is on");
+  refused(await split("ORD-0012", { loads: 3, amounts: [10000, 10000, 9000] }), 422, "they have to match");
+  refused(await split("ORD-0012", { loads: 3, freight_cents: 1000 }), 422, "lowering it is a credit note, not a split");
+  refused(await split("ORD-0012", { loads: 3, freight_cents: -5 }), 422, "freight cannot be negative");
+  refused(await call("POST", "/api/v1/dispatch/freight-split", { order_id: "ORD-9999", loads: 2 }), 404, "not found");
+  refused(await call("GET", "/api/v1/dispatch/freight-raises/00000000-0000-4000-9000-000000000000"), 404, "not found");
+  // A caller the load value policy refuses may not divide freight, and reads a parked card with no money key at all.
+  await post("/_stub/caller", { can_see_value: false });
+  refused(await split("ORD-0012", {}), 403, "forbidden");
+  const blind = await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`);
+  holds("DispatchFreightRaiseView", blind.json);
+  assert.equal("money" in blind.json, false, "absent is absent: no key, no zero, no null");
 });
