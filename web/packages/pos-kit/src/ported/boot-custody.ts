@@ -45,7 +45,11 @@ export type RoleCode =
   | "procurement_manager"
   | "driver"
   | "financial_controller"
-  | "logistics_manager";
+  | "logistics_manager"
+  | "general_manager"
+  | "hr"
+  | "branch_manager"
+  | "outside_sales";
 
 /** The demo flow id each live role maps to (the flows table's own mapping; the persona route takes the same ids). */
 export const ROLE_FLOWS: Readonly<Record<RoleCode, string>> = {
@@ -58,6 +62,10 @@ export const ROLE_FLOWS: Readonly<Record<RoleCode, string>> = {
   driver: "driver",
   financial_controller: "financial-controller",
   logistics_manager: "logistics-manager",
+  general_manager: "general-manager",
+  hr: "hr",
+  branch_manager: "branch-manager",
+  outside_sales: "outside-sales",
 };
 
 export const APP_IDS = [
@@ -79,16 +87,16 @@ export type AppId = (typeof APP_IDS)[number];
  * listed has no screens in the app and goes back to the front door.
  */
 export const APP_ROLES: Readonly<Record<AppId, readonly RoleCode[]>> = {
-  "counter-till": ["inside_sales", "sales_manager"],
-  "quote-desk": ["inside_sales", "sales_manager"],
-  "manager-home": ["sales_manager", "yard_manager", "payables_receivables", "procurement_manager", "financial_controller", "logistics_manager"],
+  "counter-till": ["inside_sales", "sales_manager", "branch_manager"],
+  "quote-desk": ["inside_sales", "sales_manager", "branch_manager", "outside_sales"],
+  "manager-home": ["sales_manager", "yard_manager", "payables_receivables", "procurement_manager", "financial_controller", "logistics_manager", "general_manager", "branch_manager"],
   "drive-run": ["driver"],
   "buying-and-stock": ["yard_manager", "procurement_manager"],
-  "money-desk": ["payables_receivables", "financial_controller"],
+  "money-desk": ["payables_receivables", "financial_controller", "general_manager"],
   "yard-pick": ["yard_manager", "yard_team"],
-  "dealer-admin": ["sales_manager", "financial_controller"],
+  "dealer-admin": ["sales_manager", "financial_controller", "general_manager", "hr"],
   // The role template admits every live role until the role that copies it narrows this list (ROLE-GOES-LIVE.md).
-  "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller", "logistics_manager"],
+  "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller", "logistics_manager", "general_manager", "hr", "branch_manager", "outside_sales"],
 };
 
 /** What an app needs from the session the exchange named, in its own terms. */
