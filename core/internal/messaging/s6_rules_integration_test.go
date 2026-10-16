@@ -123,8 +123,12 @@ func TestIntegration_SetVisibility_By_Admin_Writes_Private(t *testing.T) {
 	repo := NewRepository(intPool(t))
 	svc := NewService(repo)
 
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+
 	sam := samCaller()
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	founder := Caller{UserID: sam.UserID, RoleCode: "GENERAL_MANAGER", Scope: "BRANCH", Branches: sam.Branches}
+	room, _, err := svc.CreateChannel(ctx, founder, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("set-vis probe %d", time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -133,9 +137,6 @@ func TestIntegration_SetVisibility_By_Admin_Writes_Private(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = intPool(t).Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-
-	prev := publishDefaultRolesForTest(t)
-	defer PublishRoleConfig(prev)
 
 	if err := svc.SetVisibility(ctx, sam, room.ID, VisibilityPrivate); err != nil {
 		t.Fatalf("owner set PRIVATE: %v", err)
@@ -172,8 +173,12 @@ func TestIntegration_HandAdded_Member_Carries_Reason_And_Adder(t *testing.T) {
 	repo := NewRepository(pool)
 	svc := NewService(repo)
 
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+
 	sam := samCaller()
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	founder := Caller{UserID: sam.UserID, RoleCode: "GENERAL_MANAGER", Scope: "BRANCH", Branches: sam.Branches}
+	room, _, err := svc.CreateChannel(ctx, founder, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("hand-add probe %d", time.Now().UnixNano()),
 	})
 	if err != nil {
@@ -292,10 +297,14 @@ func TestIntegration_Delete_Channel_By_Admin_Archives(t *testing.T) {
 	repo := NewRepository(pool)
 	svc := NewService(repo)
 
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+
 	sam := samCaller()
+	founder := Caller{UserID: sam.UserID, RoleCode: "GENERAL_MANAGER", Scope: "BRANCH", Branches: sam.Branches}
 	gm := Caller{UserID: uAlexMorgan, RoleCode: "GENERAL_MANAGER", Scope: "GLOBAL"}
 	name := fmt.Sprintf("delete probe %d", time.Now().UnixNano())
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	room, _, err := svc.CreateChannel(ctx, founder, CreateChannelInput{
 		Kind: KindTeam, Name: name, Slug: name,
 	})
 	if err != nil {
@@ -304,9 +313,6 @@ func TestIntegration_Delete_Channel_By_Admin_Archives(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-
-	prev := publishDefaultRolesForTest(t)
-	defer PublishRoleConfig(prev)
 
 	// A plain member cannot delete the room: the settings panel is admins
 	// only, and the call returns the same wall the route carries. The
