@@ -69,7 +69,7 @@ import (
 )
 
 // shapeCensusWantPages pins the page shape operation count the document
-// carries (120 at this census's cut: 114 staff lists, 3 tenant lists, the
+// carries (121 at this census's cut: 115 staff lists, 3 tenant lists, the
 // sync pull, the public products list and the messaging mentions view, all
 // answered at 200). The pin moved
 // to 110 when ten inventory reads stopped being page shapes: the contract
@@ -83,7 +83,7 @@ import (
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 103
+const shapeCensusWantPages = 104
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
