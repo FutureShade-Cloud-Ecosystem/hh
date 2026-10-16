@@ -159,15 +159,22 @@ type custSpec struct {
 // Trenton, beside its quotes. Its older order book stays where it always was, on the other
 // branch's dashboards, which read orders.branch_id and never the customer's home; the repair for
 // databases seeded before this ruling sits in the demoseed_repair pair.
+//
+// THE SAME RULING HOLDS C04 AND C08. Orders O05 and O07 sit at the branch the demo logins work
+// (the yard's open picks live there), and their accounts, Harbourview Builders and the County, were
+// homed at the other branch, so both held documents at Trenton and were unfindable by name in the
+// staff search there (TestDemoWorld_CustomerSearch walks every customer with a document at that
+// branch). They are homed there now; their older book and invoices stay on the other branch's
+// dashboards, which read orders.branch_id and never the customer's home.
 var demoCustomers = []custSpec{
 	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 1, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
 	{"C03", "Quinte Paving & Design (demo)", "CONTRACTOR", 45, 7_500_000, 1, false},
-	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 0, false},
+	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 1, false},
 	{"C05", "Cedar Hollow Homes (demo)", "BUILDER", 30, 4_000_000, 1, false},
 	{"C06", "M. Okafor (demo retail)", "RETAIL", 0, 0, 0, false},
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
-	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 0, false},
+	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 1, false},
 	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
 	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
@@ -282,7 +289,7 @@ var demoOrders = []orderSpec{
 	{"O02", 0, "C04", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P04", "180.0000", 180)}},
 	{"O03", 1, "C03", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P07", "18.0000", 18), ln("P08", "6.0000", 6)}},
 	{"O04", 1, "C02", "CONFIRMED", "PICKUP", 1, 0, []lineSpec{ln("P02", "220.0000", 220)}},
-	{"O05", 0, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
+	{"O05", 1, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
 	// The Logistics Manager's load board material (roadmap 2.4): two open delivery orders with
 	// requested dates and NO stop, so the first Dispatch increment's walk builds its own load
 	// rather than inheriting one. Every other open delivery order above sits on a stop already;
@@ -291,8 +298,8 @@ var demoOrders = []orderSpec{
 	// renames it, the Point Loma main yard), the yard the demo populate converges the persona onto.
 	{"O29", 1, "C03", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
 	{"O30", 1, "C05", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
-	{"O06", 0, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
-	{"O07", 0, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
+	{"O06", 1, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
+	{"O07", 1, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
 	{"O08", 1, "C05", "PICKING", "WILL_CALL", 1, 0, []lineSpec{ln("P09", "12.0000", 12)}},
 	{"O09", 0, "C01", "READY", "DELIVERY", 2, 0, []lineSpec{ln("P02", "150.0000", 150)}},
 	{"O10", 0, "C06", "READY", "WILL_CALL", 1, 0, []lineSpec{ln("P10", "6.0000", 6)}},
@@ -456,7 +463,7 @@ type driverSpec struct {
 //
 // WHICH DRIVER. The persona has to be a driver with a DAY, or linking the login only upgrades the
 // run sheet from an error to an empty list. D1 owns R1 (completed, two days back, both stops
-// DELIVERED with a real sealed POD), R4 (TODAY) and R5 (tomorrow), a past, a present and a future,
+// DELIVERED with a real sealed POD), R4 (TODAY) and R8 (tomorrow), a past, a present and a future,
 // which is the whole walkable set. D2 owns one dispatched run, D3 one completed run, D4 the
 // deliberately over-capacity one. So: D1.
 //
@@ -501,15 +508,17 @@ type runSpec struct {
 	Notes  string
 }
 
-// Seven runs over six days: two already completed, one out on the road right now, four planned
-// ahead. A PLANNED run with no truck and no driver is legal and common (the board's "needs a crew"
-// column), and R6 is exactly that.
+// Eight runs over six days: two already completed, one out on the road right now, five planned
+// ahead (R5 and R8 share tomorrow: R5 is Point Loma's, with the three orders that moved there and
+// a Point Loma truck and driver; R8 is the Driver persona's own tomorrow, one Julian stop). A PLANNED run with no truck and no driver is legal and common (the board's
+// "needs a crew" column), and R6 is exactly that.
 var demoRuns = []runSpec{
 	{"R1", 0, "T1", "D1", -2, "COMPLETED", "Kingston east loop"},
 	{"R2", 1, "T3", "D3", -1, "COMPLETED", "Trenton bulk run"},
 	{"R3", 0, "T2", "D2", 0, "DISPATCHED", "Boom set, wall block"},
 	{"R4", 0, "T1", "D1", 0, "PLANNED", "Kingston afternoon"},
-	{"R5", 0, "T1", "D1", 1, "PLANNED", "Kingston west loop"},
+	{"R5", 1, "T3", "D3", 1, "PLANNED", "West loop, the three moved orders"},
+	{"R8", 0, "T1", "D1", 1, "PLANNED", "Kingston morning drop"},
 	{"R6", 1, "", "", 2, "PLANNED", "Needs a truck and a driver"},
 	{"R7", 1, "T4", "D4", 3, "PLANNED", "Small drops, over capacity, on purpose"},
 }
@@ -543,7 +552,8 @@ type stopSpec struct {
 //
 //	R4 · FLAT-1  9000kg  · 1400 + 1750          =  3150kg  →  35%   green
 //	R1 · FLAT-1  9000kg  · 4100 + 980           =  5080kg  →  56%   green/amber boundary
-//	R5 · FLAT-1  9000kg  · 3200 + 2100 + 1250   =  6550kg  →  73%   yellow
+//	R5 · DUMP-1  13000kg · 3200 + 2100 + 1250  =  6550kg  →  50%   green
+//	R8 · FLAT-1  9000kg  · 2600                 =  2600kg  →  29%   green
 //	R2 · DUMP-1  13000kg · 9800 + 2340          = 12140kg  →  93%   red, and still legal
 //	R7 · PICK-1  1100kg  · 900 + 620            =  1520kg  → 138%   OVER CAPACITY, deliberately
 //	R3 · BOOM-1  6500kg  · 2900 + (one unweighed)         →  partial: the honest "not weighed" case,
@@ -561,13 +571,13 @@ var demoStops = []stopSpec{
 	// planned, the fill bands
 	{"SP07", "R4", 0, "O01", 1, 0, "READY", "PM", "Driveway, tight turn", "613-555-0207", "233 Johnson St", "Kingston", "K7L 1Y4", 44.2299, -76.4951, "STANDARD", "", "1400.0000", "", ""},
 	{"SP08", "R4", 0, "O09", 2, 0, "READY", "PM", "Side entrance", "613-555-0208", "640 Cataraqui Woods Dr", "Kingston", "K7P 1T9", 44.2669, -76.5834, "STANDARD", "", "1750.0000", "", ""},
-	{"SP09", "R5", 0, "O06", 1, 1, "READY", "AM", "Foreman on site", "613-555-0209", "95 Bagot St", "Kingston", "K7L 3E7", 44.2295, -76.4831, "STANDARD", "", "3200.0000", "", ""},
-	{"SP10", "R5", 0, "O07", 2, 1, "READY", "AM", "Large drop, clear the pad", "613-555-0210", "1201 Division St", "Kingston", "K7K 6X4", 44.2711, -76.5089, "STANDARD", "", "2100.0000", "", ""},
-	{"SP11", "R5", 0, "O05", 3, 1, "READY", "PM", "Municipal yard", "613-555-0211", "216 Ontario St", "Kingston", "K7L 2Z3", 44.2286, -76.4809, "STANDARD", "", "1250.0000", "", ""},
+	{"SP09", "R5", 1, "O06", 1, 1, "READY", "AM", "Foreman on site", "613-555-0209", "95 Bagot St", "Kingston", "K7L 3E7", 44.2295, -76.4831, "STANDARD", "", "3200.0000", "", ""},
+	{"SP10", "R5", 1, "O07", 2, 1, "READY", "AM", "Large drop, clear the pad", "613-555-0210", "1201 Division St", "Kingston", "K7K 6X4", 44.2711, -76.5089, "STANDARD", "", "2100.0000", "", ""},
+	{"SP11", "R5", 1, "O05", 3, 1, "READY", "PM", "Municipal yard", "613-555-0211", "216 Ontario St", "Kingston", "K7L 2Z3", 44.2286, -76.4809, "STANDARD", "", "1250.0000", "", ""},
 	{"SP12", "R7", 1, "O03", 1, 3, "READY", "AM", "Residential", "613-555-0212", "44 Quinte St", "Trenton", "K8V 3S9", 44.0994, -77.5738, "STANDARD", "", "900.0000", "", ""},
 	{"SP13", "R7", 1, "O12", 2, 3, "READY", "AM", "Residential", "613-555-0213", "7 Marmora St", "Trenton", "K8V 4R4", 44.1042, -77.5691, "STANDARD", "", "620.0000", "", ""},
 	// unassigned, scheduled for a day, not yet on a truck. Most stops are born here.
-	{"SP14", "", 0, "O19", 0, 0, "READY", "", "Awaiting a truck", "613-555-0214", "801 Development Dr", "Kingston", "K7M 5V6", 44.2603, -76.5726, "STANDARD", "", "2600.0000", "", ""},
+	{"SP14", "R8", 0, "O19", 1, 1, "READY", "AM", "Site office", "613-555-0214", "801 Development Dr", "Kingston", "K7M 5V6", 44.2603, -76.5726, "STANDARD", "", "2600.0000", "", ""},
 	{"SP15", "", 1, "O14", 0, 1, "READY", "AM", "Awaiting a truck", "613-555-0215", "35 Monogram Pl", "Trenton", "K8V 6S3", 44.0967, -77.5647, "STANDARD", "", "1180.0000", "", ""},
 	{"SP16", "", 1, "O04", 0, 2, "READY", "", "Awaiting a truck", "613-555-0216", "160 Dundas St E", "Trenton", "K8V 1L6", 44.1015, -77.5688, "MTO", "Bullnose cut to order", "", "", ""},
 	{"SP17", "", 0, "O22", 0, -1, "CANCELLED", "", "Customer collected instead", "613-555-0217", "19 Union St", "Kingston", "K7L 2N8", 44.2263, -76.4966, "STANDARD", "", "", "", ""},
@@ -609,11 +619,16 @@ type taskSpec struct {
 	Weight   string
 }
 
+// The open PICK tasks (QUEUED, PUSHED) sit where the yard team can reach them: branch 1, the Point
+// Loma main yard the demo populate converges the yard persona onto, with their orders (O05, O06,
+// O07), because a task's branch is its order's branch. K03 (O01) stays at branch 0 so the other
+// branch's view still holds an open pick. The stops, runs and scans of O05 to O07 stay where they
+// were: dispatch reads an order through a LEFT JOIN with no branch fence.
 var demoTasks = []taskSpec{
-	{"K01", "O06", 0, "PICK", "QUEUED", "NORMAL", 2, 0, "", "", 0, ""},
-	{"K02", "O07", 0, "PICK", "QUEUED", "HIGH", 5, 0, "", "", 0, ""},
+	{"K01", "O06", 1, "PICK", "QUEUED", "NORMAL", 2, 0, "", "", 0, ""},
+	{"K02", "O07", 1, "PICK", "QUEUED", "HIGH", 5, 0, "", "", 0, ""},
 	{"K03", "O01", 0, "PICK", "PUSHED", "URGENT", 9, 0, "", "", 4, ""},
-	{"K04", "O05", 0, "PICK", "PUSHED", "NORMAL", 26, 0, "", "", 20, ""},
+	{"K04", "O05", 1, "PICK", "PUSHED", "NORMAL", 26, 0, "", "", 20, ""},
 	{"K05", "O02", 0, "PICK", "ACCEPTED", "NORMAL", 3, 0, "", "", 0, ""},
 	{"K06", "O03", 1, "PICK", "ACCEPTED", "LOW", 4, 0, "", "", 0, ""},
 	{"K07", "O08", 1, "PICK", "IN_PROGRESS", "NORMAL", 1, 0, "", "", 0, ""},
@@ -666,7 +681,7 @@ var demoScans = []scanSpec{
 	{"SC2", "O15", "SP01", demoPrefix + "LOAD-0041", "PICKED", 0, 54, ""},
 	{"SC3", "O15", "SP01", demoPrefix + "LOAD-0041", "IN_TRANSIT", 0, 50, ""},
 	{"SC4", "O15", "SP01", demoPrefix + "LOAD-0041", "DELIVERED", 0, 48, "Signed at the gate"},
-	{"SC5", "O07", "", demoPrefix + "LOAD-0057", "YARD", 0, 6, "Two skids staged"},
+	{"SC5", "O07", "", demoPrefix + "LOAD-0057", "YARD", 1, 6, "Two skids staged"},
 	{"SC6", "O02", "SP05", demoPrefix + "LOAD-0058", "IN_TRANSIT", 0, 2, ""},
 	{"SC7", "O03", "", demoPrefix + "LOAD-0059", "RECEIVED", 1, 30, "Supplier drop, awaiting a stop"},
 }
