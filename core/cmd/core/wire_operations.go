@@ -306,6 +306,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		}
 	}
 	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if pool != nil {
+		// The pull carries each task's ticket, built by the same feed the REST door reads.
+		pickSync.WithPickSource(newDispatchPickSource(pool, orderRepo, log))
+	}
 	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
