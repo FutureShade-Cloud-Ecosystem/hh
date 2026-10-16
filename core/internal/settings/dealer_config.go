@@ -1,9 +1,9 @@
 package settings
 
 // dealer_config.go, the dealer's own configuration: the one seam every module reads the dealer's
-// currency, tax jurisdiction and business day zone through. The four keys live in system_settings
-// (migration 0014 planted currency, tax_region and hst_rate_bps; business_zone is new and absent
-// until a dealer sets it). settings owns that table, so settings owns the read and the write, and a
+// currency, country, tax jurisdiction and business day zone through. The five keys live in system_settings
+// (migration 0014 planted currency, tax_region and hst_rate_bps; business_zone and country are absent
+// until a dealer sets them). settings owns that table, so settings owns the read and the write, and a
 // consumer declares a narrow interface of its own and receives an adapter over DealerConfigReader
 // at the composition root; no consumer reads system_settings for these facts itself.
 //
