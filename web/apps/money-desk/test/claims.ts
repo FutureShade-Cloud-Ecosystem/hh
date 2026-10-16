@@ -16,6 +16,7 @@ export type ClaimProof = { readonly file: string; readonly test: string } | { re
 const CARD = "test/acceptance/card-lands.pw.ts";
 const RECEIVABLES = "test/receivables.pw.ts";
 const LEDGER = "test/ledger.pw.ts";
+const OFFICE = "test/office.pw.ts";
 const FINSTMT = "test/finstmt.pw.ts";
 const LIENS = "test/liens.pw.ts";
 const COMPLIANCE = "test/compliance.pw.ts";
@@ -26,7 +27,7 @@ const CORE = "../../../core/cmd/core/";
 
 const PAYREC_CARD = { file: CARD, test: "the front door's Payables and Receivables card opens the Money Desk on the receivables landing" };
 const CONTROLLER_CARD = { file: CARD, test: "the front door's Financial Controller card opens the same Money Desk tile and lands on the ledger" };
-const PICKER = { file: FRONT_DOOR, test: "the picker renders the nine live cards and the four coming rows" };
+const PICKER = { file: FRONT_DOOR, test: "the picker renders the live cards and the coming rows" };
 const DESK_OPENS = { file: RECEIVABLES, test: "the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words" };
 const APPLY_SPLIT = { file: RECEIVABLES, test: "one payment across two invoices: the server splits it oldest first and posts it as one payment" };
 const BOUNCED_WORLD = { file: RECEIVABLES, test: "the bounced payment the demo world starts with: what happened, and a reminder sent from the queue" };
@@ -43,10 +44,9 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "other-cards": [
     { file: CARD, test: "the front door's Sales card offers no Money Desk tile" },
     { file: CARD, test: "the front door's Sales manager card offers no Money Desk tile" },
-    PICKER,
   ],
   "own-way-in": [{ file: RECEIVABLES, test: "the way in with no handoff offers the role cards" }],
-  "no-gm": [{ file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of nine" }],
+  "gm-tile": [{ file: FRONT_DOOR, test: "a General Manager sign in shows the matrix tiles, three live and one coming" }],
   "world-invoices": [{ file: `${CORE}demoworld_payables_receivables_test.go`, source: "want the 18 across the aging buckets" }],
   "world-bounce": [
     { file: `${CORE}demoseed_payables_receivables.go`, source: '{"B01", "I08", 12, 9, "Cheque returned by the bank, not sufficient funds", 4_500}' },
@@ -144,7 +144,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "liens-areas": [
     { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all six" },
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
-    { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of nine" },
+    { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of thirteen" },
   ],
   "liens-payrec-reads": [
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
@@ -231,6 +231,43 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   policy: [{ file: BOOKS, test: "the policy reads the approval threshold and says changing it is not on this screen" }],
   reader: [{ file: BOOKS, test: "Payables and Receivables reads the ledger and holds every write, naming who may" }],
+  "office-run": [{ file: OFFICE, test: "a statement run is read back with what went to whom, and no address is drawn" }],
+  "office-contact": [
+    { file: OFFICE, test: "an account's AP contact is tagged, replaced and removed, and checked before it is sent" },
+    { file: OFFICE, test: "on a phone the run and the contact fit the screen and work from the keyboard" },
+  ],
+  "office-reminders": [
+    { file: OFFICE, test: "on the base plan a reminder says why nothing goes, and the server's own sentence is what a press shows" },
+    { file: OFFICE, test: "a reminder goes to the AP contact by its role, is stamped on a resend, and lists without an address" },
+    { file: OFFICE, test: "the channel and the account's contact decide what a reminder would do, and the server's refusal is said as written" },
+    { file: OFFICE, test: "a reminder whose answer was lost is sent again with the same key and is recorded once" },
+  ],
+  "office-paper": [
+    { file: OFFICE, test: "the paper path closes a flag with a note, and the Needs you list follows" },
+    { file: OFFICE, test: "the sweep raises the account that ignored three reminders" },
+    { file: OFFICE, test: "on a phone the reminders screen fits, the history becomes cards, and the form works from the keyboard" },
+  ],
+  "office-invoice": [
+    { file: OFFICE, test: "an invoice is sent through the messaging sink, and an account with no contact email is refused in the server's words" },
+    { file: OFFICE, test: "an invoice document opens in a frame that can run nothing, and closes" },
+    { file: OFFICE, test: "on a phone the invoice's dispute form and the reversal fit the screen" },
+  ],
+  "office-dispute": [{ file: OFFICE, test: "a dispute is checked, opened, shown on the invoice and the register, and closed with an outcome" }],
+  "office-reverse": [{ file: OFFICE, test: "a payment is reversed with a reason, and the invoice is owing what it was" }],
+  "office-settings": [
+    { file: OFFICE, test: "Payables and Receivables reads the rules, and every change is held and says who may make it" },
+    { file: OFFICE, test: "the controller changes the rules, checked first, and each change is on the record" },
+    { file: OFFICE, test: "the register settings are saved with their tones and read back" },
+    { file: OFFICE, test: "on a phone the settings fit the screen and work from the keyboard" },
+  ],
+  "office-fee": [{ file: OFFICE, test: "the returned payment fee is saved in dollars and is the fee the next bounce is charged" }],
+  "office-autohold": [
+    { file: OFFICE, test: "the automatic hold switch shows what it would apply, asks twice, and says when it cannot be changed" },
+    { file: OFFICE, test: "when the switch is not wired it is shown and cannot be changed" },
+  ],
+  "office-nsf-hold": [{ file: OFFICE, test: "a hold a returned payment placed names its payment and is lifted through the till's path" }],
+  "office-sweep": [{ file: OFFICE, test: "the credit sweep only reports while automatic holds are off, and places a hold once they are on" }],
+  "office-dispatch": [{ file: OFFICE, test: "an invoice says whether its order may go out, and why not" }],
   "stmt-area": [{ file: FINSTMT, test: "the controller's Statements area opens on the income statement with the books' own periods" }],
   "stmt-periods": [
     { file: FINSTMT, test: "a period narrows the income statement and says whether it is closed or still open" },

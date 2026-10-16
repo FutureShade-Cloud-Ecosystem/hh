@@ -28,6 +28,35 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 `paymentsApplyReceived`, with the stub held to the core's sentences). Final round: one key per payment, reused on a lost or
 5xx answer, which says the outcome is unknown.
 
+Not ported on purpose: the pop out and duplicate windows. (Auto credit hold settings, the paper path and reminders
+were on this list through the first increment; the office rows below bring them in.)
+
+## The receivables office (`src/ar/office-*.ts`, Session 4 item 1f)
+
+Same original, same rule: take the existing and improve it. Reminders and statements leave only through the messaging
+sink, so every screen says what would go and to which contact by its role label, and none draws an address or number.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Statement run, read back by id | `app/src/ar-monthend-api.ts`, `app/src/ar-monthend.ts` | `showRun`, `renderRunPanel` | The run's own counts and one row per statement with where it would go; read back from the server, not echoed from the press |
+| AP contact tag, replace, remove | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `renderContacts`, `validateApContact`, `contactLine` | Said as what is on file, never the address; the core's limits checked before a request is sent |
+| Send a reminder, reminder history | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `remindForm`, `historyTable`, `reminderPreview`, `reminderResultWords` | Says before the send what would go and to which contact by role; the base plan and a switched off channel are said in words; one key per attempt, kept on a lost answer; the history reads recipient kind, never the address |
+| Paper path: list, sweep, close with a note | `app/src/ar-console.ts`, `app/src/ar-landing-surface.ts` | `paperPanel`, `paperResolveCheck` | A flag closes as moved to paper or dismissed only with a note, said before the request is sent; Needs you reloads |
+| Send an invoice, view its document | `app/src/ar-invoices-api.ts`, `app/src/ar-invoice-register.ts` | `renderInvoiceActions`, `mountDocument` (app root) | The send goes through the messaging sink and never shows the address; the document opens in a sandboxed frame with no scripts, never set into the page |
+| Open and close a dispute | `app/src/ar-invoice-register.ts` | `disputeCheck`, `renderInvoiceActions` | The amount is parsed through the decimal string and checked against the balance before the request; closing says it moves no money |
+| Reverse a payment | `app/src/ar-console.ts`, `app/src/ar-invoice-register.ts` | `reversalCheck`, `renderReverse`, `reversalWords` | A reason is required before the request; the invoice reloads to the server's balance; a returned cheque stays on Mark bounced |
+| Receivables rules (aging edges, reminder cadence, paper path window, plan) and their change history | `app/src/ar-landing.ts`, `app/src/ar-settings.ts` | `landingPolicyCheck`, `SettingsDesk`, `rulesPanel`, `historyPanel` | A manager reads, an administrator writes; the core's ranges and edge order checked before the request; history reads as words, never ids |
+| Register settings | `app/src/ar-invoice-register.ts` | `registerPolicyCheck`, `registerPanel` | The panel split and arrangement are layout of the original and ride along unchanged; HH lays its own panels out |
+| Returned payment fee | `app/src/ar-console.ts` | `nsfPolicyCheck`, `nsfPanel` | Typed in dollars through the decimal string, sent in cents; the bounce charges what was saved |
+| Automatic credit hold switch | `app/src/ar-console.ts` | `autoHoldLines`, `holdPanel` | Read as words with its thresholds read only; two presses and a reason; shown but not offered when the server says the switch is not wired |
+| Holds a returned payment placed, lifted by the till's path | `app/src/ar-console.ts` | `OfficeApi.releaseTillHold`, `placedBy` | The billing release refuses an NSF hold in the core's words, so the controller's Lift goes through the till's own route for one |
+| Dispatch gate read | `app/src/ar-console.ts` | `dispatchWords`, `renderInvoiceActions` | Asked from the invoice that names the order, answered in the server's reason |
+| Credit sweep: report or place | `app/src/ar-console.ts` | `sweepWords` | The sweep says it only reported (and how many it would hold) while automatic holds are off, instead of a flat "placed 0" |
+
+Not wired, with the reason: `billingRecordInvoicePayment` (one payment on one invoice: `paymentsApplyReceived` replaced it in round 3 and a second path to the
+same money is a way to take it twice), `billingTrackInvoiceOpened`, `billingTrackReminderOpen` and `billingTrackReminderClick` (public tracking pixels a
+customer's mail client fetches, not screens), `tillRecordPaymentAttempt` (the Counter Till's declined card log; its surface is the till, not this desk).
+
 ## Ledger beyond its three reads (`src/gl/`)
 
 | What | Source path in the original app | Lands in | What changed |
@@ -43,10 +72,6 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 
 Visual reference: the Money Desk boards (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home) for the cards and
 pills; the original's GL workbench tabs second. No FB Design board for these tabs existed when this was built.
-
-Not ported on purpose: auto credit hold settings, the paper path and reminders
-(Base tier extras, not this role's first increment), the pop out and duplicate
-windows.
 
 ## Statements slice (`src/finstmt/`)
 

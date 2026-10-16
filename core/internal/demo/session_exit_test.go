@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, fourteen flows (nine staff, five contractor), the contract's three
+	// The flow listing: the closed table, eighteen flows (thirteen staff, five contractor), the contract's three
 	// fields, the labels the entry page renders. The yard-manager flow
 	// (Manager Home's first per-role landing) shows on the front door's
 	// picker, never on the till's own entry.
@@ -114,8 +114,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 14 {
-		t.Fatalf("the listing carries %d flows, want the closed table's fourteen", len(listing.Flows))
+	if len(listing.Flows) != 18 {
+		t.Fatalf("the listing carries %d flows, want the closed table's eighteen", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
@@ -127,6 +127,10 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		{"procurement-manager", "procurement_manager", "Procurement manager"},
 		{"financial-controller", "financial_controller", "Financial Controller"},
 		{"logistics-manager", "logistics_manager", "Logistics Manager"},
+		{"general-manager", "general_manager", "General Manager"},
+		{"hr", "hr", "HR"},
+		{"branch-manager", "branch_manager", "Branch Manager"},
+		{"outside-sales", "outside_sales", "Outside Sales"},
 		{"contractor-account-admin", "account_admin", "Contractor owner"},
 		{"contractor-buyer", "buyer", "Contractor buyer"},
 		{"contractor-buyer-no-pay", "buyer_no_pay", "Contractor buyer (no pay)"},
