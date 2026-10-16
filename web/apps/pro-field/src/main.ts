@@ -3,4 +3,7 @@
 // registrations (the Pro frame, the sign in screen, the states) are the only
 // side effects.
 import "@hardscapehouse/design-system/src/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./index.js";
+
+applyTenantTitle("Pro Field");

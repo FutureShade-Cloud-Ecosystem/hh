@@ -4,7 +4,10 @@
 // else it registers the host element, which the page already carries.
 import "@hardscapehouse/design-system/src/tokens.css";
 import "./page.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { announceSwitchRole, isFramed } from "./frames.js";
+
+applyTenantTitle("Work");
 
 if (isFramed(window)) {
   announceSwitchRole(window);
