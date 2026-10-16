@@ -28,6 +28,35 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 `paymentsApplyReceived`, with the stub held to the core's sentences). Final round: one key per payment, reused on a lost or
 5xx answer, which says the outcome is unknown.
 
+Not ported on purpose: the pop out and duplicate windows. (Auto credit hold settings, the paper path and reminders
+were on this list through the first increment; the office rows below bring them in.)
+
+## The receivables office (`src/ar/office-*.ts`, Session 4 item 1f)
+
+Same original, same rule: take the existing and improve it. Reminders and statements leave only through the messaging
+sink, so every screen says what would go and to which contact by its role label, and none draws an address or number.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Statement run, read back by id | `app/src/ar-monthend-api.ts`, `app/src/ar-monthend.ts` | `showRun`, `renderRunPanel` | The run's own counts and one row per statement with where it would go; read back from the server, not echoed from the press |
+| AP contact tag, replace, remove | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `renderContacts`, `validateApContact`, `contactLine` | Said as what is on file, never the address; the core's limits checked before a request is sent |
+| Send a reminder, reminder history | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `remindForm`, `historyTable`, `reminderPreview`, `reminderResultWords` | Says before the send what would go and to which contact by role; the base plan and a switched off channel are said in words; one key per attempt, kept on a lost answer; the history reads recipient kind, never the address |
+| Paper path: list, sweep, close with a note | `app/src/ar-console.ts`, `app/src/ar-landing-surface.ts` | `paperPanel`, `paperResolveCheck` | A flag closes as moved to paper or dismissed only with a note, said before the request is sent; Needs you reloads |
+| Send an invoice, view its document | `app/src/ar-invoices-api.ts`, `app/src/ar-invoice-register.ts` | `renderInvoiceActions`, `mountDocument` (app root) | The send goes through the messaging sink and never shows the address; the document opens in a sandboxed frame with no scripts, never set into the page |
+| Open and close a dispute | `app/src/ar-invoice-register.ts` | `disputeCheck`, `renderInvoiceActions` | The amount is parsed through the decimal string and checked against the balance before the request; closing says it moves no money |
+| Reverse a payment | `app/src/ar-console.ts`, `app/src/ar-invoice-register.ts` | `reversalCheck`, `renderReverse`, `reversalWords` | A reason is required before the request; the invoice reloads to the server's balance; a returned cheque stays on Mark bounced |
+| Receivables rules (aging edges, reminder cadence, paper path window, plan) and their change history | `app/src/ar-landing.ts`, `app/src/ar-settings.ts` | `landingPolicyCheck`, `SettingsDesk`, `rulesPanel`, `historyPanel` | A manager reads, an administrator writes; the core's ranges and edge order checked before the request; history reads as words, never ids |
+| Register settings | `app/src/ar-invoice-register.ts` | `registerPolicyCheck`, `registerPanel` | The panel split and arrangement are layout of the original and ride along unchanged; HH lays its own panels out |
+| Returned payment fee | `app/src/ar-console.ts` | `nsfPolicyCheck`, `nsfPanel` | Typed in dollars through the decimal string, sent in cents; the bounce charges what was saved |
+| Automatic credit hold switch | `app/src/ar-console.ts` | `autoHoldLines`, `holdPanel` | Read as words with its thresholds read only; two presses and a reason; shown but not offered when the server says the switch is not wired |
+| Holds a returned payment placed, lifted by the till's path | `app/src/ar-console.ts` | `OfficeApi.releaseTillHold`, `placedBy` | The billing release refuses an NSF hold in the core's words, so the controller's Lift goes through the till's own route for one |
+| Dispatch gate read | `app/src/ar-console.ts` | `dispatchWords`, `renderInvoiceActions` | Asked from the invoice that names the order, answered in the server's reason |
+| Credit sweep: report or place | `app/src/ar-console.ts` | `sweepWords` | The sweep says it only reported (and how many it would hold) while automatic holds are off, instead of a flat "placed 0" |
+
+Not wired, with the reason: `billingRecordInvoicePayment` (one payment on one invoice: `paymentsApplyReceived` replaced it in round 3 and a second path to the
+same money is a way to take it twice), `billingTrackInvoiceOpened`, `billingTrackReminderOpen` and `billingTrackReminderClick` (public tracking pixels a
+customer's mail client fetches, not screens), `tillRecordPaymentAttempt` (the Counter Till's declined card log; its surface is the till, not this desk).
+
 ## Ledger beyond its three reads (`src/gl/`)
 
 | What | Source path in the original app | Lands in | What changed |
@@ -44,9 +73,32 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 Visual reference: the Money Desk boards (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home) for the cards and
 pills; the original's GL workbench tabs second. No FB Design board for these tabs existed when this was built.
 
-Not ported on purpose: auto credit hold settings, the paper path and reminders
-(Base tier extras, not this role's first increment), the pop out and duplicate
-windows.
+## Statements slice (`src/finstmt/`)
+
+Ported from the original app's financial statements screen (`finstmt-home.ts`, `finstmt-income.ts`, `finstmt-balance.ts`,
+`finstmt-gl-detail.ts`, `finstmt-aging.ts`, `finstmt-api.ts`, `finstmt-export.ts`, `_finstmt-heading.ts`), read only, at the
+commit the cycle names. The logic ports as plain code onto HH's generated api-client; the screens are rebuilt on HH's design
+system against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balance for the frame).
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| The six tabs and their titles | `app/src/_finstmt-heading.ts` | `TABS`, `heading` | Plainer names ("Saved packs" for the schedules registry); the title, period and scope are on the page and the printed sheet |
+| Period words | `formatPeriod` in `finstmt-export.ts` | `periodLabel` | The books' own words (fiscal year, numbered period) from the ledger's period list; no month names in code; each period marked closed or open |
+| Income statement, balance sheet, trial balance | `finstmt-income.ts`, `finstmt-balance.ts`, `finstmt-home.ts` | `incomeView`, `balanceView`, `trialView` | The server's totals and flags are shown, never recomputed; compare with the year before reads the contract's comparative rows |
+| Drill down to the ledger and the tie | `finstmt-gl-detail.ts` | `detailView`, `tieWords` | The tie is the server's `tie_cents` held against the line's figure, said in words either way |
+| Receivables aging | `finstmt-aging.ts` | `agingView` | Five bands in the core's order, cards on a phone |
+| Saved packs (schedules) | `finstmt-home.ts` schedules panel | `packsView`, `packForm`, `validatePack` | Change and delete added; delete asks first; the form is checked in the core's order before anything is sent |
+| CSV export | `finstmt-export.ts`, `_csv.ts` | `exportCsv`, `defangCsv` | The core's own CSV fetched as text through the staff client so the core records the export, then read and written again so no cell can run as a formula; the comparison, which the core answers as JSON, is made from the rows on the page |
+| Print | `renderStatementHtml`, `printStatement` | the print stylesheet | A print stylesheet on the page itself rather than a hidden frame |
+
+Not ported on purpose: the Excel download (bytes, not text),
+the entity name on the sheet (the app holds no tenant name), a cash flow statement (the contract has none; marked later in
+words), and sending packs by e-mail (the core keeps a registry only; marked later in words).
+
+Contract notes: the core writes the saved packs under `schedules` while the contract's page names them `items` (recorded in
+the core's shape census); the slice reads both and refuses anything else. Saving a pack carries no idempotency key (the
+contract's route takes none), so the screen holds a second press while one is in flight and, when no answer comes back, says
+the pack may or may not be saved.
 
 ## Liens slice (`src/lien/`) and compliance slice (`src/compliance/`)
 

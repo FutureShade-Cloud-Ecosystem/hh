@@ -29,7 +29,7 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's nine staff flows, the five contractor
+#   /api/v1/demo/flows answers the closed table's thirteen staff flows, the five contractor
 #     flows and both classes; the three Pro apps serve under /pro-procurement/,
 #     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
 #     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
@@ -376,11 +376,11 @@ done
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*)
-		pass "/api/v1/demo/flows answers the closed table's nine flows"
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*'"flow":"outside-sales"'*)
+		pass "/api/v1/demo/flows answers the closed table's thirteen staff flows"
 		;;
 	*)
-		fail "/api/v1/demo/flows did not answer the nine flows: $flows"
+		fail "/api/v1/demo/flows did not answer the thirteen staff flows: $flows"
 		;;
 esac
 

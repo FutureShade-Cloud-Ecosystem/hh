@@ -5,7 +5,7 @@
 // control keeps the grey fill and ink of a disabled one, never a fade.
 import { css } from "lit";
 
-export const arStyles = css`
+const receivablesStyles = css`
   .desk { font-size: 14px; max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
   h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 700; }
   h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; }
@@ -209,3 +209,46 @@ export const arStyles = css`
     .tile-figure { font-size: 24px; }
   }
 `;
+
+// The office's own additions: a checkbox row, the "what would go" box, the paper path rows and the history card forms.
+const officeStyles = css`
+  .check-row { display: flex; align-items: flex-start; gap: var(--hh-s-12); }
+  .check-row > span { display: grid; gap: 2px; }
+  .check-row > span > span { font-weight: 400; }
+  .preview { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-row-alt); padding: var(--hh-s-12) var(--hh-s-16); margin: var(--hh-s-12) 0; }
+  .preview h3 { margin-bottom: var(--hh-s-8); }
+  .preview p:last-child { margin-bottom: 0; }
+  .alert-warn { border-inline-start: 4px solid var(--hh-state-watch); background: color-mix(in srgb, var(--hh-state-watch) 14%, var(--hh-card)); padding: var(--hh-s-8) var(--hh-s-12); border-radius: var(--hh-radius-control); }
+  .btn.held { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); cursor: not-allowed; }
+  .paper-list li { align-items: flex-start; }
+  .who-block { display: grid; gap: 2px; min-width: 0; }
+  .close-form { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
+  .close-form label { min-width: 220px; flex: 1 1 220px; }
+  .inline-select { min-width: 200px; }
+  .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-16); align-items: start; }
+  .settings-grid > div { min-width: 0; }
+  .pick.held { background: var(--hh-disabled-fill); border-color: var(--hh-disabled-line); cursor: not-allowed; }
+  @media (max-width: 1100px) {
+    .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  .inv-actions { margin: var(--hh-s-12) 0; padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-line); }
+  .row-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
+  .doc-view { margin-top: var(--hh-s-12); }
+  .doc-slot iframe { width: 100%; height: 360px; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); }
+  .doc-slot:empty { display: none; }
+  @media (max-width: 1100px) {
+    .remind-cols .col-side { order: -1; }
+  }
+  .inline-select select { min-height: 36px; }
+  @media (max-width: 520px) {
+    table.hist tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "acct sent" "goes goes" "age status" "opened opened"; }
+    table.hist tbody td:nth-child(1) { grid-area: sent; text-align: end; }
+    table.hist tbody td:nth-child(2) { grid-area: acct; font-weight: 700; }
+    table.hist tbody td:nth-child(3) { grid-area: goes; }
+    table.hist tbody td:nth-child(4) { grid-area: age; }
+    table.hist tbody td:nth-child(5) { grid-area: status; text-align: end; }
+    table.hist tbody td:nth-child(6) { grid-area: opened; color: var(--hh-text-dim); }
+  }
+`;
+
+export const arStyles = [receivablesStyles, officeStyles];
