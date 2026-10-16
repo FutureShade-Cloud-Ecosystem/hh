@@ -303,3 +303,21 @@ test("a landed cost attach whose answer was lost never advises applying again", 
   await expect(error).toContainText("check Landed cost for one on PO-PLM-136/R1");
   await expect(error).not.toContainText("apply it again");
 });
+
+test("the queue's Expected cell never truncates: the relative day word reads whole, on a nowrap floor", async ({ page, request }) => {
+  await openArea(page, request, "Receiving");
+  // PO-PLM-141 ships "in 2 days", PO-PLM-67 has no date: the first row must carry the full word.
+  const cell = page.locator("[data-queue-row]").first().locator("td[data-expected-col]");
+  await expect(cell).toHaveText("in 2 days");
+  // The CSS floor: nowrap + min-width 6.5rem, so the cell cannot be crushed past its longest word.
+  const floor = await cell.evaluate((el) => {
+    const cs = window.getComputedStyle(el);
+    return { wrap: cs.whiteSpace, min: cs.minWidth, scrollW: el.scrollWidth, clientW: el.clientWidth };
+  });
+  expect(floor.wrap).toBe("nowrap");
+  expect(floor.min).toMatch(/^\d+(?:\.\d+)?(?:px|rem|em)$/);
+  const minPx = parseFloat(floor.min);
+  expect(minPx).toBeGreaterThanOrEqual(6.5 * 12);
+  // The full cell width holds the whole phrase without horizontal overflow inside the cell.
+  expect(floor.scrollW).toBeLessThanOrEqual(floor.clientW + 1);
+});
