@@ -39,7 +39,11 @@ func TestIntegration_CreateChannel_Reserved_Namespaces_Fold_Case(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	svc := NewService(repo)
-	sam := samCaller()
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+	// Founding is the admins' pen (change 7, ruling A); the fold legs drive
+	// the admin and the reserved wall runs behind the gate.
+	sam := adminCaller()
 
 	for _, tc := range []struct {
 		family string
@@ -75,7 +79,9 @@ func TestIntegration_CreateChannel_Chosen_Slug_Is_Lower_Cased(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	svc := NewService(repo)
-	sam := samCaller()
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+	sam := adminCaller()
 
 	mixed := fmt.Sprintf("Paving-Crew-%d", time.Now().UnixNano())
 	ch, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
@@ -106,7 +112,9 @@ func TestIntegration_CreateChannel_Upper_Pair_Squat_Does_Not_Deny_The_Pair_DM(t 
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	svc := NewService(repo)
-	sam := samCaller()
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+	sam := adminCaller()
 
 	upPair := strings.ToUpper(dmPairSlug(uCaseyDoyle, red2ProbeJordan))
 	if _, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
