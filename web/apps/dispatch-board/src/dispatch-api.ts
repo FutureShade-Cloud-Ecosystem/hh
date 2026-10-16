@@ -3,9 +3,10 @@
 // already serves (core/internal/dispatch). The board draws no money of its own: a figure the core
 // sends is formatted where it is shown, and a figure it leaves out is absent.
 //
-// Reads: the branches the caller reaches, the load board, the day board, the trucks and drivers,
+// Reads: the branches the caller reaches, the load board, the day board, the trucks and drivers (with
+// the ones out of use for the registry),
 // the procurement gaps, the calendar and a run's payment holds.
-// Writes: open a run, crew it, dispatch it, cancel it, complete it, reopen it, clear the reopen
+// Writes: schedule an order's delivery, open a run, crew it, dispatch it, cancel it, complete it, reopen it, clear the reopen
 // marker, move its date; put a stop on a run or take it off, commit its date, reopen it, move its
 // date, advance it along the lifecycle; load many stops in one call; and ask the auto assign seam.
 import {
@@ -15,16 +16,27 @@ import {
   type Branch,
   type DispatchBoard,
   type DispatchCalendarDayPage,
+  type DispatchCreatedRef,
+  type DispatchDriver,
   type DispatchDriverPage,
   type DispatchGapPage,
   type DispatchLoadBoardView,
   type DispatchLoadOutcomeList,
+  type DispatchMintedPickup,
+  type DispatchPolicy,
+  type DispatchPolicyChangePage,
   type DispatchPaymentHoldPage,
+  type DispatchPrintJobRef,
   type DispatchRescheduleResult,
   type DispatchRun,
   type DispatchRunDetail,
+  type DispatchScanTrail,
+  type DispatchScheduleInput,
   type DispatchStop,
+  type DispatchTruck,
   type DispatchTruckPage,
+  type DispatchWillCallPage,
+  type DispatchWillCallRevokeResult,
   type Result,
 } from "@hardscapehouse/api-client";
 
@@ -48,12 +60,79 @@ export class DispatchApi {
     return staffDispatch.dispatchGetBoard(this.#client, { branch_id: branchId, date });
   }
 
-  trucks(branchId: string): Promise<Result<DispatchTruckPage>> {
-    return staffDispatch.dispatchListTrucks(this.#client, { branch_id: branchId });
+  /** The pick list: trucks in use. The registry asks for the ones out of use too. */
+  trucks(branchId: string, includeInactive = false): Promise<Result<DispatchTruckPage>> {
+    return staffDispatch.dispatchListTrucks(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
   }
 
-  drivers(branchId: string): Promise<Result<DispatchDriverPage>> {
-    return staffDispatch.dispatchListDrivers(this.#client, { branch_id: branchId });
+  drivers(branchId: string, includeInactive = false): Promise<Result<DispatchDriverPage>> {
+    return staffDispatch.dispatchListDrivers(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
+  }
+
+  // ---- the manifest and the scan trail
+
+  /** The core's own manifest document, as the page it prints. */
+  runManifest(runId: string): Promise<Result<string>> {
+    return staffDispatch.dispatchGetRunManifest(this.#client, runId);
+  }
+
+  /** Records a manifest print in the print queue: who printed which run's manifest and when. */
+  recordManifestPrint(runId: string): Promise<Result<DispatchPrintJobRef>> {
+    return staffDispatch.dispatchPrintRunManifest(this.#client, runId);
+  }
+
+  /** Where an order's pallets are, by stage. The trail is read, never written, from this board. */
+  scanTrail(orderId: string): Promise<Result<DispatchScanTrail>> {
+    return staffDispatch.dispatchGetScanTrail(this.#client, { order_id: orderId });
+  }
+
+  // ---- will call: pickup codes for an order on the rack (the order is named by the number on the paperwork)
+
+  willCalls(orderRef: string): Promise<Result<DispatchWillCallPage>> {
+    return staffDispatch.dispatchListWillCall(this.#client, { order_id: orderRef });
+  }
+
+  /** Mints a code. The raw token rides this answer and nowhere else; the core stores only its hash. */
+  mintWillCall(orderRef: string): Promise<Result<DispatchMintedPickup>> {
+    return staffDispatch.dispatchMintWillCall(this.#client, { order_id: orderRef, ttl_hours: 0 });
+  }
+
+  revokeWillCall(id: string): Promise<Result<DispatchWillCallRevokeResult>> {
+    return staffDispatch.dispatchRevokeWillCall(this.#client, id);
+  }
+
+  // ---- the rules (the read is open to staff; the write is the setters list's; the trail is a manager's)
+
+  policy(branchId: string): Promise<Result<DispatchPolicy>> {
+    return staffDispatch.dispatchGetPolicy(this.#client, { branch_id: branchId });
+  }
+
+  /** An absolute write of the whole policy for one yard. */
+  savePolicy(body: DispatchPolicy): Promise<Result<DispatchPolicy>> {
+    return staffDispatch.dispatchPutPolicy(this.#client, body);
+  }
+
+  policyHistory(branchId: string): Promise<Result<DispatchPolicyChangePage>> {
+    return staffDispatch.dispatchGetPolicyHistory(this.#client, { branch_id: branchId });
+  }
+
+  // ---- the registry (the manage level; the core refuses below it)
+
+  createTruck(body: DispatchTruck): Promise<Result<DispatchCreatedRef>> {
+    return staffDispatch.dispatchCreateTruck(this.#client, body);
+  }
+
+  /** A rewrite, not a delta: every field of the row rides it. */
+  updateTruck(id: string, body: DispatchTruck): Promise<Result<DispatchTruck>> {
+    return staffDispatch.dispatchUpdateTruck(this.#client, id, body);
+  }
+
+  createDriver(body: DispatchDriver): Promise<Result<DispatchCreatedRef>> {
+    return staffDispatch.dispatchCreateDriver(this.#client, body);
+  }
+
+  updateDriver(id: string, body: DispatchDriver): Promise<Result<DispatchDriver>> {
+    return staffDispatch.dispatchUpdateDriver(this.#client, id, body);
   }
 
   gaps(branchId: string, date: string): Promise<Result<DispatchGapPage>> {
@@ -109,6 +188,11 @@ export class DispatchApi {
   }
 
   // ---- stops
+
+  /** Turns a confirmed order into a delivery on a day. The date is a request until the load is on a truck. */
+  scheduleStop(body: DispatchScheduleInput): Promise<Result<DispatchStop>> {
+    return staffDispatch.dispatchScheduleStop(this.#client, body);
+  }
 
   /** Puts a stop on a run (the end of its order), or takes it off with an empty run id. */
   assignStop(stopId: string, runId: string): Promise<Result<DispatchStop>> {
