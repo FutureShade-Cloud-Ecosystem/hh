@@ -965,16 +965,17 @@ export class DealerAdminApp extends HHElement {
       if (threshold !== null && threshold.value !== words) threshold.value = words;
     }
     for (const row of this.#warranty.agreements.rows) {
+      if (row.kind === "claim_by_claim") continue;
+      const select = this.renderRoot.querySelector<HTMLSelectElement>(
+        `select[data-action="warranty-period"][data-vendor="${row.vendor_id}"]`,
+      );
+      if (select !== null && select.value !== row.period) select.value = row.period;
       if (row.kind !== "fixed_allowance") continue;
       const el = this.renderRoot.querySelector<HTMLInputElement>(
         `[data-field="warranty-allowance"][data-vendor="${row.vendor_id}"]`,
       );
       const words = allowanceWords(row.allowanceBp);
       if (el !== null && el.value !== words) el.value = words;
-      const select = this.renderRoot.querySelector<HTMLSelectElement>(
-        `select[data-action="warranty-period"][data-vendor="${row.vendor_id}"]`,
-      );
-      if (select !== null && select.value !== row.period) select.value = row.period;
     }
     // The pricing editors' fields mirror the controller's model the same
     // way, checkbox included.
@@ -2063,6 +2064,7 @@ export class DealerAdminApp extends HHElement {
     this.#audit = emptyAuditModel();
     this.#roleConfig = emptyRoleConfigModel();
     this.#settings = emptySettingsModel();
+    this.#warranty = emptyWarrantyModel();
     this.#auditDetailGen += 1;
     this.#admin.signOut();
     this.#pricing.reset();

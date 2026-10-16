@@ -70,11 +70,11 @@ export const warrantyStyles = css`
   .seg button + button {
     border-left: 1px solid var(--hh-control-line);
   }
-  .seg button:hover:not(.seg-on) {
+  .seg button:hover:not([aria-pressed="true"]) {
     color: var(--hh-accent-text);
   }
-  .seg button.seg-on,
-  .seg button.seg-on:hover {
+  .seg button[aria-pressed="true"],
+  .seg button[aria-pressed="true"]:hover {
     background: var(--hh-text);
     color: var(--hh-card);
     font-weight: 600;
@@ -83,7 +83,7 @@ export const warrantyStyles = css`
     cursor: default;
     color: var(--hh-disabled-ink);
   }
-  .seg button.seg-on:disabled {
+  .seg button[aria-pressed="true"]:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
   }

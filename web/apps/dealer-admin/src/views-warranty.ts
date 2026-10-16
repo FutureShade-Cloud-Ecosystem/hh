@@ -156,7 +156,6 @@ function renderAgreementRow(row: AgreementRowView): TemplateResult {
             (kind) => html`
               <button
                 type="button"
-                class=${row.kind === kind ? "seg-on" : ""}
                 data-action="warranty-kind"
                 data-vendor=${row.vendor_id}
                 data-kind=${kind}
@@ -174,8 +173,8 @@ function renderAgreementRow(row: AgreementRowView): TemplateResult {
               <label class="field">
                 <span class="field-label">The period it runs on</span>
                 <select class="select" data-action="warranty-period" data-vendor=${row.vendor_id} ?disabled=${row.busy}>
-                  <option value="monthly" ?selected=${row.period === "monthly"}>${periodWord("monthly")}</option>
-                  <option value="quarterly" ?selected=${row.period === "quarterly"}>${periodWord("quarterly")}</option>
+                  <option value="monthly">${periodWord("monthly")}</option>
+                  <option value="quarterly">${periodWord("quarterly")}</option>
                 </select>
               </label>
             `}
