@@ -221,10 +221,10 @@ type Message struct {
 	// All omitempty, so an ordinary post's payload stays byte-identical to before this feature.
 	// SupersededBy non-empty means this message was auto-resolved by a newer fact about the same record
 	// (the LAST-WRITE-WINS ruling), the bubble stops blocking and renders as superseded, never acked.
-	Priority     string     `json:"priority,omitempty"`
-	StateKey     string     `json:"state_key,omitempty"`
-	SupersededBy string     `json:"superseded_by,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
+	Priority     string              `json:"priority,omitempty"`
+	StateKey     string              `json:"state_key,omitempty"`
+	SupersededBy string              `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time          `json:"superseded_at,omitempty"`
 	EditedAt     *time.Time          `json:"edited_at,omitempty"`
 	DeletedAt    *time.Time          `json:"deleted_at,omitempty"`
 	CreatedAt    time.Time           `json:"created_at"`

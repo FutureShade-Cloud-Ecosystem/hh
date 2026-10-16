@@ -112,12 +112,12 @@ func (h *Handler) userID(r *http.Request, caller guards.StaffCaller) string {
 }
 
 type attachmentCreateRequest struct {
-	Kind           string  `json:"kind"`
-	AppwriteFileID string  `json:"appwrite_file_id"`
-	Bucket         string  `json:"bucket"`
-	Mime           string  `json:"mime"`
-	SizeBytes      *int64  `json:"size_bytes"`
-	Checksum       string  `json:"checksum"`
+	Kind           string `json:"kind"`
+	AppwriteFileID string `json:"appwrite_file_id"`
+	Bucket         string `json:"bucket"`
+	Mime           string `json:"mime"`
+	SizeBytes      *int64 `json:"size_bytes"`
+	Checksum       string `json:"checksum"`
 }
 
 func (h *Handler) createAttachment(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

@@ -46,13 +46,13 @@ type fakeStore struct {
 	acks    map[string]Ack       // "messageID|userID" -> ack (upsert)
 	unacked map[string][]Message // userID -> un-acked forced-ack messages the poll returns
 	// Approvals rail (0075) doubles:
-	approvalChannels map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
-	approvalCards    map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
-	approvalMsgs     []Message         // card inserts captured (count assertions)
-	approvalEchoes   map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
-	stamped          map[string]string // approvalID -> last status stamped
-	stampCalls       int               // StampApprovalStatus invocation count
-	displayNames     map[string]string // userID -> display name (decider name resolution)
+	approvalChannels   map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
+	approvalCards      map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
+	approvalMsgs       []Message         // card inserts captured (count assertions)
+	approvalEchoes     map[string]bool   // "channelID|decidedEventKey" -> inserted (echo dedup)
+	stamped            map[string]string // approvalID -> last status stamped
+	stampCalls         int               // StampApprovalStatus invocation count
+	displayNames       map[string]string // userID -> display name (decider name resolution)
 	channelAttachments map[string][]MessageAttachment
 	memberCounts       map[string]int
 	singleMessages     map[string]Message
@@ -60,25 +60,25 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members:       map[string]map[string]bool{},
-		exists:        map[string]bool{},
-		channels:      map[string][]Channel{},
-		messages:      map[string]MessagePage{},
-		threads:       map[string][]Message{},
-		unread:        map[string]UnreadCounts{},
-		slugs:         map[string]string{},
-		roomsBySlug:   map[string]Channel{},
-		yard:          map[string]string{},
-		facts:         map[string]channelFactsRow{},
-		memberRoles:   map[string]string{},
-		memberSources: map[string]string{},
-		userBranches:  map[string]map[string]bool{},
-		userGlobal:    map[string]bool{},
-		eventDup:      map[string]bool{},
-		prefs:         map[string]NotificationPrefs{},
-		tiers:         map[string]string{},
-		acks:          map[string]Ack{},
-		unacked:       map[string][]Message{},
+		members:            map[string]map[string]bool{},
+		exists:             map[string]bool{},
+		channels:           map[string][]Channel{},
+		messages:           map[string]MessagePage{},
+		threads:            map[string][]Message{},
+		unread:             map[string]UnreadCounts{},
+		slugs:              map[string]string{},
+		roomsBySlug:        map[string]Channel{},
+		yard:               map[string]string{},
+		facts:              map[string]channelFactsRow{},
+		memberRoles:        map[string]string{},
+		memberSources:      map[string]string{},
+		userBranches:       map[string]map[string]bool{},
+		userGlobal:         map[string]bool{},
+		eventDup:           map[string]bool{},
+		prefs:              map[string]NotificationPrefs{},
+		tiers:              map[string]string{},
+		acks:               map[string]Ack{},
+		unacked:            map[string][]Message{},
 		channelAttachments: map[string][]MessageAttachment{},
 		memberCounts:       map[string]int{},
 		singleMessages:     map[string]Message{},

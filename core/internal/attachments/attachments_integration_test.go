@@ -15,7 +15,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
 func intPool(t *testing.T) *pgxpool.Pool {
@@ -41,7 +40,24 @@ func TestIntegration_Attachment_CreateLinkAndRuling1Fence(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
 
-	orgID := testkit.OrgNorthID
+	orgID := "a5000000-0000-4000-8000-0000000000f1"
+	otherOrgID := "a5000000-0000-4000-8000-0000000000f2"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO org (id, slug, name) VALUES
+			($1::uuid, 'attachments-ruling1-fence-leg', 'attachments ruling1 fence leg'),
+			($2::uuid, 'attachments-ruling1-other-leg', 'attachments ruling1 other leg')
+		 ON CONFLICT (id) DO NOTHING`,
+		orgID, otherOrgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM attachment_link l USING attachment a
+			WHERE l.attachment_id = a.id AND a.org_id IN ($1::uuid, $2::uuid)`, orgID, otherOrgID)
+		_, _ = pool.Exec(c, `DELETE FROM attachment WHERE org_id IN ($1::uuid, $2::uuid)`, orgID, otherOrgID)
+		_, _ = pool.Exec(c, `DELETE FROM org WHERE id IN ($1::uuid, $2::uuid)`, orgID, otherOrgID)
+	})
+
 	roomID := "a5000000-0000-4000-9000-000000000001"
 	memberUserID := "d7000000-0000-4000-9000-000000000002"
 	nonMemberUserID := "d7000000-0000-4000-9000-000000000099"
@@ -85,10 +101,6 @@ func TestIntegration_Attachment_CreateLinkAndRuling1Fence(t *testing.T) {
 		t.Fatalf("unexpected created attachment: %+v", created)
 	}
 	attID := created.ID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM attachment_link WHERE attachment_id = $1::uuid`, attID)
-		_, _ = pool.Exec(ctx, `DELETE FROM attachment WHERE id = $1::uuid`, attID)
-	})
 
 	// 2. Link to channel via POST /api/v1/attachments/{id}/links with owner_kind: "channel"
 	linkPayload, _ := json.Marshal(map[string]any{
