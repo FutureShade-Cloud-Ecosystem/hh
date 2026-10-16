@@ -26,16 +26,16 @@
 //     Controller's flow is "financial-controller" and its one live module is
 //     the same Money Desk tile, on the same path; the Logistics Manager's
 //     flow is "logistics-manager" and its live modules are the dispatch board
-//     under /dispatch/ and Manager Home, with House Messages href null; the
-//     General Manager's flow
-//     is "general-manager" and its live modules are the Money Desk and
-//     Manager Home, with House Messages and Dealer Admin still href null;
-//     HR's flow is "hr" and both its tiles (House Messages, Dealer Admin) are
-//     still href null, so its home reads "coming" until those apps exist;
-//     the Branch Manager's flow is "branch-manager" and its tiles are the
-//     Counter Till, the Quote Desk and Manager Home (live) with Dispatch and
-//     Load Building and House Messages still href null; Outside Sales' flow is "outside-sales" and its tiles are the Quote Desk
-//     (live) and House Messages (href null).
+//     under /dispatch/, Manager Home and House Messages; the General Manager's
+//     flow is "general-manager" and its live modules are the Money Desk,
+//     Manager Home, House Messages and Dealer Admin; HR's flow is "hr" and
+//     both its tiles (House Messages, Dealer Admin) are live; the Branch
+//     Manager's flow is "branch-manager" and its tiles are the Counter Till,
+//     the Quote Desk, Dispatch and Load Building, Manager Home and House
+//     Messages (all live); Outside Sales' flow is "outside-sales" and its
+//     tiles are the Quote Desk and House Messages (both live). House Messages,
+//     which the matrix gives every one of the thirteen roles, is live for all
+//     thirteen under /messages/.
 //   - Any others are COMING (none today). Each shows the modules the matrix
 //     gives that role at work, manage or admin level, by the surfaces
 //     table's own names; read cells (and none) show nothing. A coming role is
@@ -79,10 +79,12 @@ const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark
 const DRIVE_TILE: ModuleTile = { name: "HH Drive", icon: "lucide:truck", href: "/drive/" };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: "/home/" };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: "/dealer-admin/" };
+// The one tile every live role holds: the matrix gives all thirteen roles the House Messages cell
+// (work level, the general manager at admin), and the app lives under /messages/.
 const HOUSE_MESSAGES_TILE: ModuleTile = {
   name: "House Messages",
   icon: "lucide:message-square",
-  href: null,
+  href: "/messages/",
 };
 // The tile says what it opens: the app under /yard/ serves the pick half, so
 // the tile carries the app's own short name, not the matrix surface's fuller
@@ -156,7 +158,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     label: "Sales",
     line: "Ring up counter sales and build quotes.",
     icon: "lucide:receipt",
-    tiles: [TILL_TILE, QUOTE_TILE],
+    tiles: [TILL_TILE, QUOTE_TILE, HOUSE_MESSAGES_TILE],
   },
   {
     id: "sales_manager",
