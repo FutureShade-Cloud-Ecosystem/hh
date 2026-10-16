@@ -3549,6 +3549,7 @@ export type MessagingMessage = {
   edited_at?: string | null;
   deleted_at?: string | null;
   created_at: string;
+  reactions?: MessagingReactionCount[];
 };
 export type MessagingEventRef = {
   topic: string;
@@ -3594,6 +3595,25 @@ export type MessagingAck = {
   user_id: string;
   method: "TAP" | "QUICK_REPLY" | "VOICE";
   acked_at: string;
+};
+export type MessagingReactionPut = {
+  emoji: string;
+};
+export type MessagingReactionCount = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+};
+export type MessagingReactionSummary = {
+  reactions: MessagingReactionCount[];
+};
+export type MessagingSeenByReader = {
+  user_id: string;
+  display_name: string;
+};
+export type MessagingSeenBy = {
+  count: number;
+  readers: MessagingSeenByReader[];
 };
 export type MessagingAckProgress = {
   message_id: string;

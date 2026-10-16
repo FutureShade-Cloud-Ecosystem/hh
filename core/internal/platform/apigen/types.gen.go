@@ -4169,23 +4169,24 @@ type MessagingPersonPage struct {
 }
 
 type MessagingMessage struct {
-	Id           string     `json:"id"`
-	ChannelId    string     `json:"channel_id"`
-	AuthorId     *string    `json:"author_id,omitempty"`
-	AuthorName   *string    `json:"author_name,omitempty"`
-	Kind         string     `json:"kind"`
-	Body         string     `json:"body"`
-	Ref          any        `json:"ref,omitempty"`
-	ThreadRootId *string    `json:"thread_root_id,omitempty"`
-	ReplyCount   int32      `json:"reply_count"`
-	RequiresAck  *bool      `json:"requires_ack,omitempty"`
-	Priority     *string    `json:"priority,omitempty"`
-	StateKey     *string    `json:"state_key,omitempty"`
-	SupersededBy *string    `json:"superseded_by,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-	EditedAt     *time.Time `json:"edited_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Id           string                    `json:"id"`
+	ChannelId    string                    `json:"channel_id"`
+	AuthorId     *string                   `json:"author_id,omitempty"`
+	AuthorName   *string                   `json:"author_name,omitempty"`
+	Kind         string                    `json:"kind"`
+	Body         string                    `json:"body"`
+	Ref          any                       `json:"ref,omitempty"`
+	ThreadRootId *string                   `json:"thread_root_id,omitempty"`
+	ReplyCount   int32                     `json:"reply_count"`
+	RequiresAck  *bool                     `json:"requires_ack,omitempty"`
+	Priority     *string                   `json:"priority,omitempty"`
+	StateKey     *string                   `json:"state_key,omitempty"`
+	SupersededBy *string                   `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time                `json:"superseded_at,omitempty"`
+	EditedAt     *time.Time                `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time                `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	Reactions    *[]MessagingReactionCount `json:"reactions,omitempty"`
 }
 
 type MessagingEventRef struct {
@@ -4239,6 +4240,30 @@ type MessagingAck struct {
 	UserId    string    `json:"user_id"`
 	Method    string    `json:"method"`
 	AckedAt   time.Time `json:"acked_at"`
+}
+
+type MessagingReactionPut struct {
+	Emoji string `json:"emoji"`
+}
+
+type MessagingReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int32  `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+type MessagingReactionSummary struct {
+	Reactions []MessagingReactionCount `json:"reactions"`
+}
+
+type MessagingSeenByReader struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+}
+
+type MessagingSeenBy struct {
+	Count   int32                   `json:"count"`
+	Readers []MessagingSeenByReader `json:"readers"`
 }
 
 type MessagingAckProgress struct {

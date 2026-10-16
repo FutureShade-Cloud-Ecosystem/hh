@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageEdit, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageEdit, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingReactionPut, MessagingReactionSummary, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingSeenBy, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -206,6 +206,57 @@ export async function messagingGetAckProgress(
   });
 }
 
+export async function messagingAddReaction(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  body: MessagingReactionPut,
+  call?: ApiCallOptions
+): Promise<Result<MessagingReactionSummary>> {
+  return client.request<MessagingReactionSummary>({
+    method: "PUT",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/reactions",
+    pathParams: { id, msgID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingAddReaction",
+  });
+}
+
+export async function messagingRemoveReaction(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  emoji: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingReactionSummary>> {
+  return client.request<MessagingReactionSummary>({
+    method: "DELETE",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}",
+    pathParams: { id, msgID, emoji },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingRemoveReaction",
+  });
+}
+
+export async function messagingMessageSeenBy(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingSeenBy>> {
+  return client.request<MessagingSeenBy>({
+    method: "GET",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/seen-by",
+    pathParams: { id, msgID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingMessageSeenBy",
+  });
+}
+
 export async function messagingGetNotifyPrefs(
   client: ApiClient,
   id: string | number,
@@ -373,6 +424,21 @@ export async function messagingInboundCustomer(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingInboundCustomer",
+  });
+}
+
+export async function messagingListMentions(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessagePage>> {
+  return client.request<MessagingMessagePage>({
+    method: "GET",
+    path: "/api/v1/messaging/mentions",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListMentions",
   });
 }
 

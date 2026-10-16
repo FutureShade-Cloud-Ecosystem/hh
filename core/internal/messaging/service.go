@@ -81,6 +81,14 @@ type store interface {
 	userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error)
 	memberRole(ctx context.Context, channelID, userID string) (string, error)
 	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
+	// Change 7, slice S3: the reaction walls and write, the reaction summary
+	// stitch, the seen-by read, the mentions view.
+	messageFacts(ctx context.Context, channelID, messageID string) (messageFactsRow, error)
+	AddReaction(ctx context.Context, channelID, messageID, userID, emoji string) error
+	RemoveReaction(ctx context.Context, channelID, messageID, userID, emoji string) error
+	reactionsForMessages(ctx context.Context, messageIDs []string, userID string) (map[string][]ReactionCount, error)
+	MessageSeenBy(ctx context.Context, channelID, authorID string, at time.Time) (SeenByReport, error)
+	ListMentions(ctx context.Context, userID, cursor string, limit int) (MessagePage, error)
 }
 
 // Service holds the messaging business rules. It depends only on the store seam (its own tables +
@@ -131,6 +139,13 @@ var (
 	// ErrBadAckMethod is an ack whose method is not one of the msg_acks CHECK values (client fault). The
 	// handler maps it to HTTP 400, caught at the service boundary so it never reaches the DB CHECK.
 	ErrBadAckMethod = errors.New("messaging: unknown ack method")
+	// ErrBadReaction is a reaction whose emoji is empty past the trim or longer than the cap
+	// (client fault). The handler maps it to HTTP 400, caught here so it never reaches the store.
+	ErrBadReaction = errors.New("messaging: reaction must be one emoji or a short word")
+	// ErrReactionsNotAllowed is a reaction aimed at a system message (EVENT, APPROVAL, any kind that
+	// is not a person's TEXT post; ruling 6, row 2139). The handler maps it to 409: a conflict with
+	// what the message IS, not a permission failure, the same shape as the escalation mute refusal.
+	ErrReactionsNotAllowed = errors.New("messaging: system messages cannot carry reactions")
 )
 
 // ListMyChannels resyncs the caller's derived membership (FR-1, role/branch is the SoT, so a
@@ -167,6 +182,9 @@ func (s *Service) GetMessages(ctx context.Context, c Caller, channelID, cursor s
 	if err != nil {
 		return MessagePage{}, err
 	}
+	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
+		return MessagePage{}, err
+	}
 	// Coerce a nil slice to an empty one so an empty channel serializes {"messages":[]} rather than
 	// {"messages":null} (mirrors ListMyChannels / GetThread). A null broke the Lit hub's
 	// [...page.messages].reverse() with a TypeError, confusing cross-channel content.
@@ -189,10 +207,156 @@ func (s *Service) GetThread(ctx context.Context, c Caller, channelID, rootID str
 	if err != nil {
 		return nil, err
 	}
+	if err := s.stitchReactions(ctx, replies, c.UserID); err != nil {
+		return nil, err
+	}
 	if replies == nil {
 		replies = []Message{}
 	}
 	return replies, nil
+}
+
+// stitchReactions fills each message's Reactions summary in place, one round
+// trip for the page (reactionsForMessages answers per message and per emoji,
+// with Mine answered against the reader). A message with no reactions keeps a
+// nil slice, so its payload stays byte-identical to the pre-feature shape.
+func (s *Service) stitchReactions(ctx context.Context, msgs []Message, userID string) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, ids, userID)
+	if err != nil {
+		return err
+	}
+	for i := range msgs {
+		if r, ok := byMessage[msgs[i].ID]; ok {
+			msgs[i].Reactions = r
+		}
+	}
+	return nil
+}
+
+// - Reactions, the seen-by read and the mentions view (change 7, slice S3) -
+
+// maxReactionBytes caps one reaction key. An emoji is a few bytes; a word chip
+// ("Thanks", "On it") is a short word. 64 bytes holds any composed emoji
+// sequence and every word chip the boards draw, and stops a body-sized blob
+// riding in a reaction.
+const maxReactionBytes = 64
+
+// normalizeReaction trims and bounds a reaction key. ok is false when what is
+// left is empty or over the cap, so a bad key is a 400 at this boundary and
+// never reaches the store.
+func normalizeReaction(emoji string) (string, bool) {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" || len(emoji) > maxReactionBytes {
+		return "", false
+	}
+	return emoji, true
+}
+
+// AddReaction seats the caller's reaction on one message, enforcing channel
+// membership FIRST, then the channel binding (messageFacts: a message of
+// another channel is not-found, no existence leaks), then ruling 6: a reaction
+// is none on EVENT, approval or any other system message (ErrReactionsNotAllowed,
+// 409). The write is idempotent; the answer is the message's fresh summary with
+// Mine answered for the caller.
+func (s *Service) AddReaction(ctx context.Context, c Caller, channelID, messageID, emoji string) ([]ReactionCount, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return nil, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if facts.Kind != MsgText {
+		return nil, ErrReactionsNotAllowed
+	}
+	key, ok := normalizeReaction(emoji)
+	if !ok {
+		return nil, ErrBadReaction
+	}
+	if err := s.repo.AddReaction(ctx, channelID, messageID, c.UserID, key); err != nil {
+		return nil, err
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, []string{messageID}, c.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return byMessage[messageID], nil
+}
+
+// RemoveReaction drops the caller's one emoji on one message through the same
+// walls the add runs (membership, the channel binding, ruling 6 both ways).
+// Removing what is not there is not an error: the caller's end state is the
+// answer, and the fresh summary reports it.
+func (s *Service) RemoveReaction(ctx context.Context, c Caller, channelID, messageID, emoji string) ([]ReactionCount, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return nil, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if facts.Kind != MsgText {
+		return nil, ErrReactionsNotAllowed
+	}
+	key, ok := normalizeReaction(emoji)
+	if !ok {
+		return nil, ErrBadReaction
+	}
+	if err := s.repo.RemoveReaction(ctx, channelID, messageID, c.UserID, key); err != nil {
+		return nil, err
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, []string{messageID}, c.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return byMessage[messageID], nil
+}
+
+// MessageSeenBy answers the board's "Seen N" for one message, enforcing
+// membership and the channel binding first. The author is excepted by the read
+// itself (a person is never seen by their own post); a system message, whose
+// author is nobody, counts every member past it.
+func (s *Service) MessageSeenBy(ctx context.Context, c Caller, channelID, messageID string) (SeenByReport, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return SeenByReport{}, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return SeenByReport{}, err
+	}
+	return s.repo.MessageSeenBy(ctx, channelID, facts.AuthorID, facts.CreatedAt)
+}
+
+// ListMentions returns the caller's mentions view (ruling 5: the messages
+// naming the caller or the caller's role, in the rooms the caller holds,
+// newest first), cursor paginated like the stream, with the same reaction
+// stitch the stream carries so a mention row renders whole.
+func (s *Service) ListMentions(ctx context.Context, c Caller, cursor string, limit int) (MessagePage, error) {
+	if limit <= 0 || limit > maxPage {
+		if limit > maxPage {
+			limit = maxPage
+		} else {
+			limit = defaultPage
+		}
+	}
+	page, err := s.repo.ListMentions(ctx, c.UserID, cursor, limit)
+	if err != nil {
+		return MessagePage{}, err
+	}
+	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
+		return MessagePage{}, err
+	}
+	if page.Messages == nil {
+		page.Messages = []Message{}
+	}
+	return page, nil
 }
 
 // PostMessage posts a TEXT message to a channel (top-level or a thread reply when threadRootID is

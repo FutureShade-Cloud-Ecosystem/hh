@@ -13043,6 +13043,157 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/messaging/channels/{id}/messages/{msgID}/reactions:
+    put:
+      operationId: messagingAddReaction
+      tags:
+        - staff-messaging
+      summary: Seat the caller's reaction on one message, idempotently
+      description: "A reaction is none on EVENT, approval or other system messages (the change 7 ruling): a system message refuses with 409. A replay of the same (message, caller, emoji) lands once and changes nothing; the answer is the message's fresh summary with mine answered for the caller."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingReactionPut"
+      responses:
+        "200":
+          description: The message's fresh reaction summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingReactionSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}:
+    delete:
+      operationId: messagingRemoveReaction
+      tags:
+        - staff-messaging
+      summary: Remove the caller's one emoji from one message
+      description: "The emoji rides the path, URL escaped. The refusal and the idempotence are the add's: a system message refuses with 409, and removing what is not there is a 200 whose summary reports the caller's end state."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: emoji
+          in: path
+          required: true
+          description: The reaction key (an emoji or a short word chip)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The message's fresh reaction summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingReactionSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/messages/{msgID}/seen-by:
+    get:
+      operationId: messagingMessageSeenBy
+      tags:
+        - staff-messaging
+      summary: Read the seen-by arithmetic for one message
+      description: "The board's \"Seen N\": the exact count of the room's members whose read cursor stands at or past the message's created_at, the author excepted (nobody is seen by their own post; a system message, whose author is nobody, counts every member past it). readers names them, newest read first, capped while the count stays exact."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The seen-by count and readers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingSeenBy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/messaging/mentions:
+    get:
+      operationId: messagingListMentions
+      tags:
+        - staff-messaging
+      summary: List the messages naming the caller or the caller's role
+      description: "The mentions view (the change 7 ruling): every message in a room the caller belongs to that names the caller, by person or by one of the caller's own role codes, newest first, cursor paginated by the same keyset the message stream uses. Deleted messages never appear."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of mention messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessagePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/messaging/unacked:
     get:
       operationId: messagingListUnacked
@@ -40600,6 +40751,11 @@ components:
         created_at:
           type: string
           format: date-time
+        reactions:
+          type: array
+          description: The reaction summary, one row per emoji in the order the emoji were first given; absent on a message with no reactions and on every payload that predates the feature.
+          items:
+            $ref: "#/components/schemas/MessagingReactionCount"
     MessagingEventRef:
       type: object
       description: The structured ref an EVENT message carries. amount_cents is the money the event carries; count and rollup_day appear on a rollup root; rules names why a targeted payment notice reached this recipient.
@@ -40745,6 +40901,68 @@ components:
         acked_at:
           type: string
           format: date-time
+    MessagingReactionPut:
+      type: object
+      description: The reaction body, one emoji or a short word chip
+      required:
+        - emoji
+      properties:
+        emoji:
+          type: string
+          description: The reaction key; trimmed, non-empty, at most 64 bytes, so a composed emoji sequence and every word chip the boards draw fit and a body-sized blob does not.
+    MessagingReactionCount:
+      type: object
+      description: One emoji's line of a reaction summary (the board's "Thanks 1" chip)
+      required:
+        - emoji
+        - count
+        - mine
+      properties:
+        emoji:
+          type: string
+        count:
+          type: integer
+          format: int32
+          description: How many members reacted with this emoji
+        mine:
+          type: boolean
+          description: Whether the READER is one of them; answered per read, never stored
+    MessagingReactionSummary:
+      type: object
+      description: The message's reaction summary; empty when nothing reacts
+      required:
+        - reactions
+      properties:
+        reactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingReactionCount"
+    MessagingSeenByReader:
+      type: object
+      description: One member the seen-by read names
+      required:
+        - user_id
+        - display_name
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+    MessagingSeenBy:
+      type: object
+      description: "The seen-by read model: the exact count of the room's members past the message, the author excepted, plus the readers themselves (newest read first, capped while the count stays exact)"
+      required:
+        - count
+        - readers
+      properties:
+        count:
+          type: integer
+          format: int32
+        readers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingSeenByReader"
     MessagingAckProgress:
       type: object
       description: The per-message ack arithmetic. remaining is floored at zero (an acked member can later leave the channel, dropping required while their ack row remains); complete requires required greater than zero.
