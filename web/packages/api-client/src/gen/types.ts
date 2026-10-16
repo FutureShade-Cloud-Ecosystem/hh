@@ -7486,6 +7486,23 @@ export type WarrantyPolicyInput = {
   branch_id?: string;
   claim_threshold_cents: number;
 };
+export type WarrantyVendorAgreement = {
+  vendor_id: string;
+  vendor_no: string;
+  vendor_name: string;
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+  updated_at?: string;
+};
+export type WarrantyVendorAgreementInput = {
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+};
+export type WarrantyVendorAgreementPage = {
+  items: WarrantyVendorAgreement[];
+};
 export type WarrantyAddress = {
   line1?: string;
   city?: string;
