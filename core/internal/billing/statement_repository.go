@@ -471,7 +471,7 @@ func (r *Repository) PreviewAging(ctx context.Context, customerID string) (State
 	if err != nil {
 		return StatementPreviewAging{}, err
 	}
-	today := now.UTC().Format("2006-01-02")
+	today := now.Format("2006-01-02")
 	var a StatementPreviewAging
 	err = r.pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(CASE WHEN ($2::date - due_date) <= 0 THEN balance_cents ELSE 0 END), 0),

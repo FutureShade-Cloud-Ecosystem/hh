@@ -569,14 +569,14 @@ function placeHoldPanel(model: DeskModel): TemplateResult {
   return html`
     <section class="panel side" aria-label="Place a hold" data-hold-panel>
       <div class="panel-head"><h2>Place a hold</h2></div>
-      <p class="note" data-place-words>Placing a hold by hand stops the account at the till, the gate and the portal. It is audited; the reason is what a controller or the general manager will read first.</p>
+      <p class="note" data-place-words>Placing a hold by hand stops the account at the till, the gate and the portal. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
       <fieldset class="held-form">
         <label>Account<select data-field="place-hold-account">
-          <option value="">Pick an account</option>
-          ${model.registerSummary.map((r) => html`<option value="${r.customer_id}" ?selected=${draft.customerId === r.customer_id}>${r.customer_name}</option>`)}
+          <option data-id="">Pick an account</option>
+          ${model.registerSummary.map((r) => html`<option data-id="${r.customer_id}">${r.customer_name}</option>`)}
         </select></label>
         <label>Kind<input type="text" value="Manual" readonly /></label>
-        <label>Reason<textarea data-field="place-hold-reason" rows="3" placeholder="Why the account is held" maxlength="1024">${draft.reason}</textarea></label>
+        <label>Reason<textarea data-field="place-hold-reason" rows="3" placeholder="Why the account is held" maxlength="1024"></textarea></label>
         <p class="label">What it blocks</p>
         <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
       </fieldset>

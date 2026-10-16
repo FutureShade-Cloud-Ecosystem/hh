@@ -34,7 +34,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -424,7 +423,6 @@ func (h *C8S3S4Handler) writeErr(w http.ResponseWriter, r *http.Request, err err
 		if h.log != nil {
 			h.log.Error("billing c8 s3/s4 handler", "err", err, "path", r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 		httpx.Error(w, http.StatusInternalServerError, "billing handler error")
 	}
 }

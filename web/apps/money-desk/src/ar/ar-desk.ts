@@ -562,7 +562,9 @@ export class ArDesk {
   change(control: Element): void {
     if (this.#office.change(control)) return;
     if (control.getAttribute("data-field") === "place-hold-account") {
-      this.#placeHoldDraft = { ...this.#placeHoldDraft, customerId: (control as HTMLSelectElement).value };
+      const sel = (control as HTMLSelectElement).selectedOptions[0];
+      const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
+      this.#placeHoldDraft = { ...this.#placeHoldDraft, customerId };
       this.#host.repaint();
       return;
     }
