@@ -33,7 +33,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -183,6 +182,11 @@ func qwApply(t *testing.T) (proposed, created int) {
 
 // qwFingerprint fingerprints every row of the tables, contents and row versions, so an assertion can
 // hold that a run changed nothing at all rather than merely created nothing.
+//
+// The contractor account's documents are left out of the tables that hold them (qwWithoutContractor):
+// the apply that adds the quote world adds the contractor world in the same transaction (the account
+// exists by then), and demoseed_contractor_plan_test.go and internal/demo/world_contractor_test.go
+// hold that world; these fingerprints are about the OTHER worlds not moving.
 func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -191,12 +195,31 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 		if err := pool.QueryRow(ctx, `
 			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
 			  FROM (SELECT to_jsonb(r)::text AS line
-			          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`).Scan(&sum); err != nil {
+			          FROM (SELECT *, xmin::text AS row_version FROM `+table+qwWithoutContractor(table)+`) r) s`).Scan(&sum); err != nil {
 			t.Fatalf("fingerprint %s: %v", table, err)
 		}
 		out[table] = sum
 	}
 	return out
+}
+
+// qwWithoutContractor is the WHERE clause that leaves the contractor account's own rows out of a table
+// (the account is contractorCustomerID; a line table is reached through its document).
+func qwWithoutContractor(table string) string {
+	c := "'" + contractorCustomerID + "'::uuid"
+	switch table {
+	case "orders", "invoices", "payments", "quotes":
+		return " WHERE customer_id <> " + c
+	case "quote_lines":
+		return " WHERE quote_id NOT IN (SELECT id FROM quotes WHERE customer_id = " + c + ")"
+	case "order_lines":
+		return " WHERE order_id NOT IN (SELECT id FROM orders WHERE customer_id = " + c + ")"
+	case "invoice_lines":
+		return " WHERE invoice_id NOT IN (SELECT id FROM invoices WHERE customer_id = " + c + ")"
+	case "payment_allocations":
+		return " WHERE payment_id NOT IN (SELECT id FROM payments WHERE customer_id = " + c + ")"
+	}
+	return ""
 }
 
 // qwDriverDayIDs are the Driver's day-keyed run and stop ids on the pinned clock's day: the rows
@@ -206,7 +229,7 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 // in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
 // below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
-	stamp := qwClock.In(houseday.Location()).Format("20060102")
+	stamp := qwClock.In(seedLocation()).Format("20060102")
 	ids := []string{demoID(dayKey(stamp, "driver-run"))}
 	ids = append(ids, driverDayStopIDs(stamp)...)
 	return ids
@@ -216,18 +239,34 @@ func qwDriverDayIDs() []string {
 // sets, the updated_at it bumps, and the row version (xmin) any update changes.
 var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
 
+// qwTaskRepairColumns are the only columns the task sync repair (repairDemoTaskSync) moves on a
+// demo task row: the org it stamps, the seq it draws from the type's counter, and the row version
+// (xmin) any update changes. The repair needs the org row, which the populate provisions after the
+// first apply, so like the Driver's stamp it can only land on the first apply after the populate,
+// which is the apply that adds the quotes.
+var qwTaskRepairColumns = []string{"org_id", "seq", "row_version"}
+
+// qwDemoTaskIDs are the plan's own task ids, the rows the task sync repair addresses.
+func qwDemoTaskIDs() []string {
+	ids := make([]string, 0, len(demoTasks))
+	for _, tk := range demoTasks {
+		ids = append(ids, demoID("task:"+tk.Key))
+	}
+	return ids
+}
+
 // qwFingerprintStamped fingerprints one delivery table with the day-keyed Driver rows named by
 // except kept in, but with qwDriverStampColumns removed from those rows alone. Every other column of
 // those rows, and every column of every other row, still counts, so a status, a date or a driver id
 // moving on them is seen.
-func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except []string) string {
+func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except, cols []string) string {
 	t.Helper()
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
 		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
-		except, qwDriverStampColumns).Scan(&sum); err != nil {
+		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint %s: %v", table, err)
 	}
 	return sum
@@ -340,11 +379,22 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// intended movement beside the quote world, checked by name below instead of hiding inside
 	// "nothing else moved".
 	driverDayIDs := qwDriverDayIDs()
+	taskIDs := qwDemoTaskIDs()
+	// The task sync repair is the other named mover on this apply: every demo task enters it
+	// unstamped (no seq, so on no sync feed) and leaves it stamped, with only qwTaskRepairColumns
+	// moved (the fingerprint below keeps every other column of these rows in).
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NULL`, taskIDs); n != len(taskIDs) {
+		t.Fatalf("%d of %d demo tasks enter the second apply unstamped, want all of them", n, len(taskIDs))
+	}
 	fingerprint := func() map[string]string {
 		out := map[string]string{}
 		for _, table := range qwOtherWorldTables {
 			if table == "delivery_runs" || table == "delivery_stops" {
-				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs)
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs, qwDriverStampColumns)
+				continue
+			}
+			if table == "tasks" {
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, taskIDs, qwTaskRepairColumns)
 				continue
 			}
 			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
@@ -353,7 +403,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 	before := fingerprint()
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller world the same apply adds
+	const wantQuoteRows = 5 + 10 + 3 + 2 + 2 + 2 + 4 + 2 + controllerWorldRows + contractorWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, requests, and the controller and contractor worlds the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -379,17 +429,21 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
 			runsStamped, stopsStamped, len(driverDayIDs)-1)
 	}
-	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
-		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1 + 2}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
+		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {
+		t.Errorf("the task sync repair left %d of %d demo tasks on their feed, want all of them", n, len(taskIDs))
+	}
+	census := map[string]int{"quotes": 5, "quote_lines": 10, "quote_share_links": 3, "quote_acceptances": 2,
+		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 2 + 2}
 	for table, add := range census {
-		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
+		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table+qwWithoutContractor(table)); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
 		}
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 4 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1 AND customer_id <> $2::uuid`, demoMarker, contractorCustomerID); n != 5 {
 		t.Errorf("demo quotes found by the world's marker: %d, want 4", n)
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 2 {
 		t.Errorf("floor requests: %d, want 1", n)
 	}
 

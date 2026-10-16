@@ -8898,6 +8898,39 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "503":
           description: A dependency of the exchange could not answer; nothing was minted
+  /api/v1/auth/persona:
+    post:
+      operationId: identityPersona
+      tags:
+        - staff-identity
+      summary: Enter the demo as one persona of the fixed list
+      description: "Mounted only in the demo build under the console sign in mode, and absent from the default build and from the demo mode. A persona is not an FB Console user: the core mints the persona's session itself with the deployment's own signing key. The subject of the token is persona:<id>. On the testers' copy the caller sends the core bearer of a real partner exchange and the partner must be on the pinned list; a persona token cannot call it. On the public copy no bearer is sent and the route is limited per address and per address and persona. The token window is the persona role's session ceiling, with no refresh. An id outside the fixed list and the contractor personas answer the shared Forbidden body, and no refusal says which check failed."
+      x-addition: the demo build's tap-a-role entry under the real sign in (state note HH-S4-AUTH, section 5); the ERP minted demo sessions from a flow table
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPersonaRequest"
+      responses:
+        "200":
+          description: The persona's core session token, its expiry and its staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency of the entry could not answer; nothing was minted
   /api/v1/auth/methods:
     get:
       operationId: identityAuthMethods
@@ -15629,7 +15662,7 @@ paths:
       tags:
         - staff-pos
       summary: Read the tax rate the ring binds and its rounding rule
-      description: "The rate the ring binds, read through the same assessor the ring assesses with, so at the moment of the read the counter's display and the ring's math agree. Through the wired seam this holds for every ticket the counter can ring today, a relief ticket too: the relief reasons are evidence-gated and the seam carries no evidence, so the relief reason rides the ticket while this rate binds. MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard today and separately editable, and an effective-dated rate row change between the read and the ring moves the ring's rate. jurisdiction and reason_code are the standard-rated Ontario facts the read answers. The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet."
+      description: "The rate the ring binds, read through the same assessor the ring assesses with, so at the moment of the read the counter's display and the ring's math agree. Through the wired seam this holds for every ticket the counter can ring today, a relief ticket too: the relief reasons are evidence-gated and the seam carries no evidence, so the relief reason rides the ticket while this rate binds. MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard today and separately editable, and an effective-dated rate row change between the read and the ring moves the ring's rate. jurisdiction and reason_code are the dealer's own standard-rated facts the read answers (Ontario's for an Ontario dealer). The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet."
       x-addition: the counter-readable tax rate (row 661); no ERP source route
       x-role: requireStaff
       x-access:
@@ -23450,8 +23483,8 @@ paths:
       tags:
         - staff-export
       summary: Download a financial statement as a native workbook
-      description: The same builder backs the finance module's own format=xlsx route, so the two doors cannot drift. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      description: "The same builder backs the finance module's own format=xlsx route, so the two doors cannot drift. Gated as the finance reads it mirrors: a manager, and a branch outside the caller's reach (or no branch from a branch scoped caller) is the shared 403. The body is a binary workbook, not JSON."
+      x-role: requireManager
       x-access:
         surfaces:
           - money-desk
@@ -23519,7 +23552,7 @@ paths:
         - staff-export
       summary: Download the general-ledger transaction export as a native workbook
       description: The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces:
           - money-desk
@@ -23580,7 +23613,7 @@ paths:
         - staff-export
       summary: Download the audit trail as a native workbook
       description: Reads the same service and filter as the audit list, so the file is the screen's rows. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireAdmin
       x-access:
         surfaces:
           - dealer-admin
@@ -25205,6 +25238,77 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/warranty/policy:
+    get:
+      operationId: warrantyGetPolicy
+      tags:
+        - staff-warranty
+      summary: Read the effective warranty policy for a branch
+      description: branch_id empty resolves the org-wide default row; a branch resolves that branch's override when present, else the org default. The claim threshold is the line total at which a defect becomes a warranty claim rather than shrinkage.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - manager-home
+          - counter-till
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: warrantyPutPolicy
+      tags:
+        - staff-warranty
+      summary: Write the warranty policy (org default or one branch override)
+      description: Money arrives in integer cents on the wire. A change records the old and new threshold on the audit spine; a save that moved nothing writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyPolicyInput"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: A negative threshold, or an unknown branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/warranty/claims:
     get:
       operationId: warrantyListClaims
@@ -32424,6 +32528,9 @@ components:
           type: object
           additionalProperties: true
           description: The module's policy knobs via the surface hook; fields a caller may not see are byte-absent
+        business_zone:
+          type: string
+          description: The dealer's business day zone, an IANA name such as America/Los_Angeles. The apps name the dealer's day in it (the till's requested date, the quote desk's days left, the driver's runs) instead of compiling a zone in. Absent from an older core; the apps then read the Ontario dealer's America/Toronto.
     SettingsRoleItemsBody:
       type: object
       required:
@@ -35982,6 +36089,15 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+    IdentityPersonaRequest:
+      type: object
+      required:
+        - persona
+      additionalProperties: false
+      properties:
+        persona:
+          type: string
+          description: One id of the build's fixed persona list
     IdentityExchangeResponse:
       type: object
       required:
@@ -36334,6 +36450,7 @@ components:
       description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
       enum:
         - STD_ON_HST_13
+        - STD_SALES_TAX
         - ON_FN_POS_8
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
@@ -37463,6 +37580,15 @@ components:
         draft_po_no:
           type: string
           description: The number of the draft named by draft_po_id; present with it, absent without it
+        short_order_nos:
+          type: array
+          items:
+            type: string
+          description: The visible numbers of the open sales orders waiting on this product at this branch, the orders the shortfall holds up, oldest first, at most three of them; how many more wait rides beside them in short_order_more. Absent when the orders seam is unbound or nothing waits on the row.
+        short_order_more:
+          type: integer
+          format: int32
+          description: How many further open sales orders wait on this product beyond the three short_order_nos names. Absent when there are none.
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row
@@ -41579,6 +41705,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -41695,6 +41822,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -41861,6 +41989,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -42271,6 +42400,7 @@ components:
         - automated
         - requires_evidence
         - evidence_satisfied
+        - tax_label
       properties:
         purchaser_type:
           type: string
@@ -42305,6 +42435,9 @@ components:
           type: boolean
         evidence_satisfied:
           type: boolean
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
     PosSignatureCapture:
       type: object
       required:
@@ -42743,20 +42876,26 @@ components:
         - reason_code
         - rate_bps
         - round_mode
+        - tax_label
       properties:
         jurisdiction:
           type: string
-          enum:
-            - ON
+          description: The dealer's own tax jurisdiction code
+          ON for an Ontario dealer: null
         reason_code:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
+          description: The standard reason of the dealer's jurisdiction, STD_ON_HST_13 for an Ontario dealer and STD_SALES_TAX for every other
         rate_bps:
           type: integer
           format: int32
           description: Basis points
           1300 is 13 percent: null
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         round_mode:
           type: string
           enum:
@@ -49932,6 +50071,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - lines
       properties:
         quote_id:
@@ -49978,6 +50118,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50188,6 +50331,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - as_of
         - acceptable
         - quantity_notice
@@ -50223,6 +50367,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50323,6 +50470,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - quantities_confirmed
       properties:
         quote_no:
@@ -50341,6 +50489,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -53780,6 +53931,35 @@ components:
         limit:
           type: integer
           format: int32
+    WarrantyPolicy:
+      type: object
+      description: "The effective warranty policy for a scope: the branch row when present, else the org default. The claim threshold is the line total at which a defect becomes a warranty claim rather than shrinkage."
+      required:
+        - claim_threshold_cents
+      properties:
+        branch_id:
+          type: string
+          description: The branch the row answers for; empty means the org default
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          description: The claim threshold in integer cents, zero or more
+        updated_at:
+          type: string
+          format: date-time
+    WarrantyPolicyInput:
+      type: object
+      description: The policy write payload; money arrives in integer cents. branch_id empty writes the org default row, a branch id upserts that branch's override.
+      required:
+        - claim_threshold_cents
+      properties:
+        branch_id:
+          type: string
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The new threshold in integer cents, zero or more
     WarrantyAddress:
       type: object
       description: The job-site (failure-location) address shape

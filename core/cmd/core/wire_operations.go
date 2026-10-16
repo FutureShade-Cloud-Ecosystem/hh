@@ -169,6 +169,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// projection by ERP user id; decide-time authority never runs through
 	// it).
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
@@ -205,6 +206,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
 	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
@@ -223,6 +225,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
 	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
 	inventorySvc.WithDraftPOReader(invDraftPOs{svc: purchasingSvc})
+	// Change 5 slice S3: the shortfall row names the sales orders it holds up, read through the
+	// order module's seam (the 0008 tables' sole reader) rather than any second look at them.
+	inventorySvc.WithShortOrderReader(invShortOrders{svc: orderSvc})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -231,7 +236,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// stream-ticket route answers 501 and clients use the Bearer stream.
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
-	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
+	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -277,7 +282,31 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	syncEngine := sync.NewEngine().
 		WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log).
 		WithKeyLedger(sync.NewPgKeyLedger(pool))
-	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	// The pick record door (Field CP-2) runs the yard service's RecordPick under the branch fence the
+	// REST door applies: the sync store takes the staff authority seam (the subject's authority in
+	// the org, with the linked ERP user) here and the yard service, the record body, where that
+	// service is built below. A nil pool (the wiring-shape tests) wires no seam; a real boot fails
+	// fast without both.
+	var syncStaff identity.SyncStaffResolver
+	if pool != nil {
+		authority, authErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if authErr != nil {
+			panic("sync: pick record door authority resolver refused to boot: " + authErr.Error())
+		}
+		syncStaff = func(ctx context.Context, platformUserID, orgID string) (identity.StaffContext, bool, error) {
+			a, has, err := authority.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return identity.StaffContext{}, false, err
+			}
+			sc := identity.FromAuthority(a)
+			if uid, ok := link(ctx, platformUserID); ok {
+				sc.UserID = uid
+			}
+			return sc, true, nil
+		}
+	}
+	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// The yard-pick item's scopes (HH-3.5 #166): shortages and weights
@@ -290,7 +319,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	if err := syncEngine.RegisterScope("shortages", tasks.NewShortageSyncStore(pool, link)); err != nil {
+	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
@@ -342,7 +372,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
 	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
-	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
 	}
@@ -496,7 +526,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("payment_methods", payments.NewPaymentMethodsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil).WithZone(newDealerZone(pool))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -541,7 +571,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool)).WithTaxLabel(newTaxWords(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
@@ -569,6 +599,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	dispatchSvc.WithCostRoles(spine.roleCfg)
 	if !dispatchSvc.CostRolesWired() {
 		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
+	}
+	// The pod scope's typed name attestation door (Field CP-2) runs the same CapturePOD body the REST
+	// door runs; the boot fail fast keeps a deploy from serving with the door dark.
+	podSync.WithAttestor(dispatchSvc)
+	if pool != nil && !podSync.AttestDoorWired() {
+		panic("dispatch: pod attestation sync door not wired - a driver's offline proof of delivery would refuse every replay")
 	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)
@@ -603,11 +639,19 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc)
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
-	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool).WithZone(newDealerZone(pool))})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
-	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
+	orderSvc.WithDepositReleaser(newInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// The sync record door's body is the yard service, the one the REST record door runs.
+	pickSync.WithPickRecorder(yardTasksSvc)
+	// A shortage created through sync tells the counter as the REST report does, through the yard
+	// service's notifier.
+	shortageSync.WithNoticer(yardTasksSvc)
+	if pool != nil && !pickSync.PickDoorWired() {
+		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
+	}
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
 	// fail-fast keeping a deploy from serving with the yard door dark.
@@ -646,7 +690,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	ops.unionGateway = unionGateway
 	w3bPaymentsRepo := payments.NewRepository(pool)
-	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
+	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway).WithCurrency(newDealerCurrency(pool))
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
@@ -1682,6 +1726,23 @@ func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, product
 	out := make([]inventory.DraftPO, len(rows))
 	for i, r := range rows {
 		out[i] = inventory.DraftPO{ProductID: r.ProductID, BranchID: r.BranchID, POID: r.POID, PONo: r.PONo}
+	}
+	return out, nil
+}
+
+// invShortOrders satisfies inventory.ShortOrderReader over the order module's open-order numbers
+// read: the sales orders a shortfall row names, oldest first. Numbers and ids only cross the seam;
+// the orders tables stay this module's alone.
+type invShortOrders struct{ svc *order.Service }
+
+func (a invShortOrders) OpenOrdersFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.ShortOrder, error) {
+	rows, err := a.svc.OpenSaleOrdersFor(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.ShortOrder, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.ShortOrder{ProductID: r.ProductID, BranchID: r.BranchID, OrderID: r.OrderID, OrderNo: r.OrderNo}
 	}
 	return out, nil
 }

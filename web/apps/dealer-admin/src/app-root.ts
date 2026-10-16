@@ -22,10 +22,13 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
@@ -221,15 +224,8 @@ const emptySettingsModel = (): SettingsModel => ({
 export class DealerAdminApp extends HHElement {
   static styles = [baseStyles, dealerStyles, pricingStyles];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -237,10 +233,23 @@ export class DealerAdminApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The dealer's calls, over the staff client.
@@ -320,12 +329,6 @@ export class DealerAdminApp extends HHElement {
 
   // The copied mark's timer, cleared on disconnect and sign out.
   #copiedTimer = 0;
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // Every control rides data-action names; one host listener reads them, as
   // the till's and Manager Home's do.
@@ -687,14 +690,22 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // change, input and keydown do not leave this element's own shadow root,
     // so their listeners sit on the root itself.
     this.renderRoot.addEventListener("change", this.#onHostChange);
     this.renderRoot.addEventListener("input", this.#onHostInput);
     this.renderRoot.addEventListener("keydown", this.#onHostKeydown);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("dealer-admin", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -717,7 +728,27 @@ export class DealerAdminApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#start();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     this.renderRoot.removeEventListener("input", this.#onHostInput);
@@ -1756,6 +1787,12 @@ export class DealerAdminApp extends HHElement {
     this.#admin.signOut();
     this.#pricing.reset();
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 

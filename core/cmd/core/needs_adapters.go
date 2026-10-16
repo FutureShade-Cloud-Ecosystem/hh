@@ -76,6 +76,34 @@ func w6bParseStamp(s string) time.Time {
 // -- identity · approvals waiting ON THIS PERSON ------------------------------------------------
 // w6bApprovalsWaiting is re-pointed at the bridge's Approvals rail (the
 // sanctioned class: decide-time authority stays the guard's resolution).
+
+// w6bApprovalsFiledPending counts approvals the caller filed that are still pending, scoped to the
+// branches the caller reaches. It returns only a count and the oldest filing time, never another
+// person's request or its content, so a filer who may not decide still sees the count of their own.
+func w6bApprovalsFiledPending(svc *identity.Approvals) dashboard.NeedsFunc {
+	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
+		caller, ok := identity.StaffContextFromContext(ctx)
+		if !ok {
+			return dashboard.NeedsMeasure{}, errors.New("dashboard: filed pending approvals needs a caller")
+		}
+		reqs, err := svc.ListApprovals(ctx, caller, string(identity.ApprovalPending))
+		if err != nil {
+			return dashboard.NeedsMeasure{}, err
+		}
+		m := dashboard.NeedsMeasure{}
+		for _, r := range reqs {
+			if r.RequestedBy != caller.UserID {
+				continue
+			}
+			m.Count++
+			if !r.RequestedAt.IsZero() && (m.Oldest.IsZero() || r.RequestedAt.Before(m.Oldest)) {
+				m.Oldest = r.RequestedAt
+			}
+		}
+		return m, nil
+	}
+}
+
 func w6bApprovalsWaiting(svc *identity.Approvals) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		caller, ok := identity.StaffContextFromContext(ctx)
@@ -139,7 +167,7 @@ func w6bAREscalation(svc *billing.ARLandingService) dashboard.NeedsFunc {
 func w6bLoadBoard(pool *pgxpool.Pool, svc *dispatch.Service, dueToCommit bool) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		n := 0
-		day := dashboard.HouseDay(sc.Now)
+		day := dashboard.HouseDayIn(sc.Zone, sc.Now)
 		for _, b := range w6bBranches(ctx, pool, sc) {
 			view, err := svc.LoadBoard(ctx, b, day)
 			if err != nil {

@@ -945,7 +945,7 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await page.getByRole("button", { name: /Download PDF/ }).click({ force: true });
   await expect(page.locator("[data-error]")).toContainText("later");
   await expect(page.locator(".tab-later", { hasText: "Activity" })).toContainText("later");
-  await expect(page.locator(".tab-later", { hasText: "Contacts" })).toContainText("later");
+  await expect(page.getByRole("button", { name: "Contacts", exact: true })).toBeVisible();
 });
 
 test("the Statements tab lists every account and runs them all", async ({ page, request }) => {

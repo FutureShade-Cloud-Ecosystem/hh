@@ -20,7 +20,7 @@
 // this adapter never reads that response header, never sets it on a request,
 // and touches no storage of any kind (a test holds that line with storage
 // doubles that throw on any write, and a scan of this source).
-import { PlatformUnreachableError } from "./client.js";
+import { PlatformRefusedError, PlatformUnreachableError } from "./client.js";
 import type {
   AccountSurface,
   AccountUser,
@@ -71,7 +71,9 @@ function nonEmpty(value: string, what: string): string {
 
 /** The console's refusal of a JWT mint: the session is gone, blocked or throttled, or the console is down. */
 function consoleRefusal(status: number): ExchangeRefusalCode {
-  if (status === 401 || status === 403 || status === 404) return "no_session";
+  // Shells contract r7: only a Console 401 means the session is gone or blocked. A 403 or 404 can be a path,
+  // project or permission fault and must never wipe a session; every other status is an outage.
+  if (status === 401) return "no_session";
   if (status === 429) return "rate_limited";
   return "unavailable";
 }
@@ -89,7 +91,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The core's 200 body, read field by field; anything short of a usable answer is null. */
-function readAnswer(body: unknown): ExchangeAnswer | null {
+export function readExchangeAnswer(body: unknown): ExchangeAnswer | null {
   if (!isRecord(body)) return null;
   const { token, expiresAtMs, user } = body;
   if (typeof token !== "string" || token === "") return null;
@@ -199,7 +201,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     }
     jwt = ""; // the attempt is over; the JWT is not kept
     if (response.status !== 200) return { ok: false, code: coreRefusal(response.status) };
-    const answer = readAnswer(await readJson(response));
+    const answer = readExchangeAnswer(await readJson(response));
     return answer === null ? { ok: false, code: "unavailable" } : { ok: true, answer };
   }
 
@@ -216,7 +218,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     } catch {
       throw new PlatformUnreachableError("the console could not be reached (network)");
     }
-    if (response.status !== 200) throw new Error(`the console refused the account read (status ${response.status})`);
+    if (response.status !== 200) throw new PlatformRefusedError(response.status, `the console refused the account read (status ${response.status})`);
     return readAccount(await readJson(response));
   }
 
@@ -238,7 +240,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
         response = await create();
       }
       if (response.status < 200 || response.status > 299) {
-        throw new Error(`the console refused the sign-in (status ${response.status})`);
+        throw new PlatformRefusedError(response.status, `the console refused the sign-in (status ${response.status})`);
       }
       return account();
     },
@@ -274,4 +276,50 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
       }
     },
   };
+}
+
+export type PersonaRefusal = "unauthorized" | "forbidden" | "rate_limited" | "bad_request" | "unavailable" | "offline";
+
+/**
+ * POST /api/v1/auth/persona {persona}: the answer is the exchange's shape. The
+ * caller's core bearer rides only when there is one (the testers' copy); the
+ * public copy sends none. Nothing is stored here, and the answer's token goes
+ * back to the caller alone.
+ */
+export async function enterPersona(
+  fetchFn: typeof fetch,
+  coreBaseUrl: string,
+  org: string,
+  persona: string,
+  bearer: string | null,
+): Promise<{ ok: true; answer: ExchangeAnswer } | { ok: false; reason: PersonaRefusal }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json", "X-Org": org };
+  if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
+  let response: Response;
+  try {
+    response = await fetchFn(`${coreBaseUrl.replace(/\/+$/, "")}/api/v1/auth/persona`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ persona }),
+      credentials: "omit",
+      redirect: "error",
+    });
+  } catch {
+    return { ok: false, reason: "offline" };
+  }
+  if (response.status === 401) return { ok: false, reason: "unauthorized" };
+  if (response.status === 403) return { ok: false, reason: "forbidden" };
+  if (response.status === 429) return { ok: false, reason: "rate_limited" };
+  if (response.status === 400) return { ok: false, reason: "bad_request" };
+  if (response.status !== 200) return { ok: false, reason: "unavailable" };
+  const answer = readExchangeAnswer(await readJsonBody(response));
+  return answer === null ? { ok: false, reason: "unavailable" } : { ok: true, answer };
+}
+
+async function readJsonBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }

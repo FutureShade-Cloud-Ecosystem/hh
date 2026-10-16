@@ -11,7 +11,7 @@
 // the item's legacy id unless the record names another), so a load item
 // whose account number a staff member already made attaches to that row
 // and stamps it the load's own. The billing address runs the same
-// Canadian normalisation the staff write runs; an address that fails is
+// normalisation for the dealer's country the staff write runs; an address that fails is
 // left out and the item's note says so, naming the field and the
 // reason, never a value. The home branch and the reps arrive as
 // references by legacy key, resolved by the frame before any write.
@@ -41,7 +41,7 @@ import (
 )
 
 // ReasonAddressLeftOut is the note a landed customer carries when its
-// billing address failed the Canadian validation and was left out.
+// billing address failed the dealer's country validation and was left out.
 const ReasonAddressLeftOut = "address_left_out"
 
 // customerSeqCTE draws the seq atomically in the same statement from the
@@ -54,7 +54,15 @@ const customerSeqCTE = `WITH cseq AS (
 ) `
 
 // CustomerLoadWriter is the load doors' customer writer.
-type CustomerLoadWriter struct{}
+type CustomerLoadWriter struct {
+	// Country is the dealer's country source; nil is the Canadian dealer.
+	Country CountrySource
+}
+
+// country is the dealer's country for the address rules; a failed read surfaces, never a guess.
+func (w CustomerLoadWriter) country(ctx context.Context) (string, error) {
+	return dealerCountry(ctx, w.Country)
+}
 
 // deferredCustomerFields wait for the receivables load: a credit hold and
 // tax exemption need their evidence, and neither lands here.
@@ -63,7 +71,7 @@ var deferredCustomerFields = []string{"on_hold", "tax_exempt"}
 // Apply answers one customer item. The record names the name (required)
 // and, named, the account number, the customer type, the terms in days,
 // the credit limit, the active flag, and the billing address.
-func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
+func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (string, error) {
 	for _, f := range deferredCustomerFields {
 		if _, present := in.Record[f]; present {
 			return "", &load.Refusal{Code: "deferred_field", Field: f,
@@ -130,8 +138,10 @@ func (CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (
 		obj, isObj := raw.(map[string]any)
 		if !isObj {
 			noteAddress(in, "the billing address is not an object")
-		} else if norm, nerr := localization.NormalizeBillingAddress(obj); nerr != nil {
-			noteAddress(in, "the billing address failed the Canadian address validation")
+		} else if country, cerr := w.country(ctx); cerr != nil {
+			return "", fmt.Errorf("customer: load dealer country: %w", cerr)
+		} else if norm, nerr := localization.NormalizeBillingAddressFor(country, obj); nerr != nil {
+			noteAddress(in, "the billing address failed the address validation for the dealer's country")
 		} else {
 			b, merr := json.Marshal(orEmptyObject(norm))
 			if merr != nil {
@@ -388,6 +398,7 @@ func wholeNumber(raw any) (int64, bool) {
 // connection or a transaction satisfies it.
 type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // PinnedAccount is one customer account written under a caller chosen id,
@@ -417,6 +428,15 @@ func EnsureAccount(ctx context.Context, db Execer, a PinnedAccount) (created boo
 	}
 	if !validCustomerType(a.CustomerType) {
 		return false, fmt.Errorf("customer: invalid customer_type %q", a.CustomerType)
+	}
+	// The sequence CTE draws its number whether or not the insert lands, so a
+	// row that is already there is recognised first and a re-run draws nothing.
+	var one int
+	switch err := db.QueryRow(ctx, `SELECT 1 FROM customers WHERE id = $1::uuid`, a.ID).Scan(&one); {
+	case err == nil:
+		return false, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return false, fmt.Errorf("customer: pinned account read: %w", err)
 	}
 	tag, err := db.Exec(ctx, customerSeqCTE+`
 		INSERT INTO customers (id, account_no, name, customer_type, home_branch_id,

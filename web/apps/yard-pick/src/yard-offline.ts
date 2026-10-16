@@ -6,15 +6,17 @@
 // the work before the replay lands; a cycle pushes the outbox and pulls the
 // scopes back through the sync runner and the injected transport.
 //
-// The writes the core does not admit through sync stay on their direct doors
-// and need signal: the pick record (the pick_tasks set has no picked field),
-// the skid count (it moves the order's skid deposit, which is money, and the
-// weights scope is a different feed), and the shortage settle (the resolution
-// legs are the counter's act). They wait for the queued writes first and
-// answer an honest "no signal" offline; the pull that follows carries the
-// result into the store. The writable sets are the Go sets in
-// core/internal/tasks (syncscope.go, syncweights.go, syncshortage.go), pinned
-// by test/stub-sync-contract.test.mjs.
+// The pick record (the lines of what was pulled) and the shortage report queue
+// as their own operations: the record on pick_tasks with exactly the door's
+// line legs (core/internal/tasks/syncpick.go), the report on shortages without
+// the stamped legs. The writes the core does not admit through sync stay on
+// their direct doors and need signal: the skid count (it moves the order's
+// skid deposit, which is money, and the weights scope is a different feed) and
+// the shortage settle (the resolution legs are the counter's act). They wait
+// for the queued writes first and answer an honest "no signal" offline; the
+// pull that follows carries the result into the store. The writable sets are
+// the Go sets in core/internal/tasks (syncscope.go, syncpick.go,
+// syncweights.go, syncshortage.go), pinned by test/stub-sync-contract.test.mjs.
 //
 // The projection the reads compose from is the demo sync surface's: the
 // pick_tasks rows carry the task and its ticket words, the shortages rows the
@@ -56,6 +58,10 @@ import type {
   YardTask,
 } from "./yard-api.js";
 import { toPickedLine, toShortage, toTask, toTicket } from "./yard-api.js";
+import { LOCAL_LINE, pickRecordProblem, recordRefusalWords } from "./yard-logic.js";
+
+export { isLocalLine } from "./yard-logic.js";
+import { isLocalLine } from "./yard-logic.js";
 
 type Bag = Record<string, unknown>;
 
@@ -72,7 +78,26 @@ export function bannerMode(state: string, ownership: Ownership): string {
 
 /** The writes the core does not admit through sync: they stay on their direct
  * doors, wait on the outbox and need signal. Nothing about them queues. */
-export type YardDirectDoors = Pick<YardApi, "recordLines" | "recordSkids" | "resolveShortage">;
+export type YardDirectDoors = Pick<YardApi, "recordSkids" | "resolveShortage">;
+
+/** The local row's copy of what it held before this device's record, so a
+ * record the core refuses puts the server's lines back, not an empty list. */
+const PICKED_BEFORE = "__picked_before";
+
+/** One line as the door reads it: the nine legs and nothing else. */
+function wireLine(l: YardRecordLine): Bag {
+  return {
+    order_line_no: l.order_line_no,
+    product_id: l.product_id,
+    sku: l.sku,
+    description: l.description,
+    qty_ordered: l.qty_ordered,
+    qty_picked: l.qty_picked,
+    uom: l.uom,
+    short_reason: l.short_reason,
+    short_note: l.short_note,
+  };
+}
 
 export interface YardOfflineOptions {
   store: OfflineStore;
@@ -162,7 +187,7 @@ export class YardOffline {
       await this.runner.request();
       await this.runner.settled();
     });
-    this.#pulled(mark);
+    await this.#rested(mark);
     this.#onChange?.();
   }
 
@@ -171,8 +196,8 @@ export class YardOffline {
     // The count moved now, and it moves again when the replay lands or fails.
     this.#onChange?.();
     const mark = this.#writes;
-    void this.#sync(() => this.runner.request()).then(() => {
-      this.#pulled(mark);
+    void this.#sync(() => this.runner.request()).then(async () => {
+      await this.#rested(mark);
       this.#onChange?.();
     });
   }
@@ -202,6 +227,60 @@ export class YardOffline {
     this.#writtenSincePull.set(key, this.#writes);
   }
 
+  /** A cycle came to rest: forget the writes its pull covered, and take back
+   * any record of lines the core refused (the card carries its words). */
+  async #rested(mark: number): Promise<void> {
+    this.#pulled(mark);
+    await this.#takeBackUnconfirmedRecords();
+  }
+
+  /** A pick record the outbox no longer holds, whose local lines the pull did
+   * not replace, was refused: the lines come off the row (the pick's own
+   * earlier lines return), so the glass never shows a record the server does
+   * not hold. Runs only at rest, with the pull landed. */
+  async #takeBackUnconfirmedRecords(): Promise<void> {
+    if (this.runner.state !== "idle" && this.runner.state !== "conflict") return;
+    const queued = new Set(
+      (await this.store.outbox.pending())
+        .filter((row) => row.scope === "pick_tasks" && "picked" in row.payload)
+        .map((row) => row.entityId),
+    );
+    const { rows } = await this.store.list("pick_tasks");
+    for (const row of rows) {
+      const lines = row.data["picked"];
+      if (queued.has(row.id) || !Array.isArray(lines) || !lines.some((l) => isLocalLine({ id: String((l as Bag)["id"] ?? "") }))) continue;
+      await this.#patchRow("pick_tasks", row.id, (data) => {
+        const { [PICKED_BEFORE]: before, ...rest } = data;
+        return { ...rest, picked: Array.isArray(before) ? before : [] };
+      });
+    }
+  }
+
+  /** Send the queue now (the picker is standing at a connected device and
+   * wants the server's answer) and give back words if the server did not take
+   * the pick's record during the send: the core's own words for a refusal, or
+   * a plain sentence when the server moved the ticket first and the record
+   * was superseded. Empty when it took it or could not be reached. Either
+   * answer is also a card, which waits to be dismissed. */
+  async sendRecordNow(taskId: string): Promise<string> {
+    const before = new Set((await this.openCards()).map((card) => card.id));
+    await this.#drain();
+    const fresh = (await this.openCards()).filter(
+      (card) => !before.has(card.id) && card.scope === "pick_tasks" && card.clientPayload["id"] === taskId && "picked" in card.clientPayload,
+    );
+    const refused = fresh.find((card) => card.kind === "rejected");
+    if (refused !== undefined) return refused.error ?? "";
+    if (fresh.some((card) => card.kind === "superseded")) {
+      return "The ticket changed on the server first, so your record was not saved. Check the ticket and record it again.";
+    }
+    return "";
+  }
+
+  /** True while a record of this pick waits in the outbox. */
+  async pendingRecord(taskId: string): Promise<boolean> {
+    return (await this.store.outbox.pending()).some((row) => row.scope === "pick_tasks" && row.entityId === taskId && "picked" in row.payload);
+  }
+
   /** A cycle rested with its pull landed: the rows carry the server's seq for
    * every write made up to `mark`. A cycle that rested offline or unreachable
    * pulled nothing, so it forgets nothing. */
@@ -218,8 +297,15 @@ export class YardOffline {
     return (await this.store.outbox.health()).stalls;
   }
 
-  openCards(): Promise<Card[]> {
-    return this.store.cards.listOpen();
+  /** The open cards. A pick record the core refused carries the yard's words
+   * (a pick already handed over or cancelled says what the picker must tell
+   * the counter); every other card keeps the core's own. */
+  async openCards(): Promise<Card[]> {
+    return (await this.store.cards.listOpen()).map((card) =>
+      card.kind === "rejected" && card.scope === "pick_tasks" && "picked" in card.clientPayload && card.error !== null
+        ? { ...card, error: recordRefusalWords(card.error) }
+        : card,
+    );
   }
 
   dismissCard(id: string): Promise<void> {
@@ -299,15 +385,42 @@ export class YardOffline {
     return answer;
   }
 
-  /** Record what was pulled: the direct door. The core's pick_tasks sync set
-   * has no picked field, so the record is sent as itself, after the queued
-   * writes of the pick, and the pull that follows lands it in the store. */
+  /** Record what was pulled: queued as its own pick_tasks operation, the
+   * door's nine line legs and nothing else beside the row address. The local
+   * row shows the lines at once (marked as this device's), the replay
+   * overwrites them with the server's, and a record the core refuses comes
+   * back as a card with its words. A record the door would refuse for its
+   * shape or its text is refused here, in words, before it is queued: a
+   * queued poison op would only come back as a card the picker cannot act on. */
   async recordLines(taskId: string, lines: readonly YardRecordLine[]): Promise<Result<YardPickedLine[]>> {
-    const refused = this.#noSignal<YardPickedLine[]>() ?? (await this.#outboxFirst<YardPickedLine[]>("Record the pick"));
-    if (refused !== null) return refused;
-    const answer = await this.#direct.recordLines(taskId, lines);
-    if (answer.ok) await this.#drain();
-    return answer;
+    const problem = pickRecordProblem(lines);
+    if (problem !== "") return { ok: false, error: problem, status: 400 };
+    const found = await this.store.read("pick_tasks", taskId);
+    if (found.row === null) return { ok: false, error: "task not found", status: 404 };
+    const wire = lines.map(wireLine);
+    const enqueued = await this.#enqueueWithBase({
+      scope: "pick_tasks",
+      op: "update",
+      entity: "pick_tasks",
+      payload: { id: taskId, picked: wire },
+      row: found.row,
+    });
+    if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
+    const at = this.#now();
+    const local = wire.map((line) => ({
+      ...line,
+      id: `${LOCAL_LINE}${taskId}:${String(line["order_line_no"])}`,
+      task_id: taskId,
+      picked_at: at,
+    }));
+    await this.#patchRow("pick_tasks", taskId, (data) => ({
+      ...data,
+      [PICKED_BEFORE]: PICKED_BEFORE in data ? data[PICKED_BEFORE] : (data["picked"] ?? []),
+      picked: local,
+    }));
+    this.#markWritten(`pick_tasks:${taskId}`);
+    this.requestSync();
+    return { ok: true, value: local.map(toPickedLine) };
   }
 
   /** Record or change the order's skid count: the direct door, always. The
@@ -367,6 +480,9 @@ export class YardOffline {
       id,
       JSON.stringify(data),
     ]);
+    // The report moves the task row's seq on the server: later writes to the
+    // task go blind until a pull has carried that seq.
+    this.#markWritten(`pick_tasks:${taskId}`);
     this.requestSync();
     return { ok: true, value: toShortage(data) };
   }
@@ -393,7 +509,7 @@ export class YardOffline {
       await this.runner.settled();
     });
     const empty = (await this.waiting()) === 0;
-    if (empty) this.#pulled(mark);
+    if (empty) await this.#rested(mark);
     this.#onChange?.();
     return empty;
   }
@@ -448,7 +564,15 @@ export class YardOffline {
     if (input.row !== null) {
       const key = `${input.scope}:${input.row.id}`;
       const pending = await this.store.outbox.pending();
-      const queued = pending.some((row) => row.scope === input.scope && row.entityId === input.row!.id);
+      // A shortage this device queued for the task moves the task row's seq on
+      // the server too (the report bumps its pick seq so the pull carries the
+      // counts), so it counts as a write to the task: a base named before it
+      // would come back superseded for the device's own report.
+      const queued = pending.some(
+        (row) =>
+          (row.scope === input.scope && row.entityId === input.row!.id) ||
+          (input.scope === "pick_tasks" && row.scope === "shortages" && row.payload["task_id"] === input.row!.id),
+      );
       // The row is read again here, after the checks: a pull that landed since
       // the caller read it moved its seq, and a base named from the older read
       // would meet the device's own earlier write as a conflict.

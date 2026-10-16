@@ -87,7 +87,7 @@ const LINES = {
 };
 
 const STOPS_SEED = [
-  { n: 1, customer: "Summit Ridge Builders", order: "SO-1001", address: "418 Oak Hollow Road", postal: "92036", window: "AM", contact: "Site contact (demo)", phone: "619-555-0101", note: "Gate code on the paperwork. Unload on the driveway." },
+  { n: 1, customer: "Bluffside Builders", order: "SO-1001", address: "418 Oak Hollow Road", postal: "92036", window: "AM", contact: "Site contact (demo)", phone: "619-555-0101", note: "Gate code on the paperwork. Unload on the driveway." },
   { n: 2, customer: "Harbourview Builders", order: "SO-1002", address: "77 Kentwood Lane", postal: "92036", window: "AM", contact: "", phone: "", note: "" },
   { n: 3, customer: "Valley Municipal Works", order: "SO-1003", address: "1500 Farmers Road", postal: "92036", window: "PM", contact: "Yard lead (demo)", phone: "619-555-0103", note: "Call ahead. Forklift on site." },
 ];
@@ -370,20 +370,32 @@ function advance(res, stop, input) {
   return json(res, stop);
 }
 
-function capturePod(res, stop, input) {
-  if (stop.status !== "EN_ROUTE") return refuse(res, 409, "illegal status transition");
+// The one body both doors share (the core's CapturePOD): the transition rule
+// from the stop's status, the name and the confirmation, then the write that
+// delivers the stop. Answers { error, status } for a refusal, {} on success.
+function attestStop(stop, input) {
+  if (stop.status !== "EN_ROUTE") return { status: 409, error: "illegal status transition" };
   const name = String(input.received_by ?? "").trim();
-  if (name === "") return refuse(res, 400, "type the full name of the person receiving this delivery");
-  if (input.affirmed !== true) return refuse(res, 400, "the recipient must confirm the delivery before it can be signed");
+  if (name === "") return { status: 400, error: "type the full name of the person receiving this delivery" };
+  // The core's rule (CapturePOD checkTypedName): at most 200 bytes, no C0 or DEL, no bidi controls.
+  if (Buffer.byteLength(name, "utf8") > 200) return { status: 400, error: "that name is too long, type the full name in at most 200 bytes" };
+  if (/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(name)) return { status: 400, error: "the name cannot hold control characters, type the full name as plain text" };
+  if (input.affirmed !== true) return { status: 400, error: "the recipient must confirm the delivery before it can be signed" };
   const now = new Date(nowMs()).toISOString();
   stop.status = "DELIVERED";
   stop.pod_signature_ref = `sig-${stop.stop_no}`;
   stop.pod_received_by = name;
   stop.pod_at = now;
   stop.delivered_at = now;
-  // The attestation has no sync door in the core: the pod feed carries the
-  // photo records only, so the proof moves the stop and nothing else.
+  // The attestation is not a pod feed row (a photo row needs bytes): the
+  // stops feed carries DELIVERED, pod_received_by and pod_at to the device.
   syncTouch("stops", stop.id);
+  return {};
+}
+
+function capturePod(res, stop, input) {
+  const done = attestStop(stop, input);
+  if (done.error) return refuse(res, done.status, done.error);
   return json(res, stopDetail(stop));
 }
 
@@ -526,14 +538,36 @@ function syncApplyStopUpdate(stop, op) {
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("stops", stop.id) };
 }
 
-// The core's pod scope is the photo record (core/internal/dispatch/syncscope_pod.go
-// podCreateFields): the stop it proves, the content type, the bytes base64 and
-// a caption. The typed name attestation has no sync door, it rides the REST
-// proof, so a pod create here never delivers a stop.
+// The core's pod scope has two forms of create. The photo form
+// (core/internal/dispatch/syncscope_pod.go podCreateFields): the stop it
+// proves, the content type, the bytes base64 and a caption. The typed name
+// attestation (syncscope_pod_attest.go attestationFields): the stop, the name,
+// the confirmation and the outbox's local row id. A payload carrying
+// received_by or affirmed is the attestation; the two forms do not mix.
 const POD_CREATE_FIELDS = new Set(["id", "stop_id", "content_type", "image_bytes_b64", "caption"]);
+const POD_ATTEST_FIELDS = new Set(["id", "stop_id", "received_by", "affirmed"]);
+
+function syncApplyPodAttest(op) {
+  const input = op.payload ?? {};
+  for (const key of Object.keys(input)) {
+    if (!POD_ATTEST_FIELDS.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
+  }
+  const stopId = String(input.stop_id ?? "");
+  if (!UUID_RE.test(stopId)) return syncRejected(op, "dispatch: stop_id must be a uuid");
+  if (typeof input.id === "string" && input.id !== "" && !UUID_RE.test(input.id)) return syncRejected(op, "dispatch: payload id must be a uuid");
+  if ("received_by" in input && typeof input.received_by !== "string") return syncRejected(op, "dispatch: received_by must be text");
+  if ("affirmed" in input && typeof input.affirmed !== "boolean") return syncRejected(op, "dispatch: affirmed must be true or false");
+  const stop = findStop(stopId);
+  if (!stop) return syncRejected(op, "row not found");
+  const done = attestStop(stop, input);
+  if (done.error) return syncRejected(op, `dispatch: ${done.error}`);
+  // The result's row is the stop and its seq the stop's seq.
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("stops", stop.id) };
+}
 
 function syncApplyPodCreate(op) {
   const input = op.payload ?? {};
+  if ("received_by" in input || "affirmed" in input) return syncApplyPodAttest(op);
   for (const key of Object.keys(input)) {
     if (!POD_CREATE_FIELDS.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
   }

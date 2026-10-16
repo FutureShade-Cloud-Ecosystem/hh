@@ -94,7 +94,7 @@ func TestDemoWorld_FirstBootSeedsQuotes(t *testing.T) {
 	// core demoseed -apply, again: the quote world's owners are the populate's two role logins,
 	// so the quotes can only be added once they exist, and the seed is idempotent.
 	_, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // the quote world's census, the world proof's own
+	const wantQuoteRows = 5 + 10 + 3 + 2 + 2 + 2 + 4 + 2 + controllerWorldRows + contractorWorldRows // the quote world's census, the world proof's own, and the contractor world the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the apply after the populate created %d rows, want exactly the quote world's %d", created, wantQuoteRows)
 	}

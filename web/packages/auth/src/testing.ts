@@ -15,6 +15,7 @@ import type {
   OAuth2Provider,
   RefreshTimers,
 } from "./client.js";
+import { PlatformRefusedError } from "./client.js";
 import type { CredentialProvider } from "./lock.js";
 import type { StorageLike } from "./session.js";
 
@@ -276,7 +277,7 @@ export class FakeAccountSurface implements AccountSurface {
 
   async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
     if (email !== this.#acceptedEmail || password !== this.#acceptedPassword) {
-      throw new Error("fake: invalid credentials");
+      throw new PlatformRefusedError(401, "fake: invalid credentials");
     }
     this.creationCount += 1;
     this.#hasPlatformSession = true;

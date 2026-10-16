@@ -24,7 +24,7 @@ test("a card carries the order, the customer, the lines, the priority and the st
   await page.goto("/");
   const card = page.locator("[data-pick-card]", { hasText: "SO-1042" });
   await expect(card.locator("[data-order-no]")).toHaveText("SO-1042");
-  await expect(card).toContainText("Summit Ridge Builders");
+  await expect(card).toContainText("Bluffside Builders");
   await expect(card).toContainText("2 lines");
   await expect(card).toContainText("Wanted today");
   await expect(card.locator("[data-task-status]")).toHaveText("Queued");
