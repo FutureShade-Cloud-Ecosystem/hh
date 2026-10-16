@@ -385,6 +385,28 @@ const CUSTOMERS = [
     percent_off: 12,
     on_hold: true,
   },
+  {
+    id: "c-palmera",
+    account_no: "C03",
+    name: "Palmera Landscapes",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 1500000,
+    open_balance_cents: 246000,
+    percent_off: 15,
+    on_hold: false,
+  },
+  {
+    id: "c-bluffside",
+    account_no: "C08",
+    name: "Bluffside Builders",
+    customer_type: "BUILDER",
+    payment_terms_days: 30,
+    credit_limit_cents: 2800000,
+    open_balance_cents: 2482000,
+    percent_off: 10,
+    on_hold: true,
+  },
   // Round 15: DEMO-C07's shape, a retail account with no credit line: the gate refuses it on
   // account, so its payment step is pay before release words that say what the account is.
   {
@@ -2382,10 +2404,12 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no such customer account" });
       return;
     }
-    const pastDue = customer.account_no === "C02" ? 41500 : 0;
+    const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";
+    const pastDue = customer.account_no === "C02" ? 41500 : (isBluffside ? 1482000 : 0);
+    const bucket = isBluffside ? "61 to 90" : (pastDue > 0 ? "30" : undefined);
     respondJson(response, 200, {
       past_due_cents: pastDue,
-      oldest_bucket: pastDue > 0 ? "30" : undefined,
+      oldest_bucket: bucket,
       on_hold: customer.on_hold,
     });
     return;
