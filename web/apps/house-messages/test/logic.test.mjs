@@ -39,6 +39,14 @@ import {
   systemEventDetails,
   parseMentions,
   QUICK_REPLIES,
+  groupConversationSubtitle,
+  dmConversationPrompt,
+  groupSystemCreatedMessage,
+  filterRoster,
+  toggleReactionList,
+  canEditMessage,
+  formatFileSize,
+  formatMembershipRuleLine,
 } from "../src/messages-logic.ts";
 
 const ch = (over = {}) => ({
@@ -351,4 +359,82 @@ test("parse mentions: extracts @mentions as chips and keeps text intact", () => 
 test("quick replies: four standard chips", () => {
   assert.deepEqual(QUICK_REPLIES, ["On it", "Done", "Need a hand", "Call me"]);
 });
+
+test("C2 logic: group direct message subtitle matches board wording", () => {
+  assert.equal(groupConversationSubtitle(4, false), "A group direct message, 4 people including you");
+  assert.equal(groupConversationSubtitle(3, true), "A named group, 3 people including you");
+});
+
+test("C2 logic: empty DM start prompt matches board wording", () => {
+  const prompt = dmConversationPrompt("Tom Alvarez");
+  assert.equal(prompt.title, "This is the start of your conversation with Tom Alvarez");
+  assert.equal(prompt.subtitle, "Only the two of you see it. Photos and files you share here show under Files and photos.");
+});
+
+test("C2 logic: group creation system text matches board wording", () => {
+  const line = groupSystemCreatedMessage("Saturday runs", ["Marcus Webb", "Priya Shah", "Elena Ruiz"]);
+  assert.equal(line, "You created the group Saturday runs and added Marcus Webb, Priya Shah and Elena Ruiz.");
+});
+
+test("C2 logic: roster filter searches across name, role, branch and excludes caller", () => {
+  const roster = [
+    { user_id: "u1", display_name: "Marcus Webb", role_name: "Yard staff", branch_name: "Point Loma" },
+    { user_id: "u2", display_name: "Priya Shah", role_name: "Dispatch", branch_name: "Point Loma" },
+    { user_id: "u3", display_name: "Tom Alvarez", role_name: "Driver", branch_name: "Julian" },
+  ];
+  const matched = filterRoster(roster, "julian", "u1");
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].display_name, "Tom Alvarez");
+
+  const excludeMe = filterRoster(roster, "", "u1");
+  assert.equal(excludeMe.length, 2);
+  assert.equal(excludeMe.some((r) => r.user_id === "u1"), false);
+});
+
+test("C3 logic: reactions list toggle adds or removes user reaction correctly", () => {
+  const list = [{ emoji: "Thanks", count: 1, mine: false, users: ["u2"] }];
+  const added = toggleReactionList(list, "Thanks", "u1");
+  assert.equal(added.find((r) => r.emoji === "Thanks")?.count, 2);
+  assert.equal(added.find((r) => r.emoji === "Thanks")?.mine, true);
+
+  const removed = toggleReactionList(added, "Thanks", "u1");
+  assert.equal(removed.find((r) => r.emoji === "Thanks")?.count, 1);
+  assert.equal(removed.find((r) => r.emoji === "Thanks")?.mine, false);
+});
+
+test("C3 logic: canEditMessage checks 10 minute window, author match, non-ackable, and TEXT kind", () => {
+  const now = 1000000;
+  const recentMsg = {
+    id: "m1",
+    author_id: "me",
+    kind: "TEXT",
+    created_at: new Date(now - 5 * 60 * 1000).toISOString(),
+    requires_ack: false,
+  };
+  assert.equal(canEditMessage(recentMsg, "me", now), true);
+  assert.equal(canEditMessage(recentMsg, "other", now), false);
+
+  const oldMsg = { ...recentMsg, created_at: new Date(now - 15 * 60 * 1000).toISOString() };
+  assert.equal(canEditMessage(oldMsg, "me", now), false);
+
+  const ackMsg = { ...recentMsg, requires_ack: true };
+  assert.equal(canEditMessage(ackMsg, "me", now), false);
+
+  const eventMsg = { ...recentMsg, kind: "EVENT" };
+  assert.equal(canEditMessage(eventMsg, "me", now), false);
+});
+
+test("C4 logic: membership rule line formatting for automatic joins and leaves", () => {
+  const line = formatMembershipRuleLine({
+    roles: ["Yard staff", "Driver"],
+    branch: "Point Loma",
+  });
+  assert.equal(line, "Role Yard staff, Driver at Point Loma");
+});
+
+test("C6 logic: formatFileSize formats bytes to KB or MB", () => {
+  assert.equal(formatFileSize(84 * 1024), "84 KB");
+  assert.equal(formatFileSize(2 * 1024 * 1024), "2 MB");
+});
+
 

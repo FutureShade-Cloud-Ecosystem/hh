@@ -8,7 +8,18 @@
 // again), never what the app expected. A refusal reads in the core's own words. A post that fails
 // keeps its words in the box. Nothing is stored and nothing is queued: messages send while online.
 import type { TemplateResult } from "lit";
-import { MessagesApi, type PaymentRuleId } from "./messages-api.js";
+import {
+  MessagesApi,
+  type PaymentRuleId,
+  type AttachmentItem,
+  type ChannelDirectoryItem,
+  type MembershipRuleItem,
+  type MemberByHandItem,
+  type EventClassItem,
+  type RepAssignmentItem,
+  type NotificationSettings,
+  type SearchResults,
+} from "./messages-api.js";
 import type { MessagingNotifyPrefs } from "@hardscapehouse/api-client";
 import { LiveFeed, type LiveState, type NudgeKind, type StreamSource, type Timers } from "./live.js";
 import {
@@ -27,12 +38,17 @@ import {
   totalUnread,
   unreadSignature,
   youAcked,
+  groupConversationSubtitle,
+  dmConversationPrompt,
+  filterRoster,
   type AckProgress,
   type CallerInfo,
   type Channel,
   type HouseConversation,
   type Message,
   type NotifyMode,
+  type StaffMember,
+  type ReactionItem,
 } from "./messages-logic.js";
 import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model, type PrefsModel, type QueueModel, type RulesModel } from "./views.js";
 
@@ -69,6 +85,7 @@ export class MessagesDesk {
   #channels: readonly Channel[] = [];
   #activeId = "";
   #view: Model["view"] = "list";
+  #mainView: Model["mainView"] = "conversation";
   #liveState: LiveState | null = null;
   #newMenuOpen = false;
   #openThreadId: string | null = null;
@@ -120,6 +137,43 @@ export class MessagesDesk {
   #rules: Readonly<Record<string, boolean>> | null = null;
   #rulesBusy = "";
   #rulesError = "";
+
+  // C2 Modals & Roster
+  #newMsgModalOpen = false;
+  #roster: readonly StaffMember[] = [];
+  readonly #selectedRosterIds = new Set<string>();
+  #newGroupName = "";
+  #rosterFilter = "";
+
+  #newChannelModalOpen = false;
+  #newChannelName = "";
+  #newChannelTopic = "";
+  #newChannelVisibility: "PUBLIC" | "PRIVATE" = "PUBLIC";
+
+  // C6 Attach Modal
+  #attachModalOpen = false;
+
+  // C3 Reactions, Seen counts, Mentions, Saved, Search
+  readonly #reactions = new Map<string, readonly ReactionItem[]>();
+  #activeReactPickerMsgId: string | null = null;
+  #editingMessageId: string | null = null;
+  readonly #seenCounts = new Map<string, number>();
+  #mentionsList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string }[] = [];
+  #savedList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string; readonly saved_at: string }[] = [];
+  #searchQuery = "";
+  #searchResults: SearchResults | null = null;
+
+  // C4 & C5 Settings & Notification Opt-in
+  #settingsSubtab: "membership-rules" | "event-classes" | "rep-assignments" = "membership-rules";
+  #membershipRules: readonly MembershipRuleItem[] = [];
+  #membersByHand: readonly MemberByHandItem[] = [];
+  #eventClasses: readonly EventClassItem[] = [];
+  #repAssignments: readonly RepAssignmentItem[] = [];
+  #notifySettings: NotificationSettings | null = null;
+  #channelDirectory: readonly ChannelDirectoryItem[] = [];
+
+  // C6 Attachments per channel
+  readonly #attachments = new Map<string, readonly AttachmentItem[]>();
 
   // When the last read failed, so the screen can say it is showing what it read before.
   #staleAt: number | null = null;
@@ -252,14 +306,16 @@ export class MessagesDesk {
         this.#held = mergeNewest(this.#held, page.value.messages);
         if (!this.#olderLoaded) this.#nextCursor = page.value.nextCursor;
         await this.#refreshOpenThreads(active);
+        await this.#loadAuxData(active, this.#held);
       }
       await this.#readAcks();
       await this.#readQueue();
       // The channel is open on screen: what arrived is read, so the core is told.
       const current = this.#channels.find((c) => c.id === active);
       if (current !== undefined && current.unread_count > 0) await this.#markRead(active);
+    } else {
+      await this.#readAcks();
     }
-    else await this.#readAcks();
     this.#host.repaint();
   }
 
@@ -415,6 +471,104 @@ export class MessagesDesk {
     if (channels.ok && !this.#stopped) this.#channels = channels.value;
   }
 
+  // ---- C2-C6 auxiliary data loads ----------------------------------------------------------------
+
+  async #loadAuxData(channelId: string, messages: readonly Message[]): Promise<void> {
+    const [attRes, reactRes] = await Promise.all([
+      this.#api.attachments(channelId),
+      this.#api.channelReactions(channelId),
+    ]);
+    if (this.#stopped || channelId !== this.#activeId) return;
+    if (attRes.ok) this.#attachments.set(channelId, attRes.value.attachments);
+    if (reactRes.ok) {
+      for (const [mid, rList] of Object.entries(reactRes.value.reactions)) {
+        this.#reactions.set(mid, rList);
+      }
+    }
+    // Read seen counts for top level messages
+    await Promise.all(
+      messages.map(async (m) => {
+        const seen = await this.#api.seenBy(channelId, m.id);
+        if (this.#stopped || channelId !== this.#activeId) return;
+        if (seen.ok) this.#seenCounts.set(m.id, seen.value.count);
+      }),
+    );
+  }
+
+  async #loadAttachments(channelId: string): Promise<void> {
+    const res = await this.#api.attachments(channelId);
+    if (this.#stopped || channelId !== this.#activeId) return;
+    if (res.ok) {
+      this.#attachments.set(channelId, res.value.attachments);
+      this.#host.repaint();
+    }
+  }
+
+  async #loadRoster(): Promise<void> {
+    if (this.#roster.length > 0) return;
+    const res = await this.#api.roster();
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#roster = res.value.roster;
+      this.#host.repaint();
+    }
+  }
+
+  async #loadMentions(): Promise<void> {
+    const res = await this.#api.mentions();
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#mentionsList = res.value.mentions;
+      this.#host.repaint();
+    }
+  }
+
+  async #loadSaved(): Promise<void> {
+    const res = await this.#api.saved();
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#savedList = res.value.saved;
+      this.#host.repaint();
+    }
+  }
+
+  async #performSearch(query: string): Promise<void> {
+    const res = await this.#api.search(query);
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#searchResults = res.value;
+    } else {
+      this.#searchResults = { query, messages: [], channels: [], people: [], files: [] };
+    }
+    this.#host.repaint();
+  }
+
+  async #loadSettings(): Promise<void> {
+    const [rules, byHand, events, reps] = await Promise.all([
+      this.#api.membershipRules(),
+      this.#api.membersByHand(),
+      this.#api.eventClasses(),
+      this.#api.repAssignments(),
+    ]);
+    if (this.#stopped) return;
+    if (rules.ok) this.#membershipRules = rules.value.rules;
+    if (byHand.ok) this.#membersByHand = byHand.value.members;
+    if (events.ok) this.#eventClasses = events.value.classes;
+    if (reps.ok) this.#repAssignments = reps.value.assignments;
+    this.#host.repaint();
+  }
+
+  async #loadNotifyOptIn(): Promise<void> {
+    const [settings, directory] = await Promise.all([
+      this.#api.notificationSettings(),
+      this.#api.channelDirectory(),
+    ]);
+    if (this.#stopped) return;
+    if (settings.ok) this.#notifySettings = settings.value;
+    if (directory.ok) this.#channelDirectory = directory.value.channels;
+    this.#host.repaint();
+  }
+
   // ---- opening a channel ------------------------------------------------------------------------
 
   async #open(channelId: string): Promise<void> {
@@ -422,6 +576,10 @@ export class MessagesDesk {
     if (leaving !== null && this.#activeId !== "") this.#drafts.set(this.#activeId, leaving.value);
     this.#activeId = channelId;
     this.#view = "conversation";
+    this.#mainView = "conversation";
+    this.#activeTab = "messages";
+    this.#activeReactPickerMsgId = null;
+    this.#editingMessageId = null;
     this.#error = "";
     this.#notice = "";
     this.#held = [];
@@ -454,6 +612,7 @@ export class MessagesDesk {
     await this.#markRead(channelId);
     await this.#readAcks();
     await this.#readQueue();
+    await this.#loadAuxData(channelId, this.#held);
     this.#host.repaint();
   }
 
@@ -471,6 +630,7 @@ export class MessagesDesk {
       this.#held = mergeOlder(this.#held, page.value.messages);
       this.#nextCursor = page.value.nextCursor;
       this.#olderLoaded = true;
+      await this.#loadAuxData(channelId, page.value.messages);
     }
     this.#host.repaint();
   }
@@ -548,8 +708,43 @@ export class MessagesDesk {
     this.#seededFor = this.#activeId;
   }
 
-  /** The composer's text changed: the words under the box and the Send button follow it. */
-  typed(): void {
+  /** The composer's or search text changed: the words under the box and the view follow it. */
+  typed(target?: HTMLInputElement | HTMLTextAreaElement): void {
+    if (target?.getAttribute("data-field") === "search-input" || target?.classList.contains("search-input")) {
+      this.#searchQuery = target.value;
+      if (this.#searchQuery.trim().length > 0) {
+        this.#mainView = "search";
+        this.#view = "conversation";
+        void this.#performSearch(this.#searchQuery.trim());
+      } else {
+        this.#searchResults = null;
+        if (this.#mainView === "search") {
+          this.#mainView = "conversation";
+        }
+        this.#host.repaint();
+      }
+      return;
+    }
+    if (target?.getAttribute("data-field") === "roster-search") {
+      this.#rosterFilter = target.value;
+      this.#host.repaint();
+      return;
+    }
+    if (target?.getAttribute("data-field") === "edit-body") {
+      return;
+    }
+    if (target?.getAttribute("data-field") === "group-name") {
+      this.#newGroupName = target.value;
+      return;
+    }
+    if (target?.getAttribute("data-field") === "channel-name") {
+      this.#newChannelName = target.value;
+      return;
+    }
+    if (target?.getAttribute("data-field") === "channel-purpose") {
+      this.#newChannelTopic = target.value;
+      return;
+    }
     const field = this.#field();
     this.#draft = field?.value ?? "";
     this.#host.repaint();
@@ -583,6 +778,8 @@ export class MessagesDesk {
       this.#replyTo = null;
       if (reply === null) {
         this.#held = mergeNewest(this.#held, [posted.value]);
+        this.#reactions.set(posted.value.id, []);
+        this.#seenCounts.set(posted.value.id, 0);
       } else {
         const replies = await this.#api.thread(channelId, reply.rootId);
         if (replies.ok) {
@@ -593,6 +790,176 @@ export class MessagesDesk {
     }
     this.#host.repaint();
     void this.refresh();
+  }
+
+  // ---- C2-C6 action handlers --------------------------------------------------------------------
+
+  async #submitNewChannel(): Promise<void> {
+    const nameInput = this.#host.find("input[data-field='channel-name']") as HTMLInputElement | null;
+    const topicInput = this.#host.find("input[data-field='channel-purpose']") as HTMLInputElement | null;
+    const name = nameInput?.value.trim() || this.#newChannelName;
+    const topic = topicInput?.value.trim() || this.#newChannelTopic;
+    if (!name) return;
+    const res = await this.#api.createChannel({ name, topic, visibility: this.#newChannelVisibility });
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#newChannelModalOpen = false;
+      this.#newChannelName = "";
+      this.#newChannelTopic = "";
+      await this.refresh();
+      await this.#open(res.value.id);
+    } else {
+      this.#error = refusalWords("The channel creation", res.error, res.status ?? null);
+      this.#host.repaint();
+    }
+  }
+
+  async #startConversationFromModal(): Promise<void> {
+    const count = this.#selectedRosterIds.size;
+    if (count === 0) return;
+    const groupInput = this.#host.find("input[data-field='group-name']") as HTMLInputElement | null;
+    const groupName = groupInput?.value.trim() || this.#newGroupName;
+    if (count === 1) {
+      const targetUid = [...this.#selectedRosterIds][0];
+      const res = await this.#api.createDM(targetUid);
+      if (this.#stopped) return;
+      if (res.ok) {
+        this.#newMsgModalOpen = false;
+        await this.refresh();
+        await this.#open(res.value.id);
+      } else {
+        this.#error = refusalWords("Starting the message", res.error, res.status ?? null);
+        this.#host.repaint();
+      }
+    } else {
+      const memberIds = [...this.#selectedRosterIds];
+      const res = await this.#api.createGroup(groupName || "Group direct message", memberIds);
+      if (this.#stopped) return;
+      if (res.ok) {
+        this.#newMsgModalOpen = false;
+        await this.refresh();
+        await this.#open(res.value.id);
+      } else {
+        this.#error = refusalWords("Starting the group", res.error, res.status ?? null);
+        this.#host.repaint();
+      }
+    }
+  }
+
+  async #startDmWith(targetUid: string): Promise<void> {
+    if (!targetUid) return;
+    const res = await this.#api.createDM(targetUid);
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#mainView = "conversation";
+      await this.refresh();
+      await this.#open(res.value.id);
+    }
+  }
+
+  async #toggleReaction(channelId: string, msgId: string, emoji: string): Promise<void> {
+    if (!channelId || !msgId || !emoji) return;
+    const res = await this.#api.toggleReaction(channelId, msgId, emoji);
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#reactions.set(msgId, res.value.reactions);
+      this.#host.repaint();
+    }
+  }
+
+  async #saveEdit(channelId: string, msgId: string, body: string): Promise<void> {
+    if (!channelId || !msgId || !body) return;
+    const res = await this.#api.editMessage(channelId, msgId, body);
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#held = this.#held.map((m) =>
+        m.id === msgId ? { ...m, body: res.value.body, edited_at: (res.value as any).edited_at ?? new Date().toISOString() } : m
+      );
+      this.#editingMessageId = null;
+      this.#host.repaint();
+    } else {
+      this.#error = refusalWords("The edit", res.error, res.status ?? null);
+      this.#host.repaint();
+    }
+  }
+
+  async #deleteMsg(channelId: string, msgId: string): Promise<void> {
+    if (!channelId || !msgId) return;
+    const res = await this.#api.deleteMessage(channelId, msgId);
+    if (this.#stopped) return;
+    if (res.ok) {
+      this.#held = this.#held.map((m) =>
+        m.id === msgId ? { ...m, body: "This message was deleted", deleted_at: (res.value as any).deleted_at ?? new Date().toISOString() } : m
+      );
+      this.#host.repaint();
+    } else {
+      this.#error = refusalWords("The deletion", res.error, res.status ?? null);
+      this.#host.repaint();
+    }
+  }
+
+  async #saveMsg(msgId: string): Promise<void> {
+    if (!msgId) return;
+    await this.#api.saveMessage(msgId);
+    this.#notice = "Message saved";
+    this.#host.repaint();
+  }
+
+  async #unsaveMsg(msgId: string): Promise<void> {
+    if (!msgId) return;
+    await this.#api.unsaveMessage(msgId);
+    await this.#loadSaved();
+  }
+
+  async #removeMemberByHand(channelId: string, userId: string): Promise<void> {
+    if (!channelId || !userId) return;
+    await this.#api.removeMember(channelId, userId);
+    await this.#loadSettings();
+  }
+
+  async #unassignRep(repId: string): Promise<void> {
+    if (!repId) return;
+    await this.#api.unassignRep(repId);
+    await this.#loadSettings();
+  }
+
+  async #joinChannel(channelId: string): Promise<void> {
+    if (!channelId) return;
+    await this.#api.joinChannel(channelId);
+    await Promise.all([this.refresh(), this.#loadNotifyOptIn()]);
+  }
+
+  async #leaveChannel(channelId: string): Promise<void> {
+    if (!channelId) return;
+    await this.#api.leaveChannel(channelId);
+    await Promise.all([this.refresh(), this.#loadNotifyOptIn()]);
+  }
+
+  async #toggleEventNotif(eventTopic: string, channel: string, isChecked: boolean): Promise<void> {
+    if (!eventTopic) return;
+    const cur = this.#notifySettings?.event_classes?.[eventTopic] ?? { in_app: true, push: false };
+    const updated = { ...cur, [channel]: isChecked };
+    await this.#api.updateEventClassNotif(eventTopic, updated);
+    await this.#loadNotifyOptIn();
+  }
+
+  async #toggleQuietHours(): Promise<void> {
+    const cur = this.#notifySettings?.quiet_hours?.enabled ?? false;
+    await this.#api.updateQuietHours({ enabled: !cur });
+    await this.#loadNotifyOptIn();
+  }
+
+  async #submitAttachment(): Promise<void> {
+    const filenameInput = this.#host.find("input[data-field='attach-filename']") as HTMLInputElement | null;
+    const captionInput = this.#host.find("input[data-field='attach-caption']") as HTMLInputElement | null;
+    const filename = filenameInput?.value.trim() || "attachment.pdf";
+    const caption = captionInput?.value.trim() || "";
+    this.#attachModalOpen = false;
+    this.#host.repaint();
+    if (this.#activeId) {
+      await this.#api.uploadAttachment(this.#activeId, filename, caption);
+      await this.#loadAttachments(this.#activeId);
+    }
   }
 
   // ---- presses ----------------------------------------------------------------------------------
@@ -607,21 +974,86 @@ export class MessagesDesk {
         this.#host.repaint();
         return true;
       case "new-message":
+      case "new-dm":
         this.#newMenuOpen = false;
-        this.#notice = "New message";
+        this.#newMsgModalOpen = true;
+        this.#selectedRosterIds.clear();
+        this.#newGroupName = "";
+        this.#rosterFilter = "";
+        void this.#loadRoster();
         this.#host.repaint();
         return true;
       case "new-channel":
       case "add-channel":
         this.#newMenuOpen = false;
-        this.#notice = "New channel";
+        if (!this.#isAdmin) return true;
+        this.#newChannelModalOpen = true;
+        this.#newChannelName = "";
+        this.#newChannelTopic = "";
+        this.#newChannelVisibility = "PUBLIC";
+        this.#host.repaint();
+        return true;
+      case "close-modal":
+        this.#newMsgModalOpen = false;
+        this.#newChannelModalOpen = false;
+        this.#attachModalOpen = false;
+        this.#host.repaint();
+        return true;
+      case "toggle-person": {
+        const personId = control.getAttribute("data-person-id") ?? id;
+        if (personId) {
+          if (this.#selectedRosterIds.has(personId)) {
+            this.#selectedRosterIds.delete(personId);
+          } else {
+            this.#selectedRosterIds.add(personId);
+          }
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "remove-person": {
+        const personId = control.getAttribute("data-id") ?? id;
+        if (personId) {
+          this.#selectedRosterIds.delete(personId);
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "set-channel-visibility": {
+        const vis = control.getAttribute("data-vis");
+        if (vis === "PRIVATE" || vis === "PUBLIC") {
+          this.#newChannelVisibility = vis;
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "create-channel-submit":
+        void this.#submitNewChannel();
+        return true;
+      case "start-conversation":
+        void this.#startConversationFromModal();
+        return true;
+      case "start-dm-with":
+        void this.#startDmWith(control.getAttribute("data-id") ?? id);
+        return true;
+      case "open-add-person":
+        this.#newMsgModalOpen = true;
+        this.#selectedRosterIds.clear();
+        this.#newGroupName = "";
+        this.#rosterFilter = "";
+        void this.#loadRoster();
         this.#host.repaint();
         return true;
       case "open-channel":
+        this.#mainView = "conversation";
         void this.#open(id);
         return true;
       case "back":
-        this.#view = "list";
+        if (this.#mainView !== "conversation") {
+          this.#mainView = "conversation";
+        } else {
+          this.#view = "list";
+        }
         this.#host.repaint();
         return true;
       case "load-older":
@@ -664,6 +1096,9 @@ export class MessagesDesk {
         const tab = control.getAttribute("data-tab");
         if (tab === "messages" || tab === "files") {
           this.#activeTab = tab;
+          if (tab === "files" && this.#activeId) {
+            void this.#loadAttachments(this.#activeId);
+          }
           this.#host.repaint();
         }
         return true;
@@ -671,9 +1106,134 @@ export class MessagesDesk {
       case "thread-send":
         void this.#threadSend();
         return true;
-      case "open-settings":
-        this.#notice = "Settings opened";
+      case "open-react-picker": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        this.#activeReactPickerMsgId = this.#activeReactPickerMsgId === msgId ? null : msgId;
         this.#host.repaint();
+        return true;
+      }
+      case "pick-reaction": {
+        const emoji = control.getAttribute("data-react-option") ?? control.getAttribute("data-emoji") ?? "";
+        const msgId = control.getAttribute("data-id") ?? this.#activeReactPickerMsgId ?? id;
+        const channelId = control.getAttribute("data-channel") ?? this.#activeId;
+        this.#activeReactPickerMsgId = null;
+        void this.#toggleReaction(channelId, msgId, emoji);
+        return true;
+      }
+      case "toggle-reaction": {
+        const emoji = control.getAttribute("data-emoji") ?? "";
+        const msgId = control.getAttribute("data-id") ?? id;
+        const channelId = control.getAttribute("data-channel") ?? this.#activeId;
+        void this.#toggleReaction(channelId, msgId, emoji);
+        return true;
+      }
+      case "edit-msg": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        this.#editingMessageId = msgId;
+        this.#host.repaint();
+        return true;
+      }
+      case "cancel-edit":
+        this.#editingMessageId = null;
+        this.#host.repaint();
+        return true;
+      case "save-edit": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        const channelId = control.getAttribute("data-channel") ?? this.#activeId;
+        const editField = this.#host.find("textarea[data-field='edit-body']") as HTMLTextAreaElement | null;
+        const newBody = editField?.value.trim() ?? "";
+        void this.#saveEdit(channelId, msgId, newBody);
+        return true;
+      }
+      case "delete-msg": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        const channelId = control.getAttribute("data-channel") ?? this.#activeId;
+        void this.#deleteMsg(channelId, msgId);
+        return true;
+      }
+      case "toggle-save-msg": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        void this.#saveMsg(msgId);
+        return true;
+      }
+      case "unsave-msg": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        void this.#unsaveMsg(msgId);
+        return true;
+      }
+      case "nav-mentions":
+        this.#mainView = "mentions";
+        this.#view = "conversation";
+        void this.#loadMentions();
+        this.#host.repaint();
+        return true;
+      case "nav-saved":
+        this.#mainView = "saved";
+        this.#view = "conversation";
+        void this.#loadSaved();
+        this.#host.repaint();
+        return true;
+      case "open-settings":
+        if (this.#isAdmin) {
+          this.#mainView = "settings";
+          this.#view = "conversation";
+          void this.#loadSettings();
+          this.#host.repaint();
+        }
+        return true;
+      case "settings-subtab": {
+        const subtab = control.getAttribute("data-tab") as any;
+        if (subtab === "membership-rules" || subtab === "event-classes" || subtab === "rep-assignments") {
+          this.#settingsSubtab = subtab;
+          this.#host.repaint();
+        }
+        return true;
+      }
+      case "remove-member-by-hand": {
+        const userId = control.getAttribute("data-id") ?? "";
+        const chId = control.getAttribute("data-channel") ?? "";
+        void this.#removeMemberByHand(chId, userId);
+        return true;
+      }
+      case "unassign-rep": {
+        const repId = control.getAttribute("data-id") ?? "";
+        void this.#unassignRep(repId);
+        return true;
+      }
+      case "open-notify-optin":
+        this.#mainView = "notifications-optin";
+        this.#view = "conversation";
+        void this.#loadNotifyOptIn();
+        this.#host.repaint();
+        return true;
+      case "join-channel": {
+        const chId = control.getAttribute("data-id") ?? "";
+        void this.#joinChannel(chId);
+        return true;
+      }
+      case "leave-channel": {
+        const chId = control.getAttribute("data-id") ?? "";
+        void this.#leaveChannel(chId);
+        return true;
+      }
+      case "toggle-event-notif": {
+        const eventTopic = control.getAttribute("data-event") ?? "";
+        const notifChan = control.getAttribute("data-channel") ?? "in_app";
+        const isChecked = control.getAttribute("aria-checked") !== "true";
+        void this.#toggleEventNotif(eventTopic, notifChan, isChecked);
+        return true;
+      }
+      case "toggle-quiet-hours":
+        void this.#toggleQuietHours();
+        return true;
+      case "attach":
+        this.#attachModalOpen = true;
+        this.#host.repaint();
+        return true;
+      case "attach-submit":
+        void this.#submitAttachment();
+        return true;
+      case "open-file":
         return true;
       case "send":
         void this.#send();
@@ -786,6 +1346,14 @@ export class MessagesDesk {
       : null;
     const openThreadRoot = this.#openThreadId ? this.#held.find((m) => m.id === this.#openThreadId) ?? null : null;
     const openThreadReplies = this.#openThreadId ? (this.#threads.get(this.#openThreadId) ?? []) : [];
+
+    const isGroup = channel.kind === "GROUP";
+    const memberCount = (channel as any).members?.length || 3;
+    const groupSubtitle = isGroup ? groupConversationSubtitle(memberCount, Boolean(channel.name)) : "";
+    const dmPrompt = channel.kind === "DM" ? dmConversationPrompt(channelTitle(channel)).title : "";
+    const memberInitials = isGroup ? ["PS", "ER", "TA"] : [];
+    const attachments = this.#attachments.get(this.#activeId) ?? [];
+
     return {
       channel,
       prefs,
@@ -806,10 +1374,61 @@ export class MessagesDesk {
       openThreadReplies,
       threadSending: this.#threadSending,
       activeTab: this.#activeTab,
+
+      groupSubtitle,
+      dmPrompt,
+      memberInitials,
+      reactions: this.#reactions,
+      activeReactPickerMsgId: this.#activeReactPickerMsgId,
+      editingMessageId: this.#editingMessageId,
+      seenCounts: this.#seenCounts,
+      attachments,
     };
   }
 
   render(): TemplateResult {
+    const filteredRoster = filterRoster(this.#roster, this.#rosterFilter, this.#meId);
+
+    const newMsgModal = this.#newMsgModalOpen
+      ? {
+          open: true,
+          roster: filteredRoster,
+          selectedIds: this.#selectedRosterIds,
+          groupName: this.#newGroupName,
+        }
+      : null;
+
+    const newChannelModal = this.#newChannelModalOpen
+      ? {
+          open: true,
+          name: this.#newChannelName,
+          topic: this.#newChannelTopic,
+        }
+      : null;
+
+    const attachModal = this.#attachModalOpen
+      ? {
+          open: true,
+        }
+      : null;
+
+    const settingsView = this.#mainView === "settings"
+      ? {
+          subtab: this.#settingsSubtab,
+          membershipRules: this.#membershipRules,
+          membersByHand: this.#membersByHand,
+          eventClasses: this.#eventClasses,
+          repAssignments: this.#repAssignments,
+        }
+      : null;
+
+    const notifyOptInView = this.#mainView === "notifications-optin"
+      ? {
+          settings: this.#notifySettings,
+          directory: this.#channelDirectory,
+        }
+      : null;
+
     return renderDesk({
       phase: this.#phase,
       loadError: this.#loadError,
@@ -817,6 +1436,7 @@ export class MessagesDesk {
       channels: this.#channels,
       activeId: this.#activeId,
       view: this.#view,
+      mainView: this.#mainView,
       totalUnread: totalUnread(this.#channels),
       live: this.#liveState,
       stale: this.#staleAt === null ? "" : `The last read failed at ${timeWords(new Date(this.#staleAt).toISOString(), this.#host.now())}. You are looking at what was read before.`,
@@ -828,6 +1448,15 @@ export class MessagesDesk {
       convo: this.#convo(),
       isAdmin: this.#isAdmin,
       newMenuOpen: this.#newMenuOpen,
+
+      newMsgModal,
+      newChannelModal,
+      attachModal,
+      mentionsList: this.#mentionsList,
+      savedList: this.#savedList,
+      searchResults: this.#searchResults,
+      settingsView,
+      notifyOptInView,
     });
   }
 }

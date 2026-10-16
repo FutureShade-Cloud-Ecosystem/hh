@@ -22,12 +22,25 @@ import {
   systemEventDetails,
   parseMentions,
   QUICK_REPLIES,
+  canEditMessage,
+  formatFileSize,
   type Channel,
-  type ChannelGroup,
   type HouseConversation,
   type Message,
   type NotifyMode,
+  type StaffMember,
+  type ReactionItem,
 } from "./messages-logic.js";
+import type {
+  AttachmentItem,
+  ChannelDirectoryItem,
+  MembershipRuleItem,
+  MemberByHandItem,
+  EventClassItem,
+  RepAssignmentItem,
+  NotificationSettings,
+  SearchResults,
+} from "./messages-api.js";
 import { liveWords, type LiveState } from "./live.js";
 
 /** What the desk hands the screen to draw. */
@@ -38,9 +51,9 @@ export interface Model {
   readonly channels: readonly Channel[];
   readonly activeId: string;
   readonly view: "list" | "conversation";
+  readonly mainView: "conversation" | "mentions" | "saved" | "search" | "settings" | "notifications-optin";
   readonly totalUnread: number;
   readonly live: LiveState | null;
-  /** Words for a failed read, empty when the last read worked. */
   readonly stale: string;
   readonly now: number;
   readonly error: string;
@@ -50,12 +63,45 @@ export interface Model {
   readonly convo: ConvoModel | null;
   readonly isAdmin: boolean;
   readonly newMenuOpen: boolean;
+
+  // C2 Modals
+  readonly newMsgModal: {
+    readonly open: boolean;
+    readonly roster: readonly StaffMember[];
+    readonly selectedIds: ReadonlySet<string>;
+    readonly groupName: string;
+  } | null;
+  readonly newChannelModal: {
+    readonly open: boolean;
+    readonly name: string;
+    readonly topic: string;
+  } | null;
+  readonly attachModal: {
+    readonly open: boolean;
+  } | null;
+
+  // C3 Views
+  readonly mentionsList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string }[];
+  readonly savedList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string; readonly saved_at: string }[];
+  readonly searchResults: SearchResults | null;
+
+  // C4/C5 Views
+  readonly settingsView: {
+    readonly subtab: "membership-rules" | "event-classes" | "rep-assignments";
+    readonly membershipRules: readonly MembershipRuleItem[];
+    readonly membersByHand: readonly MemberByHandItem[];
+    readonly eventClasses: readonly EventClassItem[];
+    readonly repAssignments: readonly RepAssignmentItem[];
+  } | null;
+  readonly notifyOptInView: {
+    readonly settings: NotificationSettings | null;
+    readonly directory: readonly ChannelDirectoryItem[];
+  } | null;
 }
 
 /** The caller's own payment notice rules, drawn in place of the conversation while open. */
 export interface RulesModel {
   readonly loading: boolean;
-  /** Keyed by rule id; the full closed set once read, null while no read has answered. */
   readonly values: Readonly<Record<string, boolean>> | null;
   readonly busy: string;
   readonly error: string;
@@ -64,7 +110,6 @@ export interface RulesModel {
 /** The caller's notification choices for the open room. */
 export interface PrefsModel {
   readonly loading: boolean;
-  /** Whether the core's answer has been read; the controls are drawn only then. */
   readonly read: boolean;
   readonly mode: NotifyMode;
   readonly inherited: boolean;
@@ -96,11 +141,8 @@ export interface QueueModel {
 /** What one message says about acknowledgement, when it asks for one. */
 export interface AckView {
   readonly superseded: boolean;
-  /** The core's arithmetic in words; empty until it has been read. */
   readonly progress: string;
-  /** The caller's own acknowledgement is among the core's count. */
   readonly youAcked: boolean;
-  /** The core still lists this message as waiting on the caller. */
   readonly needsYou: boolean;
   readonly busy: boolean;
   readonly error: string;
@@ -109,16 +151,12 @@ export interface AckView {
 export interface ConvoModel {
   readonly channel: Channel;
   readonly loading: boolean;
-  /** Top level messages, oldest first. */
   readonly messages: readonly Message[];
   readonly hasOlder: boolean;
   readonly olderBusy: boolean;
-  /** Thread roots that are open, with their replies read so far. */
   readonly threads: ReadonlyMap<string, readonly Message[]>;
   readonly acks: ReadonlyMap<string, AckView>;
-  /** The notification sheet, open or not. */
   readonly prefs: PrefsModel | null;
-  /** The house queue, only in a house room; null elsewhere. */
   readonly queue: QueueModel | null;
   readonly replyTo: { readonly rootId: string; readonly excerpt: string } | null;
   readonly composerWords: string;
@@ -130,6 +168,20 @@ export interface ConvoModel {
   readonly openThreadReplies: readonly Message[];
   readonly threadSending: boolean;
   readonly activeTab: "messages" | "files";
+
+  // C2 Group DM & Prompt
+  readonly groupSubtitle: string;
+  readonly dmPrompt: string;
+  readonly memberInitials: readonly string[];
+
+  // C3 Reactions & Editing & Seen
+  readonly reactions: ReadonlyMap<string, readonly ReactionItem[]>;
+  readonly activeReactPickerMsgId: string | null;
+  readonly editingMessageId: string | null;
+  readonly seenCounts: ReadonlyMap<string, number>;
+
+  // C6 Files
+  readonly attachments: readonly AttachmentItem[];
 }
 
 // ---- SVGs --------------------------------------------------------------------------------------
@@ -245,8 +297,8 @@ function renderChannelItem(c: Channel, activeId: string, isDm: boolean): Templat
 }
 
 function renderRail(m: Model): TemplateResult {
-  const dmChannels = m.channels.filter((c) => c.kind === "DM");
-  const groups = channelGroups(m.channels.filter((c) => c.kind !== "DM"));
+  const dmChannels = m.channels.filter((c) => c.kind === "DM" || c.kind === "GROUP");
+  const groups = channelGroups(m.channels.filter((c) => c.kind !== "DM" && c.kind !== "GROUP"));
 
   return html`
     <aside class="rail" data-channel-list aria-label="Channels">
@@ -307,6 +359,7 @@ function renderRail(m: Model): TemplateResult {
           <span>Settings</span>
         </button>
         <button type="button" class="link" data-action="open-rules">Payment notice rules</button>
+        <button type="button" class="link" data-action="open-notify-optin">Notification preferences</button>
       </div>
     </aside>
   `;
@@ -314,8 +367,19 @@ function renderRail(m: Model): TemplateResult {
 
 // ---- the conversation --------------------------------------------------------------------------
 
-function renderMessageBody(msg: Message): TemplateResult {
-  if (msg.deleted_at) return html`<p class="text dim" data-body>This message was removed.</p>`;
+function renderMessageBody(msg: Message, c: ConvoModel): TemplateResult {
+  if (msg.deleted_at) return html`<p class="text dim" data-body>This message was deleted</p>`;
+  if (c.editingMessageId === msg.id) {
+    return html`
+      <div class="edit-box">
+        <textarea data-field="edit-body" data-initial=${msg.body} rows="2"></textarea>
+        <div class="edit-actions">
+          <button type="button" class="btn btn-primary small-btn" data-action="save-edit" data-id=${msg.id} data-channel=${msg.channel_id}>Save</button>
+          <button type="button" class="btn btn-secondary small-btn" data-action="cancel-edit">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
   const segments = parseMentions(msg.body);
   return html`
     <p class="text" data-body>
@@ -339,6 +403,11 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
   const replies = open ?? [];
   const initials = isEvent ? "" : initialsOf(msg.author_name || (mine ? "You" : "Colleague"));
 
+  const canEdit = canEditMessage(msg, m.meId, m.now);
+  const msgReactions = c.reactions.get(msg.id) ?? [];
+  const isReactOpen = c.activeReactPickerMsgId === msg.id;
+  const seenCount = c.seenCounts.get(msg.id) ?? 0;
+
   return html`
     <li class="${classes}" data-msg=${msg.id} data-kind=${msg.kind}>
       <div class="msg-head">
@@ -350,7 +419,7 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         <span class="when">${timeWords(msg.created_at, m.now)}</span>
         ${msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
       </div>
-      ${renderMessageBody(msg)}
+      ${renderMessageBody(msg, c)}
       ${why === "" ? nothing : html`<p class="why" data-why>${why}</p>`}
       ${eventDetails?.actionPill
         ? html`
@@ -361,16 +430,70 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
           </div>
         `
         : nothing}
+      ${msg.kind === "TEXT"
+        ? html`
+          <div class="reactions-row">
+            ${msgReactions.map(
+              (item) => html`
+                <button
+                  type="button"
+                  class="reaction-chip ${item.mine ? "mine" : ""}"
+                  data-action="toggle-reaction"
+                  data-emoji=${item.emoji}
+                  data-id=${msg.id}
+                  data-channel=${msg.channel_id}
+                >
+                  <span>${item.emoji}</span>
+                  <span>${item.count}</span>
+                </button>
+              `,
+            )}
+            <button
+              type="button"
+              class="btn-react-picker"
+              data-action="open-react-picker"
+              data-id=${msg.id}
+            >+ React</button>
+            ${isReactOpen
+              ? html`
+                <div class="react-popover" role="menu">
+                  ${["Thanks", "On it", "Agreed", "Done", "+1"].map(
+                    (opt) => html`
+                      <button
+                        type="button"
+                        class="react-opt"
+                        data-action="pick-reaction"
+                        data-emoji=${opt}
+                        data-id=${msg.id}
+                        data-channel=${msg.channel_id}
+                        data-react-option=${opt}
+                      >${opt}</button>
+                    `,
+                  )}
+                </div>
+              `
+              : nothing}
+          </div>
+        `
+        : nothing}
       ${renderAck(c.acks.get(msg.id), msg)}
-      ${isReply
-        ? nothing
-        : html`
-            <div class="msg-foot">
+      <div class="msg-foot">
+        ${canEdit
+          ? html`
+            <button type="button" class="link small" data-action="edit-msg" data-id=${msg.id}>Edit</button>
+            <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
+          `
+          : nothing}
+        ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
+        <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
+        ${isReply
+          ? nothing
+          : html`
               <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
               <button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>${msg.reply_count > 0 ? "Open thread" : "Reply"}</button>
               ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
-            </div>
-          `}
+            `}
+      </div>
       ${open === undefined
         ? nothing
         : html`<ul class="thread" data-thread>${replies.map((r) => renderMessage(r, c, m, true))}</ul>`}
@@ -608,10 +731,55 @@ function renderThreadSidePanel(m: Model, c: ConvoModel): TemplateResult {
   `;
 }
 
+function renderFilesPane(c: ConvoModel): TemplateResult {
+  const photos = c.attachments.filter((a) => a.content_type.startsWith("image/") || a.filename.endsWith(".jpg") || a.filename.endsWith(".png") || a.filename.endsWith(".webp"));
+  const files = c.attachments.filter((a) => !photos.includes(a));
+
+  return html`
+    <div class="files-pane" data-files-pane>
+      <div class="photos-section">
+        <h3>Photos (${photos.length})</h3>
+        <div class="photos-grid" data-photos-grid>
+          ${photos.length === 0 ? html`<p class="dim small">No photos in this room</p>` : nothing}
+          ${photos.map(
+            (p) => html`
+              <div class="photo-card" data-photo-id=${p.id}>
+                <div class="photo-thumb">[ Photo ]</div>
+                <div class="photo-info">
+                  <strong>${p.caption || p.filename}</strong>
+                  <div class="dim small">${p.author_name}</div>
+                </div>
+              </div>
+            `,
+          )}
+        </div>
+      </div>
+      <div class="files-section">
+        <h3>Files (${files.length})</h3>
+        <div class="files-list" data-files-list>
+          ${files.length === 0 ? html`<p class="dim small">No files in this room</p>` : nothing}
+          ${files.map(
+            (f) => html`
+              <div class="file-row" data-file-id=${f.id}>
+                <div>
+                  <strong>${f.filename}</strong>
+                  <div class="dim small">${f.author_name} \u00b7 ${formatFileSize(f.size_bytes)}</div>
+                </div>
+                <button type="button" class="btn btn-secondary small-btn" data-action="open-file" data-id=${f.id}>Open full size</button>
+              </div>
+            `,
+          )}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderConvo(m: Model, c: ConvoModel): TemplateResult {
   const ch = c.channel;
+  const isGroup = ch.kind === "GROUP";
   const tier = ch.tier === "ESCALATION" ? "Escalation" : ch.tier === "FIREHOSE" ? "Firehose" : "";
-  const subtitle = ch.topic ? ch.topic : channelLine(ch);
+  const subtitle = isGroup ? c.groupSubtitle : ch.topic ? ch.topic : channelLine(ch);
 
   return html`
     <section class="convo" data-conversation>
@@ -619,10 +787,15 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
         <button type="button" class="btn btn-secondary small-btn back" data-action="back">Back</button>
         <div class="titles">
           <div class="channel-title-row">
-            <span class="hash" aria-hidden="true">#</span>
+            ${isGroup
+              ? html`<div class="avatar-stacked">${c.memberInitials.slice(0, 2).map((init) => html`<span class="avatar avatar-sm">${init}</span>`)}</div>`
+              : html`<span class="hash" aria-hidden="true">#</span>`}
             <h2>${channelTitle(ch)}</h2>
+            ${isGroup
+              ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-add-person" style="margin-left: 8px;">Add a person</button>`
+              : nothing}
           </div>
-          ${subtitle === "" ? nothing : html`<p class="dim small channel-topic">${subtitle}</p>`}
+          ${subtitle === "" ? nothing : html`<p class="dim small channel-topic ${isGroup ? "group-subtitle" : ""}">${subtitle}</p>`}
         </div>
         <div class="tab-strip" role="tablist">
           <button
@@ -644,25 +817,29 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
         </div>
         ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
         <button type="button" class="btn btn-secondary small-btn btn-notify" data-action="open-prefs" aria-label="Notifications">
-          <span>Notify: ${notifyModeWord(c.prefs?.mode)}</span>
+          Notifications
         </button>
       </div>
       <div class="convo-body">
         ${c.prefs === null ? nothing : renderPrefs(ch, c.prefs)}
         ${c.queue === null ? nothing : renderQueue(c.queue, m.now)}
-        ${c.loading
-          ? html`<p class="dim" data-loading>Loading messages</p>`
-          : html`
-              ${c.hasOlder
-                ? html`<button type="button" class="btn btn-secondary small-btn" data-action="load-older" ?disabled=${c.olderBusy}>Earlier messages</button>`
-                : nothing}
-              <div class="day-separator" role="separator"><span class="day-pill">Today</span></div>
-              ${c.messages.length === 0
-                ? html`<div class="empty" data-empty><strong>No messages yet</strong>Write the first one below.</div>`
-                : html`<ul class="stream" data-stream>${c.messages.map((msg) => renderMessage(msg, c, m, false))}</ul>`}
-            `}
+        ${c.activeTab === "files"
+          ? renderFilesPane(c)
+          : c.loading
+            ? html`<p class="dim" data-loading>Loading messages</p>`
+            : html`
+                ${c.hasOlder
+                  ? html`<button type="button" class="btn btn-secondary small-btn" data-action="load-older" ?disabled=${c.olderBusy}>Earlier messages</button>`
+                  : nothing}
+                <div class="day-separator" role="separator"><span class="day-pill">Today</span></div>
+                ${c.messages.length === 0
+                  ? c.dmPrompt !== ""
+                    ? html`<div class="empty" data-empty><p class="text" data-dm-prompt>${c.dmPrompt}</p></div>`
+                    : html`<div class="empty" data-empty><strong>No messages yet</strong>Write the first one below.</div>`
+                  : html`<ul class="stream" data-stream>${c.messages.map((msg) => renderMessage(msg, c, m, false))}</ul>`}
+              `}
       </div>
-      ${renderComposer(c)}
+      ${c.activeTab === "messages" ? renderComposer(c) : nothing}
     </section>
   `;
 }
@@ -671,6 +848,541 @@ function renderEmptyConvo(): TemplateResult {
   return html`
     <section class="convo" data-conversation-empty>
       <div class="empty"><strong>Pick a channel</strong>Choose a room on the left to read it and write to it.</div>
+    </section>
+  `;
+}
+
+// ---- Modals ------------------------------------------------------------------------------------
+
+function renderNewMessageModal(m: Model): TemplateResult | typeof nothing {
+  const modal = m.newMsgModal;
+  if (!modal || !modal.open) return nothing;
+  const count = modal.selectedIds.size;
+  const btnText = count >= 2 ? "Start group" : "Start message";
+  const selectedList = modal.roster.filter((r) => modal.selectedIds.has(r.user_id));
+
+  return html`
+    <div class="modal-backdrop" data-modal-backdrop>
+      <div class="modal-dialog" data-modal="new-message" role="dialog" aria-modal="true" aria-labelledby="modal-msg-title">
+        <div class="modal-head">
+          <h2 id="modal-msg-title">New message</h2>
+          <button type="button" class="btn-close" data-action="close-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label><strong>To:</strong></label>
+          <div class="to-chips-wrap" data-to-chips>
+            ${selectedList.map(
+              (p) => html`
+                <span class="chip-selected">
+                  ${p.display_name}
+                  <button type="button" class="link small" data-action="remove-person" data-id=${p.user_id}>&times;</button>
+                </span>
+              `,
+            )}
+            <input type="text" data-field="roster-search" placeholder="Type a name, role or yard..." aria-label="Search people" />
+          </div>
+          ${count >= 2
+            ? html`
+              <label><strong>Group name (optional)</strong></label>
+              <input type="text" data-field="group-name" placeholder="e.g. Saturday runs" data-value=${modal.groupName} />
+            `
+            : nothing}
+          <div class="roster-list" data-roster-list>
+            ${modal.roster.map(
+              (p) => html`
+                <button
+                  type="button"
+                  class="roster-item"
+                  data-action="toggle-person"
+                  data-person-id=${p.user_id}
+                  aria-selected=${modal.selectedIds.has(p.user_id) ? "true" : "false"}
+                >
+                  <span class="check-indicator" role="checkbox" aria-checked=${modal.selectedIds.has(p.user_id) ? "true" : "false"}>${modal.selectedIds.has(p.user_id) ? "\u2713" : ""}</span>
+                  <span class="avatar avatar-sm">${initialsOf(p.display_name)}</span>
+                  <span><strong>${p.display_name}</strong> \u00b7 <span class="dim small">${p.role_name} (${p.branch_name})</span></span>
+                </button>
+              `,
+            )}
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" data-action="start-conversation" ?disabled=${count === 0}>${btnText}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
+  const modal = m.newChannelModal;
+  if (!modal || !modal.open) return nothing;
+
+  return html`
+    <div class="modal-backdrop" data-modal-backdrop>
+      <div class="modal-dialog" data-modal="new-channel" role="dialog" aria-modal="true" aria-labelledby="modal-ch-title">
+        <div class="modal-head">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 id="modal-ch-title">New channel</h2>
+            <span class="badge-admin">ADMINS ONLY</span>
+          </div>
+          <button type="button" class="btn-close" data-action="close-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label><strong>Channel name</strong></label>
+          <input type="text" data-field="channel-name" placeholder="e.g. yard-julian-receiving" data-value=${modal.name} />
+          <label><strong>Purpose (topic)</strong></label>
+          <input type="text" data-field="channel-purpose" placeholder="What arrives at the dock..." data-value=${modal.topic} />
+          <label><strong>Visibility</strong></label>
+          <div class="segs">
+            <button type="button" class="seg" data-action="set-channel-visibility" data-vis="PUBLIC" aria-pressed="true">Public</button>
+            <button type="button" class="seg" data-action="set-channel-visibility" data-vis="PRIVATE" aria-pressed="false">Private</button>
+          </div>
+          <label><strong>Members by rule</strong></label>
+          <p class="dim small">All staff at Point Loma will join automatically.</p>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" data-action="create-channel-submit">Create channel</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAttachModal(m: Model): TemplateResult | typeof nothing {
+  const modal = m.attachModal;
+  if (!modal || !modal.open) return nothing;
+
+  return html`
+    <div class="modal-backdrop" data-modal-backdrop>
+      <div class="modal-dialog" data-modal="attach" role="dialog" aria-modal="true" aria-labelledby="modal-att-title">
+        <div class="modal-head">
+          <h2 id="modal-att-title">Attach file or photo</h2>
+          <button type="button" class="btn-close" data-action="close-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label><strong>File name</strong></label>
+          <input type="text" data-field="attach-filename" placeholder="e.g. Yard safety walk.pdf" />
+          <label><strong>Caption (optional)</strong></label>
+          <input type="text" data-field="attach-caption" placeholder="Description of the file..." />
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" data-action="attach-submit">Attach</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---- Views (Mentions, Saved, Search, Settings, Opt-in) ------------------------------------------
+
+function renderMentionsView(m: Model): TemplateResult {
+  return html`
+    <section class="convo" data-view="mentions">
+      <div class="convo-head">
+        <div class="titles">
+          <h2>Mentions</h2>
+          <p class="dim small">Messages that name you or your role</p>
+        </div>
+      </div>
+      <div class="convo-body">
+        ${m.mentionsList.length === 0
+          ? html`<div class="empty"><strong>No mentions</strong>Nobody has mentioned you yet.</div>`
+          : html`
+            <ul class="stream">
+              ${m.mentionsList.map(
+                (item) => html`
+                  <li class="msg" data-msg=${item.message.id}>
+                    <div class="msg-head">
+                      <span class="avatar" aria-hidden="true">${initialsOf(item.message.author_name || "Staff")}</span>
+                      <span class="who">${item.message.author_name || "Colleague"}</span>
+                      <span class="dim small">in #${item.channel_name}</span>
+                      <span class="when">${timeWords(item.message.created_at, m.now)}</span>
+                    </div>
+                    <p class="text">${item.message.body}</p>
+                    <div class="msg-foot">
+                      <button type="button" class="link" data-action="open-channel" data-id=${item.channel_id}>Jump to channel</button>
+                    </div>
+                  </li>
+                `,
+              )}
+            </ul>
+          `}
+      </div>
+    </section>
+  `;
+}
+
+function renderSavedView(m: Model): TemplateResult {
+  return html`
+    <section class="convo" data-view="saved">
+      <div class="convo-head">
+        <div class="titles">
+          <h2>Saved messages</h2>
+          <p class="dim small">Your bookmarked messages</p>
+        </div>
+      </div>
+      <div class="convo-body">
+        ${m.savedList.length === 0
+          ? html`<div class="empty"><strong>Nothing saved</strong>Use the bookmark action on any message to save it here.</div>`
+          : html`
+            <ul class="stream">
+              ${m.savedList.map(
+                (item) => html`
+                  <li class="msg" data-msg=${item.message.id}>
+                    <div class="msg-head">
+                      <span class="avatar" aria-hidden="true">${initialsOf(item.message.author_name || "Staff")}</span>
+                      <span class="who">${item.message.author_name || "Colleague"}</span>
+                      <span class="dim small">in #${item.channel_name}</span>
+                      <span class="when">${timeWords(item.message.created_at, m.now)}</span>
+                    </div>
+                    <p class="text">${item.message.body}</p>
+                    <div class="msg-foot">
+                      <button type="button" class="link" data-action="open-channel" data-id=${item.channel_id}>Jump to channel</button>
+                      <button type="button" class="link" data-action="unsave-msg" data-id=${item.message.id}>Remove from saved</button>
+                    </div>
+                  </li>
+                `,
+              )}
+            </ul>
+          `}
+      </div>
+    </section>
+  `;
+}
+
+function renderSearchView(m: Model): TemplateResult {
+  const res = m.searchResults;
+  const messages = res?.messages ?? [];
+  const people = res?.people ?? [];
+  const channels = res?.channels ?? [];
+
+  return html`
+    <section class="convo" data-view="search">
+      <div class="convo-head">
+        <div class="titles">
+          <h2>Search results</h2>
+          <p class="dim small">${res?.query ? `Showing results for "${res.query}"` : "Type in the search box to find anything"}</p>
+        </div>
+      </div>
+      <div class="convo-body">
+        <div class="search-section" data-search-section="messages">
+          <h3>Messages (${messages.length})</h3>
+          ${messages.length === 0 ? html`<p class="dim small">No messages match.</p>` : nothing}
+          <ul class="stream">
+            ${messages.map(
+              (item) => html`
+                <li class="msg" data-msg=${item.message.id}>
+                  <div class="msg-head">
+                    <span class="who">${item.message.author_name || "Colleague"}</span>
+                    <span class="dim small">in #${item.channel_name}</span>
+                    <span class="when">${timeWords(item.message.created_at, m.now)}</span>
+                  </div>
+                  <p class="text">${item.message.body}</p>
+                  <button type="button" class="link" data-action="open-channel" data-id=${item.channel_id}>Open message</button>
+                </li>
+              `,
+            )}
+          </ul>
+        </div>
+        <div class="search-section" data-search-section="people">
+          <h3>People (${people.length})</h3>
+          ${people.length === 0 ? html`<p class="dim small">No people match.</p>` : nothing}
+          <div class="roster-list">
+            ${people.map(
+              (p) => html`
+                <div class="roster-item">
+                  <span class="avatar avatar-sm">${initialsOf(p.display_name)}</span>
+                  <span style="flex: 1;"><strong>${p.display_name}</strong> \u00b7 <span class="dim small">${p.role_name} (${p.branch_name})</span></span>
+                  <button type="button" class="btn btn-secondary small-btn" data-action="start-dm-with" data-id=${p.user_id}>Message</button>
+                </div>
+              `,
+            )}
+          </div>
+        </div>
+        <div class="search-section" data-search-section="channels">
+          <h3>Channels (${channels.length})</h3>
+          ${channels.length === 0 ? html`<p class="dim small">No channels match.</p>` : nothing}
+          <ul class="ch-list">
+            ${channels.map(
+              (c) => html`
+                <li>
+                  <button type="button" class="ch" data-action="open-channel" data-id=${c.id}>
+                    <span class="ch-prefix">#</span>
+                    <span class="ch-name">${channelTitle(c)}</span>
+                  </button>
+                </li>
+              `,
+            )}
+          </ul>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSettingsView(m: Model): TemplateResult {
+  const s = m.settingsView;
+  const subtab = s?.subtab ?? "membership-rules";
+
+  return html`
+    <section class="convo" data-view="settings">
+      <div class="convo-head">
+        <div class="titles">
+          <h2>Settings</h2>
+          <p class="dim small">Admin channel settings and routing rules</p>
+        </div>
+      </div>
+      <div class="subtabs-bar">
+        <button
+          type="button"
+          class="subtab-btn ${subtab === "membership-rules" ? "active" : ""}"
+          data-action="settings-subtab"
+          data-tab="membership-rules"
+        >Membership rules</button>
+        <button
+          type="button"
+          class="subtab-btn ${subtab === "event-classes" ? "active" : ""}"
+          data-action="settings-subtab"
+          data-tab="event-classes"
+        >Event classes</button>
+        <button
+          type="button"
+          class="subtab-btn ${subtab === "rep-assignments" ? "active" : ""}"
+          data-action="settings-subtab"
+          data-tab="rep-assignments"
+        >Rep assignment</button>
+      </div>
+      <div class="view-pane">
+        ${subtab === "membership-rules"
+          ? html`
+            <h3>Membership rules</h3>
+            <p class="dim small">Who joins and leaves which channel automatically, by role and employment status.</p>
+            <table class="data-table" data-membership-table>
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Joins automatically</th>
+                  <th>Leaves automatically</th>
+                  <th>Visibility</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(s?.membershipRules ?? []).map(
+                  (r) => html`
+                    <tr>
+                      <td><strong>#${r.channel_name}</strong></td>
+                      <td>${r.joins_automatically}</td>
+                      <td>${r.leaves_automatically}</td>
+                      <td><span class="tag tag-plain">${r.visibility}</span></td>
+                      <td><button type="button" class="link" data-action="edit-rule" data-id=${r.channel_id}>Edit</button></td>
+                    </tr>
+                  `,
+                )}
+              </tbody>
+            </table>
+            <div class="added-by-hand-section" data-added-by-hand style="margin-top: 24px;">
+              <h3>Added by hand</h3>
+              <p class="dim small">Staff members added explicitly to channels.</p>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Person</th>
+                    <th>Role</th>
+                    <th>Added reason</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(s?.membersByHand ?? []).map(
+                    (mb) => html`
+                      <tr>
+                        <td><strong>${mb.display_name}</strong></td>
+                        <td>${mb.role_name}</td>
+                        <td>${mb.added_reason}</td>
+                        <td>
+                          <button type="button" class="btn btn-secondary small-btn" data-action="remove-member-by-hand" data-id=${mb.user_id} data-channel=${mb.channel_id}>Remove</button>
+                        </td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `
+          : subtab === "event-classes"
+            ? html`
+              <h3>Event classes</h3>
+              <p class="dim small">Event definitions and routing configurations.</p>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Event class</th>
+                    <th>Topic</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(s?.eventClasses ?? []).map(
+                    (ec) => html`
+                      <tr>
+                        <td><strong>${ec.name}</strong></td>
+                        <td class="code">${ec.topic}</td>
+                        <td>${ec.description}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            `
+            : html`
+              <h3>Rep assignment</h3>
+              <p class="dim small">Customer representatives and primary house queue handlers.</p>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Assigned Rep</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(s?.repAssignments ?? []).map(
+                    (ra) => html`
+                      <tr>
+                        <td><strong>${ra.customer_name}</strong></td>
+                        <td>${ra.rep_name}</td>
+                        <td>
+                          <button type="button" class="btn btn-secondary small-btn" data-action="unassign-rep" data-id=${ra.id}>Unassign</button>
+                        </td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            `}
+      </div>
+    </section>
+  `;
+}
+
+function renderNotificationsOptInView(m: Model): TemplateResult {
+  const notif = m.notifyOptInView;
+  const directory = notif?.directory ?? [];
+  const settings = notif?.settings;
+  const quiet = settings?.quiet_hours;
+
+  return html`
+    <section class="convo" data-view="notifications-optin">
+      <div class="convo-head">
+        <div class="titles">
+          <h2>My notifications</h2>
+          <p class="dim small">Control your notifications, quiet hours, and channel subscriptions</p>
+        </div>
+      </div>
+      <div class="view-pane">
+        <div class="optin-card" data-card="channels">
+          <h3>Channel notifications</h3>
+          <p class="dim small">Notification mode for each of your joined channels.</p>
+          <div class="ch-list">
+            ${m.channels.map(
+              (c) => html`
+                <div class="ch" style="justify-content: space-between;">
+                  <span>#${channelTitle(c)}</span>
+                  <span class="tag tag-plain">${c.tier === "ESCALATION" ? "All (escalation)" : "All"}</span>
+                </div>
+              `,
+            )}
+          </div>
+        </div>
+
+        <div class="optin-card" data-card="events">
+          <h3>Events that reach me</h3>
+          <p class="dim small">Choose which automated event alerts trigger in-app and push notifications.</p>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Event Class</th>
+                <th>In app</th>
+                <th>Push</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${[
+                { id: "orders_released_and_blocked", label: "Orders released and blocked" },
+                { id: "stock_received", label: "Stock received" },
+                { id: "credit_holds_and_credit_owed", label: "Credit holds and credit owed" },
+                { id: "deliveries_scheduled", label: "Deliveries scheduled" },
+                { id: "payments", label: "Payments" },
+                { id: "approvals_waiting_on_me", label: "Approvals waiting on me" },
+              ].map(
+                (ev) => html`
+                  <tr>
+                    <td><strong>${ev.label}</strong></td>
+                    <td><button type="button" class="check-btn" role="checkbox" aria-checked=${(settings?.event_classes[ev.id]?.in_app ?? true) ? "true" : "false"} data-action="toggle-event-notif" data-event=${ev.id} data-channel="in_app">${(settings?.event_classes[ev.id]?.in_app ?? true) ? "\u2713" : ""}</button></td>
+                    <td><button type="button" class="check-btn" role="checkbox" aria-checked=${(settings?.event_classes[ev.id]?.push ?? false) ? "true" : "false"} data-action="toggle-event-notif" data-event=${ev.id} data-channel="push">${(settings?.event_classes[ev.id]?.push ?? false) ? "\u2713" : ""}</button></td>
+                  </tr>
+                `,
+              )}
+            </tbody>
+          </table>
+
+          <h3 style="margin-top: 16px;">Quiet hours</h3>
+          <p class="dim small">Direct messages, forced acknowledgements, and escalations break through quiet hours.</p>
+          <div class="toggle-row">
+            <span class="grow">Enable quiet hours</span>
+            <button type="button" class="switch" data-action="toggle-quiet-hours" aria-pressed=${quiet?.enabled ? "true" : "false"}>${quiet?.enabled ? "On" : "Off"}</button>
+          </div>
+          <div style="display: flex; gap: 16px; margin-top: 8px;">
+            <div>
+              <label class="dim small">Start time</label>
+              <input type="time" value="20:00" data-value=${quiet?.start_time ?? "20:00"} data-field="quiet-start" />
+            </div>
+            <div>
+              <label class="dim small">End time</label>
+              <input type="time" value="07:00" data-value=${quiet?.end_time ?? "07:00"} data-field="quiet-end" />
+            </div>
+            <div>
+              <label class="dim small">Timezone</label>
+              <span class="dim small" style="display: block; padding-top: 8px;">${quiet?.timezone ?? "America/Los_Angeles"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="optin-card" data-card="directory">
+          <h3>Channel directory</h3>
+          <p class="dim small">Browse and join open channels at your yard.</p>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Channel</th>
+                <th>Members</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${directory.map(
+                (dc) => html`
+                  <tr>
+                    <td><strong>#${dc.name}</strong></td>
+                    <td>${dc.member_count} member${dc.member_count === 1 ? "" : "s"}</td>
+                    <td>
+                      ${dc.membership_source === "DERIVED"
+                        ? html`<span class="tag tag-plain">Joined by rule, you stay</span>`
+                        : dc.is_member
+                          ? html`<button type="button" class="btn btn-secondary small-btn" data-action="leave-channel" data-id=${dc.id}>Leave</button>`
+                          : html`<button type="button" class="btn btn-primary small-btn" data-action="join-channel" data-id=${dc.id}>Join</button>`}
+                    </td>
+                  </tr>
+                `,
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -690,6 +1402,26 @@ export function renderDesk(m: Model): TemplateResult {
       </div>
     `;
   }
+
+  let centerContent: TemplateResult;
+  if (m.mainView === "mentions") {
+    centerContent = renderMentionsView(m);
+  } else if (m.mainView === "saved") {
+    centerContent = renderSavedView(m);
+  } else if (m.mainView === "search") {
+    centerContent = renderSearchView(m);
+  } else if (m.mainView === "settings") {
+    centerContent = renderSettingsView(m);
+  } else if (m.mainView === "notifications-optin") {
+    centerContent = renderNotificationsOptInView(m);
+  } else if (m.rules !== null) {
+    centerContent = renderRules(m.rules);
+  } else if (m.convo === null) {
+    centerContent = renderEmptyConvo();
+  } else {
+    centerContent = renderConvo(m, m.convo);
+  }
+
   return html`
     <div class="${m.view === "conversation" ? "desk view-conv" : "desk view-list"}">
       ${renderStrip(m)}
@@ -698,9 +1430,12 @@ export function renderDesk(m: Model): TemplateResult {
       ${m.bubble === null ? nothing : renderBubble(m.bubble)}
       <div class="panes ${m.convo?.openThreadId ? "has-thread" : ""}">
         ${renderRail(m)}
-        ${m.rules !== null ? renderRules(m.rules) : m.convo === null ? renderEmptyConvo() : renderConvo(m, m.convo)}
+        ${centerContent}
         ${m.convo?.openThreadId ? renderThreadSidePanel(m, m.convo) : nothing}
       </div>
+      ${renderNewMessageModal(m)}
+      ${renderNewChannelModal(m)}
+      ${renderAttachModal(m)}
     </div>
   `;
 }
