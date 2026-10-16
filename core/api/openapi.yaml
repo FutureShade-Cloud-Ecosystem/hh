@@ -28100,7 +28100,7 @@ components:
           description: Zero unless past due
         bucket_label:
           type: string
-          description: 'C8 5-bucket human label (Current / 1 to 30 / 31 to 60 / 61 to 90 / 91 and over), derived from days_overdue against the same server asOf clock that picked days_overdue itself. Empty for not-yet-due rows.'
+          description: C8 5-bucket human label (Current / 1 to 30 / 31 to 60 / 61 to 90 / 91 and over), derived from days_overdue against the same server asOf clock that picked days_overdue itself. Empty for not-yet-due rows.
           enum:
             - ""
             - Current
@@ -28110,7 +28110,7 @@ components:
             - 91 and over
         bucket_key:
           type: string
-          description: 'C8 5-bucket machine-readable key (CURRENT / 1_30 / 31_60 / 61_90 / 90_PLUS), for joins and server-side filtering. Empty when not past due.'
+          description: C8 5-bucket machine-readable key (CURRENT / 1_30 / 31_60 / 61_90 / 90_PLUS), for joins and server-side filtering. Empty when not past due.
           enum:
             - ""
             - CURRENT
