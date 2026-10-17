@@ -382,6 +382,16 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStockReserver(w5aStockReserver{svc: inventorySvc}).
 		WithPickState(w5aPickState{pool: pool}).
 		WithFinanceApprover(w5aFinanceApprover{svc: spine.glSvc})
+	// HH-681: the change order apply re-assesses tax through the tax engine's standard rate (the seam the
+	// quote builder reads), reads the order's creation day in the dealer's zone, and announces an applied
+	// change on the events outbox. An order that carries tax refuses without the rate seam.
+	orderSvc.
+		WithStandardRate(newTaxEngine(pool)).
+		WithZone(newDealerZone(pool)).
+		WithChangeEvents(orderChangeEvents{})
+	if !orderSvc.ChangeEventsWired() {
+		log.Warn("order: change event seam UNWIRED - an applied change order will announce nothing")
+	}
 	// The change queue labels each requester by role (never by name); a nil pool (the wiring shape
 	// tests) leaves the labels blank.
 	if pool != nil {
