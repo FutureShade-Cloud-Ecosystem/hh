@@ -1,6 +1,6 @@
-// The tax slice's plain logic: the words for every state the core stores, which rate rows are in force, how the
-// core's list shapes are read, how its refusals read out loud, and what the screen checks before it sends. Nothing
-// here computes money and nothing here is rendered.
+// The tax slice's plain logic: the words for every state the core stores, which rate rows are in force, how its
+// refusals read out loud, and what the screen checks before it sends. Nothing here computes money and nothing
+// here is rendered.
 //
 // The core's tax module was written for an Ontario dealer: its reason codes, its sentences and two of its fields
 // still say HST, band card, TCRD and Ontario. This app is shown to a California dealer, so none of those words
@@ -186,23 +186,6 @@ export const isUuid = (text: string): boolean => UUID.test(text.trim());
 /** The host's own day, written year, month, day: the only clock the screen reads. */
 export function hostDay(now: Date = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-// ---- lists --------------------------------------------------------------------------------------------
-
-/**
- * The core answers its lists under a name (rates, profiles, pending_profiles, evidence) where the contract says a
- * page of items, and writes an empty list as null. Any of those is read; anything else is not a list and the
- * caller says so.
- */
-export function listOf<T>(value: unknown, key: string): T[] | null {
-  if (Array.isArray(value)) return value as T[];
-  if (value === null || typeof value !== "object") return null;
-  const named = (value as Record<string, unknown>)[key];
-  if (Array.isArray(named)) return named as T[];
-  if (key in (value as object) && named === null) return [];
-  const items = (value as { items?: unknown }).items;
-  return Array.isArray(items) ? (items as T[]) : null;
 }
 
 // ---- refusals -----------------------------------------------------------------------------------------

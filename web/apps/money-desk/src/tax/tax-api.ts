@@ -7,9 +7,10 @@
 // the recompute. Capturing evidence is any staff member's. Viewing, downloading and validating an evidence record
 // each write an access row on the core's side, so the desk asks for them only on a press.
 //
-// The core answers its four lists under a name (rates, profiles, pending_profiles, evidence) where the contract
-// says a page of items, and an empty list as null. A list is read as any of those (listOf) and anything else is
-// not a list.
+// The contract declares the core's own keys for its four lists (rates, profiles, pending_profiles, evidence) and
+// the generated client types each answer's field, so a read takes that one field and tsc holds the key; a bare
+// array or a page of items is not readable. The core still writes an empty rates, profiles or evidence list as
+// null (a Go nil slice), which reads as an empty list; the review queue builds its own slice and is never null.
 //
 // None of these routes takes an idempotency key (the contract has none). What stands in for it: the rate table is
 // append only and a repeat is a second dated row the person sees, a profile is an upsert on its code, the config
@@ -29,7 +30,6 @@ import {
   type TaxReliefEligibility,
   type TaxStatusCardProfile,
 } from "@hardscapehouse/api-client";
-import { listOf } from "./tax-logic.js";
 
 export interface RateInput {
   readonly jurisdiction: string;
@@ -60,10 +60,16 @@ export interface CaptureInput {
   readonly expiry: string;
 }
 
-function readList<T>(answer: Result<unknown>, key: string, what: string): Result<T[]> {
-  if (!answer.ok) return answer;
-  const rows = listOf<T>(answer.value, key);
-  return rows === null ? { ok: false, error: `The ${what} were not readable.` } : { ok: true, value: rows };
+/**
+ * The contract's one shape for a tax list: an envelope keyed by the list's name, which the generated client types
+ * as the answer's own field, so the caller reads the field and tsc holds it to the key. The rows must be an
+ * array: a bare array or a page of items is not readable. Null is the core's empty table (a Go nil slice, the
+ * handler has no nil guard) and reads as an empty list.
+ */
+function keyedList<T>(rows: T[] | null | undefined, what: string): Result<T[]> {
+  if (Array.isArray(rows)) return { ok: true, value: rows };
+  if (rows === null) return { ok: true, value: [] };
+  return { ok: false, error: `The ${what} were not readable.` };
 }
 
 export class TaxApi {
@@ -74,7 +80,9 @@ export class TaxApi {
   }
 
   async rates(): Promise<Result<TaxRate[]>> {
-    return readList<TaxRate>(await staffTax.taxListRates(this.#client), "rates", "rates");
+    const answer = await staffTax.taxListRates(this.#client);
+    if (!answer.ok) return answer;
+    return keyedList(answer.value.rates, "rates");
   }
 
   createRate(input: RateInput): Promise<Result<TaxRate>> {
@@ -90,11 +98,18 @@ export class TaxApi {
   }
 
   async profiles(): Promise<Result<TaxStatusCardProfile[]>> {
-    return readList<TaxStatusCardProfile>(await staffTax.taxListProfiles(this.#client), "profiles", "profiles");
+    const answer = await staffTax.taxListProfiles(this.#client);
+    if (!answer.ok) return answer;
+    return keyedList(answer.value.profiles, "profiles");
   }
 
   async reviewQueue(): Promise<Result<TaxStatusCardProfile[]>> {
-    return readList<TaxStatusCardProfile>(await staffTax.taxReviewQueue(this.#client), "pending_profiles", "profiles waiting for review");
+    const answer = await staffTax.taxReviewQueue(this.#client);
+    if (!answer.ok) return answer;
+    // The queue is the core's own slice, never null (the contract says so), so only an array reads.
+    return Array.isArray(answer.value.pending_profiles)
+      ? { ok: true, value: answer.value.pending_profiles }
+      : { ok: false, error: "The profiles waiting for review were not readable." };
   }
 
   saveProfile(input: ProfileInput): Promise<Result<TaxStatusCardProfile>> {
@@ -127,7 +142,9 @@ export class TaxApi {
   }
 
   async evidence(orderId: string): Promise<Result<TaxEvidence[]>> {
-    return readList<TaxEvidence>(await staffTax.taxListEvidence(this.#client, orderId === "" ? {} : { order_id: orderId }), "evidence", "evidence records");
+    const answer = await staffTax.taxListEvidence(this.#client, orderId === "" ? {} : { order_id: orderId });
+    if (!answer.ok) return answer;
+    return keyedList(answer.value.evidence, "evidence records");
   }
 
   /** The raw number goes into this one call and no further: it is not kept, returned or shown anywhere. */
