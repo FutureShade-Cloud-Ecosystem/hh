@@ -141,6 +141,9 @@ type Service struct {
 	// a material delta through the DIB-360 approvals substrate. Both nil until main.go injects them.
 	picks   PickStateReader
 	finance FinanceApprover
+	// taxRate is the dealer's standard tax rate seam the change-order apply re-assesses tax through
+	// (change_signapply.go); nil FAILS CLOSED on an order that carries tax.
+	taxRate TaxRateReader
 	// requesterRoles labels a change's requester by role for the cross order queue (change_queue.go).
 	requesterRoles RequesterRoleReader
 	// DIB-78 multi-ship invoice writer (shipgroup.go). Unbound is the SHIPPED state and a documented
