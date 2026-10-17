@@ -624,11 +624,14 @@ function statusIsPostPick(status) {
   return status === "PICKING" || status === "READY" || status === "PARTIALLY_FULFILLED";
 }
 
-// changeNextActions (core change.go), for the caller this stub minted.
-function changeNextActions(status, manager) {
-  if (status === "PENDING_YARD") return ["yard_ack", "reject", "cancel"];
-  if (status === "PENDING_FINANCE") return manager ? ["finance_approve", "reject", "cancel"] : ["reject", "cancel"];
-  if (status === "APPROVED") return manager ? ["apply", "reject", "cancel"] : ["cancel"];
+// changeNextActions (core change.go changeActions), for the caller this stub minted. Reject is any staff while
+// the yard decides and a manager's alone after; cancel is the requester or a manager; sign_apply, finance_approve
+// and apply are a manager's.
+function changeNextActions(status, manager, requester = false) {
+  const cancel = manager || requester ? ["cancel"] : [];
+  if (status === "PENDING_YARD") return ["yard_ack", "reject", ...cancel];
+  if (status === "PENDING_FINANCE") return [...(manager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
+  if (status === "APPROVED") return [...(manager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
   return [];
 }
 
@@ -3364,7 +3367,7 @@ const server = createServer(async (request, response) => {
     const walls = changeWalls(caller);
     const rows = [...CHANGES.values()]
       .filter((co) => co.order_id === found.row.order_id)
-      .map((co) => ({ ...co, next_actions: changeNextActions(co.status, walls.manager) }))
+      .map((co) => ({ ...co, next_actions: changeNextActions(co.status, walls.manager, co.requested_by === caller.userId) }))
       .reverse();
     respondJson(response, 200, { changes: rows });
     return;
@@ -3464,7 +3467,7 @@ const server = createServer(async (request, response) => {
         lines,
       };
       CHANGES.set(id, co);
-      respondJson(response, 201, { ...co, next_actions: changeNextActions(co.status, changeWalls(caller).manager) });
+      respondJson(response, 201, { ...co, next_actions: changeNextActions(co.status, changeWalls(caller).manager, true) });
     });
     return;
   }
@@ -3494,9 +3497,16 @@ const server = createServer(async (request, response) => {
     }
     if (action === "reject" || action === "cancel") {
       if (isTerminalChange(co.status)) return terminal();
+      // The core's service decides, not only the route guard: cancel is the requester or a manager, and
+      // a reject after the yard is a manager's alone.
+      const own = co.requested_by === caller.userId;
+      if ((action === "cancel" && !manager && !own) || (action === "reject" && !manager && co.status !== "PENDING_YARD")) {
+        respondJson(response, 403, { error: "forbidden" });
+        return;
+      }
       co.status = action === "reject" ? "REJECTED" : "CANCELLED";
       co.decision_note = "";
-      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager, co.requested_by === caller.userId) });
       return;
     }
     if (action === "apply") {
@@ -3543,7 +3553,7 @@ const server = createServer(async (request, response) => {
       if (owed !== undefined) owed.order_total_cents = sale.total_cents;
       co.status = "APPLIED";
       co.applied_at = new Date().toISOString();
-      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager, co.requested_by === caller.userId) });
       return;
     }
     respondJson(response, 404, { error: "not found" });
@@ -3557,7 +3567,7 @@ const server = createServer(async (request, response) => {
     }
     respondJson(response, 200, {
       ...co,
-      next_actions: changeNextActions(co.status, changeWalls(caller).manager),
+      next_actions: changeNextActions(co.status, changeWalls(caller).manager, co.requested_by === caller.userId),
     });
     return;
   }
