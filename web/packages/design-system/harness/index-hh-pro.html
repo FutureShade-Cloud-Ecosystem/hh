@@ -73,9 +73,9 @@
    proposes values for the named tokens it does not cover: ground sits one step off the page
    in the same family, the widget sits between page and card, the raised widget is held at the
    card itself so the boundary ink clears the 3:1 non-text bar (kit's charcoal stops there on
-   its own), the danger / success text and fill roles step to charcoal-balanced shades that
-   carry white ink, and the quote indigo shifts from #A3BCFF (a navy-tuned light) to a charcoal
-   indigo bright enough to clear 4.5:1 on charcoal ground (#5F8BD8). The disabled-ink
+   its own), the danger and success fills step to charcoal-balanced shades, the quote ink moves
+   from #A3BCFF (tuned for navy) to the boards' dusty blue (#86A3C9 ink, #9DB4CC links), and
+   danger text is the kit's clay. The disabled-ink
    (#8A857C, kit) clears only 3.69:1 on the kit's disabled fill (#2A2F33); the proposed
    charcoal disabled-ink keeps the original navy intent of "an honest grey is free" by lifting
    it one minimal step (#9F9A91, 4.83:1 on the same fill, matching navy). The state inks, the
@@ -134,26 +134,28 @@
      so a conversion visibly changes colour. The roles mirror the gold family's. Brand mode
      half here, light half below. The FILL is one value in both modes and carries white (the
      D-077 shape), so those two are re-valued by no block; the control is seen by its 1px
-     fill-on border, the .btn-primary pattern. The kit's quote (#3F6FBE) clears only 3.55:1
-     on the charcoal page (fails AA), so the proposed indigo #5F8BD8 carries text and links
-     (5.18:1 on the page, 4.64:1 on the card). The kit uses its quote as a fill; this sheet
-     keeps the FILL invariant (the carried rule). The tint is the quote header
-     band's ground, written flat so the gates can measure it: charcoal is mix(#5F8BD8,
-     black 78%) = #1A1F2C, light is mix(#1D4ED8, white 90%). Nothing here re-values the gold
+     fill-on border, the .btn-primary pattern. The charcoal ink and link are the Quote Desk
+     boards' own dusty blues (q4 and q6 charcoal): #86A3C9 for the accent ink (6.80:1 on the
+     page, 6.09:1 on the card) and the kit's #9DB4CC for links (8.26:1, 7.40:1). The boards
+     also draw the quote button as #86A3C9 with dark ink; this sheet keeps the FILL invariant
+     (the carried rule) until that rule is ruled on. The tint is the quote header band's
+     ground, written flat so the gates can measure it: charcoal is mix(#86A3C9, black 78%) =
+     #1D242C, light is mix(#1D4ED8, white 90%). Nothing here re-values the gold
      family, and the till never consumes these. */
-  --hh-quote: #5F8BD8;         /* the accent as ink: text, borders, the focus ring's quote twin; proposed charcoal text indigo, since the kit's quote (#3F6FBE) only clears 3.55:1 on the charcoal page */
+  --hh-quote: #86A3C9;         /* the accent as ink: text, borders, the focus ring's quote twin; the boards' dusty quote blue */
   --hh-quote-fill: #1D4ED8;    /* the pressable control: theme-invariant (carried rule); brand mode sees it by its 1px fill-on border, the .btn-primary pattern */
   --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 in both modes */
-  --hh-quote-link: #5F8BD8;    /* links and text actions */
-  --hh-quote-tint: #1A1F2C;    /* the quote header band's ground, mix(#5F8BD8, black 78%) */
+  --hh-quote-link: #9DB4CC;    /* links and text actions, as the boards draw them */
+  --hh-quote-tint: #1D242C;    /* the quote header band's ground, mix(#86A3C9, black 78%) */
 
   /* ── status inks ───────────────────────────────────────────────────────────
      Danger, info and success AS TEXT, per theme. The charcoal danger is the
-     kit's clear warm red (#F08585 is the lift from #D9826E that clears AA on
-     charcoal: 7.05:1 on page, 6.02:1 on raised widget); info and success take
+     kit's clay, as the boards draw danger text (over limit, a short line):
+     #D9826E, 6.19:1 on the page and 5.54:1 on the card and the raised widget,
+     the same value as --hh-state-stop, one clay not two; info and success take
      the kit's named good/info values (#9DB4CC and #8FA67B), the moss that reads
      on charcoal (8.26:1 and 6.64:1 on page). */
-  --hh-danger: #F08585;
+  --hh-danger: #D9826E;
   --hh-info: #9DB4CC;
   --hh-success: #8FA67B;
 

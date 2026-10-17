@@ -3,10 +3,9 @@
 // records them, each measured pair against its board ratio, the one-value fill, and the gold
 // family's values byte unchanged. The generic matrices in contrast.test.mjs run over the same
 // tokens; this file names the pairs, so a re-value fails naming the pair. Brand mode is charcoal
-// (row 1763, palette B): the charcoal text-and-link indigo (#5F8BD8) clears AA on charcoal
-// ground (5.18 on the page, 4.64 on the card) where the kit's own quote (#3F6FBE) only clears
-// 3.55 on the page; the fill stays theme-invariant at #1D4ED8 (carried rule, D-077 shape with
-// white ink under 6.70:1).
+// (row 1763, palette B): the charcoal ink and link are the Quote Desk boards' dusty blues
+// (#86A3C9, 6.80 on the page and 6.09 on the card; #9DB4CC links, 8.26 and 7.40); the fill
+// stays theme-invariant at #1D4ED8 (carried rule, D-077 shape with white ink at 6.70:1).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,11 +19,11 @@ const norm = (v) => v.replace(/\s+/g, '').toUpperCase();
 
 // [token, light, brand mode]
 const QUOTE = [
-  ['--hh-quote', '#1C45B8', '#5F8BD8'],
+  ['--hh-quote', '#1C45B8', '#86A3C9'],
   ['--hh-quote-fill', '#1D4ED8', '#1D4ED8'],
   ['--hh-quote-fill-on', '#FFFFFF', '#FFFFFF'],
-  ['--hh-quote-link', '#1C45B8', '#5F8BD8'],
-  ['--hh-quote-tint', '#E8EDFB', '#1A1F2C'],
+  ['--hh-quote-link', '#1C45B8', '#9DB4CC'],
+  ['--hh-quote-tint', '#E8EDFB', '#1D242C'],
 ];
 
 test('the five quote tokens carry the board values in brand mode and in light', () => {
@@ -64,13 +63,13 @@ const MEASURED = [
   ['light', '--hh-quote', '--hh-card', 8.10],
   ['light', '--hh-quote', '--hh-page', 6.81],
   ['light', '--hh-quote-link', '--hh-card', 8.10],
-  ['dark', '--hh-quote', '--hh-page', 5.18],
-  ['dark', '--hh-quote', '--hh-card', 4.64],
-  ['dark', '--hh-quote-link', '--hh-page', 5.18],
+  ['dark', '--hh-quote', '--hh-page', 6.80],
+  ['dark', '--hh-quote', '--hh-card', 6.09],
+  ['dark', '--hh-quote-link', '--hh-page', 8.26],
   ['light', '--hh-quote-fill-on', '--hh-quote-fill', 6.70],
   ['dark', '--hh-quote-fill-on', '--hh-quote-fill', 6.70],
   ['light', '--hh-quote', '--hh-quote-tint', 6.92],
-  ['dark', '--hh-quote', '--hh-quote-tint', 4.84],
+  ['dark', '--hh-quote', '--hh-quote-tint', 6.04],
 ];
 
 test('every pair on the board measures what the board records', () => {

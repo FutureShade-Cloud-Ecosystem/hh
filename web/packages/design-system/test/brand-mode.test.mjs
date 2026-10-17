@@ -38,13 +38,13 @@ const BRAND = {
   '--hh-accent-ink': '#0B1725',
   '--hh-accent-text': '#FFC313',
   // Quote: indigo stays the family's role; on charcoal we add a brighter text-ink indigo that clears 4.5:1
-  '--hh-quote': '#5F8BD8',         // proposed; kit #3F6FBE clears only 3.55:1 on charcoal page (fails AA)
+  '--hh-quote': '#86A3C9',         // the Quote Desk boards' dusty quote blue (q4, q6 charcoal)
   '--hh-quote-fill': '#1D4ED8',    // theme-invariant (carried rule)
   '--hh-quote-fill-on': '#FFFFFF',
-  '--hh-quote-link': '#5F8BD8',    // matches --hh-quote, mirror of the gold rule
-  '--hh-quote-tint': '#1A1F2C',    // mix(#5F8BD8, black 78%) = #1A1F2C
+  '--hh-quote-link': '#9DB4CC',    // the boards' link blue (the kit's info)
+  '--hh-quote-tint': '#1D242C',    // mix(#86A3C9, black 78%) = #1D242C
   // Status inks: lifted from kit's earthy palette to clear AA on charcoal
-  '--hh-danger': '#F08585',
+  '--hh-danger': '#D9826E',
   '--hh-info': '#9DB4CC',
   '--hh-success': '#8FA67B',
   '--hh-danger-fill': '#C9364C',
@@ -91,13 +91,13 @@ const TEXT_PAIRS = [
   ['--hh-accent-ink', '--hh-accent', 11.23],
   ['--hh-accent-ink', '--hh-accent-hover', 12.74],
   // quote indigo (proposed, kit value failed AA)
-  ['--hh-quote', '--hh-page', 5.18],
-  ['--hh-quote', '--hh-card', 4.64],
-  ['--hh-quote-link', '--hh-page', 5.18],
+  ['--hh-quote', '--hh-page', 6.80],
+  ['--hh-quote', '--hh-card', 6.09],
+  ['--hh-quote-link', '--hh-page', 8.26],
   ['--hh-quote-fill-on', '--hh-quote-fill', 6.70],
-  ['--hh-quote', '--hh-quote-tint', 4.84],
+  ['--hh-quote', '--hh-quote-tint', 6.04],
   // status text
-  ['--hh-danger', '--hh-page', 7.05],
+  ['--hh-danger', '--hh-page', 6.19],
   ['--hh-info', '--hh-page', 8.26],
   ['--hh-success', '--hh-page', 6.64],
   // fills under their inks
