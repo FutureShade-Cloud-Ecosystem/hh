@@ -58,7 +58,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
-	"github.com/jackc/pgx/v5"
 )
 
 // - injected seams -
@@ -233,26 +232,62 @@ func nextStatusAfterYardAck(financeReq bool) string {
 	return ChangeStatusApproved
 }
 
-// changeNextActions computes what may be done to a change in a given state by a caller with a given
-// authority. Manager-ness gates the finance signature and the apply; the ACK is open to any active
-// in-branch staff, because the person who can answer "can the yard still do this" is the yard.
-func changeNextActions(status string, isManager bool) []string {
+// changeActions computes what may be done to a change in a given state by THIS caller, from the same
+// rules the write paths enforce (the legal_actions discipline): GetChange, the list and the cross order
+// queue all read it, so they cannot disagree.
+//
+//   - the yard ack is open to any active in-branch staff: the person who can answer "can the yard still
+//     do this" is the yard;
+//   - sign_apply and finance_approve need a manager, and finance_approve and a sign on PENDING_FINANCE
+//     need a named approver when the approvals seam is wired (narrowing, never widening);
+//   - reject is open to staff while the yard decides, and a manager's alone once the change is waiting on
+//     finance or approved: a frontline user cannot kill what a controller just signed;
+//   - cancel is the requester withdrawing, so the requester and a manager at every live state.
+//
+// approver memoises the approver answer per branch for a list; nil asks every time.
+func (s *Service) changeActions(ctx context.Context, caller identity.StaffContext, status, branchID, requestedBy string, approver map[string]bool) []string {
+	isMgr := caller.IsManager()
+	canCancel := isMgr || (requestedBy != "" && requestedBy == caller.UserID)
+	out := []string{}
 	switch status {
 	case ChangeStatusPendingYard:
-		return []string{"yard_ack", "reject", "cancel"}
+		out = append(out, "yard_ack", "reject")
 	case ChangeStatusPendingFinance:
-		if isManager {
-			return []string{"finance_approve", "reject", "cancel"}
+		if isMgr && s.mayFinanceSign(ctx, branchID, caller.UserID, approver) {
+			out = append(out, "sign_apply", "finance_approve")
 		}
-		return []string{"reject", "cancel"}
+		if isMgr {
+			out = append(out, "reject")
+		}
 	case ChangeStatusApproved:
-		if isManager {
-			return []string{"apply", "reject", "cancel"}
+		if isMgr {
+			out = append(out, "sign_apply", "apply", "reject")
 		}
-		return []string{"cancel"}
 	default:
-		return []string{}
+		return out
 	}
+	if canCancel {
+		out = append(out, "cancel")
+	}
+	return out
+}
+
+// mayFinanceSign asks the approvals seam whether this manager is a named approver for the branch. An
+// unwired seam is the shipped rule: any manager may sign.
+func (s *Service) mayFinanceSign(ctx context.Context, branchID, userID string, memo map[string]bool) bool {
+	if s.finance == nil {
+		return true
+	}
+	if memo != nil {
+		if ok, seen := memo[branchID]; seen {
+			return ok
+		}
+	}
+	ok := s.finance.CheckApprover(ctx, PolicyOrderChangeOverThreshold, branchID, userID) == nil
+	if memo != nil {
+		memo[branchID] = ok
+	}
+	return ok
 }
 
 // - raise -
@@ -317,7 +352,7 @@ func (s *Service) RaiseChange(ctx context.Context, orderIDOrNo string, in Change
 		return ChangeOrder{}, err
 	}
 	s.recordChangeAudit(ctx, caller.UserID, out, "CHANGE_RAISED", out.Reason)
-	out.NextActions = changeNextActions(out.Status, caller.IsManager())
+	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
 
@@ -478,7 +513,7 @@ func (s *Service) YardAck(ctx context.Context, changeID, note string) (ChangeOrd
 		return ChangeOrder{}, err
 	}
 	s.recordChangeAudit(ctx, caller.UserID, out, "CHANGE_YARD_ACKED", clampNote(note))
-	out.NextActions = changeNextActions(out.Status, caller.IsManager())
+	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
 
@@ -515,7 +550,7 @@ func (s *Service) FinanceApprove(ctx context.Context, changeID, note string) (Ch
 		return ChangeOrder{}, err
 	}
 	s.recordChangeAudit(ctx, caller.UserID, out, "CHANGE_FINANCE_APPROVED", clampNote(note))
-	out.NextActions = changeNextActions(out.Status, caller.IsManager())
+	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
 
@@ -538,12 +573,23 @@ func (s *Service) closeChange(ctx context.Context, changeID, target, note, actio
 	if isTerminalChange(co.Status) {
 		return ChangeOrder{}, ErrChangeTerminal
 	}
+	// The service, not only the route guard, decides who may close a change. A cancel is the requester
+	// withdrawing, so only the requester and a manager; a reject is any staff while the yard decides, and
+	// a manager's alone once the change waits on finance or is approved.
+	if !caller.IsManager() {
+		if target == ChangeStatusCancelled && (co.RequestedBy == "" || co.RequestedBy != caller.UserID) {
+			return ChangeOrder{}, ErrForbidden
+		}
+		if target == ChangeStatusRejected && co.Status != ChangeStatusPendingYard {
+			return ChangeOrder{}, ErrForbidden
+		}
+	}
 	out, err := cs.CloseChangeOrder(ctx, co.ID, target, caller.UserID, clampNote(note))
 	if err != nil {
 		return ChangeOrder{}, err
 	}
 	s.recordChangeAudit(ctx, caller.UserID, out, action, clampNote(note))
-	out.NextActions = changeNextActions(out.Status, caller.IsManager())
+	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
 
@@ -555,10 +601,15 @@ func (s *Service) closeChange(ctx context.Context, changeID, target, note, actio
 //
 //	lock order            → serializes against a concurrent transition or a second apply
 //	lock change (APPROVED)→ APPROVED→APPLIED here, so a double click cannot double-apply
-//	money predicate       → the DIB-175 guard: no finalized invoice, no committed sale, tax == 0
+//	money predicate       → no finalized invoice, no committed sale; a tax the module cannot
+//	                        reproduce refuses (ErrEditTaxAssessed), a tax it can is re-assessed below
 //	apply each delta row  → INSERT / UPDATE / DELETE on order_lines
-//	recompute totals      → Σ line_total_cents, never a delta increment
+//	recompute totals      → Σ line_total_cents, never a delta increment; tax re-assessed at the
+//	                        rate in force the day the order was created, total = subtotal + quoted
+//	                        freight + tax, line tax re-split by the largest remainder rule
 //	resync reservations   → release ALL this order's holds, re-reserve from the NEW lines
+//	record                → the order.change.applied outbox event (and, for the one tap, the audit
+//	                        row carrying the Idempotency-Key), on the same transaction
 //
 // The reservation resync is release-then-reserve rather than a per-line adjustment for the reason
 // stated at ResyncReservations: after it commits, the order's holds ARE its lines, with no path by
@@ -589,26 +640,12 @@ func (s *Service) ApplyChange(ctx context.Context, changeID string) (ChangeOrder
 		return ChangeOrder{}, ErrChangeNotApproved
 	}
 
-	out, err := cs.ApplyChangeTx(ctx, co.ID, changeApplyHooks{
-		// precheck runs under the order lock with tax read from the locked row (the DIB-175 B2-2
-		// discipline): a change is a money-moving edit and inherits its money predicate exactly.
-		precheck: func(ctx context.Context, taxCents int64) error {
-			return s.assertEditableMoney(ctx, co.OrderID, taxCents)
-		},
-		// resync runs after the lines are written and the totals recomputed, on the SAME tx.
-		resync: func(ctx context.Context, tx pgx.Tx, orderID, branchID string) error {
-			if s.stock == nil {
-				return nil // reservation lane off, see reservations.go, fail-open by design
-			}
-			_, err := s.resyncReservationsTx(ctx, tx, orderID, branchID, caller.UserID)
-			return err
-		},
-	})
+	out, err := cs.ApplyChangeTx(ctx, co.ID, s.changeApplyHooks(caller.UserID, co.OrderID, "", ""))
 	if err != nil {
 		return ChangeOrder{}, err
 	}
 	s.recordChangeAudit(ctx, caller.UserID, out, "CHANGE_APPLIED", out.Reason)
-	out.NextActions = changeNextActions(out.Status, caller.IsManager())
+	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
 
@@ -628,8 +665,9 @@ func (s *Service) ListChanges(ctx context.Context, orderIDOrNo string) ([]Change
 	if err != nil {
 		return nil, err
 	}
+	approver := map[string]bool{}
 	for i := range out {
-		out[i].NextActions = changeNextActions(out[i].Status, caller.IsManager())
+		out[i].NextActions = s.changeActions(ctx, caller, out[i].Status, out[i].BranchID, out[i].RequestedBy, approver)
 	}
 	return out, nil
 }
@@ -640,7 +678,7 @@ func (s *Service) GetChange(ctx context.Context, changeID string) (ChangeOrder, 
 	if err != nil {
 		return ChangeOrder{}, err
 	}
-	co.NextActions = changeNextActions(co.Status, caller.IsManager())
+	co.NextActions = s.changeActions(ctx, caller, co.Status, co.BranchID, co.RequestedBy, nil)
 	return co, nil
 }
 

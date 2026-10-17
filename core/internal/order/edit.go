@@ -403,6 +403,19 @@ func (s *Service) lineAuditHook(actor, orderID string, cmd EditField) func(conte
 // cancel-predicate seams verbatim (assertCancellable, cancel_seam.go) and adding the tax check. The
 // cancel vocabulary is remapped to edit-specific errors so the HTTP message names the right refusal.
 func (s *Service) assertEditableMoney(ctx context.Context, orderID string, taxCents int64) error {
+	if err := s.assertNoMoneyAttached(ctx, orderID); err != nil {
+		return err
+	}
+	if taxCents != 0 {
+		return ErrEditTaxAssessed
+	}
+	return nil
+}
+
+// assertNoMoneyAttached is the invoice and sale half of the money predicate: no finalized invoice and no
+// committed sale. A change order apply runs it and re-assesses tax itself (change_apply.go), so it needs
+// this half without the line edit's blanket refusal of a taxed order.
+func (s *Service) assertNoMoneyAttached(ctx context.Context, orderID string) error {
 	if err := s.assertCancellable(ctx, orderID); err != nil {
 		switch {
 		case errors.Is(err, ErrCancelBlocked):
@@ -411,9 +424,6 @@ func (s *Service) assertEditableMoney(ctx context.Context, orderID string, taxCe
 			return ErrEditUnverifiable
 		}
 		return err // a real read failure, never an implicit allow
-	}
-	if taxCents != 0 {
-		return ErrEditTaxAssessed
 	}
 	return nil
 }

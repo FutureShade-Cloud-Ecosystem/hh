@@ -11,11 +11,14 @@ package order
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,10 +39,22 @@ type s3Invoiced struct{}
 
 func (s3Invoiced) OrderHasFinalizedInvoice(context.Context, string) (bool, error) { return true, nil }
 
+// s3Events is the outbox seam over the real events_outbox table, the shape the composition root's adapter has.
+type s3Events struct{}
+
+func (s3Events) EnqueueTx(ctx context.Context, tx pgx.Tx, topic string, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO events_outbox (topic, payload) VALUES ($1, $2)`, topic, b)
+	return err
+}
+
 // s3Service is the change service wired as main.go wires it, plus the tax rate seam when bps > 0.
 func s3Service(t *testing.T, pool *pgxpool.Pool, unitCents int64, bps int) *Service {
 	t.Helper()
-	svc := w5aChangeServiceOn(t, pool, unitCents, true)
+	svc := w5aChangeServiceOn(t, pool, unitCents, true).WithChangeEvents(s3Events{})
 	if bps > 0 {
 		svc.WithStandardRate(s3Rate{bps: bps})
 	}
@@ -663,5 +678,126 @@ func TestIntegration_S3_TheApplyAuditRowCarriesTheKey(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("%d CHANGE_APPLIED audit rows carry the key, want exactly 1", n)
+	}
+}
+
+// - the held rate, reproduction, freight on an untaxed order, decline authority -
+
+// TestIntegration_S3_TheRateInForceOnTheOrdersDayIsTheRateUsed: the order was created in a year a closed
+// rate row governed (1500 basis points); today's standard rate is not that. The apply reads the rate for the
+// order's day through the real engine, so the tax it rewrites is the tax the order was set at, never today's.
+func TestIntegration_S3_TheRateInForceOnTheOrdersDayIsTheRateUsed(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, s3Immaterl)
+	s3CleanOutbox(t, pool, ord)
+	var rateID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps, effective_from, effective_to, notes)
+		VALUES ('ON', 'STD_ON_HST_13', 1500, DATE '2021-01-01', DATE '2021-12-31', 'HH-681 test row')
+		RETURNING id::text`).Scan(&rateID); err != nil {
+		t.Fatalf("seed rate row: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM tax_rates WHERE id = $1`, rateID) })
+	if _, err := pool.Exec(ctx, `UPDATE orders SET created_at = TIMESTAMPTZ '2021-06-01 15:00:00+00' WHERE id = $1`, ord); err != nil {
+		t.Fatalf("date the order: %v", err)
+	}
+	s3SetMoney(t, pool, ord, 1500, 0) // 15 percent of 10000, the rate in force on the order's day
+	svc := s3Service(t, pool, s3Immaterl, 0).WithStandardRate(tax.NewService(tax.NewRepository(pool)))
+
+	co := s3RaiseApproved(t, svc, ord, "12")
+	if _, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, ""); err != nil {
+		t.Fatalf("sign and apply = %v, want the order's own rate reproduced and used", err)
+	}
+	if sub, tax, total := s3Money(t, pool, ord); sub != 12000 || tax != 1800 || total != 13800 {
+		t.Fatalf("order money = %d / %d / %d, want 12000 / 1800 / 13800 (15 percent, not today's rate)", sub, tax, total)
+	}
+}
+
+// TestIntegration_S3_ATaxTheModuleCannotReproduceRefusesAndWritesNothing: the stored tax is not what the
+// standard rate gives on the order as it stands (an exemption, a manual figure, a later rate change), so it
+// is not this module's to rewrite.
+func TestIntegration_S3_ATaxTheModuleCannotReproduceRefusesAndWritesNothing(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, s3Immaterl)
+	s3CleanOutbox(t, pool, ord)
+	s3SetMoney(t, pool, ord, 777, 0) // 775 is what the rate gives on 10000
+	svc := s3Service(t, pool, s3Immaterl, s3RateBps)
+	co := s3RaiseApproved(t, svc, ord, "12")
+
+	if _, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, ""); !errors.Is(err, ErrEditTaxAssessed) {
+		t.Fatalf("sign and apply on a tax that does not reproduce = %v, want ErrEditTaxAssessed", err)
+	}
+	if _, err := svc.ApplyChange(s3Mgr(), co.ID); !errors.Is(err, ErrEditTaxAssessed) {
+		t.Fatalf("plain apply on a tax that does not reproduce = %v, want ErrEditTaxAssessed", err)
+	}
+	if sub, tax, total := s3Money(t, pool, ord); sub != 10000 || tax != 777 || total != 10777 {
+		t.Fatalf("order money = %d / %d / %d, want it untouched at 10000 / 777 / 10777", sub, tax, total)
+	}
+	if got := w5aLineQty(t, pool, ord, 1); got != 10 {
+		t.Fatalf("line qty = %v, want the original 10", got)
+	}
+	if s := s3Status(t, pool, co.ID); s != ChangeStatusApproved {
+		t.Fatalf("change status = %q, want it still APPROVED", s)
+	}
+}
+
+// TestIntegration_S3_AnUntaxedDeliveryOrderKeepsItsFeeInTheTotal: on main the apply set total = subtotal +
+// tax and dropped the delivery fee a quote converted order's total already carries.
+func TestIntegration_S3_AnUntaxedDeliveryOrderKeepsItsFeeInTheTotal(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, s3Immaterl)
+	s3CleanOutbox(t, pool, ord)
+	s3SetMoney(t, pool, ord, 0, 5000)
+	svc := s3Service(t, pool, s3Immaterl, 0)
+
+	co := s3RaiseApproved(t, svc, ord, "12")
+	if _, err := svc.ApplyChange(s3Mgr(), co.ID); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if sub, tax, total := s3Money(t, pool, ord); sub != 12000 || tax != 0 || total != 17000 {
+		t.Fatalf("order money = %d / %d / %d, want 12000 / 0 / 17000 (the delivery fee stays in the total)", sub, tax, total)
+	}
+}
+
+// TestIntegration_S3_DeclineAuthorityAtEachStage: the yard may reject while it decides; once the change
+// waits on finance or is approved only a manager rejects; cancel is the requester or a manager.
+func TestIntegration_S3_DeclineAuthorityAtEachStage(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
+	s3CleanOutbox(t, pool, ord)
+	svc := s3Service(t, pool, 6000, s3RateBps)
+	frontline := identity.ContextWithStaff(context.Background(), w5aStaff(false)) // the requester below
+	bystander := w5aStaff(false)
+	bystander.UserID = "40000061-0000-4000-9000-000000000002"
+	bctx := identity.ContextWithStaff(context.Background(), bystander)
+
+	co, err := w5aRaise(t, svc, frontline, ord, "20")
+	if err != nil {
+		t.Fatalf("raise: %v", err)
+	}
+	if _, err := svc.CancelChange(bctx, co.ID, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a bystander cancelling = %v, want ErrForbidden", err)
+	}
+	if _, err := svc.YardAck(frontline, co.ID, ""); err != nil {
+		t.Fatalf("yard ack: %v", err)
+	}
+	if _, err := svc.RejectChange(frontline, co.ID, "no"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("frontline rejecting a PENDING_FINANCE change = %v, want ErrForbidden", err)
+	}
+	if s := s3Status(t, pool, co.ID); s != ChangeStatusPendingFinance {
+		t.Fatalf("status = %q after refused declines, want PENDING_FINANCE", s)
+	}
+	if out, err := svc.CancelChange(frontline, co.ID, "customer changed their mind"); err != nil || out.Status != ChangeStatusCancelled {
+		t.Fatalf("the requester withdrawing = %q, %v, want CANCELLED", out.Status, err)
+	}
+
+	// While the yard decides, any in-branch staff may reject.
+	co2, err := w5aRaise(t, svc, s3Mgr(), ord, "20")
+	if err != nil {
+		t.Fatalf("raise again: %v", err)
+	}
+	if out, err := svc.RejectChange(bctx, co2.ID, "the truck has gone"); err != nil || out.Status != ChangeStatusRejected {
+		t.Fatalf("the yard rejecting a PENDING_YARD change = %q, %v, want REJECTED", out.Status, err)
 	}
 }

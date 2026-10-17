@@ -176,32 +176,42 @@ func TestNextStatusAfterYardAck_RoutesByMateriality(t *testing.T) {
 	}
 }
 
+// nextActionsFor is the change action list for a manager or a frontline caller who is not the requester,
+// with no approvals seam wired.
+func nextActionsFor(status string, manager bool) []string {
+	caller := staffAt("w5a-user", "w5a-branch")
+	if manager {
+		caller = managerAt("w5a-user", "w5a-branch")
+	}
+	return (&Service{}).changeActions(context.Background(), caller, status, "w5a-branch", "someone-else", nil)
+}
+
 // TestChangeNextActions_ApplyIsNeverOfferedBeforeApproval is the surface half of the gate: a client
 // renders buttons from this list, so it must never offer an apply the server would refuse.
 func TestChangeNextActions_ApplyIsNeverOfferedBeforeApproval(t *testing.T) {
 	for _, status := range []string{ChangeStatusPendingYard, ChangeStatusPendingFinance} {
 		for _, mgr := range []bool{false, true} {
-			for _, a := range changeNextActions(status, mgr) {
+			for _, a := range nextActionsFor(status, mgr) {
 				if a == "apply" {
 					t.Errorf("status %q (manager=%v) offered apply before approval", status, mgr)
 				}
 			}
 		}
 	}
-	if !contains(changeNextActions(ChangeStatusApproved, true), "apply") {
+	if !contains(nextActionsFor(ChangeStatusApproved, true), "apply") {
 		t.Error("an APPROVED change must offer apply to a manager")
 	}
-	if contains(changeNextActions(ChangeStatusApproved, false), "apply") {
+	if contains(nextActionsFor(ChangeStatusApproved, false), "apply") {
 		t.Error("apply is manager-gated, it must not be offered to a non-manager")
 	}
-	if !contains(changeNextActions(ChangeStatusPendingFinance, true), "finance_approve") {
+	if !contains(nextActionsFor(ChangeStatusPendingFinance, true), "finance_approve") {
 		t.Error("a manager must be offered the finance signature on a PENDING_FINANCE change")
 	}
-	if contains(changeNextActions(ChangeStatusPendingFinance, false), "finance_approve") {
+	if contains(nextActionsFor(ChangeStatusPendingFinance, false), "finance_approve") {
 		t.Error("a non-manager must not be offered the finance signature")
 	}
 	for _, terminal := range []string{ChangeStatusApplied, ChangeStatusRejected, ChangeStatusCancelled} {
-		if got := changeNextActions(terminal, true); len(got) != 0 {
+		if got := nextActionsFor(terminal, true); len(got) != 0 {
 			t.Errorf("terminal status %q offered %v, want nothing", terminal, got)
 		}
 	}

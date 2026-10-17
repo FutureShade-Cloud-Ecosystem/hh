@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -144,6 +145,10 @@ type Service struct {
 	// taxRate is the dealer's standard tax rate seam the change-order apply re-assesses tax through
 	// (change_signapply.go); nil FAILS CLOSED on an order that carries tax.
 	taxRate TaxRateReader
+	// zone is the dealer's business zone, the calendar an order's creation day is read in for its tax rate.
+	zone houseday.Source
+	// changeEvents announces an applied change on the outbox (change_signapply.go); nil applies without it.
+	changeEvents ChangeEventPublisher
 	// requesterRoles labels a change's requester by role for the cross order queue (change_queue.go).
 	requesterRoles RequesterRoleReader
 	// DIB-78 multi-ship invoice writer (shipgroup.go). Unbound is the SHIPPED state and a documented

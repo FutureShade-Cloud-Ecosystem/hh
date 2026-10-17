@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -25,12 +26,26 @@ import (
 // compile-time proof the real repository satisfies the change-order store.
 var _ changeStore = (*Repository)(nil)
 
-// changeApplyHooks are the two closures the service threads INTO the apply transaction: the money
-// predicate (run under the order lock, before any line write) and the reservation resync (run after
-// the lines and totals, before commit). Both share the mutation's fate.
+// changeApplyHooks are the closures the service threads INTO the apply transaction. Every one shares the
+// mutation's fate: the money predicate (run under the order lock, before any line write), the tax rate
+// (read for the day the order's tax was set), the reservation resync (after the lines and totals) and the
+// record hook (audit row and outbox event, written on the same transaction just before the commit).
 type changeApplyHooks struct {
-	precheck func(ctx context.Context, taxCents int64) error
-	resync   func(ctx context.Context, tx pgx.Tx, orderID, branchID string) error
+	precheck func(ctx context.Context) error
+	// taxRate answers the standard rate in basis points for the day the order's tax was set. nil means no
+	// rate seam is wired: an order that carries tax then refuses (ErrEditTaxAssessed), never a guess.
+	taxRate func(ctx context.Context, tx pgx.Tx, orderCreatedAt time.Time) (int, error)
+	resync  func(ctx context.Context, tx pgx.Tx, orderID, branchID string) error
+	record  func(ctx context.Context, tx pgx.Tx, ev changeApplied) error
+}
+
+// changeApplied is what the record hook is told about the apply that is about to commit.
+type changeApplied struct {
+	ChangeID, ChangeNo, OrderID, BranchID string
+	DeltaCents                            int64
+	SubtotalCents, TaxCents, TotalCents   int64
+	Lines                                 []ChangeLine
+	SignedBy                              string
 }
 
 // changeStore is the change-order persistence, asserted OFF the injected orderStore (the editStore /
@@ -43,6 +58,7 @@ type changeStore interface {
 	RecordFinanceApproval(ctx context.Context, id, actor, note, nextStatus string) (ChangeOrder, error)
 	CloseChangeOrder(ctx context.Context, id, target, actor, note string) (ChangeOrder, error)
 	ApplyChangeTx(ctx context.Context, id string, hooks changeApplyHooks) (ChangeOrder, error)
+	SignApplyChangeTx(ctx context.Context, w signApplyWrite) (ChangeOrder, error)
 }
 
 const changeOrderColumns = `
@@ -273,12 +289,26 @@ func (r *Repository) guardedChangeUpdate(ctx context.Context, id, sql string, ar
 // ApplyChangeTx is the atomic apply. See change.go's ApplyChange doc for the sequence and the
 // header of this file for the lock order.
 func (r *Repository) ApplyChangeTx(ctx context.Context, id string, hooks changeApplyHooks) (ChangeOrder, error) {
+	out, _, err := r.applyChange(ctx, id, hooks, nil)
+	return out, err
+}
+
+// SignApplyChangeTx is the one tap: under the order row lock and in ONE transaction it replays an
+// earlier press of the same key, records the finance signature when one is still owed, and applies.
+func (r *Repository) SignApplyChangeTx(ctx context.Context, w signApplyWrite) (ChangeOrder, error) {
+	out, _, err := r.applyChange(ctx, w.ChangeID, w.Hooks, &w)
+	return out, err
+}
+
+// applyChange is the shared apply transaction. sign is nil for the plain apply route (the change must
+// already be APPROVED) and set for the one tap, which also accepts PENDING_FINANCE and replays by key.
+func (r *Repository) applyChange(ctx context.Context, id string, hooks changeApplyHooks, sign *signApplyWrite) (ChangeOrder, bool, error) {
 	if r.pool == nil {
-		return ChangeOrder{}, errNoDB
+		return ChangeOrder{}, false, errNoDB
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return ChangeOrder{}, fmt.Errorf("apply change: begin: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -288,21 +318,45 @@ func (r *Repository) ApplyChangeTx(ctx context.Context, id string, hooks changeA
 	if err := tx.QueryRow(ctx, `SELECT order_id::text FROM change_orders WHERE id = $1`, id).
 		Scan(&orderID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ChangeOrder{}, ErrChangeNotFound
+			return ChangeOrder{}, false, ErrChangeNotFound
 		}
-		return ChangeOrder{}, fmt.Errorf("apply change: resolve order: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: resolve order: %w", err)
 	}
 
 	var orderStatus, branchID string
-	var taxCents int64
+	var taxCents, oldSubtotal, freight int64
+	var orderCreated time.Time
 	if err := tx.QueryRow(ctx,
-		`SELECT status, branch_id::text, tax_cents FROM orders WHERE id = $1 FOR UPDATE`, orderID).
-		Scan(&orderStatus, &branchID, &taxCents); err != nil {
+		`SELECT status, branch_id::text, tax_cents, subtotal_cents, COALESCE(quoted_freight_cents, 0), created_at
+		   FROM orders WHERE id = $1 FOR UPDATE`, orderID).
+		Scan(&orderStatus, &branchID, &taxCents, &oldSubtotal, &freight, &orderCreated); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ChangeOrder{}, ErrNotFound
+			return ChangeOrder{}, false, ErrNotFound
 		}
-		return ChangeOrder{}, fmt.Errorf("apply change: lock order: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: lock order: %w", err)
 	}
+
+	// A press that carries a key this order already applied under is a replay. It runs under the order
+	// lock and before every status check, so two presses of one key serialize and the second always sees
+	// the first's committed audit row. The first answer comes back and nothing is written.
+	if sign != nil {
+		var changeNo string
+		if err := tx.QueryRow(ctx, `SELECT change_no FROM change_orders WHERE id = $1`, id).Scan(&changeNo); err != nil {
+			return ChangeOrder{}, false, fmt.Errorf("apply change: read change no: %w", err)
+		}
+		prior, found, err := keyedApplyChangeNo(ctx, tx, orderID, sign.Key)
+		if err != nil {
+			return ChangeOrder{}, false, err
+		}
+		if found {
+			if prior != changeNo {
+				return ChangeOrder{}, false, ErrChangeKeyReused
+			}
+			out, err := r.GetChangeOrder(ctx, id)
+			return out, true, err
+		}
+	}
+
 	// An order that has left the workable range cannot absorb a delta: its lines are the basis of an
 	// invoice, a POS sale or nothing at all. Refused here rather than at the request, because the
 	// order may legitimately have moved on WHILE the signatures were being collected, which is the
@@ -310,67 +364,162 @@ func (r *Repository) ApplyChangeTx(ctx context.Context, id string, hooks changeA
 	switch orderStatus {
 	case "DRAFT", "CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED":
 	default:
-		return ChangeOrder{}, fmt.Errorf(
+		return ChangeOrder{}, false, fmt.Errorf(
 			"%w: the order is %s and can no longer absorb a change", ErrChangeTerminal, orderStatus)
 	}
 
 	var status string
 	if err := tx.QueryRow(ctx,
 		`SELECT status FROM change_orders WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
-		return ChangeOrder{}, fmt.Errorf("apply change: lock change: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: lock change: %w", err)
 	}
-	// THE re-entrancy guard: only APPROVED applies, and the flip below happens in this transaction, so
-	// a second concurrent apply blocks on this lock and then finds APPLIED.
-	if status != ChangeStatusApproved {
-		if isTerminalChange(status) {
-			return ChangeOrder{}, ErrChangeTerminal
+	// THE re-entrancy guard: only APPROVED applies (the one tap also takes PENDING_FINANCE and signs it
+	// first), and the flip below happens in this transaction, so a second concurrent apply blocks on this
+	// lock and then finds APPLIED.
+	signedBy := ""
+	switch {
+	case status == ChangeStatusApproved:
+	case sign != nil && status == ChangeStatusPendingFinance:
+		if _, err := tx.Exec(ctx, `
+			UPDATE change_orders
+			   SET status = 'APPROVED', finance_approved_by = NULLIF($2,'')::uuid, finance_approved_at = now(),
+			       finance_note = $3, updated_at = now()
+			 WHERE id = $1`, id, sign.Signer, sign.Note); err != nil {
+			return ChangeOrder{}, false, fmt.Errorf("apply change: sign: %w", err)
 		}
-		return ChangeOrder{}, ErrChangeNotApproved
+		signedBy = sign.Signer
+	case sign != nil && status == ChangeStatusPendingYard:
+		return ChangeOrder{}, false, ErrChangeYardAckRequired
+	case isTerminalChange(status):
+		return ChangeOrder{}, false, ErrChangeTerminal
+	default:
+		return ChangeOrder{}, false, ErrChangeNotApproved
 	}
 
 	if hooks.precheck != nil {
-		if err := hooks.precheck(withPrecheckTx(ctx, tx), taxCents); err != nil {
-			return ChangeOrder{}, err
+		if err := hooks.precheck(withPrecheckTx(ctx, tx)); err != nil {
+			return ChangeOrder{}, false, err
 		}
+	}
+
+	// TAX is reproduced before it is rewritten. A tax this module cannot reproduce from the order as it
+	// stands (the standard rate on the old subtotal plus the quoted freight, at the rate in force the day
+	// the tax was set, the quote's half up rule) came from something else, an exemption, a manual figure,
+	// and is not this module's to rewrite: the apply refuses and writes nothing.
+	rateBps := 0
+	if taxCents != 0 {
+		if hooks.taxRate == nil {
+			return ChangeOrder{}, false, ErrEditTaxAssessed
+		}
+		bps, err := hooks.taxRate(ctx, tx, orderCreated)
+		if err != nil {
+			return ChangeOrder{}, false, fmt.Errorf("apply change: tax rate: %w", err)
+		}
+		if taxHalfUp(oldSubtotal+freight, bps) != taxCents {
+			return ChangeOrder{}, false, ErrEditTaxAssessed
+		}
+		rateBps = bps
+	}
+	// The line tax gate reads the lines BEFORE the delta touches them: it re-splits only an order whose
+	// lines carried the header's whole tax, as the tax engine's own split does.
+	lineTaxBefore, err := orderLineTaxSumTx(ctx, tx, orderID)
+	if err != nil {
+		return ChangeOrder{}, false, err
 	}
 
 	lines, err := r.changeLinesTx(ctx, tx, id)
 	if err != nil {
-		return ChangeOrder{}, err
+		return ChangeOrder{}, false, err
 	}
 	for _, l := range lines {
 		if err := applyChangeLineTx(ctx, tx, orderID, l); err != nil {
-			return ChangeOrder{}, err
+			return ChangeOrder{}, false, err
 		}
 	}
 
 	// Totals from the LINES, never a delta increment, the edit_repository.go discipline, for the same
-	// reason: the order's money must be a function of its current lines and cannot drift from them.
+	// reason: the order's money must be a function of its current lines and cannot drift from them. The
+	// quoted freight stays in the total (the quote's total already carries the delivery fee) and in the tax
+	// base, as the quote builder has it; integer cents throughout.
+	var newSubtotal int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(line_total_cents), 0)::bigint FROM order_lines WHERE order_id = $1`, orderID).
+		Scan(&newSubtotal); err != nil {
+		return ChangeOrder{}, false, fmt.Errorf("apply change: sum lines: %w", err)
+	}
+	newTax := taxCents
+	if taxCents != 0 {
+		newTax = taxHalfUp(newSubtotal+freight, rateBps)
+	}
+	newTotal := newSubtotal + freight + newTax
 	if _, err := tx.Exec(ctx, `
-		UPDATE orders o
-		   SET subtotal_cents = COALESCE(t.sub,0),
-		       total_cents    = COALESCE(t.sub,0) + o.tax_cents,
-		       updated_at     = now()
-		  FROM (SELECT COALESCE(SUM(line_total_cents),0) AS sub FROM order_lines WHERE order_id = $1) t
-		 WHERE o.id = $1`, orderID); err != nil {
-		return ChangeOrder{}, fmt.Errorf("apply change: recompute totals: %w", err)
+		UPDATE orders SET subtotal_cents = $2, tax_cents = $3, total_cents = $4, updated_at = now()
+		 WHERE id = $1`, orderID, newSubtotal, newTax, newTotal); err != nil {
+		return ChangeOrder{}, false, fmt.Errorf("apply change: recompute totals: %w", err)
+	}
+	if taxCents != 0 && lineTaxBefore != 0 && lineTaxBefore == taxCents {
+		if err := reallocLineTaxByTotalsTx(ctx, tx, orderID, newTax); err != nil {
+			return ChangeOrder{}, false, err
+		}
 	}
 
 	if hooks.resync != nil {
 		if err := hooks.resync(ctx, tx, orderID, branchID); err != nil {
-			return ChangeOrder{}, fmt.Errorf("apply change: reservation resync: %w", err)
+			return ChangeOrder{}, false, fmt.Errorf("apply change: reservation resync: %w", err)
 		}
 	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE change_orders SET status='APPLIED', applied_at=now(), updated_at=now() WHERE id=$1`,
 		id); err != nil {
-		return ChangeOrder{}, fmt.Errorf("apply change: mark applied: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: mark applied: %w", err)
+	}
+	if hooks.record != nil {
+		var changeNo string
+		var delta int64
+		if err := tx.QueryRow(ctx, `SELECT change_no, delta_cents FROM change_orders WHERE id = $1`, id).
+			Scan(&changeNo, &delta); err != nil {
+			return ChangeOrder{}, false, fmt.Errorf("apply change: read change: %w", err)
+		}
+		if err := hooks.record(ctx, tx, changeApplied{
+			ChangeID: id, ChangeNo: changeNo, OrderID: orderID, BranchID: branchID, DeltaCents: delta,
+			SubtotalCents: newSubtotal, TaxCents: newTax, TotalCents: newTotal, Lines: lines, SignedBy: signedBy,
+		}); err != nil {
+			return ChangeOrder{}, false, fmt.Errorf("apply change: record: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ChangeOrder{}, fmt.Errorf("apply change: commit: %w", err)
+		return ChangeOrder{}, false, fmt.Errorf("apply change: commit: %w", err)
 	}
-	return r.GetChangeOrder(ctx, id)
+	out, err := r.GetChangeOrder(ctx, id)
+	return out, false, err
+}
+
+// keyedApplyChangeNo finds the change number an earlier apply of this order carried the key on. The key
+// rides the allowlisted client_id of the CHANGE_APPLIED audit row the apply wrote on its own transaction
+// (the convention of the quote door, share_idempotency.go: no migration, the audit row anchors the key).
+// The change number is the reason's head, "#CO-n: note", matched whole by the caller.
+func keyedApplyChangeNo(ctx context.Context, tx pgx.Tx, orderID, key string) (changeNo string, found bool, err error) {
+	err = tx.QueryRow(ctx, `
+		SELECT split_part(COALESCE(changes->>'reason', ''), ':', 1)
+		  FROM audit_log
+		 WHERE entity_type = 'order' AND entity_id = $1::uuid AND action = 'ORDER_CHANGED'
+		   AND changes->>'field' = 'change_order' AND changes->>'outcome' = 'CHANGE_APPLIED'
+		   AND changes->>'client_id' = $2
+		 ORDER BY seq LIMIT 1`, orderID, key).Scan(&changeNo)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("apply change: look up key: %w", err)
+	}
+	return changeNo, true, nil
+}
+
+// taxHalfUp is the quote builder's tax: the rate on the base in basis points, rounded half up once, in
+// integer cents (quote/builder_repository.go).
+func taxHalfUp(baseCents int64, rateBps int) int64 {
+	return (baseCents*int64(rateBps) + 5000) / 10000
 }
 
 // applyChangeLineTx writes ONE delta row onto order_lines.

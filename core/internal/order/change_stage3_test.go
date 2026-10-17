@@ -30,9 +30,10 @@ const (
 // fake records it and answers an APPLIED change; every other write is unreachable in these legs.
 type stage3Store struct {
 	*fakeStore
-	change    ChangeOrder
-	queue     []ChangeQueueItem
-	signCalls []signApplyWrite
+	change     ChangeOrder
+	queue      []ChangeQueueItem
+	signCalls  []signApplyWrite
+	closeCalls []string
 }
 
 var _ changeStore = (*stage3Store)(nil)
@@ -56,8 +57,11 @@ func (f *stage3Store) RecordYardAck(context.Context, string, string, string, str
 func (f *stage3Store) RecordFinanceApproval(context.Context, string, string, string, string) (ChangeOrder, error) {
 	return ChangeOrder{}, errors.New("unreachable")
 }
-func (f *stage3Store) CloseChangeOrder(context.Context, string, string, string, string) (ChangeOrder, error) {
-	return ChangeOrder{}, errors.New("unreachable")
+func (f *stage3Store) CloseChangeOrder(_ context.Context, _, target, _, _ string) (ChangeOrder, error) {
+	f.closeCalls = append(f.closeCalls, target)
+	out := f.change
+	out.Status = target
+	return out, nil
 }
 func (f *stage3Store) ApplyChangeTx(context.Context, string, changeApplyHooks) (ChangeOrder, error) {
 	return ChangeOrder{}, errors.New("unreachable")
@@ -231,6 +235,85 @@ func TestStage3_NextActions_OffersSignApplyToTheManagerWhoMayDoIt(t *testing.T) 
 		if has := slices.Contains(got.NextActions, "sign_apply"); has != c.want {
 			t.Errorf("status %s, approver err %v: next_actions %v, sign_apply offered = %v, want %v",
 				c.status, c.fin.err, got.NextActions, has, c.want)
+		}
+	}
+}
+
+// TestStage3_Decline_AuthorityIsEnforcedByTheService: reject is any staff while the yard decides and a
+// manager's alone once the change waits on finance or is approved; cancel is the requester withdrawing, so
+// the requester and a manager at every live state, no other staff. The service decides, not the route guard.
+func TestStage3_Decline_AuthorityIsEnforcedByTheService(t *testing.T) {
+	const requester = "ffffffff-0000-4000-9000-000000000001"
+	other := staffAt(s3User, s3Branch)
+	req := staffAt(requester, s3Branch)
+	mgr := s3Manager()
+	live := []string{ChangeStatusPendingYard, ChangeStatusPendingFinance, ChangeStatusApproved}
+	for _, status := range live {
+		for _, c := range []struct {
+			who     string
+			caller  identity.StaffContext
+			target  string
+			allowed bool
+		}{
+			{"manager rejects", mgr, ChangeStatusRejected, true},
+			{"manager cancels", mgr, ChangeStatusCancelled, true},
+			{"requester cancels", req, ChangeStatusCancelled, true},
+			{"other staff cancels", other, ChangeStatusCancelled, false},
+			{"other staff rejects", other, ChangeStatusRejected, status == ChangeStatusPendingYard},
+			{"requester rejects", req, ChangeStatusRejected, status == ChangeStatusPendingYard},
+		} {
+			t.Run(status+"/"+c.who, func(t *testing.T) {
+				svc, store := s3Fixture(status, nil)
+				store.change.RequestedBy = requester
+				ctx := ctxAs(c.caller)
+				var err error
+				if c.target == ChangeStatusRejected {
+					_, err = svc.RejectChange(ctx, s3Change, "note")
+				} else {
+					_, err = svc.CancelChange(ctx, s3Change, "note")
+				}
+				if c.allowed && err != nil {
+					t.Fatalf("%s at %s = %v, want it allowed", c.who, status, err)
+				}
+				if !c.allowed && !errors.Is(err, ErrForbidden) {
+					t.Fatalf("%s at %s = %v, want ErrForbidden", c.who, status, err)
+				}
+				if got, want := len(store.closeCalls), map[bool]int{true: 1, false: 0}[c.allowed]; got != want {
+					t.Fatalf("the store saw %d close calls, want %d", got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestStage3_NextActions_RejectAndCancelFollowTheAuthority: a button is offered only where the route would
+// accept it.
+func TestStage3_NextActions_RejectAndCancelFollowTheAuthority(t *testing.T) {
+	const requester = "ffffffff-0000-4000-9000-000000000001"
+	for _, c := range []struct {
+		status string
+		caller identity.StaffContext
+		reject bool
+		cancel bool
+	}{
+		{ChangeStatusPendingYard, staffAt(s3User, s3Branch), true, false},
+		{ChangeStatusPendingYard, staffAt(requester, s3Branch), true, true},
+		{ChangeStatusPendingFinance, staffAt(s3User, s3Branch), false, false},
+		{ChangeStatusPendingFinance, staffAt(requester, s3Branch), false, true},
+		{ChangeStatusApproved, staffAt(requester, s3Branch), false, true},
+		{ChangeStatusApproved, s3Manager(), true, true},
+	} {
+		svc, store := s3Fixture(c.status, nil)
+		store.change.RequestedBy = requester
+		got, err := svc.GetChange(ctxAs(c.caller), s3Change)
+		if err != nil {
+			t.Fatalf("GetChange: %v", err)
+		}
+		if has := slices.Contains(got.NextActions, "reject"); has != c.reject {
+			t.Errorf("%s %s: reject offered = %v, want %v (%v)", c.status, c.caller.UserID, has, c.reject, got.NextActions)
+		}
+		if has := slices.Contains(got.NextActions, "cancel"); has != c.cancel {
+			t.Errorf("%s %s: cancel offered = %v, want %v (%v)", c.status, c.caller.UserID, has, c.cancel, got.NextActions)
 		}
 	}
 }
