@@ -77,3 +77,19 @@ test("the evidence list is read from its key alone, and a bare array or a page i
   }
   assert.deepEqual(await stagedRead("taxListEvidence", { evidence: null }, (api) => api.evidence("")), { ok: true, value: [] });
 });
+
+// The client hands back whatever JSON a 200 carried (it checks no shape), and this slice answers a Result and never
+// throws: a body that is not an object at all (JSON null, a number) is not readable on every read, never a throw.
+test("a body that is not an object is not readable on every read, and no read throws", async () => {
+  const reads = [
+    ["taxListRates", (api) => api.rates(), "The rates were not readable."],
+    ["taxListProfiles", (api) => api.profiles(), "The profiles were not readable."],
+    ["taxReviewQueue", (api) => api.reviewQueue(), "The profiles waiting for review were not readable."],
+    ["taxListEvidence", (api) => api.evidence(""), "The evidence records were not readable."],
+  ];
+  for (const [operationId, read, error] of reads) {
+    for (const body of [null, 7]) {
+      assert.deepEqual(await stagedRead(operationId, body, read), { ok: false, error }, `${operationId} on a ${body === null ? "null" : "number"} body`);
+    }
+  }
+});
