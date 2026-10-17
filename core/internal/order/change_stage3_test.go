@@ -11,9 +11,13 @@ package order
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
@@ -315,5 +319,68 @@ func TestStage3_NextActions_RejectAndCancelFollowTheAuthority(t *testing.T) {
 		if has := slices.Contains(got.NextActions, "cancel"); has != c.cancel {
 			t.Errorf("%s %s: cancel offered = %v, want %v (%v)", c.status, c.caller.UserID, has, c.cancel, got.NextActions)
 		}
+	}
+}
+
+// - the route -
+
+func s3Handler(status string, fin FinanceApprover) (*Handler, *stage3Store) {
+	svc, store := s3Fixture(status, fin)
+	return NewHandler(svc), store
+}
+
+func s3SignApplyRequest(sc identity.StaffContext, key, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/order-changes/"+s3Change+"/sign-apply", strings.NewReader(body))
+	r.SetPathValue("changeId", s3Change)
+	if key != "" {
+		r.Header.Set("Idempotency-Key", key)
+	}
+	return r.WithContext(ctxAs(sc))
+}
+
+func TestStage3_Route_SignApplyReadsTheKeyHeaderAndTheNote(t *testing.T) {
+	h, store := s3Handler(ChangeStatusPendingFinance, nil)
+	rr := httptest.NewRecorder()
+	h.signApplyChange(rr, s3SignApplyRequest(s3Manager(), strings.ToUpper(s3Key), `{"note":"signed on the phone"}`), guards.StaffCaller{})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(store.signCalls) != 1 || store.signCalls[0].Key != s3Key || store.signCalls[0].Note != "signed on the phone" {
+		t.Fatalf("store saw %+v, want the lower cased key and the note", store.signCalls)
+	}
+}
+
+func TestStage3_Route_SignApplyRefusalsMapToTheirStatus(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status string
+		key    string
+		want   int
+	}{
+		{"no key is a 400", ChangeStatusApproved, "", http.StatusBadRequest},
+		{"a key that is not a uuid is a 400", ChangeStatusApproved, "nope", http.StatusBadRequest},
+		{"pending yard is a 409", ChangeStatusPendingYard, s3Key, http.StatusConflict},
+		{"a closed change is a 409", ChangeStatusRejected, s3Key, http.StatusConflict},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, store := s3Handler(c.status, nil)
+			rr := httptest.NewRecorder()
+			h.signApplyChange(rr, s3SignApplyRequest(s3Manager(), c.key, ""), guards.StaffCaller{})
+			if rr.Code != c.want {
+				t.Fatalf("code = %d, want %d; body=%s", rr.Code, c.want, rr.Body.String())
+			}
+			if len(store.signCalls) != 0 {
+				t.Fatalf("a refused press reached the store")
+			}
+		})
+	}
+}
+
+func TestStage3_Route_AReusedKeyIsA409(t *testing.T) {
+	h, _ := s3Handler(ChangeStatusApproved, nil)
+	rr := httptest.NewRecorder()
+	h.writeChangeErr(rr, ErrChangeKeyReused)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409", rr.Code)
 	}
 }
