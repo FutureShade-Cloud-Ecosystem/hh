@@ -80,7 +80,10 @@ func (s *Service) PaymentsTodayFor(ctx context.Context, branchIDs []string, allB
 	if err != nil {
 		return PaymentsToday{}, err
 	}
-	day := rollupDay(at)
+	day, err := s.rollupDayFor(ctx, at)
+	if err != nil {
+		return PaymentsToday{}, err
+	}
 	count, cents, channels, err := ps.RollupTotalsForDay(ctx, rollupKey(ClassRoutine, day), branchIDs, allBranches)
 	if err != nil {
 		return PaymentsToday{}, err

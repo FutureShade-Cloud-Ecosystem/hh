@@ -2,11 +2,11 @@
 // section 2): the card, the wall, the branch and the cost. Read from the demo
 // image's own core, as the rules name them.
 //
-// WRITTEN AGAINST, NOT RUN HERE: the Driver's demo mint row (flows.go and
-// populate.go) is built on the HH workstation branch, and the demo world must
-// hold a run dispatched to the seeded driver on the dealer's local day with at
-// least two stops. A world without them fails these legs loudly: a run that
-// skipped would pass vacuously.
+// The world these legs assume is the seeded one: the demo mint row (flows.go
+// and populate.go) and a run dispatched to the seeded driver on the dealer's
+// local day with at least two stops, day keyed so every day holds one. A world
+// without them fails these legs loudly: a run that skipped would pass
+// vacuously.
 import { expect, houseDay, myRuns, staff, test, shot, arriveFromFrontDoor } from "./helpers.js";
 
 test("L-card: the front door lists the Driver, with its role code and label", async ({ page }) => {
@@ -26,8 +26,11 @@ test("L-card: the card lands on its run, the driver's own, on the dealer's day",
   expect(run.status).toBe("DISPATCHED");
   expect(run.stops.length, "the run carries at least two stops: one to deliver, one to hand back").toBeGreaterThanOrEqual(2);
   await arriveFromFrontDoor(page);
-  await expect(page.locator("[data-run]").first()).toContainText(run.run_no);
-  await expect(page.locator("[data-stop]")).toHaveCount(run.stops.length);
+  // The sheet renders every run the driver holds today, the dispatched run first and any planned
+  // run behind it, so the stop count is the FIRST card's: the run the core answered first.
+  const card = page.locator("[data-run]").first();
+  await expect(card).toContainText(run.run_no);
+  await expect(card.locator("[data-stop]")).toHaveCount(run.stops.length);
   await expect(page.getByTestId("header-word")).toHaveText("Driver");
   await shot(page, "10-run-sheet", testInfo);
 });

@@ -125,6 +125,9 @@ func (h *Handler) pickQueue(w http.ResponseWriter, r *http.Request, caller guard
 		items = items[:p.Limit]
 		next = taskCursorKey(items[len(items)-1].Task)
 	}
+	if !h.moneyAllowed(r) {
+		blankEntriesMoney(items)
+	}
 	httpx.WriteCursorPage(w, items, next, p.Limit)
 }
 
@@ -163,6 +166,9 @@ func (h *Handler) pendingTickets(w http.ResponseWriter, r *http.Request, caller 
 		items = items[:p.Limit]
 		next = feedPositionCursorKey(offset + p.Limit)
 	}
+	if !h.moneyAllowed(r) {
+		blankTicketsMoney(items)
+	}
 	httpx.WriteCursorPage(w, items, next, p.Limit)
 }
 
@@ -190,10 +196,18 @@ func parseFeedPositionCursor(key string) (int, bool) {
 }
 
 func (h *Handler) pickDetail(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	// The detail hands out the ticket (customer, order number, lines): the same branch fence the
+	// write doors and the board have, so a task id from a pull is not a key to another branch.
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	e, err := h.svc.PickDetail(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeYardErr(w, r, err)
 		return
+	}
+	if !h.moneyAllowed(r) {
+		e.Ticket = blankTicketMoney(e.Ticket)
 	}
 	httpx.WriteJSON(w, http.StatusOK, e)
 }
@@ -247,10 +261,12 @@ type recordSkidsRequest struct {
 }
 
 type recordSkidsResponse struct {
-	SkidCount            int    `json:"skid_count"`
-	PreviousSkidCount    *int   `json:"previous_skid_count"`
-	DepositCents         int64  `json:"deposit_cents"`
-	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	SkidCount         int  `json:"skid_count"`
+	PreviousSkidCount *int `json:"previous_skid_count"`
+	// The deposit pair rides only for a caller the cost rule allows (cost_gate.go); a pointer, so
+	// a listed caller's zero deposit is an answer and a refused caller's is byte-absent.
+	DepositCents         *int64 `json:"deposit_cents,omitempty"`
+	PreviousDepositCents *int64 `json:"previous_deposit_cents,omitempty"`
 	Changed              bool   `json:"changed"`
 	OrderNo              string `json:"order_no"`
 }
@@ -277,10 +293,14 @@ func (h *Handler) recordSkids(w http.ResponseWriter, r *http.Request, caller gua
 		h.writeYardErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, recordSkidsResponse{
-		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, DepositCents: res.DepositAfterCents,
-		PreviousDepositCents: res.DepositBeforeCents, Changed: res.Changed, OrderNo: res.Order.OrderNo,
-	})
+	out := recordSkidsResponse{
+		SkidCount: res.CountAfter, PreviousSkidCount: res.CountBefore, Changed: res.Changed, OrderNo: res.Order.OrderNo,
+	}
+	if h.moneyAllowed(r) {
+		after, before := res.DepositAfterCents, res.DepositBeforeCents
+		out.DepositCents, out.PreviousDepositCents = &after, &before
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type stageRequest struct {
@@ -376,7 +396,7 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
 	case errors.Is(err, ErrAboveOrdered):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrOrderRefused):
+	case errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):
 		httpx.Error(w, http.StatusConflict, "shortage already resolved")

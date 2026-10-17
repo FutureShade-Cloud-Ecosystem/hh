@@ -814,7 +814,8 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 		return NSFResult{}, errNotFound
 	}
 	if !caller.CanAccessBranch(branchID) {
-		return NSFResult{}, forbidden("till: caller cannot access branch %s", branchID)
+		// Not found, as for a payment that does not exist (no existence oracle, no branch id).
+		return NSFResult{}, errNotFound
 	}
 	// Fast idempotent guard (the store re-checks under FOR UPDATE to close the race).
 	if status == "BOUNCED" {
@@ -882,20 +883,56 @@ func (s *Service) ReleaseHold(ctx context.Context, in ReleaseHoldInput) error {
 	return nil
 }
 
-// ListCreditHolds returns credit holds filtered by status ("" = all) for the AR console.
+// ListCreditHolds returns credit holds filtered by status ("" = all) for the AR console. A caller who
+// does not reach every branch sees the holds a bounce in its own branches placed: a hold names the
+// payment that raised it, and the payment names the branch. A hold placed by the credit sweep names no
+// payment and lists on billing's hold list, which cuts by invoice.
 func (s *Service) ListCreditHolds(ctx context.Context, status string) ([]CreditHold, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.store.ListCreditHolds(ctx, status)
+	holds, err := s.store.ListCreditHolds(ctx, status)
+	if err != nil || caller.Scope == identity.ScopeGlobal {
+		return holds, err
+	}
+	bounced, err := s.store.ListBouncedPayments(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	inReach := make(map[string]bool, len(bounced))
+	for _, b := range bounced {
+		if caller.CanAccessBranch(b.BranchID) {
+			inReach[b.PaymentID] = true
+		}
+	}
+	out := holds[:0:0]
+	for _, h := range holds {
+		if inReach[h.SourcePaymentID] {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // ListBouncedPayments returns the bounced-payment queue; gatewayRef "" = all, else an exact-ref search.
+// A caller who does not reach every branch sees the bounces of its own branches only.
 func (s *Service) ListBouncedPayments(ctx context.Context, gatewayRef string) ([]BouncedPayment, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.store.ListBouncedPayments(ctx, gatewayRef)
+	items, err := s.store.ListBouncedPayments(ctx, gatewayRef)
+	if err != nil || caller.Scope == identity.ScopeGlobal {
+		return items, err
+	}
+	out := items[:0:0]
+	for _, b := range items {
+		if caller.CanAccessBranch(b.BranchID) {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 // GetNSFPolicy returns the effective NSF policy for a branch (branch row overrides the org default).
@@ -912,8 +949,9 @@ func (s *Service) UpdateNSFPolicy(ctx context.Context, in NSFPolicy) error {
 	if err != nil {
 		return err
 	}
-	if !caller.IsManager() {
-		return forbidden("till: manager rights are required to edit the NSF policy")
+	// Backstop under the route's requireAdmin guard: a dealer wide setting is never a tier 2 write.
+	if !caller.IsAdmin() {
+		return forbidden("till: leadership is required to edit the NSF policy")
 	}
 	if in.FeeCents < 0 {
 		return unprocessable("till: fee_cents must be >= 0")
@@ -925,14 +963,35 @@ func (s *Service) UpdateNSFPolicy(ctx context.Context, in NSFPolicy) error {
 }
 
 // RecordPaymentAttempt persists one declined/errored gateway attempt (DX-14). Idempotent on the key. The
-// actor is stamped server-side from the authenticated caller (never trusted from the request body); the other
-// caller-supplied fields (customer/branch/amount) are out of scope for this remediation and left as-is.
+// actor is stamped server-side from the authenticated caller (never trusted from the request body), and so
+// is the branch: the attempt is written under a branch the caller's own reach covers. A named branch the
+// caller cannot reach is the shared 403; none named resolves to the caller's single granted branch (a global
+// caller may leave it unset, any other caller without exactly one grant must name one).
 func (s *Service) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt) error {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return err
 	}
 	in.AttemptedBy = caller.UserID // server-stamped; overrides anything in the body
+	switch {
+	case in.BranchID != "":
+		if !caller.CanAccessBranch(in.BranchID) {
+			return errSharedForbidden
+		}
+		// A global caller reaches every id, so the reach check cannot tell a location from garbage.
+		if !isUUID(in.BranchID) {
+			return unprocessable("till: branch_id must be a branch id")
+		}
+	case caller.Scope != identity.ScopeGlobal:
+		if len(caller.Branches) != 1 {
+			return unprocessable("till: branch_id is required unless the caller has exactly one branch")
+		}
+		for b := range caller.Branches {
+			in.BranchID = b
+		}
+	}
+	// A global caller who names no branch has none to derive from (it reaches all of them) and none to
+	// derive it from (an attempt carries no invoice or drawer): the attempt is then org wide, a NULL branch.
 	if in.AmountCents <= 0 {
 		return unprocessable("till: attempt amount_cents must be > 0")
 	}
@@ -952,4 +1011,24 @@ func denomTotal(ds []DenominationCount) int64 {
 		sum += d.DenominationCents * int64(d.Quantity)
 	}
 	return sum
+}
+
+// isUUID reports whether s is the canonical 36 character form of a UUID.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
+		default:
+			return false
+		}
+	}
+	return true
 }

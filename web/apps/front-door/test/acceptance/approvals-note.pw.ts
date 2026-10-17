@@ -7,12 +7,12 @@
 // zero. The count comes from GET /api/v1/staff/approvals with status PENDING,
 // which the demo stub serves.
 //
-// The stub answers the bare array the core really sends. One leg answers the
-// contract's page object over two pages, and one mixes in rows the Quote Desk's
-// Approvals tab does not list (another kind, and a decided margin row).
+// The stub answers the contract's page object, over two pages when there is more
+// than one row, and one leg mixes in rows the Quote Desk's Approvals tab does not
+// list (another kind, and a decided margin row).
 import { expect, test, type Page } from "@playwright/test";
 
-async function stubSetApprovals(page: Page, count: number, more: { shape?: "array" | "page"; extra?: number; delayMs?: number } = {}): Promise<void> {
+async function stubSetApprovals(page: Page, count: number, more: { extra?: number; delayMs?: number } = {}): Promise<void> {
   const res = await page.request.post("/_stub/set-approvals", { data: { count, ...more } });
   expect(res.ok()).toBe(true);
 }
@@ -72,7 +72,7 @@ test("the Sales role does not see the note regardless of approval count", async 
 });
 
 test("the count reads the contract's page object and follows its cursor", async ({ page }) => {
-  await stubSetApprovals(page, 3, { shape: "page" });
+  await stubSetApprovals(page, 3, {});
   await signInSalesManager(page);
   await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toContainText("3 approvals waiting");
 });
@@ -84,7 +84,7 @@ test("the count is the pending margin kind only, the Quote Desk's own number", a
 });
 
 test("the count is the same for the page object with other kinds mixed in", async ({ page }) => {
-  await stubSetApprovals(page, 2, { shape: "page", extra: 3 });
+  await stubSetApprovals(page, 2, { extra: 3 });
   await signInSalesManager(page);
   await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toContainText("2 approvals waiting");
 });

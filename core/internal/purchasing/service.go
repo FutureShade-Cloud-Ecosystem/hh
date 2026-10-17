@@ -14,6 +14,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -286,6 +287,9 @@ func validateLine(l AddLineParams, lineNo int) error {
 	if l.QtyOrderedBase <= 0 {
 		return badReq("purchasing: line %d quantity must be greater than zero", lineNo)
 	}
+	if l.QtyOrderedBase > maxLineQty {
+		return unprocessable("purchasing: line %d quantity is beyond what an order line can hold (%.0f at most)", lineNo, maxLineQty)
+	}
 	// AN EMPTY UOM MEANS "the product's BASE unit", resolved in SQL by InsertPOLine, it is not a
 	// missing field. DIB-461 found the shipped consequence of requiring one here: inventory's
 	// POCreator seam (the DIB-72 create-PO handoff) speaks BASE QUANTITIES and carries no unit,
@@ -314,7 +318,7 @@ func (s *Service) GetPO(ctx context.Context, poID string) (PODetail, error) {
 		return PODetail{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return PODetail{}, errForbidden
+		return PODetail{}, errNotFound
 	}
 	lines, err := s.repo.POLines(ctx, nil, poID, false)
 	if err != nil {
@@ -347,7 +351,23 @@ func (s *Service) GetPO(ctx context.Context, poID string) (PODetail, error) {
 	if receipts == nil {
 		receipts = []Receipt{}
 	}
-	return PODetail{PO: po, Lines: lines, Receipts: receipts}, nil
+	detail := PODetail{PO: po, Lines: lines, Receipts: receipts}
+	if s.warrantyCredit != nil {
+		if po.WarrantyClaimID != nil && *po.WarrantyClaimID != "" {
+			if info, err := s.warrantyCredit.ClaimInfo(ctx, *po.WarrantyClaimID); err == nil && info != nil {
+				detail.PO.WarrantyClaimNo = &info.ClaimNo
+				if po.Status == StatusDraft && lens.allow {
+					detail.OpenWarrantyCredit = info
+				}
+			}
+		}
+		if detail.OpenWarrantyCredit == nil && po.Status == StatusDraft && lens.allow {
+			if openCredit, err := s.warrantyCredit.OpenCreditForVendor(ctx, po.VendorID, po.BranchID); err == nil && openCredit != nil {
+				detail.OpenWarrantyCredit = openCredit
+			}
+		}
+	}
+	return detail, nil
 }
 
 // ListPOs lists branch-fenced purchase orders.
@@ -397,13 +417,146 @@ func (s *Service) AddLine(ctx context.Context, poID string, in AddLineParams) (P
 	return s.GetPO(ctx, poID)
 }
 
+// ApplyWarrantyCredit applies open vendor warranty credit to a draft purchase order.
+// Ruling R3: Unit prices remain unchanged; credit reduces the net total due to the vendor.
+func (s *Service) ApplyWarrantyCredit(ctx context.Context, poID string, req ApplyWarrantyCreditRequest) (PODetail, error) {
+	if !isUUIDString(poID) {
+		return PODetail{}, errNotFound
+	}
+	var claimID *string
+	var creditToApply int64
+
+	err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
+		if po.Status != StatusDraft {
+			return conflict("purchasing: cannot apply warranty credit to a %s purchase order", po.Status)
+		}
+		lines, err := s.repo.POLines(ctx, tx, poID, false)
+		if err != nil {
+			return err
+		}
+		var subtotal int64
+		for _, l := range lines {
+			subtotal += l.LineTotalCents
+		}
+		if subtotal <= 0 {
+			return badReq("purchasing: cannot apply warranty credit to an order with no lines or zero total")
+		}
+
+		claimID = req.ClaimID
+		if req.AmountCents != nil && *req.AmountCents > 0 {
+			creditToApply = *req.AmountCents
+		}
+
+		if s.warrantyCredit != nil {
+			if claimID == nil || *claimID == "" {
+				openCredit, err := s.warrantyCredit.OpenCreditForVendor(ctx, po.VendorID, po.BranchID)
+				if err != nil {
+					return fmt.Errorf("purchasing: check warranty credit: %w", err)
+				}
+				if openCredit == nil || openCredit.AmountCents <= 0 {
+					return badReq("purchasing: vendor %s has no open warranty credit", po.VendorID)
+				}
+				claimID = &openCredit.ClaimID
+				if creditToApply <= 0 {
+					creditToApply = openCredit.AmountCents
+				}
+			} else if creditToApply <= 0 {
+				info, err := s.warrantyCredit.ClaimInfo(ctx, *claimID)
+				if err != nil {
+					return fmt.Errorf("purchasing: check warranty credit: %w", err)
+				}
+				if info != nil {
+					creditToApply = info.AmountCents
+				}
+			}
+		}
+
+		if creditToApply <= 0 {
+			return badReq("purchasing: no warranty credit amount specified or available")
+		}
+
+		// Cap credit applied at the order subtotal (Ruling R3).
+		if creditToApply > subtotal {
+			creditToApply = subtotal
+		}
+		netTotal := subtotal - creditToApply
+		if netTotal < 0 {
+			netTotal = 0
+		}
+
+		return s.repo.ApplyWarrantyCredit(ctx, tx, poID, claimID, creditToApply, netTotal)
+	})
+	if err != nil {
+		return PODetail{}, err
+	}
+
+	return s.GetPO(ctx, poID)
+}
+
+// maxLineQty is the ceiling on one line's quantity: the column is numeric(19,4), which overflows
+// at 1e15, and a quantity near that is a typo in any yard. Past it the door answers in words
+// rather than letting the driver's overflow become a 500.
+const maxLineQty = 1e12
+
+// checkLinePath refuses a path whose ids are not uuids before any statement runs: an order id that
+// is not one names no order (404), a line id that is not one is a request that cannot be right
+// (422, in words), and neither may reach the database's uuid cast as a 500.
+func checkLinePath(poID, lineID string) error {
+	if !isUUIDString(poID) {
+		return errNotFound
+	}
+	if !isUUIDString(lineID) {
+		return unprocessable("purchasing: line id must be a uuid")
+	}
+	return nil
+}
+
 // RemoveLine deletes a line from a DRAFT purchase order.
 func (s *Service) RemoveLine(ctx context.Context, poID, lineID string) (PODetail, error) {
+	if err := checkLinePath(poID, lineID); err != nil {
+		return PODetail{}, err
+	}
 	if err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
 		if !CanEditLines(po.Status) {
 			return conflict("purchasing: cannot edit the lines of a %s purchase order", po.Status)
 		}
 		return s.repo.DeletePOLine(ctx, tx, poID, lineID)
+	}); err != nil {
+		return PODetail{}, err
+	}
+	return s.GetPO(ctx, poID)
+}
+
+// UpdateLine corrects the quantity or the cost of one line on a DRAFT purchase order, the leg of
+// the line editor add and remove never had: a buyer who mistypes a quantity could remove the line
+// and retype it, losing the description and the line number, or place a wrong order.
+//
+// THE EDIT IS DELIBERATELY NARROW: the quantity and the cost, the two figures a vendor's
+// confirmation corrects, and nothing else. The PRODUCT is not editable (that is a different line;
+// remove this one and add it), and once the order is placed the freeze is the one CanEditLines
+// already states, because a purchase order is a contract and editing one after placement is how a
+// three-way match is quietly defeated (the add route's own words).
+func (s *Service) UpdateLine(ctx context.Context, poID, lineID string, in UpdateLineParams) (PODetail, error) {
+	if in.QtyOrderedBase == nil && in.UnitCostCents == nil {
+		return PODetail{}, badReq("purchasing: the body names nothing to change")
+	}
+	if err := checkLinePath(poID, lineID); err != nil {
+		return PODetail{}, err
+	}
+	if in.QtyOrderedBase != nil && *in.QtyOrderedBase <= 0 {
+		return PODetail{}, badReq("purchasing: line quantity must be positive")
+	}
+	if in.QtyOrderedBase != nil && *in.QtyOrderedBase > maxLineQty {
+		return PODetail{}, unprocessable("purchasing: line quantity is beyond what an order line can hold (%.0f at most)", maxLineQty)
+	}
+	if in.UnitCostCents != nil && *in.UnitCostCents < 0 {
+		return PODetail{}, badReq("purchasing: line unit cost cannot be negative")
+	}
+	if err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
+		if !CanEditLines(po.Status) {
+			return conflict("purchasing: cannot edit the lines of a %s purchase order", po.Status)
+		}
+		return s.repo.UpdatePOLine(ctx, tx, poID, lineID, in)
 	}); err != nil {
 		return PODetail{}, err
 	}
@@ -458,7 +611,7 @@ func (s *Service) mutatePO(ctx context.Context, poID string, fn func(tx pgx.Tx, 
 		return err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return errForbidden
+		return errNotFound
 	}
 	if err := fn(tx, po); err != nil {
 		return err
@@ -502,7 +655,7 @@ func (s *Service) Receive(ctx context.Context, poID string, in ReceiveRequest) (
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	if err := CheckReceivable(po.Status); err != nil {
 		return Receipt{}, err
@@ -659,7 +812,7 @@ func (s *Service) GetReceipt(ctx context.Context, receiptID string) (Receipt, er
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	// THE COST GATE. A receipt's value is what the stock that just landed cost us.
 	s.costLensFor(ctx, po.BranchID).stampReceipt(&rc)
@@ -692,7 +845,7 @@ func (s *Service) AttachLandedCost(ctx context.Context, receiptID string, in Lan
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	if rc.LandedCostID != "" {
 		return Receipt{}, conflict("purchasing: receipt %s already carries a landed cost", rc.GRNNo)
@@ -789,7 +942,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if po.Status == StatusDraft || po.Status == StatusCancelled {
 		return BillDetail{}, conflict("purchasing: cannot bill a %s purchase order", po.Status)
@@ -802,6 +955,12 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	// and the rate on the invoice is the rate they used; inheriting the PO's would silently restate the
 	// vendor's own numbers. Both sides are converted below and only then compared.
 	billCur, billFX, err := normalizeCurrency(in.Currency, in.FXRate)
+	if err != nil {
+		return BillDetail{}, err
+	}
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a connection
+	// beside the open transaction) and bound as the default bill date.
+	zone, err := houseday.Resolve(ctx, s.zone)
 	if err != nil {
 		return BillDetail{}, err
 	}
@@ -883,7 +1042,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		BillDate: strings.TrimSpace(in.BillDate), DueDate: strings.TrimSpace(in.DueDate),
 		Subtotal: subtotal, Tax: taxCad, Total: total,
 		Match: headerState, CreatedBy: caller.UserID,
-		Currency: billCur, FXRate: billFX,
+		Currency: billCur, FXRate: billFX, HouseDay: zone.Today(nil),
 	})
 	if err != nil {
 		return BillDetail{}, err
@@ -946,7 +1105,7 @@ func (s *Service) GetBill(ctx context.Context, billID string) (BillDetail, error
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(b.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if names := s.vendorNames(ctx); names != nil {
 		b.VendorName = names[b.VendorID]
@@ -1004,7 +1163,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(bill.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if bill.Status != BillDraft {
 		return BillDetail{}, conflict("purchasing: bill is already %s", bill.Status)

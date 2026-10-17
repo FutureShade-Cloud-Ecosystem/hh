@@ -11,6 +11,7 @@
 package quote
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -28,8 +29,17 @@ const maxBodyBytes = 8 << 10
 
 // StaffHandler serves the staff quote builder.
 type StaffHandler struct {
-	svc      *StaffService
-	userLink identity.UserIDLinker
+	svc                 *StaffService
+	userLink            identity.UserIDLinker
+	settingsGrantReader func(ctx context.Context) (SettingsGrant, error)
+}
+
+// WithSettingsGrantReader wires the settings grant read behind the route. A handler
+// without one answers the route unavailable, never "no": a read that cannot be made
+// must not read as a refusal of the grant.
+func (h *StaffHandler) WithSettingsGrantReader(f func(ctx context.Context) (SettingsGrant, error)) *StaffHandler {
+	h.settingsGrantReader = f
+	return h
 }
 
 func NewStaffHandler(svc *StaffService) *StaffHandler { return &StaffHandler{svc: svc} }
@@ -77,6 +87,10 @@ func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) 
 	// same in-service gate DIB-483's counter door uses for its selling-role check.
 	r.Handle("GET /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.acceptanceSettings)))
 	r.Handle("PUT /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.setAcceptanceSettings)))
+	// The settings grant read (round 14 item 1): one question the Quote Desk asks before it
+	// mounts its settings panels, in the payment-grant mould. requireStaff is the coarse first
+	// line only; the predicates that answer the grant live in the service.
+	r.Handle("GET /api/v1/quotes/settings-grant", g.RequireStaff(h.staff(h.settingsGrant)))
 	// DIB-506/DIB-507, the work-area endpoints (policy, terms, margin glance) and the shared
 	// settings kit's /api/v1/surfaces/… routes, mounted by this pilot consumer (builder_handler.go).
 	h.registerBuilderRoutes(r, g)
@@ -330,7 +344,7 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 			return
 		}
 	}
-	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment})
+	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment, IdempotencyKey: r.Header.Get("Idempotency-Key")})
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -474,6 +488,23 @@ func (h *StaffHandler) setAcceptanceSettings(w http.ResponseWriter, r *http.Requ
 	httpx.WriteJSON(w, http.StatusOK, settings)
 }
 
+// settingsGrant answers the one grant read the Quote Desk asks before mounting its
+// settings panels: whether the signed-in caller holds the grants the three panels need.
+// Each boolean uses the very predicate the refusing route uses, so the answer cannot
+// drift from the refusal.
+func (h *StaffHandler) settingsGrant(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	if h.settingsGrantReader == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "the settings grant could not be read")
+		return
+	}
+	grant, err := h.settingsGrantReader(r.Context())
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, grant)
+}
+
 // writeErr maps this surface's errors to HTTP. Each refusal carries its OWN message: a caller who is
 // told only "409" has to guess whether the quote was accepted, converted or expired, and those need
 // three different reactions.
@@ -495,7 +526,7 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.As(err, &decisionRefused):
 		httpx.Error(w, http.StatusConflict, decisionRefused.Error())
-	case errors.Is(err, ErrIdempotencyKeyReused):
+	case errors.Is(err, ErrIdempotencyKeyReused), errors.Is(err, ErrConvertKeyReused):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.As(err, &paymentConflict):
 		httpx.Error(w, http.StatusConflict, paymentConflict.Error())

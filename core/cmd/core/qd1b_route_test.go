@@ -15,13 +15,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -81,6 +84,9 @@ func qd1bCall(t *testing.T, q *qd1bFixture, method, path, sub string, body any) 
 			t.Fatalf("encode %s: %v", path, err)
 		}
 		rdr = bytes.NewReader(raw)
+		if method == http.MethodPost && strings.HasPrefix(path, "/api/v1/sync/") {
+			qd1bSweepLedger(t, q, raw)
+		}
 	}
 	req := httptest.NewRequest(method, path, rdr)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -91,6 +97,57 @@ func qd1bCall(t *testing.T, q *qd1bFixture, method, path, sub string, body any) 
 	rec := httptest.NewRecorder()
 	q.fx.reg.inner.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
+}
+
+// qd1bSweepLedger deletes the engine's key ledger rows of every client id in
+// a pushed body, before the push and again when the test ends. The ledger
+// binds a key to its first body for good, so a leg that pushes a fixed client
+// id on a gate a tagged run has already used (CI's demo job runs the untagged
+// suite and then the demo tag suite on one gate) would meet its own earlier
+// row: replayed as bound with nothing written, or refused as a reused key.
+// The legs sweep the rows they plant; the ledger row is one of them.
+var (
+	qd1bSweptMu sync.Mutex
+	qd1bSwept   = map[string]bool{}
+)
+
+func qd1bSweepLedger(t *testing.T, q *qd1bFixture, raw []byte) {
+	t.Helper()
+	var body struct {
+		Ops []struct {
+			ClientID string `json:"client_id"`
+		} `json:"ops"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return
+	}
+	for _, op := range body.Ops {
+		if _, err := uuid.Parse(op.ClientID); err != nil {
+			continue
+		}
+		id := op.ClientID
+		// Once per leg: a leg that pushes one key twice to see it replay
+		// must keep the row its first push planted.
+		mark := fmt.Sprintf("%p/%s", t, id)
+		qd1bSweptMu.Lock()
+		seen := qd1bSwept[mark]
+		qd1bSwept[mark] = true
+		qd1bSweptMu.Unlock()
+		if seen {
+			continue
+		}
+		sweep := func() {
+			_, _ = q.pool.Exec(context.Background(),
+				`DELETE FROM sync_op_hashes WHERE client_id = $1::uuid`, id)
+		}
+		sweep()
+		t.Cleanup(func() {
+			sweep()
+			qd1bSweptMu.Lock()
+			delete(qd1bSwept, mark)
+			qd1bSweptMu.Unlock()
+		})
+	}
 }
 
 // qd1bUserID reads one planted principal's linked ERP users.id (the
@@ -441,10 +498,116 @@ func TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch(t *testing.T) {
 	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
 		t.Fatalf("the Sales manager flips the dealer wide switch: %d %s, want the service's refusal, not the gate's", code, body)
 	}
-	if !strings.Contains(body, "administrators") {
-		t.Fatalf("the refusal must be the service's words naming the rule, got %s", body)
+	if !strings.Contains(body, "only the general manager changes the dealer default quote settings") {
+		t.Fatalf("the refusal must be the service's words naming who may act, got %s", body)
+	}
+	if strings.Contains(body, "SALES_MANAGER") || strings.Contains(strings.ToLower(body), "tech admin") {
+		t.Fatalf("the refusal must carry no role code and no tech admin words, got %s", body)
 	}
 	if after := read(testkit.SubGeneralMgr); after != before {
 		t.Fatalf("a refused flip changed the switch: %s then %s", before, after)
+	}
+}
+
+// TestQD1B_SettingsGrantMatchesTheRefusingRoutesPerRole is round 14 (a)'s
+// per role table over the served surface: for each role the grant read's three
+// answers equal what the refusing route itself answers for the same caller.
+// The acceptance read and the scope rules read are real GETs (admitted is a
+// 200, refused a 403); the policy write is probed with a body the validator
+// rejects (a 400 means the role gate admitted the caller, a 403 means it
+// refused), so nothing is written. The policy write has two rows, the dealer
+// default (the General Manager alone) and a branch row (a Manage caller in a
+// branch it reaches), so can_edit_policy must equal "either row admits".
+func TestQD1B_SettingsGrantMatchesTheRefusingRoutesPerRole(t *testing.T) {
+	q := newQD1BFixture(t)
+	tooLong := strings.Repeat("x", 4096)
+	for _, tc := range []struct {
+		name                            string
+		sub                             string
+		acceptance, scopeRules, editing bool
+	}{
+		{"inside sales", testkit.SubInsideSales, false, false, false},
+		{"sales manager", testkit.SubSalesManager, true, false, true},
+		{"general manager", testkit.SubGeneralMgr, true, true, true},
+		{"branch manager", xrSubBranchManager, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/quotes/settings-grant", tc.sub, nil)
+			if code != http.StatusOK {
+				t.Fatalf("the grant read: %d %s", code, body)
+			}
+			var grant struct {
+				CanReadAcceptance bool `json:"can_read_acceptance"`
+				CanReadScopeRules bool `json:"can_read_scope_rules"`
+				CanEditPolicy     bool `json:"can_edit_policy"`
+			}
+			if err := json.Unmarshal([]byte(body), &grant); err != nil {
+				t.Fatalf("grant body %q: %v", body, err)
+			}
+			if grant.CanReadAcceptance != tc.acceptance || grant.CanReadScopeRules != tc.scopeRules || grant.CanEditPolicy != tc.editing {
+				t.Fatalf("the grant for %s = %+v, want acceptance %v scope rules %v policy edit %v",
+					tc.name, grant, tc.acceptance, tc.scopeRules, tc.editing)
+			}
+
+			admits := func(method, path string, payload any, admitted int) bool {
+				t.Helper()
+				c, b := qd1bCall(t, q, method, path, tc.sub, payload)
+				switch c {
+				case admitted:
+					return true
+				case http.StatusForbidden:
+					return false
+				}
+				t.Fatalf("%s %s as %s answered %d %s, neither %d nor the 403 refusal", method, path, tc.name, c, b, admitted)
+				return false
+			}
+			if got := admits(http.MethodGet, "/api/v1/quotes/settings/acceptance", nil, http.StatusOK); got != grant.CanReadAcceptance {
+				t.Errorf("can_read_acceptance %v but the acceptance route admits %v", grant.CanReadAcceptance, got)
+			}
+			if got := admits(http.MethodGet, "/api/v1/quote-assist/scope-rules", nil, http.StatusOK); got != grant.CanReadScopeRules {
+				t.Errorf("can_read_scope_rules %v but the scope rules route admits %v", grant.CanReadScopeRules, got)
+			}
+			dealer := admits(http.MethodPut, "/api/v1/quotes/policy", map[string]any{"quantity_notice": tooLong}, http.StatusBadRequest)
+			branch := admits(http.MethodPut, "/api/v1/quotes/policy",
+				map[string]any{"branch_id": testkit.BranchNorthAID, "quantity_notice": tooLong}, http.StatusBadRequest)
+			if got := dealer || branch; got != grant.CanEditPolicy {
+				t.Errorf("can_edit_policy %v but the policy write admits dealer %v branch %v", grant.CanEditPolicy, dealer, branch)
+			}
+		})
+	}
+}
+
+// TestQD1B_SettingsGrantRoleWithoutTheDeskIsRefusedAtTheGate: the Financial
+// Controller holds no cell on the Quote Desk, so the grant read is refused at
+// the gate with the other desk reads, before the service answers. The unit
+// table's Financial Controller row (scope rules true) is the service's answer
+// to a caller the gate never lets through, and the desk never asks it.
+func TestQD1B_SettingsGrantRoleWithoutTheDeskIsRefusedAtTheGate(t *testing.T) {
+	q := newQD1BFixture(t)
+	for _, path := range []string{"/api/v1/quotes/settings-grant", "/api/v1/quotes/settings/acceptance"} {
+		code, body := qd1bCall(t, q, http.MethodGet, path, xrSubFinancialController, nil)
+		if code != http.StatusForbidden || body != string(authz.BodyForbidden) {
+			t.Fatalf("%s as the financial controller: %d %s, want the gate's 403", path, code, body)
+		}
+	}
+}
+
+// TestQD1B_PolicyReadAnswersTheChipSetAsAnArray is the served surface leg of round 14 (a)'s
+// qs-policy-unread: the policy read as Inside Sales answers 200, and quick_chip_set is an array
+// (empty when no set was authored), never null, as the contract types it.
+func TestQD1B_PolicyReadAnswersTheChipSetAsAnArray(t *testing.T) {
+	q := newQD1BFixture(t)
+	for _, branch := range []string{"", "?branch_id=" + testkit.BranchNorthAID} {
+		code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/quotes/policy"+branch, testkit.SubInsideSales, nil)
+		if code != http.StatusOK {
+			t.Fatalf("the policy read as Inside Sales%s: %d %s", branch, code, body)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &raw); err != nil {
+			t.Fatalf("policy body %q: %v", body, err)
+		}
+		if got := strings.TrimSpace(string(raw["quick_chip_set"])); !strings.HasPrefix(got, "[") {
+			t.Fatalf("quick_chip_set%s = %s, want an array", branch, got)
+		}
 	}
 }

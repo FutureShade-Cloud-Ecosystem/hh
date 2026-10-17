@@ -18,7 +18,12 @@ test("a stop is marked not delivered with a reason, and the handback sentence re
   await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");
   await shot(page, "31-handback", testInfo);
 
-  const record = await staff(page, "GET", `/api/v1/dispatch/stops/${target.id}`);
-  expect(record.body.status).toBe("FAILED");
-  expect(record.body.failure_reason).toBe("Nobody on site");
+  // The core's own record agrees with the screen, through the run's read (the per stop detail
+  // read is a dispatch-board read the Driver is refused).
+  const record = await staff(page, "GET", `/api/v1/dispatch/runs/${run.id}`);
+  expect(record.status).toBe(200);
+  const moved = (record.body.stops as Array<{ id: string; status: string; failure_reason: string }>)
+    .find((s) => s.id === target.id);
+  expect(moved?.status).toBe("FAILED");
+  expect(moved?.failure_reason).toBe("Nobody on site");
 });

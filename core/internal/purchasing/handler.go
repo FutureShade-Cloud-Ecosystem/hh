@@ -23,13 +23,46 @@ func (h *Handler) listVendors(w http.ResponseWriter, r *http.Request, caller gua
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// createVendor is the staff writer for the vendor record (vendor_master.go). The org stamp comes
+// from the guard resolved scope on the caller, never from a header or the body.
+func (h *Handler) createVendor(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in CreateVendorRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.CreateVendor(r.Context(), caller.OrgID, in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, v)
+}
+
+// setVendor corrects the fields the body names on one vendor, the same PUT shape the expected-date
+// and delivery-method corrections carry.
+func (h *Handler) setVendor(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdateVendorRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.UpdateVendor(r.Context(), caller.OrgID, r.PathValue("vendorID"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
 func (h *Handler) listPOs(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.ListPOs(r.Context(), r.URL.Query().Get("branch_id"), r.URL.Query().Get("status"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	if items == nil {
+		items = []PO{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 func (h *Handler) createPO(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -69,6 +102,21 @@ func (h *Handler) addLine(w http.ResponseWriter, r *http.Request, caller guards.
 
 func (h *Handler) removeLine(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	po, err := h.svc.RemoveLine(r.Context(), r.PathValue("id"), r.PathValue("lineID"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, po)
+}
+
+// setLine corrects the quantity or the cost of one line on a draft, the same PUT shape the other
+// correction routes carry (vendor_master.go, the expected date, the delivery method).
+func (h *Handler) setLine(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdateLineParams
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	po, err := h.svc.UpdateLine(r.Context(), r.PathValue("id"), r.PathValue("lineID"), in)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -118,7 +166,9 @@ func (h *Handler) incoming(w http.ResponseWriter, r *http.Request, caller guards
 	if lines == nil {
 		lines = []IncomingPOLine{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"lines": lines})
+	// The contract's page (PurchasingIncomingLinePage): the list under `items`, the cursor key
+	// present and null, the same envelope every list carries. The ERP wrote it under `lines`.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": lines, "next_cursor": nil})
 }
 
 // PUT /api/v1/purchasing/pos/{id}/expected-date, DIB-460's edit path.
@@ -158,13 +208,32 @@ func (h *Handler) setDeliveryMethod(w http.ResponseWriter, r *http.Request, call
 	httpx.WriteJSON(w, http.StatusOK, po)
 }
 
+// POST /api/v1/purchasing/pos/{id}/apply-warranty-credit
+func (h *Handler) applyWarrantyCredit(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ApplyWarrantyCreditRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+	}
+	po, err := h.svc.ApplyWarrantyCredit(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, po)
+}
+
 func (h *Handler) worklist(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.Worklist(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	if items == nil {
+		items = []WorklistItem{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 func (h *Handler) getReceipt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

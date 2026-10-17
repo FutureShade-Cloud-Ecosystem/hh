@@ -209,11 +209,11 @@ func TestIntegration_0381_TheOtherManagersKeepTheirShape(t *testing.T) {
 	}
 }
 
-// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the three sources the roadmap
-// names for the yard manager's Needs-you (open shortages raised by the yard team, stale picks,
-// receiving differences). The rows are policy; the adapters that count them land with the sources
-// themselves, and a source nobody has wired renders nothing (0201's posture), so this asserts the
-// DECLARATION, not the count.
+// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the sources the roadmap names
+// for the yard manager's Needs-you, 0381's three (open shortages raised by the yard team, stale
+// picks, receiving differences) with 0395's dispatch.due_to_commit leading them. The rows are
+// policy; the adapters that count them land with the sources themselves, and a source nobody has
+// wired renders nothing (0201's posture), so this asserts the DECLARATION, not the count.
 func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -234,9 +234,9 @@ func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 		}
 		got = append(got, key)
 	}
-	want := []string{"tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences"}
+	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
 	if len(got) != len(want) {
-		t.Fatalf("the yard manager declares %d needs sources (%v), want the three the roadmap names (%v)",
+		t.Fatalf("the yard manager declares %d needs sources (%v), want the four 0395 files (%v)",
 			len(got), got, want)
 	}
 	for i := range want {
@@ -326,6 +326,158 @@ func TestIntegration_0381_TheYardManagersWidgetsAreTheBoardsList(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("widget %d is %q, the board draws %q", i, got[i], want[i])
+		}
+	}
+}
+
+// needsOf reads one profile's seeded Needs-you source keys in order.
+func needsOf(t *testing.T, profile string) []string {
+	t.Helper()
+	repo := widgetRepo(t)
+	rows, err := repo.NeedsSources(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("NeedsSources(%s): %v", profile, err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.SourceKey)
+	}
+	return out
+}
+
+func wantKeys(t *testing.T, profile string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s declares %v, want %v", profile, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s source %d is %q, want %q", profile, i, got[i], want[i])
+		}
+	}
+}
+
+// TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn pins the seeded rows of 2D gap 3:
+// shortages and receiving differences, approvals kept, the AR edge and the parked tickets gone.
+func TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
+	wantKeys(t, "manager.procurement", needsOf(t, "manager.procurement"),
+		[]string{NeedsOpenShortages, NeedsReceivingDifferences, NeedsApprovals})
+}
+
+// TestIntegration_0392_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6: the two
+// dispatch sources lead, the manager shape's three follow.
+func TestIntegration_0392_TheBranchManagerCommitsDeliveries(t *testing.T) {
+	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
+		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
+}
+
+// TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending pins the seeded rows of 2D gap 12:
+// the freight raise the logistics manager files and waits on surfaces as an "approvals you filed"
+// row. The existing dock-shape dispatch sources stay.
+func TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending(t *testing.T) {
+	wantKeys(t, "manager.logistics", needsOf(t, "manager.logistics"),
+		[]string{NeedsUnassigned, NeedsDueToCommit, NeedsStalePicks, NeedsFiledPending})
+}
+
+// TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit pins the seeded rows of 2D gap 11:
+// committing a delivery date on a load being built leads the yard manager's queue.
+func TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit(t *testing.T) {
+	wantKeys(t, "manager.yard", needsOf(t, "manager.yard"),
+		[]string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences})
+}
+
+// widgetsOf reads one profile's seeded widgets in order, and runs them through the write gate: a
+// default the gate would refuse is a hole on first login and a "my Home will not save" later.
+func widgetsOf(t *testing.T, profile string) []Widget {
+	t.Helper()
+	rows, err := widgetRepo(t).ProfileWidgets(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("ProfileWidgets(%s): %v", profile, err)
+	}
+	if err := ValidateWidgets(rows, MetricByID, NoBranch); err != nil {
+		t.Fatalf("%s: the seeded widgets fail the write gate: %v", profile, err)
+	}
+	return rows
+}
+
+// wantWidgets compares key, shape, measure and split position for position, and that the hero is
+// the first widget at L with Needs you beside it (the doctrine's two rules).
+func wantWidgets(t *testing.T, profile string, want [][4]string) {
+	t.Helper()
+	got := widgetsOf(t, profile)
+	if len(got) != len(want) {
+		t.Fatalf("%s holds %d widgets, want %d", profile, len(got), len(want))
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Key != w[0] || g.Shape != w[1] || g.Measure != w[2] || g.Split != w[3] {
+			t.Errorf("%s widget %d is %s/%s/%s/%s, want %s/%s/%s/%s", profile, i,
+				g.Key, g.Shape, g.Measure, g.Split, w[0], w[1], w[2], w[3])
+		}
+	}
+	if got[0].Size != SizeL || got[1].Measure != string(MeasureNeedsYou) {
+		t.Errorf("%s must lead with a hero at L and Needs you second", profile)
+	}
+}
+
+// TestIntegration_0392_TheSalesManagersHomeIsAboutSellingAndPricing pins 2D gap 5: sales today is
+// the hero, the branch split and the trend say how selling is going, margin by branch and the gross
+// margin figure are the pricing facts, and the receivables book is gone (the controller's).
+func TestIntegration_0392_TheSalesManagersHomeIsAboutSellingAndPricing(t *testing.T) {
+	wantWidgets(t, "manager.sales", [][4]string{
+		{"hero.sales", WidgetStat, MetricSalesByBranch, SplitNone},
+		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
+		{"sales.branch", WidgetBars, MetricSalesByBranch, DimBranch},
+		{"margin.branch", WidgetBars, MetricGrossMargin, DimBranch},
+		{"sales.trend", WidgetTrend, MetricSalesByBranch, SplitNone},
+		{"orders.status", WidgetBars, MetricOrdersOpen, DimStatus},
+		{"orders.open", WidgetStat, MetricOrdersOpen, SplitNone},
+		{"margin.gross", WidgetStat, MetricGrossMargin, SplitNone},
+	})
+}
+
+// TestIntegration_0392_TheProcurementManagersHomeIsStock pins the re-seed half of 2D gap 4: the
+// hero is the stock on hand, not the receivables book, built from existing measures only (no
+// purchase order measure exists yet).
+func TestIntegration_0392_TheProcurementManagersHomeIsStock(t *testing.T) {
+	wantWidgets(t, "manager.procurement", [][4]string{
+		{"hero.inventory", WidgetStat, MetricInventoryValue, SplitNone},
+		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
+		{"inventory.branch", WidgetBars, MetricInventoryValue, DimBranch},
+		{"orders.status", WidgetBars, MetricOrdersOpen, DimStatus},
+		{"picks.board", WidgetBoard, MetricPickQueue, DimStatus},
+		{"picks.gauge", WidgetGauge, MetricPickQueue, SplitNone},
+		{"orders.open", WidgetStat, MetricOrdersOpen, SplitNone},
+		{"warranty.open", WidgetStat, MetricWarrantyOpen, SplitNone},
+	})
+}
+
+// TestIntegration_0392_NeitherLandingCarriesTheReceivablesBook keeps the two roles off the book.
+func TestIntegration_0392_NeitherLandingCarriesTheReceivablesBook(t *testing.T) {
+	for _, p := range []string{"manager.sales", "manager.procurement"} {
+		for _, w := range widgetsOf(t, p) {
+			if w.Measure == MetricARBalance {
+				t.Errorf("%s still carries the receivables book (%s)", p, w.Key)
+			}
+		}
+	}
+}
+
+// TestIntegration_0392_TheControllerAndPayablesKeepTheBook is the control: the roles that own the
+// book keep the manager shape's whole widget set.
+func TestIntegration_0392_TheControllerAndPayablesKeepTheBook(t *testing.T) {
+	pool := testPool(t)
+	for _, p := range []string{"manager.controller", "manager.payables", "manager.branch"} {
+		var n int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM dashboard_profile_widgets w
+			   JOIN dashboard_profile_widgets b ON b.profile = 'manager' AND b.widget_key = w.widget_key
+			    AND b.shape = w.shape AND b.measure = w.measure AND b.position = w.position
+			 WHERE w.profile = $1`, p).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if n != 8 {
+			t.Errorf("%s matches the manager shape on %d of 8 widgets", p, n)
 		}
 	}
 }

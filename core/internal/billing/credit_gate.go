@@ -118,6 +118,12 @@ type CreditHold struct {
 // AgingRow is one account's AR aging, the input to the auto-hold decision AND the month-end aging
 // view. One query serves both so the screen an operator looks at and the rule the machine applies can
 // never disagree, the commonest way a credit policy loses an argument with a customer.
+//
+// Bucket fields follow the C8 5-bucket bands, INCLUSIVE at the top of each band: a balance exactly
+// 30 days past due sits in 1 to 30, never in 31 to 60, a balance exactly 60 days past due sits in
+// 31 to 60, never in 61 to 90, and a balance exactly 90 days past due sits in 61 to 90, never in
+// 91 and over. Days90PlusCents holds the 91+ band; "anything 60+ past due" is Days60Cents +
+// Days60To90Cents + Days90PlusCents, never just Days90PlusCents.
 type AgingRow struct {
 	CustomerID       string `json:"customer_id"`
 	CustomerName     string `json:"customer_name"`
@@ -125,10 +131,11 @@ type AgingRow struct {
 	BranchID         string `json:"branch_id"`
 	TermsDays        int    `json:"payment_terms_days"`
 	CreditLimitCents int64  `json:"credit_limit_cents"`
-	CurrentCents     int64  `json:"current_cents"`
-	Days30Cents      int64  `json:"days_30_cents"`
-	Days60Cents      int64  `json:"days_60_cents"`
-	Days90PlusCents  int64  `json:"days_90_plus_cents"`
+	CurrentCents     int64  `json:"current_cents"`       // 0 days past due or not yet due
+	Days30Cents      int64  `json:"days_30_cents"`       // 1 to 30 days past due
+	Days60Cents      int64  `json:"days_60_cents"`       // 31 to 60 days past due
+	Days60To90Cents  int64  `json:"days_60_to_90_cents"` // 61 to 90 days past due (C8 band)
+	Days90PlusCents  int64  `json:"days_90_plus_cents"`  // 91 and over days past due (C8 band)
 	TotalCents       int64  `json:"total_cents"`
 	PastBucketCents  int64  `json:"past_bucket_cents"` // balance older than the policy's aging window
 	OnHold           bool   `json:"on_hold"`
@@ -153,9 +160,11 @@ type EvaluationResult struct {
 type creditStore interface {
 	CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error)
 	AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error)
+	AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error)
 	PlaceHold(ctx context.Context, customerID, kind, reason string, placedBy string) (string, bool, error)
 	ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error)
 	ListHolds(ctx context.Context, status string) ([]CreditHold, error)
+	ListHoldsIn(ctx context.Context, status string, reach BranchReach) ([]CreditHold, error)
 	OverrideHold(ctx context.Context, holdID, reason string, until time.Time, actorID string) error
 	ReleaseHold(ctx context.Context, holdID, reason, actorID string) (string, error)
 	OrderDispatchFacts(ctx context.Context, orderID string) (DispatchFacts, error)
@@ -215,18 +224,24 @@ func (s *CreditService) WithClock(now func() time.Time) *CreditService {
 	return s
 }
 
-// Aging returns the AR aging worklist as of a date, for the month-end view.
+// Aging returns the AR aging worklist as of a date, for the month-end view, inside the caller's
+// branch reach (branch_reach.go). A branch named outside the reach is refused.
 func (s *CreditService) Aging(ctx context.Context, asOf time.Time, branchID string) ([]AgingRow, error) {
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return nil, err
+	}
 	pol, err := s.store.CreditPolicy(ctx, branchID)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.AgingRows(ctx, asOf, pol.AgingBucketDays, branchID)
+	return s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, branchID, reach)
 }
 
-// ListHolds returns credit holds filtered by status ("" = all).
+// ListHolds returns credit holds filtered by status ("" = all), for the accounts in the caller's
+// branch reach.
 func (s *CreditService) ListHolds(ctx context.Context, status string) ([]CreditHold, error) {
-	return s.store.ListHolds(ctx, status)
+	return s.store.ListHoldsIn(ctx, status, reachFromContext(ctx))
 }
 
 // Evaluate is the nightly sweep (registered as the 'ar.credit_hold_sweep' JobFunc, schedule in 0104).

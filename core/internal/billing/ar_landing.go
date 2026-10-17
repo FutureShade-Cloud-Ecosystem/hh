@@ -186,13 +186,25 @@ func ValidateARLandingPolicy(p ARLandingPolicy) (ARLandingPolicy, error) {
 // previous evening in Toronto), and reading asOf at Greenwich ages an evening read one day early
 // the other way. Zero or negative is CURRENT, an invoice due today is not late today, which is
 // the answer a customer will insist on.
-func DaysPastDue(due, asOf time.Time) int {
+func DaysPastDue(due, asOf time.Time) int { return DaysPastDueIn(houseday.DefaultZone(), due, asOf) }
+
+// DaysPastDueIn is DaysPastDue in a named dealer's zone: asOf's day is the dealer's calendar day. The
+// zero houseday.Zone is America/Toronto, so DaysPastDue is exactly the old answer for an Ontario dealer.
+func DaysPastDueIn(zone houseday.Zone, due, asOf time.Time) int {
 	dueDay, _ := time.Parse("2006-01-02", due.Format("2006-01-02"))
-	asOfDay, _ := time.Parse("2006-01-02", houseday.Today(func() time.Time { return asOf }))
+	asOfDay, _ := time.Parse("2006-01-02", zone.Today(func() time.Time { return asOf }))
 	// Both parses take a text this function or the platform helper just formatted, so neither can
 	// fail; the dates subtract as calendar days, DST-proof because each is a midnight in one frame.
 	return int(asOfDay.Sub(dueDay) / (24 * time.Hour))
 }
+
+// houseClock is an instant read in the house zone, so every year, month and day read off it (a date
+// parameter handed to SQL, a Format) names the dealer's day. A clock left in the server's zone names
+// the UTC day, one ahead of the house day in the evening window.
+func houseClock(at time.Time) time.Time { return houseClockIn(houseday.DefaultZone(), at) }
+
+// houseClockIn is houseClock in a named dealer's zone.
+func houseClockIn(zone houseday.Zone, at time.Time) time.Time { return at.In(zone.Location()) }
 
 // BucketFor places a days-past-due count in the policy's buckets. Boundaries are INCLUSIVE at the
 // top of each bucket: at exactly aging_escalate_days an account IS escalated, because "90 days" in
@@ -329,6 +341,11 @@ type ARLanding struct {
 // a dealer actually SEES is still theirs, curation rows own that (0183), but the server's order is
 // the one that is right when nobody has curated anything.
 func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []LandingCard {
+	return BuildCardsIn(houseday.DefaultZone(), invs, p, asOf)
+}
+
+// BuildCardsIn is BuildCards in a named dealer's zone.
+func BuildCardsIn(zone houseday.Zone, invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []LandingCard {
 	type agg struct {
 		invoices int
 		cents    int64
@@ -342,7 +359,7 @@ func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []Landing
 		if iv.BalanceCents == 0 {
 			continue
 		}
-		a := buckets[BucketFor(DaysPastDue(iv.DueDate, asOf), p)]
+		a := buckets[BucketFor(DaysPastDueIn(zone, iv.DueDate, asOf), p)]
 		a.invoices++
 		a.cents += iv.BalanceCents
 		a.accounts[iv.CustomerID] = true
@@ -375,6 +392,11 @@ func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []Landing
 // invoices at 94 days is one conversation; a queue that lists them eleven times is a queue nobody
 // finishes.
 func BuildEscalation(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time, onHold map[string]bool) []EscalationEntry {
+	return BuildEscalationIn(houseday.DefaultZone(), invs, p, asOf, onHold)
+}
+
+// BuildEscalationIn is BuildEscalation in a named dealer's zone.
+func BuildEscalationIn(zone houseday.Zone, invs []OpenInvoice, p ARLandingPolicy, asOf time.Time, onHold map[string]bool) []EscalationEntry {
 	byCustomer := map[string]*EscalationEntry{}
 	for _, iv := range invs {
 		if iv.BalanceCents <= 0 {
@@ -383,7 +405,7 @@ func BuildEscalation(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time, onHo
 			// (HH-195). The landing cards still net it, as exposure; only the queue skips it.
 			continue
 		}
-		d := DaysPastDue(iv.DueDate, asOf)
+		d := DaysPastDueIn(zone, iv.DueDate, asOf)
 		if BucketFor(d, p) != BucketEscalation {
 			continue
 		}
@@ -479,10 +501,10 @@ func BuildEngagement(queue []EscalationEntry, in map[string]EngagementInput, p A
 type ARLandingStore interface {
 	ReadARLandingPolicy(ctx context.Context, branchID string) (ARLandingPolicy, error)
 	UpsertARLandingPolicy(ctx context.Context, p ARLandingPolicy) error
-	OpenInvoices(ctx context.Context, asOf time.Time, branchID string) ([]OpenInvoice, error)
+	OpenInvoices(ctx context.Context, asOf time.Time, branchID string, reach BranchReach) ([]OpenInvoice, error)
 	ActiveHoldCustomers(ctx context.Context) (map[string]bool, error)
 	EngagementFor(ctx context.Context, customerIDs []string, windowDays int, now time.Time) (map[string]EngagementInput, error)
-	OpenPaperPathFlags(ctx context.Context) ([]PaperPathEntry, error)
+	OpenPaperPathFlags(ctx context.Context, reach BranchReach) ([]PaperPathEntry, error)
 }
 
 // ARLandingService serves the landing. The clock is injected, nothing in this package calls
@@ -497,7 +519,13 @@ type ARLandingService struct {
 	audit audit.Recorder
 	trail ARPolicyTrailReader
 	names ARActorNameResolver
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The landing's day,
+	// and every bucket on it, is the dealer's own calendar day.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *ARLandingService) WithZone(src houseday.Source) *ARLandingService { s.zone = src; return s }
 
 // NewARLandingService wires the store with the real clock.
 func NewARLandingService(store ARLandingStore) *ARLandingService {
@@ -583,11 +611,20 @@ func (s *ARLandingService) AdvancedAllowed(ctx context.Context, branchID string)
 // and the engagement query is not even ISSUED otherwise, a gate that fetches the data and then
 // declines to serialize it is one refactor away from leaking it.
 func (s *ARLandingService) Landing(ctx context.Context, branchID string, asOf time.Time) (ARLanding, error) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return ARLanding{}, err
+	}
 	if asOf.IsZero() {
-		asOf = s.now()
+		// The day the landing names is the dealer's, so a defaulted clock is read in the dealer's zone.
+		asOf = houseClockIn(zone, s.now())
+	}
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return ARLanding{}, err
 	}
 	p := s.Policy(ctx, branchID)
-	invs, err := s.store.OpenInvoices(ctx, asOf, branchID)
+	invs, err := s.store.OpenInvoices(ctx, asOf, branchID, reach)
 	if err != nil {
 		return ARLanding{}, err
 	}
@@ -601,13 +638,13 @@ func (s *ARLandingService) Landing(ctx context.Context, branchID string, asOf ti
 	out := ARLanding{
 		AsOf:       asOf.Format("2006-01-02"),
 		Policy:     p,
-		Cards:      BuildCards(invs, p, asOf),
-		Escalation: BuildEscalation(invs, p, asOf, holds),
+		Cards:      BuildCardsIn(zone, invs, p, asOf),
+		Escalation: BuildEscalationIn(zone, invs, p, asOf, holds),
 	}
 	if out.Escalation == nil {
 		out.Escalation = []EscalationEntry{}
 	}
-	flags, err := s.store.OpenPaperPathFlags(ctx)
+	flags, err := s.store.OpenPaperPathFlags(ctx, reach)
 	if err != nil || flags == nil {
 		flags = []PaperPathEntry{}
 	}

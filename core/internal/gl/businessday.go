@@ -1,6 +1,10 @@
 package gl
 
-import "time"
+import (
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+)
 
 // businessday.go, WHICH DAY THE LEDGER THINKS IT IS.
 //
@@ -82,5 +86,15 @@ func houseLocation() *time.Location {
 // conversion would be invisible in review. Anything that needs the ledger's month calls this.
 func fiscalYearMonth(at time.Time) (int, int) {
 	local := at.In(houseLocation())
+	return local.Year(), int(local.Month())
+}
+
+// fiscalYearMonthIn is fiscalYearMonth in a named dealer's zone: the dealer's own midnight closes its
+// period, so a Los Angeles dealer's 9pm posting on the 31st is that month's, not the next. The zero
+// houseday.Zone is America/Toronto, so a dealer with no configuration is exactly fiscalYearMonth.
+// This file's houseZone stays as the Ontario default a dealer with no zone is filed under; the zone
+// each dealer actually closes its books in is injected (ZoneTxSource), never a process wide setting.
+func fiscalYearMonthIn(zone houseday.Zone, at time.Time) (int, int) {
+	local := at.In(zone.Location())
 	return local.Year(), int(local.Month())
 }

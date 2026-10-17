@@ -71,7 +71,8 @@ func (r *Repository) SupersedeOlderForState(ctx context.Context, stateKey, newMe
 	}
 	rows, err := r.pool.Query(ctx, `
 		UPDATE msg_messages old
-		SET superseded_by = $2, superseded_at = now()
+		SET superseded_by = $2, superseded_at = now(),
+		    seq = nextval(pg_get_serial_sequence('msg_messages', 'seq'))
 		FROM msg_messages new
 		WHERE new.id = $2
 		  AND old.state_key = $1

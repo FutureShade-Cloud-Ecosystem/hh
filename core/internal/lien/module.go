@@ -117,7 +117,8 @@ type Service struct {
 	orders   OrderHoldbackReader
 	gl       GLPoster
 	calendar CalendarRegistrar
-	cosigner CoSignerResolver // resolves the four-eyes co-signer's authority server-side (never body-asserted)
+	standard StandardRateReader // the dealer's standard tax rate; nil is the Ontario 13 percent
+	cosigner CoSignerResolver   // resolves the four-eyes co-signer's authority server-side (never body-asserted)
 	audit    audit.Recorder
 	log      *slog.Logger
 	now      func() time.Time
@@ -136,6 +137,17 @@ func NewService(repo *Repository) *Service {
 		callerFrom: identity.StaffContextFromContext,
 	}
 }
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine; lien reads it to gross a holdback up by the tax
+// on a job that opted into HST on holdback, so it never carries a rate of its own. Unwired, the Ontario
+// 13 percent stands.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standard = r; return s }
 
 // WithHoldbackFacts injects the billing holdback-facts seam.
 func (s *Service) WithHoldbackFacts(r HoldbackFactsReader) *Service { s.holdback = r; return s }

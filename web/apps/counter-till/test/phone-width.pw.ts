@@ -37,7 +37,7 @@ test("at 390 the search drop stacks: the top row's price sits below the name, ne
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   const name = row.locator(".name");
   const price = row.locator(".price");
   await expect(name).toBeVisible();
@@ -59,7 +59,7 @@ test("at 390 the search drop stacks: the top row's price sits below the name, ne
 test("at desktop width the row keeps its one-line shape: name and price share the band", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   const name = row.locator(".name");
   const price = row.locator(".price");
   await expect(name).toBeVisible();
@@ -81,9 +81,9 @@ test("at 390 the line table drops its weight column and keeps qty, price and rem
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   await row.click();
-  const lineRow = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const lineRow = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
   await expect(lineRow).toHaveCount(1);
   // The weight column dropped at phone width (the cell renders, the column
   // does not), and the table itself scrolls inside its card: that scroll is
@@ -92,11 +92,11 @@ test("at 390 the line table drops its weight column and keeps qty, price and rem
   await expect(page.getByTestId("pos-lines")).toHaveCSS("overflow-x", "auto");
   // The qty control acts: scrolled into view by the table's own scroll, the
   // increase press lands and the box reads 2.
-  const plus = lineRow.getByRole("button", { name: "Increase quantity: Holland Stone 60 mm" });
+  const plus = lineRow.getByRole("button", { name: "Increase quantity: Charcoal Stone 60 mm" });
   await plus.scrollIntoViewIfNeeded();
   await expect(plus).toBeVisible();
   await plus.click();
-  const qty = lineRow.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  const qty = lineRow.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
   await expect(qty).toHaveValue("2");
   // The line's price is inside the viewport once the table scrolls it in.
   const price = lineRow.locator(".lprice");
@@ -114,7 +114,7 @@ test("at 390 the line table drops its weight column and keeps qty, price and rem
     )
     .toBe(true);
   // The remove control is reachable and acts: the press takes the line off.
-  const remove = lineRow.getByRole("button", { name: "Remove Holland Stone 60 mm" });
+  const remove = lineRow.getByRole("button", { name: "Remove Charcoal Stone 60 mm" });
   await remove.scrollIntoViewIfNeeded();
   const removeBox = (await remove.boundingBox()) as { x: number; y: number; width: number; height: number };
   expect(insideViewport(removeBox), "the remove control hangs outside the viewport at 390").toBe(true);
@@ -155,9 +155,9 @@ test("at 390 the page itself holds the viewport with a priced line: no sideways 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   await row.click();
-  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" })).toHaveCount(1);
   await expectDocumentHolds(page);
 });
 
@@ -173,9 +173,9 @@ test("at desktop width the line table keeps its weight column and needs no sidew
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   await row.click();
-  const lineRow = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const lineRow = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
   await expect(lineRow).toHaveCount(1);
   await expect(lineRow.getByTestId("pos-line-weight")).toBeVisible();
   // The scroll allowance is the narrow layout's alone: at desktop width the
@@ -267,7 +267,7 @@ test("no width from 320 to 480 cuts a step label short, sampled every 5 px", asy
 test("at every width from 320 to 480 a ticket line shows its qty, unit, price and total whole", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 844 });
   await signIn(page);
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   await row.click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   const bad: string[] = [];
@@ -329,7 +329,7 @@ async function marginRoleLine(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
-  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  const row = await searchDropRow(page, "charcoal", "Charcoal Stone 60 mm");
   await row.click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   await expect(page.getByTestId("pos-line-margin")).toBeVisible();

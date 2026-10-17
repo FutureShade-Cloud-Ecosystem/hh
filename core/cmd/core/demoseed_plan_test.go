@@ -50,6 +50,18 @@ func testInput(t *testing.T) planInput {
 			// world's owners). Present here so every invariant in this file runs over the quote rows.
 			personaQuoteSales:   "9e70a000-0000-4000-9000-00000000ad11",
 			personaQuoteManager: "9e70a000-0000-4000-9000-00000000ad12",
+			// The controller login the populate plants beside them (the parked journals' decider).
+			personaController: "9e70a000-0000-4000-9000-00000000ad13",
+		},
+		// The contractor account the populate makes, present so every invariant in this file runs over
+		// the contractor world's rows too (demoseed_contractor_plan_test.go asserts them in particular).
+		Contractor: contractorFacts{
+			Ready:    true,
+			BranchID: "5d1b3f6e-0000-4000-9000-000000000001",
+			Users: map[string]string{
+				"account_admin": "9e70a000-0000-4000-9000-00000000ad21",
+				"buyer":         "9e70a000-0000-4000-9000-00000000ad22",
+			},
 		},
 		// A stub sealer: these tests are about the plan's shape, and the real sealer's AES nonce is
 		// random by design (see TestPlan_OnlyTheSealedBytesDifferBetweenRuns for that half).
@@ -323,10 +335,13 @@ func TestPlan_OnlyTheTodaySurfacesAreDayKeyed(t *testing.T) {
 	}
 	// The tables a "today" measurement reads: sales.today walks pos_sale → invoices/orders, and its
 	// money needs the lines and the payment that settled it; deliveries.today, dispatch.unassigned and
-	// dispatch.due_to_commit all read delivery_stops, which needs an order to be about.
+	// dispatch.due_to_commit all read delivery_stops, which needs an order to be about. delivery_runs
+	// joined them with the Driver's dispatched day run: the run sheet is the fifth day-kind read, and
+	// the run row is as far as that read's day-keying reaches (its stops and orders were already here).
 	allowed := map[string]bool{
 		"orders": true, "order_lines": true, "invoices": true, "invoice_lines": true,
 		"payments": true, "payment_allocations": true, "pos_sale": true, "delivery_stops": true,
+		"delivery_runs": true,
 	}
 	for _, k := range sum.DayKeys {
 		if !strings.Contains(k, stamp) {
@@ -344,9 +359,11 @@ func TestPlan_OnlyTheTodaySurfacesAreDayKeyed(t *testing.T) {
 				"grows that table every deploy for nothing", k, r.table)
 		}
 	}
-	// The volume ceiling, asserted rather than intended. Eighteen rows a deploy is the trade this was
-	// argued for; a change that makes it sixty should have to come here and say so out loud.
-	if n := len(sum.DayKeys); n == 0 || n > 24 {
+	// The volume ceiling, asserted rather than intended. The counter sales and the unassigned
+	// deliveries were the trade this was argued for; the Driver's dispatched day run adds its own
+	// handful (the run, its two stops, and the order and line each stop is about), and a change that
+	// makes the daily set sixty should still have to come here and say so out loud.
+	if n := len(sum.DayKeys); n == 0 || n > 32 {
 		t.Errorf("the plan day-keys %d rows; the ruling is a handful per deploy (see ids.go)", n)
 	}
 
@@ -531,8 +548,14 @@ func TestPlan_OrderTotalsAddUp(t *testing.T) {
 		if sub != lineTotals[id] {
 			t.Errorf("order %s: subtotal %d but its lines sum to %d", id, sub, lineTotals[id])
 		}
-		if want := taxOn(sub); tax != want {
-			t.Errorf("order %s: tax %d, expected %d at %d bps", id, tax, want, hstBps)
+		// The contractor world's orders carry the California rate, asserted in
+		// demoseed_contractor_plan_test.go; this test holds the Ontario world's.
+		want := taxOn(sub)
+		if f["tenant_id"] != nil {
+			want = contractorTax(sub)
+		}
+		if tax != want {
+			t.Errorf("order %s: tax %d, expected %d", id, tax, want)
 		}
 		if total != sub+tax {
 			t.Errorf("order %s: total %d != subtotal %d + tax %d", id, total, sub, tax)
@@ -773,6 +796,10 @@ func TestPlan_BuildsWithoutAnyDemoLogins(t *testing.T) {
 	}
 	// The quote world exists only while both demo role logins resolve (demoseed_quotes.go).
 	for _, id := range linkedSum.QuoteRowIDs {
+		personBound[id] = true
+	}
+	// The controller world likewise (demoseed_controller.go).
+	for _, id := range linkedSum.ControllerRowIDs {
 		personBound[id] = true
 	}
 	if len(linked)-len(bare) != len(personBound) {
@@ -1205,3 +1232,64 @@ func dayKeyCarriesTheHouseDay(t *testing.T, sum planSummary, want string) {
 		t.Fatalf("the plan reports a day key on the UTC day 20260115, which is not the dealer's day at the pinned clock: %v", sum.DayKeys)
 	}
 }
+
+// TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial. The roadmap's first Dispatch increment (2.4)
+// walks the Logistics Manager onto the load board and has it build a load from the open orders, so
+// the demo world owes that role OPEN DELIVERY ORDERS WITH REQUESTED DATES AND NO STOP at its own
+// branch: an order already on a stop is a load somebody else already built, and an order with no
+// requested date is a promise with no date to commit against. Two is the walk's minimum, one to
+// commit and one to leave on the board, and the requested dates sit inside the commit-prompt window
+// (today or tomorrow) so the board the persona lands on is due to commit the moment it signs in.
+//
+// The branch is Trenton, branch 1 by code order (resolveBranches), the demo dealer's Point Loma main yard where
+// every demo login is homed: the seeded dispatch world's Truck 03 and 04, the run that needs a
+// crew and the over capacity run live there, so the two orders and the demo populate's
+// convergence of the dispatch persona onto the same yard name one place.
+func TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial(t *testing.T) {
+	in := testInput(t)
+	rows, _, err := buildPlan(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onAStop := map[string]bool{}
+	for _, r := range rows {
+		if r.table != "delivery_stops" {
+			continue
+		}
+		f := fieldMap(r)
+		if oid, _ := f["order_id"].(string); oid != "" {
+			onAStop[oid] = true
+		}
+	}
+	material := 0
+	for _, r := range rows {
+		if r.table != "orders" {
+			continue
+		}
+		f := fieldMap(r)
+		if f["branch_id"] != in.Branches[1].ID || f["status"] != "CONFIRMED" || f["fulfillment"] != "DELIVERY" {
+			continue
+		}
+		if onAStop[f["id"].(string)] {
+			continue
+		}
+		req, ok := f["requested_date"].(time.Time)
+		if !ok {
+			t.Fatalf("order %v carries no requested_date, the load board has no date to commit against", f["order_no"])
+		}
+		days := req.UTC().Format("2006-01-02")
+		today := in.Now.UTC().Format("2006-01-02")
+		tomorrow := in.Now.UTC().AddDate(0, 0, 1).Format("2006-01-02")
+		if days != today && days != tomorrow {
+			t.Errorf("open delivery order %v is requested for %s, outside the commit-prompt window (%s, %s)",
+				f["order_no"], days, today, tomorrow)
+		}
+		material++
+	}
+	if material < 2 {
+		t.Fatalf("the Point Loma load board holds %d open delivery orders with requested dates and no stop, the increment's walk needs two", material)
+	}
+}
+
+// TestPlan_EveryClaimedTaskNamesWhoClaimedIt. 0073 gave tasks a claimed_at AND a claimed_by, and
+// this seed used to write only the first, nine tasks stamped "somebody took this" with nobody on

@@ -320,6 +320,33 @@ func (r *Repository) InsertJournalTx(ctx context.Context, tx pgx.Tx, d journalDr
 	return id, true, nil
 }
 
+// InsertParkedJournal inserts the journal and runs file on the same transaction, then commits both; any
+// failure rolls both back. The deferred balance trigger fires at this commit.
+func (r *Repository) InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: begin park journal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, _, err := r.InsertJournalTx(ctx, tx, d)
+	if err != nil {
+		return "", err
+	}
+	if err := file(ctx, tx, id); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if isCheckViolation(err) {
+			return "", errUnbalanced
+		}
+		return "", fmt.Errorf("gl: commit parked journal: %w", err)
+	}
+	return id, nil
+}
+
 // insertJournalIn is the journal write shared by InsertJournal and InsertJournalTx: period, account and
 // counter resolution, then the header and lines, all on tx. onDup runs when the header insert loses an
 // idempotency race and returns the winner's id; found=false falls through to the original error. A
@@ -330,9 +357,13 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	// that files a 9pm Ontario sale into tomorrow, and a 9pm sale on the 31st into next month's
 	// books. See businessday.go for the full argument and for the three places this product had
 	// already answered the same question the same way.
-	y, m := fiscalYearMonth(d.OccurredAt)
+	zone, err := r.journalZone(ctx, tx)
+	if err != nil {
+		return "", false, err
+	}
+	y, m := fiscalYearMonthIn(zone, d.OccurredAt)
 	var periodID, pstatus string
-	err := tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
 	}

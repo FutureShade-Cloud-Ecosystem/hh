@@ -109,8 +109,9 @@ type fakeAR struct {
 	err      error
 	actErr   error
 
-	gotCustomerID string
-	gotLimit      int
+	gotCustomerID   string
+	gotLimit        int
+	gotWithPayments bool
 }
 
 func (f *fakeAR) CustomerAging(_ context.Context, customerID string) (billing.AgingRow, time.Time, bool, error) {
@@ -118,8 +119,8 @@ func (f *fakeAR) CustomerAging(_ context.Context, customerID string) (billing.Ag
 	return f.row, f.asOf, f.found, f.err
 }
 
-func (f *fakeAR) CustomerActivity(_ context.Context, customerID string, limit int) ([]billing.ARActivity, error) {
-	f.gotCustomerID, f.gotLimit = customerID, limit
+func (f *fakeAR) CustomerActivity(_ context.Context, customerID string, limit int, withPayments bool) ([]billing.ARActivity, error) {
+	f.gotCustomerID, f.gotLimit, f.gotWithPayments = customerID, limit, withPayments
 	return f.activity, f.actErr
 }
 

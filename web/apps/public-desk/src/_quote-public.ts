@@ -27,16 +27,29 @@
 
 import { formatMoney } from "./format.js";
 
-/** The money a quote (or an acceptance echo) carries. Both validated refs expose these three fields. */
+/**
+ * The money a quote (or an acceptance echo) carries. Both validated refs expose these fields. taxLabel is
+ * the name of the dealer's tax ("HST", "Sales tax"), the server's own word: the page renders it and never
+ * guesses it from a rate or a country.
+ */
 export interface QuoteMoney {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  taxLabel: string;
+}
+
+/**
+ * midSentence is the tax word as it reads inside a sentence: an acronym ("HST", "GST") stays as it is,
+ * a phrase ("Sales tax") drops its capital ("before sales tax").
+ */
+export function midSentence(label: string): string {
+  return label === label.toUpperCase() ? label : label.charAt(0).toLowerCase() + label.slice(1);
 }
 
 /** One rendered row of the totals block. */
 export interface TotalsRow {
-  /** Row text, already money formatted, e.g. "HST $12.57". */
+  /** Row text, already money formatted, e.g. "HST $12.57" or "Sales tax $7.75". */
   label: string;
   /** True for the emphasised bottom line (the grand row). Exactly one row is grand. */
   grand: boolean;
@@ -45,20 +58,23 @@ export interface TotalsRow {
 export interface TotalsBlock {
   rows: TotalsRow[];
   /**
-   * The "HST is applied when this quote is invoiced." footnote, or null when
-   * it must be SUPPRESSED: printing it under a total that already contains
-   * HST is the defect this module exists to prevent.
+   * The "HST is applied when this quote is invoiced." footnote (the dealer's own
+   * tax word), or null when it must be SUPPRESSED: printing it under a total
+   * that already contains the tax is the defect this module exists to prevent.
    */
   note: string | null;
-  /** True when this quote's figures are pre-tax. Drives the before-HST wording everywhere. */
+  /** True when this quote's figures are pre-tax. Drives the before-tax wording everywhere. */
   preTax: boolean;
 }
 
-export const INVOICE_TAX_NOTE = "HST is applied when this quote is invoiced.";
+/** invoiceTaxNote is the pre-tax footnote, naming the dealer's tax. */
+export function invoiceTaxNote(label: string): string {
+  return `${label} is applied when this quote is invoiced.`;
+}
 
 /**
  * carriesTax is the single predicate the whole page branches on: a finite,
- * positive tax figure means the total already includes HST.
+ * positive tax figure means the total already includes the tax.
  */
 export function carriesTax(m: Partial<QuoteMoney> | null | undefined): boolean {
   const tax = m?.taxCents;
@@ -75,7 +91,7 @@ export function totalsBlock(m: QuoteMoney): TotalsBlock {
       preTax: false,
       rows: [
         { label: `Subtotal ${formatMoney(m.subtotalCents)}`, grand: false },
-        { label: `HST ${formatMoney(m.taxCents)}`, grand: false },
+        { label: `${m.taxLabel} ${formatMoney(m.taxCents)}`, grand: false },
         { label: `Total ${formatMoney(m.totalCents)}`, grand: true },
       ],
       note: null,
@@ -84,25 +100,25 @@ export function totalsBlock(m: QuoteMoney): TotalsBlock {
   return {
     preTax: true,
     rows: [
-      { label: `Subtotal (before HST) ${formatMoney(m.subtotalCents)}`, grand: false },
-      { label: `Amount before HST ${formatMoney(m.totalCents)}`, grand: true },
+      { label: `Subtotal (before ${midSentence(m.taxLabel)}) ${formatMoney(m.subtotalCents)}`, grand: false },
+      { label: `Amount before ${midSentence(m.taxLabel)} ${formatMoney(m.totalCents)}`, grand: true },
     ],
-    note: INVOICE_TAX_NOTE,
+    note: invoiceTaxNote(m.taxLabel),
   };
 }
 
 /**
  * acceptanceAmountPhrase is the amount clause of the acceptance checkbox and
  * of any sentence that restates what the customer is agreeing to pay. Taxed
- * quotes name the HST inside the total rather than just dropping the tail:
+ * quotes name the tax inside the total rather than just dropping the tail:
  * the customer is being asked to tick a box, and the box should say what the
  * number contains.
  */
 export function acceptanceAmountPhrase(m: QuoteMoney): string {
   if (carriesTax(m)) {
-    return `${formatMoney(m.totalCents)}, including ${formatMoney(m.taxCents)} HST,`;
+    return `${formatMoney(m.totalCents)}, including ${formatMoney(m.taxCents)} ${m.taxLabel},`;
   }
-  return `${formatMoney(m.totalCents)} before HST`;
+  return `${formatMoney(m.totalCents)} before ${midSentence(m.taxLabel)}`;
 }
 
 /**
@@ -147,4 +163,134 @@ export function acceptHint(typedName: string, affirmed: boolean, quantitiesConfi
  */
 export function showsImages(q: { includeImages?: boolean | null; lines: Array<{ imageRef?: string | null }> }): boolean {
   return Boolean(q.includeImages) && q.lines.some((l) => Boolean(l.imageRef));
+}
+
+/**
+ * Status badge label: the customer-facing words on the status chip beside the
+ * quote number. SENT reads as "Awaiting acceptance", because a customer only
+ * sees this page while their quote is awaiting their own action; the same
+ * state in a staff surface would name the moment differently. CONVERTED reads
+ * as "Order created" because the document is the order now. EXPIRED reads
+ * the calendar fact. LOST reads as "Withdrawn" because that is what a dealer
+ * told the customer when they emailed back to cancel. An unmapped state
+ * degrades honestly, mirroring quoteStatusPhrase's mid-sentence form: a new
+ * state reads in its own words rather than silently reading as "Unknown".
+ */
+export function statusBadgeLabel(status: string): string {
+  const labels: Record<string, string> = {
+    DRAFT: "Draft",
+    SENT: "Awaiting acceptance",
+    ACCEPTED: "Accepted",
+    CONVERTED: "Order created",
+    EXPIRED: "Expired",
+    LOST: "Withdrawn",
+  };
+  return labels[status] ?? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * The kind word the status chip uses to pick its colour: "info" for an open
+ * quote, "success" for an acceptance, "accent" for the order band, "danger"
+ * for an expired or withdrawn quote. The badge paints in a fixed token the
+ * pair was measured for, so a state with no token drops to "info" rather than
+ * guessing; the chips.test.mjs and tokens.test.mjs pair matrices catch a chip
+ * pair that slips below its bar.
+ */
+export type StatusBadgeKind = "info" | "success" | "accent" | "danger";
+
+export function statusBadgeKind(status: string): StatusBadgeKind {
+  if (status === "ACCEPTED") return "success";
+  if (status === "CONVERTED") return "accent";
+  if (status === "EXPIRED" || status === "LOST") return "danger";
+  return "info";
+}
+
+/**
+ * Recompute a quote's money when the customer excludes one or more optional
+ * add-on lines. Tax is recomputed proportionally (the dealer's tax rate
+ * applied to the remaining subtotal); the page never rounds tax to zero on
+ * an exclusion (a $0.00 tax line on a non-zero subtotal would be a confident
+ * wrong number, which the house rule forbids). The total is then the sum.
+ *
+ * The function is pure: it returns a fresh QuoteMoney with the dealer's tax
+ * label carried across, and never reads or writes external state. Excluding
+ * zero lines is an identity: the same numbers come back. An optional line
+ * that is NOT in the excluded set is still included, so the customer's view
+ * matches the quote's own words.
+ */
+export function quoteMoneyExcludingOptional(
+  m: QuoteMoney,
+  excludedOptionalLineCents: ReadonlyArray<number>,
+): QuoteMoney {
+  const excludedTotal = excludedOptionalLineCents.reduce((sum, cents) => sum + (Number.isFinite(cents) ? cents : 0), 0);
+  if (excludedTotal <= 0 || m.subtotalCents <= 0) return m;
+  const remainingSubtotal = Math.max(0, m.subtotalCents - excludedTotal);
+  if (remainingSubtotal === m.subtotalCents) return m;
+  const taxRate = m.taxCents / m.subtotalCents;
+  const remainingTax = Math.round(remainingSubtotal * taxRate);
+  const remainingTotal = remainingSubtotal + remainingTax;
+  return {
+    subtotalCents: remainingSubtotal,
+    taxCents: remainingTax,
+    totalCents: remainingTotal,
+    taxLabel: m.taxLabel,
+  };
+}
+
+/**
+ * The optional lines a quote carries, by line number, in the server's own
+ * order. The page reads this to know which lines deserve a checkbox column;
+ * the customer's toggle state is then "which of these are EXCLUDED", and the
+ * exclusion list is what the totals see. A quote with no optional lines
+ * comes back as an empty array; the page then renders nothing extra.
+ */
+export function optionalLineNos(q: { lines: ReadonlyArray<{ lineNo: number; optional?: boolean | null }> }): number[] {
+  return q.lines.filter((l) => l.optional === true).map((l) => l.lineNo);
+}
+
+/**
+ * The cents a card surcharge adds, given the card surcharge percentage and
+ * the customer's selected payment base. A null percentage means the dealer
+ * does not accept cards with a surcharge (the page then offers ACH only); a
+ * percentage above zero adds a surcharge, rounded to the nearest cent so the
+ * page never shows a confident wrong number.
+ */
+export function cardSurchargeCents(totalCents: number, surchargePct: number | null): number {
+  if (surchargePct === null || !Number.isFinite(surchargePct) || surchargePct <= 0) return 0;
+  if (!Number.isFinite(totalCents) || totalCents <= 0) return 0;
+  return Math.round((totalCents * surchargePct) / 100);
+}
+
+/**
+ * True when a rep card should render. A rep card needs at least a NAME to
+ * render at all; an email alone (no name, no phone) does not earn a card,
+ * because the customer has no person to address.
+ */
+export function repHasContact(rep: { repName?: string | null; repEmail?: string | null; repPhone?: string | null }): boolean {
+  return typeof rep.repName === "string" && rep.repName.trim() !== "";
+}
+
+/**
+ * The mailto: URL the "Ask a question" link opens. The customer's default
+ * mail client receives the message; the page never sends mail on a customer's
+ * behalf. The subject names the quote so the rep's inbox can route it, and
+ * the body is empty so the customer writes their own words. The email
+ * address, when absent, drops to a bare "?" so a misconfigured dealer does
+ * not silently route the customer nowhere.
+ */
+export function repMailtoHref(quoteNo: string, repEmail: string | null): string {
+  const subject = encodeURIComponent(`Question about quote ${quoteNo}`);
+  const to = typeof repEmail === "string" && repEmail.trim() !== "" ? repEmail.trim() : "";
+  return `mailto:${to}?subject=${subject}`;
+}
+
+/**
+ * Whether a quote offers a card payment option. A dealer without a
+ * configured card surcharge shows ACH only; the card radio is then absent,
+ * not selected, so a customer never lands on a payment the dealer cannot
+ * accept. A null surcharge percentage is the honest "no card option".
+ */
+export function offersCardPayment(q: { cardSurchargePct?: number | null }): boolean {
+  const pct = q.cardSurchargePct;
+  return typeof pct === "number" && Number.isFinite(pct) && pct > 0;
 }

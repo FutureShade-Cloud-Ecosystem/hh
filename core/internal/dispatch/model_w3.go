@@ -190,14 +190,18 @@ type ScanLoad struct {
 
 // DispatchGateDecision is one order's answer to "may this go on a truck today". Reason is written for
 // a DRIVER to read on a phone at a customer's gate, not for a log line: it becomes the PAYMENT DUE
-// banner verbatim.
+// banner verbatim. This is the GATE's own answer, in process only: the door money fence
+// (cost_gate.go) decides which caller may receive the figure and this sentence, whose words may name
+// the figure.
 type DispatchGateDecision struct {
 	Allow  bool   `json:"allow"`
 	Reason string `json:"reason,omitempty"`
 	// Code is the machine handle for the refusal (e.g. "COD_UNPAID", "CREDIT_HOLD"). Surfaces let the
 	// client style the banner without parsing prose.
 	Code string `json:"code,omitempty"`
-	// AmountDueCents is what the driver may need to collect. Zero when the gate does not say.
+	// AmountDueCents is what the order still owes before release. Zero when the gate does not say. It
+	// reaches a caller only through the payment hold reads, and only for a role on the cost and
+	// margin list; every other caller is told the hold in words, never a figure.
 	AmountDueCents int64 `json:"amount_due_cents,omitempty"`
 }
 
@@ -219,14 +223,19 @@ type ARDispatchGate interface {
 
 // StopPaymentHold is the driver-facing banner payload: what is owed on this stop and why it is held.
 // Computed per read from the gate, never stored, a payment state cached on a delivery row is a
-// payment state that is wrong the moment the customer pays.
+// payment state that is wrong the moment the customer pays. The hold itself reaches every caller,
+// its mark, its code and its words; the figure and the gate's own sentence (whose words may name the
+// figure) reach only a role on the cost and margin list (cost_gate.go), and every other caller is
+// told the hold in words, never a figure.
 type StopPaymentHold struct {
-	StopID         string `json:"stop_id"`
-	OrderID        string `json:"order_id"`
-	Held           bool   `json:"held"`
-	Reason         string `json:"reason,omitempty"`
-	Code           string `json:"code,omitempty"`
-	AmountDueCents int64  `json:"amount_due_cents,omitempty"`
+	StopID  string `json:"stop_id"`
+	OrderID string `json:"order_id"`
+	Held    bool   `json:"held"`
+	Reason  string `json:"reason,omitempty"`
+	Code    string `json:"code,omitempty"`
+	// AmountDueCents rides only to a role on the cost and margin list; absent, not zero, for every
+	// other role.
+	AmountDueCents int64 `json:"amount_due_cents,omitempty"`
 }
 
 // - Wave 3 errors -

@@ -24,12 +24,14 @@ customer document must look identical to everyone and must print correctly,
 so there is no theme preference to read (the ERP's own ruling for this page,
 carried).
 
-The brand is pinned beside the theme: `index.html` sets `data-brand="hh-pro"`,
-because the manifest names `brand: hh-pro` for this app and the design system's
-`hh-pro` override is the dealer blue. So the Accept button is the dealer blue,
-not the ERP's house gold. That is a deliberate departure from the reference
-shots, where the button is gold; nothing else on the page changes with the
-brand. If the house decides this page should stay gold, drop the attribute.
+The brand is NOT pinned beside the theme: `index.html` sets `data-theme="light"`
+only and pins no `data-brand`, because the manifest names `brand: hh-pro` for
+this app and the design system's `hh-pro` override is the dealer blue, and the
+quote page reads in the quote blue from the base layer, never in the hh-pro
+blue and never the order's gold (the index.html comment states the ruling
+plainly). The page renders in the base brand layer; if the house decides this
+page should wear the hh-pro blue, set `data-brand="hh-pro"` on the html
+element.
 
 ## What it ports
 

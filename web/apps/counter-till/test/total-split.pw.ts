@@ -56,7 +56,7 @@ test.afterEach(async ({ page }) => {
 test("Payment shows Tax and Total from the server's preview, and Summary reads the same figures", async ({ page }) => {
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals.getByTestId("pos-preview-tax")).toContainText("$0.52");
@@ -82,7 +82,7 @@ test("while the preview loads the rows say pending and no figure is guessed, the
     await route.continue();
   });
   await signIn(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals.getByTestId("pos-preview-pending")).toContainText("pending");
@@ -101,7 +101,7 @@ test("the preview is asked again when the lines, the customer or the fulfilment 
     }
   });
   await signIn(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   const total = page.getByTestId("pos-totals-card").getByTestId("pos-preview-total");
   await expect(total).toContainText("$4.52");
@@ -128,7 +128,7 @@ test("the preview is asked again when the lines, the customer or the fulfilment 
 test("an unreadable preview says the ring states the total, and shows no figure", async ({ page }) => {
   await page.route("**/api/v1/pos/sale-preview", (route) => route.fulfill({ status: 500, body: "{}" }));
   await signIn(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   const totals = page.getByTestId("pos-totals-card");
   await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
@@ -140,7 +140,7 @@ test("the split works from the server's total: Total to split, Left to assign, t
 }) => {
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -174,7 +174,7 @@ test("the split works from the server's total: Total to split, Left to assign, t
 
 test("the server's split_total_mismatch reads in dollars from its fields, never raw cents", async ({ page }) => {
   await signIn(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -213,7 +213,7 @@ test("Ring split sale stays disabled while the total is pending, and arms when i
   });
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -232,7 +232,7 @@ test("Ring split sale stays disabled when the preview cannot be read", async ({ 
   await page.route("**/api/v1/pos/sale-preview", (route) => route.fulfill({ status: 500, body: "{}" }));
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -258,7 +258,7 @@ test("a ticket change after the legs were typed disarms Ring split sale until th
   });
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openPaymentStep(page);
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -302,7 +302,7 @@ test("a late answer for an older ticket is dropped, and quick edits make one ask
     await route.continue();
   });
   await signIn(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await expect.poll(() => asked.length).toBe(1);
 
   // Three quick quantity steps inside the debounce window: the ticket is now four sf.

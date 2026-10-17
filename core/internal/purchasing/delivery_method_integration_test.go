@@ -139,8 +139,8 @@ func TestIntegration_SetDeliveryMethod_RefusedOnAFinishedPOAndOutsideTheFence(t 
 		t.Fatalf("the refused write still reached the column: %q", full.DeliveryMethod)
 	}
 
-	// A Kingston-only caller cannot re-route a Trenton order's arrival, and the refusal is the 403
-	// classification, the fence and not some incidental failure.
+	// A Kingston-only caller cannot re-route a Trenton order's arrival, and the refusal is the 404 a
+	// missing order gets (the fence folds an out of reach order into not found, no existence oracle).
 	other := h.draftPOAt(t, branchTRT, product, "", 10)
 	scoped := NewService(NewRepository(h.pool)).
 		WithVendors(itVendors{pool: h.pool}).
@@ -150,8 +150,8 @@ func TestIntegration_SetDeliveryMethod_RefusedOnAFinishedPOAndOutsideTheFence(t 
 		t.Error("a caller with no grant on the PO's branch changed its arrival")
 	} else {
 		var ce clientError
-		if !errors.As(err, &ce) || ce.status != http.StatusForbidden {
-			t.Errorf("a cross-branch refusal = %v, want the 403 fence classification", err)
+		if !errors.As(err, &ce) || ce.status != http.StatusNotFound {
+			t.Errorf("a cross-branch refusal = %v, want the 404 a missing order gets", err)
 		}
 	}
 }

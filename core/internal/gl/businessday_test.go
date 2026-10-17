@@ -3,6 +3,8 @@ package gl
 import (
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // businessday_test.go, the ledger's day boundary, pinned at the two instants where it used to move.
@@ -103,5 +105,24 @@ func TestHouseLocation_ResolvesRatherThanFallingBack(t *testing.T) {
 	summer := time.Date(2026, 8, 31, 21, 0, 0, 0, loc)
 	if _, off := summer.Zone(); off == 0 {
 		t.Fatalf("the house zone reports a zero offset in August, it is not Ontario")
+	}
+}
+
+// A Los Angeles dealer's books close at Los Angeles midnight (item 3b slice 3): 05:00 UTC on 1 September
+// is already September in Toronto and still 31 August in Los Angeles. The zero Zone is Toronto exactly.
+func TestFiscalYearMonthIn_FollowsTheDealersZone(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, time.September, 1, 5, 0, 0, 0, time.UTC)
+	if y, m := fiscalYearMonthIn(la, at); y != 2026 || m != 8 {
+		t.Fatalf("Los Angeles = %d-%02d, want 2026-08", y, m)
+	}
+	if y, m := fiscalYearMonthIn(houseday.DefaultZone(), at); y != 2026 || m != 9 {
+		t.Fatalf("Toronto = %d-%02d, want 2026-09", y, m)
+	}
+	if y, m := fiscalYearMonth(at); y != 2026 || m != 9 {
+		t.Fatalf("the default fiscalYearMonth moved: %d-%02d", y, m)
 	}
 }

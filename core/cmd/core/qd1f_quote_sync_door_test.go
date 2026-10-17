@@ -144,6 +144,9 @@ func TestQD1F_QuotesSyncStaleUpdateConflictCarriesNoQuoteTheCallerCannotRead(t *
 		payload["id"] = id
 		code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/quotes", sub, map[string]any{
 			"ops": []map[string]any{{"client_id": uuid.NewString(), "op": "update", "payload": payload, "base_seq": stale}}})
+		if qd1bFenced(code, body) {
+			return body // refused before the engine: no envelope, no quote
+		}
 		if code != http.StatusOK {
 			t.Fatalf("push as %s: %d %s", sub, code, body)
 		}

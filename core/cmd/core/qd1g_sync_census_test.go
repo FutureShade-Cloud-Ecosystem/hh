@@ -94,7 +94,7 @@ func qd1gPlantStaff(t *testing.T, q *qd1bFixture) *qd1gCensus {
 	t.Helper()
 	ctx := context.Background()
 	c := &qd1gCensus{q: q, roles: qd1gRoleSubs()}
-	orgNorth := "org:" + testkit.OrgNorthSlug
+	orgNorth := "org-" + testkit.OrgNorthSlug
 	plant := func(sub, role string) {
 		if _, err := q.pool.Exec(ctx, `
 			INSERT INTO users (email, display_name, status, platform_user_id, org_id)
@@ -212,6 +212,28 @@ func qd1gRestAllowed(t *testing.T, label string, code int, body string) bool {
 	return false
 }
 
+// qd1gFenceAdmits reports whether the sync write fence lists the role as a
+// writer of the scope (the registry is the oracle; the pinned table in the
+// sync package holds the literal lists).
+func qd1gFenceAdmits(scope, role string) bool {
+	info, ok := syncpkg.Lookup(scope)
+	return ok && info.AllowsRole(role)
+}
+
+// qd1gFencedReplay settles a replay answer that may be the fence's 403: a
+// role off the scope's writer list is refused before any replay lookup (true,
+// skip the leg), but a refusal of a listed writer is a defect and fails.
+func qd1gFencedReplay(t *testing.T, scope string, who qd1gRole, code int, body string) bool {
+	t.Helper()
+	if !qd1bFenced(code, body) {
+		return false
+	}
+	if qd1gFenceAdmits(scope, who.role) {
+		t.Fatalf("the fence refused %s, a listed writer of %s: %s", who.role, scope, body)
+	}
+	return true
+}
+
 // qd1gPushOne drives one pushed operation through the registered sync route
 // as one principal and folds the answer to allow or refuse (an applied result
 // admits, a rejected one refuses, a conflict is a fault in the census).
@@ -222,6 +244,9 @@ func qd1gPushOne(t *testing.T, q *qd1bFixture, scope, sub, op string, payload ma
 		item["base_seq"] = *baseSeq
 	}
 	code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/"+scope, sub, map[string]any{"ops": []any{item}})
+	if qd1bFenced(code, body) {
+		return false, body // the sync write fence refused the role: a refusal
+	}
 	if code != http.StatusOK {
 		t.Fatalf("push %s %s as %s: %d %s", scope, op, sub, code, body)
 	}
@@ -416,7 +441,7 @@ func qd1gTombstoned(t *testing.T, c *qd1gCensus, id string) bool {
 // the list route admitted the caller at all (its wall).
 func qd1gRestApprovalList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []string) (out map[string]bool, wall bool) {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/staff/approvals", who.sub, nil)
+	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/staff/approvals?limit=200", who.sub, nil)
 	out = map[string]bool{}
 	if code == http.StatusForbidden {
 		return out, false
@@ -631,6 +656,9 @@ func qd1gQuotesFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		id, no := qd1gQuote(t, c, k.branch, "SENT", c.ownerFor(who, k.own), key)
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/quotes", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "valid_until": qd1cMoved()}}}})
+		if qd1gFencedReplay(t, "quotes", who, code, body) {
+			continue // off the writer list: refused before any replay lookup
+		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
 		}
@@ -721,7 +749,8 @@ func qd1gApprovalsWrite(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		id := k.make(t)
 		got, _ := qd1gPushOne(t, c.q, "approvals", who.sub, "update",
 			map[string]any{"id": id, "detail": "qd1g revised " + uuid.NewString()}, nil)
-		qd1gMust(t, "approvals.Write", who, k.name, got, k.want)
+		// A requester demoted off every filing role is refused at the fence.
+		qd1gMust(t, "approvals.Write", who, k.name, got, k.want && qd1gFenceAdmits("approvals", who.role))
 	}
 }
 
@@ -741,7 +770,7 @@ func qd1gApprovalsDelete(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			id, _ := qd1gPlain(t, c, requester, testkit.BranchNorthAID)
 			qd1gMove(t, c, id, st.status, st.used)
 			got, _ := qd1gPushOne(t, c.q, "approvals", who.sub, "delete", map[string]any{"id": id}, nil)
-			want := mine && !st.used
+			want := mine && !st.used && qd1gFenceAdmits("approvals", who.role)
 			qd1gMust(t, "approvals.Delete", who, "withdraw "+label+st.name+" request", got, want)
 			if qd1gTombstoned(t, c, id) != want {
 				t.Errorf("CENSUS RULE approvals.Delete as %s (%s%s): tombstone is %v, want %v", who.role, label, st.name, !want, want)
@@ -836,6 +865,9 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		}
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g replay words"}}}})
+		if qd1gFencedReplay(t, "approvals", who, code, body) {
+			continue // off the writer list: refused before any replay lookup
+		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
 		}
@@ -863,6 +895,9 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	}
 	code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
 		map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g dedup rewrite"}}}})
+	if qd1gFencedReplay(t, "approvals", who, code, body) {
+		return // a demoted requester: refused before the dedup lookup
+	}
 	if code != http.StatusOK {
 		t.Fatalf("dedup replay as %s: %d %s", who.role, code, body)
 	}
@@ -1301,14 +1336,19 @@ var qd1gScopesOnQuoteTables = map[string]string{
 // qd1gScopesClear are the other registered scopes, reviewed as touching
 // neither table. A scope on neither list fails the census by name.
 var qd1gScopesClear = map[string]bool{
-	"aging": true, "catalog": true, "customers": true, "cycle_counts": true,
-	"delivery_instructions": true, "delivery_stops": true, "drivers": true,
-	"inventory_lookup": true, "invoices": true, "loads": true, "parked_tickets": true,
-	"payment_methods": true, "payments": true, "pick_tasks": true, "pickups": true,
-	"pod": true, "price_matrix": true, "products": true, "projects": true,
-	"purchase_orders": true, "runs": true, "scope_items": true, "shortages": true,
-	"stops": true, "team": true, "trucks": true, "vendors": true, "warranty_board": true,
-	"warranty_claims": true, "weights": true, "will_call": true,
+	"aging": true, "catalog": true, "channels": true, "customers": true,
+	"cycle_counts": true, "delivery_instructions": true, "delivery_stops": true,
+	"drivers": true, "inventory_lookup": true, "invoices": true, "loads": true,
+	"parked_tickets": true, "payment_methods": true, "payments": true,
+	"pick_tasks": true, "pickups": true, "pod": true, "price_matrix": true,
+	"products": true, "projects": true, "purchase_orders": true, "runs": true,
+	"scope_items": true, "shortages": true, "stops": true, "team": true,
+	"trucks": true, "vendors": true, "warranty_board": true, "warranty_claims": true,
+	"weights": true, "will_call": true,
+	// The messaging feeds (House Messages core): channels, messages, acks and
+	// notify_prefs read and write the msg_* tables only, fenced per caller;
+	// no quote or approval column is anywhere in their stores.
+	"messages": true, "acks": true, "notify_prefs": true,
 }
 
 // qd1gScopesGuard reads every RegisterScope in this package's source and

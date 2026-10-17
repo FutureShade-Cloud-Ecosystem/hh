@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -61,6 +62,16 @@ type Service struct {
 	// (the additive lane, asserted at boot in the composition root); a wired
 	// seam that errors REFUSES (money, the closed direction).
 	pickHold PickHoldGate
+	// costRoles is the door money fence's rule (cost_gate.go): whether the
+	// caller is on the cost and margin list. Nil is REFUSE, the closed
+	// direction money takes everywhere in this module.
+	costRoles CostRoles
+	// stopSource is the narrow read seam behind guardStop, guardRun and the
+	// payment hold reads' stops list (cost_gate_w3_test.go names it): one
+	// stop, one run, one run's stops. It is the repository; the door money
+	// fence's untagged legs override it with a double so CI's databaseless
+	// job carries the two hold reads the integration legs cover today.
+	stopSource stopRunSource
 	// trail is the audit READ seam (session A item 3d). Nil is an empty history, never an error.
 	trail PolicyTrailReader
 	names ActorNameResolver
@@ -84,11 +95,27 @@ type Service struct {
 func NewService(repo *Repository) *Service {
 	return &Service{
 		repo:       repo,
+		stopSource: repo,
 		log:        slog.Default(),
 		now:        time.Now,
 		callerFrom: identity.StaffContextFromContext,
 	}
 }
+
+// stopRunSource is the repository's stop and run read seam: everything the
+// payment hold reads and their guards resolve through (one stop, one run, one
+// run's stops). *Repository satisfies it, and NewService wires exactly that;
+// tests substitute an in-memory double (withStopSource) so the reads are
+// driven in the untagged suite, the one CI's ci job runs with no database.
+type stopRunSource interface {
+	GetStop(ctx context.Context, id string) (Stop, error)
+	GetRun(ctx context.Context, id string) (Run, error)
+	ListStopsForRun(ctx context.Context, runID string) ([]Stop, error)
+}
+
+// withStopSource overrides the stop and run read seam for a test double. The
+// repository stays the production source; nothing outside a test calls this.
+func (s *Service) withStopSource(src stopRunSource) *Service { s.stopSource = src; return s }
 
 // WithOrders injects the order authority seam (branch/status validation at scheduling).
 func (s *Service) WithOrders(r OrderReader) *Service { s.orders = r; return s }
@@ -240,6 +267,60 @@ func (s *Service) CreateTruck(ctx context.Context, t Truck) (string, error) {
 	return id, nil
 }
 
+// UpdateTruck rewrites a truck's registry facts: the fields the create takes, plus active or not (a
+// truck the yard has sold or parked stays on the books, invisible to the picker). Manager-gated at
+// the route; the branch fence is re-checked here on the ROW's branch so the authority does not live
+// only in the mux, exactly like every id-addressed endpoint this module serves (guardStop's rule:
+// 403, not 404, the id is opaque so refusing loudly leaks nothing).
+//
+// THE BRANCH DOES NOT MOVE. The body carries branch_id because it is the row the caller read, and a
+// branch_id that names another yard is refused in words: a truck's runs, its crew assignments and
+// its capacity story all hang off the yard it lives at, and a registry that silently re-homes a
+// truck strands them. Retire it here and register it there.
+//
+// IDEMPOTENT BY CONSTRUCTION. The write is an absolute SET the create's validations gate, so the
+// same body twice leaves the same row and answers 200 both times; the only conflict is a DIFFERENT
+// code colliding with another truck at the branch, the create's own 409.
+func (s *Service) UpdateTruck(ctx context.Context, truckID string, in Truck) (Truck, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Truck{}, err
+	}
+	row, err := s.repo.GetTruck(ctx, truckID)
+	if err != nil {
+		return Truck{}, err
+	}
+	if !caller.CanAccessBranch(row.BranchID) {
+		return Truck{}, ErrForbidden
+	}
+	if in.BranchID == "" {
+		return Truck{}, httpx.BadRequestf("dispatch: branch_id is required")
+	}
+	if in.BranchID != row.BranchID {
+		return Truck{}, httpx.BadRequestf("dispatch: a truck's branch does not move; retire it here and register it at the other yard")
+	}
+	in.Code = strings.TrimSpace(in.Code)
+	if in.Code == "" {
+		return Truck{}, httpx.BadRequestf("dispatch: a truck needs a code")
+	}
+	in.TruckType = strings.ToUpper(strings.TrimSpace(in.TruckType))
+	if in.TruckType == "" {
+		in.TruckType = "FLATBED"
+	}
+	if !truckTypes[in.TruckType] {
+		return Truck{}, httpx.BadRequestf("dispatch: unknown truck_type %q", in.TruckType)
+	}
+	if in.CapacityKg != nil && *in.CapacityKg < 0 {
+		return Truck{}, httpx.BadRequestf("dispatch: capacity_kg must not be negative")
+	}
+	updated, err := s.repo.UpdateTruck(ctx, truckID, in)
+	if err != nil {
+		return Truck{}, asConflict(err, "dispatch: a truck with that code already exists at this branch")
+	}
+	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_TRUCK_UPDATED", EntityType: "dispatch_truck", EntityID: truckID})
+	return updated, nil
+}
+
 // Drivers lists a branch's drivers.
 func (s *Service) Drivers(ctx context.Context, branchID string, includeInactive bool) ([]Driver, error) {
 	caller, err := s.caller(ctx)
@@ -277,12 +358,65 @@ func (s *Service) CreateDriver(ctx context.Context, d Driver) (string, error) {
 	if d.Name == "" {
 		return "", httpx.BadRequestf("dispatch: a driver needs a name")
 	}
+	if err := checkDriverUserID(d.UserID); err != nil {
+		return "", err
+	}
 	id, err := s.repo.InsertDriver(ctx, d)
 	if err != nil {
 		return "", err
 	}
 	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_DRIVER_CREATED", EntityType: "dispatch_driver", EntityID: id})
 	return id, nil
+}
+
+// driverUserIDShape is a canonical uuid: the repository casts the linked login to one, and a cast that
+// fails is a 500, so the shape is refused in words first.
+var driverUserIDShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// checkDriverUserID answers a 400 in words for a linked login that is not a user id. Empty is a
+// driver with no login. Whether the id names a real staff login is not checked here (a backlog item).
+func checkDriverUserID(userID string) error {
+	if userID == "" || driverUserIDShape.MatchString(userID) {
+		return nil
+	}
+	return httpx.BadRequestf("dispatch: user_id must be a user id, or left out for a driver with no login")
+}
+
+// UpdateDriver rewrites a driver's registry facts: the fields the create takes (including the login
+// link, a casual driver who later gets a staff account), plus active or not. The same fence, the
+// same branch-does-not-move rule and the same idempotent-by-construction write as UpdateTruck
+// directly above; one vocabulary per surface.
+func (s *Service) UpdateDriver(ctx context.Context, driverID string, in Driver) (Driver, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Driver{}, err
+	}
+	row, err := s.repo.GetDriver(ctx, driverID)
+	if err != nil {
+		return Driver{}, err
+	}
+	if !caller.CanAccessBranch(row.BranchID) {
+		return Driver{}, ErrForbidden
+	}
+	if in.BranchID == "" {
+		return Driver{}, httpx.BadRequestf("dispatch: branch_id is required")
+	}
+	if in.BranchID != row.BranchID {
+		return Driver{}, httpx.BadRequestf("dispatch: a driver's branch does not move; retire them here and register them at the other yard")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return Driver{}, httpx.BadRequestf("dispatch: a driver needs a name")
+	}
+	if err := checkDriverUserID(in.UserID); err != nil {
+		return Driver{}, err
+	}
+	updated, err := s.repo.UpdateDriver(ctx, driverID, in)
+	if err != nil {
+		return Driver{}, err
+	}
+	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_DRIVER_UPDATED", EntityType: "dispatch_driver", EntityID: driverID})
+	return updated, nil
 }
 
 // - the board -
@@ -469,7 +603,7 @@ func (s *Service) guardStop(ctx context.Context, stopID string) (Stop, error) {
 	if err != nil {
 		return Stop{}, err
 	}
-	stop, err := s.repo.GetStop(ctx, stopID)
+	stop, err := s.stopSource.GetStop(ctx, stopID)
 	if err != nil {
 		return Stop{}, err
 	}
@@ -485,7 +619,7 @@ func (s *Service) guardRun(ctx context.Context, runID string) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	run, err := s.repo.GetRun(ctx, runID)
+	run, err := s.stopSource.GetRun(ctx, runID)
 	if err != nil {
 		return Run{}, err
 	}
@@ -1220,6 +1354,9 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 	if name == "" {
 		return StopDetail{}, httpx.BadRequestf("dispatch: type the full name of the person receiving this delivery")
 	}
+	if err := checkTypedName(name); err != nil {
+		return StopDetail{}, err
+	}
 	if !in.Affirmed {
 		return StopDetail{}, httpx.BadRequestf("dispatch: the recipient must confirm the delivery before it can be signed")
 	}
@@ -1234,7 +1371,7 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 		return StopDetail{}, err
 	}
 	at := s.now().UTC()
-	ok, err := s.repo.SetPOD(ctx, stop.ID, stop.Status, ref, name, caller.UserID, at)
+	ok, err := s.repo.SetPOD(ctx, stop.ID, stop.Status, ref, name, caller.UserID, in.IdempotencyKey, at)
 	if err != nil {
 		return StopDetail{}, err
 	}
@@ -1251,6 +1388,27 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 	s.afterPOD(ctx, stop, ref, at)
 	s.handoff(ctx, stop, at)
 	return s.StopDetail(ctx, stop.ID)
+}
+
+// maxTypedNameBytes is the signature provider's own bound on a typed name, checked here first so a
+// name it would refuse is this door's client fault and never an unmapped provider error.
+const maxTypedNameBytes = 200
+
+// checkTypedName refuses a typed name the record could not hold or print safely: over the provider's
+// bound, or carrying a control character (C0, DEL) or a bidi control (U+202A to U+202E, U+2066 to
+// U+2069), which would fail the write (NUL) or reorder the name on a screen or a printout. Both doors
+// reach it through CapturePOD, so a name a device queued while offline is refused as that op's
+// rejection and never fails the whole push on every replay.
+func checkTypedName(name string) error {
+	if len(name) > maxTypedNameBytes {
+		return httpx.BadRequestf("dispatch: that name is too long, type the full name in at most %d bytes", maxTypedNameBytes)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return httpx.BadRequestf("dispatch: the name cannot hold control characters, type the full name as plain text")
+		}
+	}
+	return nil
 }
 
 // handoff advances the order toward invoicing once every live stop for it is delivered.

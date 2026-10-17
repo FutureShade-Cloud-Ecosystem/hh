@@ -325,6 +325,11 @@ type returnPlan struct {
 	// (ApproveReturnRequest).
 	preReplay   Return
 	preReplayed bool
+	// restockProducts are the products whose balance rows the return's restock will touch, resolved
+	// before the transaction opens (a pool read of the sale's lines, immutable once rung): the body
+	// takes them, sorted through inventory's own seam, before its first counter draw, so the guard's
+	// own restock set inside the transaction is always a subset of rows already held.
+	restockProducts []string
 }
 
 // prepareReturn is the return's pre-transaction section, run while no
@@ -422,6 +427,11 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	if plan.oc, err = s.resolveConverted(ctx, plan.oc); err != nil {
 		return nil, err
 	}
+	// The stock rows the restock will touch, read here while no connection is held: the body's stock
+	// pre-lock (returnInTx) consumes them ahead of its first counter draw.
+	if plan.restockProducts, err = s.restockProductsFor(ctx, plan.oc.OrderID, in); err != nil {
+		return nil, err
+	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" && !in.railOptional {
 		return nil, ErrNoOpenTill{}
 	}
@@ -511,9 +521,25 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
 		return Return{}, false, false, err
 	}
+	// The return's restock writes stock rows, and every writer that touches those rows before a
+	// counter takes them stock first (the ring does, and the cancel's settlement now does too, round
+	// 2): take the restock's rows, sorted through inventory's own seam, BEFORE the return's first
+	// counter draw (the invoice locks below draw the payments one on the cash and card paths) and
+	// before any processor refund call, so against either writer the two only queue (the Opus read's
+	// P2-1). The set is the plan's own candidate set, read before the transaction opened; the guard's
+	// restock set inside is a subset of it (the sale's lines are immutable once rung).
+	if err := s.lockRestockRowsTx(ctx, tx, oc.BranchID, plan.restockProducts); err != nil {
+		return Return{}, false, false, err
+	}
 	if !in.railOptional {
 		// The account rail offsets invoices; a cash or card return offsets them too when the order is
 		// not fully paid (the ruling's split): take them, sorted, before the first offset (P2-1).
+		// lockReturnInvoicesTx draws the payments counter itself, and only when it will take invoice
+		// rows: the payments module's one money lock order is counter first, invoices second (every
+		// settle, received payment and reversal takes them that way), so a return that takes an
+		// invoice row must hold the counter before it (the Opus review's P2-4), while a return on a
+		// fully paid sale with no deposit document locks no invoice and must not hold the one counter
+		// row every payments writer serialises on at all (the delta reviews' P2).
 		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}, in.RefundMethod != RefundAccountCredit); err != nil {
 			return Return{}, false, false, err
 		}
@@ -605,6 +631,59 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		return Return{}, false, false, cerr
 	}
 	return out, replayedHere, approvedHere, nil
+}
+
+// lockRestockRowsTx takes the branch's balance rows of the products a return's restock will touch,
+// sorted through inventory's own seam, ahead of the return's first counter draw: the same pre-lock
+// the swap takes for its two halves (swap.go), on the seam the deploy wires for it. A nil seam or an
+// empty set locks nothing (a return that restocks nothing holds no stock row).
+func (s *Service) lockRestockRowsTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
+	if s.stockLocks == nil || len(productIDs) == 0 {
+		return nil
+	}
+	return s.stockLocks.LockStockTx(ctx, tx, branchID, productIDs)
+}
+
+// restockProductsFor answers the products whose balance rows the return's restock will touch: every
+// requested line whose disposition puts the goods back on the shelf, explicitly RESTOCK or by the
+// return's own restock flag (the same rule applyDisposition resolves per line inside the
+// transaction). A line that turns out credit only (goods that never left the shelf) writes no stock,
+// but its row is locked anyway: one sorted pass over a stable superset, never a row the guard's own
+// set could miss. Read on the pool before the transaction opens.
+func (s *Service) restockProductsFor(ctx context.Context, orderID string, in ReturnInput) ([]string, error) {
+	lineRestocks := func(req ReturnLineInput) bool {
+		switch req.Disposition {
+		case DispositionRestock:
+			return true
+		case "":
+			return in.Restock
+		}
+		return false
+	}
+	requested := make(map[string]bool, len(in.Lines))
+	for _, ln := range in.Lines {
+		if lineRestocks(ln) {
+			requested[ln.OrderLineID] = true
+		}
+	}
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	lines, err := s.store.ListReturnableLines(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(lines))
+	var out []string
+	for _, ln := range lines {
+		if !requested[ln.OrderLineID] || ln.ProductID == "" || seen[ln.ProductID] {
+			continue
+		}
+		seen[ln.ProductID] = true
+		out = append(out, ln.ProductID)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // guardedReturn is the per-line guard result every return body consumes: the derived refund lines
@@ -1227,6 +1306,16 @@ func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (retu
 // rail offsets invoices, so only it takes these locks: a cash or card return touches an invoice by its
 // foreign key share alone, and a stronger lock there would queue it against a multi invoice reversal
 // that draws the payments counter first (lockorder_pos_return_test.go).
+//
+// A cash or card return (owedOnly) that will take ANY of these rows draws the payments counter first,
+// inside this helper and before the locks: its rail writes a refund payment, which draws the counter,
+// and the payments module's one money lock order is counter first, invoices second, so holding an
+// invoice row while waiting on the counter closed the cycle the Opus review's P2-4 and the delta
+// reviews' P1 found on the two return paths. The draw is gated on the rows existing because the one
+// counter row serialises every payments writer in the company: a return on a fully paid sale with no
+// deposit document locks no invoice and never needs the counter, so it must not hold one for its
+// transaction's length (the delta reviews' P2), and the account credit rail (not owedOnly) writes no
+// payment row and draws no counter at all.
 func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []returnOrderCtx, owedOnly bool) error {
 	seen := map[string]bool{}
 	var ids []string
@@ -1252,6 +1341,11 @@ func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []ret
 		add(oc.InvoiceID)
 		for _, d := range docs {
 			add(d)
+		}
+	}
+	if owedOnly && len(ids) > 0 {
+		if err := s.store.LockPaymentsSequenceTx(ctx, tx); err != nil {
+			return err
 		}
 	}
 	sort.Strings(ids)

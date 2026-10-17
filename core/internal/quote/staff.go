@@ -15,6 +15,7 @@ package quote
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -113,6 +114,12 @@ type StaffService struct {
 	// decides it, and consumes it on the quote's own transaction). Nil
 	// fails closed: no request is filed and no approval is consumed.
 	floorRail FloorApprovalRail
+
+	// standardRate is the dealer's standard tax rate (builder.go's terms write stamps the tax at
+	// it). Nil keeps the system_settings figure the terms write has always read.
+	standardRate StandardRateReader
+	// taxWords is the dealer's tax word (platform/taxwords); nil is the Ontario dealer's "HST".
+	taxWords taxwords.Source
 
 	// invoicer and payer are the QD-5 money door's seams (order_payment.go); nil fails the door closed.
 	invoicer OrderInvoicer
@@ -302,10 +309,22 @@ type StaffQuoteView struct {
 	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, branch
 	// row over dealer default, so staff see the words the customer sees.
 	QuantityNotice string `json:"quantity_notice"`
+	// Declined is why and how a staff member closed this quote as lost for the customer: the reason from
+	// the closed list, the channel the customer said no by, and the note. Absent unless a staff decline is
+	// on record; it is read from the decision's audit row, the only place the decline is kept.
+	Declined *QuoteDeclineRecord `json:"declined,omitempty"`
 
 	// validUntil is the parsed form the service uses to compute Expired/EditableFields. Unexported -
 	// it never crosses the wire.
 	validUntil *time.Time
+}
+
+// QuoteDeclineRecord is the staff decline of a quote as the decision's audit row holds it.
+type QuoteDeclineRecord struct {
+	ReasonCode string    `json:"reason_code"`
+	Channel    string    `json:"channel"`
+	Note       string    `json:"note,omitempty"`
+	DeclinedAt time.Time `json:"declined_at"`
 }
 
 // Acceptance history sources.

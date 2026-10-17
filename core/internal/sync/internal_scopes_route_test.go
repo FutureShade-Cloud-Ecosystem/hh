@@ -34,7 +34,8 @@ func TestInternalScopesRouteTenancy(t *testing.T) {
 			t.Fatalf("register %s: %v", scope, err)
 		}
 	}
-	h, err := NewHandler(engine, nil)
+	staffDouble, portalStub := allWriters()
+	h, err := NewHandler(engine, staffDouble, portalStub, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -101,23 +102,38 @@ func TestInternalScopesRouteTenancy(t *testing.T) {
 		t.Fatalf("staff pull on price_matrix: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 
-	// The messaging trio answers the honest 501 in both directions:
-	// each scope is registry-declared (its confirmed policy rows read
-	// messages and acks server_wins, notify_prefs
-	// last_write_wins_by_field) but unwired, because the frozen schema
-	// gives those tables no org column (an org fence cannot be proven,
-	// and the GLOBAL channels cross orgs) and the two per-user tables
-	// composite keys with no uuid row id the engine's update and
-	// delete legs address, the lane's reported schema-shaped stop. A
-	// fabricated empty feed would be the lie these refusals refuse.
+	// The messaging scopes are WIRED stores now (House Messages core, 0385
+	// and internal/messaging/syncscope.go): the composition-level proof that
+	// the real server serves them is cmd/core's messaging_sync_comp_test;
+	// here the route half proves what the wiring closed, that a staff bearer
+	// reaches a wired store on all four (channels is pull-only: its POST
+	// meets the pull-only 400 before the store is consulted) and the tenant
+	// bearer meets the shared RBAC-403 family byte-identically across them.
+	// tracking_events stays the honest-unwired example: no module owns a
+	// table for it, so its GET answers the 501 a fabricated feed would lie
+	// about.
 	for _, scope := range []string{"messages", "acks", "notify_prefs"} {
-		if rec := do(http.MethodGet, "/api/v1/sync/"+scope, staff, nil,
-			map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusNotImplemented {
-			t.Fatalf("%s pull: %d %s, want the honest 501", scope, rec.Code, rec.Body.String())
+		if err := engine.RegisterScope(scope, fake); err != nil {
+			t.Fatalf("register %s: %v", scope, err)
 		}
-		if rec := do(http.MethodPost, "/api/v1/sync/"+scope, staff, []byte(`{"ops":[]}`),
-			map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusNotImplemented {
-			t.Fatalf("%s push: %d %s, want the honest 501", scope, rec.Code, rec.Body.String())
+	}
+	if err := engine.RegisterScope("channels", fake); err != nil {
+		t.Fatalf("register channels: %v", err)
+	}
+	for _, scope := range []string{"messages", "acks", "notify_prefs", "channels"} {
+		if rec := do(http.MethodGet, "/api/v1/sync/"+scope+"?since=0", staff, nil,
+			map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusOK {
+			t.Fatalf("%s pull: %d %s, want 200", scope, rec.Code, rec.Body.String())
 		}
+		if rec := do(http.MethodGet, "/api/v1/sync/"+scope, tenant, nil, nil); rec.Code != http.StatusForbidden {
+			t.Fatalf("tenant pull on %s: %d %s, want 403", scope, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := do(http.MethodPost, "/api/v1/sync/channels", staff, []byte(`{"ops":[]}`),
+		map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("channels push: %d %s, want the pull-only 400", rec.Code, rec.Body.String())
+	}
+	if rec := do(http.MethodGet, "/api/v1/sync/tracking_events", tenant, nil, nil); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("tracking_events pull: %d %s, want the honest 501", rec.Code, rec.Body.String())
 	}
 }

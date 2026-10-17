@@ -48,6 +48,9 @@ type approvalStore interface {
 	// HasApprovedOverride reports whether an APPROVED override exists for this
 	// requester + branch + policy (+ optional subject), closing the loop (H-2).
 	HasApprovedOverride(ctx context.Context, requestedBy, branchID, subjectRef string, policy PolicyType) (bool, error)
+	// HasUnusedApprovedOverride is the policy check's narrower question: an APPROVED margin override of the
+	// requester at the branch that no line write has used up yet (data->>'used' unset).
+	HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error)
 	// ListApproverCandidates returns the ACTIVE staff whose role could grant approval authority: the
 	// fan-out candidate pool ResolveApprovers filters via CanApprove (0075).
 	ListApproverCandidates(ctx context.Context) ([]StaffContext, error)
@@ -323,6 +326,17 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 	return s.store.HasApprovedOverride(ctx, requestedBy, branchID, subjectRef, policy)
 }
 
+// HasUnusedApprovedOverride reports whether the requester holds an APPROVED override for the branch and
+// policy that is still unused. A floor approval clears one line of one quote once (D3, ConsumeApprovedFloorTx),
+// so the advisory policy check counts only an unused one; HasApprovedOverride keeps its wider meaning for its
+// existing callers.
+func (s *Approvals) HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+	if requestedBy == "" || branchID == "" {
+		return false, nil
+	}
+	return s.store.HasUnusedApprovedOverride(ctx, requestedBy, branchID, policy)
+}
+
 // ListApprovals returns the requests the caller is allowed to see:
 // a GLOBAL user sees every branch; a scoped user sees only their granted branches.
 //
@@ -555,6 +569,24 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	if r.pool == nil {
 		return ApprovalRequest{}, errNoDB
 	}
+	return insertApproval(ctx, r.pool, req)
+}
+
+// CreateApprovalTx is CreateApproval on the caller's transaction, so a request commits or rolls back with the
+// row it is filed for (a parked journal's request, ruling 108).
+func (r *ApprovalRepository) CreateApprovalTx(ctx context.Context, tx pgx.Tx, req ApprovalRequest) (ApprovalRequest, error) {
+	if tx == nil {
+		return ApprovalRequest{}, errNoDB
+	}
+	return insertApproval(ctx, tx, req)
+}
+
+// approvalRowQuerier is the one method the insert needs, satisfied by the pool and by a transaction.
+type approvalRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func insertApproval(ctx context.Context, q approvalRowQuerier, req ApprovalRequest) (ApprovalRequest, error) {
 	var subject any
 	if req.SubjectRef != "" {
 		subject = req.SubjectRef
@@ -587,7 +619,7 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 		}
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
+	err := q.QueryRow(ctx, approvalsSeqCTE+`
 		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
 		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq))
 		RETURNING id::text, `+requesterRoleSQL("requested_by"),
@@ -636,14 +668,14 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 	             COALESCE(data->>'line_id',''),
-	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `
+	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `, requested_at
 	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
 		q += ` AND branch_id = ANY($2::uuid[])`
 		args = append(args, branches)
 	}
-	q += ` ORDER BY requested_at DESC`
+	q += ` ORDER BY requested_at DESC, id`
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -654,7 +686,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole, &a.RequestedAt); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
@@ -762,6 +794,63 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 		return false, fmt.Errorf("check approved override: %w", err)
 	}
 	return ok, nil
+}
+
+// HasUnusedApprovedOverride is the repository half: the same match as HasApprovedOverride without a subject,
+// narrowed to a request no line write has used up.
+func (r *ApprovalRepository) HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM permission_approval_requests
+			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = $3 AND status = 'APPROVED'
+			  AND deleted_at IS NULL
+			  AND (data->>'used') IS NULL
+		)`, requestedBy, branchID, string(policy)).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check unused approved override: %w", err)
+	}
+	return ok, nil
+}
+
+// JournalApprovalState says where a journal stands with its JE_OVER_THRESHOLD requests, given the amount the
+// journal carries now. Tombstoned requests are read on purpose: deleting a request must not free the journal
+// for the GL's own route. The id is compared as a uuid, so its letter case cannot hide a request. Precedence
+// when several requests exist: an APPROVED live request for this amount, then a PENDING one, then an
+// APPROVED one for another amount, then a REJECTED live one, then a tombstoned one, then none.
+func (r *ApprovalRepository) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (JEApprovalState, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var approvedHere, pending, approvedOther, rejected, deleted bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) = $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'PENDING'), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) <> $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'REJECTED'), false),
+		       COALESCE(bool_or(deleted_at IS NOT NULL), false)
+		FROM permission_approval_requests
+		WHERE policy_type = 'JE_OVER_THRESHOLD' AND lower(subject_ref) = $1::uuid::text`,
+		journalID, amountCents).Scan(&approvedHere, &pending, &approvedOther, &rejected, &deleted)
+	if err != nil {
+		return "", fmt.Errorf("check journal request state: %w", err)
+	}
+	switch {
+	case approvedHere:
+		return JEApprovalApproved, nil
+	case pending:
+		return JEApprovalPending, nil
+	case approvedOther:
+		return JEApprovalAmountDiffers, nil
+	case rejected:
+		return JEApprovalRejected, nil
+	case deleted:
+		return JEApprovalDeleted, nil
+	}
+	return JEApprovalNone, nil
 }
 
 // FloorRequestFor answers the caller's open quote floor request for one

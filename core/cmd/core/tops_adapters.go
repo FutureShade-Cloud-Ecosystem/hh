@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"time"
 
 	"log/slog"
@@ -25,8 +26,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -304,7 +307,115 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 		}
 		return pos.QuoteResult{}, err
 	}
-	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps, OnCreditCents: q.OnCreditCents}, nil
+	return pos.QuoteResult{
+		TaxCents: q.TaxCents, RateBps: q.RateBps, OnCreditCents: q.OnCreditCents,
+		ReasonCode: q.ReasonCode, Jurisdiction: q.Jurisdiction, StandardRateBps: q.StandardRateBps,
+	}, nil
+}
+
+// dealerRegionAdapter binds the tax engine's DealerRegionSource to the settings module's dealer
+// configuration: the one seam the dealer's tax jurisdiction is read through. It reads at every
+// assessment, uncached, so a configuration change is live at the next ring.
+type dealerRegionAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerRegionAdapter) TaxRegion(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.TaxRegion, err
+}
+
+// dealerCurrencyAdapter binds the card rails' currency sources (payment.DealerCurrencySource for the
+// POS rail, payments.CurrencySource for the portal rail) to the settings module's dealer
+// configuration. Both reads are uncached, so a change of currency is live at the next charge. The Tx
+// read rides the caller's open transaction: the pos Sale transaction holds a connection while it
+// charges, and a pool read there can deadlock a full pool.
+type dealerCurrencyAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerCurrencyAdapter) DealerCurrency(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.Currency, err
+}
+
+func (a dealerCurrencyAdapter) DealerCurrencyTx(ctx context.Context, tx pgx.Tx) (string, error) {
+	c, err := a.r.DealerConfigTx(ctx, tx)
+	return c.Currency, err
+}
+
+// newDealerCurrency builds the dealer currency source over the pool.
+func newDealerCurrency(pool *pgxpool.Pool) dealerCurrencyAdapter {
+	return dealerCurrencyAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
+// dealerZoneAdapter binds the services' houseday.Source to the settings module's dealer configuration:
+// the dealer's business day zone, read at every business day decision, uncached, so a change of zone
+// is live at the next decision. The settings reader already answers America/Toronto for an absent or
+// malformed zone, so a dealer with no configuration is the Ontario dealer exactly.
+type dealerZoneAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerZoneAdapter) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	c, err := a.r.DealerConfig(ctx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
+// BusinessZoneTx is BusinessZone on the caller's open transaction (the ledger files a journal to its
+// period inside the posting transaction, where a pool read could deadlock a full pool).
+func (a dealerZoneAdapter) BusinessZoneTx(ctx context.Context, tx pgx.Tx) (houseday.Zone, error) {
+	c, err := a.r.DealerConfigTx(ctx, tx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
+// newDealerZone builds the dealer zone source over the pool. Every composition that decides a
+// business day builds its own, so two dealers in one process never share a zone.
+func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
+	return dealerZoneAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
+// newInvoiceWriter builds an invoice writer over the pool filing its documents in the dealer's own
+// business day zone. Every composition that raises a billing document builds its writer here.
+func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
+	return billing.NewInvoiceWriter(pool).WithZone(newDealerZone(pool))
+
+}
+
+// dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
+// the country the address rules follow, read live at each customer write and each loaded item.
+type dealerCountryAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerCountryAdapter) DealerCountry(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.Country, err
+}
+
+// dealerTaxWordsAdapter binds platform/taxwords.Source to the same dealer configuration: the name of
+// the dealer's tax ("HST" for an Ontario dealer, "Sales tax" for every other jurisdiction), read live at
+// each use so a configuration change shows at the next receipt, quote, journal or printed invoice.
+type dealerTaxWordsAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerTaxWordsAdapter) TaxLabel(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	return taxwords.For(c.TaxRegion), nil
+}
+
+// newTaxWords builds the dealer's tax word source over the pool.
+func newTaxWords(pool *pgxpool.Pool) dealerTaxWordsAdapter {
+	return dealerTaxWordsAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
+// newTaxEngine builds a tax engine over the pool bound to the dealer's own jurisdiction. The engine
+// is stateless beyond its repository and its region source, so every composition that must assess a
+// tax builds its own, and two dealers in one process never share a jurisdiction.
+func newTaxEngine(pool *pgxpool.Pool) *tax.Service {
+	return tax.NewService(tax.NewRepository(pool)).
+		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)}).
+		WithZone(newDealerZone(pool))
 }
 
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
@@ -605,6 +716,10 @@ func (a w5aStockReserver) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sour
 	return a.svc.ReleaseBySourceTx(ctx, tx, sourceType, sourceRefID, status)
 }
 
+func (a w5aStockReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
+	return a.svc.LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
+}
+
 // w5aPickState satisfies order.PickStateReader over the W2/W3 tasks substrate.
 //
 // IT READS THE TABLE, NOT tasks.Service, and that is a considered choice with a stated reason: the
@@ -689,7 +804,7 @@ func w6aBranchScope(sc dashboard.Scope) any {
 //
 // dashboard.HouseDay owns the conversion, so the day boundary and the widget windows resolved beside
 // it cannot disagree.
-func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDay(sc.Now) }
+func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDayIn(sc.Zone, sc.Now) }
 
 // w6aCount builds a provider over a query that takes ONLY the branch scope and returns one bigint.
 func w6aCount(pool *pgxpool.Pool, sql string, hint func(int64) string) dashboard.MetricFunc {
@@ -1090,6 +1205,7 @@ func (a w6cWarrantyCreditIssuer) IssueCustomerCredit(ctx context.Context, in war
 type w6cCreditMemoPoster struct {
 	svc   *gl.Service
 	rules *gl.Repository
+	words taxwords.Source // the dealer's tax word for the tax leg's memo; nil is "HST"
 }
 
 func (a w6cCreditMemoPoster) PostCreditMemoJournal(ctx context.Context, in billing.CreditMemoJournal) (string, error) {
@@ -1101,7 +1217,8 @@ func (a w6cCreditMemoPoster) PostCreditMemoJournal(ctx context.Context, in billi
 	// module whose rule it is. This adapter does one thing: role → account code. (It used to do the
 	// swap too, and a mutation survived here because nothing can test a composition-root adapter.)
 	var lines []gl.ExternalLine
-	for _, leg := range in.ReversingLegs() {
+	word, _ := taxwords.Resolve(ctx, a.words) // a failed read memos the neutral "Tax"
+	for _, leg := range in.ReversingLegsFor(word) {
 		code := rules[leg.Role]
 		if code == "" {
 			// Refused, not guessed. A journal posted to an account nobody chose is worse than no

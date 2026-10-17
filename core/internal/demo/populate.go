@@ -10,7 +10,7 @@
 // writer of the demo_box row the demo boot guard reads, and it refuses
 // before any write unless the database is already a demo database in
 // shape: one org (hh-demo, which this populate itself provisions), no user
-// outside the migrations' planted set and the two role accounts this file
+// outside the migrations' planted set and the role accounts this file
 // defines, and no payment configuration but this file's own.
 //
 // IDEMPOTENCE, the demoseed_apply discipline: every insert carries an
@@ -29,9 +29,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -51,14 +56,15 @@ const demoBoxMarker = "hh-demo-populate-v1"
 // carries any other.
 const (
 	demoOrgSlug = "hh-demo"
-	demoOrgName = "Hardscape House (demo)"
+	demoOrgName = "Gable Landscape Supply"
 )
 
-// The two role accounts the demo sign-in mints for (the Counter Till's
-// pair, D49). The ids and the platform ids are pinned literals in code:
-// they are part of the contract the demo module's flow table codes
-// against, so a tester's "Sales" tap resolves this row, at this org, with
-// this grant, and nothing else on the box.
+// The role accounts the demo sign-in mints for (the Counter Till's
+// pair, D49, Manager Home's yard manager, and the roles the roadmap
+// added one reviewed row at a time). The ids and the platform ids are
+// pinned literals in code: they are part of the contract the demo
+// module's flow table codes against, so a tester's "Sales" tap resolves
+// this row, at this org, with this grant, and nothing else on the box.
 const (
 	salesUserID      = "de110000-0000-4000-9000-000000000001"
 	salesPlatformID  = "de110000-0000-4000-9000-000000000001"
@@ -70,11 +76,101 @@ const (
 	managerEmail       = "sales.manager@hh-demo.invalid"
 	managerDisplayName = "Sales manager (demo)"
 
-	// The roles behind the two accounts, resolved by code against the
+	// The yard manager, Manager Home's first per-role landing (roadmap 2.3):
+	// its needs-you queue counts the open shortages the demoseed plants at
+	// Trenton, the one branch every demo grant reaches.
+	yardMgrUserID      = "de110000-0000-4000-9000-000000000003"
+	yardMgrPlatformID  = "de110000-0000-4000-9000-000000000003"
+	yardMgrEmail       = "yard.manager@hh-demo.invalid"
+	yardMgrDisplayName = "Yard manager (demo)"
+
+	// Payables and Receivables, the third role account (global, tier two):
+	// the flow table's row for the receivables desk, minted by the roles
+	// roadmap's first increment (PR 300).
+	payRecUserID      = "de110000-0000-4000-9000-0000000000a1"
+	payRecPlatformID  = "de110000-0000-4000-9000-0000000000a1"
+	payRecEmail       = "payables.receivables@hh-demo.invalid"
+	payRecDisplayName = "Payables and Receivables (demo)"
+
+	// The procurement manager's account, the fourth role login (branch,
+	// tier two): the Buying and Stock row the roles roadmap added next
+	// (PR 303). Same id block as the flow table's row, reconciled by copy.
+	buyerUserID      = "de64b000-0000-4000-9000-000000000001"
+	buyerPlatformID  = "de64b000-0000-4000-9000-000000000001"
+	buyerEmail       = "procurement.manager@hh-demo.invalid"
+	buyerDisplayName = "Procurement manager (demo)"
+
+	// The Financial Controller, the fifth role account (global, tier one):
+	// the flow table's row for the approvals queue and the general ledger.
+	controllerUserID      = "de110000-0000-4000-9000-0000000000c1"
+	controllerPlatformID  = "de110000-0000-4000-9000-0000000000c1"
+	controllerEmail       = "financial.controller@hh-demo.invalid"
+	controllerDisplayName = "Financial controller (demo)"
+
+	// The General Manager (global, tier one): the leadership login the coming
+	// roles cycle makes live. The cycle's ids sit in their own block.
+	gmUserID      = "de5b2000-0000-4000-9000-000000000001"
+	gmPlatformID  = "de5b2000-0000-4000-9000-000000000001"
+	gmEmail       = "general.manager@hh-demo.invalid"
+	gmDisplayName = "General manager (demo)"
+
+	// HR (global, tier one): the coming roles cycle's second login, whose
+	// only cells above None are House Messages and Dealer Admin.
+	hrUserID      = "de5b2000-0000-4000-9000-000000000002"
+	hrPlatformID  = "de5b2000-0000-4000-9000-000000000002"
+	hrEmail       = "hr@hh-demo.invalid"
+	hrDisplayName = "HR (demo)"
+
+	// The Branch Manager (branch, tier two): the coming roles cycle's third
+	// login, working the one demo branch.
+	bmUserID      = "de5b2000-0000-4000-9000-000000000003"
+	bmPlatformID  = "de5b2000-0000-4000-9000-000000000003"
+	bmEmail       = "branch.manager@hh-demo.invalid"
+	bmDisplayName = "Branch manager (demo)"
+
+	// Outside Sales (branch, tier three): the coming roles cycle's last login,
+	// the field seller who works quotes at the one demo branch.
+	osUserID      = "de5b2000-0000-4000-9000-000000000005"
+	osPlatformID  = "de5b2000-0000-4000-9000-000000000005"
+	osEmail       = "outside.sales@hh-demo.invalid"
+	osDisplayName = "Outside sales (demo)"
+
+	// The roles behind the accounts, resolved by code against the
 	// roles catalog 0015 plants. staff_role_grant rows derive from these
 	// through identity.Populate, branch-scoped to the one branch below.
-	salesRoleCode   = "INSIDE_SALES"
-	managerRoleCode = "SALES_MANAGER"
+	salesRoleCode      = "INSIDE_SALES"
+	managerRoleCode    = "SALES_MANAGER"
+	yardMgrRoleCode    = "YARD_MANAGER"
+	payRecRoleCode     = "PAYABLES_RECEIVABLES"
+	buyerRoleCode      = "PROCUREMENT_MANAGER"
+	controllerRoleCode = "FINANCIAL_CONTROLLER"
+	gmRoleCode         = "GENERAL_MANAGER"
+	hrRoleCode         = "HR"
+	bmRoleCode         = "BRANCH_MANAGER"
+	osRoleCode         = "OUTSIDE_SALES"
+
+	// The two personas migration 0200 plants, named by the same literals the
+	// flow table carries: the yard team's login and the driver's. The rows
+	// are the migration's, not this populate's (the ids and emails are fixed
+	// by 0200, and the demoseed resolves the personas by these emails), so
+	// the populate verifies them, links their platform ids through the same
+	// directory as the till's accounts, and converges their branch grants;
+	// it never creates them. The display names are the renames this file's
+	// plantedDisplayNames list leaves on the rows.
+	dispatchUserID      = "d0200000-0000-4000-9000-000000000001"
+	dispatchEmail       = "dispatch.demo@" + demoDomain
+	dispatchDisplayName = "Dispatch persona (demo)"
+	dispatchRoleCode    = "LOGISTICS_MANAGER"
+
+	yardUserID      = "d0200000-0000-4000-9000-000000000002"
+	yardEmail       = "yard.demo@" + demoDomain
+	yardDisplayName = "Yard persona (demo)"
+	yardRoleCode    = "YARD_TEAM"
+
+	driverUserID      = "d0200000-0000-4000-9000-000000000003"
+	driverEmail       = "driver.demo@" + demoDomain
+	driverDisplayName = "Driver persona (demo)"
+	driverRoleCode    = "DRIVERS"
 
 	// Trenton, the till's branch (migration 0003's root branch; 0060
 	// cites the same id). Every grant the demo world carries points here.
@@ -94,7 +190,7 @@ const (
 	demoMerchantID     = "DEMO-MERCHANT-0001"
 	demoCardCredential = "demo-not-a-key-0001"
 	demoProcessor      = "run_payments"
-	demoCurrency       = "CAD"
+	demoCurrency       = "USD" // the demo dealer trades in US dollars (item 3b slice 2)
 )
 
 // demoPaymentConfigID is the populate's payment configuration row's fixed
@@ -131,6 +227,7 @@ var plantedUserIDs = []string{
 // stable handle it has, pinned here in code beside the ids.
 var plantedUserEmails = []string{
 	"scrubbed-0009@example.invalid",
+	"uat.inside.sales@gablelandscape.example",
 }
 
 // deactivatedUserIDs is the pair of planted rows whose emails sit on a
@@ -145,12 +242,35 @@ var deactivatedUserIDs = map[string]bool{
 	"d7000000-0000-4000-9000-0000000000da": true,
 }
 
+// demoPersonas is the one branch each persona works on the demo box.
+// Migration 0200 grants every BRANCH location so a walkthrough can walk
+// both yards; the demo world narrows each persona to the branch its seeded
+// work sits at, so its login reaches its own branch and nothing more: the
+// yard team's queue and claimed picks are the roadmap's Trenton story, and
+// the driver's seeded driver D1 and its runs are Kingston's, and the
+// dispatch persona's is Trenton, the main yard (Point Loma once the demo
+// world renames it) whose Truck 03 and 04, open runs and two unloaded
+// delivery orders are the load board's material.
+var demoPersonas = []struct{ userID, email, roleCode, branchID string }{
+	{yardUserID, yardEmail, yardRoleCode, trentonBranchID},
+	{driverUserID, driverEmail, driverRoleCode, kingstonBranchID},
+	{dispatchUserID, dispatchEmail, dispatchRoleCode, trentonBranchID},
+}
+
 // plantedEmailMoves is where the two real-domain addresses go: the
 // migration numbers that planted them and the scrubbed local part each
 // takes on the reserved demo domain.
 var plantedEmailMoves = []struct{ id, email string }{
 	{"d7000000-0000-4000-9000-000000000010", "platform.admin@hh-demo.invalid"},
 	{"d7000000-0000-4000-9000-0000000000da", "demo.teammate@hh-demo.invalid"},
+	// The three tour personas 0200 plants carry the first dealer's trading
+	// name in the domain; the demo dealer is Gable Landscape Supply, so the
+	// addresses move to the reserved demo domain too. The demoseed finds
+	// them under either form (its persona aliases), so a world seeded before
+	// the move and one seeded after it resolve the same three logins.
+	{dispatchUserID, dispatchEmail},
+	{yardUserID, yardEmail},
+	{driverUserID, driverEmail},
 }
 
 // plantedDisplayNames replaces every planted row's display name with an
@@ -162,10 +282,10 @@ var plantedEmailMoves = []struct{ id, email string }{
 var plantedDisplayNames = []struct{ id, name string }{
 	{"d7000000-0000-4000-9000-000000000010", "Platform admin (demo)"},
 	{"d7000000-0000-4000-9000-0000000000da", "Demo teammate (demo)"},
-	{"40000061-0000-4000-9000-000000000001", "Homework account one (demo)"},
-	{"40000061-0000-4000-9000-000000000002", "Homework account two (demo)"},
-	{"40000061-0000-4000-9000-000000000003", "Homework account three (demo)"},
-	{"40000061-0000-4000-9000-000000000004", "Homework account four (demo)"},
+	{"40000061-0000-4000-9000-000000000001", "General Manager (demo)"},
+	{"40000061-0000-4000-9000-000000000002", "Inside Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000003", "Counter Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000004", "Branch Manager (demo)"},
 	{"d0200000-0000-4000-9000-000000000001", "Dispatch persona (demo)"},
 	{"d0200000-0000-4000-9000-000000000002", "Yard persona (demo)"},
 	{"d0200000-0000-4000-9000-000000000003", "Driver persona (demo)"},
@@ -174,7 +294,7 @@ var plantedDisplayNames = []struct{ id, name string }{
 // plantedDisplayNamesByEmail renames the one planted row known by email
 // rather than id (0077's, whose id the database minted).
 var plantedDisplayNamesByEmail = []struct{ email, name string }{
-	{"scrubbed-0009@example.invalid", "Counter UAT account (demo)"},
+	{"uat.inside.sales@gablelandscape.example", "UAT Inside Sales (demo)"},
 }
 
 // Options is RunPopulate's input. Getenv is the environment reader (the
@@ -196,6 +316,8 @@ type Report struct {
 	UsersCreated         int
 	UserRolesCreated     int
 	BranchGrantsCreated  int
+	PersonasConverged    int
+	PersonaGrantsRemoved int
 	DisplayNamesRenamed  int
 	DealerNamesReplaced  int
 	UsersDeactivated     int
@@ -205,13 +327,36 @@ type Report struct {
 	StaffGrantsInserted  int64
 	PaymentConfigCreated int
 	DemoBoxCreated       bool
+	// The contractor world (the Pro apps' sign in): Summit Ridge Builders'
+	// customers row, its five portal users and its three job sites.
+	TenantAccountsCreated int
+	PortalUsersCreated    int
+	TenantJobsCreated     int
+	// The persona inboxes (House Messages): memberships materialized for the
+	// persona roles and rep DM channels ensured for the sales floor, the
+	// messaging module's own seeding keyed by role.
+	PersonaMemberships int
+	PersonaRepChannels int
+	// The sign in personas (state note section 5): the users rows, the
+	// legacy role rows and branch grants, and the staff grants keyed by the
+	// namespaced subject persona:<id>.
+	SignInPersonasCreated int
+	SignInPersonaRoles    int
+	SignInPersonaBranches int
+	SignInPersonaGrants   int
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
-// the two demo role accounts and nothing else. identity.Populate's linkage
-// pass counts every other row as unmatched and leaves it unlinked, never
-// guessed, so the migration-planted rows keep no platform identity on the
-// demo box and derive no staff grants.
+// the demo role accounts this file creates (Manager Home's yard manager
+// among them), the two personas migration 0200 plants, the Financial
+// Controller the controller lane adds and the Procurement Manager the
+// procurement lane adds, and nothing else.
+// identity.Populate's linkage pass counts every other row as unmatched and
+// leaves it unlinked, never guessed, so the remaining migration-planted
+// rows keep no platform identity on the demo box and derive no staff grants.
+// The personas' ids are their 0200 users row ids, the same convention the
+// till's accounts follow (the platform id IS the row id), so the mint's
+// subject names the row the flow table carries.
 type staticDirectory map[string]string
 
 func (d staticDirectory) PlatformUserByEmail(_ context.Context, email string) (string, bool, error) {
@@ -288,7 +433,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-	// The two role accounts. Inserted first so identity.Populate's stamping
+	// The role accounts. Inserted first so identity.Populate's stamping
 	// pass reaches them in the same run.
 	usersCreated, err := insertRoleAccounts(ctx, tx)
 	report.UsersCreated = usersCreated
@@ -298,6 +443,19 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	rolesCreated, grantsCreated, err := insertRoleAccountAccess(ctx, tx)
 	report.UserRolesCreated = rolesCreated
 	report.BranchGrantsCreated = grantsCreated
+	if err != nil {
+		return report, err
+	}
+	// The sign in personas: users rows and their legacy role and branch
+	// rows, before identity.Populate's linkage pass so it links them too.
+	personasCreated, err := insertPersonaAccounts(ctx, tx)
+	report.SignInPersonasCreated = personasCreated
+	if err != nil {
+		return report, err
+	}
+	personaRoles, personaBranches, err := insertPersonaAccess(ctx, tx)
+	report.SignInPersonaRoles = personaRoles
+	report.SignInPersonaBranches = personaBranches
 	if err != nil {
 		return report, err
 	}
@@ -311,6 +469,17 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	report.UsersDeactivated = deactivated
 	report.EmailsMoved = moved
 	report.CredentialsCleared = cleared
+	if err != nil {
+		return report, err
+	}
+
+	// The personas: verified against 0200's plant, then converged onto the
+	// one branch each works, BEFORE the identity program derives grants, so
+	// the derived grant and the caller's branch reach are the converged
+	// world's.
+	converged, removed, err := convergePersonas(ctx, tx, now)
+	report.PersonasConverged = converged
+	report.PersonaGrantsRemoved = removed
 	if err != nil {
 		return report, err
 	}
@@ -332,20 +501,51 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-	// The org, the org scope, the platform links for the two role accounts
+	// The org, the org scope, the platform links for the role accounts
 	// and the staff grants that derive from them, all through the identity
 	// program itself, so the demo world is provisioned exactly the way a
 	// real dealer's is.
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
-		OrgSlug:   demoOrgSlug,
-		OrgName:   demoOrgName,
-		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID},
+		OrgSlug: demoOrgSlug,
+		OrgName: demoOrgName,
+		Directory: staticDirectory{
+			salesEmail:      salesPlatformID,
+			managerEmail:    managerPlatformID,
+			yardMgrEmail:    yardMgrPlatformID,
+			yardEmail:       yardUserID,
+			driverEmail:     driverUserID,
+			dispatchEmail:   dispatchUserID,
+			payRecEmail:     payRecPlatformID,
+			buyerEmail:      buyerPlatformID,
+			controllerEmail: controllerPlatformID,
+			gmEmail:         gmPlatformID,
+			hrEmail:         hrPlatformID,
+			bmEmail:         bmPlatformID,
+			osEmail:         osPlatformID,
+		}.withPersonas(),
 	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
 	}
 	report.OrgInserted = pop.OrgInserted
 	report.StaffGrantsInserted = pop.Grants.Inserted
+
+	// The personas' staff grants, keyed by the namespaced subject, written
+	// through the identity module's own seam.
+	personaGrants, err := writePersonaGrants(ctx, tx, pop.OrgID)
+	report.SignInPersonaGrants = personaGrants
+	if err != nil {
+		return report, err
+	}
+
+	// The contractor world, after the org anchor exists: Summit Ridge
+	// Builders, its five portal users and its three jobs, written through
+	// the owning modules' seams so the table fence has nothing to allow.
+	tenantAccounts, portalUsers, tenantJobs, err := writeTenantWorld(ctx, tx, pop.OrgID)
+	report.TenantAccountsCreated, report.PortalUsersCreated, report.TenantJobsCreated = tenantAccounts, portalUsers, tenantJobs
+	if err != nil {
+		return report, err
+	}
 
 	// REFUSAL 6 belongs beside the write it guards: exactly one payment
 	// configuration, this populate's own. A row any other run or hand put
@@ -354,6 +554,12 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	report.PaymentConfigCreated = payCreated
 	if err != nil {
 		return report, err
+	}
+	// The rail's row says demoCurrency, and the card rail refuses a charge whose row disagrees with
+	// the dealer's currency, so the dealer's own currency is written beside it, through the settings
+	// module's seam. The build's seed writes the whole configuration after this.
+	if err := settings.WriteDealerCurrencyTx(ctx, tx, demoCurrency); err != nil {
+		return report, fmt.Errorf("demo-populate: dealer currency: %w", err)
 	}
 
 	// The demo_box row: the one-row table only this populate creates,
@@ -369,11 +575,31 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, fmt.Errorf("demo-populate: commit: %w", err)
 	}
 
+	// The personas' House Messages inboxes, seeded BY ROLE after the
+	// transactional world commits (the seeding's every statement converges
+	// on its own rows, so it needs no share of the all-or-nothing
+	// transaction above): every persona role's derived membership in its
+	// branch's rooms, and the sales floor's rep DM channels, the path a yard
+	// short pick's notice reaches the order's rep through. Keyed by role, so
+	// a persona whose rows land on a later branch gets its rooms the next
+	// time this populate runs.
+	seedPool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona seed connect: %w", err)
+	}
+	seeded, err := messaging.SeedPersonaInboxes(ctx, seedPool)
+	seedPool.Close()
+	report.PersonaMemberships = seeded.MembershipsSynced
+	report.PersonaRepChannels = seeded.RepChannelsSeeded
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona inboxes: %w", err)
+	}
+
 	writeReport(opt.Out, report)
 	return report, nil
 }
 
-// insertRoleAccounts writes the two demo role accounts, idempotently. The
+// insertRoleAccounts writes the demo role accounts, idempotently. The
 // rows carry no password hash (the core has no password route; the demo
 // sign-in mints its sessions from the flow table, never from a secret) and
 // no platform id yet: the platform id arrives through identity.Populate's
@@ -384,6 +610,14 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 	for _, u := range []struct{ id, email, name string }{
 		{salesUserID, salesEmail, salesDisplayName},
 		{managerUserID, managerEmail, managerDisplayName},
+		{yardMgrUserID, yardMgrEmail, yardMgrDisplayName},
+		{payRecUserID, payRecEmail, payRecDisplayName},
+		{buyerUserID, buyerEmail, buyerDisplayName},
+		{controllerUserID, controllerEmail, controllerDisplayName},
+		{gmUserID, gmEmail, gmDisplayName},
+		{hrUserID, hrEmail, hrDisplayName},
+		{bmUserID, bmEmail, bmDisplayName},
+		{osUserID, osEmail, osDisplayName},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO users (id, email, display_name, status)
@@ -410,6 +644,14 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{yardMgrUserID, yardMgrRoleCode},
+		{payRecUserID, payRecRoleCode},
+		{buyerUserID, buyerRoleCode},
+		{controllerUserID, controllerRoleCode},
+		{gmUserID, gmRoleCode},
+		{hrUserID, hrRoleCode},
+		{bmUserID, bmRoleCode},
+		{osUserID, osRoleCode},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id)
@@ -422,7 +664,13 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
-	for _, userID := range []string{salesUserID, managerUserID} {
+	// Payables and Receivables and the Financial Controller are global roles,
+	// so the staff grants derived for them carry no branch and their reach
+	// is every branch; the Trenton rows below are inert for them (reach
+	// follows the role's scope, never user_branch_grants) and are written
+	// only so the accounts have the same shape as the others. The buyer is
+	// branch scoped, so its Trenton row is its real grant.
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID, bmUserID, osUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -439,6 +687,14 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{yardMgrUserID, yardMgrRoleCode},
+		{payRecUserID, payRecRoleCode},
+		{buyerUserID, buyerRoleCode},
+		{controllerUserID, controllerRoleCode},
+		{gmUserID, gmRoleCode},
+		{hrUserID, hrRoleCode},
+		{bmUserID, bmRoleCode},
+		{osUserID, osRoleCode},
 	} {
 		var n int
 		if err := tx.QueryRow(ctx, `
@@ -452,7 +708,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID, bmUserID, osUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants
@@ -465,6 +721,65 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 	}
 	return roles, grants, nil
+}
+
+// convergePersonas verifies each persona's planted role and narrows its
+// branch grants onto the one branch it works, on the demo database only.
+// The verify half refuses before any write: a persona the flow table mints
+// whose role is missing would be a login that reaches nothing, and that is
+// a refusal, not a world. (The account-lifetime half is not this pass's to
+// check: the row is 0200's planted ACTIVE row, and the mint itself refuses
+// a non-ACTIVE account before any session exists, so the door that matters
+// already fails closed.) The converge half tombstones every live grant
+// outside the persona's branch (0200 plants every BRANCH location) and
+// heals a tombstone at its own, each guarded so a re-run writes nothing.
+func convergePersonas(ctx context.Context, tx pgx.Tx, now time.Time) (converged, removed int, err error) {
+	for _, p := range demoPersonas {
+		var roles int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_roles ur
+			  JOIN roles r ON r.id = ur.role_id
+			 WHERE ur.user_id = $1::uuid AND r.code = $2 AND ur.deleted_at IS NULL`,
+			p.userID, p.roleCode).Scan(&roles); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona role verify: %w", err)
+		}
+		if roles == 0 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds no live %s row, its login would reach nothing", p.email, p.roleCode)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE user_branch_grants SET deleted_at = $3
+			 WHERE user_id = $1::uuid AND deleted_at IS NULL AND branch_id <> $2::uuid`,
+			p.userID, p.branchID, now)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grants: %w", err)
+		}
+		removed += int(tag.RowsAffected())
+		tag, err = tx.Exec(ctx, `
+			INSERT INTO user_branch_grants (user_id, branch_id)
+			SELECT $1::uuid, l.id FROM locations l WHERE l.id = $2::uuid
+			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+			WHERE user_branch_grants.deleted_at IS NOT NULL`,
+			p.userID, p.branchID)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grant heal: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			converged++
+		}
+		// The verify half, whatever this run wrote: exactly one live grant,
+		// at the persona's own branch.
+		var live, atOwn int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE branch_id = $2::uuid)
+			  FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
+			p.userID, p.branchID).Scan(&live, &atOwn); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: persona branch grant verify: %w", err)
+		}
+		if live != 1 || atOwn != 1 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds %d live branch grant(s) (%d at its own), the demo world works one branch", p.email, live, atOwn)
+		}
+	}
+	return converged, removed, nil
 }
 
 // scrubPlantedUsers rewrites the planted rows on the demo database only:
@@ -531,6 +846,40 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 	return renamed, deactivated, moved, cleared, nil
 }
 
+// ConvergeDealerBranches moves the two BRANCH rows onto the demo dealer: code,
+// display name and address. Each statement is guarded on the values it would
+// write, so a re-run matches nothing and the count is only what this run
+// changed. It runs inside the caller's transaction.
+func ConvergeDealerBranches(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
+	for _, b := range DealerBranches {
+		tag, err := tx.Exec(ctx,
+			`UPDATE locations
+			    SET code = $2, name = $3, updated_at = now()
+			  WHERE id = $1::uuid AND (code::text IS DISTINCT FROM $2 OR name IS DISTINCT FROM $3)`,
+			b.ID, b.Code, b.Name)
+		if err != nil {
+			return 0, fmt.Errorf("demo dealer branch %s: %w", b.Code, err)
+		}
+		replaced += int(tag.RowsAffected())
+		tag, err = tx.Exec(ctx,
+			`UPDATE locations
+			    SET address = jsonb_build_object(
+			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
+			          'postal', $5::text, 'country', 'US'),
+			        updated_at = now()
+			  WHERE id = $1::uuid
+			    AND address IS DISTINCT FROM jsonb_build_object(
+			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
+			          'postal', $5::text, 'country', 'US')`,
+			b.ID, b.Line1, b.City, b.Province, b.Postal)
+		if err != nil {
+			return 0, fmt.Errorf("demo dealer branch %s address: %w", b.Code, err)
+		}
+		replaced += int(tag.RowsAffected())
+	}
+	return replaced, nil
+}
+
 // renameDemoDealer converges the demo database's dealer display words onto
 // the invented trading name. The org anchor's name is already the identity
 // program's to converge (ProvisionOrgAnchor's guarded upsert writes the
@@ -545,38 +894,9 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 // guarded on the value it would write, so a re-run writes nothing, and the
 // count is only what this run changed.
 func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
-	for _, branch := range []struct{ id, name string }{
-		{trentonBranchID, "Hardscape House (demo), Trenton"},
-		{kingstonBranchID, "Hardscape House (demo), Kingston"},
-	} {
-		tag, err := tx.Exec(ctx,
-			`UPDATE locations SET name = $2, updated_at = now()
-			  WHERE id = $1::uuid AND name IS DISTINCT FROM $2`,
-			branch.id, branch.name)
-		if err != nil {
-			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
-		}
-		replaced += int(tag.RowsAffected())
-	}
-	// The branch address lines the receipt's letterhead prints (printing's
-	// ReadBranchHeader serves locations.address verbatim): migration 0003
-	// planted each line1 as a note to the first dealer, with the real trading
-	// name in it, and the counter receipt is the document that prints that
-	// address to a customer, so the demo database converges the two lines onto
-	// invented ones, the same guarded, demo-only discipline the display names
-	// above follow. Real deployments keep their own addresses.
-	for _, branch := range []struct{ id, line1 string }{
-		{trentonBranchID, "12 Yard Gate Road"},
-		{kingstonBranchID, "9 Yard Gate Road"},
-	} {
-		tag, err := tx.Exec(ctx,
-			`UPDATE locations SET address = jsonb_set(address, '{line1}', to_jsonb($2::text)), updated_at = now()
-			  WHERE id = $1::uuid AND address->>'line1' IS DISTINCT FROM $2`,
-			branch.id, branch.line1)
-		if err != nil {
-			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
-		}
-		replaced += int(tag.RowsAffected())
+	replaced, err = ConvergeDealerBranches(ctx, tx)
+	if err != nil {
+		return 0, err
 	}
 	// The settings row the receipt's letterhead reads, converged the way
 	// the identity program converges the org anchor: an upsert whose
@@ -645,6 +965,60 @@ func writeDemoBox(ctx context.Context, tx pgx.Tx, now time.Time) (bool, error) {
 	return tag.RowsAffected() == 1, nil
 }
 
+// writeTenantWorld creates the demo's one contractor account, Summit Ridge
+// Builders (GLS-TENANT-r3): the customers row under the flow table's pinned
+// id (top pricing tier is the customer type CONTRACTOR on account terms),
+// one portal user per contractor flow with the platform identity and the
+// tenant already set, and the three job sites. Every write goes through the
+// module that owns the table (customer, identity, portal) and converges on
+// its own rows, so a second run writes nothing. The portal rows are keyed
+// by the flow table: the same id is the row id, the platform user id and the
+// token subject.
+func writeTenantWorld(ctx context.Context, tx pgx.Tx, orgID string) (accounts, users, jobs int, err error) {
+	made, err := customer.EnsureAccount(ctx, tx, customer.PinnedAccount{
+		ID:               flows.TenantAccountID,
+		AccountNo:        flows.TenantAccountNo,
+		Name:             flows.TenantAccountName,
+		CustomerType:     "CONTRACTOR",
+		HomeBranchID:     trentonBranchID,
+		OrgID:            orgID,
+		PaymentTermsDays: 30,
+		CreditLimitCents: 5_000_000,
+	})
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("demo-populate: contractor account: %w", err)
+	}
+	if made {
+		accounts = 1
+	}
+	var seeds []identity.PortalUserSeed
+	for _, a := range flows.All() {
+		if a.Class() != flows.ClassTenant {
+			continue
+		}
+		seeds = append(seeds, identity.PortalUserSeed{
+			ID: a.PlatformUserID, CustomerID: a.Tenant, Email: a.Email,
+			Name: a.DisplayName, Role: a.Role, PlatformUserID: a.PlatformUserID,
+		})
+	}
+	users, err = identity.ProvisionPortalUsers(ctx, tx, seeds)
+	if err != nil {
+		return accounts, users, 0, fmt.Errorf("demo-populate: contractor portal users: %w", err)
+	}
+	for _, j := range flows.TenantJobs() {
+		made, err := portal.EnsureProject(ctx, tx, portal.PinnedProject{
+			ID: j.ID, CustomerID: flows.TenantAccountID, Name: j.Name, JobAddress: j.Address,
+		})
+		if err != nil {
+			return accounts, users, jobs, fmt.Errorf("demo-populate: contractor job: %w", err)
+		}
+		if made {
+			jobs++
+		}
+	}
+	return accounts, users, jobs, nil
+}
+
 // writeReport prints what the run did, in the demoseed run report's
 // spirit: the clock, the counts, and the second-run line stated plainly.
 // Every figure counts what THIS RUN created or changed, never what the
@@ -655,13 +1029,20 @@ func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "  org              %s (inserted: %v)\n", demoOrgSlug, r.OrgInserted)
 	fmt.Fprintf(out, "  role accounts    %d created, %d role rows, %d branch grants at %s\n",
 		r.UsersCreated, r.UserRolesCreated, r.BranchGrantsCreated, trentonBranchID)
+	fmt.Fprintf(out, "  personas         %d converged, %d branch grants outside their own removed\n",
+		r.PersonasConverged, r.PersonaGrantsRemoved)
 	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated, %d addresses moved to %s, %d planted credentials cleared\n",
 		r.DisplayNamesRenamed, r.UsersDeactivated, r.EmailsMoved, demoDomain, r.CredentialsCleared)
+	fmt.Fprintf(out, "  sign in personas %d created, %d role rows, %d branch grants, %d staff grants\n",
+		r.SignInPersonasCreated, r.SignInPersonaRoles, r.SignInPersonaBranches, r.SignInPersonaGrants)
 	fmt.Fprintf(out, "  dealer names     %d replaced with the invented trading name\n", r.DealerNamesReplaced)
 	fmt.Fprintf(out, "  staff grants     %d inserted\n", r.StaffGrantsInserted)
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
+	fmt.Fprintf(out, "  contractor world %d account, %d portal users, %d jobs (%s)\n",
+		r.TenantAccountsCreated, r.PortalUsersCreated, r.TenantJobsCreated, flows.TenantAccountName)
 	fmt.Fprintf(out, "  demo_box         row created: %v\n", r.DemoBoxCreated)
+	fmt.Fprintf(out, "  persona inboxes  %d memberships, %d rep channels\n", r.PersonaMemberships, r.PersonaRepChannels)
 	if r.createdNothing() {
 		fmt.Fprintln(out, "  the demo world was already complete, this run wrote nothing.")
 	}
@@ -669,8 +1050,141 @@ func writeReport(out io.Writer, r Report) {
 
 func (r Report) createdNothing() bool {
 	return r.UsersCreated == 0 && r.UserRolesCreated == 0 && r.BranchGrantsCreated == 0 &&
+		r.PersonasConverged == 0 && r.PersonaGrantsRemoved == 0 &&
 		r.DisplayNamesRenamed == 0 && r.DealerNamesReplaced == 0 &&
 		r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
 		r.CredentialsCleared == 0 &&
-		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0
+		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0 &&
+		r.SignInPersonasCreated == 0 && r.SignInPersonaRoles == 0 && r.SignInPersonaBranches == 0 && r.SignInPersonaGrants == 0 &&
+		r.TenantAccountsCreated == 0 && r.PortalUsersCreated == 0 && r.TenantJobsCreated == 0
+}
+
+// withPersonas adds the enterable personas' addresses to the directory, so
+// the linkage pass stamps users.platform_user_id with the namespaced
+// subject persona:<id>. Personas are not FB Console users: the subject is
+// the build's own, and no Console id can equal it.
+func (d staticDirectory) withPersonas() staticDirectory {
+	for _, p := range flows.Personas() {
+		if !p.Contractor {
+			d[strings.ToLower(p.Email)] = p.Subject()
+		}
+	}
+	return d
+}
+
+// personaBranch is the one branch a persona works: Trenton, the demo
+// world's branch, except the driver, whose seeded work is Kingston's like
+// the older driver persona's.
+func personaBranch(p flows.Persona) string {
+	if p.ID == "driver" {
+		return kingstonBranchID
+	}
+	return trentonBranchID
+}
+
+// insertPersonaAccounts writes the users rows of the enterable personas,
+// idempotently. The contractor personas have no row until the Pro cycle. The
+// rows carry no password hash and no platform id yet: identity.Populate's
+// linkage pass stamps the subject. The old demo+<role> style Console
+// accounts are not created.
+func insertPersonaAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
+	created := 0
+	for _, p := range flows.Personas() {
+		if p.Contractor {
+			continue
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO users (id, email, display_name, status)
+			VALUES ($1, $2, $3, 'ACTIVE')
+			ON CONFLICT (id) DO NOTHING`,
+			p.UserID, p.Email, p.DisplayName())
+		if err != nil {
+			return 0, fmt.Errorf("demo-populate: sign in persona %s: %w", p.ID, err)
+		}
+		created += int(tag.RowsAffected())
+	}
+	return created, nil
+}
+
+// insertPersonaAccess writes each persona's carried role rows (by catalog
+// code; the dealer administrator has none) and its one branch grant, then
+// verifies the live rows: a persona that reaches nothing is a refusal.
+func insertPersonaAccess(ctx context.Context, tx pgx.Tx) (roles, branches int, err error) {
+	for _, p := range flows.Personas() {
+		if p.Contractor {
+			continue
+		}
+		for _, role := range p.StaffRoles() {
+			code := flows.LegacyCode(role)
+			if code == "" {
+				continue
+			}
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO user_roles (user_id, role_id)
+				SELECT $1, r.id FROM roles r WHERE r.code = $2
+				ON CONFLICT (user_id, role_id) DO UPDATE SET deleted_at = NULL
+				WHERE user_roles.deleted_at IS NOT NULL`,
+				p.UserID, code)
+			if err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona %s role %s: %w", p.ID, code, err)
+			}
+			roles += int(tag.RowsAffected())
+			var n int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM user_roles ur
+				  JOIN roles r ON r.id = ur.role_id
+				 WHERE ur.user_id = $1::uuid AND r.code = $2 AND ur.deleted_at IS NULL`,
+				p.UserID, code).Scan(&n); err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona role verify: %w", err)
+			}
+			if n == 0 {
+				return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the persona %s would reach nothing", code, p.ID)
+			}
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO user_branch_grants (user_id, branch_id)
+			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
+			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+			WHERE user_branch_grants.deleted_at IS NOT NULL`,
+			p.UserID, personaBranch(p))
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: sign in persona %s branch grant: %w", p.ID, err)
+		}
+		branches += int(tag.RowsAffected())
+		var live int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_branch_grants
+			 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
+			p.UserID, personaBranch(p)).Scan(&live); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: sign in persona branch verify: %w", err)
+		}
+		if live == 0 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the persona %s would reach no branch", personaBranch(p), p.ID)
+		}
+	}
+	return roles, branches, nil
+}
+
+// writePersonaGrants gives each persona a staff grant per role it holds, at
+// its branch for a branch scoped role and with none for a global one, keyed
+// by the subject persona:<id>. The identity module's EnsureStaffGrant checks
+// the branch rule and is idempotent; a grant the carried derivation already
+// wrote is the same row and counts as existing.
+func writePersonaGrants(ctx context.Context, tx pgx.Tx, orgID string) (int, error) {
+	inserted := 0
+	for _, p := range flows.Personas() {
+		if p.Contractor {
+			continue
+		}
+		for _, role := range p.StaffRoles() {
+			ok, err := identity.EnsureStaffGrantAt(ctx, tx, orgID, p.Subject(), role, personaBranch(p))
+			if err != nil {
+				return 0, fmt.Errorf("demo-populate: sign in persona %s staff grant %s: %w", p.ID, role, err)
+			}
+			if ok {
+				inserted++
+			}
+		}
+	}
+	return inserted, nil
 }

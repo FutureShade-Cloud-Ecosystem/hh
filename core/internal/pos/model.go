@@ -177,6 +177,7 @@ type StockGlance struct {
 // -- tax reason codes (W4 records the decision; the deterministic engine is M5) --
 const (
 	TaxStdON13      = "STD_ON_HST_13"           // 13% provisional default
+	TaxStdSales     = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0391)
 	TaxONFNPos8     = "ON_FN_POS_8"             // Ontario First Nations point-of-sale 8% credit → collect 5%
 	TaxFedVendorDel = "FED_S87_VENDOR_DELIVERY" // federal 0% provisional, Dibbits delivery to a reserve
 	TaxManualReview = "MANUAL_TAX_REVIEW"       // routed to a person
@@ -260,6 +261,8 @@ type ReliefOutcome struct {
 	Automated         bool   `json:"automated"`          // ALWAYS false at W4 (M5 flips it true)
 	RequiresEvidence  bool   `json:"requires_evidence"`  // the 0% fulfilment hard gate
 	EvidenceSatisfied bool   `json:"evidence_satisfied"` // POD/waybill attached
+	// TaxLabel is the name of the dealer's tax ("HST", "Sales tax") for the screen's words.
+	TaxLabel string `json:"tax_label"`
 }
 
 // -- internal row types for the M2-debt writes (consumed by Repository + the test fake) --
@@ -370,6 +373,8 @@ type taxSnapshotRow struct {
 	Automated         bool
 	EvidenceDocID     string
 	SignatureID       string
+	// StandardRateBps is the standard rate FullHSTCents was computed at (0391); zero is the Ontario 13 percent.
+	StandardRateBps int
 }
 
 type signatureRow struct {
@@ -523,7 +528,34 @@ var (
 )
 
 // flatHST13 is the W4 PROVISIONAL 13% HST fallback (D-A19-9). M5 owns the real tax_cents. Round half-up.
-func flatHST13(subtotalCents int64) int64 { return (subtotalCents*flatHSTRateBps + 5000) / 10000 }
+func flatHST13(subtotalCents int64) int64 { return taxAt(subtotalCents, flatHSTRateBps) }
+
+// taxAt is the half-up, round-once tax of a subtotal at a rate in basis points: the engine's own hstOn.
+func taxAt(subtotalCents int64, rateBps int) int64 {
+	return (subtotalCents*int64(rateBps) + 5000) / 10000
+}
+
+// standardRateOrFlat answers the standard rate a quote names, the flat Ontario rate when it names none
+// (an assessor written before the field existed).
+func standardRateOrFlat(q QuoteResult) int {
+	if q.StandardRateBps > 0 {
+		return q.StandardRateBps
+	}
+	return flatHSTRateBps
+}
+
+// standardOutcomeWord is the plain word for a standard outcome at a rate: "13%" at 1300 bps, "7.75%" at 775.
+func standardOutcomeWord(rateBps int) string {
+	whole, frac := rateBps/100, rateBps%100
+	switch {
+	case frac == 0:
+		return fmt.Sprintf("%d%%", whole)
+	case frac%10 == 0:
+		return fmt.Sprintf("%d.%d%%", whole, frac/10)
+	default:
+		return fmt.Sprintf("%d.%02d%%", whole, frac)
+	}
+}
 
 // -- W7 counter-v2 domain types (0043: pos_policy / pos_returns / pos_parked_tickets / pricing_orders) --
 
@@ -583,6 +615,18 @@ const (
 	BalanceVisibilityHidden    = "HIDDEN"
 )
 
+// The two dispositions of a cancelled special order's supplier deposit (row
+// 1193): what the dealer's default (and a manager's per-order override to
+// keep) does with the deposit document's liability in 2300.
+const (
+	// SupplierDepositCancelCreditBack is the ruling's default: the deposit is
+	// credited back to the customer's account, DR 2300 / CR the receivable.
+	SupplierDepositCancelCreditBack = "CREDIT_BACK"
+	// SupplierDepositCancelKept is the manager's override (or the dealer's own
+	// default): the dealer keeps the deposit, DR 2300 / CR other income.
+	SupplierDepositCancelKept = "KEPT"
+)
+
 // PosPolicy is the branch-overridable POS behavior policy (pos_policy; branch NULL = org default).
 type PosPolicy struct {
 	BranchID         string `json:"branch_id"` // "" = the org-wide default row
@@ -613,6 +657,11 @@ type PosPolicy struct {
 	// comma-separated TEXT column; served as a list. Empty on the wire = the service DERIVED
 	// nothing (no curated set and no sales history), the client falls back to the full chip row.
 	QuickChipSet []string `json:"quick_chip_set,omitempty"`
+	// The dealer default a cancelled special order's supplier deposit takes (row
+	// 1193): CREDIT_BACK (the default, credited back to the customer's account)
+	// or KEPT (the dealer keeps it). A manager may keep it on a given order at
+	// the cancel itself, with a reason; this column is only the default.
+	SupplierDepositCancel string `json:"supplier_deposit_cancel"`
 }
 
 // WorkspacePrefs is the RESOLVED POS workspace for the calling user: their pos_user_workspace row

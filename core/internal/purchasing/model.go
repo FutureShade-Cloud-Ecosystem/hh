@@ -110,13 +110,37 @@ type PO struct {
 	// gets a purchase order with no money key on it at all.
 	SubtotalCadCents int64 `json:"-"`
 
-	SubtotalCents int64     `json:"-"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	SubtotalCents int64 `json:"-"`
+
+	// Warranty credit applied up to subtotal, ruling R3.
+	WarrantyCreditAppliedCents int64   `json:"-"`
+	WarrantyClaimID            *string `json:"warranty_claim_id,omitempty"`
+	WarrantyClaimNo            *string `json:"warranty_claim_no,omitempty"`
+	NetTotalCents              int64   `json:"-"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// POCosts contributes `subtotal_cents` + `subtotal_cad_cents` for an allowed caller and nothing
 	// whatsoever for a refused one. Stamped by exactly one producer (costLens.costs).
 	POCosts
+}
+
+// OpenWarrantyCredit describes available or applied vendor warranty credit.
+type OpenWarrantyCredit struct {
+	ClaimID     string  `json:"claim_id"`
+	ClaimNo     string  `json:"claim_no"`
+	AmountCents int64   `json:"amount_cents"`
+	Description string  `json:"description"`
+	Summary     *string `json:"summary,omitempty"`
+	VendorID    *string `json:"vendor_id,omitempty"`
+	VendorName  *string `json:"vendor_name,omitempty"`
+}
+
+// ApplyWarrantyCreditRequest carries the parameters for applying warranty credit.
+type ApplyWarrantyCreditRequest struct {
+	ClaimID     *string `json:"claim_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
 }
 
 // POLine is one purchasing_po_lines row plus the derived outstanding quantity the receiving worklist reads.
@@ -142,8 +166,9 @@ type POLine struct {
 // PODetail is a PO with its lines and its receipts.
 type PODetail struct {
 	PO
-	Lines    []POLine  `json:"lines"`
-	Receipts []Receipt `json:"receipts"`
+	Lines              []POLine            `json:"lines"`
+	Receipts           []Receipt           `json:"receipts"`
+	OpenWarrantyCredit *OpenWarrantyCredit `json:"open_warranty_credit,omitempty"`
 }
 
 // Receipt is one receiving event.
@@ -294,6 +319,13 @@ type AddLineParams struct {
 	UnitCostCents  int64   `json:"unit_cost_cents"`
 }
 
+// UpdateLineParams is the PUT .../lines/{lineID} body: the quantity or the cost of a line already
+// on the draft, each optional, absent meaning unchanged. The product is not editable through it.
+type UpdateLineParams struct {
+	QtyOrderedBase *float64 `json:"qty_ordered_base"`
+	UnitCostCents  *int64   `json:"unit_cost_cents"`
+}
+
 // SetExpectedDateRequest is the PUT /purchasing/pos/{id}/expected-date body, DIB-460's edit path.
 // An EMPTY expected_at clears the date: a withdrawn vendor promise leaves us with no date, and a
 // stale one left on the record is a screen that lies to the person planning around it.
@@ -402,9 +434,17 @@ func clientErr(status int, format string, a ...any) error {
 
 func badReq(format string, a ...any) error { return clientErr(http.StatusBadRequest, format, a...) }
 
+func unprocessable(format string, a ...any) error {
+	return clientErr(http.StatusUnprocessableEntity, format, a...)
+}
+
 func conflict(format string, a ...any) error { return clientErr(http.StatusConflict, format, a...) }
 
 var (
+	// errNotFound is also the answer for a PO outside the caller's branch reach on every id door
+	// (read, mutate, send, document, costs, lines, receiving): an out of reach order and a missing
+	// one are the same answer, so the status cannot be used to probe which ids exist. errForbidden
+	// is kept for a branch the caller names outright (branch_id) and for the role wall.
 	errNotFound     = clientError{status: http.StatusNotFound, msg: "purchasing: not found"}
 	errNoDB         = clientError{status: http.StatusServiceUnavailable, msg: "purchasing: database not configured"}
 	errUnauthorized = clientError{status: http.StatusUnauthorized, msg: "purchasing: authentication required"}

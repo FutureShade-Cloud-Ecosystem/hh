@@ -7,6 +7,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // realtime is the optional real-time fan-out seam (FR-7). The SSE hub implements it; when nil the
@@ -28,6 +32,13 @@ type store interface {
 	ListMessages(ctx context.Context, channelID, cursor string, limit int) (MessagePage, error)
 	ListThread(ctx context.Context, channelID, rootID string) ([]Message, error)
 	InsertMessage(ctx context.Context, channelID, userID, body, threadRootID string) (Message, error)
+	// Change 7 S4: the author's own edit and delete, inside the window the
+	// msg_policy row keeps. The facts read binds the message to its channel;
+	// both writes re-check their walls in the WHERE.
+	messageFactsFor(ctx context.Context, channelID, messageID string) (messageFacts, error)
+	EditMessage(ctx context.Context, channelID, messageID, body string) (Message, error)
+	DeleteMessage(ctx context.Context, channelID, messageID string) (Message, error)
+	EditWindowMinutes(ctx context.Context) (int, error)
 	MarkRead(ctx context.Context, channelID, userID string, at time.Time) error
 	UnreadSummary(ctx context.Context, userID string) (UnreadCounts, error)
 	InsertEventMessage(ctx context.Context, channelID, eventKey, body string, ref EventRef, requiresAck bool) (Message, bool, error)
@@ -42,6 +53,11 @@ type store interface {
 	// Feature 1 (0071): forced-ack write + kiosk poll read seam.
 	AckMessage(ctx context.Context, channelID, messageID, userID, method string) (Ack, error)
 	UnackedRequiresAck(ctx context.Context, userID string) ([]Message, error)
+	// Slice S7 (0401): per-person event-category prefs + quiet-hours read/write seam.
+	GetPersonEventPrefsForUser(ctx context.Context, userID string) (map[string]PersonEventPref, error)
+	UpsertPersonEventPref(ctx context.Context, p PersonEventPref) (PersonEventPref, error)
+	GetQuietHoursForUser(ctx context.Context, userID string) (QuietHours, error)
+	UpsertQuietHours(ctx context.Context, q QuietHours) (QuietHours, error)
 	// Approvals rail (0075): per-person channel provisioning + card/echo/stamp write path.
 	EnsureApprovalChannel(ctx context.Context, userID string) (string, error)
 	PostApprovalMessage(ctx context.Context, channelID, eventKey, body string, ref ApprovalRef) (Message, bool, error)
@@ -49,14 +65,97 @@ type store interface {
 	ApprovalChannelIDs(ctx context.Context, approvalID string) ([]string, error)
 	PostApprovalEcho(ctx context.Context, channelID, approvalID, body string, ref EventRef) (Message, bool, error)
 	UserDisplayName(ctx context.Context, userID string) (string, error)
+	// PR 302 N2: the yard notice fence looks up the rep's own role to ask
+	// SeesCostAndMargin about it (the same X3 rule cost_gate reads).
+	UserRoleCode(ctx context.Context, userID string) (string, error)
+	// Channel create, DM create, membership writes (the house's own surfaces).
+	CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error)
+	CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error)
+	AddChannelMember(ctx context.Context, in AddMemberInput) (ChannelMember, error)
+	RemoveChannelMember(ctx context.Context, channelID, userID string) error
+	// Settings panel (rule 7): visibility write and channel archive.
+	SetChannelVisibility(ctx context.Context, channelID, visibility string) (Channel, error)
+	ArchiveChannel(ctx context.Context, channelID string) error
+	// S6 directory + join + leave + membership-rule reads/writes.
+	ListDirectory(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) (map[string]DirectoryEntry, error)
+	ListChannelMembers(ctx context.Context, channelID string) ([]ChannelMemberEntry, error)
+	GetChannelRule(ctx context.Context, channelID string) (MembershipRule, error)
+	SetChannelRule(ctx context.Context, channelID string, rule MembershipRule) error
+	ListChannelRules(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) ([]MembershipRuleEntry, error)
+	// Slice S1: the New message picker's roster, the identity read-seam the
+	// repository's StaffRoster answers (active staff of one org, labels in).
+	StaffRoster(ctx context.Context, orgID string) ([]StaffRosterRow, error)
+	// Group rooms (walk change 7, slice S2, rulings 3 and 4): the create,
+	// the any-member seat with its system line, and the rename with its own.
+	CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error)
+	SeatGroupMember(ctx context.Context, channelID, userID, adderName, targetName string) (ChannelMember, bool, error)
+	RenameGroup(ctx context.Context, channelID, name, actorName string) (Channel, error)
+	userActive(ctx context.Context, userID string) error
+	SaveMessage(ctx context.Context, userID, messageID string) (SavedMessage, error)
+	ListSavedMessages(ctx context.Context, userID string, limit int) ([]SavedMessage, error)
+	DeleteSavedMessage(ctx context.Context, userID, messageID string) error
+	SearchMessages(ctx context.Context, userID, pattern string, limit int) ([]SearchMessage, error)
+	SearchPeople(ctx context.Context, orgID, pattern string, limit int) ([]SearchPerson, error)
+	SearchChannels(ctx context.Context, userID, orgID, pattern string, limit int) ([]SearchChannel, error)
+	// The membership walls' reads: the room's kind/branch/auto_scope, the
+	// caller's row role, and the add-target's branch reach.
+	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)
+	userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error)
+	memberRole(ctx context.Context, channelID, userID string) (string, error)
+	memberSource(ctx context.Context, channelID, userID string) (string, error)
+	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
+	// Room attachments (0403, S8)
+	ListChannelAttachments(ctx context.Context, channelID string) ([]MessageAttachment, error)
+	CountChannelMembers(ctx context.Context, channelID string) (int, error)
+	InsertChannelAttachment(ctx context.Context, channelID, uploadedBy string, in ChannelAttachmentCreateInput) (MessageAttachment, error)
+	UpsertChannelAttachmentFromMirror(ctx context.Context, channelID string, att MessageAttachment) error
+	GetMessage(ctx context.Context, messageID string) (Message, error)
+	// Change 7, slice S3: the reaction walls and write, the reaction summary
+	// stitch, the seen-by read, the mentions view.
+	messageFacts(ctx context.Context, channelID, messageID string) (messageFactsRow, error)
+	AddReaction(ctx context.Context, channelID, messageID, userID, emoji string) error
+	RemoveReaction(ctx context.Context, channelID, messageID, userID, emoji string) error
+	reactionsForMessages(ctx context.Context, messageIDs []string, userID string) (map[string][]ReactionCount, error)
+	MessageSeenBy(ctx context.Context, channelID, authorID string, at time.Time) (SeenByReport, error)
+	ListMentions(ctx context.Context, userID, cursor string, limit int) (MessagePage, error)
+}
+
+// AttachmentChecker is the injected seam to verify and resolve attachments from the attachments module.
+type AttachmentChecker interface {
+	VerifyRoomAttachment(ctx context.Context, orgID, attachmentID, channelID string) (*AttachmentMeta, error)
+	ResolveAttachmentMetas(ctx context.Context, orgID string, attachmentIDs []string) (map[string]AttachmentMeta, error)
 }
 
 // Service holds the messaging business rules. It depends only on the store seam (its own tables +
 // the identity read-seam) and the optional realtime hub, no other module is imported, honouring
 // the modular-monolith boundary.
 type Service struct {
-	repo store
-	rt   realtime
+	repo              store
+	rt                realtime
+	attachmentChecker AttachmentChecker
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The rollup's day,
+	// the day a routine event is filed under, is the dealer's own calendar day.
+	zone houseday.Source
+}
+
+// WithAttachmentChecker attaches the attachment checker seam.
+func (s *Service) WithAttachmentChecker(c AttachmentChecker) *Service {
+	s.attachmentChecker = c
+	return s
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// rollupDayFor is the dealer's calendar day an instant belongs to (the rollup's day), in the zone the
+// service's dealer chose. A failed zone read refuses: a payment filed under the wrong day is a total
+// the clerk reconciles against, so it is not guessed.
+func (s *Service) rollupDayFor(ctx context.Context, at time.Time) (string, error) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return "", err
+	}
+	return zone.Today(func() time.Time { return at }), nil
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
@@ -82,6 +181,15 @@ var (
 	// ErrBadAckMethod is an ack whose method is not one of the msg_acks CHECK values (client fault). The
 	// handler maps it to HTTP 400, caught at the service boundary so it never reaches the DB CHECK.
 	ErrBadAckMethod = errors.New("messaging: unknown ack method")
+	// ErrBadAttachment is an invalid room attachment payload (client fault). The handler maps it to HTTP 400.
+	ErrBadAttachment = errors.New("messaging: invalid attachment payload")
+	// ErrBadReaction is a reaction whose emoji is empty past the trim or longer than the cap
+	// (client fault). The handler maps it to HTTP 400, caught here so it never reaches the store.
+	ErrBadReaction = errors.New("messaging: reaction must be one emoji or a short word")
+	// ErrReactionsNotAllowed is a reaction aimed at a system message (EVENT, APPROVAL, any kind that
+	// is not a person's TEXT post; ruling 6, row 2139). The handler maps it to 409: a conflict with
+	// what the message IS, not a permission failure, the same shape as the escalation mute refusal.
+	ErrReactionsNotAllowed = errors.New("messaging: system messages cannot carry reactions")
 )
 
 // ListMyChannels resyncs the caller's derived membership (FR-1, role/branch is the SoT, so a
@@ -118,12 +226,16 @@ func (s *Service) GetMessages(ctx context.Context, c Caller, channelID, cursor s
 	if err != nil {
 		return MessagePage{}, err
 	}
+	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
+		return MessagePage{}, err
+	}
 	// Coerce a nil slice to an empty one so an empty channel serializes {"messages":[]} rather than
 	// {"messages":null} (mirrors ListMyChannels / GetThread). A null broke the Lit hub's
 	// [...page.messages].reverse() with a TypeError, confusing cross-channel content.
 	if page.Messages == nil {
 		page.Messages = []Message{}
 	}
+	s.populateMessagePageAttachments(ctx, c.OrgID, page.Messages)
 	return page, nil
 }
 
@@ -140,10 +252,157 @@ func (s *Service) GetThread(ctx context.Context, c Caller, channelID, rootID str
 	if err != nil {
 		return nil, err
 	}
+	if err := s.stitchReactions(ctx, replies, c.UserID); err != nil {
+		return nil, err
+	}
 	if replies == nil {
 		replies = []Message{}
 	}
+	s.populateMessagePageAttachments(ctx, c.OrgID, replies)
 	return replies, nil
+}
+
+// stitchReactions fills each message's Reactions summary in place, one round
+// trip for the page (reactionsForMessages answers per message and per emoji,
+// with Mine answered against the reader). A message with no reactions keeps a
+// nil slice, so its payload stays byte-identical to the pre-feature shape.
+func (s *Service) stitchReactions(ctx context.Context, msgs []Message, userID string) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, ids, userID)
+	if err != nil {
+		return err
+	}
+	for i := range msgs {
+		if r, ok := byMessage[msgs[i].ID]; ok {
+			msgs[i].Reactions = r
+		}
+	}
+	return nil
+}
+
+// - Reactions, the seen-by read and the mentions view (change 7, slice S3) -
+
+// maxReactionBytes caps one reaction key. An emoji is a few bytes; a word chip
+// ("Thanks", "On it") is a short word. 64 bytes holds any composed emoji
+// sequence and every word chip the boards draw, and stops a body-sized blob
+// riding in a reaction.
+const maxReactionBytes = 64
+
+// normalizeReaction trims and bounds a reaction key. ok is false when what is
+// left is empty or over the cap, so a bad key is a 400 at this boundary and
+// never reaches the store.
+func normalizeReaction(emoji string) (string, bool) {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" || len(emoji) > maxReactionBytes {
+		return "", false
+	}
+	return emoji, true
+}
+
+// AddReaction seats the caller's reaction on one message, enforcing channel
+// membership FIRST, then the channel binding (messageFacts: a message of
+// another channel is not-found, no existence leaks), then ruling 6: a reaction
+// is none on EVENT, approval or any other system message (ErrReactionsNotAllowed,
+// 409). The write is idempotent; the answer is the message's fresh summary with
+// Mine answered for the caller.
+func (s *Service) AddReaction(ctx context.Context, c Caller, channelID, messageID, emoji string) ([]ReactionCount, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return nil, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if facts.Kind != MsgText {
+		return nil, ErrReactionsNotAllowed
+	}
+	key, ok := normalizeReaction(emoji)
+	if !ok {
+		return nil, ErrBadReaction
+	}
+	if err := s.repo.AddReaction(ctx, channelID, messageID, c.UserID, key); err != nil {
+		return nil, err
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, []string{messageID}, c.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return byMessage[messageID], nil
+}
+
+// RemoveReaction drops the caller's one emoji on one message through the same
+// walls the add runs (membership, the channel binding, ruling 6 both ways).
+// Removing what is not there is not an error: the caller's end state is the
+// answer, and the fresh summary reports it.
+func (s *Service) RemoveReaction(ctx context.Context, c Caller, channelID, messageID, emoji string) ([]ReactionCount, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return nil, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if facts.Kind != MsgText {
+		return nil, ErrReactionsNotAllowed
+	}
+	key, ok := normalizeReaction(emoji)
+	if !ok {
+		return nil, ErrBadReaction
+	}
+	if err := s.repo.RemoveReaction(ctx, channelID, messageID, c.UserID, key); err != nil {
+		return nil, err
+	}
+	byMessage, err := s.repo.reactionsForMessages(ctx, []string{messageID}, c.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return byMessage[messageID], nil
+}
+
+// MessageSeenBy answers the board's "Seen N" for one message, enforcing
+// membership and the channel binding first. The author is excepted by the read
+// itself (a person is never seen by their own post); a system message, whose
+// author is nobody, counts every member past it.
+func (s *Service) MessageSeenBy(ctx context.Context, c Caller, channelID, messageID string) (SeenByReport, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return SeenByReport{}, err
+	}
+	facts, err := s.repo.messageFacts(ctx, channelID, messageID)
+	if err != nil {
+		return SeenByReport{}, err
+	}
+	return s.repo.MessageSeenBy(ctx, channelID, facts.AuthorID, facts.CreatedAt)
+}
+
+// ListMentions returns the caller's mentions view (ruling 5: the messages
+// naming the caller or the caller's role, in the rooms the caller holds,
+// newest first), cursor paginated like the stream, with the same reaction
+// stitch the stream carries so a mention row renders whole.
+func (s *Service) ListMentions(ctx context.Context, c Caller, cursor string, limit int) (MessagePage, error) {
+	if limit <= 0 || limit > maxPage {
+		if limit > maxPage {
+			limit = maxPage
+		} else {
+			limit = defaultPage
+		}
+	}
+	page, err := s.repo.ListMentions(ctx, c.UserID, cursor, limit)
+	if err != nil {
+		return MessagePage{}, err
+	}
+	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
+		return MessagePage{}, err
+	}
+	if page.Messages == nil {
+		page.Messages = []Message{}
+	}
+	return page, nil
 }
 
 // PostMessage posts a TEXT message to a channel (top-level or a thread reply when threadRootID is
@@ -153,19 +412,9 @@ func (s *Service) PostMessage(ctx context.Context, c Caller, channelID, body, th
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return Message{}, err
 	}
-	body = strings.TrimSpace(body)
+	body = trimMessageBody(body)
 	if body == "" {
 		return Message{}, ErrEmptyBody
-	}
-	if len(body) > maxBody {
-		// Truncate on a rune boundary so a multibyte UTF-8 rune is never split (a split rune would
-		// serialize as U+FFFD and corrupt the trailing character). Walk back from maxBody to the
-		// start byte of the rune that straddles the cut.
-		cut := maxBody
-		for cut > 0 && !utf8.RuneStart(body[cut]) {
-			cut--
-		}
-		body = body[:cut]
 	}
 	m, err := s.repo.InsertMessage(ctx, channelID, c.UserID, body, threadRootID)
 	if err != nil {
@@ -173,6 +422,24 @@ func (s *Service) PostMessage(ctx context.Context, c Caller, channelID, body, th
 	}
 	s.fanout(channelID, m)
 	return m, nil
+}
+
+// trimMessageBody is the post's own trim and bound, shared with the edit
+// route so an edit cannot carry what a post cannot. Trimmed, and bounded to
+// maxBody on a rune boundary so a multibyte UTF-8 rune is never split (a
+// split rune would serialize as U+FFFD and corrupt the trailing character):
+// walk back from maxBody to the start byte of the rune that straddles the
+// cut.
+func trimMessageBody(body string) string {
+	body = strings.TrimSpace(body)
+	if len(body) > maxBody {
+		cut := maxBody
+		for cut > 0 && !utf8.RuneStart(body[cut]) {
+			cut--
+		}
+		body = body[:cut]
+	}
+	return body
 }
 
 // MarkRead advances the caller's read cursor for a channel to now (drives unread counts). Requires
@@ -583,4 +850,378 @@ func looksLikeCleartextID(s string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) populateMessagePageAttachments(ctx context.Context, orgID string, msgs []Message) {
+	if s.attachmentChecker == nil || len(msgs) == 0 {
+		return
+	}
+	var aidList []string
+	for _, m := range msgs {
+		for _, a := range m.Attachments {
+			if a.AttachmentID != nil && *a.AttachmentID != "" {
+				aidList = append(aidList, *a.AttachmentID)
+			}
+		}
+	}
+	if len(aidList) == 0 {
+		return
+	}
+	metas, err := s.attachmentChecker.ResolveAttachmentMetas(ctx, orgID, aidList)
+	if err != nil || metas == nil {
+		return
+	}
+	for i := range msgs {
+		for j := range msgs[i].Attachments {
+			if msgs[i].Attachments[j].AttachmentID != nil {
+				if meta, ok := metas[*msgs[i].Attachments[j].AttachmentID]; ok {
+					msgs[i].Attachments[j].AppwriteFileID = meta.AppwriteFileID
+					msgs[i].Attachments[j].Bucket = meta.Bucket
+					if msgs[i].Attachments[j].SizeBytes == 0 && meta.SizeBytes > 0 {
+						msgs[i].Attachments[j].SizeBytes = meta.SizeBytes
+					}
+					if msgs[i].Attachments[j].ContentType == "" && meta.Mime != "" {
+						msgs[i].Attachments[j].ContentType = meta.Mime
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetChannelAttachments returns the photos, files, and member count for a room.
+func (s *Service) GetChannelAttachments(ctx context.Context, c Caller, channelID string) (ChannelAttachmentsResponse, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+	atts, err := s.repo.ListChannelAttachments(ctx, channelID)
+	if err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+	count, err := s.repo.CountChannelMembers(ctx, channelID)
+	if err != nil {
+		return ChannelAttachmentsResponse{}, err
+	}
+
+	if s.attachmentChecker != nil && len(atts) > 0 {
+		var aidList []string
+		for _, a := range atts {
+			if a.AttachmentID != nil && *a.AttachmentID != "" {
+				aidList = append(aidList, *a.AttachmentID)
+			}
+		}
+		if len(aidList) > 0 {
+			metas, err := s.attachmentChecker.ResolveAttachmentMetas(ctx, c.OrgID, aidList)
+			if err == nil && metas != nil {
+				for i := range atts {
+					if atts[i].AttachmentID != nil {
+						if meta, ok := metas[*atts[i].AttachmentID]; ok {
+							atts[i].AppwriteFileID = meta.AppwriteFileID
+							atts[i].Bucket = meta.Bucket
+							if atts[i].SizeBytes == 0 && meta.SizeBytes > 0 {
+								atts[i].SizeBytes = meta.SizeBytes
+							}
+							if atts[i].ContentType == "" && meta.Mime != "" {
+								atts[i].ContentType = meta.Mime
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	photos := make([]MessageAttachment, 0)
+	files := make([]MessageAttachment, 0)
+	for _, a := range atts {
+		if a.Kind == "photo" {
+			photos = append(photos, a)
+		} else {
+			files = append(files, a)
+		}
+	}
+
+	return ChannelAttachmentsResponse{
+		Photos:      photos,
+		Files:       files,
+		MemberCount: count,
+	}, nil
+}
+
+// CreateChannelAttachment links an attachment to a channel or message.
+func (s *Service) CreateChannelAttachment(ctx context.Context, c Caller, channelID string, in ChannelAttachmentCreateInput) (MessageAttachment, error) {
+	if err := s.assertMember(ctx, c, channelID); err != nil {
+		return MessageAttachment{}, err
+	}
+	if strings.TrimSpace(in.Filename) == "" {
+		return MessageAttachment{}, ErrBadAttachment
+	}
+	if _, err := uuid.Parse(in.AttachmentID); err != nil {
+		return MessageAttachment{}, ErrBadAttachment
+	}
+	if in.MessageID != nil && *in.MessageID != "" {
+		if _, err := uuid.Parse(*in.MessageID); err != nil {
+			return MessageAttachment{}, ErrBadAttachment
+		}
+		msg, err := s.repo.GetMessage(ctx, *in.MessageID)
+		if err != nil {
+			return MessageAttachment{}, ErrNotFound
+		}
+		if msg.ChannelID != channelID {
+			return MessageAttachment{}, ErrNotFound
+		}
+	}
+	var meta *AttachmentMeta
+	if s.attachmentChecker != nil {
+		m, err := s.attachmentChecker.VerifyRoomAttachment(ctx, c.OrgID, in.AttachmentID, channelID)
+		if err != nil {
+			return MessageAttachment{}, ErrNotFound
+		}
+		meta = m
+		if in.ContentType == "" && m.Mime != "" {
+			in.ContentType = m.Mime
+		}
+		if in.SizeBytes == nil && m.SizeBytes > 0 {
+			in.SizeBytes = &m.SizeBytes
+		}
+		if in.Kind == "" && m.Kind != "" {
+			if m.Kind == "photo" {
+				in.Kind = "photo"
+			} else {
+				in.Kind = "document"
+			}
+		}
+	}
+
+	att, err := s.repo.InsertChannelAttachment(ctx, channelID, c.UserID, in)
+	if err != nil {
+		return MessageAttachment{}, err
+	}
+	if meta != nil {
+		att.AppwriteFileID = meta.AppwriteFileID
+		att.Bucket = meta.Bucket
+	}
+	return att, nil
+}
+
+// MirrorRoomAttachment mirrors an attachment link to msg_attachments.
+func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, meta AttachmentMeta, uploadedBy, filename, role string) error {
+	name := filename
+	if name == "" {
+		if role != "" {
+			name = role
+		} else {
+			name = meta.AppwriteFileID
+		}
+	}
+	kind := "document"
+	if meta.Kind == "photo" {
+		kind = "photo"
+	}
+	var uPtr *string
+	if uploadedBy != "" {
+		uPtr = &uploadedBy
+	}
+	attID := meta.ID
+	att := MessageAttachment{
+		ChannelID:    &channelID,
+		AttachmentID: &attID,
+		Filename:     name,
+		ContentType:  meta.Mime,
+		SizeBytes:    meta.SizeBytes,
+		Kind:         kind,
+		UploadedBy:   uPtr,
+		CreatedAt:    time.Now(),
+	}
+	return s.repo.UpsertChannelAttachmentFromMirror(ctx, channelID, att)
+}
+
+// - Slice S7: per-person notification settings (event-category toggles + quiet hours), 0401 -
+
+// NotificationSettings is the envelope the GET /notification-settings route returns: the closed
+// 6-category set in board order (always, with the per-category default filled when a user has no
+// stored row) and the user's quiet-hours row (always, with the shipped defaults when no row). A
+// partial payload would force the surface to invent the missing half, and "no row" and "default"
+// must look identical to the reader because they mean the same thing to the system.
+type NotificationSettings struct {
+	EventPrefs []PersonEventPref `json:"event_prefs"`
+	QuietHours QuietHours        `json:"quiet_hours"`
+}
+
+// NotificationSettingsPatch is the PUT body. event_prefs is OPTIONAL (a PUT may touch only quiet
+// hours), quiet_hours is OPTIONAL (a PUT may touch only categories). Inside event_prefs, every
+// entry carries a category; in_app / push are pointers so an omitted field keeps the caller's
+// current value on the upsert (the same omitted-fields-keep-their-current-value rule PrefsPatch
+// uses, applied per-category).
+type NotificationSettingsPatch struct {
+	EventPrefs []PersonEventPrefsPatch `json:"event_prefs,omitempty"`
+	QuietHours QuietHoursPatch         `json:"quiet_hours,omitempty"`
+}
+
+// ErrBadQuietHours is a quiet-hours field that failed HH:MM or timezone validation (caller fault
+// -> 400). Surfaced so the handler can map it without writing a Postgres CHECK violation -> 500.
+var ErrBadQuietHours = errors.New("messaging: invalid quiet-hours field")
+
+// GetNotificationSettings returns the caller's full notification-settings envelope, ALWAYS the
+// closed 6-category set in board order with the per-category default filled when no row exists,
+// and the user's quiet-hours row with shipped defaults when no row. Caller is taken from the
+// verified StaffContext (the route stamps it via RequireStaff); there is no path through which one
+// staffer can read another's notification choices.
+func (s *Service) GetNotificationSettings(ctx context.Context, c Caller) (NotificationSettings, error) {
+	stored, err := s.repo.GetPersonEventPrefsForUser(ctx, c.UserID)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	qh, err := s.repo.GetQuietHoursForUser(ctx, c.UserID)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	prefs := make([]PersonEventPref, 0, len(EventCategories))
+	for _, cat := range EventCategories {
+		if p, ok := stored[cat]; ok {
+			prefs = append(prefs, p)
+			continue
+		}
+		prefs = append(prefs, DefaultPersonEventPref(c.UserID, cat))
+	}
+	return NotificationSettings{EventPrefs: prefs, QuietHours: qh}, nil
+}
+
+// SetNotificationSettings upserts the caller's notification-settings envelope. event_prefs is
+// optional; quiet_hours is optional; both may be sent in the same PUT. Validation is at the
+// service boundary (ErrBadQuietHours / ErrBadEventCategory -> 400) so a bad value never reaches the
+// SQL CHECKs. Each category row is merged over the caller's CURRENT stored values so a partial
+// PUT does not silently coerce an omitted toggle. Returns the full updated envelope.
+//
+// Caller isolation is intrinsic: c.UserID comes from the verified StaffContext (never from the
+// body or a query param), so Alice's PUT cannot alter Bob's settings.
+func (s *Service) SetNotificationSettings(ctx context.Context, c Caller, patch NotificationSettingsPatch) (NotificationSettings, error) {
+	// Validate quiet_hours first; a bad HH:MM / timezone in the patch must fail before any row is
+	// written (defence-in-depth: a half-applied write is worse than a refused write).
+	if patch.QuietHours.StartLocal != nil {
+		if _, _, ok := parseHHMM(*patch.QuietHours.StartLocal); !ok {
+			return NotificationSettings{}, ErrBadHHMM
+		}
+	}
+	if patch.QuietHours.EndLocal != nil {
+		if _, _, ok := parseHHMM(*patch.QuietHours.EndLocal); !ok {
+			return NotificationSettings{}, ErrBadHHMM
+		}
+	}
+	if patch.QuietHours.Timezone != nil {
+		if loc, err := time.LoadLocation(*patch.QuietHours.Timezone); err != nil || loc == nil {
+			return NotificationSettings{}, ErrBadTimezone
+		}
+	}
+
+	// Upsert each category row. Per-category validation: the closed-set check runs before the
+	// upsert so a single bad category refuses the WHOLE request (a partial write of the others is
+	// a half-applied change the surface cannot honestly present back).
+	for _, ep := range patch.EventPrefs {
+		if _, ok := normalizeEventCategory(ep.Category); !ok {
+			return NotificationSettings{}, ErrBadEventCategory
+		}
+		// Merge over the caller's CURRENT stored row so an omitted field keeps its value (the
+		// omitted-fields-keep-their-current-value rule).
+		cur := DefaultPersonEventPref(c.UserID, ep.Category)
+		if stored, ok := s.lookupStoredEventPref(ctx, c.UserID, ep.Category); ok {
+			cur = stored
+		}
+		if ep.InApp != nil {
+			cur.InApp = *ep.InApp
+		}
+		if ep.Push != nil {
+			cur.Push = *ep.Push
+		}
+		if _, err := s.repo.UpsertPersonEventPref(ctx, cur); err != nil {
+			return NotificationSettings{}, err
+		}
+	}
+
+	// Upsert quiet hours if any field was sent. A truly empty patch (no event_prefs, no
+	// quiet_hours fields) is a clean no-op: nothing to merge, nothing to write.
+	if qhHasAny(patch.QuietHours) {
+		cur, _ := s.repo.GetQuietHoursForUser(ctx, c.UserID)
+		if cur.UserID == "" {
+			cur = DefaultQuietHours(c.UserID) // guard against an empty zero-value from a fresh repo
+		}
+		if patch.QuietHours.Enabled != nil {
+			cur.Enabled = *patch.QuietHours.Enabled
+		}
+		if patch.QuietHours.StartLocal != nil {
+			cur.StartLocal = *patch.QuietHours.StartLocal
+		}
+		if patch.QuietHours.EndLocal != nil {
+			cur.EndLocal = *patch.QuietHours.EndLocal
+		}
+		if patch.QuietHours.Timezone != nil {
+			cur.Timezone = *patch.QuietHours.Timezone
+		}
+		if patch.QuietHours.BypassUserIDs != nil {
+			cur.BypassUserIDs = patch.QuietHours.BypassUserIDs
+		}
+		if _, err := s.repo.UpsertQuietHours(ctx, cur); err != nil {
+			return NotificationSettings{}, err
+		}
+	}
+
+	// Re-read the full envelope so the response mirrors what a follow-up GET would return (the
+	// same honesty GetNotifyPrefs / GetPaymentRules apply: round-trip the truth).
+	return s.GetNotificationSettings(ctx, c)
+}
+
+// lookupStoredEventPref is the merge-over-current helper for the category upsert. It returns
+// ok=false when no row is stored (the caller falls back to DefaultPersonEventPref). A repo
+// failure surfaces as an empty map (the upsert that follows will overwrite the defaults with the
+// patch's values, which is what the caller asked for).
+func (s *Service) lookupStoredEventPref(ctx context.Context, userID, category string) (PersonEventPref, bool) {
+	all, err := s.repo.GetPersonEventPrefsForUser(ctx, userID)
+	if err != nil {
+		return PersonEventPref{}, false
+	}
+	p, ok := all[category]
+	return p, ok
+}
+
+// qhHasAny reports whether a QuietHoursPatch carries ANY field. A truly empty patch is a
+// no-op; we don't even open a transaction for it (the brief's "no row" / "default" honesty).
+func qhHasAny(p QuietHoursPatch) bool {
+	return p.Enabled != nil || p.StartLocal != nil || p.EndLocal != nil ||
+		p.Timezone != nil || p.BypassUserIDs != nil
+}
+
+// ErrBadEventCategory is a category outside EventCategories (mirrors ErrBadPaymentRule, ErrBadMode);
+// the handler maps it to HTTP 400.
+var ErrBadEventCategory = errors.New("messaging: unknown event category")
+
+// ShouldDeliverPushOnService is the Service-level wrapper that the SSE/desktop-push path will
+// eventually call (the per-recipient fan-out seam the consumer.go comment names). It looks up the
+// caller's stored prefs (caller pref + per-category pref + quiet hours) and runs the pure
+// ShouldDeliverPush predicate. The full stored-set read is the fan-out's hot path; it is DB-free
+// in the unit-test seam via Service.repo overrides.
+func (s *Service) ShouldDeliverPushOnService(ctx context.Context, userID, channelID, eventCategory, dmSenderID string, isForcedAck bool) bool {
+	pref, err := s.repo.GetNotificationPrefs(ctx, channelID, userID)
+	if err != nil {
+		return false // defensive: a missing prefs row returns the defaults; a DB failure is "no push"
+	}
+	tier, err := s.repo.ChannelTier(ctx, channelID)
+	if err != nil {
+		tier = TierStandard // mirrors the existing predicate: a missing tier is the safe default
+	}
+	var classPref PersonEventPref
+	if eventCategory != "" {
+		stored, err := s.repo.GetPersonEventPrefsForUser(ctx, userID)
+		if err == nil {
+			if p, ok := stored[eventCategory]; ok {
+				classPref = p
+			} else {
+				classPref = DefaultPersonEventPref(userID, eventCategory)
+			}
+		}
+	}
+	qh, err := s.repo.GetQuietHoursForUser(ctx, userID)
+	if err != nil {
+		qh = DefaultQuietHours(userID)
+	}
+	return ShouldDeliverPush(time.Now(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
 }

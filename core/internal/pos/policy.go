@@ -84,6 +84,18 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 		return PosPolicy{}, err
 	}
 	p.QuickChipSet = chips
+	// Row 1193: the cancelled special order's deposit disposition rides the same
+	// admin write, same posture (omitted normalizes to the column default, a bad
+	// value is a 422 in words before the CHECK constraint could make it a 500).
+	switch p.SupplierDepositCancel {
+	case "":
+		p.SupplierDepositCancel = SupplierDepositCancelCreditBack
+	case SupplierDepositCancelCreditBack, SupplierDepositCancelKept:
+		// authored explicitly, fine
+	default:
+		return PosPolicy{}, clientErr(http.StatusUnprocessableEntity,
+			"pos: supplier_deposit_cancel must be CREDIT_BACK or KEPT")
+	}
 	// THE PRE-IMAGE IS READ BEFORE THE WRITE, which is the whole reason before→after can be truthful.
 	//
 	// IT IS s.store.ReadPosPolicy AND NOT s.Policy. Policy() DERIVES an un-curated quick_chip_set from
@@ -96,6 +108,15 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 	// before-image costs a history row, and refusing a legitimate settings change because a second read
 	// failed would cost them the change itself.
 	before, beforeErr := s.store.ReadPosPolicy(ctx, p.BranchID)
+	// The counter settings screen echoes the row it read, and Policy() read an
+	// un-curated chip set as the derived one. Echoing the derived set back is no
+	// curation: over an empty stored set it stays empty, so a one-knob save never
+	// freezes the derivation or writes a chip set row nobody authored.
+	if beforeErr == nil && len(before.QuickChipSet) == 0 && len(p.QuickChipSet) > 0 {
+		if derived, derr := s.store.TopSellingApplications(ctx, 6); derr == nil && sameChips(derived, p.QuickChipSet) {
+			p.QuickChipSet = nil
+		}
+	}
 	if err := s.store.UpsertPosPolicy(ctx, p); err != nil {
 		return PosPolicy{}, err
 	}
@@ -116,6 +137,22 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 		s.recordPolicyChanges(ctx, p.BranchID, caller.UserID, caller.RoleCode, posPolicyChanges(before, saved))
 	}
 	return saved, nil
+}
+
+// SupplierDepositCancelDefault answers the dealer's default disposition for a
+// cancelled special order's supplier deposit (row 1193), branch-resolved the
+// way Policy resolves every counter rule. It is the read the order module's
+// cancel path takes through its own seam at the composition root; an unset
+// column answers the ruling's default, CREDIT_BACK, never an empty word.
+func (s *Service) SupplierDepositCancelDefault(ctx context.Context, branchID string) (string, error) {
+	p, err := s.store.ReadPosPolicy(ctx, branchID)
+	if err != nil {
+		return "", err
+	}
+	if p.SupplierDepositCancel == SupplierDepositCancelKept {
+		return SupplierDepositCancelKept, nil
+	}
+	return SupplierDepositCancelCreditBack, nil
 }
 
 // Park saves a ticket for later (no order, no stock effect, no AR, prices re-derive on resume).
@@ -219,4 +256,17 @@ func (s *Service) parkedBranchAccess(ctx context.Context, id string) error {
 		return errParkedNotFound
 	}
 	return nil
+}
+
+// sameChips reports whether two chip lists are the same names in the same order.
+func sameChips(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

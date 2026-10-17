@@ -163,16 +163,32 @@ paths:
     post:
       operationId: orderCancel
       tags: [staff-order]
-      summary: Cancel an open order (manager only, reason required)
+      summary: Cancel an open order (Sales, Branch or General Manager, reason required)
       description: >-
         Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or
-        READY. The service proves no finalized invoice or committed counter
-        sale is attached, under the order row lock; a money-attached order
-        answers 409 and belongs to the POS returns flow.
+        READY. The service proves no money the cancel has no exit for is
+        attached, under the order row lock: a finalized invoice other than a
+        supplier deposit document, or a committed counter sale, answers 409
+        and belongs to the POS returns flow. An order whose only money is its
+        supplier deposit document cancels: the deposit settles on the same
+        transaction, credited back to the customer's account by the dealer's
+        default or kept when keep_deposit is true (a manager's override, the
+        mandatory reason is its audited reason). Kept means the dealer keeps
+        only what the customer paid of the deposit; the unpaid rest is closed
+        so nothing more is owed on the cancelled order.
+        Walled to the order_cancellers list: the Sales Manager, the Branch
+        Manager and the General Manager, each giving a reason (and the super
+        admin); every other role is refused with the shared forbidden body. A
+        branch scoped manager reaches only the orders of their own branches.
       x-role: requireManager
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        list: order_cancellers
+        reason: >-
+          The order_cancellers list is the wall, not the level: the General Manager reads the
+          quote desk and the Branch Manager works it, and both may still cancel an order, which a
+          manage level cannot say without leaving them out.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -600,6 +616,48 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes:
+    get:
+      operationId: orderListChangeQueue
+      tags: [staff-order]
+      summary: List change requests across orders by status, oldest first
+      description: >-
+        The cross order read behind "changes waiting on the yard" (status
+        PENDING_YARD, Yard Pick) and "changes waiting on you" (status
+        PENDING_FINANCE, Manager Home). The caller sees the changes of its
+        own branches and no other branch's. Rows are ordered oldest first with
+        the id as the tie-break, paged by an opaque cursor. delta_cents and
+        finance_threshold_cents are the numbers stored when the delta was
+        priced at request time; nothing is recomputed. next_actions are the
+        ones the single read gives this caller, and on a PENDING_FINANCE row
+        finance_approve is dropped when the caller is not a named
+        ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch (the row
+        stays listed). Absent status lists every status.
+      x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick, manager-home]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Restrict to one change status; absent lists every status
+          schema:
+            type: string
+            enum: [PENDING_YARD, PENDING_FINANCE, APPROVED, APPLIED, REJECTED, CANCELLED]
+      responses:
+        "200":
+          description: The page of change requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChangeQueuePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/order-changes/{changeId}:
     get:
       operationId: orderGetChange
@@ -1422,7 +1480,7 @@ paths:
         from the same list as a short pick is required on every change; OTHER also
         needs a note. The same count again is not a change (changed is false). The
         skid deposit that follows the count is recorded, not billed; the response
-        carries it before and after. The caller must reach the task's branch (403
+        carries it before and after to a role on the cost and margin list only. The caller must reach the task's branch (403
         otherwise). Refused with 409 when the order's status cannot take it.
       x-role: requireStaff
       x-access:
@@ -1486,11 +1544,15 @@ paths:
       summary: Resolve one shortage with a stated resolution
       description: >-
         The resolution text is required. Resolving an already-resolved
-        shortage answers 409.
+        shortage answers 409. Beside the yard-pick level, the caller's
+        role must sit on the shortage_resolvers list (the decided default
+        names the yard team and the yard manager, exactly the roles the
+        default gives the surface at work).
       x-role: requireStaff
       x-access:
         surfaces: [yard-pick]
         level: work
+        list: shortage_resolvers
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1756,7 +1818,13 @@ components:
       properties:
         reason:
           type: string
-          description: The cancellation reason; blank is refused
+          description: The cancellation reason; blank is refused. With keep_deposit it is the override's audited reason.
+        keep_deposit:
+          type: boolean
+          description: >-
+            A manager's override to keep what the customer paid of the order's
+            supplier deposit rather than credit it back (the unpaid rest is
+            closed); false applies the dealer's default
 
     # --- order: header and line edits ----------------------------------------
     OrderHeaderEditRequest:
@@ -2144,6 +2212,59 @@ components:
             type: string
             enum: [yard_ack, finance_approve, apply, reject, cancel]
 
+    OrderChangeQueueItem:
+      type: object
+      description: >-
+        One row of the cross order change read: the change, the order it
+        belongs to, the stored priced delta, and what this caller may do to
+        it right now. Lines are not carried; the single read has them.
+      required:
+        - id
+        - change_no
+        - order_id
+        - order_no
+        - branch_id
+        - status
+        - reason
+        - delta_cents
+        - finance_threshold_cents
+        - finance_required
+        - requested_by_role
+        - requested_at
+        - next_actions
+      properties:
+        id: { type: string, format: uuid }
+        change_no: { type: string }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string, description: The visible order number }
+        branch_id: { type: string }
+        status:
+          type: string
+          description: The stage of the ladder the change is at
+          enum: [PENDING_YARD, PENDING_FINANCE, APPROVED, APPLIED, REJECTED, CANCELLED]
+        reason: { type: string, description: The requester's note }
+        delta_cents: { type: integer, format: int64, description: The stored priced delta, signed }
+        finance_threshold_cents: { type: integer, format: int64 }
+        finance_required: { type: boolean }
+        requested_by_role:
+          type: string
+          description: The requester's staff role label; blank when it cannot be resolved
+        requested_at: { type: string }
+        yard_ack_note: { type: string }
+        next_actions:
+          type: array
+          items:
+            type: string
+            enum: [yard_ack, finance_approve, apply, reject, cancel]
+    OrderChangeQueuePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderChangeQueueItem" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
     OrderChangesResponse:
       type: object
       required: [changes]
@@ -2666,7 +2787,10 @@ components:
         still_owed_cents:
           type: integer
           format: int64
-          description: The money the order still owes under the hold; absent when nothing
+          description: >-
+            The money the order still owes under the hold. Carried only to a
+            role on the cost and margin list and absent for every other role
+            and when nothing is owed; the hold mark and its words stay.
 
     TaskShortage:
       type: object
@@ -2810,12 +2934,18 @@ components:
 
     TaskRecordSkidsResult:
       type: object
-      required: [skid_count, previous_skid_count, deposit_cents, previous_deposit_cents, changed, order_no]
+      required: [skid_count, previous_skid_count, changed, order_no]
       properties:
         skid_count: { type: integer, format: int32 }
         previous_skid_count: { type: [integer, "null"], format: int32 }
-        deposit_cents: { type: integer, format: int64 }
-        previous_deposit_cents: { type: integer, format: int64 }
+        deposit_cents:
+          type: integer
+          format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
+        previous_deposit_cents:
+          type: integer
+          format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
         changed: { type: boolean }
         order_no: { type: string }
 

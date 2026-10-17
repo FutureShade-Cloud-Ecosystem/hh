@@ -3,15 +3,18 @@ package messaging
 import (
 	"encoding/json"
 	"errors"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 
 	"github.com/google/uuid"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -57,14 +60,66 @@ func (h *Handler) WithStreamTickets(secret string) *Handler {
 // convention. There is otherwise no manager/admin split in P1 (channel-admin tooling is deferred).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
+	// The house's own founding and membership routes. Founding is the
+	// admins' pen now (change 7, ruling A: the boards' New channel is for
+	// admins only); DMs stay every role's, and the membership walls are the
+	// module's existing ones: assertMember on every membership write, the
+	// owner or matrix admin pen on the seats, the branch wall on a channel
+	// that names a branch.
+	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}", g.RequireStaff(h.staff(h.deleteChannel)))
+	r.Handle("PATCH /api/v1/messaging/channels/{id}/visibility", g.RequireStaff(h.staff(h.patchChannelVisibility)))
+	r.Handle("GET /api/v1/messaging/directory", g.RequireStaff(h.staff(h.listDirectory)))
+	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
+	// Slice S1: the New message picker's roster, a read any staffer may make
+	// (the picker feeds the DM route beside it), active staff of the caller's
+	// org with the labels the picker shows and nothing else.
+	r.Handle("GET /api/v1/messaging/people", g.RequireStaff(h.staff(h.listPeople)))
+	// The group room (walk change 7, slice S2, rulings 3 and 4): any staffer
+	// starts a named group with any set of staffers, and any member renames
+	// it; the rename and the fresh seat write their system lines. The add
+	// rides the existing member route, whose service wall gives the group its
+	// any-member arm. Gated like the siblings: RequireStaff, house-messages
+	// work, the caller stamped from the verified staff context.
+	r.Handle("POST /api/v1/messaging/groups", g.RequireStaff(h.staff(h.createGroup)))
+	r.Handle("PATCH /api/v1/messaging/channels/{id}", g.RequireStaff(h.staff(h.renameChannel)))
+	r.Handle("GET /api/v1/messaging/saved", g.RequireStaff(h.staff(h.listSaved)))
+	r.Handle("POST /api/v1/messaging/saved", g.RequireStaff(h.staff(h.saveSaved)))
+	r.Handle("DELETE /api/v1/messaging/saved/{messageID}", g.RequireStaff(h.staff(h.unsaveSaved)))
+	r.Handle("GET /api/v1/messaging/search", g.RequireStaff(h.staff(h.search)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/join", g.RequireStaff(h.staff(h.joinChannel)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/leave", g.RequireStaff(h.staff(h.leaveChannel)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.listChannelMembers)))
+	r.Handle("GET /api/v1/messaging/membership-rules", g.RequireStaff(h.staff(h.listMembershipRules)))
+	r.Handle("PUT /api/v1/messaging/channels/{id}/membership-rule", g.RequireStaff(h.staff(h.updateMembershipRule)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/attachments", g.RequireStaff(h.staff(h.listChannelAttachments)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/attachments", g.RequireStaff(h.staff(h.createChannelAttachment)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
+	// Change 7 S4 (ruling 6): the author's own edit and delete inside the
+	// edit window the module's policy row keeps. PATCH rewords the author's
+	// own text message, DELETE tombstones it (the body dropped, deleted_at
+	// stamped); the walls are the service's: the channel wall, the kind wall
+	// (system messages are nobody's), the forced acknowledgement wall (a
+	// notice is never editable once sent), the author wall, and the window.
+	r.Handle("PATCH /api/v1/messaging/channels/{id}/messages/{msgID}", g.RequireStaff(h.staff(h.editMessage)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/messages/{msgID}", g.RequireStaff(h.staff(h.deleteMessage)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/read", g.RequireStaff(h.staff(h.markRead)))
 	// Feature 1 (0071): forced-ack. POST an ack for one message (mirrors markRead: channel-scoped,
 	// staff-gated); GET the caller's un-acked forced-ack messages for the kiosk to poll.
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages/{msgID}/ack", g.RequireStaff(h.staff(h.ackMessage)))
 	r.Handle("GET /api/v1/messaging/unacked", g.RequireStaff(h.staff(h.unacked)))
+	// Change 7, slice S3: reactions on a person's message (ruling 6: none on EVENT, approval or any
+	// other system message, refused 409 at the service), the seen-by read (the board's "Seen N") and
+	// the mentions view (ruling 5: the messages naming the caller or the caller's role). The reaction
+	// PUT is idempotent; the DELETE names its emoji in the path and removes exactly that one.
+	r.Handle("PUT /api/v1/messaging/channels/{id}/messages/{msgID}/reactions", g.RequireStaff(h.staff(h.putReaction)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}", g.RequireStaff(h.staff(h.deleteReaction)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/messages/{msgID}/seen-by", g.RequireStaff(h.staff(h.seenBy)))
+	r.Handle("GET /api/v1/messaging/mentions", g.RequireStaff(h.staff(h.listMentions)))
 	// Feature A (0069): per-user notification prefs for a channel. Staff-gated, mirroring markRead.
 	r.Handle("GET /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.getNotifyPrefs)))
 	r.Handle("PUT /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.putNotifyPrefs)))
@@ -98,6 +153,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// same class as the per-channel mode above, not an admin knob like the event classes.
 	r.Handle("GET /api/v1/messaging/payment-rules", g.RequireStaff(h.staff(h.getPaymentRules)))
 	r.Handle("PUT /api/v1/messaging/payment-rules/{rule}", g.RequireStaff(h.staff(h.putPaymentRule)))
+	// Slice S7 (0401): the caller's notification-settings envelope (event-category toggles + quiet
+	// hours). Staff-gated and self-scoped, mirroring the payment-rules' "the user id comes from the
+	// verified StaffContext, never from the path or the body" rule. Both routes are work-level
+	// (the surface writes to it), per the brief's "work and field" access.
+	r.Handle("GET /api/v1/messaging/notification-settings", g.RequireStaff(h.staff(h.getNotificationSettings)))
+	r.Handle("PUT /api/v1/messaging/notification-settings", g.RequireStaff(h.staff(h.putNotificationSettings)))
 }
 
 // caller builds the messaging Caller from the identity StaffContext stamped by RequireStaff. ok is
@@ -111,11 +172,19 @@ func (h *Handler) caller(r *http.Request) (Caller, bool) {
 	for b := range sc.Branches {
 		branches[b] = true
 	}
+	var orgID string
+	if scope, ok := authz.StaffScopeFrom(r.Context()); ok {
+		orgID = scope.OrgID
+	}
+	if orgID == "" {
+		orgID = r.Header.Get("X-Org")
+	}
 	return Caller{
 		UserID:   sc.UserID,
 		RoleCode: sc.RoleCode,
 		Scope:    string(sc.Scope),
 		Branches: branches,
+		OrgID:    orgID,
 	}, true
 }
 
@@ -150,6 +219,448 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request, caller gu
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"channels": chans})
+}
+
+// createChannelRequest is the channel-create body. Slug is optional (derived
+// from the name when empty, so the same founding twice converges); branch_id
+// optionally scopes a TEAM channel to one yard; visibility defaults to
+// PUBLIC when unset (the room's settings panel default, change 7 ruling 7
+// hand: a PRIVATE room's directory entry hides behind the membership wall).
+type createChannelRequest struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Topic      string `json:"topic"`
+	Slug       string `json:"slug"`
+	BranchID   string `json:"branch_id"`
+	Visibility string `json:"visibility"`
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+}
+
+// createChannel founds a TEAM or TOPIC channel, 201 the first time and 200 on
+// the idempotent replay (the found channel), so a retried founding is not a
+// duplicate room.
+func (h *Handler) createChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req createChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.BranchID != "" {
+		if _, err := uuid.Parse(req.BranchID); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "branch_id must be a valid UUID")
+			return
+		}
+	}
+	ch, created, err := h.svc.CreateChannel(r.Context(), c, CreateChannelInput{
+		Kind: req.Kind, Name: req.Name, Topic: req.Topic, Slug: req.Slug, BranchID: req.BranchID,
+		Visibility: req.Visibility, AutoScope: req.AutoScope, AutoRole: req.AutoRole,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if created {
+		httpx.WriteJSON(w, http.StatusCreated, ch)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// deleteChannel is the change 7 ruling 7 hand on the room's settings panel:
+// the manager flips the channel to is_archived = true and the channel
+// leaves every list-my-channels read. The wall is the same one membership
+// management carries (room owner or house messages admin, not a plain
+// member); the archive's own repository answers "channel is already
+// archived" on a second call so the route never reaches the manager wall
+// twice. Body is empty: a DELETE answer is its own keep-state.
+func (h *Handler) deleteChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteChannel(r.Context(), c, channelID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// patchChannelVisibility is the change 7 ruling 7 hand on the room's
+// settings panel: the manager flips PUBLIC/PRIVATE and the room's
+// settings panel answer changes (a PRIVATE room hides from the directory
+// behind the membership wall). The wall is the same one membership
+// management carries (room owner or house messages admin, not a plain
+// member); an invalid value is refused in shape the migration's CHECK
+// already permits.
+func (h *Handler) patchChannelVisibility(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Visibility string `json:"visibility"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.svc.SetVisibility(r.Context(), c, channelID, req.Visibility); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// createDM opens (or finds) the direct message channel between the caller and
+// the named staffer: 201 the first time, 200 when the pair's room already
+// exists (whoever opened it).
+func (h *Handler) createDM(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.UserID != "" {
+		if _, err := uuid.Parse(req.UserID); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "user_id must be a valid UUID")
+			return
+		}
+	}
+	ch, created, err := h.svc.CreateDM(r.Context(), c, req.UserID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if created {
+		httpx.WriteJSON(w, http.StatusCreated, ch)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// listPeople answers the New message picker's roster page. The org comes
+// from the guard's resolved scope (never from the query string), the window
+// and the limit from the shared cursor family, q from the query string; a
+// malformed cursor is the client fault the shared family already maps to 400.
+func (h *Handler) listPeople(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if caller.OrgID == "" {
+		// The guards resolve the org before any handler runs; an empty one
+		// means the request arrived unblessed, fail closed.
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	p, perr := httpx.ParseCursorPage(r)
+	if perr != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
+	}
+	items, next, err := h.svc.GetPeople(r.Context(), c, caller.OrgID, r.URL.Query().Get("q"), p.Cursor, p.Limit)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteCursorPage(w, items, next, p.Limit)
+}
+
+// listDirectory is the change 7 ruling 7 directory read:
+// GET /api/v1/messaging/directory returns the PUBLIC, non-archived
+// channels (TEAM, TOPIC, BRANCH) the caller's branch reach can see,
+// with the caller's membership state (joined, source, member_count).
+func (h *Handler) listDirectory(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	dir, err := h.svc.ListDirectory(r.Context(), c)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if dir == nil {
+		dir = map[string]DirectoryEntry{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"channels": dir})
+}
+
+// joinChannel is the change 7 ruling 7 self-join: POST .../channels/{id}/join
+// seats the caller as EXPLICIT MEMBER (never DERIVED, never OWNER). The
+// walls run inside the service: PRIVATE refuses with 403, branch reach
+// refuses with 403, money rooms with member_roles the caller does not hold
+// refuse with 403, and DM/APPROVAL refuses with 409.
+func (h *Handler) joinChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	m, err := h.svc.JoinChannel(r.Context(), c, channelID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// leaveChannel is the change 7 ruling 7 self-leave: POST .../channels/{id}/leave
+// drops the caller's EXPLICIT MEMBER row. The walls run inside the service:
+// DERIVED refuses with 409 ("Joined by rule, you stay"), the last OWNER
+// refuses with 409, DM and APPROVAL refuse with 409.
+func (h *Handler) leaveChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.LeaveChannel(r.Context(), c, channelID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// listChannelMembers is the membership-rule read:
+// GET /api/v1/messaging/channels/{id}/members returns the channel's
+// membership rows with the audit fields the Settings > Membership
+// rules "Added by hand" panel shows.
+func (h *Handler) listChannelMembers(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	members, err := h.svc.ListExplicitMembers(r.Context(), c, channelID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if members == nil {
+		members = []ChannelMemberEntry{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
+}
+
+// listMembershipRules is the membership-rule collection read:
+// GET /api/v1/messaging/membership-rules returns the rule rows for
+// every channel the caller can see in the directory.
+func (h *Handler) listMembershipRules(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	rules, err := h.svc.ListMembershipRules(r.Context(), c)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if rules == nil {
+		rules = []MembershipRuleEntry{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rules": rules})
+}
+
+// updateMembershipRule is the membership-rule write:
+// PUT /api/v1/messaging/channels/{id}/membership-rule updates
+// auto_scope, auto_role, and visibility in one transaction. The wall
+// is admin-only: only a role the matrix gives Admin on house-messages
+// (the roleconfig publish) may write a room's rule.
+func (h *Handler) updateMembershipRule(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req MembershipRule
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	rule, err := h.svc.UpdateMembershipRule(r.Context(), c, channelID, req)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rule)
+}
+
+// createGroup starts a group room (walk change 7, slice S2, rulings 3 and 4):
+// the caller's own name and set are optional, the caller is seated as the
+// group's owner, and every named staffer as an explicit member.
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		Name      string   `json:"name"`
+		MemberIDs []string `json:"member_ids"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	for _, id := range req.MemberIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "member_ids must be valid UUIDs")
+			return
+		}
+	}
+	ch, err := h.svc.CreateGroup(r.Context(), c, GroupCreateInput{Name: req.Name, MemberIDs: req.MemberIDs})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, ch)
+}
+
+// renameChannel renames a group room: any member may, and the rename writes
+// its system line. A room of any other kind refuses with 409.
+func (h *Handler) renameChannel(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	id, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	ch, err := h.svc.RenameGroup(r.Context(), c, id, req.Name)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// addChannelMember seats one staffer in a channel the caller belongs to. The
+// body names the member and the change 7 ruling 7 audit trail: added_reason
+// is the manager's text reason the staff member reads in the row audit
+// (Settings > Membership rules "Added by hand"), added_by is the user id
+// of the manager who wrote the row (the brief's audit pair). The row is
+// EXPLICIT and idempotent: a re-seat keeps the audit trail the row
+// already carries.
+func (h *Handler) addChannelMember(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		UserID      string `json:"user_id"`
+		Role        string `json:"role"`
+		AddedReason string `json:"added_reason"`
+		AddedBy     string `json:"added_by"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, err := uuid.Parse(req.UserID); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "user_id must be a valid UUID")
+		return
+	}
+	if req.Role == "" {
+		req.Role = RoleMember
+	}
+	if req.AddedBy != "" {
+		if _, err := uuid.Parse(req.AddedBy); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "added_by must be a valid UUID")
+			return
+		}
+	} else {
+		// No single findable manager? Use the caller: the route is admin-gated
+		// already, so the caller is the room's manager; the seat's audit row
+		// names them. The repository's NULLIF guard means an unset added_by is
+		// NULL on disk, which is the migration's keep-state for an empty
+		// adder. Naming the caller is the keep-state the route answers.
+		req.AddedBy = c.UserID
+	}
+	m, err := h.svc.AddMember(r.Context(), c, AddMemberInput{
+		ChannelID:   channelID,
+		UserID:      req.UserID,
+		Role:        req.Role,
+		AddedReason: strings.TrimSpace(req.AddedReason),
+		AddedBy:     req.AddedBy,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// removeChannelMember drops one EXPLICIT member row; a DERIVED row is a 409
+// conflict with the role and branch model that owns it.
+func (h *Handler) removeChannelMember(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := h.pathUUID(w, r, "userID")
+	if !ok {
+		return
+	}
+	if err := h.svc.RemoveMember(r.Context(), c, channelID, userID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -230,6 +741,66 @@ func (h *Handler) listThread(w http.ResponseWriter, r *http.Request, caller guar
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"messages": replies})
 }
 
+// editMessageRequest is the PATCH body: the message's new wording.
+type editMessageRequest struct {
+	Body string `json:"body"`
+}
+
+// editMessage applies the caller's new wording to their own message inside
+// the edit window (change 7 S4). Mirrors postMessage's shape: caller, the
+// path UUIDs validated at the boundary, the body decoded and bounded, and
+// the service's walls answer in their own words.
+func (h *Handler) editMessage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	var req editMessageRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	m, err := h.svc.EditMessage(r.Context(), c, channelID, messageID, req.Body)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// deleteMessage tombstones the caller's own message inside the edit window
+// (change 7 S4): the body is dropped in the row, deleted_at is stamped, and
+// the answer is the tombstone the client renders in place.
+func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	m, err := h.svc.DeleteMessage(r.Context(), c, channelID, messageID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
 func (h *Handler) markRead(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	c, ok := h.caller(r)
 	if !ok {
@@ -300,6 +871,116 @@ func (h *Handler) unacked(w http.ResponseWriter, r *http.Request, caller guards.
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+// - Change 7, slice S3: reactions, seen-by, mentions -
+
+// reactionPut is the reaction body: the emoji (or short word chip) to seat.
+type reactionPut struct {
+	Emoji string `json:"emoji"`
+}
+
+// putReaction seats the caller's reaction on one message and answers the
+// message's fresh summary. The service enforces membership, the channel
+// binding and ruling 6 (a system message is a 409).
+func (h *Handler) putReaction(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	var req reactionPut
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	reactions, err := h.svc.AddReaction(r.Context(), c, channelID, messageID, req.Emoji)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if reactions == nil {
+		reactions = []ReactionCount{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reactions": reactions})
+}
+
+// deleteReaction removes the caller's one emoji from one message and answers
+// the fresh summary. The emoji rides the path (URL escaped by any HTTP client;
+// the mux hands the decoded segment to PathValue).
+func (h *Handler) deleteReaction(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	emoji := r.PathValue("emoji")
+	reactions, err := h.svc.RemoveReaction(r.Context(), c, channelID, messageID, emoji)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if reactions == nil {
+		reactions = []ReactionCount{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reactions": reactions})
+}
+
+// seenBy answers the board's "Seen N" for one message: the exact count of the
+// room's members past the message, the author excepted, plus the readers.
+func (h *Handler) seenBy(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	report, err := h.svc.MessageSeenBy(r.Context(), c, channelID, messageID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, report)
+}
+
+// listMentions serves the mentions view (ruling 5), cursor paginated like the
+// message stream it shares the page shape with.
+func (h *Handler) listMentions(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	cursor := r.URL.Query().Get("cursor")
+	limit := parseLimit(r.URL.Query().Get("limit"))
+	page, err := h.svc.ListMentions(r.Context(), c, cursor, limit)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
 // getNotifyPrefs returns the caller's notification prefs for a channel (defaults if unset). Mirrors
@@ -384,6 +1065,48 @@ func (h *Handler) putPaymentRule(w http.ResponseWriter, r *http.Request, caller 
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, prefs)
+}
+
+// getNotificationSettings returns the caller's notification-settings envelope (event-category
+// toggles + quiet hours). Self-scoped: c.UserID comes from the verified StaffContext (the route
+// has no path/body id), so there is no route through which one staffer can read another's
+// notification choices. The envelope always carries the closed 6-category set in board order with
+// defaults filled, and the user's quiet-hours row with shipped defaults when no row exists.
+func (h *Handler) getNotificationSettings(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	settings, err := h.svc.GetNotificationSettings(r.Context(), c)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, settings)
+}
+
+// putNotificationSettings upserts the caller's notification-settings envelope. event_prefs is
+// optional, quiet_hours is optional, both may be sent in the same PUT. Per-category fields are
+// pointers so an omitted field keeps the caller's current value on the upsert (the
+// omitted-fields-keep-their-current-value rule). Validation (unknown category → 400, bad HH:MM →
+// 400, bad timezone → 400) is at the service boundary so a bad value never reaches the SQL CHECK.
+func (h *Handler) putNotificationSettings(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body NotificationSettingsPatch
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	settings, err := h.svc.SetNotificationSettings(r.Context(), c, body)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, settings)
 }
 
 func (h *Handler) unread(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -594,8 +1317,17 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "message body is empty")
 	case errors.Is(err, ErrBadCursor):
 		httpx.Error(w, http.StatusBadRequest, "malformed pagination cursor")
+	case errors.Is(err, ErrBadSearchQuery):
+		httpx.Error(w, http.StatusBadRequest, "q must contain at least 2 characters")
 	case errors.Is(err, ErrBadAckMethod):
 		httpx.Error(w, http.StatusBadRequest, "ack method must be one of TAP, QUICK_REPLY, VOICE")
+	// Change 7, slice S3: a reaction on a system message is a conflict with what the message IS (the
+	// caller may react to any person's post, just not this kind), and a bad emoji key is a client
+	// fault caught at the boundary so it never reaches the store.
+	case errors.Is(err, ErrReactionsNotAllowed):
+		httpx.Error(w, http.StatusConflict, "system messages cannot carry reactions")
+	case errors.Is(err, ErrBadReaction):
+		httpx.Error(w, http.StatusBadRequest, "reaction must be one emoji or a short word")
 	// DIB-269: refusing to mute an escalation channel is a CONFLICT with the channel's class, not a
 	// permission failure, the caller may edit their prefs, just not this one on this channel. 409 also
 	// lets the UI show the honest message ("this channel cannot be muted") instead of "forbidden".
@@ -611,18 +1343,130 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	// Postgres as a CHECK violation → 500.
 	case errors.Is(err, ErrBadPaymentRule):
 		httpx.Error(w, http.StatusBadRequest, "rule must be one of ONLINE, CROSS_BRANCH, OWN_ORDER")
+	// Slice S7 (0401): the same shape for the new pref surface. Caught at the boundary so a bad
+	// value never reaches the SQL CHECK.
+	case errors.Is(err, ErrBadEventCategory):
+		httpx.Error(w, http.StatusBadRequest, "category must be one of the six closed event categories")
+	case errors.Is(err, ErrBadHHMM):
+		httpx.Error(w, http.StatusBadRequest, "time must be in HH:MM 24-hour form")
+	case errors.Is(err, ErrBadTimezone):
+		httpx.Error(w, http.StatusBadRequest, "unknown timezone")
+	case errors.Is(err, ErrBadQuietHours):
+		httpx.Error(w, http.StatusBadRequest, "invalid quiet-hours field")
 	case errors.Is(err, ErrBadMode):
 		httpx.Error(w, http.StatusBadRequest, "mode must be one of ALL, MENTIONS, MUTED")
+	// The founding and membership refusals: the branch wall is the caller's
+	// reach (403), a bad kind/name/target is a client fault (400), an inactive
+	// staffer can be named but not seated (403), and a DERIVED member row is
+	// the role and branch model's, a conflict (409) rather than a permission
+	// failure.
+	case errors.Is(err, ErrBadChannelKind):
+		httpx.Error(w, http.StatusBadRequest, "kind must be one of TEAM, TOPIC")
+	case errors.Is(err, ErrChannelNameRequired):
+		httpx.Error(w, http.StatusBadRequest, "channel name is required")
+	case errors.Is(err, ErrReservedSlug):
+		httpx.Error(w, http.StatusBadRequest, "that slug prefix is reserved for system channels")
+	case errors.Is(err, ErrChannelSlugTaken):
+		httpx.Error(w, http.StatusConflict, "a channel with that name or slug already exists")
+	case errors.Is(err, ErrMembershipFixed):
+		httpx.Error(w, http.StatusConflict, "this channel's membership is fixed (a direct message's two parties, an approvals channel's owner)")
+	case errors.Is(err, ErrNotChannelOwner):
+		httpx.Error(w, http.StatusForbidden, "only the channel's owner or a house messages admin may manage members")
+	case errors.Is(err, ErrTargetNotInBranch):
+		httpx.Error(w, http.StatusForbidden, "that staff member does not reach this branch")
+	case errors.Is(err, ErrTargetNotInRoom):
+		httpx.Error(w, http.StatusForbidden, "that staff member's role may not be seated in this room")
+	case errors.Is(err, ErrLastOwner):
+		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
+	// The founding gate (change 7, ruling A): founding is the admins' pen,
+	// a permission answer, never a validation one.
+	case errors.Is(err, ErrNotChannelAdmin):
+		httpx.Error(w, http.StatusForbidden, "only a house messages admin may found a channel")
+	// Change 7 S4: the edit and delete refusals, each in its own words so
+	// the surface can say what happened: the pen is the author's own (403),
+	// a system message or a forced ack notice is what it is (409), a
+	// tombstone is not a revival (409), and the window has closed (409).
+	case errors.Is(err, ErrNotMessageAuthor):
+		httpx.Error(w, http.StatusForbidden, "only the message's author may edit or delete it")
+	case errors.Is(err, ErrMessageImmutable):
+		httpx.Error(w, http.StatusConflict, "system messages cannot be edited or deleted")
+	case errors.Is(err, ErrMessageDeleted):
+		httpx.Error(w, http.StatusConflict, "a deleted message cannot be edited")
+	case errors.Is(err, ErrEditWindowClosed):
+		httpx.Error(w, http.StatusConflict, "the edit window has closed")
+	case errors.Is(err, ErrNotGroupRoom):
+		httpx.Error(w, http.StatusConflict, "only a group room renames through this route")
+	case errors.Is(err, ErrNotInBranch):
+		httpx.Error(w, http.StatusForbidden, "caller does not reach this branch")
+	case errors.Is(err, ErrBadDMTarget):
+		httpx.Error(w, http.StatusBadRequest, "a direct message needs another staff member")
+	case errors.Is(err, ErrUserNotActive):
+		httpx.Error(w, http.StatusForbidden, "that staff member is not active")
+	case errors.Is(err, ErrDerivedMember):
+		httpx.Error(w, http.StatusConflict, "derived membership is managed by the role and branch model")
+	case errors.Is(err, ErrChannelArchived):
+		httpx.Error(w, http.StatusConflict, "channel is already archived")
+	case errors.Is(err, ErrBadVisibility):
+		httpx.Error(w, http.StatusBadRequest, "visibility must be PUBLIC or PRIVATE")
+	case errors.Is(err, ErrPrivateRoom):
+		httpx.Error(w, http.StatusForbidden, "a private channel is hand-add only")
+	case errors.Is(err, ErrCannotJoin):
+		httpx.Error(w, http.StatusForbidden, "this channel does not accept self-joins")
+	case errors.Is(err, ErrAdminOnly):
+		httpx.Error(w, http.StatusForbidden, "only a house messages admin may change this rule")
 	case errors.Is(err, ErrAlreadyClaimed):
 		httpx.Error(w, http.StatusConflict, "conversation already claimed")
 	case errors.Is(err, ErrNoCustomer):
 		httpx.Error(w, http.StatusBadRequest, "customer_id is required")
 	case errors.Is(err, ErrBadAssignSource):
 		httpx.Error(w, http.StatusBadRequest, "source must be one of MANUAL, CLAIM, IMPORT")
+	case errors.Is(err, ErrBadAttachment):
+		httpx.Error(w, http.StatusBadRequest, "invalid attachment payload")
 	case errors.Is(err, errNoDB):
 		httpx.Error(w, http.StatusServiceUnavailable, "database unavailable")
 	default:
 		h.log.Error("messaging: internal error", "method", r.Method, "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+func (h *Handler) listChannelAttachments(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	res, err := h.svc.GetChannelAttachments(r.Context(), c, channelID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) createChannelAttachment(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in ChannelAttachmentCreateInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&in); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	res, err := h.svc.CreateChannelAttachment(r.Context(), c, channelID, in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
 }

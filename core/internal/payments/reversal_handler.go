@@ -61,6 +61,8 @@ func (h *ReversalHandler) reverse(w http.ResponseWriter, r *http.Request, caller
 		Reason:    req.Reason,
 		ActorID:   sc.UserID,
 		IsManager: sc.IsManager(),
+		// The caller's branch reach (a branch manager reverses its own branch's payments only).
+		CanAccessBranch: sc.CanAccessBranch,
 	})
 	if err != nil {
 		switch {

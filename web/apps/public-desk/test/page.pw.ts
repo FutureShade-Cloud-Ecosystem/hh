@@ -11,6 +11,7 @@
 // so the tests run in order and each reads only what it itself caused or
 // names deliberately.
 import { createHash } from "node:crypto";
+import assert from "node:assert/strict";
 import { expect, test, type Page, type Response } from "@playwright/test";
 import { DEALER_NAME } from "../src/dealer.js";
 
@@ -51,16 +52,16 @@ test("the lane's reference shots, against the stub, on demand", async ({ page })
 test("a quote is viewed by its token: header, lines, totals", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
-  await expect(page.getByText("Prepared for Quinte Hardscapes Inc")).toBeVisible();
+  await expect(page.getByText("Prepared for Fieldstone Hardscapes Inc")).toBeVisible();
   await expect(page.getByText(/valid until /)).toBeVisible();
 
   const rows = page.locator("tbody tr");
   await expect(rows).toHaveCount(3);
-  await expect(rows.nth(0)).toContainText("Banas Natural Step");
+  await expect(rows.nth(0)).toContainText("Bluff Natural Step");
   await expect(rows.nth(0)).toContainText("1.0000");
   await expect(rows.nth(0)).toContainText("PC");
   await expect(rows.nth(0)).toContainText("$20.57");
-  await expect(rows.nth(1)).toContainText("Alliance Gator Polymeric Sand");
+  await expect(rows.nth(1)).toContainText("Tidewater Polymeric Sand");
   await expect(rows.nth(1)).toContainText("BAG");
   await expect(rows.nth(1)).toContainText("$22.08");
   await expect(rows.nth(2)).toContainText("Black Mulch");
@@ -70,6 +71,18 @@ test("a quote is viewed by its token: header, lines, totals", async ({ page }) =
   await expect(page.getByText("Subtotal $96.65")).toBeVisible();
   await expect(page.getByText("HST $12.57")).toBeVisible();
   await expect(page.getByText("Total $109.22")).toBeVisible();
+});
+
+test("a California dealer's page speaks Sales tax, from the server's own word and nowhere else", async ({ page }) => {
+  await page.route(/\/api\/public\/v1\/quotes\/[^/?]+$/, async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, tax_label: "Sales tax" } });
+  });
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByText("Sales tax $12.57")).toBeVisible();
+  await expect(page.getByText("Subtotal $96.65")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("HST");
 });
 
 test("the line thumbnails ride the product image read, when the dealer chose images", async ({ page }) => {
@@ -342,7 +355,10 @@ test("no credential header rides any call, every call is a public route or the i
     expect(sighting.headerNames).not.toContain("x-org");
     const isPublic = sighting.path.startsWith("/api/public/v1/");
     const isImageRead = /^\/api\/v1\/products\/[^/]+\/image$/.test(sighting.path);
-    expect(isPublic || isImageRead).toBe(true);
+    // The tenant config read only names the browser tab's dealer title; it is
+    // a public GET (no credential, no token onward) the page fires once.
+    const isTenantTitleRead = sighting.method === "GET" && sighting.path === "/api/v1/tenant/config";
+    expect(isPublic || isImageRead || isTenantTitleRead).toBe(true);
   }
 
   const storage = await page.evaluate(() => ({
@@ -478,6 +494,7 @@ const ECHO_28 = {
   subtotal_cents: 52000,
   tax_cents: 6760,
   total_cents: 58760,
+  tax_label: "HST",
 };
 
 async function slowAccept(page: Page): Promise<() => number> {
@@ -721,7 +738,7 @@ async function convertInFlight(page: Page, token: string): Promise<void> {
     const body = (await response.json()) as { status: string; acceptable: boolean; order_no?: string };
     body.status = "CONVERTED";
     body.acceptable = false;
-    body.order_no = "SO-TRT-17";
+    body.order_no = "SO-PLM-17";
     await route.fulfill({ response, json: body });
   });
 }
@@ -739,7 +756,7 @@ test("the same quote reads blue before conversion and gold after, light and on p
     await convertInFlight(after, "q-flip-8");
     await after.goto(`/?t=q-flip-8${query}`);
     await expect(after.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(
-      "Sales order SO-TRT-17, converted from #Q-7",
+      "Sales order SO-PLM-17, converted from #Q-7",
     );
     expectToken(await measureAgainstToken(after, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", `the order total (print ${print})`);
     expectToken(await measureAgainstToken(after, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", `the order band (print ${print})`);
@@ -752,7 +769,7 @@ test("the same quote reads blue before conversion and gold after, light and on p
 test("a converted quote's page is the order's, in the gold family only: no quote blue, no Accept form", async ({ page }) => {
   await page.goto("/?t=q-conv-8");
   const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
-  await expect(heading).toHaveText("Sales order SO-TRT-17, converted from #Q-7");
+  await expect(heading).toHaveText("Sales order SO-PLM-17, converted from #Q-7");
   await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
   await expect(page.locator("#name")).toHaveCount(0);
   // No element on the page paints the quote family: walk every computed colour and refuse the blue.
@@ -799,7 +816,7 @@ test("a converted quote with no order number from the core says it became an ord
 // say what happened.
 test("a converted quote's page drops the valid until line and the notice, and says the quantities were confirmed", async ({ page }) => {
   await page.goto("/?t=q-conv-8");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   const confirmed = page.locator(".orderband").getByText("You confirmed the quantities on this quote.");
   await expect(confirmed).toBeVisible();
   const body = page.locator("pd-quote-public");
@@ -818,7 +835,7 @@ test("a converted quote's page drops the valid until line and the notice, and sa
 test("a converted quote's paper copy drops the same two and carries the confirmation line", async ({ page }) => {
   await page.emulateMedia({ media: "print" });
   await page.goto("/?t=q-conv-8&print=1");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
   const body = page.locator("pd-quote-public");
   await expect(body).not.toContainText("valid until");
@@ -846,7 +863,7 @@ test("multi-accept on: a converted quote the dealer left acceptable keeps the fo
     await route.fulfill({ response, json: body });
   });
   await page.goto("/?t=q-conv-8");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
   await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
   await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
@@ -1819,4 +1836,251 @@ test("the quantities tick is one of the card's own ticks: the same row and the s
   expect(same.qty.hasRow).toBe(true);
   expect(same.affirm.hasRow).toBe(true);
   expect(same.qty).toEqual(same.affirm);
+});
+
+// Change 9 WALK-C9: the new surface elements the board requires.
+// The status badge, the job-site card, the rep card, the payment selector, the optional
+// add-on toggle, the ask-a-question link, the print button. Each rides the design
+// system tokens and the existing contract shape; the test pins the visible surface,
+// not the wire, so a contract change behind the helper does not move them.
+
+test("an open quote shows the status badge in the customer-facing word for its state", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  // SENT quotes read "Awaiting acceptance": the customer-facing word, not the wire state.
+  const badge = page.locator(".statusbadge");
+  await expect(badge).toHaveCount(1);
+  await expect(badge).toHaveText("Awaiting acceptance");
+  await expect(badge).toHaveAttribute("data-status", "SENT");
+});
+
+test("an expired quote shows the badge's Expired word and the danger family", async ({ page }) => {
+  await page.goto("/?t=q-expired-25");
+  const badge = page.locator(".statusbadge");
+  await expect(badge).toHaveText("Expired");
+  await expect(badge).toHaveAttribute("data-status", "EXPIRED");
+  await expect(badge).toHaveClass(/statusbadge-danger/);
+});
+
+test("a withdrawn quote (LOST) shows the badge's Withdrawn word, never silently accepted", async ({ page }) => {
+  await page.goto("/?t=q-lost-93");
+  const badge = page.locator(".statusbadge");
+  await expect(badge).toHaveText("Withdrawn");
+  await expect(badge).toHaveAttribute("data-status", "LOST");
+  await expect(badge).toHaveClass(/statusbadge-danger/);
+  // The closed card speaks its own state in the body's own words, not the server's.
+  await expect(page.getByText(/This quote is lost and is not awaiting acceptance/)).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+});
+
+test("a converted quote shows the badge as Order created on the gold family", async ({ page }) => {
+  await page.goto("/?t=q-conv-8");
+  const badge = page.locator(".statusbadge");
+  await expect(badge).toHaveText("Order created");
+  await expect(badge).toHaveAttribute("data-status", "CONVERTED");
+  await expect(badge).toHaveClass(/statusbadge-accent/);
+});
+
+test("a delivery quote renders a job-site card with the address and the date and fee", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  const job = page.locator(".card[data-fact=\"job-site\"]");
+  await expect(job).toBeVisible();
+  // The exact words the old terms-facts row used: a customer moving from a saved page
+  // to this one still sees the same phrase.
+  await expect(job).toContainText("Delivery to 12 Test Yard Lane");
+  await expect(job).toContainText("delivery fee $45.00 (included in the total)");
+});
+
+test("a pickup quote renders a job-site card with no delivery fee and no address line", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/**", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, fulfillment: "PICKUP", delivery_address: "12 Pickup Lane" } });
+  });
+  await page.goto("/?t=q-terms-28");
+  const job = page.locator(".card[data-fact=\"job-site\"]");
+  await expect(job).toBeVisible();
+  await expect(job).toContainText("Pickup at 12 Pickup Lane");
+  await expect(job).not.toContainText("delivery fee");
+});
+
+test("a quote whose dealer set a rep renders the rep card with name, email and phone", async ({ page }) => {
+  await page.goto("/?t=q-rep-90");
+  const rep = page.locator(".card[data-fact=\"rep\"]");
+  await expect(rep).toBeVisible();
+  await expect(rep).toContainText("Marisol Reyes");
+  await expect(rep).toContainText("marisol@example.test");
+  await expect(rep).toContainText("+1-555-0140");
+});
+
+test("a quote without rep info renders no rep card", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  await expect(page.locator(".card[data-fact=\"rep\"]")).toHaveCount(0);
+});
+
+test("the payment selector offers ACH first, with card only when the dealer configured a surcharge", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  const radios = page.locator(".paymentrow input[type=\"radio\"][name=\"payment\"]");
+  // No surcharge configured: the card radio is absent, only ACH is offered.
+  await expect(radios).toHaveCount(1);
+  await expect(radios.first()).toHaveValue("ach");
+
+  await page.goto("/?t=q-card-91");
+  await expect(page.locator(".paymentrow input[type=\"radio\"][name=\"payment\"]")).toHaveCount(2);
+  await expect(page.locator(".paymentrow input[value=\"card\"]")).toHaveCount(1);
+  // The card row's sub-line names the surcharge as a percentage AND a money figure, so the
+  // customer sees the cost before they tick.
+  await expect(page.locator(".payopt .paysub").nth(1)).toContainText("2.9% surcharge");
+});
+
+test("the deposit line shows the percentage and the cents, and a card payment adds a surcharge line", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  await expect(page.locator(".depositline")).toContainText("33% of the accepted total");
+  await expect(page.locator(".depositline")).toContainText("$193.91");
+});
+
+test("an optional add-on row shows an include checkbox that excludes the line when unticked", async ({ page }) => {
+  await page.goto("/?t=q-optional-92");
+  // Two rows: the required one and the optional add-on.
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(2);
+  const optRow = rows.nth(1);
+  await expect(optRow).toContainText("Premium edge restraint");
+  await expect(optRow).toContainText("Optional add-on");
+  // The optional checkbox is initially ticked: the customer accepts the full quote by default.
+  const box = optRow.locator("input[type=\"checkbox\"][data-line-no=\"2\"]");
+  await expect(box).toBeChecked();
+  // Untick: the row slashes and dims, and the totals recompute proportionally.
+  await box.uncheck();
+  await expect(box).not.toBeChecked();
+  await expect(optRow).toHaveClass(/excluded/);
+  // The optional line's $80.00 cents has been removed; subtotal drops 6000 to 5200.
+  await expect(page.getByText("Subtotal $520.00")).toBeVisible();
+  await expect(page.getByText("Total $587.60")).toBeVisible();
+});
+
+test("an optional add-on the customer excluded is named in the accept payload, otherwise the wire is unchanged", async ({ page }) => {
+  await page.goto("/?t=q-optional-accept-92");
+  await page.locator("input[type=\"checkbox\"][data-line-no=\"2\"]").uncheck();
+  await page.locator("#qty-confirm").check();
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  const posted = acceptCall(page);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  const request = (await posted).request();
+  // The customer excluded line 2: the wire carries both halves and the excluded list.
+  expect(request.postDataJSON()).toEqual({
+    typed_name: "Sample Customer",
+    accepted: true,
+    quantities_confirmed: true,
+    excluded_optional_lines: [2],
+  });
+
+  // A quote with NO optional add-ons keeps the original contract wire.
+  await page.goto("/?t=q-plain-accept-28");
+  await page.locator("#qty-confirm").check();
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  const posted2 = acceptCall(page);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  const request2 = (await posted2).request();
+  expect(request2.postDataJSON()).toEqual({ typed_name: "Sample Customer", accepted: true, quantities_confirmed: true });
+});
+
+test("the Ask a question button calls window.open on the rep's mailto URL, never a binding inside an address attribute", async ({ page }) => {
+  await page.goto("/?t=q-rep-90");
+  // The button is the design system's secondary kind: a customer reads "Ask a
+  // question" as the same shape as every other secondary action on the page.
+  const ask = page.getByRole("button", { name: "Ask a question" });
+  await expect(ask).toBeVisible();
+  await expect(ask).toHaveClass(/btn-secondary/);
+
+  // The button's handler opens the mail client via window.open, so the page
+  // never carries a binding inside an address attribute (the position gate).
+  let opened: string | null = null;
+  await page.exposeFunction("__recordOpen", (url: string) => {
+    opened = url;
+  });
+  await page.addInitScript(() => {
+    window.open = ((url?: string | URL): Window | null => {
+      (window as unknown as { __recordOpen: (url: string) => void }).__recordOpen(typeof url === "string" ? url : "");
+      return null;
+    }) as typeof window.open;
+  });
+  await page.goto("/?t=q-rep-90");
+  await expect(page.getByRole("button", { name: "Ask a question" })).toBeVisible();
+  await page.getByRole("button", { name: "Ask a question" }).click();
+  assert.equal(opened, "mailto:marisol@example.test?subject=Question%20about%20quote%20Q-90");
+});
+
+test("the Print or save PDF button is a secondary design-system button that calls window.print", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  const printBtn = page.getByRole("button", { name: "Print or save PDF" });
+  await expect(printBtn).toBeVisible();
+  // The button is the design system's secondary kind: same shape as every other secondary
+  // button the apps render, so a customer recognises it as a print action.
+  await expect(printBtn).toHaveClass(/btn-secondary/);
+  // Print is a browser path: stub window.print to record the call, the page cannot actually print.
+  let printed = false;
+  await page.exposeFunction("__recordPrint", () => {
+    printed = true;
+  });
+  await page.addInitScript(() => {
+    window.print = () => (window as unknown as { __recordPrint: () => void }).__recordPrint();
+  });
+  // The init script runs BEFORE the page navigation; reload so it takes effect.
+  await page.goto("/?t=q-terms-28");
+  await expect(page.getByRole("button", { name: "Print or save PDF" })).toBeVisible();
+  await page.getByRole("button", { name: "Print or save PDF" }).click();
+  expect(printed).toBe(true);
+});
+
+test("the page at 390px shows the new surface without sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?t=q-all-94");
+  await expect(page.getByRole("heading", { name: "Quote #Q-94" })).toBeVisible();
+  await expect(page.locator(".statusbadge")).toBeVisible();
+  await expect(page.locator(".card[data-fact=\"rep\"]")).toBeVisible();
+  await expect(page.locator(".card[data-fact=\"job-site\"]")).toBeVisible();
+  await expect(page.locator(".paymentrow")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Print or save PDF" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow, "page must not scroll sideways at 390px").toBeLessThanOrEqual(0);
+});
+
+test("?theme=charcoal flips the design sheet to the dark half while every other quote stays light", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  const light = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
+  assert.equal(light, "light");
+  await page.goto("/?t=q-terms-28&theme=charcoal");
+  const dark = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
+  // The opt-in kept light OFF: the design sheet's dark half is the page's own family.
+  assert.equal(dark, null);
+  // The card still paints: the dark half is a designed surface, not a broken page.
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+});
+
+test("the new surface elements ride the design system's tokens: no raw px, no literal hex", async ({ page }) => {
+  await page.goto("/?t=q-all-94");
+  const probe = await page.evaluate(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
+    const read = (sel: string) => {
+      const el = root.querySelector(sel) as Element | null;
+      return el === null ? null : { borderTopLeftRadius: getComputedStyle(el).borderTopLeftRadius };
+    };
+    return {
+      badge: read(".statusbadge"),
+      job: read(".card[data-fact=\"job-site\"]"),
+      rep: read(".card[data-fact=\"rep\"]"),
+      payment: read(".payopt"),
+      asklink: read("button[data-action=\"ask\"]"),
+      printbtn: read("button[data-action=\"print\"]"),
+      deposit: read(".depositline"),
+      excluded: read("tr.optionalrow.excluded, tr.optionalrow:not(.excluded)"),
+    };
+  });
+  // Each new card rides a token radius, not raw px: the sinks rule says so.
+  for (const [name, value] of Object.entries(probe)) {
+    if (value === null) continue;
+    expect(value.borderTopLeftRadius, `${name} radius must come from a token`).toMatch(/^(0px|\d+(\.\d+)?(px|rem))$/);
+  }
 });

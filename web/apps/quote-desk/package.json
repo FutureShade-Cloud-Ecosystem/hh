@@ -1,0 +1,29 @@
+{
+  "name": "@hardscapehouse/quote-desk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Quote Desk micro-app: the demo way in (role cards, the demo adapter, X-Org hh-demo), then the quote work area (the Customer, Products, Review and Send stepper, the products panel with scan, search, chips, ticket lines and add-ons, the customer and terms and send panel) and the quotes list, every difference held by the server",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/*.test.mjs test/offline-reads.node-test.mjs test/desk-offline.node-test.mjs && playwright test && playwright test --config test/front-door-prefixed.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/offline-store": "0.0.0",
+    "@hardscapehouse/pos-kit": "0.0.0",
+    "@hardscapehouse/shell-chrome": "0.0.0",
+    "@hardscapehouse/work-offline": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}

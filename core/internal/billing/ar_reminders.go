@@ -43,6 +43,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -392,15 +393,16 @@ type ReminderContext struct {
 
 // ARReminderStore is the reminder machinery's persistence seam.
 type ARReminderStore interface {
-	ReminderContextFor(ctx context.Context, customerID, invoiceID, channel string) (ReminderContext, error)
+	ReminderContextFor(ctx context.Context, customerID, invoiceID, channel string, reach BranchReach) (ReminderContext, error)
+	AccountInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error)
 	FindSendByKey(ctx context.Context, key string) (ReminderSend, bool, error)
 	InsertSend(ctx context.Context, s ReminderSend, trackToken string) (ReminderSend, error)
 	MarkSendResult(ctx context.Context, sendID, status, provider, providerRef, detail string, at time.Time) error
 	RecordTrackEvent(ctx context.Context, token, event, userAgent string, at time.Time) (string, bool, error)
-	ListSends(ctx context.Context, customerID string, limit int) ([]ReminderSend, error)
+	ListSends(ctx context.Context, customerID string, limit int, reach BranchReach) ([]ReminderSend, error)
 	EngagementWindows(ctx context.Context, windowDays int, now time.Time) ([]EngagementWindow, error)
 	RaisePaperPathFlag(ctx context.Context, w EngagementWindow, windowDays int, now time.Time) (bool, error)
-	ResolvePaperPathFlag(ctx context.Context, flagID, status, note, actorID string, at time.Time) error
+	ResolvePaperPathFlag(ctx context.Context, flagID, status, note, actorID string, at time.Time, reach BranchReach) error
 	ReadAPContact(ctx context.Context, customerID string) (APContact, bool, error)
 	UpsertAPContact(ctx context.Context, c APContact, actorID string) error
 	DeleteAPContact(ctx context.Context, customerID string) error
@@ -413,7 +415,11 @@ type ARReminderService struct {
 	sender  ReminderSender
 	baseURL string
 	now     func() time.Time
+	zone    houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *ARReminderService) WithZone(src houseday.Source) *ARReminderService { s.zone = src; return s }
 
 // NewARReminderService wires the machinery. A nil sender means UnwiredSender, which is the default
 // this program ships on, an unwired transport is visibly inert, never quietly half-running: the row
@@ -439,6 +445,23 @@ func (s *ARReminderService) trackURL(token, kind string) string {
 	return fmt.Sprintf("%s/api/public/v1/ar/track/%s/%s", s.baseURL, token, kind)
 }
 
+// account is the branch door for every account level act: an account the caller's reach does not
+// touch (home branch or an invoice in it) is not found, the same answer as one that does not exist.
+func (s *ARReminderService) account(ctx context.Context, customerID string) error {
+	reach := reachFromContext(ctx)
+	if reach.Global {
+		return nil
+	}
+	in, err := s.store.AccountInReach(ctx, customerID, reach)
+	if err != nil {
+		return err
+	}
+	if !in {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Send sends one reminder and writes the record that outlives it.
 //
 // ORDER MATTERS AND IS NOT AN ACCIDENT: the row is inserted BEFORE the transport is called. A send
@@ -452,8 +475,13 @@ func (s *ARReminderService) Send(ctx context.Context, in SendReminderInput, acto
 			return prior, nil
 		}
 	}
+	if err := s.account(ctx, in.CustomerID); err != nil {
+		return ReminderSend{}, err
+	}
 	p := s.landing.Policy(ctx, "")
-	rc, err := s.store.ReminderContextFor(ctx, in.CustomerID, in.InvoiceID, in.Channel)
+	// The subject invoice is chosen inside the caller's reach: the oldest open one of the reach, or the
+	// one named when it is in the reach. Another branch's invoice is never the subject of this send.
+	rc, err := s.store.ReminderContextFor(ctx, in.CustomerID, in.InvoiceID, in.Channel, reachFromContext(ctx))
 	if err != nil {
 		return ReminderSend{}, err
 	}
@@ -468,8 +496,12 @@ func (s *ARReminderService) Send(ctx context.Context, in SendReminderInput, acto
 	if err != nil {
 		return ReminderSend{}, err
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return ReminderSend{}, err
+	}
 	now := s.now()
-	days := DaysPastDue(rc.DueDate, now)
+	days := DaysPastDueIn(zone, rc.DueDate, now)
 	bucket := BucketFor(days, p)
 	watermark := WatermarkFor(days, in.Resend)
 
@@ -567,7 +599,12 @@ func (s *ARReminderService) History(ctx context.Context, customerID string, limi
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.store.ListSends(ctx, customerID, limit)
+	if customerID != "" {
+		if err := s.account(ctx, customerID); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.store.ListSends(ctx, customerID, limit, reachFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -614,11 +651,14 @@ func (s *ARReminderService) ResolvePaperPathFlag(ctx context.Context, flagID, st
 	if len([]rune(note)) > 300 {
 		return settings.Errf(http.StatusUnprocessableEntity, "ar: that note is longer than 300 characters")
 	}
-	return s.store.ResolvePaperPathFlag(ctx, flagID, status, note, actorID, s.now())
+	return s.store.ResolvePaperPathFlag(ctx, flagID, status, note, actorID, s.now(), reachFromContext(ctx))
 }
 
 // APContact reads one account's tagged contact.
 func (s *ARReminderService) APContact(ctx context.Context, customerID string) (APContact, bool, error) {
+	if err := s.account(ctx, customerID); err != nil {
+		return APContact{}, false, err
+	}
 	return s.store.ReadAPContact(ctx, customerID)
 }
 
@@ -626,6 +666,9 @@ func (s *ARReminderService) APContact(ctx context.Context, customerID string) (A
 func (s *ARReminderService) TagAPContact(ctx context.Context, c APContact, actorID string) (APContact, error) {
 	clean, err := ValidateAPContact(c)
 	if err != nil {
+		return APContact{}, err
+	}
+	if err := s.account(ctx, clean.CustomerID); err != nil {
 		return APContact{}, err
 	}
 	if err := s.store.UpsertAPContact(ctx, clean, actorID); err != nil {
@@ -636,5 +679,8 @@ func (s *ARReminderService) TagAPContact(ctx context.Context, c APContact, actor
 
 // UntagAPContact removes it. The sends already made keep their AP_CONTACT kind, see 0183.
 func (s *ARReminderService) UntagAPContact(ctx context.Context, customerID string) error {
+	if err := s.account(ctx, customerID); err != nil {
+		return err
+	}
 	return s.store.DeleteAPContact(ctx, customerID)
 }

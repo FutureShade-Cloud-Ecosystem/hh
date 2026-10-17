@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 var errNoDB = errors.New("customer: database not configured")
@@ -119,13 +121,14 @@ SELECT c.id::text, c.name, c.account_no::text, c.customer_type,
                   WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0)
   FROM customers c
  WHERE c.is_active
-   AND (c.name ILIKE '%' || $1 || '%' OR c.account_no::text ILIKE '%' || $1 || '%')
+   AND (c.name ILIKE '%' || $1 || '%' ESCAPE '\' OR c.account_no::text ILIKE '%' || $1 || '%' ESCAPE '\')
    AND c.account_no <> 'WALK-IN'
    AND c.name NOT ILIKE 'walk-in%'
    AND ($3::uuid IS NULL OR c.home_branch_id = $3::uuid OR c.home_branch_id IS NULL)
  ORDER BY c.name
  LIMIT $2`
-	rows, err := r.pool.Query(ctx, query, q, limit, nullUUID(scope.BranchID))
+	// $1 is a pattern here, so it is bound escaped: a typed '%' or '_' matches text, never a wildcard.
+	rows, err := r.pool.Query(ctx, query, likeutil.EscapeLikePattern(q), limit, nullUUID(scope.BranchID))
 	if err != nil {
 		return nil, fmt.Errorf("search accounts %q: %w", q, err)
 	}
@@ -186,7 +189,7 @@ func (r *Repository) GetPrimaryContact(ctx context.Context, customerID string) (
 }
 
 // -- write path (M5 / A-5) ----------------------------------------------------
-// The service has already validated + normalized billing_address (Canadian postal/province)
+// The service has already validated + normalized billing_address (postal/province for the dealer's country)
 // before these run; the repository just persists. billing_address is stored as JSONB.
 
 // InsertCustomer inserts a new customer and returns the resolved Account. home_branch_id ""

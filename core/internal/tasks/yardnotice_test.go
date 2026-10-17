@@ -202,7 +202,63 @@ func TestShortPick_NeverReadsAnEmptyReason(t *testing.T) {
 		t.Errorf("a notice must not read an empty reason:\n%s", s)
 	}
 	if got := shortPickMessage(YardOrderFacts{OrderNo: "#X", TotalAfterCents: 100, TotalBeforeCents: 100},
-		YardLineEffect{LineNo: 1, Description: "d", UOM: "EA", QtyOrdered: "5.0000", QtyPicked: "3.0000", QtyBackordered: "2.0000"}); strings.Contains(got, "Reason") || strings.Contains(got, "(was") {
+		YardLineEffect{LineNo: 1, Description: "d", UOM: "EA", QtyOrdered: "5.0000", QtyPicked: "3.0000", QtyBackordered: "2.0000"}, true); strings.Contains(got, "Reason") || strings.Contains(got, "(was") {
 		t.Errorf("no reason means no reason sentence, and an unchanged total has no (was ...):\n%s", got)
+	}
+}
+
+// The notice carries a second body with the figures left out and the words kept, for a channel
+// whose readers are not all on the cost and margin list (ruling 91: a figure never reaches an off
+// list role, in words either). The rep's own copy keeps the figures.
+func TestShortPick_SecondBodyLeavesTheFiguresOutOfTheWords(t *testing.T) {
+	svc, taskID, fy, n := noticeSvc(t)
+	fy.facts.InvoiceNo, fy.facts.InvoicedCents, fy.facts.PaidCents, fy.facts.OwedBackCents = "#INV-12", 5650, 5650, 2260
+	if _, err := svc.RecordPick(context.Background(), taskID, "u-1", []PickedLineInput{shortLine()}); err != nil {
+		t.Fatal(err)
+	}
+	ref := lastRepNotice(t, n)
+	for _, want := range []string{"$33.90", "$56.50", "$22.60"} {
+		if !strings.Contains(ref.Summary, want) {
+			t.Errorf("the rep's copy keeps the figures (%q):\n%s", want, ref.Summary)
+		}
+	}
+	if ref.SummaryNoFigures == "" || ref.SummaryNoFigures == ref.Summary {
+		t.Fatalf("a notice that names figures must carry a different second body:\n%s", ref.SummaryNoFigures)
+	}
+	for _, want := range []string{"Short pick on", "ordered 5.0000 EA", "picked 3.0000 EA", "on backorder",
+		"Skids condensed", "two skids became one", "The order total changed", "already paid", "#INV-12", "owed back"} {
+		if !strings.Contains(ref.SummaryNoFigures, want) {
+			t.Errorf("the second body keeps the words (%q):\n%s", want, ref.SummaryNoFigures)
+		}
+	}
+	if strings.Contains(ref.SummaryNoFigures, "$") {
+		t.Errorf("the second body names no figure, the count and the words only:\n%s", ref.SummaryNoFigures)
+	}
+}
+
+// The skid notice's second body keeps the count and the deposit's words ("the skid deposit
+// changed", "owed back on the invoice") and leaves the figures out.
+func TestSkidChange_SecondBodyLeavesTheFiguresOutOfTheWords(t *testing.T) {
+	svc, taskID, fy, n := noticeSvc(t)
+	fy.facts.InvoiceNo, fy.facts.InvoicedCents, fy.facts.PaidCents, fy.facts.OwedBackCents = "#INV-12", 5650, 5650, 5000
+	three := 3
+	fy.skidResult = &YardSkidResult{CountBefore: &three, CountAfter: 2, DepositBeforeCents: 15000, DepositAfterCents: 10000, Changed: true}
+	if _, err := svc.RecordSkids(context.Background(), SkidInput{TaskID: taskID, ActorID: "u-1", SkidCount: 2,
+		Reason: ShortReasonCondensed, Note: "three became two"}); err != nil {
+		t.Fatal(err)
+	}
+	ref := lastRepNotice(t, n)
+	for _, want := range []string{"from 3 to 2", "$100.00", "$150.00", "$50.00", "owed back"} {
+		if !strings.Contains(ref.Summary, want) {
+			t.Errorf("the rep's copy keeps the count and the figures (%q):\n%s", want, ref.Summary)
+		}
+	}
+	for _, want := range []string{"from 3 to 2", "The skid deposit changed.", "already paid", "#INV-12", "owed back"} {
+		if !strings.Contains(ref.SummaryNoFigures, want) {
+			t.Errorf("the second body keeps the count and the words (%q):\n%s", want, ref.SummaryNoFigures)
+		}
+	}
+	if strings.Contains(ref.SummaryNoFigures, "$") {
+		t.Errorf("the second body names no figure:\n%s", ref.SummaryNoFigures)
 	}
 }

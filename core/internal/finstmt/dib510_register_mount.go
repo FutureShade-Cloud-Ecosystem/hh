@@ -40,6 +40,8 @@ package finstmt
 import (
 	"context"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
@@ -68,6 +70,20 @@ func (h *Handler) WithRegisterSender(s RegisterSender) *Handler {
 	return h
 }
 
+// WithPaymentTrail binds the reader that says whether a caller holds the payment trail reads. Unbound,
+// the register's invoice detail withholds the payment entries from every caller.
+func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
+	h.paymentTrail = t
+	return h
+}
+
+// WithRegisterTaxLabel binds the dealer's tax word seam (platform/taxwords) for the register's printed
+// invoice. Unbound is the Ontario dealer's "HST".
+func (h *Handler) WithRegisterTaxLabel(src taxwords.Source) *Handler {
+	h.registerTaxWords = src
+	return h
+}
+
 // NotifierSender adapts the shipped notify port onto the register's Sender. Pure translation: the
 // register composes the words (billing/register_messages.go), notify decides how they travel.
 type NotifierSender struct{ N notify.Notifier }
@@ -85,19 +101,46 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	if pool == nil {
 		return
 	}
-	repo := billing.NewRepository(pool)
+	repo := billing.NewRepository(pool).WithZone(h.zone)
 	svc := billing.NewRegisterService(repo).
+		WithZone(h.zone).
 		WithMoney(billing.NewPaymentsReceiptWriter(payments.NewRepository(pool))).
 		// The SHIPPED statement generator (billing/statements.go), the same one the month-end run
 		// drives. The bulk bar produces statements; it does not compose them.
-		WithStatements(billing.NewStatementService(repo))
+		WithStatements(billing.NewStatementService(repo).WithZone(h.zone))
 	if h.registerSender != nil {
 		svc = svc.WithSender(h.registerSender)
 	}
 	billing.NewRegisterHandler(svc, repo, h.log).
 		WithBranchNamer(branchNamer(pool)).
 		WithUserLinker(h.userLink).
+		WithPaymentTrail(h.paymentTrail).
+		WithTaxLabel(h.registerTaxWords).
 		RegisterRoutes(r, g)
+	// Walk change 8 S5/S6/S8: promises list, account payment policy, reminder rules + enrol/exempt.
+	// Lives here because cmd/server/main.go is off limits to a lane and the same pool backs it;
+	// see c8walk_handler.go's header for why these handlers are in finstmt and not in billing.
+	NewC8WalkHandler(pool, h.log).RegisterC8WalkRoutes(r, g)
+
+	// -- the customer account workspace (Change 8 S2 + S2M) ----------------------------------------
+	// Mounted from this composition seam for the same reason the register is: cmd/server/main.go
+	// is off limits to a lane, and this is the registration the Finance module already makes. The
+	// workspace uses the same pool-backed repository the register just bound, and a CreditService
+	// pointing at the same repo so the 5-bucket aging the workspace opens with is the AR
+	// console's own read, by the discipline customer_ar_read.go spends thirty lines on.
+	creditSvc := billing.NewCreditService(repo)
+	if h.svc != nil && h.svc.now != nil {
+		creditSvc = creditSvc.WithClock(h.svc.now)
+	}
+	billing.NewWorkspaceHandler(repo, creditSvc, h.log).RegisterRoutes(r, g)
+
+	// -- the C8 S3 + S4 + S3M surface (manual hold, paylink, statement preview) ---------------------
+	// Three new operations beside the workspace handler. The handler rides the same billing
+	// Repository the workspace and the register just bound, the same caller-stamp middleware
+	// (caller_stamp_workspacehandler.go's pattern), and the same composition seam this
+	// module already owns. Mounted from this seam for the same reason the register is:
+	// cmd/server/main.go is off limits to a lane.
+	billing.NewC8S3S4Handler(repo, h.log).WithUserLinker(h.userLink).RegisterRoutes(r, g)
 }
 
 // registerPool resolves the pgx pool behind this service's repository, or nil in scaffold mode.

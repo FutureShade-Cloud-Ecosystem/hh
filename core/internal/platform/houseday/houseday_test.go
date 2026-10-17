@@ -41,3 +41,25 @@ func TestToday_IsTheHouseZonesDayWhateverZoneTheClockIsRead(t *testing.T) {
 		}
 	}
 }
+
+func TestEndOfDay_IsTheLastInstantOfTheNamedHouseDay(t *testing.T) {
+	for _, day := range []string{"2026-03-10", "2026-03-08", "2026-11-01", "2026-12-31"} {
+		end, err := EndOfDay(day)
+		if err != nil {
+			t.Fatalf("%s: %v", day, err)
+		}
+		if got := Today(func() time.Time { return end }); got != day {
+			t.Fatalf("%s: the end of day reads as house day %s", day, got)
+		}
+		if got := Today(func() time.Time { return end.Add(time.Microsecond) }); got == day {
+			t.Fatalf("%s: one microsecond later is still the same house day", day)
+		}
+		start, _ := ParseDay(day)
+		if got := Today(func() time.Time { return start }); got != day {
+			t.Fatalf("%s: ParseDay starts on house day %s", day, got)
+		}
+	}
+	if _, err := EndOfDay("not a day"); err == nil {
+		t.Fatal("a malformed day must be refused")
+	}
+}

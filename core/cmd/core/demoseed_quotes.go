@@ -86,7 +86,8 @@ var quotePersonaEmails = []string{personaQuoteSales, personaQuoteManager}
 // resolvablePersonaEmails is everything resolvePersonas asks the database for.
 func resolvablePersonaEmails() []string {
 	out := append([]string{}, demoPersonaEmails...)
-	return append(out, quotePersonaEmails...)
+	out = append(out, quotePersonaEmails...)
+	return append(out, controllerPersonaEmails...)
 }
 
 // demoFloorBps is the margin floor the world's two categories carry (the PAVER and BULK policy rows
@@ -122,7 +123,9 @@ type quoteSpec struct {
 	Editor string
 }
 
-// The three quotes. All at the branch the demo logins reach (index 1, Trenton on the demo database).
+// The quotes. Four at the branch the demo logins reach (index 1, Trenton/Point Loma on the demo
+// database), and one at the other branch (index 0, Kingston/Julian) so a Sales Manager's landing has
+// a margin request to decide on every branch the demo dealer owns.
 //
 //	Q1  DRAFT     C02  Sales          Brussels 200 PC at the rule price, and a request filed for a 12 percent
 //	                                  discount on it that lands below the floor; edging 30 EA at 4 percent
@@ -135,6 +138,8 @@ type quoteSpec struct {
 //	Q4  ACCEPTED  C10  Sales          Concrete Sand 10 T and Granular A 4 T, both at list. The Cash On
 //	                                  Demand account's quote: conversion succeeds against the account's
 //	                                  credit line, and the release hold is the till's, see below.
+//	Q5  DRAFT     C04  Sales          Wall block 50 PC at the negotiated rule price, with a request filed for
+//	                                  a 5 percent discount that lands below the floor at the Kingston branch.
 //
 // Q4 EXISTS SO THE CASH ON DEMAND PATH IS ONE CLICK OLD, not a story a tester has to build first: the
 // account (plan.go's C10) is the one whose zero-day terms the product's own dispatch rule reads as
@@ -181,6 +186,10 @@ var demoQuotes = []quoteSpec{
 			{Prod: "P08", Qty: 10},
 			{Prod: "P07", Qty: 4},
 		}, Link: true},
+	{Key: "Q5", Cust: "C04", Status: "DRAFT", Owner: personaQuoteSales, Branch: 0, AgeDays: 2,
+		Project: "Harbourview foundation", PO: "", Contact: "Site contact",
+		Notes: "Draft for the foundation, wall block.",
+		Lines: []quoteLineSpec{{Prod: "P04", Qty: 50}}},
 }
 
 // quoteRequestSpec is one pending floor request: the salesperson asked for a discount on one line of
@@ -195,6 +204,7 @@ type quoteRequestSpec struct {
 
 var demoQuoteRequests = []quoteRequestSpec{
 	{"FR1", "Q1", 1, 12, "Customer is comparing a second yard, asking for twelve percent on the Brussels.", 20},
+	{"FR2", "Q5", 1, 5, "Builder needs the block price closer to their budget.", 14},
 }
 
 // quoteLineFacts is one line priced by the builder's own rules.

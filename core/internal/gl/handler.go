@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -140,7 +141,9 @@ func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return "", false
 	}
-	return id, true
+	// One canonical value for everything downstream: a uuid column compares case blind but a text column
+	// (an approval request's subject_ref) does not, so the lower case form is what every read and write sees.
+	return strings.ToLower(id), true
 }
 
 // - chart of accounts -
@@ -382,7 +385,15 @@ func (h *Handler) tieOut(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 	}
 	asOf := time.Now()
 	if v := r.URL.Query().Get("as_of"); v != "" {
-		if t, err := time.Parse("2006-01-02", v); err == nil {
+		// An explicit day is the dealer's day, cut at its last instant: the AR arm reads the house day
+		// of this instant and the GL arm cuts posted_at at it, so both sides close the same day. A
+		// bare time.Parse (midnight at Greenwich) is the previous evening to the AR arm.
+		zone, zerr := houseday.Resolve(r.Context(), h.zone)
+		if zerr != nil {
+			h.writeErr(w, r, zerr)
+			return
+		}
+		if t, err := zone.EndOfDay(v); err == nil {
 			asOf = t
 		}
 	}
@@ -408,6 +419,10 @@ func (h *Handler) bistrackTieOut(w http.ResponseWriter, r *http.Request, _ guard
 	if !ok {
 		return
 	}
+	// A dealer migration aid: on only where the dealer's configuration names a legacy import source.
+	if !h.legacyImportEnabled(w, r) {
+		return
+	}
 	year := queryInt(r, "year", time.Now().Year())
 	month := queryInt(r, "month", 0) // 0 → rejected by the service (a closing balance needs an explicit month)
 	tolerance := int64(queryInt(r, "tolerance_cents", 0))
@@ -417,6 +432,24 @@ func (h *Handler) bistrackTieOut(w http.ResponseWriter, r *http.Request, _ guard
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, rep)
+}
+
+// legacyImportEnabled answers whether this dealer names a legacy import source, writing the refusal
+// itself when not (a plain 404 sentence) or when the read fails. No source wired is no source.
+func (h *Handler) legacyImportEnabled(w http.ResponseWriter, r *http.Request) bool {
+	src := ""
+	if h.legacy != nil {
+		var err error
+		if src, err = h.legacy.LegacyImportSource(r.Context()); err != nil {
+			h.writeErr(w, r, err)
+			return false
+		}
+	}
+	if src == "" {
+		httpx.Error(w, http.StatusNotFound, "the legacy import check is not enabled for this dealer")
+		return false
+	}
+	return true
 }
 
 // - periods -

@@ -2,8 +2,10 @@
 
 One image in the Railway shape (plan r7 section 5): the core built with
 `-tags demo`, the built files of every web app (front door at `/`, till at
-`/till/`, public desk at `/q/`, Quote Desk at `/quote/` when present), Caddy in front, and the
-frozen migration set. Build from the repository root:
+`/till/`, buying-and-stock at `/buying-and-stock/`, public desk at `/q/`, HH
+Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Money
+Desk at `/money-desk/`, Dealer Admin at `/dealer-admin/`, Quote Desk at `/quote/` when present), Caddy in
+front, and the frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .
 
@@ -101,6 +103,71 @@ forged chain is never the answer.
 | `CORE_INTERNAL_PORT` | the core's loopback port (the default is 9090) |
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
+| `HH_DEMO_MINT_VISITOR_ALLOWANCE` | the per-visitor mint allowance on the testers' copy, optional; unset or non-positive keeps the default of 5, and the value is capped at 20. Staging and public deployments leave this unset. |
+| `CORE_SIGNIN_MODE` | `demo` or `console`, required, no default (the image refuses to start without it) |
+| `CORE_SESSION_SIGNING_KEY_FILE` | console mode: path of the PEM EC P-256 private key. The secret mount must be mode 0400 or 0600 and owned by the user the core runs as (a file readable by group or other is refused at boot, and so is one the core's user cannot read); mount it read only |
+| `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
+| `CORE_TOKEN_ISSUER`, `CORE_APPWRITE_ENDPOINT`, `CORE_APPWRITE_PROJECT`, `CORE_APPWRITE_API_KEY` | console mode: the deployment's issuer (never `hh-demo`) and the FB Console values |
+| `CORE_EXCHANGE_TOKEN_TTL` | console mode, optional: the exchange token window, one second to one hour |
+| `HH_WEB_MODE` | the web runtime config the box serves at `/config.json`: `demo` or `console`. Unset or `demo` keeps the file the image baked (`{"mode":"demo"}`); `console` writes it at boot from the names below and the entrypoint refuses to start, naming the variable and never its value, if one is wrong. Public facts only: never a key |
+| `HH_WEB_ORG`, `HH_WEB_CONSOLE_ENDPOINT`, `HH_WEB_CONSOLE_PROJECT_ID`, `HH_WEB_DEALER_NAME` | console web config, required: the org slug (`hh-demo` on the console copies), FB Console's endpoint (https, or http on localhost), the HH project id, the dealer's name; console mode writes `/srv/app/config.json` at boot, so the container must run as root with a writable `/srv/app` (no `--read-only`, no `--user`), and a copy that sets any `HH_WEB_*` must also set `HH_WEB_MODE` |
+| `HH_WEB_CORE_BASE_URL`, `HH_WEB_DEALER_MARK` | console web config, optional: the core's base URL (empty means the page's own origin), a built in mark code |
+| `HH_WEB_PERSONAS`, `HH_WEB_PERSONAS_OPEN`, `HH_WEB_PERSONA_CALLER` | console web config, optional: `true` or `false` for the first two (the public copy sets both), and `public` or `partner` for the caller, which must agree with `HH_WEB_PERSONAS_OPEN` as the browser's parser demands |
+
+## The console sign in mode (the testers' copy and the public copy)
+
+A copy that signs real people in through FB Console runs this image with
+`CORE_SIGNIN_MODE=console`. Staging keeps `CORE_SIGNIN_MODE=demo` until it is
+retired; the mode has no default, so every copy names it, and a console copy
+does not serve the old demo mint routes (they answer 404). The console mode
+is a declared shape of the demo environment guard: it carries a live
+connection to FB Console (the one outbound a console copy makes) and the
+guard allows exactly the names listed here under `CORE_`, refusing any other
+`CORE_` name at boot, naming the variable and never its value.
+
+Every value below is set in FB Deploy for the copy. Nothing is baked into the
+image and nothing is committed.
+
+| Name | Kind | What it is |
+|---|---|---|
+| `CORE_SIGNIN_MODE` | public value | `console` |
+| `CORE_TOKEN_ISSUER` | public value | one value per deployment, never `hh-demo`; a token minted on one copy never verifies on another |
+| `CORE_SESSION_SIGNING_KEY_FILE` | **secret file** (a path) | the PEM private key (ES256, P-256); mount it read only with mode 0400 or 0600, readable by the core's user, never an environment value; boot refuses a group or other readable file |
+| `CORE_SESSION_KEY_NEXT_FILE` | public half (a path) | optional; the PEM public key staged for a rotation |
+| `CORE_SESSION_KEY_PREVIOUS_FILE` | public half (a path) | optional; the retired key's PEM public key while its tokens live |
+| `CORE_APPWRITE_ENDPOINT` | public value | the FB Console API endpoint, ending in `/v1` |
+| `CORE_APPWRITE_PROJECT` | public value | the HH project id in FB Console |
+| `CORE_APPWRITE_API_KEY` | **secret** | the core's server key: users read, teams read, files read and files write only (it cannot mint a JWT for anyone) |
+| `CORE_EXCHANGE_TOKEN_TTL` | public value | optional Go duration, at most 1 hour (the default is 1 hour) |
+| `CORE_EXCHANGE_JWT_BOUND` | public value | optional Go duration, at least 900 seconds, default 20 minutes; the furthest a FB Console JWT's `exp` may lie ahead |
+| `CORE_SIGNIN_EMAIL_DOMAINS` | public value | comma list; with `CORE_SIGNIN_EMAIL_ADDRESSES` the allow list of sign in emails; both empty or unset refuses every sign in |
+| `CORE_SIGNIN_EMAIL_ADDRESSES` | public value | comma list of whole addresses |
+| `CORE_TRUSTED_PROXIES` | public value | comma list of peer addresses allowed to name the client: set it to the address Caddy connects from (`127.0.0.1` in this image), or every visitor shares the proxy's one rate limit bucket |
+| `CORE_PERSONA_CALLER` | public value | `partner` on the testers' copy, `open` on the public copy; no default, a console copy that does not say does not boot. It decides who may call `POST /api/v1/auth/persona` |
+| `CORE_PERSONA_PARTNERS` | public value | comma list of FB Console user ids that may enter as a persona on the testers' copy (each also needs a linked ACTIVE staff row); empty refuses every caller; refused at boot on an `open` copy |
+| `CORE_JWKS_URL` | unset | the console copy verifies its own tokens; if it is still set the boot logs one warning and ignores it |
+
+The persona route (`POST /api/v1/auth/persona`) exists in this image's console
+mode only. The tap-a-role cards mint a persona's own session with the copy's
+signing key; a persona is not an FB Console user and its subject is
+`persona:<id>`. On the testers' copy the caller sends the core bearer of a real
+partner exchange (a persona token cannot call it); on the public copy it is open
+and limited per address and per address and persona. The demo populate creates
+the persona rows (`persona.<id>@hh-demo.invalid`, never a Console style
+account); the four contractor personas are listed and answer the shared 403
+until the Pro cycle.
+
+The rest of the table above (database, vault key, gate hash, acceptance
+signing pair) is unchanged. The JWK Set at `/.well-known/jwks.json` is served
+through Caddy with no phrase, ahead of the front door's catch all; proven by
+`deploy/demo/caddy-jwks-test.sh`. The environment guard's list is
+`demoEnvAllowCoreNames` in `core/cmd/core/demoenv_inventory.go`: a new
+`CORE_` name is added there, by name, in the same change that reads it.
+
+A console copy needs the core to be the only replica per deployment (a
+replica knows only its own key configuration), the signing key rotated by the
+staged order in the sign in state note, and FB Deploy's secret file mode
+confirmed before the copy ships.
 
 ## One replica
 
@@ -116,7 +183,7 @@ is no second box sharing the work.
 `deploy/demo/exit-test.sh` drives the built image end to end against a
 throwaway local Postgres (container `hh-till-l3d-pg` on `127.0.0.1:5599`,
 started by the script when absent): the image builds; on a clean database
-it answers `/healthz` (no phrase asked), the flows listing with the two
+it answers `/healthz` (no phrase asked), the flows listing with the eight
 flows, the app's first page (refused without the phrase, served with it),
 and `/api/v1/payments/config` with `simulated: true`; the gate refuses the
 mint without the phrase and still admits a staff call with a valid demo

@@ -182,6 +182,11 @@ func qwApply(t *testing.T) (proposed, created int) {
 
 // qwFingerprint fingerprints every row of the tables, contents and row versions, so an assertion can
 // hold that a run changed nothing at all rather than merely created nothing.
+//
+// The contractor account's documents are left out of the tables that hold them (qwWithoutContractor):
+// the apply that adds the quote world adds the contractor world in the same transaction (the account
+// exists by then), and demoseed_contractor_plan_test.go and internal/demo/world_contractor_test.go
+// hold that world; these fingerprints are about the OTHER worlds not moving.
 func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -190,12 +195,128 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 		if err := pool.QueryRow(ctx, `
 			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
 			  FROM (SELECT to_jsonb(r)::text AS line
-			          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`).Scan(&sum); err != nil {
+			          FROM (SELECT *, xmin::text AS row_version FROM `+table+qwWithoutContractor(table)+`) r) s`).Scan(&sum); err != nil {
 			t.Fatalf("fingerprint %s: %v", table, err)
 		}
 		out[table] = sum
 	}
 	return out
+}
+
+// qwWithoutContractor is the WHERE clause that leaves the contractor account's own rows out of a table
+// (the account is contractorCustomerID; a line table is reached through its document).
+func qwWithoutContractor(table string) string {
+	c := "'" + contractorCustomerID + "'::uuid"
+	switch table {
+	case "orders", "invoices", "payments", "quotes":
+		return " WHERE customer_id <> " + c
+	case "quote_lines":
+		return " WHERE quote_id NOT IN (SELECT id FROM quotes WHERE customer_id = " + c + ")"
+	case "order_lines":
+		return " WHERE order_id NOT IN (SELECT id FROM orders WHERE customer_id = " + c + ")"
+	case "invoice_lines":
+		return " WHERE invoice_id NOT IN (SELECT id FROM invoices WHERE customer_id = " + c + ")"
+	case "payment_allocations":
+		return " WHERE payment_id NOT IN (SELECT id FROM payments WHERE customer_id = " + c + ")"
+	}
+	return ""
+}
+
+// qwDriverDayIDs are the Driver's day-keyed run and stop ids on the pinned clock's day: the rows
+// the seed's org stamp addresses. The stamp cannot land on the first apply (the org row does not
+// exist until the populate provisions it), so it lands on the first apply AFTER the populate, which
+// in this world is the one that adds the quotes. The fingerprints around that apply keep these rows
+// in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
+// below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
+func qwDriverDayIDs() []string {
+	stamp := qwClock.In(seedLocation()).Format("20060102")
+	ids := []string{demoID(dayKey(stamp, "driver-run"))}
+	ids = append(ids, driverDayStopIDs(stamp)...)
+	return ids
+}
+
+// qwDriverStampColumns are the only columns the org stamp moves on a Driver day row: the org it
+// sets, the updated_at it bumps, and the row version (xmin) any update changes.
+var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
+
+// qwTaskRepairColumns are the only columns the task sync repair (repairDemoTaskSync) moves on a
+// demo task row: the org it stamps, the seq it draws from the type's counter, and the row version
+// (xmin) any update changes. The repair needs the org row, which the populate provisions after the
+// first apply, so like the Driver's stamp it can only land on the first apply after the populate,
+// which is the apply that adds the quotes.
+var qwTaskRepairColumns = []string{"org_id", "seq", "row_version"}
+
+// qwOrderRepColumns are the only columns the order rep repair (repairDemoOrderReps) moves on an
+// open yard-branch order: the salesperson it stamps, the updated_at it writes, and the row version
+// (xmin) any update changes. The repair needs the Sales login, which the populate provisions after
+// the first apply, so it lands on the same apply that adds the quotes.
+var qwOrderRepColumns = []string{"salesperson_id", "updated_at", "row_version"}
+
+// qwOrderRepIDs are the open demo orders of the yard branch (the second by code order), the rows
+// the order rep repair addresses. Asked of the database with the repair's own predicate, so a plan
+// change that moves the set moves the exception with it.
+func qwOrderRepIDs(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+		SELECT id FROM orders
+		 WHERE metadata->>'demo_seed' = $1
+		   AND branch_id = (SELECT id FROM locations ORDER BY code OFFSET 1 LIMIT 1)
+		   AND status = ANY($2::text[]) ORDER BY id`, demoMarker, demoOpenOrderStatuses)
+	if err != nil {
+		t.Fatalf("reading the rep repair's rows: %v", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// qwFingerprintOrdersRep fingerprints the orders table the way qwFingerprint does (the contractor
+// world's orders are added by the same apply, so they are kept out), but with the rep repair's rows
+// kept in and only qwOrderRepColumns removed from those rows alone.
+func qwFingerprintOrdersRep(t *testing.T, ctx context.Context, pool *pgxpool.Pool, except, cols []string) string {
+	t.Helper()
+	var sum string
+	if err := pool.QueryRow(ctx, `
+		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		          FROM (SELECT *, xmin::text AS row_version FROM orders`+qwWithoutContractor("orders")+`) r) s`,
+		except, cols).Scan(&sum); err != nil {
+		t.Fatalf("fingerprint orders: %v", err)
+	}
+	return sum
+}
+
+// qwDemoTaskIDs are the plan's own task ids, the rows the task sync repair addresses.
+func qwDemoTaskIDs() []string {
+	ids := make([]string, 0, len(demoTasks))
+	for _, tk := range demoTasks {
+		ids = append(ids, demoID("task:"+tk.Key))
+	}
+	return ids
+}
+
+// qwFingerprintStamped fingerprints one delivery table with the day-keyed Driver rows named by
+// except kept in, but with qwDriverStampColumns removed from those rows alone. Every other column of
+// those rows, and every column of every other row, still counts, so a status, a date or a driver id
+// moving on them is seen.
+func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except, cols []string) string {
+	t.Helper()
+	var sum string
+	if err := pool.QueryRow(ctx, `
+		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
+		except, cols).Scan(&sum); err != nil {
+		t.Fatalf("fingerprint %s: %v", table, err)
+	}
+	return sum
 }
 
 func qwCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q string, args ...any) int {
@@ -300,29 +421,95 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
-	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	// The Driver's day-keyed rows stay in the two delivery fingerprints with only the org stamp's
+	// columns taken out (see qwDriverStampColumns): the stamp they take on this apply is the one
+	// intended movement beside the quote world, checked by name below instead of hiding inside
+	// "nothing else moved".
+	driverDayIDs := qwDriverDayIDs()
+	taskIDs := qwDemoTaskIDs()
+	// The task sync repair is the other named mover on this apply: every demo task enters it
+	// unstamped (no seq, so on no sync feed) and leaves it stamped, with only qwTaskRepairColumns
+	// moved (the fingerprint below keeps every other column of these rows in).
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NULL`, taskIDs); n != len(taskIDs) {
+		t.Fatalf("%d of %d demo tasks enter the second apply unstamped, want all of them", n, len(taskIDs))
+	}
+	// The order rep repair is the last named mover: every open yard-branch demo order enters this
+	// apply with no salesperson and leaves it with the Sales persona, with only qwOrderRepColumns
+	// moved. A fresh apply's orders are all NULL (the first apply runs before the populate), so the
+	// guard is the repair's own scope arriving empty-handed, not an assumption.
+	orderRepIDs := qwOrderRepIDs(t, ctx, pool)
+	if len(orderRepIDs) == 0 {
+		t.Fatal("no open yard-branch demo orders for the rep repair to address")
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM orders WHERE id = ANY($1::uuid[]) AND salesperson_id IS NOT NULL`, orderRepIDs); n != 0 {
+		t.Fatalf("%d of %d rep repair rows already carry a salesperson before the apply", n, len(orderRepIDs))
+	}
+	fingerprint := func() map[string]string {
+		out := map[string]string{}
+		for _, table := range qwOtherWorldTables {
+			if table == "delivery_runs" || table == "delivery_stops" {
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs, qwDriverStampColumns)
+				continue
+			}
+			if table == "tasks" {
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, taskIDs, qwTaskRepairColumns)
+				continue
+			}
+			if table == "orders" {
+				out[table] = qwFingerprintOrdersRep(t, ctx, pool, orderRepIDs, qwOrderRepColumns)
+				continue
+			}
+			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
+		}
+		return out
+	}
+	before := fingerprint()
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 // quotes, lines, links, acceptances, audit rows, events, log rows, request
+	const wantQuoteRows = 5 + 10 + 3 + 2 + 2 + 2 + 4 + 2 + controllerWorldRows + contractorWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, requests, and the controller and contractor worlds the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
-	after := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	after := fingerprint()
 	for table, sum := range before {
 		if after[table] != sum {
 			t.Errorf("%s changed across the apply that adds the quotes, nothing else in the world may move", table)
 		}
 	}
-	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
-		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1}
+	// The named exception, held to its bounds: every day-keyed Driver row now carries the demo org
+	// (the stamp the first apply could not run), and the two fingerprints above prove nothing else
+	// moved to get it: no other row of those tables, and no other column of these.
+	var runsStamped, stopsStamped int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM delivery_runs WHERE id = ANY($1::uuid[]) AND org_id = (SELECT id FROM org WHERE slug = $2)`,
+		driverDayIDs, demoOrgSlug).Scan(&runsStamped); err != nil {
+		t.Fatalf("reading the stamped run: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM delivery_stops WHERE id = ANY($1::uuid[]) AND org_id = (SELECT id FROM org WHERE slug = $2)`,
+		driverDayIDs, demoOrgSlug).Scan(&stopsStamped); err != nil {
+		t.Fatalf("reading the stamped stops: %v", err)
+	}
+	if runsStamped != 1 || stopsStamped != len(driverDayIDs)-1 {
+		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
+			runsStamped, stopsStamped, len(driverDayIDs)-1)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
+		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {
+		t.Errorf("the task sync repair left %d of %d demo tasks on their feed, want all of them", n, len(taskIDs))
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM orders WHERE id = ANY($1::uuid[]) AND salesperson_id = $2`,
+		orderRepIDs, qwSalesUserID); n != len(orderRepIDs) {
+		t.Errorf("the order rep repair left %d of %d open yard-branch orders on the Sales persona, want all of them", n, len(orderRepIDs))
+	}
+	census := map[string]int{"quotes": 5, "quote_lines": 10, "quote_share_links": 3, "quote_acceptances": 2,
+		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 2 + 2}
 	for table, add := range census {
-		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
+		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table+qwWithoutContractor(table)); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
 		}
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 4 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1 AND customer_id <> $2::uuid`, demoMarker, contractorCustomerID); n != 5 {
 		t.Errorf("demo quotes found by the world's marker: %d, want 4", n)
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 2 {
 		t.Errorf("floor requests: %d, want 1", n)
 	}
 
@@ -368,7 +555,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 	appwrite := newAppwriteFake(t)
 	for _, sub := range []string{qwSalesUserID, qwManagerUserID, qwHRSubject} {
-		appwrite.setTeam(sub, "org:"+demoOrgSlug)
+		appwrite.setTeam(sub, "org-"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
@@ -386,6 +573,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}
@@ -408,10 +596,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		lines             int
 	}
 	wants := map[string]want{
-		"Q1": {"DEMO-TRT-Q1", "DRAFT", qwSalesUserID, 2},
-		"Q2": {"DEMO-TRT-Q2", "SENT", qwManagerUserID, 2},
-		"Q3": {"DEMO-TRT-Q3", "ACCEPTED", qwSalesUserID, 3},
-		"Q4": {"DEMO-TRT-Q4", "ACCEPTED", qwSalesUserID, 2},
+		"Q1": {"DEMO-PLM-Q1", "DRAFT", qwSalesUserID, 2},
+		"Q2": {"DEMO-PLM-Q2", "SENT", qwManagerUserID, 2},
+		"Q3": {"DEMO-PLM-Q3", "ACCEPTED", qwSalesUserID, 3},
+		"Q4": {"DEMO-PLM-Q4", "ACCEPTED", qwSalesUserID, 2},
 	}
 	seeded := map[string]qwQuote{}
 	for key, w := range wants {
@@ -560,7 +748,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	requestID := demoID("floorrequest:FR1")
 	listed := func(c *tillClient) bool {
 		t.Helper()
-		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING", nil)
+		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING&limit=200", nil)
 		if rsp.status == http.StatusForbidden {
 			return false
 		}

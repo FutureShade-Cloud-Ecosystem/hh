@@ -21,6 +21,28 @@ export { css } from 'lit';
 export { HHElement, defineElement, HHRenderError } from './base.js';
 export { hhAddress } from './address.js';
 export {
+  CHROME_ACTION_MESSAGE,
+  CHROME_CONTROLS_MESSAGE,
+  FRAMED_BY_WORK_SHELL,
+  FRAMED_PARAM,
+  MAX_SIGN_OUT_NONCE_LENGTH,
+  SIGNED_OUT_MESSAGE,
+  SIGN_OUT_REQUEST_MESSAGE,
+  acceptChromeControls,
+  announceChromeControls,
+  announceSignOut,
+  announceSignedOut,
+  chromeActionFrom,
+  framedAddress,
+  framedByShell,
+  framedFlagFromSearch,
+  listenForHostSignOut,
+  readFramedByShell,
+  signOutRequestFrom,
+  signedOutFrom,
+} from './framed.js';
+export type { ChromeAction, FramedListenWindow, FramedWindow } from './framed.js';
+export {
   KIT_STATES,
   STATE_META,
   stateIndicator,
@@ -28,7 +50,7 @@ export {
   stateStyles,
 } from './state.js';
 export type { KitState, DesignedState } from './state.js';
-export { baseStyles, button, chip, row, spinner } from './primitives.js';
+export { baseStyles, button, select, dateInput, fieldGroup, textInput, segmented, chip, row, spinner } from './primitives.js';
 export { STATE_ICONS, icon } from './state-icons.js';
 export { HosAppHeader } from './header.js';
 export { HHFeedback } from './feedback.js';

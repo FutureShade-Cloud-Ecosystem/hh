@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 )
@@ -17,6 +20,7 @@ import (
 type Engine struct {
 	stores map[string]Store
 	audit  *auditLog
+	ledger KeyLedger
 }
 
 // NewEngine returns an empty Engine. Scopes arrive by RegisterScope; the
@@ -122,7 +126,9 @@ const (
 // Push replays the client's outbox in order, one result per operation, in
 // push order. Per operation, in order: shape validation (a rejected
 // result, never a failed request), idempotency-key dedup (a replayed
-// operation returns applied and never applies twice), then the operation
+// operation returns applied and never applies twice, and a key reused
+// with a different body is a rejected key_reused result, keyledger.go),
+// then the operation
 // itself with the scope's conflict policy deciding any stale write.
 // Operation-level refusals (the module's own invariants, a missing or
 // out-of-scope row, an impossible create) are that operation's rejected
@@ -149,13 +155,69 @@ func (e *Engine) Push(ctx context.Context, info ScopeInfo, f ScopeFilter, ops []
 // SyncPushResult: status (applied, conflict, rejected), seq when the
 // operation wrote, the conflict envelope when it conflicted, error when it
 // was rejected.
+//
+// The idempotency key is canonicalized here, once: a uuid is one key whatever
+// its letter case, and the ledger's slot lock, the ledger's uuid column and
+// the modules' dedup columns must all see one spelling, or the same key in
+// two cases takes two locks and both bodies apply. The result answers with
+// the spelling the client sent, which is how it matches results to its outbox.
 func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation) (apigen.SyncPushResult, error) {
+	sent := op.ClientId
+	if validOp(op) == nil {
+		if id, err := uuid.Parse(sent); err == nil {
+			op.ClientId = id.String()
+		}
+	}
+	res, err := e.pushCanonical(ctx, store, info, f, op)
+	if err == nil {
+		res.ClientId = sent
+		if res.Conflict != nil {
+			res.Conflict.ClientId = sent
+		}
+	}
+	return res, err
+}
+
+func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation) (apigen.SyncPushResult, error) {
 	if err := validOp(op); err != nil {
 		return e.auditRejected(ctx, info, f, op, "", err), nil
 	}
-	// Dedup first, before any conflict evaluation: an operation that
-	// already applied under this key is finished, and a replay must not
-	// re-litigate a row that moved after it landed.
+	// The body hash the key is bound to (keyledger.go); empty when no
+	// ledger is wired.
+	var hash string
+	var entry LedgerEntry
+	bound := false
+	if e.ledger != nil {
+		h, err := opHash(info.Name, op)
+		if err != nil {
+			return e.auditRejected(ctx, info, f, op, "", errors.New("payload cannot be hashed")), nil
+		}
+		hash = h
+		// One key, one operation at a time: the lock spans the lookup, the
+		// apply and the remember, so a second push of the same key sees the
+		// first one's outcome before it applies anything.
+		release, err := e.ledger.Lock(ctx, f, info.Name, op.ClientId)
+		if err != nil {
+			return apigen.SyncPushResult{}, err
+		}
+		defer release()
+		// The fourth guarantee, asked of EVERY keyed operation before the
+		// module's dedup: the module's column may hold only a later key, so
+		// the ledger is the one record of what this key first applied. A
+		// different body is refused for this operation alone (rejected,
+		// never applied, no card of the first).
+		entry, bound, err = e.ledger.Lookup(ctx, f, info.Name, op.ClientId)
+		if err != nil {
+			return apigen.SyncPushResult{}, err
+		}
+		if bound && entry.Hash != hash {
+			return e.keyReused(ctx, info, f, op, entry.EntityID), nil
+		}
+	}
+	// Dedup, before any conflict evaluation: an operation that already
+	// applied under this key is finished, and a replay must not re-litigate
+	// a row that moved after it landed. A key with no stored hash is a plain
+	// replay (keyledger.go).
 	row, applied, err := store.FindApplied(ctx, f, op.ClientId)
 	if err != nil {
 		return e.classified(ctx, info, f, op, "", err)
@@ -165,11 +227,19 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 		e.record(ctx, info, f, op, row.ID, resultApplied, "")
 		return res, nil
 	}
+	if bound {
+		// Same body, and the module's column has moved past this key: it
+		// applied once already and must not apply again.
+		return e.replayBound(ctx, store, info, f, op, entry)
+	}
 	switch op.Op {
 	case opCreate:
 		created, err := store.Create(ctx, f, op.ClientId, op.Payload)
 		if err != nil {
 			return e.classified(ctx, info, f, op, "", err)
+		}
+		if err := e.remember(ctx, info, f, op, hash, created.ID); err != nil {
+			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &created.Seq}
 		e.record(ctx, info, f, op, created.ID, resultApplied, "")
@@ -184,11 +254,14 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 			return e.auditRejected(ctx, info, f, op, id, ErrRowNotFound), nil
 		}
 		if stale(op, row) {
-			return e.resolveStale(ctx, store, info, f, op, row, id)
+			return e.resolveStale(ctx, store, info, f, op, row, id, hash)
 		}
 		written, err := store.Write(ctx, f, id, op.ClientId, op.Payload)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
+		}
+		if err := e.remember(ctx, info, f, op, hash, id); err != nil {
+			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &written.Seq}
 		e.record(ctx, info, f, op, id, resultApplied, "")
@@ -213,6 +286,9 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 		deleted, err := store.Delete(ctx, f, id, op.ClientId)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
+		}
+		if err := e.remember(ctx, info, f, op, hash, id); err != nil {
+			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &deleted.Seq}
 		e.record(ctx, info, f, op, id, resultApplied, "")
@@ -240,7 +316,10 @@ func (e *Engine) classified(ctx context.Context, info ScopeInfo, f ScopeFilter, 
 // rule). The envelope travels per operation inside this push response, in
 // the contract's own shape; the request itself is never failed for a
 // conflict.
-func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, row RowState, id string) (apigen.SyncPushResult, error) {
+func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, row RowState, id, hash string) (apigen.SyncPushResult, error) {
+	if d, ok := store.(ServerStateDecorator); ok {
+		d.DecorateServerState(ctx, f, &row)
+	}
 	out := resolveConflict(info.Policy, row, op.Payload)
 	if out.ReviewMarker {
 		// The manual policy's review marker: the server-side record that
@@ -278,6 +357,9 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 	if err != nil {
 		return e.classified(ctx, info, f, op, id, err)
 	}
+	if err := e.remember(ctx, info, f, op, hash, id); err != nil {
+		return apigen.SyncPushResult{}, err
+	}
 	applied := out.Applied
 	res := apigen.SyncPushResult{
 		ClientId: op.ClientId,
@@ -292,6 +374,66 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 	}
 	e.record(ctx, info, f, op, id, resultApplied, string(out.Policy))
 	return res, nil
+}
+
+// remember binds the key that has just applied to its body hash and the
+// row it touched. Nothing is stored without a ledger. A failure is an
+// operational fault, not a verdict on the operation: the push fails whole
+// and the client retries it whole (keyledger.go says what the retry sees).
+//
+// The write runs on a context detached from the request's cancellation: the
+// module has already committed, and the request context dies the moment the
+// client's connection drops, so riding it would leave an applied key unbound
+// for good. It is one primary key insert, bounded by ledgerWriteBound.
+func (e *Engine) remember(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, hash, entityID string) error {
+	if e.ledger == nil {
+		return nil
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ledgerWriteBound)
+	defer cancel()
+	return e.ledger.Remember(wctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID})
+}
+
+// ledgerWriteBound caps the detached ledger write, so a stalled database
+// cannot hold the slot lock and a pool connection without end.
+const ledgerWriteBound = 30 * time.Second
+
+// replayBound answers an operation whose key the ledger holds with the same
+// body while the module's dedup no longer finds it: the key applied, so the
+// answer is applied from the row's current state and nothing is written. A
+// row that can no longer be read under the caller's filter answers applied
+// without a seq (the operation did land; there is no row left to report).
+func (e *Engine) replayBound(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entry LedgerEntry) (apigen.SyncPushResult, error) {
+	id := entry.EntityID
+	if id == "" {
+		id, _ = op.Payload["id"].(string)
+	}
+	res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied}
+	if id != "" {
+		row, ok, err := store.Load(ctx, f, id)
+		if err != nil {
+			return e.classified(ctx, info, f, op, id, err)
+		}
+		if ok {
+			res.Seq = &row.Seq
+		}
+	}
+	e.record(ctx, info, f, op, id, resultApplied, "")
+	return res, nil
+}
+
+// keyReused builds the refusal for a key reused with a different body and
+// its audit row. The row is the operation's one audit fact (SYNC_KEY_REUSED
+// stands in for SYNC_PUSH), naming the row the first application touched.
+func (e *Engine) keyReused(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entityID string) apigen.SyncPushResult {
+	if e.audit != nil {
+		e.audit.record(ctx, AuditEntry{
+			Action: auditKeyReused, Scope: info.Name, Op: op.Op,
+			ClientID: op.ClientId, EntityID: entityID, Actor: f.Actor, Outcome: resultRejected,
+		})
+	}
+	msg := ErrKeyReused.Error()
+	return apigen.SyncPushResult{ClientId: op.ClientId, Status: resultRejected, Error: &msg}
 }
 
 // record writes the per-operation audit row for one applied or conflicted

@@ -35,6 +35,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // Statement run modes (0105 CHECK).
@@ -142,14 +145,15 @@ type StatementOutbox interface {
 // statementStore is the persistence the StatementService needs.
 type statementStore interface {
 	CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error)
-	AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error)
-	StatementLines(ctx context.Context, customerID string, asOf time.Time) ([]StatementLine, error)
+	AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error)
+	StatementLines(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error)
 	BranchHeader(ctx context.Context, branchID string) (StatementHeader, error)
 	CreateRun(ctx context.Context, mode, branchID string, asOf time.Time, actorID string) (string, error)
 	SaveStatement(ctx context.Context, runID string, s Statement, notice *StatementNotice, outbox StatementOutbox) (string, error)
 	FinishRun(ctx context.Context, runID, status string, generated, queued int, runErr string) error
 	GetRun(ctx context.Context, runID string) (StatementRun, []Statement, error)
 	LatestStatement(ctx context.Context, customerID string) (Statement, bool, error)
+	LatestStatementIn(ctx context.Context, customerID string, reach BranchReach) (Statement, bool, error)
 }
 
 // statementNoticeAccountant is the OPTIONAL store capability that records 0148's notice counts.
@@ -185,7 +189,12 @@ type StatementService struct {
 	outbox StatementOutbox
 	audit  audit.Recorder
 	clock  func() time.Time
+	zone   houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source: a statement run is cut at the dealer's own
+// calendar day. Nil keeps the Ontario dealer's.
+func (s *StatementService) WithZone(src houseday.Source) *StatementService { s.zone = src; return s }
 
 // NewStatementService builds the service.
 func NewStatementService(store statementStore) *StatementService {
@@ -222,12 +231,33 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	asOf = houseClockIn(zone, asOf)
 
+	// The caller's branch reach (branch_reach.go). A caller who reaches one branch files its run under
+	// that branch, so the run can be read back by the same reach and no other.
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	if !reach.Global && branchID == "" {
+		switch len(reach.IDs) {
+		case 0:
+			return StatementRun{}, nil, ErrBranchForbidden
+		case 1:
+			branchID = reach.IDs[0]
+		default:
+			return StatementRun{}, nil, httpx.BadRequestf("name the branch this statement run is for")
+		}
+	}
 	pol, err := s.store.CreditPolicy(ctx, branchID)
 	if err != nil {
 		return StatementRun{}, nil, err
 	}
-	rows, err := s.store.AgingRows(ctx, asOf, pol.AgingBucketDays, branchID)
+	rows, err := s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, branchID, reach)
 	if err != nil {
 		return StatementRun{}, nil, err
 	}
@@ -254,13 +284,13 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if err != nil {
 		// A missing letterhead must not fail a month end. The statement renders with a plain header,
 		// which is worse-looking and entirely correct.
-		header = StatementHeader{BranchName: "Dibbits"}
+		header = StatementHeader{BranchName: dealer.Or("Your dealer")}
 	}
 
 	var generated, queued int
 	out := make([]Statement, 0, len(rows))
 	for _, r := range rows {
-		lines, err := s.store.StatementLines(ctx, r.CustomerID, asOf)
+		lines, err := s.store.StatementLines(ctx, r.CustomerID, asOf, reach)
 		if err != nil {
 			_ = s.store.FinishRun(ctx, runID, "FAILED", generated, queued, err.Error())
 			return StatementRun{}, nil, err
@@ -268,7 +298,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 		st := Statement{
 			RunID: runID, CustomerID: r.CustomerID, CustomerName: r.CustomerName, AsOfDate: asOf,
 			CurrentCents: r.CurrentCents, Days30Cents: r.Days30Cents, Days60Cents: r.Days60Cents,
-			Days90PlusCents: r.Days90PlusCents, ClosingCents: r.TotalCents,
+			Days90PlusCents: r.Days60To90Cents + r.Days90PlusCents, ClosingCents: r.TotalCents,
 			DeliveryStatus: DeliveryNotQueued,
 		}
 		st.HTML = RenderStatementHTML(header, r, lines, asOf)
@@ -339,14 +369,25 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	return run, statements, nil
 }
 
-// GetRun reads a completed run with its statements.
+// GetRun reads a completed run with its statements. A caller who does not reach every branch reads
+// only a run filed under a branch it reaches: a run of the whole book is not found for it.
 func (s *StatementService) GetRun(ctx context.Context, runID string) (StatementRun, []Statement, error) {
-	return s.store.GetRun(ctx, runID)
+	run, sts, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	if reach := reachFromContext(ctx); !reach.Global && (run.BranchID == "" || !reach.Allows(run.BranchID)) {
+		return StatementRun{}, nil, ErrNotFound
+	}
+	return run, sts, nil
 }
 
-// LatestStatement returns the most recent statement for an account (the portal's "your statement").
+// LatestStatement returns the most recent statement for an account (the portal's "your statement")
+// that the caller's branch reach may read: for a caller who does not reach every branch, the newest
+// statement of a run filed under a branch it reaches. A statement made for the whole book carries the
+// whole account's lines and is not its to read.
 func (s *StatementService) LatestStatement(ctx context.Context, customerID string) (Statement, bool, error) {
-	return s.store.LatestStatement(ctx, customerID)
+	return s.store.LatestStatementIn(ctx, customerID, reachFromContext(ctx))
 }
 
 // -- rendering -----------------------------------------------------------------------------------
@@ -416,15 +457,15 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 		b.WriteString(`<th style="padding:8px 4px;font-size:12px;text-align:right;border-bottom:1px solid #ccc">` + th + `</th>`)
 	}
 	b.WriteString(`</tr></thead><tbody><tr>`)
-	for _, v := range []int64{r.CurrentCents, r.Days30Cents, r.Days60Cents, r.Days90PlusCents} {
+	for _, v := range []int64{r.CurrentCents, r.Days30Cents, r.Days60Cents, r.Days60To90Cents + r.Days90PlusCents} {
 		b.WriteString(`<td style="padding:10px 4px;text-align:right">` + Money(v) + `</td>`)
 	}
 	b.WriteString(`<td style="padding:10px 4px;text-align:right;font-weight:700">` + Money(r.TotalCents) + `</td>`)
 	b.WriteString(`</tr></tbody></table>`)
 
-	if r.Days90PlusCents > 0 {
+	if over60 := r.Days60To90Cents + r.Days90PlusCents; over60 > 0 {
 		b.WriteString(`<p style="margin-top:20px;padding:12px;background:#fff4f4;border-left:3px solid #b00">` +
-			`<strong>` + Money(r.Days90PlusCents) + `</strong> of this balance is more than 60 days past due. ` +
+			`<strong>` + Money(over60) + `</strong> of this balance is more than 60 days past due. ` +
 			`Please contact our office to arrange payment.</p>`)
 	}
 	b.WriteString(`<footer style="margin-top:32px;color:#777;font-size:11px">Statement generated ` +

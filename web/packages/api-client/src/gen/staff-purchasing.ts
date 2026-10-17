@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAddLineRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -159,6 +159,23 @@ export async function purchasingGetPO(
   });
 }
 
+export async function purchasingApplyWarrantyCredit(
+  client: ApiClient,
+  id: string | number,
+  body: PurchasingApplyWarrantyCreditRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPODetail>> {
+  return client.request<PurchasingPODetail>({
+    method: "POST",
+    path: "/api/v1/purchasing/pos/{id}/apply-warranty-credit",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingApplyWarrantyCredit",
+  });
+}
+
 export async function purchasingGetPOCosts(
   client: ApiClient,
   id: string | number,
@@ -254,6 +271,24 @@ export async function purchasingAddLine(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingAddLine",
+  });
+}
+
+export async function purchasingUpdateLine(
+  client: ApiClient,
+  id: string | number,
+  lineID: string | number,
+  body: PurchasingUpdateLineRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPODetail>> {
+  return client.request<PurchasingPODetail>({
+    method: "PUT",
+    path: "/api/v1/purchasing/pos/{id}/lines/{lineID}",
+    pathParams: { id, lineID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingUpdateLine",
   });
 }
 
@@ -445,6 +480,38 @@ export async function purchasingListVendors(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingListVendors",
+  });
+}
+
+export async function purchasingCreateVendor(
+  client: ApiClient,
+  body: PurchasingCreateVendorRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingVendorMaster>> {
+  return client.request<PurchasingVendorMaster>({
+    method: "POST",
+    path: "/api/v1/purchasing/vendors",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingCreateVendor",
+  });
+}
+
+export async function purchasingUpdateVendor(
+  client: ApiClient,
+  vendorID: string | number,
+  body: PurchasingUpdateVendorRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingVendorMaster>> {
+  return client.request<PurchasingVendorMaster>({
+    method: "PUT",
+    path: "/api/v1/purchasing/vendors/{vendorID}",
+    pathParams: { vendorID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingUpdateVendor",
   });
 }
 

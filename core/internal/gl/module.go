@@ -27,7 +27,9 @@ package gl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -109,12 +112,36 @@ type DeadRequeuer interface {
 }
 
 // ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
-// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL best-effort files a JE_OVER_THRESHOLD
-// approval request through this seam so the rail fans out approval cards. The adapter (main.go) wraps
-// identity.Service.FileJEApproval. Log-and-continue: parking NEVER depends on it, a rail/identity blip
-// must not fail a journal write, and nil (unwired) is byte-identical to the shipped park behavior.
+// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL files a JE_OVER_THRESHOLD approval
+// request through this seam IN THE PARK'S TRANSACTION (ruling 108): the journal and its request commit
+// together, or the create fails and neither exists, so a journal is never parked that can only be posted
+// through a request that was never filed. The returned func is the card fan-out, run by GL after the commit.
+// The adapter (main.go) wraps identity.Approvals.FileJEApprovalTx. Nil (unwired) is the shipped park
+// behavior: a bare DRAFT with no request.
 type ApprovalFiler interface {
-	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
+	FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error)
+}
+
+// ApprovalState is where a parked journal stands with the approvals rail.
+type ApprovalState string
+
+const (
+	ApprovalNone          ApprovalState = "none"           // no JE_OVER_THRESHOLD request exists for the journal
+	ApprovalPending       ApprovalState = "pending"        // a request is waiting for its decision
+	ApprovalRejected      ApprovalState = "rejected"       // the request was declined
+	ApprovalDeleted       ApprovalState = "deleted"        // the request was tombstoned (soft deleted)
+	ApprovalAmountDiffers ApprovalState = "amount_differs" // approved, but for another amount than the journal now carries
+	ApprovalApproved      ApprovalState = "approved"       // approved for the journal's current amount
+)
+
+// ApprovalStateChecker is the rail read the GL's own approve route asks before it posts: where does this
+// journal stand with its JE_OVER_THRESHOLD request, given the amount the journal carries now. A journal over
+// the threshold is posted by this route only on ApprovalApproved, an APPROVED request for its current
+// amount; every other state refuses in its own words, and what happens to the request is decided in the
+// approvals queue and not here. An unwired checker refuses the route: a money guard that cannot ask does
+// not post.
+type ApprovalStateChecker interface {
+	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -155,29 +182,59 @@ type ExternalLine struct {
 // additions) and the 0034 balance views. A nil pool is tolerated (scaffold/offline mode).
 type Repository struct {
 	pool *pgxpool.Pool
+	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
+	// dealer's. It decides which fiscal period a posting's instant belongs to.
+	zone ZoneTxSource
+}
+
+// ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
+// filed to its period inside the posting transaction, so the zone is read on that transaction and
+// never through the pool: a pool read there makes the holder wait on a second connection, which a full
+// pool of such holders never frees. The composition root adapts the settings module's dealer
+// configuration into one.
+type ZoneTxSource interface {
+	BusinessZoneTx(ctx context.Context, tx pgx.Tx) (houseday.Zone, error)
 }
 
 // NewRepository wraps a pool (may be nil in scaffold mode).
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (r *Repository) WithZone(src ZoneTxSource) *Repository { r.zone = src; return r }
+
+// journalZone answers the zone a posting's period is read in, on the posting transaction.
+func (r *Repository) journalZone(ctx context.Context, tx pgx.Tx) (houseday.Zone, error) {
+	if r.zone == nil {
+		return houseday.DefaultZone(), nil
+	}
+	z, err := r.zone.BusinessZoneTx(ctx, tx)
+	if err != nil {
+		return houseday.Zone{}, fmt.Errorf("gl: the dealer's business zone could not be read, nothing was posted: %w", err)
+	}
+	return z, nil
+}
 
 // - service -
 
 // Service is the GL domain seam. It owns the journal lifecycle, the posting consumer, tie-out, and close.
 // Sibling seams are injected via the With* builder options (main.go wires the real adapters).
 type Service struct {
-	repo          *Repository
-	store         glStore
-	invoices      InvoiceReader
-	taxSplits     TaxSplitReader
-	ar            ARSubledger
-	payments      PaymentReader
-	costBasis     CostBasis
-	dead          DeadRequeuer
-	audit         audit.Recorder
-	approvalFiler ApprovalFiler // 0075: nil-able JE park → approvals-rail filing seam
-	log           *slog.Logger
-	now           func() time.Time
-	callerFrom    func(context.Context) (identity.StaffContext, bool)
+	repo            *Repository
+	store           glStore
+	invoices        InvoiceReader
+	taxSplits       TaxSplitReader
+	ar              ARSubledger
+	payments        PaymentReader
+	costBasis       CostBasis
+	dead            DeadRequeuer
+	audit           audit.Recorder
+	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
+	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
+	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
+	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	log             *slog.Logger
+	now             func() time.Time
+	callerFrom      func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods. The repository is the
@@ -248,6 +305,27 @@ func (s *Service) clock() time.Time {
 	return s.now()
 }
 
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine; gl reads it to back the tax out of a tax-inclusive
+// NSF fee, so it never carries a rate of its own. Unwired, the Ontario 13 percent stands.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standardRate = r; return s }
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords): the word the tax legs' memos
+// carry. Unwired is the Ontario dealer's "HST".
+func (s *Service) WithTaxLabel(src taxwords.Source) *Service { s.taxWords = src; return s }
+
+// taxWord reads the word a journal memo names the tax by. A posting never fails for a word: a failed
+// read memos the neutral "Tax", true for every dealer.
+func (s *Service) taxWord(ctx context.Context) string {
+	w, _ := taxwords.Resolve(ctx, s.taxWords)
+	return w
+}
+
 // WithInvoiceReader injects the billing invoice-facts seam.
 func (s *Service) WithInvoiceReader(r InvoiceReader) *Service { s.invoices = r; return s }
 
@@ -272,6 +350,12 @@ func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return
 // WithApprovalFiler injects the approvals-rail JE-park filing seam (0075). Nil = the shipped maker-checker
 // park behaves exactly as today (no rail filing). Chainable.
 func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
+
+// WithApprovalStateChecker injects the request-state read the approve route consults. Chainable.
+func (s *Service) WithApprovalStateChecker(c ApprovalStateChecker) *Service {
+	s.approvalChecker = c
+	return s
+}
 
 // - provider surface (bankrec + finstmt + boot depend on these) -
 
@@ -326,7 +410,7 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 }
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
-// W7 POS-return topics + the deposit release, 0374 + the damaged goods write off, 0378).
+// W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375 + the damaged goods write off, 0378).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -339,6 +423,7 @@ var PostedTopics = []string{
 	"pos.return.committed",
 	"order.returned",
 	"deposit.released",
+	"deposit.cancelled",
 	"pos.return.written_off",
 }
 
@@ -359,7 +444,25 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. An explicit tie-out
+	// day is cut at the last instant of the dealer's own day.
+	zone houseday.Source
+	// legacy answers the dealer's legacy import source; nil or "" means the dealer has none and the
+	// legacy import check route is refused.
+	legacy LegacyImportSource
 }
+
+// LegacyImportSource answers the short lowercase word naming the legacy system a dealer imports from,
+// or "" when it has none. The settings module owns the key; the composition root binds the reader.
+type LegacyImportSource interface {
+	LegacyImportSource(ctx context.Context) (string, error)
+}
+
+// WithLegacyImport binds the dealer's legacy import source. Nil leaves the legacy import check off.
+func (h *Handler) WithLegacyImport(src LegacyImportSource) *Handler { h.legacy = src; return h }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (h *Handler) WithZone(src houseday.Source) *Handler { h.zone = src; return h }
 
 // NewHandler wires the service.
 func NewHandler(svc *Service, log *slog.Logger) *Handler {

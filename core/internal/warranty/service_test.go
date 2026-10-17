@@ -73,21 +73,27 @@ type fakeStore struct {
 	intakeCfg  IntakeConfig
 	rateHits   map[string]int // "<bucket>|<windowRFC3339>" → hits
 	photos     map[string][]IntakePhoto
-	failOn     map[string]error // method name → forced error (unwired/broken-store paths)
+	policy     policyRows // walk change 6: keyed by branch_id, "" the org default row (the 0396 shape)
+	// - walk change 6 vendor agreements (see agreement_test.go for the methods) -
+	vendorRoster map[string]VendorAgreement // the vendors master the read joins (id → no/name)
+	agreements   map[string]AgreementInput  // stored agreement rows, keyed by vendor_id (the 0404 shape)
+	failOn       map[string]error           // method name → forced error (unwired/broken-store paths)
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		profiles: map[string]VendorProfile{}, claims: map[string]Claim{}, lines: map[string][]ClaimLine{},
-		paths:      defaultOutcomePaths(),
-		postings:   map[string]SettlementPosting{},
-		recovery:   map[string][]RecoveryAction{},
-		slaTargets: defaultSLATargets(),
-		slaAlerts:  map[string]SLAAlert{},
-		intakeCfg:  defaultIntakeConfig(),
-		rateHits:   map[string]int{},
-		photos:     map[string][]IntakePhoto{},
-		failOn:     map[string]error{},
+		paths:        defaultOutcomePaths(),
+		postings:     map[string]SettlementPosting{},
+		recovery:     map[string][]RecoveryAction{},
+		slaTargets:   defaultSLATargets(),
+		slaAlerts:    map[string]SLAAlert{},
+		intakeCfg:    defaultIntakeConfig(),
+		rateHits:     map[string]int{},
+		photos:       map[string][]IntakePhoto{},
+		vendorRoster: map[string]VendorAgreement{},
+		agreements:   map[string]AgreementInput{},
+		failOn:       map[string]error{},
 	}
 }
 

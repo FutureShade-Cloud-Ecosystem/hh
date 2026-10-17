@@ -29,13 +29,17 @@
 #   the app builds (vite build) and the core's demo build compiles;
 #   the gate answers /healthz without a phrase;
 #   the picker page is refused without the phrase and served with it;
-#   the served bundle carries the picker's structure: the two live card
-#     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
-#     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's two flows;
+#   the served bundle carries the picker's structure: the live card
+#     labels ("Sales", "Sales manager", "Yard manager", "Yard Team", "Payables
+#     and Receivables", "Procurement manager", "Driver", "Financial
+#     Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"), the Coming next heading, and
+#     the demo badge's copy;
+#   /api/v1/demo/flows answers the closed table's flows, every
+#     one of the live roles the front door maps, in order;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
-#     with it mints for both flow ids the front door maps (sales,
-#     sales-manager);
+#     with it mints for every flow id the front door maps (sales,
+#     sales-manager, yard-manager, yard-team, payables-receivables,
+#     procurement-manager, driver, financial-controller, logistics-manager, general-manager, hr, branch-manager, outside-sales);
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -84,7 +88,7 @@ run_core() {
 	(
 		cd core &&
 			DEMO_MODE=true APP_ENV=demo \
-			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" \
+			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" CORE_SIGNIN_MODE=demo \
 				DATABASE_URL="$DSN" CORE_DATABASE_URL="$DSN" \
 				PAYMENT_VAULT_KEY="$VAULT" \
 				HH_ACCEPTANCE_SIGN_KEY_ID=d2-fd-exit \
@@ -170,7 +174,7 @@ echo "== the core serving the mint routes"
 (
 	cd core &&
 		DEMO_MODE=true APP_ENV=demo \
-			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" \
+			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" CORE_SIGNIN_MODE=demo \
 			DATABASE_URL="$DSN" CORE_DATABASE_URL="$DSN" \
 			CORE_LISTEN_ADDR="127.0.0.1:$CORE_PORT" \
 			PAYMENT_VAULT_KEY="$VAULT" \
@@ -254,23 +258,29 @@ assert_in_bundle() {
 assert_in_bundle "Pick a role to walk the demo."
 assert_in_bundle "Sales"
 assert_in_bundle "Sales manager"
+assert_in_bundle "Yard manager"
+assert_in_bundle "Yard Team"
+assert_in_bundle "Payables and Receivables"
+assert_in_bundle "Procurement manager"
+assert_in_bundle "Driver"
+assert_in_bundle "Financial Controller"
+assert_in_bundle "Logistics Manager"
 assert_in_bundle "Coming"
 assert_in_bundle "Everything on this box is invented demo data: nothing here is real."
 assert_in_bundle "Switch role"
 assert_in_bundle "Sign out"
-for role in "Outside Sales" "Yard Team" "Yard Manager" "Logistics Manager" "Driver" \
-	"Branch Manager" "Procurement Manager" "Payables and Receivables" \
-	"Financial Controller" "General Manager" "HR"; do
+for role in "Outside Sales" \
+	"Branch Manager" "General Manager" "HR"; do
 	assert_in_bundle "$role"
 done
 
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*)
-		pass "/api/v1/demo/flows answers the closed table's two flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*'"flow":"outside-sales"'*)
+		pass "/api/v1/demo/flows answers the closed table's flows, every live role the front door maps"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the two flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the closed table's flows, every live role the front door maps: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -279,7 +289,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$code" = "401" ] && pass "the mint without the phrase is refused by the gate" \
 	|| fail "the mint without the phrase answered $code, want 401"
 
-for flow in sales sales-manager; do
+for flow in sales sales-manager yard-manager yard-team driver payables-receivables procurement-manager financial-controller logistics-manager general-manager hr branch-manager outside-sales; do
 	mint="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
 		-d "{\"flow\":\"$flow\"}" "$BASE/api/v1/demo/session")"
 	case "$mint" in

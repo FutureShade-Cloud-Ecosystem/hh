@@ -37,6 +37,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/feedback"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
@@ -52,6 +53,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tour"
@@ -94,9 +96,19 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 		log.Error("sms: requested provider is not usable - falling back to the stub; NO texts will be sent", "err", smsErr)
 	}
 	smsOutbox := messagingprovider.NewOutbox(pool)
-	smsPrefs := messagingprovider.NewPrefsStore(pool)
+	smsPrefs := messagingprovider.NewPrefsStore(pool).WithZone(newDealerZone(pool))
 	smsResolver := messagingprovider.NewConsentResolver(smsPrefs, log)
 	smsPolicy := messagingprovider.PolicyFromEnv()
+	// The send window is read in the dealer's own zone unless SMS_WINDOW_ZONE named one. Read once, at
+	// boot, beside the other SMS_WINDOW_* variables; an unreadable zone keeps the Ontario default and
+	// says so.
+	zoneCtx, cancelZone := context.WithTimeout(context.Background(), 5*time.Second)
+	if dz, zerr := newDealerZone(pool).BusinessZone(zoneCtx); zerr != nil {
+		log.Warn("sms: the dealer's business zone could not be read; the send window keeps its default zone", "err", zerr)
+	} else {
+		smsPolicy.WithDealerZone(dz)
+	}
+	cancelZone()
 	if zerr := smsPolicy.ZoneError(); zerr != nil {
 		log.Warn("sms: send-window timezone fell back to the business default", "err", zerr)
 	}
@@ -120,6 +132,9 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 // built and the card rail test pins the handoff (the default build's serve
 // path never reads them; the worker never reads any of it).
 type topsSpine struct {
+	// portalSvc is the portal BFF's service, held so a build can give its
+	// login and refresh answers a dealer config (the demo's) after wiring.
+	portalSvc     *portal.Service
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
 	notifier      notify.Notifier
@@ -193,11 +208,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	bistrackSvc := bistrack.NewService(bistrack.NewRepository(pool)).WithConfigured(cfg.BisTrackConfigured())
 	bistrack.NewHandler(bistrackSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// CP-07 customer surface: the write path validates Canadian addresses
-	// through localization; the variadic write guard's manager mapping is
+	// CP-07 customer surface: the write path validates addresses for the
+	// dealer's country through localization; the variadic write guard's manager mapping is
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
-	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo)
+	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)})
 	customer.NewHandler(customerSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-1 branches: the read the ledger claimed VERIFIED and the dashboard's
@@ -221,7 +237,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// first construction, DIB-416; the second service the W3-B block built
 	// stays in wireOperations, the duplication the A1 ruling carries
 	// verbatim).
-	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway)
+	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
 
 	// Procurement Planning board: pricing + customers + the catalog seam.
 	procurementSvc := procurement.NewService(procurement.NewRepository(pool)).
@@ -233,7 +249,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// issuer world: an empty secret leaves the mint paths unable to sign and
 	// no served mux registers them (the bearer-split carry note on
 	// RegisterRoutes); the BFF's tenant legs resolve through the Guards.
-	portalHandler := portal.NewHandler(portal.NewService(portal.NewRepository(pool), ""), log).
+	portalSvc := portal.NewService(portal.NewRepository(pool), "")
+	portalHandler := portal.NewHandler(portalSvc, log).
 		WithCustomers(customerSvc).
 		WithBilling(billingSvc).
 		WithOrders(orderSvc).
@@ -276,8 +293,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// till's role-configuration rules ride the same wiring (RT-B): the
 	// dealer's configuration loaded at boot, the approver credential
 	// through the same guards the routes register behind.
-	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool))
+	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool)).WithZone(newDealerZone(pool))
 	posSvc := wireTillRules(pos.NewService(posRepo).
+		WithZone(newDealerZone(pool)).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(ops.tillRepo)).
@@ -290,7 +308,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithOpenQuantityReleaser(orderRepo).
 		// A return releases the order's supplier deposit; the documents are billing's, read through
 		// its writer on the return's transaction.
-		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
+		WithDepositDocuments(newInvoiceWriter(pool)).
 		WithClock(time.Now), roleCfg, g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)
@@ -303,6 +321,17 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	orderSvc.WithCancelGuards(billingRepo, posRepo)
 	if !orderSvc.CancelGuardsWired() {
 		panic("order: cancel guards not wired - a manual CANCELLED could not verify attached money state")
+	}
+
+	// Row 1193: the deposit exit beside the predicate. A cancelled order's
+	// supplier deposit documents settle on the cancel's own transaction
+	// (billing owns them), under the dealer's default disposition read from
+	// the pos policy the counter administers. The boot fail-fast keeps a
+	// deploy from serving with the exit dark, the cancel guards' own posture.
+	orderSvc.WithDepositCanceller(newInvoiceWriter(pool).WithAudit(auditSvc))
+	orderSvc.WithDepositCancelDefault(posSvc)
+	if !orderSvc.DepositCancelWired() {
+		panic("order: deposit cancel seams not wired - a cancelled special order's deposit could not settle")
 	}
 
 	// Item 9.3 (the row 1047 deposits work): the pay before release hold on
@@ -325,7 +354,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// with (the quoteMoneyDoor writer), on the take's own transaction, so the
 	// whole balance is one number at every door and there is no second writer
 	// to drift from the first.
-	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: billing.NewInvoiceWriter(pool).
+	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: newInvoiceWriter(pool).
+		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).
 		WithOrderSource(quoteAgreedOrderSource{w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc})})
 
 	// A-21 audit viewer routes (the module carried since the foundations;
@@ -352,6 +382,15 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStockReserver(w5aStockReserver{svc: inventorySvc}).
 		WithPickState(w5aPickState{pool: pool}).
 		WithFinanceApprover(w5aFinanceApprover{svc: spine.glSvc})
+	// The change queue labels each requester by role (never by name); a nil pool (the wiring shape
+	// tests) leaves the labels blank.
+	if pool != nil {
+		roleLabels, err := erpidentity.NewStaffAuthorityResolver(pool)
+		if err != nil {
+			panic("order: change queue role labels refused to boot: " + err.Error())
+		}
+		orderSvc.WithRequesterRoles(roleLabels)
+	}
 	// Boot warning, the pin's: an unwired reservation seam turns the hold
 	// lane off silently (order's reservations fail open by design), so the
 	// silence is said out loud. Wired, it never fires.
@@ -387,12 +426,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithRegisterTaxLabel(newTaxWords(pool)).RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
-	taxSvc := tax.NewService(tax.NewRepository(pool)).
+	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
@@ -413,15 +452,17 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the month-end handler, the counter's aging reader, the AR landing
 	// half.
 	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
-	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
+	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
+		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
 		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
-	arLandingRepo := billing.NewARLandingRepository(pool)
+	arLandingRepo := billing.NewARLandingRepository(pool).WithZone(newDealerZone(pool))
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
+		WithZone(newDealerZone(pool)).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo})
@@ -430,8 +471,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the send is recorded and marked FAILED in words, never a phantom
 	// DELIVERED the paper-path sweep would count; a real transport lands
 	// as an adapter passed in this same slot.
-	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL)
+	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL).WithZone(newDealerZone(pool))
 	billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
+		WithZone(newDealerZone(pool)).
+		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewARWorklistHandler(billing.NewARWorklistService(billingRepo).WithZone(newDealerZone(pool)), log).
+		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing
@@ -500,7 +545,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// widget substrate and the needs sources register over the pool; in
 	// scaffold mode (nil pool) every tile renders its labelled unwired
 	// state, the honest answer.
-	dashboardSvc := dashboard.NewService(dashboard.NewRepository(pool), log)
+	dashboardSvc := dashboard.NewService(dashboard.NewRepository(pool), log).WithZone(newDealerZone(pool))
 	if pool != nil {
 		for _, reg := range []struct {
 			tile     string
@@ -552,6 +597,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 			// A receiving difference is a purchase order received in part with a short line, aged by
 			// its latest receipt; it leaves the queue on full receipt or close (see ReceivingDifferences).
 			{dashboard.NeedsReceivingDifferences, w6bReceivingDifferences(ops.purchasingSvc)},
+			// Approvals the caller filed that are still pending: the logistics manager's own ask
+			// (0395), counted without exposing another person's request or its content.
+			{dashboard.NeedsFiledPending, w6bApprovalsFiledPending(spine.approvals)},
 		} {
 			if err := dashboardSvc.RegisterNeedsSource(reg.key, reg.source); err != nil {
 				log.Error("dashboard: needs source NOT registered - that queue row will never appear", "source", reg.key, "err", err)
@@ -639,15 +687,15 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
-	assist.NewHandler(assistSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
 	// consumers (order's multi-ship invoicer, warranty's customer credit,
 	// the credit-memo repost sweep the worker registers).
-	w6cInvoiceWriter := billing.NewInvoiceWriter(pool).
+	w6cInvoiceWriter := newInvoiceWriter(pool).
 		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: taxSvc}).
 		WithOrderSource(w6cOrderInvoiceSource{svc: orderSvc}).
-		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool)})
+		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool), words: newTaxWords(pool)})
 	orderSvc.WithMultiShipInvoicer(w6cMultiShipInvoicer{w: w6cInvoiceWriter})
 	ops.warrantySvc.WithCustomerCredit(w6cWarrantyCreditIssuer{w: w6cInvoiceWriter})
 
@@ -689,6 +737,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}
 
 	return &topsSpine{
+		portalSvc:     portalSvc,
 		bistrackSvc:   bistrackSvc,
 		billingRepo:   billingRepo,
 		notifier:      notifier,
@@ -727,7 +776,7 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	if err != nil {
 		panic("payment vault init failed: " + err.Error())
 	}
-	payStore := payment.NewStore(pool, payVault)
+	payStore := payment.NewStore(pool, payVault).WithDealerCurrency(newDealerCurrency(pool))
 	// DIB-416: the POS card rail selection is FATAL, the same fail-closed
 	// posture the payments gateway selector carries.
 	cardProc, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig())

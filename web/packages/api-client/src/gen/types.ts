@@ -62,6 +62,7 @@ export type Attachment = {
   created_by?: string;
   created_at: string;
   deleted_at?: string | null;
+  links?: AttachmentLink[];
 };
 export type AttachmentCreate = {
   kind: "photo" | "proof_of_delivery" | "document" | "signature" | "product_image";
@@ -74,7 +75,7 @@ export type AttachmentCreate = {
 };
 export type AttachmentLink = {
   attachment_id: string;
-  owner_kind: "order" | "plan" | "stop" | "receiving" | "quote";
+  owner_kind: "order" | "plan" | "stop" | "receiving" | "quote" | "channel";
   owner_id: string;
   role: string;
 };
@@ -233,12 +234,14 @@ export type DemoSessionResponse = {
   token?: string;
   user?: { [key: string]: unknown };
   flow?: string;
+  class?: "staff" | "tenant";
   chapter_key?: string;
 };
 export type DemoFlow = {
   flow?: string;
   role_code?: string;
   label?: string;
+  class?: "staff" | "tenant";
 };
 export type DemoFlowList = {
   flows: DemoFlow[];
@@ -285,6 +288,8 @@ export type BillingRegisterRow = {
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
   status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
   days_overdue: number;
+  bucket_label?: "" | "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  bucket_key?: "" | "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
   account_status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
   disputed: boolean;
   promised_date?: string | null;
@@ -373,6 +378,73 @@ export type BillingPromiseView = {
   taken_at: string;
   settled_at?: string | null;
 };
+export type BillingPromiseEnriched = {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  invoice_id: string;
+  invoice_no: string;
+  promised_cents: number;
+  promised_date: string;
+  status: "OPEN" | "KEPT" | "BROKEN" | "CANCELLED";
+  promised_by?: string;
+  note?: string;
+  taken_by?: string;
+  taken_at: string;
+  settled_at?: string | null;
+};
+export type BillingPromisePage = {
+  rows: BillingPromiseEnriched[];
+  next_cursor: string | null;
+};
+export type BillingAccountPaymentPolicy = {
+  customer_id: string;
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+  updated_at: string;
+};
+export type BillingAccountPaymentPolicyInput = {
+  ach_first: boolean;
+  surcharge_rate_bps: number;
+  min_ach_cents: number;
+};
+export type BillingReminderRule = {
+  id: string;
+  code: string;
+  label: string;
+  channel: "EMAIL" | "SMS" | "PHONE";
+  days_past_due: number;
+  max_per_window: number;
+  paylink_url_template: string;
+  last_sent_at: string | null;
+  amount_brought_in_cents: number;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at: string;
+};
+export type BillingReminderRulePage = {
+  rules: BillingReminderRule[];
+};
+export type BillingReminderEnrolInput = {
+  customer_id: string;
+  rule_id: string;
+  note?: string;
+};
+export type BillingReminderExemptInput = {
+  customer_id: string;
+  rule_id: string;
+  note: string;
+};
+export type BillingReminderEnrolResult = {
+  customer_id: string;
+  rule_id: string;
+  exempt: boolean;
+  note?: string;
+  enrolled_count: number;
+  exclusion_count: number;
+  updated_at?: string;
+};
 export type BillingDisputeView = {
   id: string;
   status: "OPEN" | "RESOLVED";
@@ -409,6 +481,47 @@ export type BillingInvoiceDetail = {
   last_contact_at?: string | null;
   as_of: string;
 };
+export type BillingARWorklistRow = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  branch_id: string;
+  open_ar_cents: number;
+  past_due_cents: number;
+  over_60_cents: number;
+  available_credit_cents: number;
+  unapplied_credit_cents: number;
+  oldest_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  oldest_bucket_key: "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
+  broken_promises: number;
+  due_promises: number;
+  open_promises: number;
+  promised_cents: number;
+  next_promise_date?: string | null;
+  on_hold: boolean;
+  credit_hold_candidate: boolean;
+  action_needed: boolean;
+  urgency: "broken_promise" | "over_60" | "promise_due" | "credit_hold" | "credit" | "past_due" | "open";
+  recommended_action: "record_payment" | "review_promise" | "review_credit_hold" | "apply_credit" | "open_account";
+};
+export type BillingARWorklistSummary = {
+  total_past_due_cents: number;
+  over_60_cents: number;
+  broken_promises: number;
+  unapplied_credits_cents: number;
+};
+export type BillingARWorklistCounts = {
+  all_open: number;
+  action_needed: number;
+  over_60: number;
+  credit_hold: number;
+};
+export type BillingARWorklistResponse = {
+  rows: BillingARWorklistRow[];
+  summary: BillingARWorklistSummary;
+  counts: BillingARWorklistCounts;
+  as_of: string;
+};
 export type BillingReceiptInput = {
   method: "CASH" | "CARD" | "CHEQUE" | "EFT";
   amount_cents: number;
@@ -421,6 +534,33 @@ export type BillingReceiptResult = {
   amount_cents: number;
   balance_cents: number;
   status: "RECEIVED" | "DEPOSITED" | "BOUNCED" | "REFUNDED" | "VOID" | "PENDING";
+  replayed: boolean;
+};
+export type BillingApplyPaymentInput = {
+  customer_id: string;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT";
+  amount_cents: number;
+  reference: string;
+  invoice_ids: string[];
+  idempotency_key: string;
+  preview?: boolean;
+};
+export type BillingApplyPaymentLine = {
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  outcome: "CLOSES" | "PART" | "NONE";
+  balance_after_cents: number;
+  stays_open_cents: number;
+};
+export type BillingApplyPaymentAnswer = {
+  preview: boolean;
+  payment_id?: string;
+  payment_no?: string;
+  amount_cents: number;
+  applied_cents: number;
+  unapplied_cents: number;
+  lines: BillingApplyPaymentLine[];
   replayed: boolean;
 };
 export type BillingReminderInput = {
@@ -776,6 +916,150 @@ export type PaymentCardAttemptSummary = {
 export type PaymentCardAttemptResolve = {
   resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
   note: string;
+};
+export type BillingCustomerWorkspaceHeader = {
+  customer_id: string;
+  name: string;
+  account_no: string;
+  status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
+  terms_days: number;
+  credit_limit_cents: number;
+  open_cents: number;
+  available_credit_cents: number;
+  overdue_cents: number;
+  utilization_bps: number;
+  primary_ap_contact_name?: string;
+  primary_ap_contact_email?: string;
+  primary_ap_contact_phone?: string;
+  last_payment_at?: string;
+  last_payment_cents?: number;
+  aging: BillingCustomerWorkspaceAging;
+};
+export type BillingCustomerWorkspaceAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
+};
+export type BillingCustomerWorkspaceInvoice = {
+  id: string;
+  invoice_no: string;
+  doc_type: "INVOICE" | "CREDIT_MEMO";
+  status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
+  issue_date: string;
+  due_date: string;
+  total_cents: number;
+  balance_cents: number;
+  days_overdue: number;
+  days_overdue_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  is_disputed: boolean;
+  has_open_promise: boolean;
+};
+export type BillingCustomerWorkspacePayment = {
+  id: string;
+  payment_no: string;
+  received_at: string;
+  amount_cents: number;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT" | "OTHER";
+  unapplied_cents: number;
+  branch_id?: string;
+};
+export type BillingCustomerWorkspaceCreditNote = {
+  id: string;
+  memo_no: string;
+  issued_at: string;
+  amount_cents: number;
+  unapplied_cents: number;
+  reason?: string;
+};
+export type BillingCustomerWorkspaceStatement = {
+  id: string;
+  run_id: string;
+  mode: "MASS" | "INTERIM";
+  as_of_date: string;
+  closing_balance_cents: number;
+  delivery_status: "NOT_QUEUED" | "QUEUED" | "SENT" | "FAILED";
+  created_at: string;
+};
+export type BillingCustomerWorkspaceNote = {
+  id: string;
+  kind: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  body: string;
+  author_id?: string;
+  author_name?: string;
+  pinned: boolean;
+  created_at: string;
+};
+export type BillingCustomerWorkspaceActivity = {
+  kind: "INVOICE" | "PAYMENT" | "CREDIT_MEMO" | "ADJUSTMENT" | "NSF" | "WRITE_OFF";
+  reference?: string;
+  amount_cents: number;
+  balance_after_cents: number;
+  branch_id?: string;
+  memo?: string;
+  occurred_at: string;
+};
+export type BillingCustomerWorkspace = {
+  header: BillingCustomerWorkspaceHeader;
+  invoices_open: BillingCustomerWorkspaceInvoice[];
+  invoices_closed: BillingCustomerWorkspaceInvoice[];
+  invoices_disputed: BillingCustomerWorkspaceInvoice[];
+  payments: BillingCustomerWorkspacePayment[];
+  credit_notes: BillingCustomerWorkspaceCreditNote[];
+  statements: BillingCustomerWorkspaceStatement[];
+  notes: BillingCustomerWorkspaceNote[];
+  activity: BillingCustomerWorkspaceActivity[];
+  as_of: string;
+};
+export type BillingAddCustomerNoteInput = {
+  body: string;
+  kind?: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  pinned?: boolean;
+};
+export type BillingAddCustomerNoteResult = {
+  note: BillingCustomerWorkspaceNote;
+};
+export type BillingCreateHoldRequest = {
+  customer_id: string;
+  reason: string;
+};
+export type BillingSendPaylinkRequest = {
+  customer_id: string;
+  invoice_id?: string | null;
+  amount_cents?: number | null;
+  channel?: "EMAIL" | "SMS";
+  recipient?: string;
+};
+export type BillingSendPaylinkResult = {
+  paylink_url: string;
+  status: "QUEUED" | "SENT";
+  sent_at: string;
+};
+export type BillingStatementPreview = {
+  statement: BillingStatement;
+  open_lines: BillingStatementPreviewLine[];
+  aging: BillingStatementPreviewAging;
+  reconciled: boolean;
+};
+export type BillingStatementPreviewLine = {
+  invoice_id: string;
+  invoice_no: string;
+  due_date: string;
+  balance_cents: number;
+  days_overdue: number;
+  bucket_label: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+};
+export type BillingStatementPreviewAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
 };
 export type AssistArgSpec = {
   name: string;
@@ -1494,6 +1778,8 @@ export type SettingsSurfaceConfig = {
   user_items: SettingsItem[];
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
+  business_zone?: string;
+  legacy_import_source?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;
@@ -2313,11 +2599,7 @@ export type BankRecAccount = {
   tracking_only: boolean;
   unmatched_lines: number;
 };
-export type BankRecAccountPage = {
-  items: BankRecAccount[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
   id: string;
   bank_account_id: string;
@@ -2366,11 +2648,7 @@ export type BankRecMatchSummary = {
   unmatched: number;
   matches: BankRecMatch[];
 };
-export type BankRecMatchPage = {
-  items: BankRecMatch[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchList = BankRecMatch[];
 export type BankRecMatchInput = {
   mode: "auto" | "manual";
   bank_account_id?: string;
@@ -2389,6 +2667,12 @@ export type BankRecUnmatchResult = {
 };
 export type BankRecRuleSpec = {
   kind?: "gateway_ref_exact" | "lodgement_ref_exact" | "descriptor_fuzzy";
+  target?: string;
+  tolerance_cents?: number;
+  descriptor_ilike?: string;
+  date_window_days?: number;
+  allow_fee_split?: boolean;
+  fee_account_code?: string;
 };
 export type BankRecMatchRule = {
   id: string;
@@ -2406,11 +2690,7 @@ export type BankRecRuleInput = {
   spec: BankRecRuleSpec;
   priority: number;
 };
-export type BankRecMatchRulePage = {
-  items: BankRecMatchRule[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchRuleList = BankRecMatchRule[];
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
@@ -2428,14 +2708,22 @@ export type BankRecReconInput = {
   month: number;
   statement_balance_cents: number;
 };
-export type BankRecReconciliationPage = {
-  items: BankRecReconciliation[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {
   module: string;
   status: string;
+};
+export type SessionJwkSet = {
+  keys: SessionJwk[];
+};
+export type SessionJwk = {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+  kid: string;
+  use: "sig";
+  alg: "ES256";
 };
 export type IdentityLoginRequest = {
   email: string;
@@ -2453,6 +2741,21 @@ export type IdentityUser = {
 export type IdentityLoginResponse = {
   token: string;
   user: IdentityUser;
+};
+export type IdentityExchangeRequest = {
+  jwt: string;
+  org: string;
+};
+export type IdentityPersonaRequest = {
+  persona: string;
+};
+export type IdentityExchangeResponse = {
+  token: string;
+  expiresAtMs: number;
+  user: IdentityUser;
+};
+export type IdentityAuthMethodsResponse = {
+  methods: ("email_password" | "google" | "microsoft" | "magic_link")[];
 };
 export type IdentityChangePasswordRequest = {
   current_password: string;
@@ -2555,7 +2858,7 @@ export type IdentityApprovalDecideRequest = {
   approve: boolean;
   reason: string;
 };
-export type TaxReasonCode = "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
+export type TaxReasonCode = "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW" | "FED_S87_GOODS_ON_RES" | "FED_S87_SERVICE_RESERVE" | "FED_BAND_MANAGEMENT" | "FNT_PRODUCT" | "TREATY_OR_SELF_GOV_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
 export type TaxRate = {
   id: string;
   jurisdiction: string;
@@ -2565,10 +2868,8 @@ export type TaxRate = {
   effective_to?: string;
   notes?: string;
 };
-export type TaxRatePage = {
-  items: TaxRate[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxRateList = {
+  rates: TaxRate[] | null;
 };
 export type TaxProfileStatus = "ACTIVE" | "PENDING" | "RETIRED";
 export type TaxStatusCardProfile = {
@@ -2582,10 +2883,11 @@ export type TaxStatusCardProfile = {
   status: TaxProfileStatus;
   notes?: string;
 };
-export type TaxStatusCardProfilePage = {
-  items: TaxStatusCardProfile[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxStatusCardProfileList = {
+  profiles: TaxStatusCardProfile[] | null;
+};
+export type TaxPendingProfileList = {
+  pending_profiles: TaxStatusCardProfile[];
 };
 export type TaxConfig = {
   branch_id?: string;
@@ -2608,10 +2910,8 @@ export type TaxEvidence = {
   created_at?: string;
   attestation_status?: string;
 };
-export type TaxEvidencePage = {
-  items: TaxEvidence[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxEvidenceList = {
+  evidence: TaxEvidence[] | null;
 };
 export type TaxEvidenceCapture = {
   profile_id: string;
@@ -2659,7 +2959,7 @@ export type InventoryStockMove = {
   move_type: "RECEIPT" | "SHIP" | "COUNT" | "ADJUST" | "RETURN" | "TRANSFER";
   source_type: string;
   source_ref_id: string;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   occurred_at: string;
 };
 export type InventoryOnHand = {
@@ -2669,7 +2969,7 @@ export type InventoryOnHand = {
   on_hand_base: number;
   allocated_base: number;
   available_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryPendingFulfilment = {
   order_id: string;
@@ -2723,7 +3023,7 @@ export type InventoryBranchStock = {
   in_transit_base: number;
   available_base: number;
   soft_held_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryBrowseRow = {
   product_id: string;
@@ -2744,7 +3044,8 @@ export type InventoryBrowseRow = {
   reserved_base: number;
   available_base: number;
   in_transit_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
+  out_at_branches?: string[];
 };
 export type InventoryFacetValue = {
   value: string;
@@ -2830,7 +3131,7 @@ export type InventoryTransferLine = {
   qty_base: number;
   qty_shipped_base: number;
   qty_received_base: number;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   ship_move_id: string;
   recv_move_id: string;
 };
@@ -2881,8 +3182,12 @@ export type InventoryShortfallRow = {
   preferred_vendor_id: string;
   preferred_vendor_name: string;
   lead_time_days: number;
-  avg_cost_cents: number;
-  suggested_value_cents: number;
+  avg_cost_cents?: number;
+  suggested_value_cents?: number;
+  draft_po_id?: string;
+  draft_po_no?: string;
+  short_order_nos?: string[];
+  short_order_more?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -2935,6 +3240,8 @@ export type InventoryReorderResult = {
   suggested_qty_base: number;
   uom: string;
   vendor_name: string;
+  existing_draft_po_id?: string;
+  existing_draft_po_no?: string;
 };
 export type InventoryNudgeRequest = {
   product_id: string;
@@ -2947,51 +3254,36 @@ export type InventoryNudgeResult = {
   body: string;
   note: string;
 };
-export type InventoryOnHandPage = {
-  items: InventoryOnHand[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryOnHandList = {
+  on_hand: InventoryOnHand[];
 };
-export type InventoryMovePage = {
-  items: InventoryStockMove[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryMoveList = {
+  moves: InventoryStockMove[];
 };
-export type InventoryPendingFulfilmentPage = {
-  items: InventoryPendingFulfilment[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryPendingFulfilmentList = {
+  pending: InventoryPendingFulfilment[];
 };
-export type InventoryTransitDaysPairPage = {
-  items: InventoryTransitDaysPair[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransitDaysPairList = {
+  pairs: InventoryTransitDaysPair[];
 };
-export type InventoryBranchStockPage = {
-  items: InventoryBranchStock[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBranchStockList = {
+  branches: InventoryBranchStock[] | null;
 };
-export type InventoryBrowsePage = {
-  items: InventoryBrowseRow[];
-  facets: InventoryFacet[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBrowseResult = {
+  rows: InventoryBrowseRow[];
+  facets: InventoryFacet[] | null;
+  total: number;
+  limit: number;
+  offset: number;
 };
-export type InventoryReservationPage = {
-  items: InventoryReservation[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReservationList = {
+  reservations: InventoryReservation[] | null;
 };
-export type InventoryTransferPage = {
-  items: InventoryTransfer[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransferList = {
+  transfers: InventoryTransfer[] | null;
 };
-export type InventoryInTransitLinePage = {
-  items: InventoryInTransitLine[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryInTransitLineList = {
+  lines: InventoryInTransitLine[];
 };
 export type InventoryShortfallPage = {
   items: InventoryShortfallRow[];
@@ -2999,10 +3291,8 @@ export type InventoryShortfallPage = {
   next_cursor?: string | null;
   limit?: number;
 };
-export type InventoryReorderPointPage = {
-  items: InventoryReorderPoint[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReorderPointList = {
+  reorder_points: InventoryReorderPoint[] | null;
 };
 export type InvCountSheet = {
   id: string;
@@ -3028,8 +3318,8 @@ export type InvCountLine = {
   snapshot_qty_base: number;
   counted_qty_base: number | null;
   variance_base: number;
-  unit_cost_cents: number;
-  variance_value_cents: number;
+  unit_cost_cents?: number;
+  variance_value_cents?: number;
   reason_code?: string;
   move_id?: string;
 };
@@ -3055,8 +3345,8 @@ export type InvCountVarianceSummary = {
   line_count: number;
   counted_lines: number;
   variance_lines: number;
-  net_variance_value_cents: number;
-  abs_variance_value_cents: number;
+  net_variance_value_cents?: number;
+  abs_variance_value_cents?: number;
 };
 export type InvCountSheetDetail = {
   sheet: InvCountSheet;
@@ -3067,7 +3357,7 @@ export type InvCountNegativeStockRow = {
   product_id: string;
   location_id: string;
   on_hand_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InvCountCreateSheetRequest = {
   branch_id: string;
@@ -3189,14 +3479,64 @@ export type LoadBatchView = {
   items: LoadBatchItemOutcome[];
   created_at: string;
 };
+export type MessagingSearchMessage = {
+  message_id: string;
+  channel_id: string;
+  channel_slug: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  kind: "TEXT" | "EVENT" | "APPROVAL";
+  body: string;
+  created_at: string;
+};
+export type MessagingSearchPerson = {
+  user_id: string;
+  display_name: string;
+  role_code: string;
+  role_label: string;
+  branch_label: string;
+};
+export type MessagingSearchChannel = {
+  id: string;
+  slug: string;
+  name: string;
+  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";
+  topic: string;
+  is_member: boolean;
+};
+export type MessagingSearchResults = {
+  messages: MessagingSearchMessage[];
+  people: MessagingSearchPerson[];
+  channels: MessagingSearchChannel[];
+};
+export type MessagingSavedSave = {
+  message_id: string;
+};
+export type MessagingSavedItem = {
+  message_id: string;
+  channel_id: string;
+  channel_slug: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  kind: "TEXT" | "EVENT" | "APPROVAL";
+  body: string;
+  created_at: string;
+  saved_at: string;
+};
+export type MessagingSavedList = {
+  items: MessagingSavedItem[];
+};
 export type MessagingChannel = {
   id: string;
-  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";
+  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";
   branch_id?: string;
   slug?: string;
   name: string;
   topic: string;
   tier: "STANDARD" | "ESCALATION" | "FIREHOSE";
+  visibility: "PUBLIC" | "PRIVATE";
   is_archived: boolean;
   created_at: string;
   unread_count: number;
@@ -3205,6 +3545,101 @@ export type MessagingChannel = {
 };
 export type MessagingChannelList = {
   channels: MessagingChannel[];
+};
+export type MessagingChannelCreate = {
+  kind: "TEAM" | "TOPIC";
+  name: string;
+  topic?: string;
+  slug?: string;
+  branch_id?: string;
+  visibility?: "PUBLIC" | "PRIVATE";
+};
+export type MessagingDMCreate = {
+  user_id: string;
+};
+export type MessagingGroupCreate = {
+  name?: string;
+  member_ids?: string[];
+};
+export type MessagingChannelRename = {
+  name: string;
+};
+export type MessagingChannelMember = {
+  channel_id: string;
+  user_id: string;
+  role: "MEMBER" | "OWNER";
+  source: "DERIVED" | "EXPLICIT";
+  joined_at: string;
+  added_reason?: string;
+  added_by?: string;
+};
+export type MessagingChannelMemberAdd = {
+  user_id: string;
+  role: "MEMBER";
+  added_reason?: string;
+  added_by?: string;
+};
+export type MessagingChannelVisibilityPatch = {
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRule = {
+  auto_scope: "" | "BRANCH" | "GLOBAL";
+  auto_role: string;
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRuleEntry = {
+  channel_id: string;
+  name: string;
+  kind: "TEAM" | "TOPIC" | "BRANCH";
+  branch_id?: string;
+  auto_scope: "" | "BRANCH" | "GLOBAL";
+  auto_role: string;
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRulesList = {
+  rules: MessagingMembershipRuleEntry[];
+};
+export type MessagingDirectoryEntry = {
+  channel_id: string;
+  kind: "TEAM" | "TOPIC" | "BRANCH";
+  branch_id?: string;
+  name: string;
+  topic?: string;
+  slug?: string;
+  joined: boolean;
+  membership_source: "" | "DERIVED" | "EXPLICIT";
+  member_count: number;
+};
+export type MessagingDirectoryList = {
+  channels: { [key: string]: MessagingDirectoryEntry };
+};
+export type MessagingChannelMemberEntry = {
+  user_id: string;
+  display_name?: string;
+  role: "MEMBER" | "OWNER";
+  source: "DERIVED" | "EXPLICIT";
+  added_reason?: string;
+  added_by?: string;
+  joined_at: string;
+};
+export type MessagingChannelMembersList = {
+  members: MessagingChannelMemberEntry[];
+};
+export type MessagingChannelDelete = {
+  channel_deleted?: boolean;
+  is_admin?: boolean;
+};
+export type MessagingPerson = {
+  user_id: string;
+  display_name: string;
+  role_label: string;
+  branch_label: string;
+  is_me: boolean;
+};
+export type MessagingPersonPage = {
+  items: MessagingPerson[];
+  next_cursor?: string | null;
+  limit?: number;
 };
 export type MessagingMessage = {
   id: string;
@@ -3224,6 +3659,38 @@ export type MessagingMessage = {
   edited_at?: string | null;
   deleted_at?: string | null;
   created_at: string;
+  attachments?: MessageAttachment[];
+  reactions?: MessagingReactionCount[];
+};
+export type MessageAttachment = {
+  id: string;
+  message_id?: string | null;
+  channel_id?: string | null;
+  attachment_id?: string | null;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  storage_key?: string;
+  kind: "photo" | "document";
+  uploaded_by?: string | null;
+  sender_name?: string;
+  appwrite_file_id?: string;
+  bucket?: string;
+  created_at: string;
+};
+export type MessagingChannelAttachmentsResponse = {
+  photos: MessageAttachment[];
+  files: MessageAttachment[];
+  member_count: number;
+};
+export type MessagingChannelAttachmentCreate = {
+  attachment_id: string;
+  message_id?: string | null;
+  filename: string;
+  content_type?: string;
+  size_bytes?: number;
+  kind?: "photo" | "document";
+  storage_key?: string;
 };
 export type MessagingEventRef = {
   topic: string;
@@ -3258,6 +3725,9 @@ export type MessagingMessagePost = {
   body: string;
   thread_root_id?: string;
 };
+export type MessagingMessageEdit = {
+  body: string;
+};
 export type MessagingAckRequest = {
   method?: "TAP" | "QUICK_REPLY" | "VOICE";
 };
@@ -3266,6 +3736,25 @@ export type MessagingAck = {
   user_id: string;
   method: "TAP" | "QUICK_REPLY" | "VOICE";
   acked_at: string;
+};
+export type MessagingReactionPut = {
+  emoji: string;
+};
+export type MessagingReactionCount = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+};
+export type MessagingReactionSummary = {
+  reactions: MessagingReactionCount[];
+};
+export type MessagingSeenByReader = {
+  user_id: string;
+  display_name: string;
+};
+export type MessagingSeenBy = {
+  count: number;
+  readers: MessagingSeenByReader[];
 };
 export type MessagingAckProgress = {
   message_id: string;
@@ -3339,6 +3828,42 @@ export type MessagingPaymentRulePrefs = {
 };
 export type MessagingPaymentRulePut = {
   enabled: boolean;
+};
+export type MessagingPersonEventPref = {
+  user_id: string;
+  event_category: "orders_released_and_blocked" | "stock_received" | "credit_holds_and_credit_owed" | "deliveries_scheduled" | "payments" | "approvals_waiting_on_me";
+  in_app: boolean;
+  push: boolean;
+  updated_at?: string;
+};
+export type MessagingPersonEventPrefPut = {
+  category: "orders_released_and_blocked" | "stock_received" | "credit_holds_and_credit_owed" | "deliveries_scheduled" | "payments" | "approvals_waiting_on_me";
+  in_app?: boolean;
+  push?: boolean;
+};
+export type MessagingQuietHours = {
+  user_id: string;
+  enabled: boolean;
+  start_local: string;
+  end_local: string;
+  timezone: string;
+  bypass_user_ids: string[];
+  updated_at?: string;
+};
+export type MessagingQuietHoursPut = {
+  enabled?: boolean;
+  start_local?: string;
+  end_local?: string;
+  timezone?: string;
+  bypass_user_ids?: string[];
+};
+export type MessagingNotificationSettings = {
+  event_prefs: MessagingPersonEventPref[];
+  quiet_hours: MessagingQuietHours;
+};
+export type MessagingNotificationSettingsPatch = {
+  event_prefs?: MessagingPersonEventPrefPut[];
+  quiet_hours?: MessagingQuietHoursPut;
 };
 export type MessagingRepAssignment = {
   id: string;
@@ -3461,6 +3986,7 @@ export type OrderTransitionResult = {
 };
 export type OrderCancelRequest = {
   reason: string;
+  keep_deposit?: boolean;
 };
 export type OrderHeaderEditRequest = {
   requested_date: string;
@@ -3628,6 +4154,27 @@ export type OrderChange = {
   applied_at?: string;
   lines: OrderChangeLine[];
   next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
+};
+export type OrderChangeQueueItem = {
+  id: string;
+  change_no: string;
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  status: "PENDING_YARD" | "PENDING_FINANCE" | "APPROVED" | "APPLIED" | "REJECTED" | "CANCELLED";
+  reason: string;
+  delta_cents: number;
+  finance_threshold_cents: number;
+  finance_required: boolean;
+  requested_by_role: string;
+  requested_at: string;
+  yard_ack_note?: string;
+  next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
+};
+export type OrderChangeQueuePage = {
+  items: OrderChangeQueueItem[];
+  next_cursor?: string | null;
+  limit?: number;
 };
 export type OrderChangesResponse = {
   changes: OrderChange[];
@@ -3900,8 +4447,8 @@ export type TaskRecordSkidsRequest = {
 export type TaskRecordSkidsResult = {
   skid_count: number;
   previous_skid_count: number | null;
-  deposit_cents: number;
-  previous_deposit_cents: number;
+  deposit_cents?: number;
+  previous_deposit_cents?: number;
   changed: boolean;
   order_no: string;
 };
@@ -4045,7 +4592,7 @@ export type PosSale = {
   supplier_deposit_cents?: number;
   supplier_deposit_invoice_id?: string;
   supplier_deposit_invoice_no?: string;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   status: "COMMITTED" | "VOIDED";
   replayed: boolean;
   po_job_ref?: string;
@@ -4076,7 +4623,7 @@ export type PosSalePreview = {
   total_cents: number;
   payment_options: PosPaymentOption[];
   supplier_deposit: PosSupplierDepositOption;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
   ticket_base_cents?: number;
@@ -4115,7 +4662,7 @@ export type PosSaleView = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   invoice_id: string;
   invoice_no: string;
   payment_id?: string;
@@ -4229,6 +4776,7 @@ export type PosReliefOutcome = {
   automated: boolean;
   requires_evidence: boolean;
   evidence_satisfied: boolean;
+  tax_label: string;
 };
 export type PosSignatureCapture = {
   purpose: "TAX_ATTESTATION" | "PROOF_OF_DELIVERY" | "CARD_PRESENT" | "ORDER_SIGNOFF";
@@ -4361,9 +4909,10 @@ export type PosAddonSuggestions = {
   suggestions: PosAddonSuggestion[];
 };
 export type PosTaxRate = {
-  jurisdiction: "ON";
-  reason_code: "STD_ON_HST_13";
+  jurisdiction: string;
+  reason_code: "STD_ON_HST_13" | "STD_SALES_TAX";
   rate_bps: number;
+  tax_label: string;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
 };
 export type PosPolicy = {
@@ -4378,6 +4927,7 @@ export type PosPolicy = {
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
   balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
+  supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };
 export type PosPolicyChange = {
@@ -5091,6 +5641,57 @@ export type PricingAuditLogRow = {
   ref_entity_id?: string;
   bypass_reason?: "PRODUCT_POLICY_DISABLED" | "CATEGORY_POLICY_DISABLED" | "APPROVED_OVERRIDE" | "MANAGER_SCOPE_OVERRIDE";
 };
+export type PricingFloorPreviewRequest = {
+  kind: "rule" | "override" | "category_policy" | "quantity_break";
+  id?: string;
+  branch_id?: string;
+  rule?: PricingRuleWrite;
+  customer_id?: string;
+  override?: PricingOverrideWrite;
+  category_id?: string;
+  policy?: PricingCategoryPolicyWrite;
+  quantity_break?: PricingQuantityBreakWrite;
+};
+export type PricingFloorPreviewItem = {
+  product_id: string;
+  sku: string;
+  name: string;
+  category_id?: string;
+  customer_type?: string;
+  branch_id?: string;
+  branch_code?: string;
+  branch_name?: string;
+  final_cents: number;
+  margin_bps: number;
+  floor_bps: number;
+  price_uom: string;
+  source: "CUSTOMER_PRODUCT_RULE" | "QUANTITY_BREAK" | "CUSTOMER_CATEGORY_RULE" | "CUSTOMER_OVERRIDE" | "TIER_CATEGORY" | "TIER_DEFAULT" | "LIST" | "PROMOTION";
+  previous_final_cents: number;
+  previous_margin_bps: number;
+  already_under_floor: boolean;
+};
+export type PricingFloorPreview = {
+  items: PricingFloorPreviewItem[];
+  evaluated: number;
+  not_graded: number;
+  no_cost: number;
+  truncated: boolean;
+  no_cost_branches?: PricingFloorNoCostBranch[];
+  not_graded_branches?: number;
+};
+export type PricingFloorNoCostBranch = {
+  branch_id: string;
+  branch_code?: string;
+  branch_name?: string;
+  products: number;
+};
+export type PricingFloorConfirmation = {
+  entity_type: "pricing_rule" | "customer_override" | "category_policy" | "quantity_break";
+  entity_id: string;
+  product_ids: string[];
+  ref_entity_type?: "product" | "customer" | "category" | "quote" | "order";
+  ref_entity_id?: string;
+};
 export type PricingLowMarginRequest = {
   lines: PricingResolveRequest[];
 };
@@ -5607,6 +6208,25 @@ export type PurchasingVendor = {
   payment_terms_days: number;
   is_active: boolean;
 };
+export type PurchasingCreateVendorRequest = {
+  name: string;
+  payment_terms_days?: number;
+  order_email?: string;
+};
+export type PurchasingUpdateVendorRequest = {
+  name?: string;
+  payment_terms_days?: number;
+  order_email?: string;
+  is_active?: boolean;
+};
+export type PurchasingVendorMaster = {
+  id: string;
+  vendor_no: string;
+  name: string;
+  payment_terms_days: number;
+  order_email: string;
+  is_active: boolean;
+};
 export type PurchasingPO = {
   id: string;
   po_no: string;
@@ -5623,6 +6243,10 @@ export type PurchasingPO = {
   delivery_method?: "PICKUP" | "DELIVERY" | "UNKNOWN";
   subtotal_cents?: number;
   subtotal_cad_cents?: number;
+  warranty_credit_applied_cents?: number;
+  warranty_claim_id?: string | null;
+  warranty_claim_no?: string | null;
+  net_total_cents?: number;
   created_at: string;
   updated_at: string;
 };
@@ -5641,7 +6265,20 @@ export type PurchasingPOLine = {
   line_total_cents?: number;
   billed_cents?: number;
 };
-export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[] };
+export type PurchasingPODetail = PurchasingPO & { lines: PurchasingPOLine[]; receipts: PurchasingReceipt[]; open_warranty_credit?: PurchasingOpenWarrantyCredit };
+export type PurchasingApplyWarrantyCreditRequest = {
+  claim_id?: string;
+  amount_cents?: number;
+};
+export type PurchasingOpenWarrantyCredit = {
+  claim_id: string;
+  claim_no: string;
+  amount_cents: number;
+  description: string;
+  summary?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+};
 export type PurchasingReceipt = {
   id: string;
   po_id: string;
@@ -5809,6 +6446,10 @@ export type PurchasingAddLineRequest = {
   description?: string;
   qty_ordered_base: number;
   uom?: string;
+  unit_cost_cents?: number;
+};
+export type PurchasingUpdateLineRequest = {
+  qty_ordered_base?: number;
   unit_cost_cents?: number;
 };
 export type PurchasingSetExpectedDateRequest = {
@@ -6038,6 +6679,13 @@ export type QuoteView = {
   updated_at: string;
   quantity_notice: string;
   acceptances: QuoteAcceptanceRecord[];
+  declined?: QuoteDeclineRecord;
+};
+export type QuoteDeclineRecord = {
+  reason_code: "price" | "competitor" | "project_cancelled" | "timing" | "no_response" | "other";
+  channel: string;
+  note?: string;
+  declined_at: string;
 };
 export type QuoteAcceptanceRecord = {
   source: "CUSTOMER" | "STAFF_ON_BEHALF";
@@ -6220,6 +6868,11 @@ export type QuoteAcceptanceSettings = {
   allow_multi_accept: boolean;
   switch_wired: boolean;
 };
+export type QuoteSettingsGrant = {
+  can_read_acceptance: boolean;
+  can_read_scope_rules: boolean;
+  can_edit_policy: boolean;
+};
 export type QuoteAcceptanceSettingsWrite = {
   allow_multi_accept: boolean;
   reason?: string;
@@ -6257,6 +6910,7 @@ export type QuoteTerms = {
   deposit_cents: number;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   lines: QuoteTermsLine[];
 };
@@ -6328,6 +6982,7 @@ export type QuotePublicView = {
   lines: QuotePublicLine[];
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   as_of: string;
   acceptable: boolean;
@@ -6366,6 +7021,7 @@ export type QuoteAcceptanceResult = {
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   repeat_acceptance?: boolean;
 };
@@ -7325,6 +7981,32 @@ export type WarrantyVendorProfilePage = {
   items: WarrantyVendorProfile[];
   next_cursor?: string | null;
   limit?: number;
+};
+export type WarrantyPolicy = {
+  branch_id?: string;
+  claim_threshold_cents: number;
+  updated_at?: string;
+};
+export type WarrantyPolicyInput = {
+  branch_id?: string;
+  claim_threshold_cents: number;
+};
+export type WarrantyVendorAgreement = {
+  vendor_id: string;
+  vendor_no: string;
+  vendor_name: string;
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+  updated_at?: string;
+};
+export type WarrantyVendorAgreementInput = {
+  agreement_kind: "claim_by_claim" | "periodic_credit_note" | "fixed_allowance";
+  period?: "monthly" | "quarterly";
+  allowance_bp: number;
+};
+export type WarrantyVendorAgreementPage = {
+  items: WarrantyVendorAgreement[];
 };
 export type WarrantyAddress = {
   line1?: string;

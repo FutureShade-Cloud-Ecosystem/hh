@@ -41,23 +41,28 @@ var tablesTheSeedWrites = []string{
 	"credit_holds", "customers", "delivery_freight_raises", "delivery_runs", "delivery_stops",
 	"dispatch_branch_depots",
 	"dispatch_drivers", "dispatch_reschedules", "dispatch_trucks", "invoice_lines", "invoices",
-	"load_scan_checkpoints", "order_lines", "orders", "payment_allocations", "payments",
+	"load_scan_checkpoints", "order_lines", "orders", "payment_allocations", "payment_nsf", "payments",
 	"permission_approval_requests", "pos_parked_tickets",
 	"pos_sale", "pos_signature", "pricing_list_prices", "pricing_rules", "product_branch_costs",
 	"product_images",
-	"product_reorder_points", "product_uoms", "products", "quantity_break_headers",
+	"product_reorder_points", "product_uoms", "products", "purchasing_po_lines",
+	"purchasing_pos", "purchasing_receipts", "quantity_break_headers",
 	"quantity_break_items", "quote_lines", "stock_balances", "stock_moves", "task_events",
 	"task_shortages",
-	"tasks", "will_call_pickups",
+	"tasks", "vendors", "will_call_pickups",
 }
 
 // dayKeyedTables is the subset of the census that §15 adds to on each NEW calendar day. Every other
 // table in the list above is written once, ever, which is the claim
 // TestIntegration_ASecondDayAddsOnlyTheDayKeyedRows exists to hold, and the reason this list is
 // spelled out rather than derived: a table that quietly joins it should have to be typed here.
+// delivery_runs joined with the Driver's dispatched day run: the run sheet asks for the dealer's day
+// and must find a run out for delivery on it, which a stable-keyed fleet cannot promise past the
+// first apply's date.
 var dayKeyedTables = map[string]bool{
 	"orders": true, "order_lines": true, "invoices": true, "invoice_lines": true,
 	"payments": true, "payment_allocations": true, "pos_sale": true, "delivery_stops": true,
+	"delivery_runs": true,
 }
 
 // -- Promise 1 · running it twice produces the same world ------------------------------------------
@@ -650,13 +655,12 @@ func TestIntegration_TheNeedsQueueHasSomethingToCount(t *testing.T) {
 
 // -- Promise 6 · the yard manager's Needs-you counts match the seed -------------------------------
 
-// TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three sources of the yard
-// manager's landing (0381) through the adapters the composition root registers, over the seeded
-// demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved) and
-// the stale picks (the PUSHED picks past their accept deadline), counted from demoShortages and
-// demoTasks rather than typed. The receiving differences source has no rows in this world (the demo
-// seed plants no purchase orders), so its count is zero here and the module's own integration test
-// carries the positive case.
+// TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three seed-counted sources of
+// the yard manager's Needs-you (0381) through the adapters the composition root registers, over the
+// seeded demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3
+// resolved), the stale picks (the PUSHED picks past their accept deadline), and the receiving
+// differences (the PARTIAL purchase orders with a short line), counted from demoShortages,
+// demoTasks and demoPurchaseOrders rather than typed.
 func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "yardneeds")
@@ -666,6 +670,12 @@ func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	for _, s := range demoShortages {
 		if s.Resolution == "" {
 			wantShortages++
+		}
+	}
+	wantDifferences := 0
+	for _, po := range demoPurchaseOrders {
+		if po.Status == "PARTIAL" && len(po.Lines) > 0 {
+			wantDifferences++
 		}
 	}
 	wantStale := 0
@@ -689,7 +699,7 @@ func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	}{
 		{"open shortages", w6bOpenShortages(tasksSvc), wantShortages},
 		{"stale picks", w6bStalePicks(pool), wantStale},
-		{"receiving differences", w6bReceivingDifferences(purchasingSvc), 0},
+		{"receiving differences", w6bReceivingDifferences(purchasingSvc), wantDifferences},
 	} {
 		m, err := tc.src(ctx, scope)
 		if err != nil {

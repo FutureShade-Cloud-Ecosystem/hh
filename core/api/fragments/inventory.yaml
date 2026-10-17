@@ -26,7 +26,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryOnHandPage"
+                $ref: "#/components/schemas/InventoryOnHandList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -58,7 +58,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryMovePage"
+                $ref: "#/components/schemas/InventoryMoveList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -85,7 +85,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryPendingFulfilmentPage"
+                $ref: "#/components/schemas/InventoryPendingFulfilmentList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -140,7 +140,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransitDaysPairPage"
+                $ref: "#/components/schemas/InventoryTransitDaysPairList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -203,7 +203,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBranchStockPage"
+                $ref: "#/components/schemas/InventoryBranchStockList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -297,7 +297,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryBrowsePage"
+                $ref: "#/components/schemas/InventoryBrowseResult"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -330,7 +330,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReservationPage"
+                $ref: "#/components/schemas/InventoryReservationList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -510,7 +510,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryTransferPage"
+                $ref: "#/components/schemas/InventoryTransferList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -686,7 +686,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryInTransitLinePage"
+                $ref: "#/components/schemas/InventoryInTransitLineList"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -699,8 +699,11 @@ paths:
       summary: List the replenishment worklist, worst shortfall first
       description: >-
         Graded on the projected position (available plus in transit plus on
-        order), not on-hand. on_order_degraded is true when the on-order leg
-        was not measured; it is always present rather than omitted when false.
+        order), not on-hand. On order counts placed orders only (ORDERED and
+        PARTIAL): a draft never covers a shortfall, so a row with a draft
+        stays here and names it in draft_po_id and draft_po_no. on_order_degraded
+        is true when the on-order leg was not measured; it is always present
+        rather than omitted when false.
       x-role: requireStaff
       x-access:
         surfaces: [buying-and-stock]
@@ -712,7 +715,10 @@ paths:
         - name: branch_id
           in: query
           required: false
-          description: Omitted means all branches
+          description: >-
+            Omitted means every branch in the caller's reach (all branches for a
+            global caller, the granted ones for a branch scoped caller). A
+            branch outside the reach answers 403.
           schema: { type: string }
       responses:
         "200":
@@ -746,7 +752,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryReorderPointPage"
+                $ref: "#/components/schemas/InventoryReorderPointList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
@@ -820,10 +826,18 @@ paths:
         refused. When the purchasing seam is unbound the answer is 503 with
         the draft carried alongside the error, so the surface can show what
         would have been ordered.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -856,10 +870,18 @@ paths:
         qty_base of zero means use the replenishment suggestion. Always a
         DRAFT, never an ordered PO. The same 503-with-draft posture as
         shortfall/create-po applies when purchasing is unbound.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1250,7 +1272,7 @@ components:
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves
-      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, unit_cost_cents, occurred_at]
+      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, occurred_at]
       properties:
         id: { type: string, format: uuid }
         product_id: { type: string, format: uuid }
@@ -1265,13 +1287,16 @@ components:
           enum: [RECEIPT, SHIP, COUNT, ADJUST, RETURN, TRANSFER]
         source_type: { type: string }
         source_ref_id: { type: string }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at: { type: string, format: date-time }
 
     InventoryOnHand:
       type: object
       description: A product's on-hand and available at a branch/location; available_base may be negative, by design
-      required: [product_id, location_id, branch_id, on_hand_base, allocated_base, available_base, avg_cost_cents]
+      required: [product_id, location_id, branch_id, on_hand_base, allocated_base, available_base]
       properties:
         product_id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
@@ -1282,7 +1307,10 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InventoryPendingFulfilment:
       type: object
@@ -1367,7 +1395,7 @@ components:
     InventoryBranchStock:
       type: object
       description: The four-bucket view of one product at one branch
-      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base]
       properties:
         product_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
@@ -1386,12 +1414,18 @@ components:
         soft_held_base:
           type: number
           description: Advisory quote holds; shown but never subtracted from available_base
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
-      required: [product_id, sku, name, manufacturer, collection, color_family, texture, product_size, sold_by, color, finish, application, is_featured, is_special_order, on_hand_base, reserved_base, available_base, in_transit_base, avg_cost_cents]
+      required: [product_id, sku, name, manufacturer, collection, color_family, texture, product_size, sold_by, color, finish, application, is_featured, is_special_order, on_hand_base, reserved_base, available_base, in_transit_base]
       properties:
         product_id: { type: string, format: uuid }
         sku: { type: string }
@@ -1411,7 +1445,22 @@ components:
         reserved_base: { type: number }
         available_base: { type: number }
         in_transit_base: { type: number }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
+        out_at_branches:
+          type: array
+          items: { type: string }
+          description: >-
+            The branches whose own stock record shows nothing available (on
+            hand at or under what is reserved). The row is a roll-up, so a list
+            line that says "Out at <branch>" reads the names here. Absent when
+            the product is available at every branch that holds a record for
+            it, and for a product with no stock record anywhere.
 
     InventoryFacetValue:
       type: object
@@ -1572,7 +1621,7 @@ components:
     InventoryTransferLine:
       type: object
       description: One product on a transfer, carrying both halves of the ship/receive pair
-      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, unit_cost_cents, ship_move_id, recv_move_id]
+      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, ship_move_id, recv_move_id]
       properties:
         id: { type: string, format: uuid }
         line_no: { type: integer, format: int32 }
@@ -1583,7 +1632,10 @@ components:
         qty_base: { type: number }
         qty_shipped_base: { type: number }
         qty_received_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id: { type: string }
         recv_move_id: { type: string }
 
@@ -1638,7 +1690,7 @@ components:
     InventoryShortfallRow:
       type: object
       description: One line of the replenishment worklist
-      required: [product_id, sku, product_name, branch_id, branch_code, uom, on_hand_base, reserved_base, available_base, in_transit_base, on_order_base, projected_base, reorder_point_base, reorder_qty_base, order_multiple_base, suggested_qty_base, short_base, preferred_vendor_id, preferred_vendor_name, lead_time_days, avg_cost_cents, suggested_value_cents]
+      required: [product_id, sku, product_name, branch_id, branch_code, uom, on_hand_base, reserved_base, available_base, in_transit_base, on_order_base, projected_base, reorder_point_base, reorder_qty_base, order_multiple_base, suggested_qty_base, short_base, preferred_vendor_id, preferred_vendor_name, lead_time_days]
       properties:
         product_id: { type: string, format: uuid }
         sku: { type: string }
@@ -1668,11 +1720,45 @@ components:
         preferred_vendor_id: { type: string }
         preferred_vendor_name: { type: string }
         lead_time_days: { type: integer, format: int32 }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: >-
+            suggested_qty_base times the branch weighted-average cost; the same
+            role gate as avg_cost_cents (the figure derives from it):
+            byte-absent for a caller off the dealer's cost and margin list.
+        draft_po_id:
+          type: string
+          format: uuid
+          description: >-
+            The newest draft purchase order a buyer has started for this product at this branch,
+            unplaced. A draft never covers a shortfall, so the row stays on the worklist beside it;
+            absent when there is none. Placing the draft takes the row off the worklist.
+        draft_po_no:
+          type: string
+          description: The number of the draft named by draft_po_id; present with it, absent without it
+        short_order_nos:
+          type: array
+          items:
+            type: string
+          description: >-
+            The visible numbers of the open sales orders waiting on this product at this branch,
+            the orders the shortfall holds up, oldest first, at most three of them; how many more
+            wait rides beside them in short_order_more. Absent when the orders seam is unbound or
+            nothing waits on the row.
+        short_order_more:
+          type: integer
+          format: int32
+          description: >-
+            How many further open sales orders wait on this product beyond the three
+            short_order_nos names. Absent when there are none.
 
     InventoryReorderPoint:
       type: object
@@ -1765,6 +1851,15 @@ components:
           description: The quantity the replenishment arithmetic proposed, whether or not the caller overrode it
         uom: { type: string }
         vendor_name: { type: string }
+        existing_draft_po_id:
+          type: string
+          format: uuid
+          description: >-
+            The unplaced draft this product already had at this branch before this press. A draft never
+            covers a shortfall, so the press still drafts the full quantity; absent when there was none.
+        existing_draft_po_no:
+          type: string
+          description: The number of the draft named by existing_draft_po_id; present with it, absent without it
 
     InventoryNudgeRequest:
       type: object
@@ -1786,91 +1881,109 @@ components:
         note: { type: string }
 
     # --- inventory page envelopes ---------------------------------------------
-    InventoryOnHandPage:
+    InventoryOnHandList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key on_hand, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [on_hand]
       properties:
-        items:
+        on_hand:
           type: array
           items: { $ref: "#/components/schemas/InventoryOnHand" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryMovePage:
+    InventoryMoveList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key moves, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [moves]
       properties:
-        items:
+        moves:
           type: array
           items: { $ref: "#/components/schemas/InventoryStockMove" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryPendingFulfilmentPage:
+    InventoryPendingFulfilmentList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key pending, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [pending]
       properties:
-        items:
+        pending:
           type: array
           items: { $ref: "#/components/schemas/InventoryPendingFulfilment" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryTransitDaysPairPage:
+    InventoryTransitDaysPairList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key pairs, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [pairs]
       properties:
-        items:
+        pairs:
           type: array
           items: { $ref: "#/components/schemas/InventoryTransitDaysPair" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryBranchStockPage:
+    InventoryBranchStockList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key branches, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [branches]
       properties:
-        items:
-          type: array
+        branches:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryBranchStock" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryBrowsePage:
+    InventoryBrowseResult:
       type: object
-      required: [items, facets]
+      description: >-
+        The browse surface's single round trip, as the core writes it: the
+        rows, the facets, the honest total before the limit, and the page the
+        answer IS (limit and offset echo the service's clamping). It pages by
+        offset, not by cursor, and answers no next_cursor. An empty page is
+        [], never null; facets is null when no facet has a value.
+      required: [rows, facets, total, limit, offset]
       properties:
-        items:
+        rows:
           type: array
           items: { $ref: "#/components/schemas/InventoryBrowseRow" }
         facets:
-          type: array
+          type: [array, "null"]
           description: Facet counts for the current filter; a facet with no values is dropped
           items: { $ref: "#/components/schemas/InventoryFacet" }
-        next_cursor: { type: [string, "null"] }
+        total: { type: integer, format: int32 }
         limit: { type: integer, format: int32 }
-    InventoryReservationPage:
+        offset: { type: integer, format: int32 }
+    InventoryReservationList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key reservations, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [reservations]
       properties:
-        items:
-          type: array
+        reservations:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryReservation" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryTransferPage:
+    InventoryTransferList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key transfers, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [transfers]
       properties:
-        items:
-          type: array
+        transfers:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryTransfer" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
-    InventoryInTransitLinePage:
+    InventoryInTransitLineList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key lines, with no cursor and no
+        limit echo. An empty answer is [], never null.
+      required: [lines]
       properties:
-        items:
+        lines:
           type: array
           items: { $ref: "#/components/schemas/InventoryInTransitLine" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
     InventoryShortfallPage:
       type: object
       required: [items, on_order_degraded]
@@ -1883,15 +1996,17 @@ components:
           description: True when no on-order reader is bound and every on_order_base is an unmeasured zero
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
-    InventoryReorderPointPage:
+    InventoryReorderPointList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key reorder_points, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [reorder_points]
       properties:
-        items:
-          type: array
+        reorder_points:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/InventoryReorderPoint" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     # --- invcount schemas ------------------------------------------------------
     InvCountSheet:
@@ -1919,7 +2034,7 @@ components:
     InvCountLine:
       type: object
       description: A snapshot on-hand vs counted reading, its variance, the valuation and the reason
-      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base, unit_cost_cents, variance_value_cents]
+      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base]
       properties:
         id: { type: string, format: uuid }
         sheet_id: { type: string, format: uuid }
@@ -1932,8 +2047,14 @@ components:
           type: [number, "null"]
           description: Null until the maker counts this line
         variance_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
-        variance_value_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code: { type: string }
         move_id:
           type: string
@@ -1970,13 +2091,19 @@ components:
 
     InvCountVarianceSummary:
       type: object
-      required: [line_count, counted_lines, variance_lines, net_variance_value_cents, abs_variance_value_cents]
+      required: [line_count, counted_lines, variance_lines]
       properties:
         line_count: { type: integer, format: int32 }
         counted_lines: { type: integer, format: int32 }
         variance_lines: { type: integer, format: int32 }
-        net_variance_value_cents: { type: integer, format: int64 }
-        abs_variance_value_cents: { type: integer, format: int64 }
+        net_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        abs_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
 
     InvCountSheetDetail:
       type: object
@@ -1992,12 +2119,18 @@ components:
     InvCountNegativeStockRow:
       type: object
       description: One product carrying by-design negative on-hand
-      required: [product_id, location_id, on_hand_base, avg_cost_cents]
+      required: [product_id, location_id, on_hand_base]
       properties:
         product_id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
         on_hand_base: { type: number }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InvCountCreateSheetRequest:
       type: object

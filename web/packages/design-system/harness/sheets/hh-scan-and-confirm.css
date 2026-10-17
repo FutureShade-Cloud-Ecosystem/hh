@@ -35,11 +35,28 @@
     font-family: inherit;
     font-size: var(--hh-s-16);
     line-height: 1;
-    min-height: 44px;
+    min-height: var(--hh-h-input);
     padding: 0 var(--hh-s-20);
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
     cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
   }
   button:focus-visible {
     outline: 2px solid var(--hh-focus-ring);
@@ -71,11 +88,83 @@
   /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
      drop their fill and go grey; the grey pair clears AA in both halves. */
   button:disabled,
-  button:disabled:hover {
+  button:disabled:hover,
+  .control:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
     cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
   }
 
   .spinner-wrap {

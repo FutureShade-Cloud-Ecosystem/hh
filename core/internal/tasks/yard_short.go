@@ -42,6 +42,39 @@ const maxShortNote = 400
 // request: the order cannot take a pick in its status, or the line has already gone out. Mapped to 409.
 var ErrOrderRefused = errors.New("tasks: the order cannot take that pick")
 
+// ErrPickClosed is a record onto a pick that is CANCELLED or DONE. Both are terminal in the module's
+// matrix (allowedTransitions moves out of neither) and the module has no correction path for a done
+// pick, so the record is refused before the order is told anything. → 409, and through sync that op's
+// rejection.
+var ErrPickClosed = errors.New("tasks: this pick is closed, its record cannot change")
+
+// ErrNotPickTask is a pick record or skid count submitted against a task that is not a PICK task (for
+// example a NEED_WEIGHT, DISPATCH, or OTHER task). The yard handlers, syncpick, and the fake store all
+// refuse it before the order is told, because a pick record or a skid count on a non-PICK row would
+// reprice an order line that nobody asked the yard to move. → 409, and through sync that op's
+// rejection.
+var ErrNotPickTask = errors.New("tasks: this is not a pick task")
+
+// pickClosedError is ErrPickClosed with the status in the words.
+type pickClosedError struct{ status string }
+
+func (e pickClosedError) Error() string {
+	if e.status == StatusCancelled {
+		return "tasks: this pick was cancelled, its record cannot change"
+	}
+	return "tasks: this pick is done, its record cannot change"
+}
+
+func (e pickClosedError) Is(target error) bool { return target == ErrPickClosed }
+
+// pickClosed is the refusal for a task in a terminal status, nil for any open one.
+func pickClosed(status string) error {
+	if status == StatusCancelled || status == StatusDone {
+		return pickClosedError{status: status}
+	}
+	return nil
+}
+
 // ErrAboveOrdered is a picked quantity above what was ordered. The yard may record less, never more.
 var ErrAboveOrdered = errors.New("tasks: that is more than was ordered, the yard cannot raise a quantity")
 
@@ -185,6 +218,13 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	if err != nil {
 		return YardSkidResult{}, err
 	}
+	// A skid count is a yard-pick measurement: only a PICK task carries one. Recording a skid count
+	// against a NEED_WEIGHT / DISPATCH / OTHER task would reprice an order line nobody asked the
+	// yard to move (FROM-PRINCIPAL row 2122 item 5 / REVIEW-YS-opus section 4: the demo's NEED_WEIGHT
+	// task on DEMO-PLM-O14 lost $8.02 to a stray pick record). Refuse before the order is told.
+	if task.TaskType != TypePick {
+		return YardSkidResult{}, ErrNotPickTask
+	}
 	change := YardSkidChange{
 		OrderID: task.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
 	}
@@ -194,7 +234,8 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	}
 	if res.Changed {
 		key := fmt.Sprintf("yard.skids:%s:%s", task.OrderID, res.ChangeID)
-		s.notifyOrderRep(ctx, task, res.Order, key, "yard.skid_change", skidMessage(change, res))
+		s.notifyOrderRep(ctx, task, res.Order, key, "yard.skid_change",
+			skidMessage(change, res, true), skidMessage(change, res, false))
 	}
 	return res, nil
 }

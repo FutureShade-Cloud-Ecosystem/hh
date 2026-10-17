@@ -34,6 +34,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // Transfer statuses (stock_transfers.status CHECK set, 0116).
@@ -80,7 +82,7 @@ type TransferLine struct {
 	QtyBase         float64 `json:"qty_base"`
 	QtyShippedBase  float64 `json:"qty_shipped_base"`
 	QtyReceivedBase float64 `json:"qty_received_base"`
-	UnitCostCents   int64   `json:"unit_cost_cents"`
+	UnitCostCents   int64   `json:"unit_cost_cents,omitempty"`
 	ShipMoveID      string  `json:"ship_move_id"`
 	RecvMoveID      string  `json:"recv_move_id"`
 }
@@ -167,6 +169,12 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 	if transferID == "" {
 		return Transfer{}, badReq("inventory: transfer id is required")
 	}
+	// The dealer's calendar, decided before the transaction opens: a zone read must not hold a
+	// connection beside the ship transaction, and a failed read ships nothing.
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return Transfer{}, err
+	}
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
 		return Transfer{}, err
@@ -232,7 +240,7 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 	// mistyped date refuses the whole shipment (400, nothing moved) rather than leaving a loaded truck
 	// with a rolled-back eta. shippedAt is read from the clock here and the UPDATE stamps now(); the two
 	// are the same instant to the millisecond in one process, and only the DAY of it is ever used.
-	eta, err := s.resolveShipETA(ctx, tx, hdr.FromBranchID, hdr.ToBranchID, etaIn, time.Now())
+	eta, err := s.resolveShipETA(ctx, tx, zone, hdr.FromBranchID, hdr.ToBranchID, etaIn, time.Now())
 	if err != nil {
 		return Transfer{}, err
 	}

@@ -145,8 +145,10 @@ func (s *Service) PolicyFor(ctx context.Context, branchID string) Policy {
 // domain fields used to carry, so every screen that may see cost reads exactly what it always read.
 type POCosts struct {
 	// header money (PO)
-	Subtotal    *int64 `json:"subtotal_cents,omitempty"`
-	SubtotalCad *int64 `json:"subtotal_cad_cents,omitempty"`
+	Subtotal              *int64 `json:"subtotal_cents,omitempty"`
+	SubtotalCad           *int64 `json:"subtotal_cad_cents,omitempty"`
+	WarrantyCreditApplied *int64 `json:"warranty_credit_applied_cents,omitempty"`
+	NetTotal              *int64 `json:"net_total_cents,omitempty"`
 	// line money (POLine, ReceiptLine, IncomingPOLine)
 	UnitCost  *int64 `json:"unit_cost_cents,omitempty"`
 	LineTotal *int64 `json:"line_total_cents,omitempty"`
@@ -219,7 +221,7 @@ func (s *Service) POCostsFor(ctx context.Context, poID string) (POCosts, error) 
 		return POCosts{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return POCosts{}, errForbidden
+		return POCosts{}, errNotFound
 	}
 	lines, err := orders.POLinesFor(ctx, poID)
 	if err != nil {
@@ -230,8 +232,19 @@ func (s *Service) POCostsFor(ctx context.Context, poID string) (POCosts, error) 
 		subtotal += l.LineTotalCents
 	}
 	cad := toCAD(subtotal, po.FXRate)
+	cred := po.WarrantyCreditAppliedCents
+	net := po.NetTotalCents
+	if net == 0 && cred == 0 && subtotal > 0 {
+		net = subtotal
+	} else if cred > 0 && (net == 0 || net > subtotal) {
+		net = subtotal - cred
+	}
+	if net < 0 {
+		net = 0
+	}
 	return s.costLensFor(ctx, po.BranchID).costs(func(c *POCosts) {
 		c.Subtotal, c.SubtotalCad = &subtotal, &cad
+		c.WarrantyCreditApplied, c.NetTotal = &cred, &net
 	}), nil
 }
 
@@ -242,7 +255,22 @@ func (s *Service) POCostsFor(ctx context.Context, poID string) (POCosts, error) 
 
 func (l costLens) stampPO(p *PO) {
 	sub, cad := p.SubtotalCents, p.SubtotalCadCents
-	p.POCosts = l.costs(func(c *POCosts) { c.Subtotal, c.SubtotalCad = &sub, &cad })
+	cred := p.WarrantyCreditAppliedCents
+	net := p.NetTotalCents
+	if net == 0 && cred == 0 && sub > 0 {
+		net = sub
+	} else if cred > 0 && (net == 0 || net > sub) {
+		net = sub - cred
+	}
+	if net < 0 {
+		net = 0
+	}
+	p.NetTotalCents = net
+	p.POCosts = l.costs(func(c *POCosts) {
+		c.Subtotal, c.SubtotalCad = &sub, &cad
+		c.WarrantyCreditApplied = &cred
+		c.NetTotal = &net
+	})
 }
 
 func (l costLens) stampPOLines(lines []POLine) {

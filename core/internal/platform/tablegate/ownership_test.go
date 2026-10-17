@@ -301,6 +301,11 @@ var migrationTopics = map[string]string{
 	"0369_yard_short_pick_backorder":       "order",
 	"0370_order_skids":                     "order",
 	"0372_yard_short_line_tax":             "order",
+	"0396_warranty_policy":                 "warranty",
+	"0402_messaging_saved_and_search":      "messaging",
+	"0404_warranty_vendor_agreements":      "warranty",
+	"0409_ar_account_payment_policy":       "billing",
+	"0410_ar_reminder_paylink_enrol":       "billing",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -347,6 +352,7 @@ var multiTopicSplits = map[string]func(table string) string{
 var ownedObjects = map[string]string{
 
 	"ar_ap_contacts":                  "billing",           // 0183_ar_landing_reminders
+	"ar_account_payment_policy":       "billing",           // 0409_ar_account_payment_policy
 	"ar_credit_policy":                "billing",           // 0104_ar_credit_gates
 	"ar_invoice_deliveries":           "billing",           // 0175_ar_invoice_deliveries
 	"ar_invoice_disputes":             "billing",           // 0177_ar_invoice_disputes
@@ -356,6 +362,8 @@ var ownedObjects = map[string]string{
 	"ar_paper_path_flags":             "billing",           // 0183_ar_landing_reminders
 	"ar_promises_to_pay":              "billing",           // 0176_ar_promises_to_pay
 	"ar_reminder_events":              "billing",           // 0183_ar_landing_reminders
+	"ar_reminder_rules":               "billing",           // 0410_ar_reminder_paylink_enrol
+	"ar_reminder_exempts":             "billing",           // 0410_ar_reminder_paylink_enrol
 	"ar_reminder_sends":               "billing",           // 0183_ar_landing_reminders
 	"ar_statement_runs":               "billing",           // 0105_ar_statements
 	"ar_statements":                   "billing",           // 0105_ar_statements
@@ -389,6 +397,7 @@ var ownedObjects = map[string]string{
 	"count_reason_codes":              "invcount",          // 0040_inventory_counts
 	"count_sheets":                    "invcount",          // 0040_inventory_counts
 	"credit_holds":                    "payments",          // 0035_nsf_credit_hold
+	"customer_ar_notes":               "billing",           // 0405_customer_ar_workspace
 	"customer_category_overrides":     "pricing",           // 0023_pricing
 	"customer_contacts":               "customer",          // 0006_customers
 	"customer_quote":                  "customerquote",     // 0214_new_entities_and_pricing
@@ -446,6 +455,8 @@ var ownedObjects = map[string]string{
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
 	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
+	"console_jwt_claim":               "identity",          // 0387_console_jwt_claim
+	"org_signin_method":               "identity",          // 0388_org_signin_method
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests
@@ -457,9 +468,15 @@ var ownedObjects = map[string]string{
 	"msg_members":                     "messaging",         // 0050_messaging_core
 	"msg_message_archive":             "messaging",         // 0070_messaging_retention_archive
 	"msg_messages":                    "messaging",         // 0050_messaging_core
+	"msg_mentions":                    "messaging",         // 0399_messaging_reactions_mentions_seen
 	"msg_notification_prefs":          "messaging",         // 0069_messaging_notif_prefs_and_tiers
+	"msg_person_event_prefs":          "messaging",         // 0401_messaging_person_prefs_and_quiet_hours
+	"msg_quiet_hours":                 "messaging",         // 0401_messaging_person_prefs_and_quiet_hours
 	"msg_payment_notify_rules":        "messaging",         // 0157_msg_payment_notify_rules
+	"msg_policy":                      "messaging",         // 0398_msg_edit_window_policy
+	"msg_reactions":                   "messaging",         // 0399_messaging_reactions_mentions_seen
 	"msg_retention_policy":            "messaging",         // 0070_messaging_retention_archive
+	"msg_saved_messages":              "messaging",         // 0402_messaging_saved_and_search
 	"msg_unread_effective":            "messaging",         // 0137_msg_notification_modes
 	"msg_unread_summary":              "messaging",         // 0051_messaging_unread_view
 	"nsf_policy":                      "payments",          // 0035_nsf_credit_hold
@@ -590,6 +607,7 @@ var ownedObjects = map[string]string{
 	"surface_user_workspace":          "settings",          // 0172_surface_settings_substrate
 	"sync_discrepancies":              "bistrack",          // 0079_bistrack_sync
 	"sync_jobs":                       "bistrack",          // 0079_bistrack_sync
+	"sync_op_hashes":                  "sync",              // 0389_sync_op_hashes (the engine's idempotency body ledger)
 	"system_settings":                 "settings",          // 0014_dibbits_branch_config
 	"task_events":                     "tasks",             // 0073_tasks_and_task_events
 	"task_pick_lines":                 "tasks",             // 0187_task_pick_lines
@@ -633,7 +651,9 @@ var ownedObjects = map[string]string{
 	"warranty_intake_photos":          "warranty",          // 0131_warranty_public_intake
 	"warranty_intake_rate_limit":      "warranty",          // 0131_warranty_public_intake
 	"warranty_outcome_paths":          "warranty",          // 0129_warranty_settlement_paths
+	"warranty_policy":                 "warranty",          // 0396_warranty_policy
 	"warranty_product_overrides":      "warranty",          // 0053_warranty_claims
+	"warranty_vendor_agreements":      "warranty",          // 0404_warranty_vendor_agreements
 	"warranty_recovery_actions":       "warranty",          // 0130_warranty_recovery_board
 	"warranty_recovery_balances":      "warranty",          // 0130_warranty_recovery_board
 	"demo_box":                        "demo",              // runtime created by demo populate's writeDemoBox, outside the frozen migration chain by that file's own statement

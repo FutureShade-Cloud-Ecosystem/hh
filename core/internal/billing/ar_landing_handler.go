@@ -20,6 +20,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"log/slog"
@@ -34,7 +35,11 @@ type ARLandingHandler struct {
 	landing   *ARLandingService
 	reminders *ARReminderService
 	log       *slog.Logger
+	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (h *ARLandingHandler) WithZone(src houseday.Source) *ARLandingHandler { h.zone = src; return h }
 
 // NewARLandingHandler wires the services. A nil reminder service is allowed: the landing renders
 // without the machinery, and the reminder routes answer 503 in words rather than 404, an unwired
@@ -74,7 +79,7 @@ func (h *ARLandingHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 }
 
 func (h *ARLandingHandler) landingRead(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	asOf, err := parseAsOf(r.URL.Query().Get("as_of"))
+	asOf, err := parseAsOfFor(r.Context(), h.zone, r.URL.Query().Get("as_of"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -312,6 +317,8 @@ func (h *ARLandingHandler) writeErr(w http.ResponseWriter, r *http.Request, err 
 		httpx.Error(w, se.Status, se.Msg)
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
 	default:

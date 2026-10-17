@@ -34,9 +34,25 @@
 // colour, gap and radius is a token except the lockup's own geometry (the
 // 30px mark, the 56px bar), which has no token and keeps the front door's
 // literal shape.
+//
+// Framed by the Work shell (item 8d, row 1520: one header band): a desk app the
+// shell frames shows no band of its own, because the shell's band carries the
+// app and surface selector, the Demo badge, Theme, Feedback and the account.
+// The element reads framedByShell() once, at construction, and renders nothing
+// while it is set (it stays in the document, so the app keeps setting its
+// inputs, the theme above all). The app's slotted Theme and Feedback buttons
+// stay in the light DOM, unrendered: the element tells the shell which of the
+// two it holds, and presses them when the shell asks, so the app's own handlers
+// run unchanged. A standalone page never takes this path.
+//
+// One host knob: --hh-header-control-min sets the floor of the Switch role and
+// Sign out buttons. Unset, they keep their own height (44 px on the compact
+// phone layout, content height elsewhere); an app with a taller target floor
+// sets it on the element (tokens.css defines it as zero, and each read carries a zero fallback, so a page that loads the header without tokens.css computes the same rules).
 
 import { css, html, nothing, type PropertyValues, type TemplateResult as Template } from 'lit';
 import { defineElement, HHElement } from './base.js';
+import { announceChromeControls, chromeActionFrom, framedByShell, type ChromeAction } from './framed.js';
 import { baseStyles } from './primitives.js';
 
 /** The word the centre zone carries when nobody is signed in. */
@@ -49,7 +65,9 @@ const DEFAULT_SUB = 'a Hardscape House product';
 const styles = css`
   header {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    /* The left cell takes the room its brand and the Demo pill need on one row (a longer role word in the middle
+       must not push the pill under the logo); where the screen is too narrow for that, the pill wraps as before. */
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
     box-sizing: border-box;
@@ -63,11 +81,12 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-12);
   }
-  /* The brand lockup, the ERP shell's own: the HH mark at the left, the
-     product name with the house line under it. Gold is a fill, never an ink,
-     so the mark's "HH" is the near-black ink the gold fill carries; the
-     accent word takes the gold-as-ink token, which is dark gold in the light
-     theme. */
+  /* The brand lockup, the front door's own: the Hardscape House badge at
+     the left, the product name with the house line under it. The badge is
+     the yellow square ground (the badge yellow IS --hh-accent), square
+     cornered as the source colourways are, carrying mark.svg's measured H
+     inlined in the ink a gold fill carries (--hh-accent-ink, through
+     currentColor), in both themes (decision log rows 953 and 968). */
   .brand {
     display: flex;
     align-items: center;
@@ -78,14 +97,13 @@ const styles = css`
     width: 30px;
     height: 30px;
     flex: none;
-    display: grid;
-    place-items: center;
-    border-radius: var(--hh-radius-control);
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
-    font-size: var(--hh-s-12);
-    font-weight: 800;
-    letter-spacing: -0.02em;
+  }
+  .brand-mark svg {
+    width: 100%;
+    height: 100%;
+    display: block;
   }
   .brand-names {
     display: flex;
@@ -139,6 +157,11 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-8);
   }
+  @media (max-width: 1280px) {
+    header {
+      grid-template-columns: 1fr auto 1fr;
+    }
+  }
   @media (max-width: 480px) {
     header {
       grid-template-columns: 1fr;
@@ -155,8 +178,11 @@ const styles = css`
     .who {
       justify-self: center;
     }
+    /* The phone's narrowest screens: the cluster wraps onto a second row rather than reaching past the edge. */
     .controls {
       justify-self: center;
+      flex-wrap: wrap;
+      justify-content: center;
     }
   }
   /* The compact layout is opt in (the compact attribute) and narrow only: an
@@ -196,7 +222,7 @@ const styles = css`
       flex: 1 1 auto;
     }
     :host([compact]) .controls button {
-      min-height: 44px;
+      min-height: max(44px, var(--hh-header-control-min, 0px));
       padding: 0 var(--hh-s-8);
       font-size: 13px;
       white-space: nowrap;
@@ -211,7 +237,7 @@ const styles = css`
     }
   }
   .controls button {
-    min-height: 0;
+    min-height: var(--hh-header-control-min, 0px);
     padding: 7px 12px;
     font-size: 11px;
     line-height: normal;
@@ -261,6 +287,7 @@ export class HosAppHeader extends HHElement {
     productName: { attribute: 'product-name' },
     productSub: { attribute: 'product-sub' },
     compact: { type: Boolean, reflect: true },
+    framed: { type: Boolean },
   };
 
   /** The centred role name; the default word when empty or unsigned. */
@@ -277,6 +304,8 @@ export class HosAppHeader extends HHElement {
   declare productSub: string;
   /** The compact narrow layout, opt in. */
   declare compact: boolean;
+  /** Framed by the Work shell: the band renders nothing. Read once at boot, from the frame's address. */
+  declare framed: boolean;
 
   constructor() {
     super();
@@ -287,6 +316,7 @@ export class HosAppHeader extends HHElement {
     this.productName = '';
     this.productSub = '';
     this.compact = false;
+    this.framed = framedByShell();
   }
 
   /** Whether light DOM children claim the theme slot by name. */
@@ -301,11 +331,38 @@ export class HosAppHeader extends HHElement {
       this.#themeSlotted = claimed;
       this.requestUpdate();
     }
+    this.#announceControls();
   }
+
+  /** The shell controls this host's light DOM holds, last told to the shell. */
+  #announced = '';
+
+  /** Framed: tells the shell which of its controls (Theme, Feedback) the app holds, when that changes. */
+  #announceControls(): void {
+    if (!this.framed) return;
+    const held = (['theme', 'feedback'] as const).filter((name) => this.querySelector(`[data-action="${name}"]`) !== null);
+    const key = held.join(',');
+    if (key === this.#announced) return;
+    this.#announced = key;
+    try {
+      announceChromeControls(window, held);
+    } catch {
+      // no parent to tell: the shell simply shows no app controls
+    }
+  }
+
+  /** The shell asked the app to press one of the controls it carries. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action: ChromeAction | null = chromeActionFrom(event, window);
+    if (action === null) return;
+    this.querySelector<HTMLElement>(`[data-action="${action}"]`)?.click();
+  };
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.framed) window.addEventListener('message', this.#onChromeAction);
     this.#syncThemeSlot();
+    this.#announceControls();
     if (typeof MutationObserver === 'function') {
       this.#themeObserver = new MutationObserver(() => this.#syncThemeSlot());
       this.#themeObserver.observe(this, { childList: true, subtree: true, attributeFilter: ['slot'] });
@@ -315,6 +372,7 @@ export class HosAppHeader extends HHElement {
   override disconnectedCallback(): void {
     this.#themeObserver?.disconnect();
     this.#themeObserver = null;
+    window.removeEventListener('message', this.#onChromeAction);
     super.disconnectedCallback();
   }
 
@@ -330,6 +388,7 @@ export class HosAppHeader extends HHElement {
   }
 
   render(): Template {
+    if (this.framed) return html``;
     const signedIn = this.signedIn === true;
     const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
     const product = this.productName !== '' ? this.productName : DEFAULT_PRODUCT;
@@ -347,7 +406,14 @@ export class HosAppHeader extends HHElement {
       <header>
         <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label=${`HH ${product}, ${sub}`}>
-            <span class="brand-mark" aria-hidden="true">HH</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 3000 3000">
+                <path
+                  fill="currentColor"
+                  d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
+                />
+              </svg>
+            </span>
             <span class="brand-names">
               <span class="brand-product">HH <span class="accent">${product}</span></span>
               <span class="brand-sub">${sub}</span>

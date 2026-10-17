@@ -113,8 +113,17 @@ type RegisterRow struct {
 	StoredStatus  string    `json:"stored_status"` // the 0009 CHECK value, unmodified
 	Status        string    `json:"status"`        // the derived pill state
 	DaysOverdue   int       `json:"days_overdue"`  // 0 unless past due
-	AccountStatus string    `json:"account_status"`
-	Disputed      bool      `json:"disputed"`
+	// BucketLabel is the C8 5-bucket label (Current / 1 to 30 / 31 to 60 / 61 to 90 / 91 and over),
+	// derived from DaysOverdue against the same server asOf clock that picked DaysOverdue itself.
+	// Equal to the empty string for non-past-due rows (Current), the same shape as the table cell
+	// shows when DaysOverdue == 0. The single source of truth lives in BucketLabelFor.
+	BucketLabel string `json:"bucket_label,omitempty"`
+	// BucketKey is the CANONICAL C8 bucket key for the row (CURRENT / 1_30 / 31_60 / 61_90 /
+	// 90_PLUS), machine-readable. The display label sits in BucketLabel; the key is for joins and
+	// filtering on the server side.
+	BucketKey     string `json:"bucket_key,omitempty"`
+	AccountStatus string `json:"account_status"`
+	Disputed      bool   `json:"disputed"`
 	// PromisedDate is the live promise against this document, when one exists, the fact that stops
 	// the next caller chasing a customer who has already committed.
 	PromisedDate  *time.Time `json:"promised_date,omitempty"`
@@ -141,6 +150,61 @@ const (
 	StatusVoid          = "VOID"
 	StatusCredit        = "CREDIT"
 )
+
+// C8 register filter chips. The legacy strings below stay valid for backward compatibility with
+// every wire payload and stored URL bookmark that already names them.
+const (
+	ChipAll      = "all"
+	ChipPastDue  = "past_due"
+	ChipCurrent  = "current"
+	ChipOnHold   = "on_hold"
+	ChipOpen     = "open"     // legacy: open documents, any state
+	ChipOverdue  = "overdue"  // legacy
+	ChipPromised = "promised" // legacy
+	ChipDisputed = "disputed" // legacy
+	ChipPaid     = "paid"     // legacy
+)
+
+// C8 5-bucket keys (the SQL aging buckets). The WIRE label (BucketLabel) and the JSON key
+// (BucketKey) read the same row from two angles; the bucket math lives in BucketLabelFor and the
+// only place that changes when finance retunes the bands.
+const (
+	BucketKeyCurrent = "CURRENT"
+	BucketKey1To30   = "1_30"
+	BucketKey31To60  = "31_60"
+	BucketKey61To90  = "61_90"
+	BucketKey90Plus  = "90_PLUS"
+)
+
+// BucketLabelCurrent is the canonical human label for the CURRENT band. The other labels are
+// spelled inline in BucketLabelFor so a typo in one is impossible to miss when they sit next to
+// each other. Do not refactor that into a table for the sake of one if.
+const BucketLabelCurrent = "Current"
+
+// BucketLabelFor is the SINGLE source of truth for which C8 5-bucket band a days-past-due count
+// sits in. Returns (label, key) so the wire payload and the join key can never disagree. The
+// boundary convention matches the aging bucket math the SQL projection uses: inclusive at the
+// TOP of each band, so "31" lands in 31 to 60, never in 1 to 30. Negative or zero days (i.e. not
+// yet due) return the Current band.
+func BucketLabelFor(daysPastDue int) (label, key string) {
+	switch {
+	case daysPastDue <= 0:
+		return BucketLabelCurrent, BucketKeyCurrent
+	case daysPastDue <= 30:
+		return "1 to 30", BucketKey1To30
+	case daysPastDue <= 60:
+		return "31 to 60", BucketKey31To60
+	case daysPastDue <= 90:
+		return "61 to 90", BucketKey61To90
+	default:
+		return "91 and over", BucketKey90Plus
+	}
+}
+
+// C8BucketOrder is the canonical order in which the 5-bucket summary is read and summed. It is
+// the SAME order the AgingSummary grand total is derived from, so any panel that lists the
+// buckets in display order MUST read from this slice and nowhere else.
+var C8BucketOrder = []string{BucketKeyCurrent, BucketKey1To30, BucketKey31To60, BucketKey61To90, BucketKey90Plus}
 
 // RegisterCounts is the count-bearing chip row. These are COUNTS OF THE SAME PREDICATES the filters
 // apply, computed in one pass over the same rows, so a chip that says 8 and a filter that shows 7 is
@@ -171,6 +235,9 @@ type RegisterFilter struct {
 	// ignored, and the rows come from a single snapshot, so a payment landing mid-read cannot shift a
 	// row between pages. Only the export sets it; the list read is always paged.
 	All bool
+	// Reach is the caller's branches, set by the service from the stamped caller and never taken from
+	// a request. The zero value reaches nothing, so a filter built anywhere else reads an empty book.
+	Reach BranchReach
 }
 
 // RegisterPage is the register read's answer.
@@ -343,6 +410,18 @@ type ReceiptInput struct {
 	AmountCents    int64  `json:"amount_cents"`
 	Reference      string `json:"reference"` // cheque no / EFT trace, recorded, never invented
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// ApplyPaymentInput records ONE received payment against a list of the account's open invoices and
+// asks the server to split it oldest first. The split is never the caller's to compute.
+type ApplyPaymentInput struct {
+	CustomerID     string   `json:"customer_id"`
+	Method         string   `json:"method"` // CASH | CARD | CHEQUE | EFT
+	AmountCents    int64    `json:"amount_cents"`
+	Reference      string   `json:"reference"`
+	InvoiceIDs     []string `json:"invoice_ids"`
+	IdempotencyKey string   `json:"idempotency_key"`
+	Preview        bool     `json:"preview"`
 }
 
 // ReceiptResult is what the Record Payment control gets back. Replayed=true means the key had

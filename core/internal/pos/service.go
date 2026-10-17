@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"net/http"
 	"sort"
 	"strings"
@@ -216,6 +217,14 @@ type posStore interface {
 	SetReturnOffset(ctx context.Context, tx pgx.Tx, returnID string, offsetCents int64) error
 	// LockInvoicesTx takes the invoices a return may touch, sorted, before any credit offset (P2-1).
 	LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error
+	// LockPaymentsSequenceTx takes the payments sequence row BEFORE the invoice locks a cash or card
+	// return takes, and only when lockReturnInvoicesTx has decided invoice rows will be taken at all:
+	// the payments module's one money lock order (its counter first, invoices second) says a return
+	// that takes an invoice row must hold the counter first (a return that held an owed invoice and
+	// then waited on the counter closed a cycle with a received payment apply holding the counter and
+	// waiting on that invoice, the Opus review's P2-4), and a return that takes no invoice row must
+	// not hold the one counter every payments writer serialises on (the delta reviews' P2).
+	LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error
 	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked (D5).
 	SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error)
 	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
@@ -374,6 +383,7 @@ type Service struct {
 	// orderInvoices resolves a converted order's live invoice (billing owns the documents).
 	orderInvoices OrderInvoiceReader
 	now           func() time.Time
+	zone          houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 	callerFrom    func(context.Context) (identity.StaffContext, bool)
 }
 
@@ -508,6 +518,10 @@ func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; r
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
+// WithZone binds the dealer's business day zone source: the ring's issue and due days are filed in the
+// dealer's own calendar. Nil keeps the Ontario dealer's (America/Toronto).
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
 // salePlan is everything a sale resolves BEFORE its transaction opens (validation, the customer,
 // pricing and tax, the capture plan, the credit gate and the card captures), carried to the
 // transactional body (saleInTx) and the post-commit step (finishSale). The swap runs the same body
@@ -537,6 +551,9 @@ type salePlan struct {
 	applied          int64 // the swap credit spent on this order (10.5), 0 on an ordinary sale
 	actor            string
 	ring             *cardRing
+	// zone is the dealer's business day zone, resolved BEFORE any card is captured: a failed zone
+	// read refuses the ring while no money has moved, never after a capture.
+	zone houseday.Zone
 }
 
 // Sale commits one atomic counter sale (price → CheckCredit → order → tender → invoice → allocate, one
@@ -769,6 +786,8 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	subtotal := priced.subtotal
 	tax := priced.tax
 	total := priced.total
+	// The ring records the reason the assessor bound: the dealer's own standard for a standard sale.
+	taxReason = priced.reasonCode
 	// Item 10.5: a swap spends its credit note on the new order first; the tender takes the rest.
 	var applied int64
 	if in.swapCreditCents > 0 {
@@ -947,6 +966,10 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	if len(captures) > 0 && in.TillSessionID == "" {
 		return nil, nil, ErrNoOpenTill{}
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return nil, nil, err
+	}
 	ring, err := s.captureCardLegs(ctx, in, captures, customerID, actor)
 	if err != nil {
 		return nil, nil, err
@@ -964,6 +987,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
 		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
 		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, applied: applied, actor: actor, ring: ring,
+		zone: zone,
 	}, nil, nil
 }
 
@@ -1140,7 +1164,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	// different "todays".
 	invStatus := "PAID"
 	balance := int64(0)
-	issueDate := houseday.Today(s.now)
+	issueDate := p.zone.Today(s.now)
 	dueDate := issueDate
 	if !fullyPaid {
 		invStatus = "FINALIZED"
@@ -1149,7 +1173,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			invStatus = "PARTIALLY_PAID"
 		}
 		if !codSale {
-			dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
+			dueDate = p.zone.AddDays(s.now, cust.PaymentTermsDays)
 		}
 	}
 	// Sub item 9.5: a supplier's demanded deposit rides the sale as its
@@ -1311,15 +1335,15 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	if in.Relief != nil {
 		// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
 		// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
-		// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
-		// reconstructBase divides this column by the constant 1300, so it must never carry the
-		// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
+		// the subtotal (taxAt at the quote's standard rate, bit-identical to the engine's hstOn; the
+		// recompute's reconstructBase divides this column by the standard_rate_bps stored beside it,
+		// so it must never carry the assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
 		// assessed tax the ring actually collected. At the standard rate this row is byte-identical
 		// to the old flat-constant write.
 		if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
 			OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
-			FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
-			NetCollectedCents: tax, Automated: false,
+			FullHSTCents: taxAt(subtotal, priced.standardRateBps), StandardRateBps: priced.standardRateBps,
+			OnCreditCents: priced.onCreditCents, NetCollectedCents: tax, Automated: false,
 			EvidenceDocID: in.Relief.EvidenceDocID,
 		}); err != nil {
 			return err
@@ -1755,26 +1779,34 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 		return ReliefOutcome{}, err
 	}
 
+	// The dealer's own standard: its reason, its rate and its plain word ("13%" for an Ontario dealer).
+	stdReason := firstNonEmpty(fallback.ReasonCode, TaxStdON13)
+	stdRate := standardRateOrFlat(fallback)
+	stdWord := standardOutcomeWord(stdRate)
+
 	out := ReliefOutcome{
 		PurchaserType:    firstNonEmpty(prof.PurchaserType, in.PurchaserType),
 		MaskedIdentifier: prof.MaskedIdentifier,
 		Automated:        false, // M5 flips this true
 		FullHSTCents:     fallback.TaxCents,
+		TaxLabel:         taxwords.For(fallback.Jurisdiction),
 	}
 	eligible := !prof.Expired && (prof.OntarioEligibility == "ON_RESIDENT" || prof.OntarioEligibility == "AKWESASNE")
+	// The Ontario 5% pickup path is Ontario's alone; an assessor that names no jurisdiction is Ontario.
+	ontarioDealer := fallback.Jurisdiction == "" || fallback.Jurisdiction == "ON"
 
 	switch in.Fulfilment {
 	case "pickup", "purchaser_carrier":
 		// Customer pickup NEVER qualifies for 0%, the outcome is 5% (Ontario path) or 13%.
-		if eligible && in.DeclaredUse == "personal" {
+		if eligible && ontarioDealer && in.DeclaredUse == "personal" {
 			out.Outcome = "5%"
 			out.ReasonCode = TaxONFNPos8
 			out.RateBps = ontarioNetBps
 			out.OnCreditCents = (in.SubtotalCents*ontarioCreditBps + 5000) / 10000
 			out.NetCollectedCents = (in.SubtotalCents*ontarioNetBps + 5000) / 10000
 		} else {
-			out.Outcome = "13%"
-			out.ReasonCode = TaxStdON13
+			out.Outcome = stdWord
+			out.ReasonCode = stdReason
 			out.RateBps = fallback.RateBps
 			out.NetCollectedCents = out.FullHSTCents
 		}
@@ -1795,8 +1827,8 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 				out.NetCollectedCents = out.FullHSTCents
 			}
 		} else {
-			out.Outcome = "13%"
-			out.ReasonCode = TaxStdON13
+			out.Outcome = stdWord
+			out.ReasonCode = stdReason
 			out.RateBps = fallback.RateBps
 			out.NetCollectedCents = out.FullHSTCents
 		}
@@ -1814,7 +1846,7 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 			_, e := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
 				OrderID: in.OrderID, TaxReasonCode: out.ReasonCode, RuleVersion: ruleVersionW4, RateBps: out.RateBps,
 				FullHSTCents: out.FullHSTCents, OnCreditCents: out.OnCreditCents, NetCollectedCents: out.NetCollectedCents,
-				Automated: false,
+				Automated: false, StandardRateBps: stdRate,
 			})
 			return e
 		}); err != nil {

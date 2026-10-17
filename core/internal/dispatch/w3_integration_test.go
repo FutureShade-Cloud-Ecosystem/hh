@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 func w3Harness(t *testing.T) (*harness, context.Context, string) {
@@ -484,6 +486,14 @@ func TestW3Gate_AHeldOrderStopsTheRunAndFeedsTheDriverBanner(t *testing.T) {
 		t.Fatalf("assign: %v", err)
 	}
 	h.svc.WithARGate(denyGate{orders: map[string]bool{orderID: true}})
+	// The caller this test walks is the logistics manager, a role on the cost
+	// and margin list, so the door money fence (cost_gate_w3_integration_test.go
+	// proves the other roles) lets the banner's figure through to them.
+	doorCfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.svc.WithCostRoles(doorCfg)
 
 	if _, err := h.svc.DispatchRun(ctx, run.ID); err == nil {
 		t.Fatal("a run carrying a held order must not leave the yard")

@@ -74,6 +74,11 @@ type Config struct {
 	// any path is fine; production overrides to the public origin (e.g. https://pro.dibbits.ca).
 	PortalBaseURL string
 
+	// DealerName is the dealer's own name as a person reads it in an email, a text, an export and the
+	// assistant's brief (DEALER_NAME). Empty is allowed: every reader then uses a neutral role word
+	// (internal/platform/dealer), never another dealer's name.
+	DealerName string
+
 	// Plane feedback bridge (#16 / IMP-038): staff feedback submitted in the ERP is
 	// filed as an issue on the Dibbits Plane board. All three must be set for the
 	// /api/v1/feedback route to be wired; otherwise the module stays dark (dev default).
@@ -175,6 +180,7 @@ func Load() Config {
 		Env:                 env,
 		PaymentVaultKey:     strEnv("PAYMENT_VAULT_KEY", ""),
 		PortalBaseURL:       strEnv("PORTAL_BASE_URL", portalDef),
+		DealerName:          strEnv("DEALER_NAME", ""),
 		PlaneAPIURL:         strEnv("PLANE_API_URL", ""),
 		PlaneAPIKey:         strEnv("PLANE_API_KEY", ""),
 		PlaneProject:        strEnv("PLANE_PROJECT_ID", ""),

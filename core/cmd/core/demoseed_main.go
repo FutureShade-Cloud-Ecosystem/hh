@@ -12,7 +12,9 @@
 // list of guarded UPDATEs that repair rows this command itself (or a migration) already planted,
 // never a live tester's row: the scrub-name rename pass (the demoseed_scrubname pair), which moves
 // migration-planted demo customers off their scrub placeholders, and the seed-repair pass (the
-// demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved.
+// demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved and
+// stamps the demo org on the Driver's day-keyed rows the boot's first apply wrote before the
+// populate provisioned the org.
 // Each statement in them names the row by fixed id AND the exact value being repaired, so nothing
 // outside the fixed list moves, a second run matches no row, and a hand-edited row is left alone.
 // Running it twice produces the same world: the second run's inserts all conflict, create nothing,
@@ -109,6 +111,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		return fmt.Errorf("demoseed: composing modules: %w", err)
 	}
 
+	// The demo world seam (the glsworld pair): in the demo build, -apply moves the two branch rows
+	// onto the demo dealer before the plan reads them, because the plan derives every document
+	// reference from the branch code. The default build's side is a no-op.
+	if *doApply {
+		if err := glsPrepareWorld(ctx, pool); err != nil {
+			return err
+		}
+	}
 	branches, err := resolveBranches(ctx, pool)
 	if err != nil {
 		return err
@@ -124,16 +134,24 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	contractor, err := resolveContractor(ctx, pool)
+	if err != nil {
+		return err
+	}
 	seal, keyed, err := newSealer(cfg.PaymentVaultKey)
 	if err != nil {
 		return err
 	}
 
 	rows, summary, err := buildPlan(planInput{
-		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal})
+		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal, Contractor: contractor})
 	if err != nil {
 		return err
 	}
+
+	// The demo world's words (the glsworld pair): the built plan's strings pass through the demo
+	// dictionary before anything prints or writes. The default build returns the rows as built.
+	rows = glsRewritePlan(rows)
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
@@ -145,10 +163,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// says how many migration-planted customers -apply renames, the default build's
 	// says nothing because it carries no rename at all.
 	scrubNamesPlan(out)
+	// The Gable-address rename pass is the demo build's too (the gableaddr pair): the demo build's
+	// plan says how many migration-planted email addresses -apply renames onto the demo dealer's
+	// addresses; the default build's says nothing.
+	gableAddressesPlan(out)
 	// The seed-repair pass is the demo build's too (the repair pair): the plan says the guarded
 	// repair -apply would make, and only when the row still sits where the pass moves it from,
 	// so a world with nothing to repair reports nothing.
-	repairDemoWorldPlan(ctx, out, pool, branches)
+	repairDemoWorldPlan(ctx, out, pool, branches, now)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -183,6 +205,32 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The demo world's migration-planted words (the glsworld pair), in the same transaction for the
+	// same reason: the rows the migrations plant carry the first dealer's names, and the demo build
+	// moves them through the demo dictionary, one guarded update per changed value.
+	worldRenamed, err := glsRenamePlanted(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
+	// The Gable-address display-name rename pass (the gableaddr pair), in the same transaction for the
+	// same reason: the migration-planted demo staff display names move onto invented Gable Landscape
+	// Supply role labels. This runs BEFORE the email rename because the UAT staff account has no fixed
+	// id and is looked up by its migration-planted email; once that email moves, the display_name guard
+	// would match no row.
+	displayRenamed, err := renameGableDisplayNames(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
+	// The Gable-address rename pass (the gableaddr pair), in the same transaction: the migration-planted
+	// demo email addresses move onto invented Gable Landscape Supply addresses, one guarded UPDATE per
+	// fixed id / exact old value.
+	addrRenamed, err := renameGableAddresses(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
 	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
 	// in demoseed_repair_demo.go beside the scrub-name pass it follows.
@@ -200,10 +248,19 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if renamed > 0 {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
-	if repaired > 0 {
-		fmt.Fprintf(out, "repaired: %d row(s) an older seed left wrong (a home branch, an empty product application)\n", repaired)
+	if worldRenamed > 0 {
+		fmt.Fprintf(out, "world words:  %d migration-planted value(s) moved onto the demo dealer's words\n", worldRenamed)
 	}
-	if res.Created == 0 && renamed == 0 && repaired == 0 {
+	if addrRenamed > 0 {
+		fmt.Fprintf(out, "gable addresses: %d migration-planted email address(es) moved onto Gable Landscape Supply addresses\n", addrRenamed)
+	}
+	if displayRenamed > 0 {
+		fmt.Fprintf(out, "gable display names: %d migration-planted display name(s) moved onto Gable Landscape Supply role labels\n", displayRenamed)
+	}
+	if repaired > 0 {
+		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
+	}
+	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && addrRenamed == 0 && displayRenamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {
@@ -235,6 +292,14 @@ func writeSummary(out *os.File, s planSummary) {
 		}
 		fmt.Fprintln(out, "  quote share links")
 		for _, l := range s.QuoteLinks {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+	}
+	if len(s.ContractorLines) == 0 {
+		fmt.Fprintln(out, "  contractor   none, the contractor account is not on this database yet (apply again after the demo populate)")
+	} else {
+		fmt.Fprintln(out, "  contractor world")
+		for _, l := range s.ContractorLines {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}

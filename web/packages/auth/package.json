@@ -8,10 +8,13 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./appwrite-adapter": "./src/appwrite-adapter.ts",
+    "./runtime-config": "./src/runtime-config.ts",
+    "./tauri-adapter": "./src/tauri-adapter.ts"
   },
   "scripts": {
-    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/lock-signout.test.mjs test/client.test.mjs test/gates.test.mjs",
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/lock-signout.test.mjs test/client.test.mjs test/gates.test.mjs test/exchange.test.mjs test/appwrite-adapter.test.mjs test/tauri-adapter.test.mjs test/signin-reasons.test.mjs test/runtime-config.test.mjs test/write-web-config.test.mjs test/app-session.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -66,6 +66,47 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/trucks/{id}:
+    put:
+      operationId: dispatchUpdateTruck
+      tags: [staff-dispatch]
+      summary: Update a truck's registry facts, including active or not
+      description: >-
+        An absolute PUT of the row the caller read: the fields the create
+        takes plus is_active. The same body twice leaves the same row, so a
+        retry is never a conflict; only a different code colliding with
+        another truck at the branch answers 409. A branch_id naming another
+        yard is refused in words, a truck's runs and crew hang off the yard
+        it lives at. Branch-walled on the row's own branch.
+      x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "200":
+          description: The stored truck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruck"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/dispatch/drivers:
     get:
       operationId: dispatchListDrivers
@@ -124,6 +165,45 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/drivers/{id}:
+    put:
+      operationId: dispatchUpdateDriver
+      tags: [staff-dispatch]
+      summary: Update a driver's registry facts, including active or not
+      description: >-
+        An absolute PUT of the row the caller read: the fields the create
+        takes (including the login link user_id) plus is_active. Idempotent
+        under an identical retry; a branch_id naming another yard is refused
+        in words, the truck update's own rule. Branch-walled on the row's
+        own branch.
+      x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "200":
+          description: The stored driver
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriver"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # --- the board and stops --------------------------------------------------
   /api/v1/dispatch/board:
@@ -883,11 +963,14 @@ paths:
       description: >-
         Malformed values are refused in words before any database CHECK can
         fire; omitted knobs normalise to the column defaults rather than to
-        zero.
+        zero. Beside the level, the route names the configuration's
+        dispatch_policy_setters list (X13): a role off the list is refused
+        the write whatever its cells say, the pricing_editors precedent.
       x-role: requireManager
       x-access:
         surfaces: [dispatch-board]
         level: manage
+        list: dispatch_policy_setters
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -2558,6 +2641,9 @@ components:
         The driver-facing banner payload, computed per read from the gate and
         never stored. reason is written for a driver to read; code is the
         machine handle so surfaces can style the banner without parsing prose.
+        The hold itself reaches every caller; the figure and the gate's own
+        sentence reach only a role on the cost and margin list, and every
+        other caller is told the hold in words, never a figure.
       required: [stop_id, order_id, held]
       properties:
         stop_id: { type: string, format: uuid }
@@ -2565,7 +2651,12 @@ components:
         held: { type: boolean }
         reason: { type: string }
         code: { type: string }
-        amount_due_cents: { type: integer, format: int64 }
+        amount_due_cents:
+          type: integer
+          format: int64
+          description: >-
+            Carried only to a role on the cost and margin list; absent for
+            every other role, which is told the hold in words
     DispatchPaymentHoldPage:
       type: object
       required: [items]

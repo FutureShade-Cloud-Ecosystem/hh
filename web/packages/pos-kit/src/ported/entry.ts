@@ -1,11 +1,13 @@
 // The entry view: the tap-a-role chooser, staged to the till's own polish
 // (the train review's P3-5): a centered column with a headline and a one-line
-// intro, one card per flow the demo routes list (the real table holds Sales
-// and Sales manager) wearing the ported token sheet's surfaces and borders,
+// intro, one card per flow the app hands the view (the till hands its own
+// pair of the box's flow table, which mints more logins than any one app
+// offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other eleven roles of the decided matrix as coming: shown in a
+// then the other four roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
-// exist in this release. When the flows route answers nothing (a default-build
+// exist in this release (the roles with a live card at the front door are
+// not listed here). When the flows route answers nothing (a default-build
 // core or a non-demo box), there are no cards at all and the page says so
 // plainly, on the same stage.
 //
@@ -25,19 +27,7 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
  * so there is no third card either). Coming means coming: a disabled control
  * that drops its fill and goes grey, never a faded one.
  */
-export const COMING_ROLES: readonly string[] = [
-  "Outside Sales",
-  "Yard Team",
-  "Yard Manager",
-  "Logistics Manager",
-  "Driver",
-  "Branch Manager",
-  "Procurement Manager",
-  "Payables and Receivables",
-  "Financial Controller",
-  "General Manager",
-  "HR",
-];
+export const COMING_ROLES: readonly string[] = [];
 
 export type FlowsState =
   | { kind: "loading" }
@@ -62,10 +52,28 @@ export interface EntryView {
 const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
+  "yard-manager": "lucide:warehouse",
+  "payables-receivables": "lucide:landmark",
+  "procurement-manager": "lucide:package",
+  "financial-controller": "lucide:landmark",
+  "general-manager": "lucide:shield-check",
+  hr: "lucide:users",
+  "branch-manager": "lucide:store",
+  "logistics-manager": "lucide:route",
+  "outside-sales": "lucide:file-pen-line",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
+  "yard-manager": "The yard: picks, shortages and deliveries.",
+  "payables-receivables": "Chase overdue accounts and work the bounced payments.",
+  "procurement-manager": "Buy the branch's stock.",
+  "financial-controller": "Decide approvals and keep the ledger.",
+  "general-manager": "Decide what only leadership may decide.",
+  hr: "People, messages and the dealer's staff settings.",
+  "branch-manager": "Run the branch: the counter, quotes, dispatch and approvals.",
+  "logistics-manager": "Build the day's loads and send the trucks out.",
+  "outside-sales": "Build quotes in the field.",
 };
 
 export const entryStyles = css`
@@ -196,7 +204,17 @@ export const entryStyles = css`
 /** The stage column: every state the entry shows lives on it, centred. */
 const stage = (content: TemplateResult): TemplateResult => html`<div class="stage">${content}</div>`;
 
-export function renderEntry(view: EntryView): TemplateResult {
+/**
+ * The words a host may change on the entry page. The defaults are the till's own. A dispatch or
+ * yard app says its own thing and shows no Coming list (the front door already carries it).
+ */
+export interface EntryCopy {
+  readonly headline?: string;
+  readonly intro?: string;
+  readonly coming?: boolean;
+}
+
+export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
   if (view.flows.kind === "loading") {
     return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
   }
@@ -219,16 +237,17 @@ export function renderEntry(view: EntryView): TemplateResult {
       The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
     </p>`);
   }
-  if (view.flows.flows.length === 0) {
-    return stage(html`<p class="notice" role="status">
-      The demo sign-in answered with no roles: there is nothing to tap.
-    </p>`);
-  }
-  return stage(html`
-    <h2 class="headline">Who is at the counter?</h2>
-    <p class="intro">Tap a role to open the till:</p>
-    <div class="cards">
-      ${view.flows.flows.map(
+	const tillFlows = view.flows.flows;
+	if (tillFlows.length === 0) {
+		return stage(html`<p class="notice" role="status">
+			The demo sign-in answered with no roles: there is nothing to tap.
+		</p>`);
+	}
+	return stage(html`
+		<h2 class="headline">${copy.headline ?? "Who is at the counter?"}</h2>
+		<p class="intro">${copy.intro ?? "Tap a role to open the till:"}</p>
+		<div class="cards">
+			${tillFlows.map(
         (flow) => html`
           <button
             type="button"
@@ -252,7 +271,9 @@ export function renderEntry(view: EntryView): TemplateResult {
       )}
     </div>
     ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
-    <section class="coming-card">
+    ${copy.coming === false || COMING_ROLES.length === 0
+      ? nothing
+      : html`<section class="coming-card">
       <h2 class="coming-heading">Coming</h2>
       <ul class="coming" aria-label="Coming roles">
         ${COMING_ROLES.map(
@@ -266,6 +287,6 @@ export function renderEntry(view: EntryView): TemplateResult {
           `,
         )}
       </ul>
-    </section>
+    </section>`}
   `);
 }

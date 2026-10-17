@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 
 import { renderKit } from './_lib/render.mjs';
 import { HosAppHeader } from '../src/header.js';
+import { readPkg } from './_lib/sheet.mjs';
 
 /** The rendered markup with markers stripped, the text the browser shows. */
 const visible = (markup) => markup.replace(/<!--.*?-->/g, '');
@@ -29,13 +30,19 @@ const actionButton = (markup, action) => {
   return m === null ? null : m[0];
 };
 
-test('the header renders the brand lockup: the HH mark, the product name with its accent word, the house line', () => {
+test('the header renders the brand lockup: the measured badge H, the product name with its accent word, the house line', () => {
   const markup = visible(renderKit(HosAppHeader));
   assert.ok(markup.includes('class="brand"'), 'the lockup div is present');
   assert.ok(markup.includes('role="img"'), 'the lockup is one image');
   assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'), 'the lockup names itself');
   assert.ok(markup.includes('aria-hidden="true"'), 'the mark is hidden from assistive tech');
-  assert.ok(markup.includes('>HH<'), 'the mark is the plain text HH');
+  // The mark is the badge's own geometry (decision log rows 953 and 968):
+  // mark.svg inlined, one path carrying currentColor, at the badge's
+  // measured viewBox; the plain text letter pair is gone.
+  assert.ok(markup.includes('viewBox="0 0 3000 3000"'), 'the mark svg carries the badge viewBox');
+  assert.ok(markup.includes('fill="currentColor"'), 'the mark path carries currentColor');
+  assert.ok(markup.includes('M644.94 465.17 H1386.06'), 'the mark path is the measured H geometry');
+  assert.ok(!markup.includes('>HH<'), 'the plain text HH is gone from the mark');
   assert.ok(markup.includes('HH Yard'), 'the product name reads HH Yard');
   assert.ok(markup.includes('a Hardscape House product'), 'the house line is present');
   assert.ok(markup.includes('class="accent"'), 'the accent word carries the gold-as-ink class');
@@ -125,7 +132,16 @@ test('the compact layout is opt in, narrow only, and its controls are at least 4
   assert.ok(at !== -1, 'a compact rule exists');
   const compactRules = css.slice(at);
   assert.ok(/max-width:\s*480px/.test(css), 'it rides the narrow breakpoint');
-  assert.ok(/min-height:\s*44px/.test(compactRules), 'compact controls are 44 px tall');
+  assert.ok(/min-height:\s*max\(44px,\s*var\(--hh-header-control-min,\s*0px\)\)/.test(compactRules), 'compact controls are 44 px tall, or the host floor when higher');
   // Nothing outside the opt in changed: the plain control rule keeps its small face.
-  assert.ok(/\.controls button \{\s*min-height: 0;/.test(css));
+  assert.ok(/\.controls button \{\s*min-height: var\(--hh-header-control-min, 0px\);/.test(css));
+  assert.match(readPkg('src/tokens.css'), /--hh-header-control-min:\s*0px;/, 'the knob defaults to zero, so an app that sets nothing keeps its own small face');
+});
+
+test('every read of the header floor knob carries a zero fallback, so a page without tokens.css computes the old rules', () => {
+  const css = HosAppHeader.styles.map((s) => s.cssText ?? String(s)).join('\n');
+  const reads = css.match(/var\(--hh-header-control-min[^)]*\)/g) ?? [];
+  assert.equal(reads.length, 2, 'the knob is read in the compact and the plain control rules, and nowhere else');
+  for (const read of reads) assert.equal(read, 'var(--hh-header-control-min, 0px)', 'each read names its own zero fallback');
+  // With the token undefined the reads collapse to main's rules: max(44px, 0px) is 44px, and the plain rule is 0px.
 });

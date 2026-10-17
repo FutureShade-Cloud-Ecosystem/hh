@@ -23,6 +23,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -61,6 +66,8 @@ func (h *ApprovalsHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/staff/approvals", g.RequireStaff(h.staff(h.createApproval)))
 	r.Handle("GET /api/v1/staff/approvals", g.RequireStaff(h.staff(h.listApprovals)))
 	r.Handle("POST /api/v1/staff/approvals/{id}/decide", g.RequireStaff(h.staff(h.decideApproval)))
+	// The margin policy check rides the same stamp: the override lookup is keyed by the caller's ERP id.
+	r.Handle("POST /api/v1/staff/policy/check", g.RequireStaff(h.staff(h.checkPolicy)))
 }
 
 type createApprovalRequest struct {
@@ -107,10 +114,33 @@ func (h *ApprovalsHandler) listApprovals(w http.ResponseWriter, r *http.Request,
 		writeApprovalErr(w, r, err)
 		return
 	}
-	if list == nil {
-		list = []ApprovalRequest{}
+	// The contract's IdentityApprovalPage: the list is ordered (newest first, id as the tie break), the
+	// cursor is the id of the last row of the page before, and a page of limit rows carries next_cursor
+	// while more follow.
+	p, perr := httpx.ParseCursorPage(r)
+	if perr != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, list)
+	start := 0
+	if p.Cursor != "" {
+		at, id, ok := parseApprovalCursor(p.Cursor)
+		if !ok {
+			httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+			return
+		}
+		// Positional: the page starts at the first row strictly after the (requested_at, id) pair under the
+		// list's own order, so the row the cursor names may have left the list since (decided, tombstoned)
+		// and the walk neither fails nor skips nor repeats a row.
+		start = sort.Search(len(list), func(i int) bool { return approvalAfter(list[i], at, id) })
+	}
+	page := list[start:]
+	next := ""
+	if len(page) > p.Limit {
+		page = page[:p.Limit]
+		next = approvalCursor(page[len(page)-1])
+	}
+	httpx.WriteCursorPage(w, page, next, p.Limit)
 }
 
 type decideApprovalRequest struct {
@@ -139,6 +169,68 @@ func (h *ApprovalsHandler) decideApproval(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// maxPolicyCheckCents bounds the advisory check's amounts so the basis point arithmetic (amount times 10000
+// in int64) cannot wrap: ten billion dollars is far past any quote.
+const maxPolicyCheckCents int64 = 1_000_000_000_000
+
+// policyCheckRequest is the contract's IdentityPolicyCheckRequest. The amounts are pointers so a body
+// that leaves one out is a 400 rather than a quiet zero.
+type policyCheckRequest struct {
+	PriceCents *int64 `json:"price_cents"`
+	CostCents  *int64 `json:"cost_cents"`
+	BranchID   string `json:"branch_id"`
+}
+
+// checkPolicy evaluates the margin policy for a price and cost at a branch, consulting the caller's
+// approved overrides so the request, approve, proceed loop closes (identityCheckPolicy). Below the
+// floor with no approved override is a 403 whose error is the block's own sentence (the transport
+// hands a client only that field) and whose block key carries the IdentityActionBlocked object. A
+// branch outside the caller's grants is refused before anything is looked up.
+func (h *ApprovalsHandler) checkPolicy(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	caller, ok := StaffContextFromContext(r.Context())
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "no caller")
+		return
+	}
+	var req policyCheckRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.PriceCents == nil || req.CostCents == nil || req.BranchID == "" {
+		httpx.Error(w, http.StatusBadRequest, "price_cents, cost_cents and branch_id are required")
+		return
+	}
+	if _, err := uuid.Parse(req.BranchID); err != nil {
+		// A global caller reaches any string, and a non uuid would raise in the lookup's uuid column as a 503.
+		httpx.Error(w, http.StatusBadRequest, "branch_id must be a branch id")
+		return
+	}
+	if *req.PriceCents < 0 || *req.CostCents < 0 || *req.PriceCents > maxPolicyCheckCents || *req.CostCents > maxPolicyCheckCents {
+		httpx.Error(w, http.StatusBadRequest, "price_cents and cost_cents must be between 0 and 1000000000000")
+		return
+	}
+	if !caller.CanAccessBranch(req.BranchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
+		return
+	}
+	hasOverride, err := h.svc.HasUnusedApprovedOverride(r.Context(), caller.UserID, req.BranchID, PolicyMargin)
+	if err != nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "the override lookup failed")
+		return
+	}
+	if b := CheckMargin(*req.PriceCents, *req.CostCents, req.BranchID, hasOverride); b != nil {
+		httpx.ErrorWith(w, http.StatusForbidden, b.Detail, map[string]any{"block": b})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"allowed":    true,
+		"margin_bps": MarginBps(*req.PriceCents, *req.CostCents),
+		"override":   hasOverride,
+	})
+}
+
 // writeApprovalErr maps the rail's errors to HTTP without leaking
 // internals: a typed clientError answers its own status with its safe
 // message, the unconfigured-pool state answers 503, everything else is a
@@ -154,4 +246,37 @@ func writeApprovalErr(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	httpx.Error(w, http.StatusInternalServerError, "internal error")
+}
+
+// approvalCursor is the keyset position of a row under the list's order (requested_at descending, id
+// ascending): its filing time to the microsecond Postgres keeps, and its id.
+func approvalCursor(a ApprovalRequest) string {
+	return a.RequestedAt.UTC().Format(approvalCursorTime) + "|" + a.ID
+}
+
+const approvalCursorTime = "2006-01-02T15:04:05.000000Z07:00"
+
+// parseApprovalCursor reads a cursor key back into its pair; anything else is malformed.
+func parseApprovalCursor(key string) (time.Time, string, bool) {
+	ts, id, ok := strings.Cut(key, "|")
+	if !ok {
+		return time.Time{}, "", false
+	}
+	at, err := time.Parse(approvalCursorTime, ts)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return time.Time{}, "", false
+	}
+	return at, id, true
+}
+
+// approvalAfter reports whether a row sorts strictly after the pair under requested_at DESC, id ASC.
+func approvalAfter(a ApprovalRequest, at time.Time, id string) bool {
+	rt := a.RequestedAt.UTC().Truncate(time.Microsecond)
+	if rt.Equal(at) {
+		return a.ID > id
+	}
+	return rt.Before(at)
 }

@@ -150,8 +150,8 @@ func TestMintStopsAtTheAddressCeiling(t *testing.T) {
 	m, _, _ := newTestMint(t, minter, nil)
 	// The wiring's ceiling must carry exactly the number the farm walk
 	// below proves, the package's own team scale constant.
-	if m.ceiling.allow != DefaultAddressCeiling {
-		t.Fatalf("the wiring's ceiling allowance is %d, want the package's %d", m.ceiling.allow, DefaultAddressCeiling)
+	if m.ceiling.Allowance() != DefaultAddressCeiling {
+		t.Fatalf("the wiring's ceiling allowance is %d, want the package's %d", m.ceiling.Allowance(), DefaultAddressCeiling)
 	}
 
 	mintAs := func(id string) *httptest.ResponseRecorder {
@@ -313,9 +313,9 @@ func TestMintNeverRendersTheVisitorID(t *testing.T) {
 // The cookie hygiene leg, the fallback: a value outside the issued shape
 // is the client's word and the key takes none of it. Every malformed
 // value lands on the address key, so a stream of distinct malformed
-// values spends that one allowance: the sixth refuses, a bare mint after
-// them refuses too (the address is what they spent), and a well formed
-// id issued after still holds its own bucket.
+// values spends that one allowance: the sixth refuses, a bare mint
+// after them refuses too (the address is what they spent), and a well
+// formed id issued after still holds its own bucket.
 func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	minter := &fakeMinter{token: "t"}
 	m, _, _ := newTestMint(t, minter, nil)
@@ -351,6 +351,101 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	fresh.seed(t, m)
 	if rsp := fresh.mint(t, m, `{"flow":"sales"}`); rsp.Code != http.StatusOK {
 		t.Fatalf("a well formed id answered %d, want 200 from its own bucket (body: %s)", rsp.Code, rsp.Body.String())
+	}
+}
+
+// VisitorAllowance parses the testers' copy knob and keeps the default for
+// everything else: empty, unparseable, and non-positive values fall back to
+// the default burst allowance, and the value is capped at the maximum so it
+// cannot be set without bound.
+func TestVisitorAllowance(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"empty", "", DefaultBurstAllowance},
+		{"whitespace only", "   ", DefaultBurstAllowance},
+		{"positive within cap", "14", 14},
+		{"positive with whitespace", "  14  ", 14},
+		{"zero", "0", DefaultBurstAllowance},
+		{"negative", "-3", DefaultBurstAllowance},
+		{"unparseable", "lots", DefaultBurstAllowance},
+		{"at cap", "20", 20},
+		{"over cap", "21", MaxVisitorAllowance},
+		{"far over cap", "1000", MaxVisitorAllowance},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := VisitorAllowance(c.raw); got != c.want {
+				t.Errorf("VisitorAllowance(%q) = %d, want %d", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+// A testers' copy that sets HH_DEMO_MINT_VISITOR_ALLOWANCE to 14 lets one
+// browser tap all 14 role cards before the visitor key refuses; the 15th
+// mint is the limit's refusal. The address ceiling is not involved because
+// the same visitor id is carried on every mint.
+func TestMintVisitorAllowanceFourteen(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, auditFake := newTestMint(t, minter, nil)
+	m.limit = NewAddressLimit(14, DefaultBurstWindow, nil)
+
+	jar := &visitorJar{}
+	jar.seed(t, m)
+	if jar.visitor == "" {
+		t.Fatal("the flows GET set no visitor cookie")
+	}
+	for i := 0; i < 14; i++ {
+		if rsp := jar.mint(t, m, `{"flow":"sales"}`); rsp.Code != http.StatusOK {
+			t.Fatalf("admission %d: status %d, want 200 (body: %s)", i+1, rsp.Code, rsp.Body.String())
+		}
+	}
+	refused := jar.mint(t, m, `{"flow":"sales"}`)
+	if refused.Code != http.StatusTooManyRequests {
+		t.Fatalf("the 15th mint answered %d, want 429 (body: %s)", refused.Code, refused.Body.String())
+	}
+	if len(minter.subjects) != 14 || len(auditFake.rows) != 14 {
+		t.Errorf("%d mints and %d trail rows, want 14: the refusal must sign and trail nothing",
+			len(minter.subjects), len(auditFake.rows))
+	}
+}
+
+// Raising the visitor allowance does not raise the address ceiling: a farm
+// of distinct visitor ids still stops at DefaultAddressCeiling whatever the
+// per-key allowance is set to.
+func TestMintAddressCeilingUnchangedWhenVisitorAllowanceRaised(t *testing.T) {
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
+	minter := &fakeMinter{token: "t"}
+	m, err := NewMint(MintDeps{
+		Minter: minter,
+		Orgs:   &fakeOrgs{id: "org-demo-1", ok: true},
+		Staff:  &fakeStaff{auth: salesAuthority(), ok: true},
+		Audit:  &fakeAudit{},
+		Now:    clock.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewMint: %v", err)
+	}
+	m.limit = NewAddressLimit(1000, DefaultBurstWindow, clock.Now)
+	if m.ceiling.Allowance() != DefaultAddressCeiling {
+		t.Fatalf("the ceiling allowance is %d, want the default %d", m.ceiling.Allowance(), DefaultAddressCeiling)
+	}
+
+	mintAs := func(id string) *httptest.ResponseRecorder {
+		return postSessionFrom(t, m, `{"flow":"sales"}`, "192.0.2.1:1234",
+			map[string]string{"Cookie": "demo_visitor=" + id})
+	}
+	for i := 0; i < DefaultAddressCeiling; i++ {
+		if rsp := mintAs(fmt.Sprintf("%032x", i)); rsp.Code != http.StatusOK {
+			t.Fatalf("farm mint %d: status %d, want 200 inside the ceiling (body: %s)", i+1, rsp.Code, rsp.Body.String())
+		}
+	}
+	if rsp := mintAs(fmt.Sprintf("%032x", DefaultAddressCeiling)); rsp.Code != http.StatusTooManyRequests {
+		t.Fatalf("the farm's mint %d answered %d, want 429 at the ceiling (body: %s)",
+			DefaultAddressCeiling+1, rsp.Code, rsp.Body.String())
 	}
 }
 

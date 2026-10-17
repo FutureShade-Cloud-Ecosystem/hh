@@ -58,6 +58,15 @@ handle /api/* {
 	}
 }
 
+# The session JWK Set (public halves only, no phrase): the core serves it
+# in the console sign in mode, and it must not fall to the front door below.
+# The same overwrite discipline as every other proxy leg.
+handle /.well-known/jwks.json {
+	reverse_proxy __UPSTREAM__ {
+		header_up X-Forwarded-For "{remote_host}"
+	}
+}
+
 handle /healthz {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
@@ -79,12 +88,103 @@ handle /till/* {
 	file_server
 }
 
+handle /buying-and-stock/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /buying-and-stock/index.html
+	file_server
+}
+
 handle /drive/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
 	root * /srv/app
 	try_files {path} /drive/index.html
+	file_server
+}
+
+handle /home/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /home/index.html
+	file_server
+}
+
+handle /yard/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /yard/index.html
+	file_server
+}
+
+handle /money-desk/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /money-desk/index.html
+	file_server
+}
+
+handle /dispatch/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dispatch/index.html
+	file_server
+}
+
+handle /dealer-admin/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dealer-admin/index.html
+	file_server
+}
+
+handle /messages/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /messages/index.html
+	file_server
+}
+
+# The Pro contractor apps (Pro Procurement, Pro Pay, Pro Field), each behind the same gate.
+handle /pro-procurement/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-procurement/index.html
+	file_server
+}
+
+handle /pro-pay/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-pay/index.html
+	file_server
+}
+
+handle /pro-field/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-field/index.html
 	file_server
 }
 
@@ -114,6 +214,18 @@ handle /quote.html {
 	}
 	root * /srv/app
 	rewrite * /q/index.html?{query}
+	file_server
+}
+
+# The front door's runtime configuration: its own exact handle, behind the same
+# phrase gate (the browser sends its authentication entry same origin), and no
+# try_files, so a file that is missing is a 404 and the page says "missing" and
+# never takes the page's own HTML for a damaged file.
+handle /config.json {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
 	file_server
 }
 

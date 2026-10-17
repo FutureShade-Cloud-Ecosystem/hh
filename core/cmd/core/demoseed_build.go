@@ -17,11 +17,12 @@ import (
 	"sort"
 	"strconv"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-const hstBps = 1300 // 13% HST, the rate the demo world prices at
+// hstBps is the rate the seed prices its documents at: 13 percent in a default build. The demo
+// build's world seam (demoseed_glsworld_tax_demo.go) sets it to the demo dealer's rate before any
+// plan is built; nothing else assigns it.
+var hstBps = 1300
 
 // taxOn is the money rule, done in integer cents with half-up rounding. The server is the
 // arithmetic authority everywhere else in this system; here the seed is writing the rows the server
@@ -61,7 +62,7 @@ func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 // system already obeys (the sales.today window, the rollup day, the ledger's period, the tax
 // assessor's today).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.In(houseday.Location()).Date()
+	y, m, d := b.in.Now.In(seedLocation()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 
@@ -163,12 +164,18 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.customers()
 	b.products()
 	b.pricing()
+	// The buyer's supplier set, before the stock section whose reorder points name them.
+	b.procurementVendors()
 	b.stock()
 	b.orderBook()
 	b.invoices()
 	b.counterSales()
 	// Item 9.9: two deposit sales a tester can walk, after the counter sales whose trio they follow.
 	b.depositSales()
+	// Item 64: the receivables world's bounced payment, after the invoices it was tendered against.
+	b.bouncedPayments()
+	// The buying world (demoseed_procurement.go), after the products its lines name.
+	b.procurementWorld()
 	b.fleet()
 	b.runs()
 	if err := b.stops(); err != nil {
@@ -179,10 +186,17 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 		return nil, planSummary{}, err
 	}
 	b.picking()
+	// The yard manager's receiving difference, after the products its lines name.
+	b.purchaseOrders()
 	b.parkedTickets()
 	b.freightApprovals()
 	// The quote world, after the customers and products it prices and before the day-keyed rows.
 	b.quoteWorld()
+	// The contractor world, after the products and customers' neighbours it reads (it builds nothing
+	// until the populate has made the account).
+	b.contractorWorld()
+	// The Financial Controller's parked journals, after the quote world's makers it shares.
+	b.controllerWorld()
 	// The CP-03 island's missing lines, beside the quote world because they are documents too, and
 	// after the products their foreign keys name (demoseed_island.go argues the whole case).
 	b.islandLines()
@@ -190,6 +204,7 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	// them and nothing references them back, so they sit at the end where a reader looking for "what
 	// grows every deploy" finds the whole of it in one place.
 	b.today()
+	b.driverDay()
 
 	b.sum.Rows = len(b.rows)
 	for _, r := range b.rows {
@@ -344,6 +359,7 @@ func (b *builder) stock() {
 					"branch_id", b.branchID(i),
 					"reorder_point_base", rp[i],
 					"reorder_qty_base", rp[i],
+					"preferred_vendor_id", demoID("procurement-vendor:"+reorderVendor[p.Key]),
 					"lead_time_days", 7,
 					"is_active", true,
 					"notes", "Seeded demo reorder point.",
@@ -753,6 +769,9 @@ func (b *builder) fleet() {
 	depots := map[string][2]float64{
 		"KGN": {44.2312, -76.4860},
 		"TRT": {44.1001, -77.5766},
+		// The demo dealer's two yards (the demo build moves the branch codes to these).
+		"JUL": {33.0786, -116.6020},
+		"PLM": {32.7370, -117.2370},
 	}
 	for _, br := range b.in.Branches {
 		c, ok := depots[br.Code]
@@ -798,7 +817,7 @@ func (b *builder) runs() {
 	// The reschedule trail. Two real moves, so the history panel is not an empty state on day one.
 	b.add(insert("dispatch_reschedules", "(id)",
 		"id", demoID("resched:1"),
-		"branch_id", b.branchID(0), "entity_type", "delivery_stop",
+		"branch_id", b.branchID(1), "entity_type", "delivery_stop",
 		"entity_id", demoID("stop:SP11"),
 		"from_date", b.day(0), "to_date", b.day(1),
 		"reason", "Customer asked for the morning instead", "stops_moved", 1,
@@ -1106,6 +1125,74 @@ func (b *builder) picking() {
 
 // -- §13 parked tickets ---------------------------------------------------------------------------
 
+// purchaseOrders writes the demo world's purchase orders: the one PARTIAL
+// order whose short line is the yard manager's receiving difference (§12b of
+// the plan). Idempotent by fixed ids, like everything above; the numbers are
+// the plan's own, never a live sequence.
+func (b *builder) purchaseOrders() {
+	for _, po := range demoPurchaseOrders {
+		vendorID := demoID("vendor:" + po.VendorKey)
+		b.add(insert("vendors", "(id)",
+			"id", vendorID,
+			"vendor_no", po.VendorNo,
+			"name", po.VendorName,
+			"payment_terms_days", 30,
+			"is_edi", false,
+			"remit_address", "{}",
+			"is_active", true,
+			"metadata", fmt.Sprintf(`{"demo_seed": %q}`, demoMarker),
+			"created_at", b.agoDays(40), "updated_at", b.agoDays(40),
+		))
+		poID := demoID("po:" + po.Key)
+		b.add(insert("purchasing_pos", "(id)",
+			"id", poID,
+			"po_no", po.PONo,
+			"vendor_id", vendorID,
+			"branch_id", b.branchID(po.Branch),
+			"status", po.Status,
+			"expected_at", b.day(po.ExpectedIn),
+			"ordered_at", b.ago(po.AgeHours),
+			"notes", "",
+			"created_at", b.ago(po.AgeHours), "updated_at", b.ago(po.AgeHours),
+		))
+		receiptValue := int64(0)
+		for i, l := range po.Lines {
+			b.add(insert("purchasing_po_lines", "(id)",
+				"id", demoID(fmt.Sprintf("poline:%s:%d", po.Key, i+1)),
+				"po_id", poID,
+				"line_no", i+1,
+				"product_id", demoID("product:"+l.Prod),
+				"description", b.prod[l.Prod].Name,
+				"qty_ordered_base", l.Qty,
+				"uom", b.prod[l.Prod].UOM,
+				"unit_cost_cents", l.UnitCost,
+				"qty_received_base", l.Received,
+				"qty_billed_base", "0.0000",
+				"billed_cents", 0,
+				"created_at", b.ago(po.AgeHours), "updated_at", b.ago(po.AgeHours),
+			))
+			// The receipt's value: received quantity at the buying price, integer cents. The
+			// plan's literals are fixed decimals, so the parse cannot fail; a bad literal is a
+			// plan defect and the seed refuses to write a wrong figure.
+			recv, err := strconv.ParseFloat(l.Received, 64)
+			if err != nil {
+				panic(fmt.Sprintf("demoseed: po %s line %d received qty: %v", po.Key, i+1, err))
+			}
+			receiptValue += int64(recv*float64(l.UnitCost) + 0.5)
+		}
+		b.add(insert("purchasing_receipts", "(id)",
+			"id", demoID("receipt:"+po.Key),
+			"po_id", poID,
+			"seq", 1,
+			"grn_no", po.PONo+"-GRN1",
+			"value_cad_cents", receiptValue,
+			"received_at", b.ago(po.AgeHours),
+			"notes", "Landed short; the rest is expected.",
+			"created_at", b.ago(po.AgeHours),
+		))
+	}
+}
+
 func (b *builder) parkedTickets() {
 	for _, t := range demoParked {
 		// The lines column is the SHAPE pos.ParkedLineInput unmarshals (pos/model.go:659), product
@@ -1291,4 +1378,125 @@ func (b *builder) today() {
 			"created_at", at, "updated_at", at,
 		))
 	}
+}
+
+// -- §15's driver run, out for delivery ------------------------------------------------------------
+//
+// demoOrgSlug is the org the demo populate provisions (internal/demo's own constant, repeated here
+// on purpose: that package's is unexported, and if the populate ever changes slug the box's own
+// refusal does too, so this literal drifting goes red at the world proof, not silently). The demo
+// populate refuses any database holding another org, and the box's entrypoint refuses a database
+// holding any org but this one, so on every database this seed may lawfully write, the slug names
+// exactly one row.
+const demoOrgSlug = "hh-demo"
+
+// driverOrgStamp is the org_id value on the Driver's day-keyed run and stops: the org row read at
+// apply time, the same shape the core's own inserts use (dispatch's InsertRun and AssignStop read
+// the org off the branch location; on a demo box locations carry no org, so the seed reads the one
+// org the box holds instead). A database without the row (a plain staging copy, or a fresh demo box's
+// FIRST apply, which runs before the populate provisions the org) answers NULL, and the seed-repair
+// pass stamps the row once the row exists: see demoseed_repair_demo.go.
+func driverOrgStamp() sqlExpr {
+	return sqlExpr{sql: `(SELECT id FROM org WHERE slug = ?::citext)`, args: []any{demoOrgSlug}}
+}
+
+// THE RUN IS OUT, AND IT IS OUT EVERY DAY. The Driver persona's walk starts at Mark loaded and the
+// core refuses Mark en route on a run that was never dispatched, so the walk needs a DISPATCHED run
+// on the dealer's current day: day-keyed whole (run row, stops, the order each stop is about), on
+// the stable crew the persona's grant reaches, carrying what the core's own dispatch would set,
+// which runs() above already states for a seeded DISPATCHED row: the status and a departure stamp.
+// The run row matches the dispatch (DISPATCHED, departure stamped); its stops do NOT: they are
+// seeded READY on a dispatched run, a state the core cannot reach by its own routes (DispatchRun
+// moves every READY stop to LOADED in the same act, and AssignStop refuses a stop onto a run that
+// is not PLANNED). It is seeded on purpose, so the walk can start at Mark loaded, the state the
+// drive run acceptance legs were written against; the stop matrix allows the move and AdvanceStop
+// is the guard that matters.
+//
+// THE RUN NUMBER CARRIES THE DAY, for the UNIQUE column, and its D prefix sorts it ahead of the
+// stable fleet's R rows on the same date, so the driver's own read (ORDER BY scheduled_date DESC,
+// run_no) answers the out-for-delivery run first, with the stable planned runs behind it for the
+// board's story.
+func (b *builder) driverDay() {
+	runID := b.dayID("driver-run")
+	departed := b.day(0).Add(7 * time.Hour)
+	b.add(insert("delivery_runs", "(id)",
+		"id", runID,
+		"run_no", fmt.Sprintf("#%sRUN-%s-D%s", demoPrefix, b.branchCode(0), b.dayStamp()),
+		"branch_id", b.branchID(0),
+		"org_id", driverOrgStamp(),
+		"scheduled_date", b.day(0),
+		"truck_id", demoID("truck:T1"),
+		"driver_id", demoID("driver:D1"),
+		"status", "DISPATCHED",
+		"notes", "Kingston, out for delivery (demo)",
+		"dispatched_at", departed,
+		"created_at", b.day(0).Add(-6*time.Hour),
+		"updated_at", departed,
+	))
+	weighed := 0.0
+	for i, s := range demoDriverDayStops {
+		p := b.prod[s.Prod]
+		unit := b.unitPrice(s.Cust, s.Prod)
+		subtotal := int64(s.QtyF * float64(unit))
+		tax := taxOn(subtotal)
+		orderID := b.dayID("driver-order:" + s.Key)
+		at := b.in.Now.UTC()
+		// The order each stop is about, one row and one line, the same shape and the same reasoning
+		// as the unassigned delivery's order directly above: pointing at the stable order book would
+		// attach a stop a day to one order for as long as the box lives. Both customers hold terms,
+		// so nothing is owed at the door and the driver's payloads carry no money.
+		b.add(insert("orders", "(id)",
+			"id", orderID,
+			"order_no", fmt.Sprintf("%s%s-D%s-%s", demoPrefix, b.branchCode(0), b.dayStamp(), s.Key),
+			"customer_id", demoID("customer:"+s.Cust),
+			"branch_id", b.branchID(0),
+			"status", "CONFIRMED", "fulfillment", "DELIVERY",
+			"requested_date", b.day(0),
+			"subtotal_cents", subtotal, "tax_cents", tax, "total_cents", subtotal+tax,
+			"metadata", demoMetadata,
+			"created_at", at, "updated_at", at,
+		))
+		b.add(insert("order_lines", "(id)",
+			"id", b.dayID("driver-orderline:"+s.Key),
+			"order_id", orderID, "line_no", 1,
+			"product_id", demoID("product:"+s.Prod), "description", p.Name,
+			"qty_entered", s.Qty, "uom_entered", p.UOM, "qty_base", s.Qty,
+			"fulfilled_base", "0",
+			"unit_price_cents", unit, "price_uom", p.UOM, "line_total_cents", subtotal,
+			"metadata", demoMetadata,
+			"created_at", at, "updated_at", at,
+		))
+		// THE STOP, ON THE RUN, READY. commit_state stays the column's default, which is true of it:
+		// a stop on a run is a dispatcher's committed load (0185, and §10's own reasoning).
+		window := "AM"
+		if i > 0 {
+			window = "PM"
+		}
+		b.add(insert("delivery_stops", "(id)",
+			"id", b.dayID("driver-stop:"+s.Key),
+			"branch_id", b.branchID(0),
+			"org_id", driverOrgStamp(),
+			"order_id", orderID,
+			"run_id", runID,
+			"stop_no", i+1,
+			"scheduled_date", b.day(0),
+			"status", "READY",
+			"time_window", window,
+			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
+			"latitude", s.Lat, "longitude", s.Lng,
+			"mto_class", "STANDARD", "mto_note", "",
+			"failure_reason", "",
+			"weight_kg", s.WeightKg,
+			"created_at", at, "updated_at", at,
+		))
+		b.sum.Stops["READY"]++
+		var kg float64
+		fmt.Sscanf(s.WeightKg, "%f", &kg)
+		weighed += kg
+	}
+	// The run's own fill line, so the summary's "one line per run" stays honest about the day's run
+	// too. FLAT-1's advisory capacity, read the way stops() reads it off the truck spec.
+	b.sum.RunFill = append(b.sum.RunFill,
+		fmt.Sprintf("D%s · %s %.0fkg · loaded %.0fkg · %.0f%%", b.dayStamp(), "T1", 9000.0, weighed, weighed/9000.0*100))
 }

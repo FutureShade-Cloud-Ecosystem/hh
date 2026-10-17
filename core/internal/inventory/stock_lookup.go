@@ -41,6 +41,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // isNoRows is the local spelling of "the query matched nothing", so the three attempts in
@@ -73,6 +75,19 @@ func (r BranchReach) branchFilter() any {
 		return []string{}
 	}
 	return r.BranchIDs
+}
+
+// covers reports whether one branch is inside the reach.
+func (r BranchReach) covers(branchID string) bool {
+	if r.Global {
+		return true
+	}
+	for _, b := range r.BranchIDs {
+		if b == branchID {
+			return true
+		}
+	}
+	return false
 }
 
 // reachesNothing reports the short-circuit case: a scoped caller with no grants. Answered without a
@@ -209,13 +224,14 @@ func (r *Repository) ResolveProductRef(ctx context.Context, ref string) (Product
 	}
 
 	// 3. a name prefix. LIMIT 1 with an ORDER BY, never a bare LIMIT 1: an unordered limit is a
-	// different product on different days for the same question.
+	// different product on different days for the same question. The reference is escaped under
+	// `ESCAPE '\'`, so a typed '%' or '_' matches text and never widens into a wildcard.
 	err = r.pool.QueryRow(ctx, `
 		SELECT `+cols+`
 		  FROM products p
-		 WHERE p.name ILIKE $1 || '%'
+		 WHERE p.name ILIKE $1 || '%' ESCAPE '\'
 		 ORDER BY p.is_active DESC, p.sku
-		 LIMIT 1`, ref).Scan(&p.ProductID, &p.SKU, &p.Name, &p.UOM)
+		 LIMIT 1`, likeutil.EscapeLikePattern(ref)).Scan(&p.ProductID, &p.SKU, &p.Name, &p.UOM)
 	if err != nil {
 		if isNoRows(err) {
 			return ProductLookup{}, false, nil

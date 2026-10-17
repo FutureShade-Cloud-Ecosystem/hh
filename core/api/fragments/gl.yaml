@@ -144,8 +144,14 @@ paths:
         Maker-checker: a journal whose debit total is below the gl_policy
         approval threshold posts immediately; at or over the threshold it is
         parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a
-        JE_OVER_THRESHOLD approval request is filed on the approvals rail. An
-        unbalanced body is refused with an unprocessable-entity error.
+        JE_OVER_THRESHOLD approval request is filed on the approvals rail in
+        the same transaction as the park. A journal at or over the threshold
+        needs a branch_id to file under (bad request when it has none) and
+        must be a manual journal (a journal of any other source at or over
+        the threshold is a bad request and nothing is saved), and
+        when the request cannot be filed the create fails (service
+        unavailable) and nothing is saved. An unbalanced body is refused with
+        an unprocessable-entity error.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -205,7 +211,21 @@ paths:
       description: >-
         Four-eyes: the approver must differ from the journal's creator; a
         creator attempting to approve their own journal is refused as
-        forbidden. Approving a journal that is no longer DRAFT conflicts.
+        forbidden. Approving a journal that is no longer DRAFT conflicts. A
+        journal over the approval threshold is posted by this route only when
+        the approvals queue holds an approved request for the journal's
+        current amount. Every other state conflicts, each with its own
+        sentence: a pending request ("gl: this journal has a pending approval
+        request; decide it from the approvals queue, which posts it"), a
+        rejected request, a deleted request, an approved request for a
+        different amount, and no request at all. Deciding the request in the
+        queue is the way to post such a journal (the decision posts the
+        journal and stamps the request in one transaction). A journal under
+        the threshold with no request is approved by this route as before. The
+        journal id is matched without regard to letter case. A journal made
+        by a recurring run carries no request (a run files none yet), so at or
+        over the threshold the conflict names its recurring template. When the
+        queue cannot be asked the route answers 503.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -409,7 +429,10 @@ paths:
       description: >-
         Read-only reconciliation of the ERP books against the committed static
         BisTrack snapshot. month is required (a closing balance reconciles at
-        one period end); the fixture path is fixed, never a caller input.
+        one period end); the fixture path is fixed, never a caller input. Served
+        only where the dealer's configuration names a legacy import source
+        (legacy_import_source on the surface config); a dealer with none gets a
+        404 sentence. The route keeps its path.
       x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
@@ -445,6 +468,11 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: The dealer's configuration names no legacy import source, so the check is off for it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # --- gl: fiscal periods ----------------------------------------------------
   /api/v1/gl/periods:
@@ -999,7 +1027,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecAccountPage"
+                $ref: "#/components/schemas/BankRecAccountList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/bankrec/imports:
@@ -1168,7 +1196,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchPage"
+                $ref: "#/components/schemas/BankRecMatchList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -1197,7 +1225,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchRulePage"
+                $ref: "#/components/schemas/BankRecMatchRuleList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -1261,7 +1289,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecReconciliationPage"
+                $ref: "#/components/schemas/BankRecReconciliationList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -1891,15 +1919,12 @@ components:
           type: boolean
           description: True for CREDIT_CARD accounts (no spend is booked)
         unmatched_lines: { type: integer, format: int32 }
-    BankRecAccountPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/BankRecAccount" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
+    BankRecAccountList:
+      type: array
+      description: >-
+        The core writes the bare array as the whole answer body: no envelope,
+        no cursor, no limit echo. An empty answer is [], never null.
+      items: { $ref: "#/components/schemas/BankRecAccount" }
     BankRecStatementLine:
       type: object
       description: One parsed bank line; amount_cents is signed (positive credit, negative debit)
@@ -1982,15 +2007,12 @@ components:
         matches:
           type: array
           items: { $ref: "#/components/schemas/BankRecMatch" }
-    BankRecMatchPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/BankRecMatch" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
+    BankRecMatchList:
+      type: array
+      description: >-
+        The core writes the bare array as the whole answer body: no envelope,
+        no cursor, no limit echo. An empty answer is [], never null.
+      items: { $ref: "#/components/schemas/BankRecMatch" }
     BankRecMatchInput:
       type: object
       description: >-
@@ -2034,12 +2056,34 @@ components:
         settlement, payment gateway ref equals line reference),
         lodgement_ref_exact (cash or cheque lodgement, reference exact with
         zero tolerance), descriptor_fuzzy (settlement descriptor match with a
-        fee split allowance).
+        fee split allowance). The core stores the whole object as written and
+        returns it unchanged; the matcher reads the six fields below besides
+        kind and ignores any other key.
       additionalProperties: true
       properties:
         kind:
           type: string
           enum: [gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy]
+        target:
+          type: string
+          description: What the matcher pairs a line with (PAYMENT or LODGEMENT in the seeded rules)
+        tolerance_cents:
+          type: integer
+          format: int64
+          description: Amount tolerance in cents; zero or absent means exact
+        descriptor_ilike:
+          type: string
+          description: The ILIKE pattern the line descriptor must satisfy (descriptor_fuzzy)
+        date_window_days:
+          type: integer
+          format: int32
+          description: Days either side of the line date a target may fall
+        allow_fee_split:
+          type: boolean
+          description: Whether the matcher may book a processor fee split
+        fee_account_code:
+          type: string
+          description: The GL account code a fee split books to
     BankRecMatchRule:
       type: object
       description: A match rule row plus its decoded spec
@@ -2064,15 +2108,12 @@ components:
         name: { type: string }
         spec: { $ref: "#/components/schemas/BankRecRuleSpec" }
         priority: { type: integer, format: int32 }
-    BankRecMatchRulePage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/BankRecMatchRule" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
+    BankRecMatchRuleList:
+      type: array
+      description: >-
+        The core writes the bare array as the whole answer body: no envelope,
+        no cursor, no limit echo. An empty answer is [], never null.
+      items: { $ref: "#/components/schemas/BankRecMatchRule" }
     BankRecReconciliation:
       type: object
       description: One per-account period reconciliation
@@ -2100,12 +2141,9 @@ components:
         year: { type: integer, format: int32 }
         month: { type: integer, format: int32, minimum: 1, maximum: 12 }
         statement_balance_cents: { type: integer, format: int64 }
-    BankRecReconciliationPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/BankRecReconciliation" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
+    BankRecReconciliationList:
+      type: array
+      description: >-
+        The core writes the bare array as the whole answer body: no envelope,
+        no cursor, no limit echo. An empty answer is [], never null.
+      items: { $ref: "#/components/schemas/BankRecReconciliation" }

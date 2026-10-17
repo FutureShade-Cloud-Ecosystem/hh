@@ -659,7 +659,8 @@ paths:
         MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard
         today and separately editable, and an effective-dated rate row change
         between the read and the ring moves the ring's rate. jurisdiction and
-        reason_code are the standard-rated Ontario facts the read answers.
+        reason_code are the dealer's own standard-rated facts the read answers
+        (Ontario's for an Ontario dealer).
         The header tax today rounds half-up once at the invoice total;
         round_mode PER_LINE is stored but not yet applied at ring, so the
         word says what is configured, not what the ring does yet.
@@ -1684,11 +1685,15 @@ paths:
       operationId: tillListBouncedPayments
       tags: [staff-till]
       summary: List the bounced-payment queue
-      description: Manager-gated; the queue exposes customer financial-distress information.
+      description: >-
+        Manager-gated; the queue exposes customer financial-distress information.
+        Held to work by ruling 87, like a payment's history: the queue lists
+        payments by number, method and amount, and the payment trail is the
+        money desk's to work.
       x-role: requireManager
       x-access:
-        surfaces: [money-desk]
-        level: read
+        surfaces: [counter-till, money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1715,7 +1720,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1746,11 +1751,12 @@ paths:
         The path key may be the payment's id or the human payment number
         printed on the receipt. For a BOUNCED payment the historical
         applications are reconstructed from the audit trail and flagged
-        reversed_by_nsf.
+        reversed_by_nsf. Held to work by ruling 87: a customer's payment trail
+        is the money desk's to work, not a money desk reader's to browse.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
-        level: read
+        surfaces: [counter-till, money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1773,11 +1779,14 @@ paths:
       operationId: tillInvoicePayments
       tags: [staff-till]
       summary: Read which payments and credits settled an invoice, attributed
-      description: The path key may be the invoice's id or the human invoice number.
+      description: >-
+        The path key may be the invoice's id or the human invoice number.
+        Held to work by ruling 87, like a payment's history: the payment trail
+        is the money desk's to work.
       x-role: requireStaff
       x-access:
-        surfaces: [counter-till]
-        level: read
+        surfaces: [counter-till, money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1877,7 +1886,12 @@ paths:
       operationId: tillUpdateNSFPolicy
       tags: [staff-till]
       summary: Upsert the org-default NSF policy
-      x-role: requireManager
+      description: >-
+        Dealer wide money policy: tier 1 global only, and the role gate's
+        money-desk manage cell leaves the general manager, the financial
+        controller and the platform roles under the default configuration.
+        Any other role gets the shared 403. The read is unchanged.
+      x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
         level: manage
@@ -1904,7 +1918,13 @@ paths:
       operationId: tillRecordPaymentAttempt
       tags: [staff-till]
       summary: Record one declined or errored gateway attempt
-      description: A successful capture is a payments row, never an attempt here.
+      description: >-
+        A successful capture is a payments row, never an attempt here. The
+        attempt is written under a branch the caller reaches: a named branch
+        the caller cannot reach is the shared 403, a branch that is not a
+        branch id is 422, none named resolves to the caller's single granted
+        branch (422 when the caller has several), and a global caller naming
+        none records an attempt with no branch.
       x-role: requireStaff
       x-access:
         surfaces: [counter-till]
@@ -1927,6 +1947,14 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: >-
+            The attempt failed validation (amount, result, a branch that is
+            not a branch id, or no single branch to derive); the message says
+            which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
   parameters:
@@ -2301,7 +2329,7 @@ components:
         supplier_deposit_invoice_no: { type: string }
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         status: { type: string, enum: [COMMITTED, VOIDED] }
         replayed: { type: boolean }
         po_job_ref: { type: string }
@@ -2369,7 +2397,7 @@ components:
           $ref: "#/components/schemas/PosSupplierDepositOption"
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         discount_cents: { type: integer, format: int64, description: Every manual discount together; absent when there is none }
         sale_discount_cents: { type: integer, format: int64, description: The ticket discount's own cents }
         ticket_base_cents: { type: integer, format: int64, description: "The subtotal after the line discounts, before any ticket discount: what a ticket discount is approved against" }
@@ -2462,7 +2490,7 @@ components:
         total_cents: { type: integer, format: int64 }
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }
         payment_id: { type: string, format: uuid }
@@ -2636,7 +2664,7 @@ components:
     PosReliefOutcome:
       type: object
       description: Masked-only assessment answer with the displayed outcome and the snapshot fields
-      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied]
+      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied, tax_label]
       properties:
         purchaser_type: { type: string }
         masked_identifier: { type: string, description: The only identifier a cashier ever sees }
@@ -2649,6 +2677,7 @@ components:
         automated: { type: boolean }
         requires_evidence: { type: boolean }
         evidence_satisfied: { type: boolean }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
 
     # ── POS: signatures ──────────────────────────────────────────────────────
     PosSignatureCapture:
@@ -2891,11 +2920,15 @@ components:
       description: >-
         The counter-readable tax facts: the rate the ring binds (read through
         the ring's own assessor) and the configured rounding rule.
-      required: [jurisdiction, reason_code, rate_bps, round_mode]
+      required: [jurisdiction, reason_code, rate_bps, round_mode, tax_label]
       properties:
-        jurisdiction: { type: string, enum: [ON] }
-        reason_code: { type: string, enum: [STD_ON_HST_13] }
+        jurisdiction: { type: string, description: The dealer's own tax jurisdiction code, ON for an Ontario dealer }
+        reason_code:
+          type: string
+          enum: [STD_ON_HST_13, STD_SALES_TAX]
+          description: The standard reason of the dealer's jurisdiction, STD_ON_HST_13 for an Ontario dealer and STD_SALES_TAX for every other
         rate_bps: { type: integer, format: int32, description: Basis points, 1300 is 13 percent }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         round_mode:
           type: string
           enum: [INVOICE_TOTAL, PER_LINE]
@@ -2906,7 +2939,7 @@ components:
         The branch-overridable POS behavior policy; branch_id empty is the
         org-wide default row. quick_chip_set empty on the wire means the service
         derived nothing and the client falls back to the full chip row.
-      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility]
+      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility, supplier_deposit_cancel]
       properties:
         branch_id: { type: string, description: Empty is the org-wide default row }
         cod_enabled: { type: boolean }
@@ -2925,6 +2958,12 @@ components:
           type: string
           enum: [ALL_STAFF, MANAGER_UP, HIDDEN]
           description: Who may receive a customer's past-due balance on the customer step
+        supplier_deposit_cancel:
+          type: string
+          enum: [CREDIT_BACK, KEPT]
+          description: >-
+            The dealer default a cancelled special order's supplier deposit
+            takes; a manager may keep it on a given order at the cancel itself
         quick_chip_set:
           type: array
           items: { type: string }

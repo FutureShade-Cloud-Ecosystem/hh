@@ -70,7 +70,15 @@ func (s *CreditService) CustomerAging(ctx context.Context, customerID string) (A
 	}
 	// branchID "", the account's WHOLE position, for the reason in the file header. asOf is the
 	// service clock, so a test can pin the buckets without pinning wall time.
-	rows, err := s.Aging(ctx, asOf, "")
+	// THE ACCOUNT'S WHOLE POSITION, whatever branch the caller works: this is the counter's standing,
+	// which warns the till off selling on credit to a held or past due account, and an account held in
+	// another branch is held. It is the internal read (every branch), as the sweep's is; the register,
+	// the aging worklist and the holds list are the reach fenced reads.
+	pol, err := s.store.CreditPolicy(ctx, "")
+	if err != nil {
+		return AgingRow{}, asOf, false, err
+	}
+	rows, err := s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, "", AllBranches)
 	if err != nil {
 		return AgingRow{}, asOf, false, err
 	}
@@ -85,8 +93,8 @@ func (s *CreditService) CustomerAging(ctx context.Context, customerID string) (A
 // OpenCents is what the account owes right now: every open invoice balance, current and late.
 func (a AgingRow) OpenCents() int64 { return a.TotalCents }
 
-// OverdueCents is the part of the open balance that is PAST ITS DUE DATE, the sum of the three
-// late buckets.
+// OverdueCents is the part of the open balance that is PAST ITS DUE DATE, the sum of the four
+// late C8 buckets.
 //
 // Derived from the buckets rather than as Total − Current, and the difference is not cosmetic: the
 // buckets and the total are computed by separate FILTER aggregates over the same rows, so if one of
@@ -94,19 +102,19 @@ func (a AgingRow) OpenCents() int64 { return a.TotalCents }
 // subtraction would silently absorb the gap into "overdue" and report money as late that nobody has
 // aged. Adding the late buckets can only ever report what was actually bucketed as late.
 func (a AgingRow) OverdueCents() int64 {
-	return a.Days30Cents + a.Days60Cents + a.Days90PlusCents
+	return a.Days30Cents + a.Days60Cents + a.Days60To90Cents + a.Days90PlusCents
 }
 
 // OldestOverdueBucket names how late the OLDEST overdue money on this account is, in the aging
 // screens' own vocabulary ("30" / "60" / "90+"). Empty when nothing is overdue.
 //
-// It reads the same three buckets OverdueCents adds, and for the same reason: a bucket label
+// It reads the same four buckets OverdueCents adds, and for the same reason: a bucket label
 // derived from a subtraction, or from PastBucketCents (which the aging window may or may not fold
 // into 90+ depending on the dealer's bucket_days), could name a bucket that holds no money. A label
 // on a counter screen has to be a fact about a number the customer can be shown.
 func (a AgingRow) OldestOverdueBucket() string {
 	switch {
-	case a.Days90PlusCents > 0:
+	case a.Days90PlusCents > 0 || a.Days60To90Cents > 0:
 		return "90+"
 	case a.Days60Cents > 0:
 		return "60"
@@ -138,7 +146,7 @@ type ARActivity struct {
 // interface reached by type assertion, so creditStore (implemented by fakes in this package's tests)
 // is not widened.
 type customerActivityStore interface {
-	CustomerActivity(ctx context.Context, customerID string, limit int) ([]ARActivity, error)
+	CustomerActivity(ctx context.Context, customerID string, limit int, withPayments bool) ([]ARActivity, error)
 }
 
 // CustomerActivity returns the account's most recent AR movements, newest first.
@@ -146,7 +154,7 @@ type customerActivityStore interface {
 // An account with no movements returns an EMPTY slice and no error. A brand-new account that has
 // never been invoiced is an ordinary state, and reporting it as a fault is the defect DIB-443 was
 // filed for one ticket earlier.
-func (s *CreditService) CustomerActivity(ctx context.Context, customerID string, limit int) ([]ARActivity, error) {
+func (s *CreditService) CustomerActivity(ctx context.Context, customerID string, limit int, withPayments bool) ([]ARActivity, error) {
 	customerID = strings.TrimSpace(customerID)
 	if customerID == "" {
 		return nil, nil
@@ -158,7 +166,7 @@ func (s *CreditService) CustomerActivity(ctx context.Context, customerID string,
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
-	return as.CustomerActivity(ctx, customerID, limit)
+	return as.CustomerActivity(ctx, customerID, limit, withPayments)
 }
 
 // CustomerActivity is the pgx read behind it.
@@ -172,7 +180,12 @@ func (s *CreditService) CustomerActivity(ctx context.Context, customerID string,
 // per-type queries: source_ref_id is a plain uuid with no FK (0009), so a row whose document has
 // since been voided or removed still appears, with an empty reference, instead of vanishing from the
 // ledger, a missing ledger line is a much worse answer than a nameless one.
-func (r *Repository) CustomerActivity(ctx context.Context, customerID string, limit int) ([]ARActivity, error) {
+//
+// withPayments admits the rows that name a payment (the payment, and the NSF reversal of one): they are
+// the payment trail ruling 87 holds to money desk or counter till WORK, so a caller the role gate does
+// not admit to the payment reads asks without them and the rows are absent, not blanked. The limit
+// counts only the rows the caller may see.
+func (r *Repository) CustomerActivity(ctx context.Context, customerID string, limit int, withPayments bool) ([]ARActivity, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -193,8 +206,9 @@ func (r *Repository) CustomerActivity(ctx context.Context, customerID string, li
 		  LEFT JOIN invoices i ON i.id = ct.source_ref_id
 		  LEFT JOIN payments p ON p.id = ct.source_ref_id
 		 WHERE ct.customer_id = $1::uuid
+		   AND ($3::bool OR ct.txn_type NOT IN ('PAYMENT','NSF'))
 		 ORDER BY ct.occurred_at DESC, ct.created_at DESC
-		 LIMIT $2`, customerID, limit)
+		 LIMIT $2`, customerID, limit, withPayments)
 	if err != nil {
 		return nil, err
 	}

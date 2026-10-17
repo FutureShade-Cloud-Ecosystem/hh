@@ -18,7 +18,7 @@ test("a default build shows the category tile, not the glyph, in the hot list an
   await expect(groups.locator("hos-product-thumb svg")).toHaveCount(0);
   await expect(groups.filter({ hasText: "Pavers" }).locator("img")).toHaveAttribute("src", /^data:image\/svg\+xml|pavers/);
 
-  await page.getByTestId("pos-scan-input").fill("holland");
+  await page.getByTestId("pos-scan-input").fill("charcoal");
   const results = page.getByTestId("drop-row");
   await expect(results.first()).toBeVisible();
   await expect(results.first().locator("hos-product-thumb img")).toHaveAttribute("src", /^data:image\/svg\+xml|pavers/);

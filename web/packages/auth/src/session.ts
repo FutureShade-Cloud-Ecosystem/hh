@@ -202,7 +202,7 @@ function validateUser(user: SessionUser): SessionUser | null {
 
 /**
  * The custody. adopt() takes a full session handed over from out of band (a
- * sign-in answer, a Google callback through the Console bridge, a reload's
+ * sign-in answer, a Google callback through FB Console's OAuth provider, a reload's
  * resume through the issuer) exactly as the ERP's adoptSession did: the
  * token lives in private memory, the mirror receives the display profile,
  * never the token and never any other credential. adopt returns false and
@@ -301,5 +301,50 @@ export class SessionStore {
       signedIn: this.current !== null,
       profile: this.profile,
     };
+  }
+}
+
+/** The one key the persona memo uses: a role id that survives a page hop in this tab, and nothing else. */
+export const PERSONA_MIRROR_KEY = "hh-auth.persona.v1";
+
+// A persona id is the core's own list entry ("sales-manager"): lowercase words
+// joined by hyphens. Nothing longer, nothing with another character, so a token
+// (dots, mixed case, length) can never pass for one.
+const PERSONA_ID = /^[a-z][a-z0-9-]{0,39}$/;
+
+/**
+ * The persona memo: the front door's note to the micro app that a persona
+ * entry was chosen. A persona has no FB Console session behind it, so a page
+ * that loads after the hop cannot recover it the way a partner's session is
+ * recovered; it needs the role id and asks the core for a fresh persona
+ * session itself. The value is ONE persona id (JSON string) in this tab's
+ * session storage: it names a role, it is not bearer capable, and a value that
+ * is not an id is refused on write and dropped on read. Sign out and Switch
+ * role clear it.
+ */
+export class PersonaMemo {
+  readonly #mirror: ThrowSafeMirror;
+
+  constructor(storage?: StorageLike) {
+    this.#mirror = new ThrowSafeMirror(PERSONA_MIRROR_KEY, storage);
+  }
+
+  /** Remember one persona id. False (and nothing stored) when the value is not an id. */
+  write(id: unknown): boolean {
+    if (typeof id !== "string" || !PERSONA_ID.test(id)) return false;
+    this.#mirror.write(id);
+    return true;
+  }
+
+  /** The remembered persona id, or null when none or when the stored value is not an id (which is dropped). */
+  read(): string | null {
+    const value = this.#mirror.read();
+    if (typeof value === "string" && PERSONA_ID.test(value)) return value;
+    this.#mirror.clear(); // absent, corrupt or not an id: nothing stays under this key
+    return null;
+  }
+
+  clear(): void {
+    this.#mirror.clear();
   }
 }
