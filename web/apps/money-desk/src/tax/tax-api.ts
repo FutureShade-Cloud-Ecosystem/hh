@@ -64,7 +64,8 @@ export interface CaptureInput {
  * The contract's one shape for a tax list: an envelope keyed by the list's name, which the generated client types
  * as the answer's own field, so the caller reads the field and tsc holds it to the key. The rows must be an
  * array: a bare array or a page of items is not readable. Null is the core's empty table (a Go nil slice, the
- * handler has no nil guard) and reads as an empty list.
+ * handler has no nil guard) and reads as an empty list. The client checks no shape, so a caller reads the field
+ * with ?. and a body that is not an object at all is not readable rather than a throw.
  */
 function keyedList<T>(rows: T[] | null | undefined, what: string): Result<T[]> {
   if (Array.isArray(rows)) return { ok: true, value: rows };
@@ -82,7 +83,7 @@ export class TaxApi {
   async rates(): Promise<Result<TaxRate[]>> {
     const answer = await staffTax.taxListRates(this.#client);
     if (!answer.ok) return answer;
-    return keyedList(answer.value.rates, "rates");
+    return keyedList(answer.value?.rates, "rates");
   }
 
   createRate(input: RateInput): Promise<Result<TaxRate>> {
@@ -100,15 +101,16 @@ export class TaxApi {
   async profiles(): Promise<Result<TaxStatusCardProfile[]>> {
     const answer = await staffTax.taxListProfiles(this.#client);
     if (!answer.ok) return answer;
-    return keyedList(answer.value.profiles, "profiles");
+    return keyedList(answer.value?.profiles, "profiles");
   }
 
   async reviewQueue(): Promise<Result<TaxStatusCardProfile[]>> {
     const answer = await staffTax.taxReviewQueue(this.#client);
     if (!answer.ok) return answer;
     // The queue is the core's own slice, never null (the contract says so), so only an array reads.
-    return Array.isArray(answer.value.pending_profiles)
-      ? { ok: true, value: answer.value.pending_profiles }
+    const rows = answer.value?.pending_profiles;
+    return Array.isArray(rows)
+      ? { ok: true, value: rows }
       : { ok: false, error: "The profiles waiting for review were not readable." };
   }
 
@@ -144,7 +146,7 @@ export class TaxApi {
   async evidence(orderId: string): Promise<Result<TaxEvidence[]>> {
     const answer = await staffTax.taxListEvidence(this.#client, orderId === "" ? {} : { order_id: orderId });
     if (!answer.ok) return answer;
-    return keyedList(answer.value.evidence, "evidence records");
+    return keyedList(answer.value?.evidence, "evidence records");
   }
 
   /** The raw number goes into this one call and no further: it is not kept, returned or shown anywhere. */
