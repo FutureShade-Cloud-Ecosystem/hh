@@ -205,6 +205,28 @@ func (s *Service) changeApplyHooks(actor, orderID, key, note string) changeApply
 			})
 		},
 	}
+	h.replay = func(ctx context.Context, orderID, key string) (string, bool, error) {
+		// The key lives on the CHANGE_APPLIED audit row (the allowlisted client_id), read back through the
+		// audit module's own trail read, never its table. The order lock is held by the caller, so an earlier
+		// press has committed its row before this one reads.
+		if s.auditTrail == nil {
+			return "", false, errors.New("order: sign and apply needs the audit trail reader")
+		}
+		entries, err := s.auditTrail.ReopenTransaction(ctx, "order", orderID)
+		if err != nil {
+			return "", false, fmt.Errorf("order: read the audit trail for the idempotency key: %w", err)
+		}
+		for _, e := range entries {
+			if e.Action != audit.ActOrderChanged || e.Changes["field"] != "change_order" ||
+				e.Changes["outcome"] != "CHANGE_APPLIED" || e.Changes["client_id"] != key {
+				continue
+			}
+			reason, _ := e.Changes["reason"].(string)
+			head, _, _ := strings.Cut(reason, ":")
+			return head, true, nil
+		}
+		return "", false, nil
+	}
 	if s.taxRate != nil {
 		h.taxRate = func(ctx context.Context, tx pgx.Tx, created time.Time) (int, error) {
 			zone, err := houseday.ResolveTx(ctx, s.zone, tx)

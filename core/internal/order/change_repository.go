@@ -35,8 +35,11 @@ type changeApplyHooks struct {
 	// taxRate answers the standard rate in basis points for the day the order's tax was set. nil means no
 	// rate seam is wired: an order that carries tax then refuses (ErrEditTaxAssessed), never a guess.
 	taxRate func(ctx context.Context, tx pgx.Tx, orderCreatedAt time.Time) (int, error)
-	resync  func(ctx context.Context, tx pgx.Tx, orderID, branchID string) error
-	record  func(ctx context.Context, tx pgx.Tx, ev changeApplied) error
+	// replay answers the change number an earlier apply of this order carried the Idempotency-Key on, or
+	// found=false. It runs under the order lock, so an earlier press is always committed and visible.
+	replay func(ctx context.Context, orderID, key string) (changeNo string, found bool, err error)
+	resync func(ctx context.Context, tx pgx.Tx, orderID, branchID string) error
+	record func(ctx context.Context, tx pgx.Tx, ev changeApplied) error
 }
 
 // changeApplied is what the record hook is told about the apply that is about to commit.
@@ -344,7 +347,10 @@ func (r *Repository) applyChange(ctx context.Context, id string, hooks changeApp
 		if err := tx.QueryRow(ctx, `SELECT change_no FROM change_orders WHERE id = $1`, id).Scan(&changeNo); err != nil {
 			return ChangeOrder{}, false, fmt.Errorf("apply change: read change no: %w", err)
 		}
-		prior, found, err := keyedApplyChangeNo(ctx, tx, orderID, sign.Key)
+		if hooks.replay == nil {
+			return ChangeOrder{}, false, errors.New("order: sign and apply cannot look up an idempotency key without the audit trail")
+		}
+		prior, found, err := hooks.replay(ctx, orderID, sign.Key)
 		if err != nil {
 			return ChangeOrder{}, false, err
 		}
@@ -493,27 +499,6 @@ func (r *Repository) applyChange(ctx context.Context, id string, hooks changeApp
 	}
 	out, err := r.GetChangeOrder(ctx, id)
 	return out, false, err
-}
-
-// keyedApplyChangeNo finds the change number an earlier apply of this order carried the key on. The key
-// rides the allowlisted client_id of the CHANGE_APPLIED audit row the apply wrote on its own transaction
-// (the convention of the quote door, share_idempotency.go: no migration, the audit row anchors the key).
-// The change number is the reason's head, "#CO-n: note", matched whole by the caller.
-func keyedApplyChangeNo(ctx context.Context, tx pgx.Tx, orderID, key string) (changeNo string, found bool, err error) {
-	err = tx.QueryRow(ctx, `
-		SELECT split_part(COALESCE(changes->>'reason', ''), ':', 1)
-		  FROM audit_log
-		 WHERE entity_type = 'order' AND entity_id = $1::uuid AND action = 'ORDER_CHANGED'
-		   AND changes->>'field' = 'change_order' AND changes->>'outcome' = 'CHANGE_APPLIED'
-		   AND changes->>'client_id' = $2
-		 ORDER BY seq LIMIT 1`, orderID, key).Scan(&changeNo)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("apply change: look up key: %w", err)
-	}
-	return changeNo, true, nil
 }
 
 // taxHalfUp is the quote builder's tax: the rate on the base in basis points, rounded half up once, in
