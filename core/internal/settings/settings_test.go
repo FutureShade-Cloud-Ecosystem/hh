@@ -444,10 +444,9 @@ func TestCounterRosterReadsEveryValidProfile(t *testing.T) {
 // TestNotAdminError_NamesTheFourRolesExactly pins the admin-refusal text for the write gate.
 // The gate caller.IsAdmin() admits exactly the four Tier-1 GLOBAL roles (General Manager,
 // Financial Controller, HR and Platform Administrator), the refusal names those four so the
-// reader sees who may act instead of "limited to administrators", and the caller's role code never
+// reader sees who may act instead of the old administrator-only message, and the caller's role code never
 // reaches the words; it stays on the type for the audit (the NotSettingsAdminError posture the
-// Quote Desk decided). Red-first witness: this test fails on main with the old
-// "is limited to administrators, ... cannot do it; ask a tech admin" message, passes here.
+// Quote Desk decided). Red-first witness: this test fails on main before the four roles were named exactly, passes here.
 func TestNotAdminError_NamesTheFourRolesExactly(t *testing.T) {
 	const want = "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
 	got := (&NotAdminError{RoleCode: "FINANCIAL_CONTROLLER"}).Error()

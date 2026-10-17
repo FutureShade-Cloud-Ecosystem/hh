@@ -440,10 +440,9 @@ func TestARChangeStr_MissingAndRoundTrippedValues(t *testing.T) {
 // TestSetPolicy_RefusesNonAdminWithTheFourRolesNamedExactly pins the billing admin-refusal text.
 // The gate caller.IsAdmin() admits exactly the four Tier-1 GLOBAL roles (General Manager, Financial
 // Controller, HR and Platform Administrator), the refusal names those four so the reader sees who
-// may act instead of "limited to administrators", and the caller's role code never reaches the
+// may act instead of the old administrator-only message, and the caller's role code never reaches the
 // words; the package prefix is "billing:" to match the convention the settings kit carries.
-// Red-first witness: this test fails on main with the old "is limited to administrators, ask a
-// tech admin" message, passes here.
+// Red-first witness: this test fails on main before the four roles were named exactly, passes here.
 func TestSetPolicy_RefusesNonAdminWithTheFourRolesNamedExactly(t *testing.T) {
 	frontlineCtx := func() context.Context {
 		return identity.ContextWithStaff(context.Background(), identity.StaffContext{
