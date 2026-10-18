@@ -292,8 +292,11 @@ func TestIntegration_ChangeQueue_NextActionsPerCaller(t *testing.T) {
 	if _, err := approved.YardAck(ctx, yard.ID, ""); err != nil {
 		t.Fatalf("yard ack: %v", err)
 	}
-	// Manager and a named approver: finance_approve on PENDING_FINANCE.
-	items = queueAll(t, approved, w5aStaff(true), "PENDING_FINANCE")
+	// A manager other than the requester, and a named approver: finance_approve on PENDING_FINANCE. (The
+	// requester is not offered the signature on their own change.)
+	signer := w5aStaff(true)
+	signer.UserID = sodOtherManager
+	items = queueAll(t, approved, signer, "PENDING_FINANCE")
 	if ok, row := has(items, yard.ID, "finance_approve"); !ok {
 		t.Errorf("a named-approver manager must be offered finance_approve, got %v", row.NextActions)
 	}
@@ -304,7 +307,7 @@ func TestIntegration_ChangeQueue_NextActionsPerCaller(t *testing.T) {
 	}
 	// Manager who is NOT a named approver: row still listed, finance_approve narrowed away.
 	notNamed := queueSvc(t, pool, 6000, ErrForbidden)
-	items = queueAll(t, notNamed, w5aStaff(true), "PENDING_FINANCE")
+	items = queueAll(t, notNamed, signer, "PENDING_FINANCE")
 	ok, row := has(items, yard.ID, "finance_approve")
 	if ok {
 		t.Error("a manager who is not a named approver must not be offered finance_approve")

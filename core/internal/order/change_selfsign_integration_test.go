@@ -28,7 +28,7 @@ func TestIntegration_SoD_TheRequesterCannotSignThroughEitherDoor(t *testing.T) {
 	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
 	s3CleanOutbox(t, pool, ord)
 	svc := s3Service(t, pool, 6000, s3RateBps)
-	co := s3RaisePendingFinance(t, svc, ord) // raised by w5aUser, who is a manager
+	co := s3RaisePendingFinanceBy(t, svc, ord, s3Mgr()) // raised by w5aUser, who is a manager
 
 	if _, err := svc.FinanceApprove(s3Mgr(), co.ID, "ok"); !errors.Is(err, ErrChangeSelfSign) {
 		t.Fatalf("finance approve by the requester = %v, want ErrChangeSelfSign", err)
@@ -55,7 +55,7 @@ func TestIntegration_SoD_TheStorePathRedecidesItUnderTheLock(t *testing.T) {
 	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
 	s3CleanOutbox(t, pool, ord)
 	svc := s3Service(t, pool, 6000, s3RateBps)
-	co := s3RaisePendingFinance(t, svc, ord)
+	co := s3RaisePendingFinanceBy(t, svc, ord, s3Mgr())
 
 	_, err := NewRepository(pool).SignApplyChangeTx(context.Background(), signApplyWrite{
 		ChangeID: co.ID, Key: s3Key, Signer: w5aUser, Hooks: svc.changeApplyHooks(w5aUser, ord, s3Key, ""),
@@ -76,7 +76,7 @@ func TestIntegration_SoD_ADifferentManagerStillSignsAndApplies(t *testing.T) {
 	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
 	s3CleanOutbox(t, pool, ord)
 	svc := s3Service(t, pool, 6000, s3RateBps)
-	co := s3RaisePendingFinance(t, svc, ord)
+	co := s3RaisePendingFinanceBy(t, svc, ord, s3Mgr())
 
 	out, err := svc.SignApplyChange(sodOtherCtx(), co.ID, s3Key, "approved")
 	if err != nil {
@@ -92,7 +92,7 @@ func TestIntegration_SoD_ADifferentManagerSignsThroughFinanceApprove(t *testing.
 	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
 	s3CleanOutbox(t, pool, ord)
 	svc := s3Service(t, pool, 6000, s3RateBps)
-	co := s3RaisePendingFinance(t, svc, ord)
+	co := s3RaisePendingFinanceBy(t, svc, ord, s3Mgr())
 
 	out, err := svc.FinanceApprove(sodOtherCtx(), co.ID, "approved")
 	if err != nil || out.Status != ChangeStatusApproved {

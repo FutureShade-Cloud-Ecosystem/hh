@@ -195,7 +195,7 @@ func TestIntegration_W5A_OverFiveHundredNeedsFinance(t *testing.T) {
 	svc := w5aChangeService(t, 6000, true)
 	ctx := identity.ContextWithStaff(context.Background(), w5aStaff(true))
 
-	co, err := w5aRaise(t, svc, ctx, ord, "20")
+	co, err := w5aRaise(t, svc, sodOtherCtx(), ord, "20") // raised by another manager: the signer below may not be the requester
 	if err != nil {
 		t.Fatalf("raise: %v", err)
 	}

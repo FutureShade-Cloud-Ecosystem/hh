@@ -311,6 +311,8 @@ func (h *Handler) writeChangeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrChangeOpenExists):
 		httpx.Error(w, http.StatusConflict,
 			"this order already has an open change request, decide it before raising another")
+	case errors.Is(err, ErrChangeSelfSign):
+		httpx.Error(w, http.StatusForbidden, "You raised this change, so another manager signs it.")
 	case errors.Is(err, ErrChangeYardAckRequired):
 		httpx.Error(w, http.StatusConflict, "the yard has not acknowledged this change yet")
 	case errors.Is(err, ErrChangeFinanceRequired):

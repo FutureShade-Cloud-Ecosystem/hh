@@ -251,13 +251,16 @@ func nextStatusAfterYardAck(financeReq bool) string {
 // approver memoises the approver answer per branch for a list; nil asks every time.
 func (s *Service) changeActions(ctx context.Context, caller identity.StaffContext, status, branchID, requestedBy string, approver map[string]bool) []string {
 	isMgr := caller.IsManager()
-	canCancel := isMgr || (requestedBy != "" && requestedBy == caller.UserID)
+	isRequester := requestedBy != "" && requestedBy == caller.UserID
+	canCancel := isMgr || isRequester
 	out := []string{}
 	switch status {
 	case ChangeStatusPendingYard:
 		out = append(out, "yard_ack", "reject")
 	case ChangeStatusPendingFinance:
-		if isMgr && s.mayFinanceSign(ctx, branchID, caller.UserID, approver) {
+		// The requester is not offered the signature their own change needs: another manager signs it
+		// (separation of duties). The door refuses them with ErrChangeSelfSign; the list never offers it.
+		if isMgr && !isRequester && s.mayFinanceSign(ctx, branchID, caller.UserID, approver) {
 			out = append(out, "sign_apply", "finance_approve")
 		}
 		if isMgr {
@@ -543,6 +546,11 @@ func (s *Service) FinanceApprove(ctx context.Context, changeID, note string) (Ch
 	}
 	if !caller.IsManager() {
 		return ChangeOrder{}, ErrForbidden
+	}
+	// Separation of duties: the manager who raised the change does not sign it. requested_by never changes
+	// after the insert, so this read cannot go stale (the one tap re-decides it under the lock all the same).
+	if co.RequestedBy != "" && co.RequestedBy == caller.UserID {
+		return ChangeOrder{}, ErrChangeSelfSign
 	}
 	if s.finance != nil {
 		if err := s.finance.CheckApprover(ctx, PolicyOrderChangeOverThreshold, co.BranchID, caller.UserID); err != nil {

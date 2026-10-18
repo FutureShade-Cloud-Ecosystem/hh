@@ -131,6 +131,11 @@ func (s *Service) SignApplyChange(ctx context.Context, changeID, idempotencyKey,
 	case ChangeStatusPendingYard:
 		return ChangeOrder{}, ErrChangeYardAckRequired
 	case ChangeStatusPendingFinance:
+		// Separation of duties: the requester does not give the finance signature on their own change. Applying
+		// one that is already APPROVED stays open to them. The store re-decides this under the lock.
+		if co.RequestedBy != "" && co.RequestedBy == caller.UserID {
+			return ChangeOrder{}, ErrChangeSelfSign
+		}
 		// Status only moves forward, so a pass here cannot go stale into a signature nobody may give.
 		if !s.mayFinanceSign(ctx, co.BranchID, caller.UserID, nil) {
 			return ChangeOrder{}, ErrForbidden

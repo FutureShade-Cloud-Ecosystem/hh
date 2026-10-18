@@ -144,10 +144,17 @@ func s3RaiseApproved(t *testing.T, svc *Service, ord, qty string) ChangeOrder {
 	return acked
 }
 
-// s3RaisePendingFinance raises a material change ($60 a unit, 10 to 20) and acks it to PENDING_FINANCE.
+// s3RaisePendingFinance raises a material change ($60 a unit, 10 to 20) as ANOTHER manager and acks it to
+// PENDING_FINANCE, so the usual signer (s3Mgr) is not the requester and may sign it (separation of duties).
 func s3RaisePendingFinance(t *testing.T, svc *Service, ord string) ChangeOrder {
 	t.Helper()
-	co, err := w5aRaise(t, svc, s3Mgr(), ord, "20")
+	return s3RaisePendingFinanceBy(t, svc, ord, sodOtherCtx())
+}
+
+// s3RaisePendingFinanceBy is s3RaisePendingFinance raised by the given caller.
+func s3RaisePendingFinanceBy(t *testing.T, svc *Service, ord string, requester context.Context) ChangeOrder {
+	t.Helper()
+	co, err := w5aRaise(t, svc, requester, ord, "20")
 	if err != nil {
 		t.Fatalf("raise: %v", err)
 	}

@@ -377,9 +377,10 @@ func (r *Repository) applyChange(ctx context.Context, id string, hooks changeApp
 			"%w: the order is %s and can no longer absorb a change", ErrChangeTerminal, orderStatus)
 	}
 
-	var status string
+	var status, requestedBy string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM change_orders WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
+		`SELECT status, COALESCE(requested_by::text, '') FROM change_orders WHERE id = $1 FOR UPDATE`, id).
+		Scan(&status, &requestedBy); err != nil {
 		return ChangeOrder{}, false, fmt.Errorf("apply change: lock change: %w", err)
 	}
 	// THE re-entrancy guard: only APPROVED applies (the one tap also takes PENDING_FINANCE and signs it
@@ -389,6 +390,11 @@ func (r *Repository) applyChange(ctx context.Context, id string, hooks changeApp
 	switch {
 	case status == ChangeStatusApproved:
 	case sign != nil && status == ChangeStatusPendingFinance:
+		// Separation of duties, decided again from the locked row: the requester does not sign their own
+		// change, whatever reached this store call.
+		if requestedBy != "" && requestedBy == sign.Signer {
+			return ChangeOrder{}, false, ErrChangeSelfSign
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE change_orders
 			   SET status = 'APPROVED', finance_approved_by = NULLIF($2,'')::uuid, finance_approved_at = now(),
