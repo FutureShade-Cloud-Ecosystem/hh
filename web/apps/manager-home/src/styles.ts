@@ -483,10 +483,13 @@ export const homeStyles = css`
     display: block;
     height: 100%;
   }
-  .tone-none { background: var(--hh-success-fill); }
-  .tone-good { background: var(--hh-state-good); }
-  .tone-watch { background: var(--hh-state-watch); }
-  .tone-stop { background: var(--hh-state-stop); }
+  /* A gauge segment's tone, and its legend swatch's, is a FILL. Scoped to those two: the approvals use the same
+     tone-* words for a text colour (approvals-styles.ts), and an unscoped fill painted a box of nearly the ink's own
+     colour behind them. */
+  .seg.tone-none, .swatch.tone-none { background: var(--hh-success-fill); }
+  .seg.tone-good, .swatch.tone-good { background: var(--hh-state-good); }
+  .seg.tone-watch, .swatch.tone-watch { background: var(--hh-state-watch); }
+  .seg.tone-stop, .swatch.tone-stop { background: var(--hh-state-stop); }
   .legend {
     display: flex;
     flex-wrap: wrap;

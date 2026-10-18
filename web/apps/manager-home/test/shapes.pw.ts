@@ -30,6 +30,12 @@ test("the yard manager's gauge is one meter of segments with a legend carrying e
   const widths = await card.locator(".meter .seg").evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().width));
   const track = await card.locator(".meter").evaluate((n) => n.getBoundingClientRect().width);
   expect(widths.reduce((a, b) => a + b, 0)).toBeGreaterThan(track * 0.85);
+  // Each legend swatch is the key to its segment: it carries the segment's own fill, never an empty square.
+  const fills = (sel: string) => card.locator(sel).evaluateAll((nodes) => nodes.map((n) => getComputedStyle(n).backgroundColor));
+  const segs = await fills(".meter .seg");
+  const swatches = await fills(".legend-row .swatch");
+  expect(swatches).toEqual(segs);
+  for (const fill of swatches) expect(fill).not.toBe("rgba(0, 0, 0, 0)");
 });
 
 test("nothing on a gauge animates, so reduced motion has nothing to reduce", async ({ request, page }) => {
