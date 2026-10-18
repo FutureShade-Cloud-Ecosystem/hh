@@ -925,6 +925,37 @@ func TestMigration0206_AddressesTheRowsThisPlanActuallyWrites(t *testing.T) {
 	}
 }
 
+func TestPlan_RunsCarryDepartureTimeAndDriverStopsCarryGateCode(t *testing.T) {
+	rows, _ := buildForTest(t)
+	r5ID := demoID("run:R5")
+	foundR5 := false
+	foundGate := false
+	for _, r := range rows {
+		if r.table == "delivery_runs" {
+			f := fieldMap(r)
+			if f["id"] == r5ID {
+				foundR5 = true
+				dep, ok := f["departs_at"].(time.Time)
+				if !ok || dep.Hour() != 8 || dep.Minute() != 15 {
+					t.Fatalf("R5 departs_at = %v, want 08:15 UTC on scheduled_date", f["departs_at"])
+				}
+			}
+		}
+		if r.table == "delivery_stops" {
+			f := fieldMap(r)
+			if gc, _ := f["gate_code"].(string); gc == "#4421" {
+				foundGate = true
+			}
+		}
+	}
+	if !foundR5 {
+		t.Fatal("R5 run not found in plan")
+	}
+	if !foundGate {
+		t.Fatal("expected at least one stop with gate_code #4421 in plan")
+	}
+}
+
 // -- helpers ---------------------------------------------------------------------------------------
 
 func fieldMap(r row) map[string]any {

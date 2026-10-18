@@ -26,6 +26,17 @@ const pickFeedSelect = `
 SELECT s.id::text, s.branch_id::text, s.order_id::text, COALESCE(o.order_no::text,''),
        COALESCE(c.name,''), COALESCE(o.fulfillment,''), to_char(s.scheduled_date,'YYYY-MM-DD'),
        s.status, COALESCE(s.run_id::text,''), COALESCE(r.run_no,''), COALESCE(r.status,''),
+       r.departs_at,
+       CASE
+           WHEN s.run_id IS NULL THEN 0
+           ELSE COALESCE((
+               SELECT COUNT(*)::int
+                 FROM delivery_stops s2
+                WHERE s2.run_id = s.run_id
+                  AND s2.status <> 'CANCELLED'
+                  AND (s2.stop_no > s.stop_no OR (s2.stop_no = s.stop_no AND s2.id >= s.id))
+           ), 1)
+       END,
        s.mto_class, s.time_window
   FROM delivery_stops s
   LEFT JOIN orders        o ON o.id = s.order_id
@@ -50,7 +61,8 @@ SELECT count(*)::int
 func scanPickFeedStop(row pgx.Row) (pickFeedStop, error) {
 	var p pickFeedStop
 	err := row.Scan(&p.StopID, &p.BranchID, &p.OrderID, &p.OrderNo, &p.CustomerName, &p.Fulfillment,
-		&p.ScheduledDate, &p.StopStatus, &p.RunID, &p.RunNo, &p.RunStatus, &p.MTOClass, &p.TimeWindow)
+		&p.ScheduledDate, &p.StopStatus, &p.RunID, &p.RunNo, &p.RunStatus,
+		&p.RunDepartsAt, &p.LoadPosition, &p.MTOClass, &p.TimeWindow)
 	return p, err
 }
 

@@ -81,7 +81,7 @@ func scanSyncRun(row pgx.Row) (syncRunRow, error) {
 	var deleted bool
 	if err := row.Scan(&r.ID, &r.RunNo, &r.BranchID, &r.ScheduledDate, &r.TruckID, &r.DriverID,
 		&r.TruckCode, &r.DriverName, &r.Status, &r.Notes, &r.DispatchedAt, &r.CompletedAt,
-		&r.StopCount, &r.CreatedAt, &r.CommitState, &r.ReopenedAt, &r.ReopenReason,
+		&r.RunDepartsAt, &r.StopCount, &r.CreatedAt, &r.CommitState, &r.ReopenedAt, &r.ReopenReason,
 		&seq, &deleted); err != nil {
 		return syncRunRow{}, err
 	}

@@ -1807,6 +1807,7 @@ components:
         time_window: { type: string }
         contact_name: { type: string }
         contact_phone: { type: string }
+        gate_code: { type: string }
         address_line: { type: string }
         city: { type: string }
         postal_code: { type: string }
@@ -1955,6 +1956,7 @@ components:
           type: string
           enum: [PLANNED, DISPATCHED, COMPLETED, CANCELLED]
         notes: { type: string }
+        run_departs_at: { type: [string, "null"], format: date-time }
         dispatched_at: { type: [string, "null"], format: date-time }
         completed_at: { type: [string, "null"], format: date-time }
         stop_count: { type: integer, format: int32 }
@@ -2079,6 +2081,7 @@ components:
         time_window: { type: string }
         contact_name: { type: string }
         contact_phone: { type: string }
+        gate_code: { type: string }
         address_line: { type: string }
         city: { type: string }
         postal_code: { type: string }
@@ -2129,6 +2132,7 @@ components:
         truck_id: { type: string, format: uuid }
         driver_id: { type: string, format: uuid }
         notes: { type: string }
+        run_departs_at: { type: [string, "null"], format: date-time }
     DispatchCrewInput:
       type: object
       required: [truck_id, driver_id]

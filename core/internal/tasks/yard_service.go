@@ -344,6 +344,9 @@ func (s *Service) PickDetail(ctx context.Context, taskID string) (PickQueueEntry
 	if s.picks != nil {
 		if ticket, err := s.picks.PickTicket(ctx, t.OrderID); err == nil {
 			e.Ticket = &ticket
+			e.RunNo = ticket.RunNo
+			e.RunDepartsAt = ticket.RunDepartsAt
+			e.LoadPosition = ticket.LoadPosition
 		} else if s.log != nil {
 			s.log.Warn("tasks: pick source has no ticket", "task", t.ID, "order", t.OrderID, "err", err)
 		}
@@ -415,6 +418,9 @@ func (s *Service) decorate(ctx context.Context, t Task) PickQueueEntry {
 	if s.picks != nil {
 		if ticket, err := s.picks.PickTicket(ctx, t.OrderID); err == nil {
 			e.Ticket = &ticket
+			e.RunNo = ticket.RunNo
+			e.RunDepartsAt = ticket.RunDepartsAt
+			e.LoadPosition = ticket.LoadPosition
 		}
 	}
 	if t.OpenShortages > 0 {

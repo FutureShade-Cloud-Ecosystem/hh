@@ -499,13 +499,14 @@ var demoDrivers = []driverSpec{
 }
 
 type runSpec struct {
-	Key    string
-	Branch int
-	Truck  string // truck key, or "" for an unassigned-crew planned run
-	Driver string
-	DayOff int // scheduled_date = today + DayOff
-	Status string
-	Notes  string
+	Key        string
+	Branch     int
+	Truck      string // truck key, or "" for an unassigned-crew planned run
+	Driver     string
+	DayOff     int // scheduled_date = today + DayOff
+	DepartsMin int // minutes past midnight on scheduled_date; 0 = unset
+	Status     string
+	Notes      string
 }
 
 // Eight runs over six days: two already completed, one out on the road right now, five planned
@@ -513,14 +514,14 @@ type runSpec struct {
 // a Point Loma truck and driver; R8 is the Driver persona's own tomorrow, one Julian stop). A PLANNED run with no truck and no driver is legal and common (the board's
 // "needs a crew" column), and R6 is exactly that.
 var demoRuns = []runSpec{
-	{"R1", 0, "T1", "D1", -2, "COMPLETED", "Kingston east loop"},
-	{"R2", 1, "T3", "D3", -1, "COMPLETED", "Trenton bulk run"},
-	{"R3", 0, "T2", "D2", 0, "DISPATCHED", "Boom set, wall block"},
-	{"R4", 0, "T1", "D1", 0, "PLANNED", "Kingston afternoon"},
-	{"R5", 1, "T3", "D3", 1, "PLANNED", "West loop, the three moved orders"},
-	{"R8", 0, "T1", "D1", 1, "PLANNED", "Kingston morning drop"},
-	{"R6", 1, "", "", 2, "PLANNED", "Needs a truck and a driver"},
-	{"R7", 1, "T4", "D4", 3, "PLANNED", "Small drops, over capacity, on purpose"},
+	{"R1", 0, "T1", "D1", -2, 7 * 60, "COMPLETED", "Kingston east loop"},
+	{"R2", 1, "T3", "D3", -1, 7 * 60, "COMPLETED", "Trenton bulk run"},
+	{"R3", 0, "T2", "D2", 0, 7 * 60, "DISPATCHED", "Boom set, wall block"},
+	{"R4", 0, "T1", "D1", 0, 13 * 60, "PLANNED", "Kingston afternoon"},
+	{"R5", 1, "T3", "D3", 1, 8*60 + 15, "PLANNED", "West loop, the three moved orders"},
+	{"R8", 0, "T1", "D1", 1, 7*60 + 30, "PLANNED", "Kingston morning drop"},
+	{"R6", 1, "", "", 2, 0, "PLANNED", "Needs a truck and a driver"},
+	{"R7", 1, "T4", "D4", 3, 9 * 60, "PLANNED", "Small drops, over capacity, on purpose"},
 }
 
 type stopSpec struct {
@@ -543,6 +544,7 @@ type stopSpec struct {
 	WeightKg string // "" = never weighed; the manifest prints "-" and refuses to total it
 	Received string // POD display name, for DELIVERED stops
 	Failure  string
+	GateCode string
 }
 
 // THE LOAD GAUGE. A run's fill is its COMPLETE recorded weight against its truck's advisory
@@ -561,26 +563,26 @@ type stopSpec struct {
 //	                                                         warning no matter how heavy it gets
 var demoStops = []stopSpec{
 	// completed history
-	{"SP01", "R1", 0, "O15", 1, -2, "DELIVERED", "AM", "Site foreman", "613-555-0201", "418 Bath Rd", "Kingston", "K7M 4X5", 44.2312, -76.5460, "STANDARD", "", "4100.0000", "R. Vance (demo)", ""},
-	{"SP02", "R1", 0, "O17", 2, -2, "DELIVERED", "AM", "Yard gate", "613-555-0202", "77 Gardiners Rd", "Kingston", "K7M 3X9", 44.2489, -76.5591, "MTO", "Cut to 1150mm, do not substitute", "980.0000", "T. Okonkwo (demo)", ""},
-	{"SP03", "R2", 1, "O16", 1, -1, "DELIVERED", "8-10", "Back lot", "613-555-0203", "290 Dundas St W", "Trenton", "K8V 3S5", 44.1001, -77.5766, "STANDARD", "", "9800.0000", "L. Beaupre (demo)", ""},
-	{"SP04", "R2", 1, "O21", 2, -1, "FAILED", "PM", "Nobody on site", "613-555-0204", "12 Sidney St", "Trenton", "K8V 2H5", 44.1063, -77.5824, "STANDARD", "", "2340.0000", "", "Nobody on site and the gate was locked"},
+	{"SP01", "R1", 0, "O15", 1, -2, "DELIVERED", "AM", "Site foreman", "613-555-0201", "418 Bath Rd", "Kingston", "K7M 4X5", 44.2312, -76.5460, "STANDARD", "", "4100.0000", "R. Vance (demo)", "", ""},
+	{"SP02", "R1", 0, "O17", 2, -2, "DELIVERED", "AM", "Yard gate", "613-555-0202", "77 Gardiners Rd", "Kingston", "K7M 3X9", 44.2489, -76.5591, "MTO", "Cut to 1150mm, do not substitute", "980.0000", "T. Okonkwo (demo)", "", "#1190"},
+	{"SP03", "R2", 1, "O16", 1, -1, "DELIVERED", "8-10", "Back lot", "613-555-0203", "290 Dundas St W", "Trenton", "K8V 3S5", 44.1001, -77.5766, "STANDARD", "", "9800.0000", "L. Beaupre (demo)", "", ""},
+	{"SP04", "R2", 1, "O21", 2, -1, "FAILED", "PM", "Nobody on site", "613-555-0204", "12 Sidney St", "Trenton", "K8V 2H5", 44.1063, -77.5824, "STANDARD", "", "2340.0000", "", "Nobody on site and the gate was locked", ""},
 	// out on the road now
-	{"SP05", "R3", 0, "O02", 1, 0, "EN_ROUTE", "AM", "Harbourview site office", "613-555-0205", "1500 Princess St", "Kingston", "K7M 3E7", 44.2437, -76.5372, "STANDARD", "", "2900.0000", "", ""},
-	{"SP06", "R3", 0, "O13", 2, 0, "LOADED", "PM", "Call ahead", "613-555-0206", "88 Days Rd", "Kingston", "K7M 3R6", 44.2551, -76.5688, "MIXED", "Wall block is MTO; bedding stone is stock", "", "", ""},
+	{"SP05", "R3", 0, "O02", 1, 0, "EN_ROUTE", "AM", "Harbourview site office", "613-555-0205", "1500 Princess St", "Kingston", "K7M 3E7", 44.2437, -76.5372, "STANDARD", "", "2900.0000", "", "", "#4421"},
+	{"SP06", "R3", 0, "O13", 2, 0, "LOADED", "PM", "Call ahead", "613-555-0206", "88 Days Rd", "Kingston", "K7M 3R6", 44.2551, -76.5688, "MIXED", "Wall block is MTO; bedding stone is stock", "", "", "", ""},
 	// planned, the fill bands
-	{"SP07", "R4", 0, "O01", 1, 0, "READY", "PM", "Driveway, tight turn", "613-555-0207", "233 Johnson St", "Kingston", "K7L 1Y4", 44.2299, -76.4951, "STANDARD", "", "1400.0000", "", ""},
-	{"SP08", "R4", 0, "O09", 2, 0, "READY", "PM", "Side entrance", "613-555-0208", "640 Cataraqui Woods Dr", "Kingston", "K7P 1T9", 44.2669, -76.5834, "STANDARD", "", "1750.0000", "", ""},
-	{"SP09", "R5", 1, "O06", 1, 1, "READY", "AM", "Foreman on site", "613-555-0209", "95 Bagot St", "Kingston", "K7L 3E7", 44.2295, -76.4831, "STANDARD", "", "3200.0000", "", ""},
-	{"SP10", "R5", 1, "O07", 2, 1, "READY", "AM", "Large drop, clear the pad", "613-555-0210", "1201 Division St", "Kingston", "K7K 6X4", 44.2711, -76.5089, "STANDARD", "", "2100.0000", "", ""},
-	{"SP11", "R5", 1, "O05", 3, 1, "READY", "PM", "Municipal yard", "613-555-0211", "216 Ontario St", "Kingston", "K7L 2Z3", 44.2286, -76.4809, "STANDARD", "", "1250.0000", "", ""},
-	{"SP12", "R7", 1, "O03", 1, 3, "READY", "AM", "Residential", "613-555-0212", "44 Quinte St", "Trenton", "K8V 3S9", 44.0994, -77.5738, "STANDARD", "", "900.0000", "", ""},
-	{"SP13", "R7", 1, "O12", 2, 3, "READY", "AM", "Residential", "613-555-0213", "7 Marmora St", "Trenton", "K8V 4R4", 44.1042, -77.5691, "STANDARD", "", "620.0000", "", ""},
+	{"SP07", "R4", 0, "O01", 1, 0, "READY", "PM", "Driveway, tight turn", "613-555-0207", "233 Johnson St", "Kingston", "K7L 1Y4", 44.2299, -76.4951, "STANDARD", "", "1400.0000", "", "", ""},
+	{"SP08", "R4", 0, "O09", 2, 0, "READY", "PM", "Side entrance", "613-555-0208", "640 Cataraqui Woods Dr", "Kingston", "K7P 1T9", 44.2669, -76.5834, "STANDARD", "", "1750.0000", "", "", ""},
+	{"SP09", "R5", 1, "O06", 1, 1, "READY", "AM", "Foreman on site", "613-555-0209", "95 Bagot St", "Kingston", "K7L 3E7", 44.2295, -76.4831, "STANDARD", "", "3200.0000", "", "", "#2180"},
+	{"SP10", "R5", 1, "O07", 2, 1, "READY", "AM", "Large drop, clear the pad", "613-555-0210", "1201 Division St", "Kingston", "K7K 6X4", 44.2711, -76.5089, "STANDARD", "", "2100.0000", "", "", ""},
+	{"SP11", "R5", 1, "O05", 3, 1, "READY", "PM", "Municipal yard", "613-555-0211", "216 Ontario St", "Kingston", "K7L 2Z3", 44.2286, -76.4809, "STANDARD", "", "1250.0000", "", "", ""},
+	{"SP12", "R7", 1, "O03", 1, 3, "READY", "AM", "Residential", "613-555-0212", "44 Quinte St", "Trenton", "K8V 3S9", 44.0994, -77.5738, "STANDARD", "", "900.0000", "", "", ""},
+	{"SP13", "R7", 1, "O12", 2, 3, "READY", "AM", "Residential", "613-555-0213", "7 Marmora St", "Trenton", "K8V 4R4", 44.1042, -77.5691, "STANDARD", "", "620.0000", "", "", ""},
 	// unassigned, scheduled for a day, not yet on a truck. Most stops are born here.
-	{"SP14", "R8", 0, "O19", 1, 1, "READY", "AM", "Site office", "613-555-0214", "801 Development Dr", "Kingston", "K7M 5V6", 44.2603, -76.5726, "STANDARD", "", "2600.0000", "", ""},
-	{"SP15", "", 1, "O14", 0, 1, "READY", "AM", "Awaiting a truck", "613-555-0215", "35 Monogram Pl", "Trenton", "K8V 6S3", 44.0967, -77.5647, "STANDARD", "", "1180.0000", "", ""},
-	{"SP16", "", 1, "O04", 0, 2, "READY", "", "Awaiting a truck", "613-555-0216", "160 Dundas St E", "Trenton", "K8V 1L6", 44.1015, -77.5688, "MTO", "Bullnose cut to order", "", "", ""},
-	{"SP17", "", 0, "O22", 0, -1, "CANCELLED", "", "Customer collected instead", "613-555-0217", "19 Union St", "Kingston", "K7L 2N8", 44.2263, -76.4966, "STANDARD", "", "", "", ""},
+	{"SP14", "R8", 0, "O19", 1, 1, "READY", "AM", "Site office", "613-555-0214", "801 Development Dr", "Kingston", "K7M 5V6", 44.2603, -76.5726, "STANDARD", "", "2600.0000", "", "", ""},
+	{"SP15", "", 1, "O14", 0, 1, "READY", "AM", "Awaiting a truck", "613-555-0215", "35 Monogram Pl", "Trenton", "K8V 6S3", 44.0967, -77.5647, "STANDARD", "", "1180.0000", "", "", ""},
+	{"SP16", "", 1, "O04", 0, 2, "READY", "", "Awaiting a truck", "613-555-0216", "160 Dundas St E", "Trenton", "K8V 1L6", 44.1015, -77.5688, "MTO", "Bullnose cut to order", "", "", "", ""},
+	{"SP17", "", 0, "O22", 0, -1, "CANCELLED", "", "Customer collected instead", "613-555-0217", "19 Union St", "Kingston", "K7L 2N8", 44.2263, -76.4966, "STANDARD", "", "", "", "", ""},
 }
 
 // will-call pickups (§11). ACTIVE and REVOKED are seeded freely; the single CONFIRMED pickup gets a
@@ -950,6 +952,7 @@ type driverDayStopSpec struct {
 	QtyF     float64
 	Contact  string
 	Phone    string
+	GateCode string
 	Addr     string
 	City     string
 	Postal   string
@@ -959,7 +962,7 @@ type driverDayStopSpec struct {
 
 var demoDriverDayStops = []driverDayStopSpec{
 	{Key: "D1", Cust: "C08", Prod: "P01", Qty: "560.0000", QtyF: 560,
-		Contact: "Municipal yard office", Phone: "613-555-0241", Addr: "290 Counter St",
+		Contact: "Municipal yard office", Phone: "613-555-0241", GateCode: "#4421", Addr: "290 Counter St",
 		City: "Kingston", Postal: "K7M 8T6", Lat: 44.2517, Lng: -76.5225, WeightKg: "1456.0000"},
 	{Key: "D2", Cust: "C04", Prod: "P03", Qty: "520.0000", QtyF: 520,
 		Contact: "Site super, rear laneway", Phone: "613-555-0242", Addr: "15 Woodhaven Dr",

@@ -35307,6 +35307,8 @@ components:
           type: string
         contact_phone:
           type: string
+        gate_code:
+          type: string
         address_line:
           type: string
         city:
@@ -35635,6 +35637,11 @@ components:
             - CANCELLED
         notes:
           type: string
+        run_departs_at:
+          type:
+            - string
+            - "null"
+          format: date-time
         dispatched_at:
           type:
             - string
@@ -35837,6 +35844,8 @@ components:
           type: string
         contact_phone:
           type: string
+        gate_code:
+          type: string
         address_line:
           type: string
         city:
@@ -35944,6 +35953,11 @@ components:
           format: uuid
         notes:
           type: string
+        run_departs_at:
+          type:
+            - string
+            - "null"
+          format: date-time
     DispatchCrewInput:
       type: object
       required:
@@ -44207,6 +44221,17 @@ components:
             - string
             - "null"
           format: date-time
+        run_no:
+          type: string
+        run_departs_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        load_position:
+          type: integer
+          format: int32
+          description: Load order on the truck, 1 is loaded first (LIFO stop sequence)
         lines:
           type: array
           items:
@@ -44328,6 +44353,17 @@ components:
           $ref: "#/components/schemas/Task"
         ticket:
           $ref: "#/components/schemas/TaskPickTicket"
+        run_no:
+          type: string
+        run_departs_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        load_position:
+          type: integer
+          format: int32
+          description: Load order on the truck, 1 is loaded first (LIFO stop sequence)
         shortages:
           type: array
           items:
