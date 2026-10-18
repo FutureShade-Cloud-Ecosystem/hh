@@ -9341,7 +9341,7 @@ paths:
       tags:
         - staff-identity
       summary: Exchange a FB Console JWT and an org slug for a core session token
-      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. With class tenant the same route is the contractor leg: the staff allow lists, the staff row and the role ceiling give way to membership of the org's tenant Team, a linked ACTIVE portal row whose email is the account's, and the tenant ceiling, and the token is a tenant class token whose tenant claim is that row's contractor account. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
       x-addition: the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table
       x-role: public
       security: []
@@ -38520,7 +38520,7 @@ components:
           format: password
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: The non-secret identity returned on login and by the exchange; scope is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required:
         - user_id
         - email
@@ -38548,6 +38548,7 @@ components:
           enum:
             - GLOBAL
             - BRANCH
+            - TENANT
     IdentityLoginResponse:
       type: object
       required:
@@ -38572,6 +38573,12 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "Optional, staff when absent. The tenant class is the contractor leg: the person belongs to the org's ten-<slug> Team and has a linked ACTIVE portal row whose email is the FB Console account's, the sign in is an email link or Google, and the token carries the row's contractor account as its tenant claim"
     IdentityPersonaRequest:
       type: object
       required:

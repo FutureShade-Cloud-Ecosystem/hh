@@ -2736,7 +2736,7 @@ export type IdentityUser = {
   role_code: string;
   role_name: string;
   tier: number;
-  scope: "GLOBAL" | "BRANCH";
+  scope: "GLOBAL" | "BRANCH" | "TENANT";
 };
 export type IdentityLoginResponse = {
   token: string;
@@ -2745,6 +2745,7 @@ export type IdentityLoginResponse = {
 export type IdentityExchangeRequest = {
   jwt: string;
   org: string;
+  class?: "staff" | "tenant";
 };
 export type IdentityPersonaRequest = {
   persona: string;

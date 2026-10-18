@@ -79,3 +79,39 @@ func TestOrgMemberUsesHyphenTeamID(t *testing.T) {
 		t.Fatalf("a slug that cannot form a team id reached the Console")
 	}
 }
+
+func TestTenantTeamID(t *testing.T) {
+	long32 := "a" + strings.Repeat("b", 31)
+	cases := []struct {
+		slug string
+		want string
+		ok   bool
+	}{
+		{"yardone", "ten-yardone", true},
+		{"hh-demo", "ten-hh-demo", true},
+		{long32, "ten-" + long32, true},
+		{long32 + "c", "", false},
+		{"", "", false},
+		{"Yard", "", false},
+		{"yard:one", "", false},
+	}
+	for _, c := range cases {
+		got, ok := TenantTeamID(c.slug)
+		if got != c.want || ok != c.ok {
+			t.Errorf("TenantTeamID(%q) = %q, %v; want %q, %v", c.slug, got, ok, c.want, c.ok)
+		}
+		if ok && len(got) > maxTeamIDLen {
+			t.Errorf("team id %q exceeds %d characters", got, maxTeamIDLen)
+		}
+	}
+	// The two Team families never collide: an org Team is never read as a
+	// tenant Team and the reverse.
+	org, _ := OrgTeamID("yardone")
+	if _, ok := tenantTeamOrg(org); ok {
+		t.Errorf("org team %q read as a tenant team", org)
+	}
+	ten, _ := TenantTeamID("yardone")
+	if strings.HasPrefix(ten, orgTeamPrefix) {
+		t.Errorf("tenant team %q carries the org prefix", ten)
+	}
+}

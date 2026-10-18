@@ -12,13 +12,13 @@ import (
 // membership only, never authority and never the credential; the
 // credential is the platform JWT, verified per request by the identity
 // verifier and never cached anywhere. Platform teams are named
-// org-<slug> (tenant teams keep the older tenant:<org>:<slug> reading until the Pro cycle), so both methods
+// org-<slug> and tenant teams ten-<slug>, so both methods
 // key on the slug itself and touch no core table.
 type MembershipSource interface {
 	// OrgMember reports whether the platform user belongs to the team
 	// org-<orgSlug>.
 	OrgMember(ctx context.Context, platformUserID, orgSlug string) (bool, error)
-	// TenantOrgs lists the distinct org slugs of the tenant:<org>:<slug>
+	// TenantOrgs lists the distinct org slugs of the ten-<slug>
 	// teams the user belongs to. One org is the normal answer; the
 	// middleware fails closed on zero or on more than one.
 	TenantOrgs(ctx context.Context, platformUserID string) ([]string, error)
