@@ -170,33 +170,38 @@ func (s *Service) changeApplyHooks(actor, orderID, key, note string) changeApply
 					// A key with no audit trail to carry it could not be replayed safely.
 					return errors.New("order: sign and apply needs the transactional audit recorder")
 				}
-				reason := ev.ChangeNo
-				if note != "" {
-					reason += ": " + note
+				// The reason is the change number ALONE. The audit boundary redacts a whole string that carries
+				// a run of seven digits, so a note ("PO 4471234") in the reason erased the change number and
+				// broke the replay. The note rides its own allowlisted key, redacted on its own, and the change
+				// number rides change_no, which the replay matches on.
+				extra := func(outcome, status string) map[string]any {
+					m := map[string]any{
+						"field": "change_order", "outcome": outcome, "status": status, "change_no": ev.ChangeNo,
+					}
+					if note != "" {
+						m["note"] = note
+					}
+					return m
 				}
 				// The one tap that signs leaves the signature on the trail as the separate finance approve
 				// route does: a CHANGE_FINANCE_APPROVED row naming the signer, on this transaction, written
 				// before the applied row. It carries no client_id, so the replay lookup reads only the
 				// applied row and is unchanged.
 				if ev.SignedBy != "" {
+					fin := extra("CHANGE_FINANCE_APPROVED", ChangeStatusApproved)
+					fin["policy"] = PolicyOrderChangeOverThreshold
 					if err := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
 						Action: audit.ActOrderChanged, EntityType: "order", EntityID: ev.OrderID,
-						ActorID: ev.SignedBy, Purpose: "ORDER_CHANGE_ORDER", Reason: reason,
-						Extra: map[string]any{
-							"field": "change_order", "outcome": "CHANGE_FINANCE_APPROVED", "status": ChangeStatusApproved,
-							"policy": PolicyOrderChangeOverThreshold,
-						},
+						ActorID: ev.SignedBy, Purpose: "ORDER_CHANGE_ORDER", Reason: ev.ChangeNo, Extra: fin,
 					}); err != nil {
 						return fmt.Errorf("audit: %w", err)
 					}
 				}
+				applied := extra("CHANGE_APPLIED", ChangeStatusApplied)
+				applied["client_id"] = key
 				if err := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
 					Action: audit.ActOrderChanged, EntityType: "order", EntityID: ev.OrderID,
-					ActorID: actor, Purpose: "ORDER_CHANGE_ORDER", Reason: reason,
-					Extra: map[string]any{
-						"field": "change_order", "outcome": "CHANGE_APPLIED", "status": ChangeStatusApplied,
-						"client_id": key,
-					},
+					ActorID: actor, Purpose: "ORDER_CHANGE_ORDER", Reason: ev.ChangeNo, Extra: applied,
 				}); err != nil {
 					return fmt.Errorf("audit: %w", err)
 				}
@@ -234,9 +239,8 @@ func (s *Service) changeApplyHooks(actor, orderID, key, note string) changeApply
 				e.Changes["outcome"] != "CHANGE_APPLIED" || e.Changes["client_id"] != key {
 				continue
 			}
-			reason, _ := e.Changes["reason"].(string)
-			head, _, _ := strings.Cut(reason, ":")
-			return head, true, nil
+			changeNo, _ := e.Changes["change_no"].(string)
+			return changeNo, true, nil
 		}
 		return "", false, nil
 	}
