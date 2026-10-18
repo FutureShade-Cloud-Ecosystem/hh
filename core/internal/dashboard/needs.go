@@ -62,6 +62,8 @@ const (
 	NeedsReceivingDifferences = "purchasing.receiving_differences"
 	// The logistics manager's own source (0395): approvals they filed that are still pending.
 	NeedsFiledPending = "approvals.filed_pending"
+	// The change orders waiting on THIS manager (0411): signed or applied from Manager Home's Approvals.
+	NeedsChangesWaiting = "orders.changes_waiting"
 )
 
 // NeedsSourceMeta is one catalog entry: what the row SAYS and where it GOES. It carries nothing

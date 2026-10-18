@@ -30,6 +30,7 @@ test("needs rows go to the app that owns the source, dispatch stays coming", () 
 
 test("needsRowTarget names a view, a live app, or the honest coming", () => {
   assert.deepEqual(needsRowTarget(row("tasks.open_shortages")), { view: "shortages" });
+  assert.deepEqual(needsRowTarget(row("orders.changes_waiting", "Change orders · waiting on you", "approvals")), { view: "approvals" });
   assert.deepEqual(needsRowTarget(row("ar.escalation", "Escalation queue")), { view: null, app: "Money Desk", href: "/money-desk/" });
   assert.deepEqual(needsRowTarget(row("pos.parked")), { view: null, app: "Counter Till", href: "/till/" });
   assert.deepEqual(needsRowTarget(row("tasks.stale_picks")), { view: null, app: "Yard Pick", href: "/yard/" });

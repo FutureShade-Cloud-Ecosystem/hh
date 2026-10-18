@@ -11,6 +11,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
@@ -248,5 +249,21 @@ func w6bReceivingDifferences(svc *purchasing.Service) dashboard.NeedsFunc {
 			return dashboard.NeedsMeasure{}, err
 		}
 		return dashboard.NeedsMeasure{Count: sum.Count, Oldest: sum.Oldest}, nil
+	}
+}
+
+// -- order · change orders waiting on THIS manager (0411) ---------------------------------------
+//
+// SKELETON: the names the tests build on; the build replaces the body.
+
+// changeQueueReader is the narrow read the adapter needs from the order module: the cross order change
+// queue, which applies the caller's branch grants and computes each row's next_actions for the caller.
+type changeQueueReader interface {
+	ListChangeQueue(ctx context.Context, in order.ChangeQueueRequest) (order.ChangeQueuePage, error)
+}
+
+func ordersChangesWaiting(q changeQueueReader) dashboard.NeedsFunc {
+	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
+		return dashboard.NeedsMeasure{}, errors.New("dashboard: change orders waiting is not built yet")
 	}
 }
