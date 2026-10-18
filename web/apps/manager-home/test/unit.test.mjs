@@ -152,10 +152,11 @@ test("a kind this caller does not decide becomes plain words naming who decides 
 test("the approval kind vocabulary is the core's closed set, in its order", () => {
   assert.deepEqual(
     APPROVAL_KINDS.map((k) => k.kind),
-    ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"],
+    ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE", "CHANGE_ORDER"],
   );
   assert.equal(kindWord("COD_CONSTRAINT"), "Cash On Demand");
-  assert.equal(Object.keys(APPROVAL_DECIDER_WORDS).length, 5);
+  assert.equal(kindWord("CHANGE_ORDER"), "Change orders");
+  assert.equal(Object.keys(APPROVAL_DECIDER_WORDS).length, 6);
 });
 
 test("a receiving difference is a PARTIAL purchase order, per the ruled definition", () => {

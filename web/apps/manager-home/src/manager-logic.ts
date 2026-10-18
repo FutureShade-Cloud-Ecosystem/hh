@@ -317,6 +317,7 @@ export const APPROVAL_KINDS: readonly { readonly kind: string; readonly word: st
   { kind: "COD_CONSTRAINT", word: "Cash On Demand" },
   { kind: "JE_OVER_THRESHOLD", word: "Journal entry" },
   { kind: "FREIGHT_ABOVE_QUOTE", word: "Freight above quote" },
+  { kind: "CHANGE_ORDER", word: "Change orders" },
 ]);
 
 export function kindWord(kind: string): string {
@@ -336,6 +337,7 @@ export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.f
   COD_CONSTRAINT: "Cash On Demand approvals are decided by the financial controller and the general manager.",
   JE_OVER_THRESHOLD: "Journal entry approvals are decided by the financial controller and the general manager.",
   FREIGHT_ABOVE_QUOTE: "Freight approvals are decided by the financial controller and the general manager.",
+  CHANGE_ORDER: "Change orders are decided by the financial controller and the general manager.",
 });
 
 /** Map a kind refusal to plain words naming who decides it: no enum on screen, ever. */
