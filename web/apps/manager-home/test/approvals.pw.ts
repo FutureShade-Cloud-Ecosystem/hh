@@ -126,7 +126,7 @@ test("a tone word on the margin and credit cards paints no fill behind its text"
   await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
   for (const kind of ["Margin", "Credit"]) {
     await page.locator(".kind-tab", { hasText: kind }).click();
-    const toned = page.locator(".metric-val[class*='tone-'], td[class*='tone-']");
+    const toned = page.locator(".metric-val[class*='tone-'], td[class*='tone-'], .meta-value[class*='tone-']");
     await expect(toned.first()).toBeVisible();
     const fills = await toned.evaluateAll((els) => els.map((el) => `${el.textContent?.trim()} on ${getComputedStyle(el).backgroundColor}`));
     expect(fills.length).toBeGreaterThan(0);
