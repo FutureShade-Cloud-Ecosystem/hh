@@ -119,6 +119,7 @@ type Run struct {
 	Notes         string     `json:"notes,omitempty"`
 	DispatchedAt  *time.Time `json:"dispatched_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	RunDepartsAt  *time.Time `json:"run_departs_at,omitempty"`
 	StopCount     int        `json:"stop_count"`
 	CreatedAt     time.Time  `json:"created_at"`
 
@@ -157,6 +158,7 @@ type Stop struct {
 	Latitude      *float64   `json:"latitude,omitempty"`
 	Longitude     *float64   `json:"longitude,omitempty"`
 	Instructions  string     `json:"instructions,omitempty"`
+	GateCode      string     `json:"gate_code,omitempty"`
 	PODSignedRef  string     `json:"pod_signature_ref,omitempty"`
 	PODReceivedBy string     `json:"pod_received_by,omitempty"`
 	PODAt         *time.Time `json:"pod_at,omitempty"`
@@ -335,6 +337,7 @@ type ScheduleInput struct {
 	Latitude      *float64 `json:"latitude"`
 	Longitude     *float64 `json:"longitude"`
 	Instructions  string   `json:"instructions"`
+	GateCode      string   `json:"gate_code,omitempty"`
 
 	// - 0184/0185: how the delivery is being asked for, and what it puts on a truck -
 	//
@@ -362,11 +365,12 @@ type ScheduleInput struct {
 // CreateRunInput opens a run for a branch/date. Truck and driver are optional at creation (a run is
 // often drafted before the morning crew is settled) and REQUIRED at dispatch.
 type CreateRunInput struct {
-	BranchID      string `json:"branch_id"`
-	ScheduledDate string `json:"scheduled_date"`
-	TruckID       string `json:"truck_id"`
-	DriverID      string `json:"driver_id"`
-	Notes         string `json:"notes"`
+	BranchID      string     `json:"branch_id"`
+	ScheduledDate string     `json:"scheduled_date"`
+	TruckID       string     `json:"truck_id"`
+	DriverID      string     `json:"driver_id"`
+	Notes         string     `json:"notes"`
+	RunDepartsAt  *time.Time `json:"run_departs_at,omitempty"`
 }
 
 // AssignInput puts a stop on a run at a position. StopNo 0 means "append".
