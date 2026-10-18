@@ -8,7 +8,7 @@
 //	  status ∈ allowedFrom ?                                          ← the matrix guard, evaluated INSIDE the lock
 //	  precheck(tax_cents)                                            ← the money predicate, INSIDE the lock (B2-2)
 //	  <mutate the line / the date>
-//	  UPDATE orders SET subtotal_cents = Σ line_total_cents, total_cents = Σ + tax_cents
+//	  UPDATE orders SET subtotal_cents = Σ line_total_cents, total_cents = Σ + tax_cents + quoted freight
 //	  record(tx, before, after, totals)                             ← the audit trail, on THIS tx (B2-1)
 //	COMMIT   ← so the mutation, the totals, and the trail are one atomic unit
 //
@@ -88,13 +88,18 @@ func runPrecheck(ctx context.Context, tx pgx.Tx, hooks lineEditHooks, taxCents i
 // recomputeTotals rewrites the order's money from its CURRENT lines, inside the caller's transaction,
 // and returns what it wrote. Σ over zero lines is 0 (COALESCE), so emptying an order zeroes it rather
 // than leaving the last computed total standing.
+//
+// THE DELIVERY FEE STAYS IN THE TOTAL. A quote converted order's total_cents already contains the fee, and
+// quoted_freight_cents carries the same figure (quote/convert.go), so the total is the lines plus the tax
+// plus that column; leaving it out took an untaxed order with a 5000 fee from 15000 to 12000 on any line
+// edit. The yard pick (yard_pick_repository.go) and the change order apply read the same column the same way.
 func recomputeTotals(ctx context.Context, tx pgx.Tx, orderID string) (OrderTotals, error) {
 	var t OrderTotals
 	err := tx.QueryRow(ctx, `
 UPDATE orders SET
     subtotal_cents = COALESCE((SELECT SUM(line_total_cents) FROM order_lines WHERE order_id = $1), 0),
     total_cents    = COALESCE((SELECT SUM(line_total_cents) FROM order_lines WHERE order_id = $1), 0)
-                     + tax_cents,
+                     + tax_cents + COALESCE(quoted_freight_cents, 0),
     updated_at     = now()
 WHERE id = $1
 RETURNING subtotal_cents, total_cents`, orderID).Scan(&t.SubtotalCents, &t.TotalCents)
