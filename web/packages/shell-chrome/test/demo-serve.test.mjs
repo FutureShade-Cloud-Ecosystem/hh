@@ -16,8 +16,9 @@ const SHEETS = readdirSync(`${demoDir}sheets`).filter((name) => name.endsWith('.
 
 test('there are element sheets to serve', () => {
   // One sheet per element the page mounts: the header, the rail, the offline
-  // banner, the update prompt, and the conflict card list.
-  assert.equal(SHEETS.length, 5, 'one sheet per element');
+  // banner, the update prompt, the conflict card list, and the shared Field
+  // phone frame (phone-header, tab-bar, action-bar).
+  assert.equal(SHEETS.length, 8, 'one sheet per element');
 });
 
 test('every committed sheet is served as text/css with the committed bytes', () => {

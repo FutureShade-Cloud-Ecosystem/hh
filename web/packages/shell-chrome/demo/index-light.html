@@ -581,6 +581,13 @@
   .shell-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; display: grid; grid-template-rows: auto auto 1fr; min-height: 260px; }
   .frame-body { position: relative; display: flex; min-height: 240px; }
   .ghost { flex: 1; display: grid; place-items: center; color: var(--hh-text-dim); font-size: var(--hh-s-12); padding: var(--hh-s-16); text-align: center; }
+  /* The transform makes each frame the containing block of the tab bar's and the action bar's fixed and sticky
+     layers, so they sit at the frame's bottom and never cover the rest of the page. */
+  .phone-frame { position: relative; transform: translateZ(0); grid-template-columns: minmax(0, 1fr); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; display: grid; grid-template-rows: auto 1fr auto; min-height: 480px; background: var(--hh-page); }
+  .phone-body { padding: var(--hh-s-16); display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+  .phone-frame .phone-body { padding-bottom: 76px; }
+  .phone-body .primary { width: 100%; min-height: 48px; border: 1px solid transparent; border-radius: var(--hh-radius-control); background: var(--hh-accent); color: var(--hh-accent-ink); font: inherit; font-weight: 700; }
+  .phone-ghost { color: var(--hh-text-dim); font-size: var(--hh-s-12); display: grid; place-items: center; padding: var(--hh-s-16); text-align: center; }
 </style>
 </head>
 <body>
@@ -2961,6 +2968,5288 @@ rendered output and the package's tests hold the wiring contract.</p>
         <!--lit-part jMFIaYynKsI=--><p class="empty">Nothing waits for review. Conflicts land here when the server answers a queued change.</p><!--/lit-part-->
       </section>
     <!--/lit-part--></template></hh-shell-conflict-list></figure>
+</div>
+</section>
+<section class="width-frame" data-section="phone-frame"><h2>The shared Field phone frame: phone-header, tab-bar and action-bar ride as one row of chrome on a phone, the rail band on a tablet</h2>
+<div class="grid">
+<figure class="cell"><figcaption>phone 390, synced, three waiting on review</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part VP9SnSUpPLM=--><hh-phone-header     title="Pick queue" sync-state="idle" branch="Point Loma" count="3"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="idle" data-kind="good" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part M1sqFm+pRLo=--><!--lit-node 0--><span class="branch" data-branch="Point Loma"><!--lit-part-->Point Loma<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 3 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>phone 390, sending</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part CbFz+GLkEo0=--><hh-phone-header     title="Pick queue" sync-state="pushing" branch="Point Loma" count="3"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="pushing" data-kind="busy" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part M1sqFm+pRLo=--><!--lit-node 0--><span class="branch" data-branch="Point Loma"><!--lit-part-->Point Loma<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 3 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>phone 390, a conflict, two waiting on review</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part c40oVdGuTpI=--><hh-phone-header     title="Pick queue" sync-state="conflict" branch="Point Loma" count="2"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="conflict" data-kind="stop" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part M1sqFm+pRLo=--><!--lit-node 0--><span class="branch" data-branch="Point Loma"><!--lit-part-->Point Loma<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 2 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>phone 390, no branch chip</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part h/zKSLwORxw=--><hh-phone-header    title="Pick queue" sync-state="idle" count="3"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="idle" data-kind="good" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part--><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 3 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>phone 390, nothing waiting on review</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part VP9SnSbFaH0=--><hh-phone-header     title="Pick queue" sync-state="idle" branch="Point Loma" count="0"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="idle" data-kind="good" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part M1sqFm+pRLo=--><!--lit-node 0--><span class="branch" data-branch="Point Loma"><!--lit-part-->Point Loma<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part--><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>phone 390, an inner screen with the back control</figcaption><div class="phone-frame" style="width:min(390px, 100%)"><!--lit-part 1+rEXRfmjAY=--><hh-phone-header    title="SO-1038" sync-state="idle" count="3"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->SO-1038<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="idle" data-kind="good" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part--><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 3 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template><!--lit-part DkLDifp85IU=--><button slot="back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button><!--/lit-part--></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
+<figure class="cell"><figcaption>tablet 834, no tab bar, the action at the bottom</figcaption><div class="phone-frame" style="width:min(834px, 100%)"><!--lit-part VP9SnSUpPLM=--><hh-phone-header     title="Pick queue" sync-state="idle" branch="Point Loma" count="3"><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Its own class: the design system's base .row wraps, and this row must not. */
+  .phone-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 56px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-bottom: 1px solid var(--hh-line);
+  }
+
+  /* The back chevron slot: the host renders a button here on an inner screen, the r4 target; a root screen
+   * slots nothing and the slot takes no room (the wrapper is display: contents). */
+  .back { display: contents; }
+  slot[name='back']::slotted(button) {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-left: calc(-1 * var(--hh-s-8));
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-control);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  slot[name='back']::slotted(button:hover) { color: var(--hh-text); }
+  slot[name='back']::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+
+  /* The title block: the large word and the sync dot that rides beside it. */
+  .title-block {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--hh-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* The sync dot: a small inline marker, the same colour roles the band chip
+   * carries, so a state that is good/busy/stop reads in the dot as the chip
+   * itself would. The word never rides the dot alone: the title or the chip
+   * already names the surface. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--hh-radius-pill);
+    background: currentColor;
+  }
+  .dot[data-kind='good'] { color: var(--hh-state-good); }
+  .dot[data-kind='busy'] { color: var(--hh-state-watch); }
+  .dot[data-kind='stop'] { color: var(--hh-state-stop); }
+
+  /* The branch chip: a rounded chip beside the title. */
+  .branch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* The bell: the r4 target, a count badge at the top-right. The badge hides
+   * at zero: a bell without a count is just a bell, and the word "Notifications"
+   * alone is its accessible name. */
+  .bell {
+    flex: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .bell:hover:not(:disabled) {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .bell:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .bell svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+  }
+</style><!--lit-part mperMDx6tHg=-->
+      <header class="phone-row">
+        <span class="back"><slot name="back"></slot></span>
+        <div class="title-block">
+          <span class="title"><!--lit-part-->Pick queue<!--/lit-part--></span>
+          <!--lit-part 9R+MlP65FjI=--><!--lit-node 0--><span class="dot" data-state="idle" data-kind="good" aria-hidden="true"></span><!--/lit-part-->
+        </div>
+        <!--lit-part M1sqFm+pRLo=--><!--lit-node 0--><span class="branch" data-branch="Point Loma"><!--lit-part-->Point Loma<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-node 8--><button
+          class="bell"
+          type="button"
+          data-action="review"
+          aria-label="Notifications, 3 unread"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        </button>
+      </header>
+    <!--/lit-part--></template></hh-phone-header><!--/lit-part--><div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div><!--lit-part 3gh3BfHVhLQ=--><hh-action-bar><template shadowroot="open" shadowrootmode="open"><style>
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* The bar: sticky at the bottom of the host's scrolling region, the
+   * hairline above. The host's tab bar (the phone) is fixed; this bar sits
+   * inside the host's scrollable content and rises with it on a tablet
+   * where there is no tab bar. The z-index keeps the bar above a long
+   * list, below a sheet's scrim. */
+  .bar {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--hh-z-nav);
+    display: block;
+    padding: var(--hh-s-12) var(--hh-s-16) calc(var(--hh-s-12) + env(safe-area-inset-bottom, 0px));
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  /* On a phone the tab bar is fixed over the bottom 60 px (tab-bar.ts holds the same number), so the action rides
+   * just above it; on a tablet there is no tab bar and the action sits at the very bottom. */
+  @media (max-width: 599px) {
+    .bar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* The slotted action: full width, the design system's button face. A
+   * consumer that wants a different button can set their own styles in
+   * light DOM and the rule below yields to a higher-specificity author
+   * rule. */
+  ::slotted(button) {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  ::slotted(button:hover:not(:disabled)) {
+    background: var(--brand-fill-hover);
+  }
+  ::slotted(button:focus-visible) {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+</style><!--lit-part fidyABLNfUs=-->
+      <div class="bar" role="region" aria-label="Primary action">
+        <slot></slot>
+      </div>
+    <!--/lit-part--></template><button class="primary">Save pick</button></hh-action-bar><!--/lit-part--></div><hh-tab-bar><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-tab-bar.css"><!--lit-part Py51pRv2PUY=-->
+    <nav class="bar" aria-label="Tabs">
+      <!--lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="pick"
+      aria-current="page"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="pick"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8-3 8 3v10l-8 3-8-3z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 7l8 3 8-3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 10v10"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Pick<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="drive"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="drive"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M5 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M19 18a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M7 16h10l-2-6H9z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 10V6h6v4"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->Drive<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="messages"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="messages"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 5h16v11H8l-4 4z"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+      <span class="label"><!--lit-part-->Messages<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--lit-part qoUttokh97s=-->
+    <!--lit-node 0--><button
+      class="tab"
+      type="button"
+      data-action="tab-select"
+      data-key="more"
+      aria-current="false"
+      
+    >
+      <!--lit-part titxNx1iBsw=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    data-icon="more"
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 12h.01"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 12h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+      <!--lit-part--><!--/lit-part-->
+      <span class="label"><!--lit-part-->More<!--/lit-part--></span>
+    </button>
+  <!--/lit-part--><!--/lit-part-->
+    </nav>
+  <!--/lit-part--></template></hh-tab-bar></div></figure>
 </div>
 </section>
 </body>

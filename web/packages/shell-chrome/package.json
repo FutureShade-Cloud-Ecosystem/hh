@@ -8,7 +8,10 @@
     "./src/shell-header.ts",
     "./src/shell-rail.ts",
     "./src/shell-banner.ts",
-    "./src/shell-update.ts"
+    "./src/shell-update.ts",
+    "./src/phone-header.ts",
+    "./src/tab-bar.ts",
+    "./src/action-bar.ts"
   ],
   "main": "src/index.ts",
   "exports": {

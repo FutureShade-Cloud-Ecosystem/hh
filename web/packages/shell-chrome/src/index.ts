@@ -1,7 +1,8 @@
 // The public surface of @hardscapehouse/shell-chrome: the pure shell state
 // (pins per user, the switcher model, the sync chip words) and the chrome
 // elements the shells mount, offline banner, conflict cards, header, rail
-// and update prompt. The shells wire the elements to the state module and to
+// and update prompt, and the shared Field phone frame (header, tab bar and
+// action bar). The shells wire the elements to the state module and to
 // the offline store and auth packages; this surface carries no template tag: markup is built by Lit's html and css tagged
 // templates inside the elements, and the design system's gates hold that in
 // this package as in any dependent of it.
@@ -15,3 +16,6 @@ export * from './shell-cards.js';
 export * from './shell-header.js';
 export * from './shell-rail.js';
 export * from './shell-update.js';
+export * from './phone-header.js';
+export * from './tab-bar.js';
+export * from './action-bar.js';

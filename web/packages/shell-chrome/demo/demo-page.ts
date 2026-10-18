@@ -29,12 +29,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { CSSResult, type CSSResultGroup, type TemplateResult } from 'lit';
+import { CSSResult, html, type CSSResultGroup, type TemplateResult } from 'lit';
 import { ShellHeader } from '../src/shell-header.js';
 import { ShellRail } from '../src/shell-rail.js';
 import { ShellBanner } from '../src/shell-banner.js';
 import { ShellUpdate } from '../src/shell-update.js';
 import { ShellConflictList, type ShellCardInput } from '../src/shell-cards.js';
+import { PhoneHeader } from '../src/phone-header.js';
+import { TabBar, type TabSpec, renderTabBar } from '../src/tab-bar.js';
+import { ActionBar } from '../src/action-bar.js';
 
 export const DEMO_TITLE = '@hardscapehouse/shell-chrome demo';
 
@@ -84,6 +87,20 @@ function renderMarkup(element: new () => { render(): TemplateResult }, props: Re
   return collectResultSync(render(instance.render()));
 }
 
+/** The phone frame's three elements, server rendered by their own tags so each emits its own declarative shadow
+ * root (the slot needs its host on the render stack). The binding position gate refuses value bindings on the chrome
+ * attributes, so every variant a reader compares is its own static template. */
+const BACK = html`<button slot="back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>`;
+const PHONE_HEADERS = {
+  idle: () => html`<hh-phone-header title="Pick queue" sync-state="idle" branch="Point Loma" count="3"></hh-phone-header>`,
+  pushing: () => html`<hh-phone-header title="Pick queue" sync-state="pushing" branch="Point Loma" count="3"></hh-phone-header>`,
+  conflict: () => html`<hh-phone-header title="Pick queue" sync-state="conflict" branch="Point Loma" count="2"></hh-phone-header>`,
+  noBranch: () => html`<hh-phone-header title="Pick queue" sync-state="idle" count="3"></hh-phone-header>`,
+  zero: () => html`<hh-phone-header title="Pick queue" sync-state="idle" branch="Point Loma" count="0"></hh-phone-header>`,
+  inner: () => html`<hh-phone-header title="SO-1038" sync-state="idle" count="3">${BACK}</hh-phone-header>`,
+} as const;
+type PhoneHeaderVariant = keyof typeof PHONE_HEADERS;
+
 /** The update card mid install, rendered through the element's own click path: a pending
  * updater, the captured click listener, one press on Update now. The in flight flag is
  * private to the element, so the page drives the real code instead of editing the markup. */
@@ -115,6 +132,9 @@ export function demoSheets(): ReadonlyArray<{ tag: string; css: string }> {
     { tag: 'hh-shell-offline-banner', css: cssTextOf(ShellBanner.styles) },
     { tag: 'hh-shell-update-prompt', css: cssTextOf(ShellUpdate.styles) },
     { tag: 'hh-shell-conflict-list', css: cssTextOf(ShellConflictList.styles) },
+    { tag: 'hh-phone-header', css: cssTextOf(PhoneHeader.styles) },
+    { tag: 'hh-tab-bar', css: cssTextOf(TabBar.styles) },
+    { tag: 'hh-action-bar', css: cssTextOf(ActionBar.styles) },
   ];
 }
 
@@ -237,6 +257,44 @@ function shadowed(tag: string, markup: string): string {
   return `<template shadowrootmode="open"><link rel="stylesheet" href="./sheets/${tag}.css">${markup}</template>`;
 }
 
+/** The four Field tabs the bar carries, a phone's worth; the demo page's
+ * tab-bar renders with a Messages badge so the count badge has something to
+ * show. */
+const PHONE_TABS: ReadonlyArray<TabSpec> = [
+  { key: 'pick', label: 'Pick', icon: 'pick' },
+  { key: 'drive', label: 'Drive', icon: 'drive' },
+  { key: 'messages', label: 'Messages', icon: 'messages', count: 2 },
+  { key: 'more', label: 'More', icon: 'more' },
+];
+
+/** One phone frame at the given width: the phone-header, a body and the
+ * tab-bar, the action-bar. At 600 px and wider the tab-bar hides itself
+ * (its own rule), the action-bar rises to the body's bottom edge. At 390
+ * px the bar shows, and the body wraps above it. */
+/** The server render emits a tag's own shadow root only for a tag the SSR registry knows, so the two slot bearing
+ * elements are registered there once per process (the design system harness does the same for its sheet). */
+function registerForRender(): void {
+  for (const [tag, ctor] of [['hh-phone-header', PhoneHeader], ['hh-action-bar', ActionBar]] as const) {
+    if (!customElements.get(tag)) customElements.define(tag, ctor as unknown as CustomElementConstructor);
+  }
+}
+
+function phoneFrameCell(title: string, width: number, variant: PhoneHeaderVariant): string {
+  registerForRender();
+  const header = collectResultSync(render(PHONE_HEADERS[variant]()));
+  const actionBar = collectResultSync(render(html`<hh-action-bar><button class="primary">Save pick</button></hh-action-bar>`));
+  // The tab bar's tabs are a property, not an attribute, so its shadow root is filled from its own template form.
+  const tabBar = `<hh-tab-bar>${shadowed('hh-tab-bar', collectResultSync(render(renderTabBar({ tabs: PHONE_TABS, active: 'pick' }))))}</hh-tab-bar>`;
+  return (
+    `<figure class="cell"><figcaption>${title}</figcaption>` +
+    `<div class="phone-frame" style="width:min(${width}px, 100%)">` +
+    header +
+    `<div class="phone-body"><div class="phone-ghost">The surface works here; the chrome rides above and below.</div>${actionBar}</div>` +
+    tabBar +
+    `</div></figure>`
+  );
+}
+
 const SYNC_STATES_CELLS: ReadonlyArray<{ state: string; over?: Record<string, unknown>; note: string }> = [
   { state: 'idle', note: 'at rest, outbox draining done' },
   { state: 'pulling', note: 'the scopes are being pulled' },
@@ -319,6 +377,13 @@ ${tokens}
   .shell-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; display: grid; grid-template-rows: auto auto 1fr; min-height: 260px; }
   .frame-body { position: relative; display: flex; min-height: 240px; }
   .ghost { flex: 1; display: grid; place-items: center; color: var(--hh-text-dim); font-size: var(--hh-s-12); padding: var(--hh-s-16); text-align: center; }
+  /* The transform makes each frame the containing block of the tab bar's and the action bar's fixed and sticky
+     layers, so they sit at the frame's bottom and never cover the rest of the page. */
+  .phone-frame { position: relative; transform: translateZ(0); grid-template-columns: minmax(0, 1fr); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; display: grid; grid-template-rows: auto 1fr auto; min-height: 480px; background: var(--hh-page); }
+  .phone-body { padding: var(--hh-s-16); display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+  .phone-frame .phone-body { padding-bottom: 76px; }
+  .phone-body .primary { width: 100%; min-height: 48px; border: 1px solid transparent; border-radius: var(--hh-radius-control); background: var(--hh-accent); color: var(--hh-accent-ink); font: inherit; font-weight: 700; }
+  .phone-ghost { color: var(--hh-text-dim); font-size: var(--hh-s-12); display: grid; place-items: center; padding: var(--hh-s-16); text-align: center; }
 </style>
 </head>
 <body>
@@ -389,6 +454,17 @@ ${cell('hh-shell-update-prompt', 'update prompt, phone 390, the card wraps', upd
 <div class="grid">
 ${cell('hh-shell-conflict-list', 'one card of each outcome the sync engine answers', cardsFull)}
 ${cell('hh-shell-conflict-list', 'the empty list, before the first conflict comes back', cardsEmpty)}
+</div>
+</section>
+<section class="width-frame" data-section="phone-frame"><h2>The shared Field phone frame: phone-header, tab-bar and action-bar ride as one row of chrome on a phone, the rail band on a tablet</h2>
+<div class="grid">
+${phoneFrameCell('phone 390, synced, three waiting on review', 390, 'idle')}
+${phoneFrameCell('phone 390, sending', 390, 'pushing')}
+${phoneFrameCell('phone 390, a conflict, two waiting on review', 390, 'conflict')}
+${phoneFrameCell('phone 390, no branch chip', 390, 'noBranch')}
+${phoneFrameCell('phone 390, nothing waiting on review', 390, 'zero')}
+${phoneFrameCell('phone 390, an inner screen with the back control', 390, 'inner')}
+${phoneFrameCell('tablet 834, no tab bar, the action at the bottom', 834, 'idle')}
 </div>
 </section>
 </body>
