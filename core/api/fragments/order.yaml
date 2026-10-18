@@ -2771,6 +2771,14 @@ components:
         requested_at:
           type: [string, "null"]
           format: date-time
+        run_no: { type: string }
+        run_departs_at:
+          type: [string, "null"]
+          format: date-time
+        load_position:
+          type: integer
+          format: int32
+          description: Load order on the truck, 1 is loaded first (LIFO stop sequence)
         lines:
           type: array
           items: { $ref: "#/components/schemas/TaskPickLine" }
@@ -2854,6 +2862,14 @@ components:
       properties:
         task: { $ref: "#/components/schemas/Task" }
         ticket: { $ref: "#/components/schemas/TaskPickTicket" }
+        run_no: { type: string }
+        run_departs_at:
+          type: [string, "null"]
+          format: date-time
+        load_position:
+          type: integer
+          format: int32
+          description: Load order on the truck, 1 is loaded first (LIFO stop sequence)
         shortages:
           type: array
           items: { $ref: "#/components/schemas/TaskShortage" }

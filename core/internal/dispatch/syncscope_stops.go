@@ -84,7 +84,7 @@ func scanSyncStop(row pgx.Row) (syncStopRow, error) {
 	if err := row.Scan(&st.ID, &st.BranchID, &st.OrderID, &st.OrderNo, &st.CustomerName, &st.RunID, &st.RunNo,
 		&st.StopNo, &st.ScheduledDate, &st.Status, &st.TimeWindow, &st.ContactName, &st.ContactPhone,
 		&st.AddressLine, &st.City, &st.PostalCode, &st.Latitude, &st.Longitude, &st.Instructions,
-		&st.PODSignedRef, &st.PODReceivedBy, &st.PODAt, &st.FailureReason,
+		&st.GateCode, &st.PODSignedRef, &st.PODReceivedBy, &st.PODAt, &st.FailureReason,
 		&st.LoadedAt, &st.EnRouteAt, &st.DeliveredAt, &st.HandoffAt, &st.PhotoCount, &st.CreatedAt,
 		&st.WeightKg, &st.VolumeM3, &st.PalletPositions, &st.ValueCents, &st.FreightCents,
 		&st.FreightIsOverride, &st.LoadSeq, &st.LoadCount,
@@ -257,7 +257,7 @@ func stopCreateFields(fields map[string]any) error {
 		switch k {
 		case "id", "order_id", "scheduled_date", "run_id",
 			"time_window", "contact_name", "contact_phone",
-			"address_line", "city", "postal_code", "instructions":
+			"address_line", "city", "postal_code", "instructions", "gate_code":
 		default:
 			return fmt.Errorf("dispatch: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
 		}
@@ -410,15 +410,15 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	err = tx.QueryRow(ctx, `
 		INSERT INTO delivery_stops (id, branch_id, order_id, run_id, stop_no, scheduled_date,
 		                            time_window, contact_name, contact_phone, address_line, city,
-		                            postal_code, instructions, created_by, org_id, seq, idempotency_key)
+		                            postal_code, instructions, gate_code, created_by, org_id, seq, idempotency_key)
 		VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), $2::uuid, $3::uuid, NULLIF($4,'')::uuid,
-		        $5, $6::date, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15::uuid, $16, $17::uuid)
+		        $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $18, NULLIF($14,'')::uuid, $15::uuid, $16, $17::uuid)
 		ON CONFLICT (id) DO NOTHING
 		RETURNING id::text`,
 		id, brief.BranchID, brief.ID, runID, stopNo, date,
 		str("time_window"), str("contact_name"), str("contact_phone"),
 		str("address_line"), str("city"), str("postal_code"), str("instructions"),
-		actor, f.OrgID, seq, key).Scan(&rowID)
+		actor, f.OrgID, seq, key, str("gate_code")).Scan(&rowID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, own, _ := s.load(ctx, tx, f, d, id); own {
 			return sync.RowState{}, sync.ErrRowExists

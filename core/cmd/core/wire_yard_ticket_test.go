@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
@@ -45,5 +47,31 @@ func TestYardOrderRefusalMapsToTheYardsRefusals(t *testing.T) {
 	}
 	if err := yardOrderRefusal(fmt.Errorf("line 1: %w", order.ErrAboveOrdered)); !errors.Is(err, tasks.ErrAboveOrdered) {
 		t.Fatalf("above ordered is its own refusal: %v", err)
+	}
+}
+
+func TestPickTicketFromFeed_CarriesTruckRunAndLoadPosition(t *testing.T) {
+	departs := time.Date(2026, 8, 6, 12, 15, 0, 0, time.UTC)
+	got := pickTicketFromFeed(dispatch.PickFeedTicket{
+		OrderID:      "o-1",
+		OrderNo:      "#SO-TRT-1041",
+		BranchID:     "b-1",
+		CustomerName: "Bostock Landscaping",
+		Fulfillment:  "DELIVERY",
+		Priority:     "HIGH",
+		Reference:    "s-1",
+		RunNo:        "#DEMO-RUN-PLM-R5",
+		RunDepartsAt: &departs,
+		LoadPosition: 1,
+		Lines:        []dispatch.PickFeedLine{{LineNo: 1, Description: "Holland Paver", QtyOrdered: "480", UOM: "PC"}},
+	})
+	if got.RunNo != "#DEMO-RUN-PLM-R5" {
+		t.Fatalf("RunNo = %q, want #DEMO-RUN-PLM-R5", got.RunNo)
+	}
+	if got.RunDepartsAt == nil || !got.RunDepartsAt.Equal(departs) {
+		t.Fatalf("RunDepartsAt = %v, want %v", got.RunDepartsAt, departs)
+	}
+	if got.LoadPosition != 1 {
+		t.Fatalf("LoadPosition = %d, want 1", got.LoadPosition)
 	}
 }

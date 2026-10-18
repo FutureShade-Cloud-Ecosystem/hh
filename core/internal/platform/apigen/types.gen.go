@@ -2221,6 +2221,7 @@ type DispatchStop struct {
 	TimeWindow        *string    `json:"time_window,omitempty"`
 	ContactName       *string    `json:"contact_name,omitempty"`
 	ContactPhone      *string    `json:"contact_phone,omitempty"`
+	GateCode          *string    `json:"gate_code,omitempty"`
 	AddressLine       *string    `json:"address_line,omitempty"`
 	City              *string    `json:"city,omitempty"`
 	PostalCode        *string    `json:"postal_code,omitempty"`
@@ -2314,6 +2315,7 @@ type DispatchRun struct {
 	DriverName    *string             `json:"driver_name,omitempty"`
 	Status        string              `json:"status"`
 	Notes         *string             `json:"notes,omitempty"`
+	RunDepartsAt  *time.Time          `json:"run_departs_at,omitempty"`
 	DispatchedAt  *time.Time          `json:"dispatched_at,omitempty"`
 	CompletedAt   *time.Time          `json:"completed_at,omitempty"`
 	StopCount     int32               `json:"stop_count"`
@@ -2377,6 +2379,7 @@ type DispatchScheduleInput struct {
 	TimeWindow      string   `json:"time_window"`
 	ContactName     string   `json:"contact_name"`
 	ContactPhone    string   `json:"contact_phone"`
+	GateCode        *string  `json:"gate_code,omitempty"`
 	AddressLine     string   `json:"address_line"`
 	City            string   `json:"city"`
 	PostalCode      string   `json:"postal_code"`
@@ -2407,11 +2410,12 @@ type DispatchPODInput struct {
 }
 
 type DispatchCreateRunInput struct {
-	BranchId      string `json:"branch_id"`
-	ScheduledDate string `json:"scheduled_date"`
-	TruckId       string `json:"truck_id"`
-	DriverId      string `json:"driver_id"`
-	Notes         string `json:"notes"`
+	BranchId      string     `json:"branch_id"`
+	ScheduledDate string     `json:"scheduled_date"`
+	TruckId       string     `json:"truck_id"`
+	DriverId      string     `json:"driver_id"`
+	Notes         string     `json:"notes"`
+	RunDepartsAt  *time.Time `json:"run_departs_at,omitempty"`
 }
 
 type DispatchCrewInput struct {
@@ -5128,6 +5132,9 @@ type TaskPickTicket struct {
 	Priority        *string        `json:"priority,omitempty"`
 	Reference       *string        `json:"reference,omitempty"`
 	RequestedAt     *time.Time     `json:"requested_at,omitempty"`
+	RunNo           *string        `json:"run_no,omitempty"`
+	RunDepartsAt    *time.Time     `json:"run_departs_at,omitempty"`
+	LoadPosition    *int32         `json:"load_position,omitempty"`
 	Lines           []TaskPickLine `json:"lines"`
 	Source          string         `json:"source"`
 	HeldFromPicking *bool          `json:"held_from_picking,omitempty"`
@@ -5169,10 +5176,13 @@ type TaskPickedLine struct {
 }
 
 type TaskPickQueueEntry struct {
-	Task      Task              `json:"task"`
-	Ticket    *TaskPickTicket   `json:"ticket,omitempty"`
-	Shortages *[]TaskShortage   `json:"shortages,omitempty"`
-	Picked    *[]TaskPickedLine `json:"picked,omitempty"`
+	Task         Task              `json:"task"`
+	Ticket       *TaskPickTicket   `json:"ticket,omitempty"`
+	RunNo        *string           `json:"run_no,omitempty"`
+	RunDepartsAt *time.Time        `json:"run_departs_at,omitempty"`
+	LoadPosition *int32            `json:"load_position,omitempty"`
+	Shortages    *[]TaskShortage   `json:"shortages,omitempty"`
+	Picked       *[]TaskPickedLine `json:"picked,omitempty"`
 }
 
 type TaskPickQueuePage struct {

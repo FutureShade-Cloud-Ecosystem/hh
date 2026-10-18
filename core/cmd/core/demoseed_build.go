@@ -789,12 +789,15 @@ func (b *builder) fleet() {
 
 func (b *builder) runs() {
 	for _, r := range demoRuns {
-		var truck, driver, dispatched, completed any
+		var truck, driver, departs, dispatched, completed any
 		if r.Truck != "" {
 			truck = demoID("truck:" + r.Truck)
 		}
 		if r.Driver != "" {
 			driver = demoID("driver:" + r.Driver)
+		}
+		if r.DepartsMin > 0 {
+			departs = b.day(r.DayOff).Add(time.Duration(r.DepartsMin) * time.Minute)
 		}
 		if r.Status == "DISPATCHED" || r.Status == "COMPLETED" {
 			dispatched = b.day(r.DayOff).Add(7 * time.Hour)
@@ -809,6 +812,7 @@ func (b *builder) runs() {
 			"scheduled_date", b.day(r.DayOff),
 			"truck_id", truck, "driver_id", driver,
 			"status", r.Status, "notes", r.Notes,
+			"departs_at", departs,
 			"dispatched_at", dispatched, "completed_at", completed,
 			"created_at", b.day(r.DayOff).Add(-6*time.Hour),
 			"updated_at", b.day(r.DayOff).Add(-6*time.Hour),
@@ -852,6 +856,7 @@ func (b *builder) stops() error {
 			"status", s.Status,
 			"time_window", s.Window,
 			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"gate_code", s.GateCode,
 			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
 			"latitude", s.Lat, "longitude", s.Lng,
 			"mto_class", s.MTOClass, "mto_note", s.MTONote,
@@ -1429,6 +1434,7 @@ func (b *builder) driverDay() {
 		"driver_id", demoID("driver:D1"),
 		"status", "DISPATCHED",
 		"notes", "Kingston, out for delivery (demo)",
+		"departs_at", departed,
 		"dispatched_at", departed,
 		"created_at", b.day(0).Add(-6*time.Hour),
 		"updated_at", departed,
@@ -1483,6 +1489,7 @@ func (b *builder) driverDay() {
 			"status", "READY",
 			"time_window", window,
 			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"gate_code", s.GateCode,
 			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
 			"latitude", s.Lat, "longitude", s.Lng,
 			"mto_class", "STANDARD", "mto_note", "",

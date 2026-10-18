@@ -1860,6 +1860,7 @@ export type DispatchStop = {
   time_window?: string;
   contact_name?: string;
   contact_phone?: string;
+  gate_code?: string;
   address_line?: string;
   city?: string;
   postal_code?: string;
@@ -1943,6 +1944,7 @@ export type DispatchRun = {
   driver_name?: string;
   status: "PLANNED" | "DISPATCHED" | "COMPLETED" | "CANCELLED";
   notes?: string;
+  run_departs_at?: string | null;
   dispatched_at?: string | null;
   completed_at?: string | null;
   stop_count: number;
@@ -1991,6 +1993,7 @@ export type DispatchScheduleInput = {
   time_window: string;
   contact_name: string;
   contact_phone: string;
+  gate_code?: string;
   address_line: string;
   city: string;
   postal_code: string;
@@ -2022,6 +2025,7 @@ export type DispatchCreateRunInput = {
   truck_id: string;
   driver_id: string;
   notes: string;
+  run_departs_at?: string | null;
 };
 export type DispatchCrewInput = {
   truck_id: string;
@@ -4372,6 +4376,9 @@ export type TaskPickTicket = {
   priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
   reference?: string;
   requested_at?: string | null;
+  run_no?: string;
+  run_departs_at?: string | null;
+  load_position?: number;
   lines: TaskPickLine[];
   source: string;
   held_from_picking?: boolean;
@@ -4412,6 +4419,9 @@ export type TaskPickedLine = {
 export type TaskPickQueueEntry = {
   task: Task;
   ticket?: TaskPickTicket;
+  run_no?: string;
+  run_departs_at?: string | null;
+  load_position?: number;
   shortages?: TaskShortage[];
   picked?: TaskPickedLine[];
 };

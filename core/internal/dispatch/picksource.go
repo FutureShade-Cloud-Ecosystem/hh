@@ -461,6 +461,8 @@ func (f *PickFeed) ticket(row pickFeedStop) PickFeedTicket {
 		RunID:         row.RunID,
 		RunNo:         row.RunNo,
 		RunStatus:     row.RunStatus,
+		RunDepartsAt:  row.RunDepartsAt,
+		LoadPosition:  row.LoadPosition,
 		MTOClass:      row.MTOClass,
 		TimeWindow:    row.TimeWindow,
 		Lines:         []PickFeedLine{},

@@ -127,6 +127,7 @@ func ticketFromFeed(t dispatch.PickFeedTicket) PickTicket {
 		OrderID: t.OrderID, OrderNo: t.OrderNo, BranchID: t.BranchID, CustomerName: t.CustomerName,
 		Fulfillment: t.Fulfillment, Priority: t.Priority, Reference: t.Reference,
 		RequestedAt: t.RequestedAt, Lines: lines, Source: "DISPATCH",
+		RunNo: t.RunNo, RunDepartsAt: t.RunDepartsAt, LoadPosition: t.LoadPosition,
 	}
 }
 

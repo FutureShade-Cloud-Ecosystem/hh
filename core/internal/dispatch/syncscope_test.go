@@ -37,7 +37,7 @@ var contractStopFields = map[string]bool{
 	"scheduled_date": true, "status": true, "time_window": true,
 	"contact_name": true, "contact_phone": true, "address_line": true,
 	"city": true, "postal_code": true, "latitude": true, "longitude": true,
-	"instructions": true, "pod_signature_ref": true, "pod_received_by": true,
+	"instructions": true, "gate_code": true, "pod_signature_ref": true, "pod_received_by": true,
 	"pod_at": true, "failure_reason": true, "loaded_at": true,
 	"en_route_at": true, "delivered_at": true, "handoff_at": true,
 	"photo_count": true, "created_at": true, "weight_kg": true,
@@ -52,7 +52,7 @@ var contractRunFields = map[string]bool{
 	"id": true, "run_no": true, "branch_id": true, "scheduled_date": true,
 	"truck_id": true, "driver_id": true, "truck_code": true,
 	"driver_name": true, "status": true, "notes": true, "dispatched_at": true,
-	"completed_at": true, "stop_count": true, "created_at": true,
+	"completed_at": true, "run_departs_at": true, "stop_count": true, "created_at": true,
 	"commit_state": true, "reopened_at": true, "reopen_reason": true,
 	"commit": true, "gauge": true,
 }
@@ -87,7 +87,7 @@ func fullStop() Stop {
 		Status: StopEnRoute, TimeWindow: "AM", ContactName: "Fixture contact",
 		ContactPhone: "5550100", AddressLine: "Fixture address line", City: "Fixture City",
 		PostalCode: "K0A 0A0", Latitude: &lat, Longitude: &lng,
-		Instructions: "Fixture instructions", PODSignedRef: "FXSIG-1", PODReceivedBy: "Fixture Receiver",
+		Instructions: "Fixture instructions", GateCode: "#4420", PODSignedRef: "FXSIG-1", PODReceivedBy: "Fixture Receiver",
 		PODAt: &at, FailureReason: "", LoadedAt: &at, EnRouteAt: &at, DeliveredAt: nil,
 		HandoffAt: nil, PhotoCount: 2, CreatedAt: at, WeightKg: &weight, VolumeM3: &volume,
 		PalletPositions: &pallets, ValueCents: &value, FreightCents: &freight,
@@ -125,7 +125,7 @@ func TestStopsPayloadSerialisesOnlyTheContractFields(t *testing.T) {
 	}
 	// The declared legs that must be present on the widest row: the
 	// required set plus the ones this row set.
-	for _, k := range []string{"id", "branch_id", "order_id", "run_id", "stop_no", "scheduled_date", "status", "photo_count", "created_at", "weight_kg", "volume_m3", "pallet_positions", "requested_date", "commit_state", "reopened_at", "reopen_reason", "pod_signature_ref", "pod_received_by", "pod_at", "loaded_at", "en_route_at", "latitude", "longitude"} {
+	for _, k := range []string{"id", "branch_id", "order_id", "run_id", "stop_no", "scheduled_date", "status", "photo_count", "created_at", "weight_kg", "volume_m3", "pallet_positions", "requested_date", "commit_state", "reopened_at", "reopen_reason", "pod_signature_ref", "pod_received_by", "pod_at", "loaded_at", "en_route_at", "latitude", "longitude", "gate_code"} {
 		if _, ok := data[k]; !ok {
 			t.Fatalf("widest stop row lost declared leg %q (payload keys: %v)", k, data)
 		}
@@ -145,7 +145,7 @@ func TestRunsPayloadMatchesTheContractFields(t *testing.T) {
 		BranchID: testkit.BranchNorthAID, ScheduledDate: "2026-09-25",
 		TruckID: testkit.TruckID, DriverID: "3ef10000-0000-4000-8000-0000000000c1",
 		TruckCode: "FX-TRK-1", DriverName: "Fixture Driver", Status: RunDispatched,
-		Notes: "Fixture notes", DispatchedAt: &at, StopCount: 3, CreatedAt: at,
+		Notes: "Fixture notes", DispatchedAt: &at, RunDepartsAt: &at, StopCount: 3, CreatedAt: at,
 		CommitState: "AUTO", ReopenedAt: "2026-09-20", ReopenReason: "Fixture reopen",
 	}
 	state, err := runStateOf(syncRunRow{run: r, seq: 1})

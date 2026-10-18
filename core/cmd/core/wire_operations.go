@@ -1429,6 +1429,9 @@ func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
 		RequestedAt:  t.RequestedAt,
 		Lines:        lines,
 		Source:       "DISPATCH",
+		RunNo:        t.RunNo,
+		RunDepartsAt: t.RunDepartsAt,
+		LoadPosition: t.LoadPosition,
 	}
 }
 
