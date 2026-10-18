@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { functionBody } from "./_slice.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, "..");
@@ -20,9 +21,12 @@ const src = (rel) => readFileSync(join(appDir, rel), "utf8");
 
 test("the Receiving queue marks Expected with a data-expected-col on th and td", () => {
   const source = src("src/receiving/receiving-views.ts");
-  const queueRange = source.slice(
-    source.indexOf('aria-label="Orders to receive"'),
-    source.indexOf("// ---- the order"),
+  // The queue is the function that draws it; taking its body (and proving it is the queue) means a moved or
+  // renamed section comment cannot widen or empty the text the assertions read.
+  const queueRange = functionBody(source, "queue");
+  assert.ok(
+    queueRange.includes('aria-label="Orders to receive"'),
+    "the function named queue must be the one that draws the Orders to receive panel",
   );
   assert.ok(
     /<th data-expected-col>Expected<\/th>/.test(queueRange),
