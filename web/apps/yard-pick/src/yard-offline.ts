@@ -183,7 +183,12 @@ export class YardOffline {
   async cycle(): Promise<void> {
     const mark = this.#writes;
     await this.#sync(async () => {
-      await this.runner.dispatch({ type: "ONLINE" });
+      await this.runner.settled();
+      if (this.runner.state === "auth_expired") {
+        await this.runner.dispatch({ type: "SESSION_REFRESHED", online: this.#lastOnline ?? true });
+      } else {
+        await this.runner.dispatch({ type: "ONLINE" });
+      }
       await this.runner.request();
       await this.runner.settled();
     });
@@ -372,9 +377,9 @@ export class YardOffline {
   /** Claim an unclaimed pick: the claim queues, the local row shows it. The
    * payload declares the status alone: who claimed is the caller's own fact,
    * stamped by the server, never a field the device declares. */
-  async claim(taskId: string): Promise<Result<YardTask>> {
+  async claim(taskId: string, sync = true): Promise<Result<YardTask>> {
     const answer = await this.#taskWrite(taskId, { status: "ACCEPTED", claimed_by: this.#actorId }, { status: "ACCEPTED" });
-    if (answer.ok) this.requestSync();
+    if (answer.ok && sync) this.requestSync();
     return answer;
   }
 

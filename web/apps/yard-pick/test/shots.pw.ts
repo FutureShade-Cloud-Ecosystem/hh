@@ -62,8 +62,8 @@ for (const size of SIZES) {
       await take("03", "held-order");
 
       // A claimed pick, opened and started.
-      await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
-      await page.getByRole("button", { name: "Start picking" }).click();
+      await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
+      await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
       await expect(page.locator("[data-task-status]")).toHaveText("Picking");
       await brandOn();
       await take("04", "pick-started");
@@ -95,7 +95,7 @@ for (const size of SIZES) {
       // The pick that already holds the shortages: SO-1041, in progress, one
       // open and one cleared.
       await page.getByRole("button", { name: "Back to the queue" }).click();
-      await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+      await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
       await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
       await brandOn();
 
@@ -117,7 +117,7 @@ for (const size of SIZES) {
 
       // Staged, with the spot and the handle: back to the short picked order.
       await page.getByRole("button", { name: "Back to the queue" }).click();
-      await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+      await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
       await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
       await brandOn();
       await page.getByLabel("The stage location").fill("Bay 3");

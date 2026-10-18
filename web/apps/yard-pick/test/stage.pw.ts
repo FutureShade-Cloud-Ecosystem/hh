@@ -14,9 +14,8 @@ test.beforeEach(async ({ request, page }) => {
 /** Opens the claimed pick, starts it, and records a full pick: ready to stage. */
 async function readyToStage(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
@@ -25,6 +24,7 @@ async function readyToStage(page: import("@playwright/test").Page): Promise<void
 
 test("the stage form demands a spot before it will stage", async ({ page }) => {
   await readyToStage(page);
+  await expect(page.locator("[data-stage-form] hh-sheet")).toHaveAttribute("open", "");
   await expect(page.locator("[data-stage-form]")).toContainText("Where did you put it?");
   await expect(page.locator("[data-stage-form]")).toContainText("The ref is generated for you if you leave it blank.");
   await page.getByRole("button", { name: "Stage", exact: true }).click();

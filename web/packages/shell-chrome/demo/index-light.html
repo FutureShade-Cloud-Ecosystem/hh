@@ -131,19 +131,19 @@
   /* ── the quote blue family (decision log rows 1047 item 7 and 1063) ─────────
      Quotes and their documents read in an indigo quote blue; orders and the till keep gold,
      so a conversion visibly changes colour. The roles mirror the gold family's. Brand mode
-     half here, light half below. The FILL is one value in both modes and carries white (the
-     D-077 shape), so those two are re-valued by no block; the control is seen by its 1px
-     fill-on border, the .btn-primary pattern. The charcoal ink and link are the Quote Desk
+     half here, light half below. The FILL is per theme: in light it is #1D4ED8 carrying white
+     (the D-077 shape, 6.70:1); in brand mode it is the Quote Desk boards' own button, #86A3C9
+     carrying the near-black #0B1725 (6.96:1), and it is seen by itself as a shape (6.80:1 on the
+     page, 6.09:1 on the card), where the old invariant #1D4ED8 measured 2.63:1 on the charcoal
+     page and was seen only by its white edge. The charcoal ink and link are the Quote Desk
      boards' own dusty blues (q4 and q6 charcoal): #86A3C9 for the accent ink (6.80:1 on the
-     page, 6.09:1 on the card) and the kit's #9DB4CC for links (8.26:1, 7.40:1). The boards
-     also draw the quote button as #86A3C9 with dark ink; this sheet keeps the FILL invariant
-     (the carried rule) until that rule is ruled on. The tint is the quote header band's
+     page, 6.09:1 on the card) and the kit's #9DB4CC for links (8.26:1, 7.40:1). The tint is the quote header band's
      ground, written flat so the gates can measure it: charcoal is mix(#86A3C9, black 78%) =
      #1D242C, light is mix(#1D4ED8, white 90%). Nothing here re-values the gold
      family, and the till never consumes these. */
   --hh-quote: #86A3C9;         /* the accent as ink: text, borders, the focus ring's quote twin; the boards' dusty quote blue */
-  --hh-quote-fill: #1D4ED8;    /* the pressable control: theme-invariant (carried rule); brand mode sees it by its 1px fill-on border, the .btn-primary pattern */
-  --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 in both modes */
+  --hh-quote-fill: #86A3C9;    /* the pressable control, the boards' quote button in brand mode */
+  --hh-quote-fill-on: #0B1725; /* the ink the fill carries: 6.96:1 */
   --hh-quote-link: #9DB4CC;    /* links and text actions, as the boards draw them */
   --hh-quote-tint: #1D242C;    /* the quote header band's ground, mix(#86A3C9, black 78%) */
 
@@ -405,8 +405,11 @@
   --hh-focus-ring: var(--hh-accent-text);
 
   /* The quote blue's light half: 8.10:1 on the card, 6.81:1 on the page; the tint is
-     mix(#1D4ED8, white 90%) and quote ink on it is 6.92:1. The fill and its ink stay put. */
+     mix(#1D4ED8, white 90%) and quote ink on it is 6.92:1. The fill is the D-077 blue carrying
+     white (6.70:1), 5.64:1 on the page and 6.70:1 on the card. */
   --hh-quote: #1C45B8;
+  --hh-quote-fill: #1D4ED8;
+  --hh-quote-fill-on: #FFFFFF;
   --hh-quote-link: #1C45B8;
   --hh-quote-tint: #E8EDFB;
 

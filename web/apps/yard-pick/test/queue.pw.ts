@@ -13,22 +13,25 @@ test.beforeEach(async ({ request, page }) => {
 
 test("the board lands on the Point Loma queue, in its two halves", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("[data-branch]")).toHaveText("Gable Landscape Supply, Point Loma");
+  await expect(page.locator("[data-branch]")).toContainText("Point Loma");
   await expect(page.getByRole("heading", { name: "Pick queue" })).toBeVisible();
-  await expect(page.locator("[data-unclaimed]")).toHaveText("3 unclaimed");
-  await expect(page.locator("[data-claimed]")).toHaveText("2 claimed");
+  await expect(page.locator("[data-queue-sub]")).toContainText("5 orders, in departure order");
+  await expect(page.locator("[data-unclaimed]")).toHaveCount(0);
+  await expect(page.locator("[data-claimed]")).toHaveCount(0);
   await expect(page.locator("[data-pick-card]")).toHaveCount(5);
 });
 
 test("a card carries the order, the customer, the lines, the priority and the status", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator("[data-pick-card] [data-order-no]")).toHaveText(["SO-1042", "SO-1039", "SO-1040", "SO-1044", "SO-1041"]);
   const card = page.locator("[data-pick-card]", { hasText: "SO-1042" });
   await expect(card.locator("[data-order-no]")).toHaveText("SO-1042");
   await expect(card).toContainText("Bluffside Builders");
   await expect(card).toContainText("2 lines");
   await expect(card).toContainText("Wanted today");
+  await expect(card.locator("[data-run-line]")).toHaveText("R5 · leaves 8:15 · load 2nd");
   await expect(card.locator("[data-task-status]")).toHaveText("Queued");
-  await expect(card.getByRole("button", { name: "Claim" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Claim" })).toHaveCount(0);
 });
 
 test("a claimed pick is marked as yours, with the made to order note on the mixed load", async ({ page }) => {
@@ -52,13 +55,14 @@ test("a held order waits on the board with its words and no claim to press", asy
 test("claiming a pick makes it mine and opens it", async ({ page }) => {
   await page.goto("/");
   const card = page.locator("[data-pick-card]", { hasText: "SO-1039" });
-  await card.getByRole("button", { name: "Claim" }).click();
+  await card.click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
   await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
+  await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await page.getByRole("button", { name: "Back to the queue" }).click();
   const nowMine = page.locator("[data-pick-card]", { hasText: "SO-1039" });
   await expect(nowMine).toContainText("Claimed by you");
-  await expect(nowMine.locator("[data-task-status]")).toHaveText("Claimed");
+  await expect(nowMine.locator("[data-task-status]")).toHaveText("Picking");
 });
 
 test("an open shortage leads its card with a Short pill and the first item", async ({ page }) => {

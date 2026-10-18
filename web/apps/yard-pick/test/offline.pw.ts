@@ -87,12 +87,10 @@ function payloadOf(op: unknown): Record<string, unknown> {
 /** Claims SO-1039 offline, starts it and records the pick with a short line: all three wait in the outbox. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
-  // The claim goes through the door: queued, not lost, and the pick opens.
-  await page.locator("[data-pick-card]", { hasText: "SO-1039" }).getByRole("button", { name: "Claim" }).click();
+  // Tapping the card claims and starts the pick in one step: both wait in the outbox.
+  await page.locator("[data-pick-card]", { hasText: "SO-1039" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
-  // Starting the pick queues its own operation; the record doors open on it.
-  await page.getByRole("button", { name: "Start picking" }).click();
+  await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   for (const what of ["Retaining wall block", "HPB bedding sand"]) {
     await page.locator("[data-line]", { hasText: what }).locator(".line-row").click();
@@ -169,7 +167,7 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
 
 test("offline, a shortage report waits in the outbox and drains clean, and the settle says no signal", async ({ page, request }) => {
   await loadBoard(page);
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await platformWord(page, false, "You're offline");
   await page.getByRole("button", { name: "Report a shortage" }).click();
@@ -199,7 +197,7 @@ test("offline, a shortage report waits in the outbox and drains clean, and the s
 
 test("offline, the pick record and a shortage report drain in order and land clean, and the rep is told when they send", async ({ page, request }) => {
   await loadBoard(page);
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await platformWord(page, false, "You're offline");
   // The short line: two of forty six flagstone, with its reason.
@@ -251,7 +249,7 @@ test("offline, the pick record and a shortage report drain in order and land cle
 
 test("offline, a shortage reported before the record does not make the record come back superseded", async ({ page, request }) => {
   await loadBoard(page);
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await platformWord(page, false, "You're offline");
   // The picker reports the shortage first: on the server it moves the task's seq.

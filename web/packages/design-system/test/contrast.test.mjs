@@ -142,7 +142,7 @@ test('every ink resolves in every palette (guards the matrix above)', () => {
 const FILL_PAIRS = [
   { fill: '--hh-danger-fill', surfaces: ['--hh-page', '--hh-ground'] },
   { fill: '--hh-success-fill', surfaces: ['--hh-page', '--hh-card'] },
-  { fill: '--hh-quote-fill', surfaces: ['--hh-page', '--hh-card'], lightOnly: true },
+  { fill: '--hh-quote-fill', surfaces: ['--hh-page', '--hh-card'] },
 ];
 
 // The danger fill against every surface a danger button can land on: under white ink the fill

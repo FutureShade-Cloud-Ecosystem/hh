@@ -60,6 +60,8 @@ export type {
   FeedbackSendResult,
   FeedbackSender,
 } from './feedback.js';
+export { HHSheet, hhSheetTag, hhSheetEvents, HHSheetCloseEvent } from './sheet.js';
+export type { HHSheetCloseReason, HHSheetCloseDetail } from './sheet.js';
 
 export { ScanConfirmKit } from './kits/scan-and-confirm.js';
 export { ListDetailKit } from './kits/list-detail.js';

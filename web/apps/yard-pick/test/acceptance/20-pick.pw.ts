@@ -65,10 +65,9 @@ test("the card claims a pick, records its lines in full, changes the skid count 
 test("the screen walks the same story", async ({ page }, testInfo) => {
   await arriveFromFrontDoor(page);
   await expect(page.locator("[data-pick-card]").first()).toBeVisible();
-  const firstOpen = page.locator("[data-pick-card]").filter({ has: page.getByRole("button", { name: "Claim" }) }).first();
-  await firstOpen.getByRole("button", { name: "Claim" }).click();
+  const firstOpen = page.locator("[data-pick-card]").filter({ has: page.locator("[data-task-status]", { hasText: "Queued" }) }).first();
+  await firstOpen.click();
   await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   for (const line of await page.locator("[data-line]").all()) {
     await line.locator(".line-row").click();

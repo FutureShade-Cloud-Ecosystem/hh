@@ -146,17 +146,73 @@ export function isUnclaimed(status: string): boolean {
   return status === "QUEUED" || status === "PUSHED";
 }
 
+/** Format an integer load position into words ("load 1st", "load 2nd", ...); empty when absent. */
+export function loadPositionWord(position: number | null | undefined): string {
+  if (typeof position !== "number" || !Number.isInteger(position) || position <= 0) return "";
+  const mod100 = position % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `load ${position}th`;
+  switch (position % 10) {
+    case 1:
+      return `load ${position}st`;
+    case 2:
+      return `load ${position}nd`;
+    case 3:
+      return `load ${position}rd`;
+    default:
+      return `load ${position}th`;
+  }
+}
+
+/** Format an RFC 3339 departure timestamp into "leaves 8:15"; empty when absent or unreadable. */
+export function departTimeWord(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (s === "") return "";
+  const plainClock = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (plainClock) return `leaves ${Number(plainClock[1])}:${plainClock[2]}`;
+  const isoClock = /T(\d{2}):(\d{2})/.exec(s);
+  if (isoClock) return `leaves ${Number(isoClock[1])}:${isoClock[2]}`;
+  return "";
+}
+
 /**
- * queueOrder sorts the board the way a yard lead reads it: open shortage
- * first (somebody at the counter is waiting on an answer), then open work
- * before finished, then priority, then oldest first. A pure comparator over
- * a copied array, it never mutates its input.
+ * Assemble the queue row's run line ("R5 · leaves 8:15 · load 2nd") from the
+ * optional fields on Task / TaskPickTicket. Any absent piece is omitted cleanly.
  */
-export function queueOrder<T extends { task: { open_shortages: number; status: string; priority: string; created_at: string } }>(
+export function runLineWords(
+  source: { readonly run_no?: string; readonly run_departs_at?: string; readonly load_position?: number } | null | undefined,
+  fallback?: { readonly run_no?: string; readonly run_departs_at?: string; readonly load_position?: number } | null | undefined,
+): string {
+  const runNo = (source?.run_no ?? fallback?.run_no ?? "").trim();
+  const departs = departTimeWord(source?.run_departs_at ?? fallback?.run_departs_at);
+  const loadPos = loadPositionWord(source?.load_position ?? fallback?.load_position);
+  return [runNo, departs, loadPos].filter((part) => part !== "").join(" · ");
+}
+
+/**
+ * queueOrder sorts the board by departure time when run_departs_at is present,
+ * and falls back to the yard lead's order (open shortage first, then open work
+ * before finished, then priority, then oldest first) when absent or tied. A
+ * pure comparator over a copied array, it never mutates its input.
+ */
+export function queueOrder<
+  T extends {
+    task: { open_shortages: number; status: string; priority: string; created_at: string; run_departs_at?: string };
+    ticket?: { run_departs_at?: string } | null;
+  },
+>(
   entries: readonly T[] | null | undefined,
 ): T[] {
   const rank: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 };
+  const departOf = (row: T): string => (row.task.run_departs_at ?? row.ticket?.run_departs_at ?? "").trim();
   return [...(entries ?? [])].sort((a, b) => {
+    const depA = departOf(a);
+    const depB = departOf(b);
+    if (depA !== "" && depB !== "") {
+      const cmp = depA.localeCompare(depB);
+      if (cmp !== 0) return cmp;
+    } else if (depA !== "" || depB !== "") {
+      return depA !== "" ? -1 : 1;
+    }
     const shortA = a.task.open_shortages > 0 ? 0 : 1;
     const shortB = b.task.open_shortages > 0 ? 0 : 1;
     if (shortA !== shortB) return shortA - shortB;

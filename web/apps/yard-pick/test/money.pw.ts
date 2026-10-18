@@ -40,9 +40,8 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-pick-card]")).toHaveCount(5);
   const screens: string[] = [await everyWordOnScreen(page)];
 
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   screens.push(await everyWordOnScreen(page));
 
@@ -65,7 +64,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   screens.push(await everyWordOnScreen(page));
 
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await page.getByRole("button", { name: "Report a shortage" }).click();
   await expect(page.locator("[data-shortage-sheet]")).toBeVisible();
@@ -110,9 +109,8 @@ test("with money laid on every read, no screen shows a figure or a money word", 
 test("nothing the app sends to the core carries a money field", async ({ page, request }) => {
   await useScenario(request, "poisoned");
   await page.goto("/");
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await page.locator("[data-line]").first().locator(".line-row").click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();

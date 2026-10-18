@@ -31,7 +31,7 @@ export const yardStyles = css`
     }
   }
   h1 {
-    margin: 0 0 var(--hh-s-12);
+    margin: 0 0 var(--hh-s-8);
     font-size: 28px;
     line-height: 1.2;
     font-weight: 700;
@@ -41,6 +41,7 @@ export const yardStyles = css`
   p { margin: 0 0 var(--hh-s-8); }
   .dim { color: var(--hh-text-dim); }
   .small { font-size: 14px; }
+  .queue-sub { margin: 0 0 var(--hh-s-12); }
   .section-label {
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -66,24 +67,43 @@ export const yardStyles = css`
     .pick-grid { grid-template-columns: 1fr 1fr; gap: var(--hh-s-16); }
   }
   .pick-card {
+    padding: 0;
+    border-left: 6px solid var(--hh-control-line);
+    overflow: hidden;
+  }
+  .pick-card.queued { border-left-color: var(--hh-control-line); }
+  .pick-card.held { border-left-color: var(--hh-state-watch); }
+  .pick-card.picking { border-left-color: var(--hh-state-good); }
+  .pick-card.staged { border-left-color: var(--hh-text-dim); }
+  .pick-card.mine { border-left-color: var(--hh-state-good); }
+  .pick-card-inner {
     display: flex;
     flex-direction: column;
     gap: var(--hh-s-8);
-    border-left: 6px solid var(--hh-control-line);
-    padding-left: var(--hh-s-16);
+    width: 100%;
+    min-height: 56px;
+    padding: var(--hh-s-16);
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  .pick-card.mine { border-left-color: var(--hh-state-good); }
+  .pick-card-inner:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: -3px; }
   .pick-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-8); flex-wrap: wrap; }
   .pick-no { font-size: 20px; font-weight: 700; }
-  .pick-who { color: var(--hh-text-dim); }
-  .pick-facts { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); color: var(--hh-text-dim); font-size: 14px; }
-  .mine-tag { color: var(--hh-state-good); font-weight: 700; }
+  .pick-who { color: var(--hh-text-dim); margin: 0; }
+  .pick-card-run { font-weight: 700; margin: 0; color: var(--hh-text); }
+  .pick-facts { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); color: var(--hh-text-dim); font-size: 14px; margin: 0; }
+  .mine-tag { color: var(--hh-state-good); font-weight: 700; margin: 0; }
   .held {
     padding: var(--hh-s-8) var(--hh-s-12);
     border-radius: var(--hh-radius-control);
     border: 2px solid var(--hh-state-watch);
     color: var(--hh-state-watch);
     font-weight: 600;
+    margin: 0;
   }
 
   .status {
@@ -131,7 +151,7 @@ export const yardStyles = css`
     cursor: pointer;
   }
   .back:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
-  .detail-head { display: flex; justify-content: space-between; align-items: center; gap: var(--hh-s-12); flex-wrap: wrap; }
+  .detail-head { display: flex; justify-content: space-between; align-items: center; gap: var(--hh-s-12); flex-wrap: wrap; margin-bottom: var(--hh-s-4); }
   .detail-who { font-size: 20px; font-weight: 700; margin: 0; }
   .detail-grid { display: grid; grid-template-columns: 1fr; gap: var(--hh-s-16); }
   @media (min-width: 900px) {
@@ -152,11 +172,15 @@ export const yardStyles = css`
   .lines { list-style: none; margin: 0; padding: 0; }
   .lines li { border-bottom: 1px solid var(--hh-line); }
   .lines li:last-child { border-bottom: 0; }
+  .line.short {
+    border-left: 4px solid var(--hh-state-watch);
+    padding-left: var(--hh-s-8);
+  }
   .line-row {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-columns: 56px minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--hh-s-8);
+    gap: var(--hh-s-12);
     width: 100%;
     min-height: 72px;
     padding: var(--hh-s-8) 0;
@@ -169,18 +193,44 @@ export const yardStyles = css`
     cursor: pointer;
   }
   .line-row:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .line-thumb {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-row-alt);
+    border: 1px solid var(--hh-line);
+    overflow: hidden;
+    flex: none;
+  }
+  .line-thumb-fallback {
+    position: absolute;
+    inset: 0;
+    background: var(--hh-row-alt);
+  }
+  .line-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
   .line-check {
-    width: 40px;
-    height: 40px;
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
-    border: 3px solid var(--hh-control-line);
+    border: 2px solid var(--hh-control-line);
+    background: var(--hh-card);
     display: grid;
     place-items: center;
-    font-size: 20px;
+    font-size: 13px;
     font-weight: 800;
   }
   .line-check.full { background: var(--brand-fill); border-color: var(--brand-fill-on); color: var(--brand-fill-on); }
-  .line-check.short { border-color: var(--hh-state-watch); color: var(--hh-state-watch); }
+  .line-check.short { background: var(--hh-card); border-color: var(--hh-state-watch); color: var(--hh-state-watch); }
   .line-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .line-desc { font-weight: 600; overflow-wrap: anywhere; }
   .line-sub { color: var(--hh-text-dim); font-size: 14px; overflow-wrap: anywhere; }
@@ -225,6 +275,41 @@ export const yardStyles = css`
   .skid-row { display: flex; align-items: center; gap: var(--hh-s-16); margin-bottom: var(--hh-s-12); min-width: 0; }
   .skid-count { font-size: 28px; font-weight: 800; flex: 1; text-align: center; overflow-wrap: anywhere; }
   .skid-count.unknown { font-size: 18px; font-weight: 700; color: var(--hh-text-dim); }
+
+  /* Design-system bottom sheet parts, rendered inline inside the pick detail cards so
+     the grabber bar, heading, radio rows and actions never obscure adjacent steppers. */
+  hh-sheet::part(scrim) {
+    display: none;
+  }
+  hh-sheet::part(dialog) {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    margin: 0;
+    padding: var(--hh-s-8) 0 0;
+    box-shadow: none;
+    background: transparent;
+    border-radius: 0;
+    overflow: visible;
+  }
+  hh-sheet::part(rows) {
+    max-height: none;
+    overflow: visible;
+    margin-bottom: var(--hh-s-12);
+  }
+
+  .bay-chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--hh-s-8);
+    margin: var(--hh-s-8) 0 var(--hh-s-12);
+  }
+  .bay-chip {
+    min-height: 56px;
+    font-weight: 700;
+  }
 
   .field-label { display: block; font-weight: 700; margin: var(--hh-s-12) 0 var(--hh-s-8); }
   .text-field {
@@ -321,7 +406,7 @@ export const yardStyles = css`
   .shortage-list li { padding: var(--hh-s-12) 0; border-bottom: 1px solid var(--hh-line); }
   .shortage-list li:last-child { border-bottom: 0; }
   .shortage-what { font-weight: 700; }
-  .shortage-open { color: var(--hh-state-watch); font-weight: 700; }
+  .shortage-open { color: var(--hh-state-watch); font-weight: 700; margin: 0; }
   .shortage-cleared { color: var(--hh-success); font-weight: 700; }
 
   /* Staged. */
@@ -333,7 +418,23 @@ export const yardStyles = css`
      system's own floor is 44). The shared header's Switch role and Sign out
      take the floor through its one host knob. */
   hos-app-header { --hh-header-control-min: 56px; }
+  .header-extra {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+  }
   .theme-button { min-height: 56px; }
+  .header-door {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-height: 56px;
+    max-width: 100%;
+    text-align: left;
+  }
   main .btn { min-height: 56px; }
   .card .big + .big { margin-top: var(--hh-s-12); }
   .queue-footnote { margin-top: var(--hh-s-16); }
@@ -341,18 +442,9 @@ export const yardStyles = css`
   .pick-no, [data-pick-order] { font-variant-numeric: normal; font-feature-settings: normal; }
   .pick-head-pills { display: inline-flex; gap: var(--hh-s-8); align-items: center; flex-wrap: wrap; }
 
-  /* The changes waiting on the yard: the landing's door, and the waiting
-     rows. The door names its count; the rows are the pull list's shape (one
-     big tappable row, the change's own words under the order number). */
-  .door-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--hh-s-12);
-    margin: 0 0 var(--hh-s-12);
-  }
+  /* The changes waiting on the yard: the waiting rows in the changes view. */
   .change-card { padding: 0; }
-  .change-card .line-row { width: 100%; border: 0; background: transparent; }
+  .change-card .line-row { grid-template-columns: minmax(0, 1fr) auto; width: 100%; border: 0; background: transparent; padding: var(--hh-s-16); }
   .change-card .line-sub { overflow-wrap: anywhere; }
 
   /* The stall strip: the outbox health's own words, under the offline banner.
