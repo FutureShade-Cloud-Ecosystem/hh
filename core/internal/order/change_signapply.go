@@ -55,12 +55,9 @@ type ChangeEventPublisher interface {
 	EnqueueTx(ctx context.Context, tx pgx.Tx, topic string, payload any) error
 }
 
-// WithChangeEvents injects the outbox seam. An unwired seam applies without the event (fail open, said
-// loudly at boot through ChangeEventsWired), like the reservation seam.
+// WithChangeEvents injects the outbox seam. An unwired seam applies without the event (fail open, like the
+// reservation seam); the composition leg in cmd/core proves the real root wires it.
 func (s *Service) WithChangeEvents(p ChangeEventPublisher) *Service { s.changeEvents = p; return s }
-
-// ChangeEventsWired reports whether an applied change reaches the outbox.
-func (s *Service) ChangeEventsWired() bool { return s.changeEvents != nil }
 
 // ChangeAppliedTopic is the outbox topic of a signed and applied change.
 const ChangeAppliedTopic = "order.change.applied"

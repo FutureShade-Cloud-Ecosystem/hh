@@ -413,7 +413,7 @@ func (s *Service) assertEditableMoney(ctx context.Context, orderID string, taxCe
 }
 
 // assertNoMoneyAttached is the invoice and sale half of the money predicate: no finalized invoice and no
-// committed sale. A change order apply runs it and re-assesses tax itself (change_apply.go), so it needs
+// committed sale. A change order apply runs it and re-assesses tax itself (change_repository.go), so it needs
 // this half without the line edit's blanket refusal of a taxed order.
 func (s *Service) assertNoMoneyAttached(ctx context.Context, orderID string) error {
 	if err := s.assertCancellable(ctx, orderID); err != nil {

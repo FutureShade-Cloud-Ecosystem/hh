@@ -389,9 +389,6 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStandardRate(newTaxEngine(pool)).
 		WithZone(newDealerZone(pool)).
 		WithChangeEvents(orderChangeEvents{})
-	if !orderSvc.ChangeEventsWired() {
-		log.Warn("order: change event seam UNWIRED - an applied change order will announce nothing")
-	}
 	// The change queue labels each requester by role (never by name); a nil pool (the wiring shape
 	// tests) leaves the labels blank.
 	if pool != nil {
