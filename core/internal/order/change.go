@@ -554,8 +554,10 @@ func (s *Service) FinanceApprove(ctx context.Context, changeID, note string) (Ch
 	return out, nil
 }
 
-// RejectChange refuses a change. Available from any live state to any in-branch staff: the yard
-// saying "we cannot do that, the truck has gone" is as valid a refusal as a controller's.
+// RejectChange refuses a change. Any in-branch staff may reject while the yard is deciding (the yard
+// saying "we cannot do that, the truck has gone" is as valid a refusal as a controller's); once the change
+// waits on finance or is approved only a manager may, and the guarded write enforces that against a racing
+// yard ack, not only the read before it.
 func (s *Service) RejectChange(ctx context.Context, changeID, note string) (ChangeOrder, error) {
 	return s.closeChange(ctx, changeID, ChangeStatusRejected, note, "CHANGE_REJECTED")
 }
@@ -576,15 +578,28 @@ func (s *Service) closeChange(ctx context.Context, changeID, target, note, actio
 	// The service, not only the route guard, decides who may close a change. A cancel is the requester
 	// withdrawing, so only the requester and a manager; a reject is any staff while the yard decides, and
 	// a manager's alone once the change waits on finance or is approved.
+	allowedFrom := liveChangeStatuses
 	if !caller.IsManager() {
 		if target == ChangeStatusCancelled && (co.RequestedBy == "" || co.RequestedBy != caller.UserID) {
 			return ChangeOrder{}, ErrForbidden
 		}
-		if target == ChangeStatusRejected && co.Status != ChangeStatusPendingYard {
+		if target == ChangeStatusRejected {
+			if co.Status != ChangeStatusPendingYard {
+				return ChangeOrder{}, ErrForbidden
+			}
+			// The status above came from an unlocked read. The write carries the same restriction, so a yard
+			// ack that lands between the two cannot let this reject through.
+			allowedFrom = []string{ChangeStatusPendingYard}
+		}
+	}
+	out, err := cs.CloseChangeOrder(ctx, co.ID, target, caller.UserID, clampNote(note), allowedFrom)
+	if errors.Is(err, ErrChangeTerminal) && len(allowedFrom) < len(liveChangeStatuses) {
+		// Either the change closed meanwhile (terminal, as ever) or it moved past the status this caller may
+		// reject from: that second case is an authority refusal, not a closed change.
+		if now, gerr := cs.GetChangeOrder(ctx, co.ID); gerr == nil && !isTerminalChange(now.Status) {
 			return ChangeOrder{}, ErrForbidden
 		}
 	}
-	out, err := cs.CloseChangeOrder(ctx, co.ID, target, caller.UserID, clampNote(note))
 	if err != nil {
 		return ChangeOrder{}, err
 	}
@@ -592,6 +607,9 @@ func (s *Service) closeChange(ctx context.Context, changeID, target, note, actio
 	out.NextActions = s.changeActions(ctx, caller, out.Status, out.BranchID, out.RequestedBy, nil)
 	return out, nil
 }
+
+// liveChangeStatuses are the states a change can still be closed from.
+var liveChangeStatuses = []string{ChangeStatusPendingYard, ChangeStatusPendingFinance, ChangeStatusApproved, "DRAFT"}
 
 // - apply -
 

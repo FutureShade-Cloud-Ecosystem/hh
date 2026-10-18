@@ -59,7 +59,7 @@ type changeStore interface {
 	ListChangeOrders(ctx context.Context, orderID string) ([]ChangeOrder, error)
 	RecordYardAck(ctx context.Context, id, actor, note, nextStatus string) (ChangeOrder, error)
 	RecordFinanceApproval(ctx context.Context, id, actor, note, nextStatus string) (ChangeOrder, error)
-	CloseChangeOrder(ctx context.Context, id, target, actor, note string) (ChangeOrder, error)
+	CloseChangeOrder(ctx context.Context, id, target, actor, note string, allowedFrom []string) (ChangeOrder, error)
 	ApplyChangeTx(ctx context.Context, id string, hooks changeApplyHooks) (ChangeOrder, error)
 	SignApplyChangeTx(ctx context.Context, w signApplyWrite) (ChangeOrder, error)
 }
@@ -251,14 +251,17 @@ func (r *Repository) RecordFinanceApproval(ctx context.Context, id, actor, note,
 		nextStatus, actor, note)
 }
 
-// CloseChangeOrder rejects or withdraws a live request.
-func (r *Repository) CloseChangeOrder(ctx context.Context, id, target, actor, note string) (ChangeOrder, error) {
+// CloseChangeOrder rejects or withdraws a live request. allowedFrom is the set of statuses the caller may
+// close it from, decided in the same UPDATE that writes: a caller whose authority depends on the status (a
+// frontline reject is the yard's alone) cannot be raced past it by a yard ack landing between a read and this
+// write. A row that exists but is outside the set answers ErrChangeTerminal, as every guarded write here does.
+func (r *Repository) CloseChangeOrder(ctx context.Context, id, target, actor, note string, allowedFrom []string) (ChangeOrder, error) {
 	return r.guardedChangeUpdate(ctx, id, `
 		UPDATE change_orders
 		   SET status = $2, decided_by = NULLIF($3,'')::uuid, decided_at = now(),
 		       decision_note = $4, updated_at = now()
-		 WHERE id = $1 AND status IN ('DRAFT','PENDING_YARD','PENDING_FINANCE','APPROVED')`,
-		target, actor, note)
+		 WHERE id = $1 AND status = ANY($5::text[])`,
+		target, actor, note, allowedFrom)
 }
 
 // guardedChangeUpdate runs a status-guarded UPDATE and translates "no row matched" into

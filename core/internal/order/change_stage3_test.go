@@ -38,6 +38,7 @@ type stage3Store struct {
 	queue      []ChangeQueueItem
 	signCalls  []signApplyWrite
 	closeCalls []string
+	closeFrom  [][]string
 }
 
 var _ changeStore = (*stage3Store)(nil)
@@ -61,8 +62,9 @@ func (f *stage3Store) RecordYardAck(context.Context, string, string, string, str
 func (f *stage3Store) RecordFinanceApproval(context.Context, string, string, string, string) (ChangeOrder, error) {
 	return ChangeOrder{}, errors.New("unreachable")
 }
-func (f *stage3Store) CloseChangeOrder(_ context.Context, _, target, _, _ string) (ChangeOrder, error) {
+func (f *stage3Store) CloseChangeOrder(_ context.Context, _, target, _, _ string, allowedFrom []string) (ChangeOrder, error) {
 	f.closeCalls = append(f.closeCalls, target)
+	f.closeFrom = append(f.closeFrom, allowedFrom)
 	out := f.change
 	out.Status = target
 	return out, nil
@@ -382,5 +384,24 @@ func TestStage3_Route_AReusedKeyIsA409(t *testing.T) {
 	h.writeChangeErr(rr, ErrChangeKeyReused)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("code = %d, want 409", rr.Code)
+	}
+}
+
+// TestStage3_Decline_AFrontlineRejectIsGuardedInTheWriteToo: the write carries the status restriction, so the
+// store is told a non manager's reject may leave PENDING_YARD only, and a manager's may leave any live state.
+func TestStage3_Decline_AFrontlineRejectIsGuardedInTheWriteToo(t *testing.T) {
+	svc, store := s3Fixture(ChangeStatusPendingYard, nil)
+	if _, err := svc.RejectChange(ctxAs(staffAt(s3User, s3Branch)), s3Change, "no"); err != nil {
+		t.Fatalf("frontline reject while the yard decides: %v", err)
+	}
+	if got := store.closeFrom[0]; !slices.Equal(got, []string{ChangeStatusPendingYard}) {
+		t.Fatalf("frontline reject was written from %v, want PENDING_YARD only", got)
+	}
+	svc, store = s3Fixture(ChangeStatusPendingFinance, nil)
+	if _, err := svc.RejectChange(ctxAs(s3Manager()), s3Change, "no"); err != nil {
+		t.Fatalf("manager reject: %v", err)
+	}
+	if got := store.closeFrom[0]; !slices.Contains(got, ChangeStatusPendingFinance) || !slices.Contains(got, ChangeStatusApproved) {
+		t.Fatalf("manager reject was written from %v, want every live state", got)
 	}
 }
