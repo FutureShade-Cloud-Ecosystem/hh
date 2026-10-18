@@ -44,9 +44,13 @@ test('the shared visibility validator anchors to the column the screen actually 
 // The shape test is what stops an ordinary sentence from being mistaken for a field name and
 // anchoring a message under an unrelated input, where nobody would find it.
 test('a sentence that names no knob names no field', () => {
+  // The settings kit's admin refusal carries the package prefix and the four role labels; the
+  // parser strips the prefix and the visible text is what the till shows the reader. The fixture
+  // is the exact server sentence, kept in step with core/internal/settings/service.go.
+  const adminServer = 'settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings';
   for (const msg of [
     'Nothing was saved because the request could not be read',
-    'changing dealer screen settings is limited to administrators',
+    adminServer,
     'internal error',
     'branch_id is required',
     '',
@@ -58,6 +62,9 @@ test('a sentence that names no knob names no field', () => {
     }
     assert.equal(r.field, '', `"${msg}" names no control`);
   }
+ // The parser strips the package prefix; what the reader sees is the same sentence without it.
+  const adminVisible = 'only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings';
+  assert.equal(fieldRefusal(adminServer).sentence, adminVisible, 'the package prefix is stripped, the words are the server\'s');
  // A single lowercase word is not a column name: one underscore at least.
   assert.equal(fieldRefusal('saved').field, '');
 });
@@ -83,8 +90,11 @@ test('a refusal for a control this screen does not render still reaches the read
     'a knob this screen does not draw must not be swallowed',
   );
   assert.equal(
-    formRefusal(fieldRefusal('changing dealer screen settings is limited to administrators'), rendered),
-    'changing dealer screen settings is limited to administrators',
+    // The settings kit's admin refusal as the server sends it (with the settings: prefix). The
+    // parser strips the prefix, the visible sentence is what the till shows the reader, and a
+    // refusal that names no knob belongs at the top of the panel rather than under an input.
+    formRefusal(fieldRefusal('settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings'), rendered),
+    'only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings',
     'and a refusal that names no knob at all belongs at the top',
   );
   assert.equal(formRefusal(null, rendered), '');

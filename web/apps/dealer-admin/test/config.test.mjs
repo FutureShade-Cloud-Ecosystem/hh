@@ -144,10 +144,10 @@ test("a workspace split outside 20 to 80 is refused in the core's words", () => 
 test("a refused read carries the server's own sentence whole; a bare word becomes plain words", () => {
   assert.equal(
     configRefusalWords(
-      "settings: changing dealer screen settings is limited to administrators, inside_sales cannot do it; ask a tech admin",
+      "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings",
       403,
     ),
-    "settings: changing dealer screen settings is limited to administrators, inside_sales cannot do it; ask a tech admin",
+    "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings",
   );
   assert.equal(configRefusalWords("", undefined), "Try again in a moment.");
 });
@@ -195,7 +195,7 @@ test("the cell read asks the core for one surface and one job shape", async () =
 test("a refused cell read answers the refusal, never a throw", async () => {
   const { api } = apiAnswering({
     status: 403,
-    body: { error: "settings: changing dealer screen settings is limited to administrators" },
+    body: { error: "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings" },
   });
   const result = await api.surfaceConfig("money-desk", "manager");
   assert.equal(result.ok, false);

@@ -754,7 +754,11 @@ func (s *RegisterService) SetPolicy(ctx context.Context, p RegisterPolicy) error
 		return httpx.BadRequestf("no authenticated staff caller")
 	}
 	if !caller.IsAdmin() {
-		return httpx.BadRequestf("changing dealer screen settings is limited to administrators, ask a tech admin")
+		// The gate (caller.IsAdmin()) admits the four Tier-1 GLOBAL roles; the words here mirror
+		// the settings kit's NotAdminError so the till can carry one refusal phrase across both
+		// surfaces. The caller's role code never reaches the words; it stays on the staff context
+		// for the audit.
+		return httpx.BadRequestf("billing: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings")
 	}
 	if !containsString([]string{VisibilityManagerUp, VisibilityAllStaff, VisibilityHidden}, p.AccountPositionVisibility) {
 		return httpx.BadRequestf("account position visibility must be MANAGER_UP, ALL_STAFF or HIDDEN")

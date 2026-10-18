@@ -124,8 +124,12 @@ func TestPlatformHotkeys_ADealersAdministratorMayNotChangeThePlatformRoster(t *t
 	if !strings.Contains(msg, "Counter settings") {
 		t.Fatalf("the refusal must name the way forward, a dealer's own keys: %q", msg)
 	}
-	if strings.Contains(msg, "limited to administrators") {
-		t.Fatalf("this is not the not-an-administrator refusal; a GM IS one: %q", msg)
+	// The platform refusal must not overlap the dealer-curation admin refusal's words: that is
+	// how the two refusals stay distinguishable to a reader, and a refactor that pasted one over
+	// the other would also type-check. "dealer screen settings" names the admin-refusal surface
+	// and is never part of the platform one (which names the platform key roster instead).
+	if strings.Contains(msg, "dealer screen settings") {
+		t.Fatalf("this is the dealer-curation admin refusal, not the platform one: %q", msg)
 	}
 }
 
