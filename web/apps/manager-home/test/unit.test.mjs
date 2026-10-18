@@ -149,7 +149,7 @@ test("a kind this caller does not decide becomes plain words naming who decides 
   assert.equal(approvalsRefusalWords("MARGIN_BELOW_MINIMUM", "boom", 500), "boom");
 });
 
-test("the approval kind vocabulary is the core's closed set, in its order", () => {
+test("the approval kind vocabulary is the core's closed set, in its order, then the change queue", () => {
   assert.deepEqual(
     APPROVAL_KINDS.map((k) => k.kind),
     ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE", "CHANGE_ORDER"],

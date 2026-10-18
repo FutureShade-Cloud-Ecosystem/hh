@@ -1719,7 +1719,9 @@ export class ManagerHomeApp extends HHElement {
     const changeOrderQueue: ChangeOrderQueueRow[] = [];
     if (pendingFinance.ok) changeOrderQueue.push(...pendingFinance.value);
     if (approved.ok) changeOrderQueue.push(...approved.value);
-    const candidates = all.ok ? waitingKinds(all.value, changeOrderQueue) : [];
+    // The view opens on the first waiting approvals kind the core does not refuse, as it always has; the change
+    // orders tab shows its count but is never the opening tab, so a person lands where the approvals board puts them.
+    const candidates = all.ok ? waitingKinds(all.value) : [];
     for (const kind of candidates) {
       if (opening !== this.#approvalsOpening) return;
       if (kind === "CHANGE_ORDER") {

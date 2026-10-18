@@ -1357,8 +1357,17 @@ function decidesKind(flow, kind) {
   return kind === "MARGIN_BELOW_MINIMUM" && decidesMargin(flow);
 }
 
-function decidesChangeOrders(flow) {
+// The core's change queue answers every in-branch staff member; what narrows is next_actions. In this stub the
+// controller and the general manager are the named approvers, so on a change waiting on finance only they may sign;
+// every other manager may decline it. An approved change any manager may apply or decline.
+function signsChangeOrders(flow) {
   return flow === "financial-controller" || flow === "general-manager";
+}
+
+function changeActionsFor(flow, change) {
+  if (scenario === "change-order-no-sign" && change.id === CHANGE_PENDING) return ["reject"];
+  if (change.status === "PENDING_FINANCE" && !signsChangeOrders(flow)) return ["reject"];
+  return change.next_actions;
 }
 
 // ---- the builder's world -------------------------------------------------------------
@@ -1759,10 +1768,7 @@ async function handle(req, res) {
     if (status !== "PENDING_FINANCE" && status !== "APPROVED") {
       return refuse(res, 400, "status must be PENDING_FINANCE or APPROVED");
     }
-    const items = (decidesChangeOrders(flow)
-      ? [world.changeOrders.pending, world.changeOrders.approved].filter((c) => c.status === status)
-      : []
-    ).map((c) => ({
+    const items = [world.changeOrders.pending, world.changeOrders.approved].filter((c) => c.status === status).map((c) => ({
         id: c.id,
         change_no: c.change_no,
         order_id: c.order_id,
@@ -1776,7 +1782,7 @@ async function handle(req, res) {
         requested_by_role: c.requested_by_role,
         requested_at: c.requested_at,
         yard_ack_note: c.yard_ack_note,
-        next_actions: scenario === "change-order-no-sign" && c.id === CHANGE_PENDING ? ["reject"] : c.next_actions,
+        next_actions: changeActionsFor(flow, c),
       }));
     return json(res, { items, next_cursor: null, limit: 50 });
   }
@@ -1794,11 +1800,11 @@ async function handle(req, res) {
     if (!change) return notFound(res);
     const idempotencyKey = req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"];
     if (!idempotencyKey || typeof idempotencyKey !== "string") {
-      return refuse(res, 400, "Idempotency-Key is required");
+      return refuse(res, 400, "Idempotency-Key is required (a UUID, one per press)");
     }
     const replay = world.changeOrders.replays?.[signApplyMatch[1]]?.[idempotencyKey];
     if (replay !== undefined) return json(res, replay);
-    if (!Array.isArray(change.next_actions) || !change.next_actions.includes("sign_apply")) {
+    if (!changeActionsFor(flow, change).includes("sign_apply")) {
       return refuse(res, 403, "you may not sign and apply this change");
     }
     if (change.status !== "PENDING_FINANCE" && change.status !== "APPROVED") {
@@ -1819,7 +1825,7 @@ async function handle(req, res) {
     if (!change) return notFound(res);
     const note = String(body?.note ?? "").trim();
     if (note === "") return refuse(res, 400, "note is required");
-    if (!Array.isArray(change.next_actions) || !change.next_actions.includes("reject")) {
+    if (!changeActionsFor(flow, change).includes("reject")) {
       return refuse(res, 403, "you may not reject this change");
     }
     if (change.status === "APPLIED" || change.status === "REJECTED" || change.status === "CANCELLED") {
