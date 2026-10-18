@@ -423,3 +423,90 @@ test('hh-tab-bar: renderTabBar is the template form, used by the demo page', () 
   // sanity: the template form renders the same markup as the element.
   assert.ok(a.includes('data-key="pick"'), 'pick is present');
 });
+
+// ── tablet slim header (>= 600px) and tenant lockup from config ───────────────────────────────
+
+test('hh-phone-header: tablet slim header renders tenant lockup from config, sync pill and user initials', () => {
+  const markup = visible(
+    ssr(
+      html`<hh-phone-header
+        title="Pick queue"
+        sync-state="idle"
+        branch="Point Loma"
+        count="2"
+        org="Harbor Stone Supply"
+        user="Dana Yard"
+      ></hh-phone-header>`,
+    ),
+  );
+  assert.ok(markup.includes('data-tenant="Harbor Stone Supply"'), 'tenant lockup carries config org');
+  assert.ok(markup.includes('data-monogram="HSS"'), 'monogram badge derives from config org');
+  assert.ok(markup.includes('>HSS<'), 'monogram text renders in badge');
+  assert.ok(markup.includes('>Harbor Stone Supply<'), 'tenant name renders from config');
+  assert.ok(markup.includes('class="sync-pill"'), 'tablet sync pill is rendered');
+  assert.ok(markup.includes('Synced · just now'), 'idle sync pill shows Synced · just now');
+  assert.ok(markup.includes('data-initials="DY"'), 'user initials avatar derives from user');
+  assert.ok(!phoneHeaderSrc.includes(['G', 'L', 'S'].join('')), 'tenant monogram is never hardcoded in source');
+});
+
+test('hh-phone-header: tablet slim header honours an explicit monogram from config and shows Offline in sync pill', () => {
+  const markup = visible(
+    ssr(
+      html`<hh-phone-header
+        title="My run"
+        sync-state="offline"
+        org="Pacific Paver Co"
+        monogram="PPC"
+      ></hh-phone-header>`,
+    ),
+  );
+  assert.ok(markup.includes('data-monogram="PPC"'), 'explicit config monogram is used');
+  assert.ok(/class="sync-pill"[^>]*data-state="offline"/.test(markup), 'sync pill reflects offline state');
+  assert.ok(markup.includes('>Offline<'), 'offline sync pill shows Offline');
+});
+
+test('FLOOR hh-phone-header: tablet slim header is 48 px tall at 600 px and wider', () => {
+  const rules = parseRules(PhoneHeader.styles.map((sheet) => sheet.cssText).join('\n'));
+  const tablet = declsFor(rules, '.phone-row', '@media (min-width: 600px)');
+  assert.equal(px(tablet['min-height']) ?? px(tablet['height']), 48, 'the tablet header bar is a slim 48 px row');
+});
+
+// ── <hh-field-sign-in> ────────────────────────────────────────────────────────────────────────
+
+test('hh-field-sign-in: renders centered card with tenant monogram from config, fields, primary action and yard PIN hint', async () => {
+  const { FieldSignIn } = await import('../src/field-sign-in.js');
+  const el = new FieldSignIn();
+  el.org = 'Harbor Stone Supply';
+  el.branch = 'Point Loma';
+  const markup = visible(ssr(el.render()));
+  assert.ok(markup.includes('data-monogram="HSS"'), 'tenant monogram from config');
+  assert.ok(markup.includes('Harbor Stone Supply · Point Loma'), 'tenant and branch subtitle');
+  assert.ok(markup.includes('Sign in to Field'), 'card heading');
+  assert.ok(markup.includes('Work email or phone'), 'identifier field label');
+  assert.ok(markup.includes('Passcode or PIN'), 'secret field label');
+  assert.ok(/<button[^>]*data-action="sign-in"[^>]*>\s*Sign in\s*<\/button>/.test(markup), 'Sign in primary button');
+  assert.ok(markup.includes('On a shared yard tablet? Use a 4-digit yard PIN'), 'shared yard tablet PIN hint');
+});
+
+test('hh-field-sign-in: pressing Sign in fires hh-field-sign-in (bubbles, composed)', async () => {
+  const { FieldSignIn } = await import('../src/field-sign-in.js');
+  const listeners = new Map();
+  const fired = [];
+  const el = new FieldSignIn();
+  el.addEventListener = (type, fn, opts) => { listeners.set(type, { fn, opts }); };
+  el.removeEventListener = (type) => { listeners.delete(type); };
+  el.dispatchEvent = (event) => {
+    fired.push(event);
+    return true;
+  };
+  el.performUpdate = () => {};
+  el.connectedCallback();
+  const control = Object.create(Element.prototype);
+  control.hasAttribute = (name) => name === 'data-action';
+  control.getAttribute = (name) => (name === 'data-action' ? 'sign-in' : null);
+  listeners.get('click').fn({ composedPath: () => [control] });
+  assert.equal(fired.length, 1, 'fires one event');
+  assert.equal(fired[0].type, 'hh-field-sign-in', 'event name is hh-field-sign-in');
+  assert.equal(fired[0].bubbles, true, 'bubbles');
+  assert.equal(fired[0].composed, true, 'composed');
+});

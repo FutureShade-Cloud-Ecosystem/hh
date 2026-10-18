@@ -76,3 +76,24 @@ test('the card list renders one row per open card and none when all are dismisse
   const empty = renderKit(ShellConflictList, { cards: [] });
   assert.match(empty, /Nothing waits for review/);
 });
+
+test('conflict card visual restyle renders YOUR DEVICE and AT THE COUNTER comparison boxes, warning badge, and safe actions without Keep mine', () => {
+  const markup = renderKit(ShellConflictCard, {
+    card: card({
+      kind: 'review',
+      scope: 'shortages',
+      policy: 'manual',
+      serverState: { id: 'sh-1', description: 'Coping stone, sandstone' },
+      clientPayload: { id: 'sh-1', resolution: 'Short 4 EA reported' },
+    }),
+  });
+  assert.match(markup, /YOUR DEVICE/, 'shows YOUR DEVICE comparison box');
+  assert.match(markup, /AT THE COUNTER/, 'shows AT THE COUNTER comparison box');
+  assert.match(markup, /Short 4 EA reported/, 'shows device payload summary');
+  assert.match(markup, /Coping stone, sandstone/, 'shows counter server state summary');
+  assert.match(markup, /warning-badge/, 'renders warning badge');
+  assert.match(markup, /Use counter(?:&#39;|')s/, 'renders Use counter\'s safe action');
+  assert.match(markup, /Open the order/, 'renders Open the order safe action');
+  assert.doesNotMatch(markup, /Keep mine/, 'never offers an unsafe Keep mine write action');
+});
+

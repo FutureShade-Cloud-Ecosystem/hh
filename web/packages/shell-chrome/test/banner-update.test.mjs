@@ -95,6 +95,42 @@ test('the banner pairs its icon with its words: the icon is never the only signa
   assert.ok(markup.includes('class="icon"'), 'the icon rides the design system\u2019s state icons');
 });
 
+test('field mode offline strip shows Offline · N waiting to send, gold pill count, and Tap to review action', () => {
+  const raw = renderKit(ShellBanner, { mode: 'offline', waiting: 3, field: true });
+  const markup = visible(raw);
+  assert.ok(markup.includes('Offline · 3 waiting to send'), 'field offline strip words');
+  assert.ok(raw.includes('count-gold'), 'gold count pill class is present');
+  assert.ok(markup.includes('>3<'), 'gold count pill carries waiting count');
+  assert.ok(raw.includes('data-action="review"'), 'review action button is present');
+  assert.ok(markup.includes('Tap to review'), 'review action reads Tap to review');
+});
+
+test('field mode offline strip Tap to review emits hh-shell-review (bubbles, composed)', () => {
+  const el = new ShellBanner();
+  const listeners = {};
+  const fired = [];
+  el.addEventListener = (type, fn) => { listeners[type] = fn; };
+  el.removeEventListener = (type) => { delete listeners[type]; };
+  el.dispatchEvent = (event) => {
+    fired.push(event);
+    return true;
+  };
+  el.performUpdate = () => {};
+  el.mode = 'offline';
+  el.waiting = 3;
+  el.field = true;
+  el.connectedCallback();
+  const control = Object.create(Element.prototype);
+  control.hasAttribute = (name) => name === 'data-action';
+  control.getAttribute = (name) => (name === 'data-action' ? 'review' : null);
+  listeners.click({ composedPath: () => [control] });
+  assert.equal(fired.length, 1, 'fires one review event');
+  assert.equal(fired[0].type, 'hh-shell-review', 'emits hh-shell-review');
+  assert.equal(fired[0].bubbles, true);
+  assert.equal(fired[0].composed, true);
+});
+
+
 // ── the update prompt ────────────────────────────────────────────────────────────────────────────
 
 test('closed by default, the prompt renders nothing a person can see or hear', () => {
