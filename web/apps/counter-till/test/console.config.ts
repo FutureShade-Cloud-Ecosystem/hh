@@ -10,5 +10,5 @@ export default consoleHarness({
   appDir,
   appStub: { command: "node test/stub/demo-stub.mjs", portEnv: "CT_STUB_PORT" },
   appVite: { stubPortEnv: "CT_STUB_PORT", appPortEnv: "CT_APP_PORT" },
-  firstPort: 56170,
+  firstPort: 28170,
 });
