@@ -114,3 +114,22 @@ test("a sales manager with only freight raises waiting opens on Margin, not on a
   await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
   await expect(page.locator("[data-test='approvals-refusal']")).toHaveCount(0);
 });
+
+// The approvals' tone words are TEXT colours (approvals-styles.ts), and the home's bar segments use the same
+// tone-* names for a FILL (styles.ts). Both sheets reach the same shadow root, so a metric value or a margin
+// cell once took a fill of nearly its own ink and could not be read. A tone word paints no background.
+test("a tone word on the margin and credit cards paints no fill behind its text", async ({ request, page }) => {
+  await resetStub(request);
+  await page.goto("/");
+  await page.locator("[data-flow='general-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
+  for (const kind of ["Margin", "Credit"]) {
+    await page.locator(".kind-tab", { hasText: kind }).click();
+    const toned = page.locator(".metric-val[class*='tone-'], td[class*='tone-']");
+    await expect(toned.first()).toBeVisible();
+    const fills = await toned.evaluateAll((els) => els.map((el) => `${el.textContent?.trim()} on ${getComputedStyle(el).backgroundColor}`));
+    expect(fills.length).toBeGreaterThan(0);
+    for (const fill of fills) expect(fill, `${kind}: ${fill}`).toMatch(/ on rgba\(0, 0, 0, 0\)$/);
+  }
+});
