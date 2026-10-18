@@ -483,10 +483,12 @@ export const homeStyles = css`
     display: block;
     height: 100%;
   }
-  .tone-none { background: var(--hh-success-fill); }
-  .tone-good { background: var(--hh-state-good); }
-  .tone-watch { background: var(--hh-state-watch); }
-  .tone-stop { background: var(--hh-state-stop); }
+  /* A bar segment's tone is a FILL. Scoped to .seg: the approvals use the same tone-* words for a text colour
+     (approvals-styles.ts), and an unscoped fill painted a box of nearly the ink's own colour behind them. */
+  .seg.tone-none { background: var(--hh-success-fill); }
+  .seg.tone-good { background: var(--hh-state-good); }
+  .seg.tone-watch { background: var(--hh-state-watch); }
+  .seg.tone-stop { background: var(--hh-state-stop); }
   .legend {
     display: flex;
     flex-wrap: wrap;
