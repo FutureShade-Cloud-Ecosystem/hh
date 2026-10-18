@@ -607,6 +607,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 			// Approvals the caller filed that are still pending: the logistics manager's own ask
 			// (0395), counted without exposing another person's request or its content.
 			{dashboard.NeedsFiledPending, w6bApprovalsFiledPending(spine.approvals)},
+			// Change orders waiting on this manager to sign or apply (0411).
+			{dashboard.NeedsChangesWaiting, ordersChangesWaiting(orderSvc)},
 		} {
 			if err := dashboardSvc.RegisterNeedsSource(reg.key, reg.source); err != nil {
 				log.Error("dashboard: needs source NOT registered - that queue row will never appear", "source", reg.key, "err", err)

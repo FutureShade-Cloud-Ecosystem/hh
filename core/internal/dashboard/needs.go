@@ -141,6 +141,12 @@ var NeedsSourceCatalog = []NeedsSourceMeta{
 		Key: NeedsFiledPending, What: "Approvals you filed", Module: "identity",
 		Unit: "admin", Screen: "approvals", View: "Filed by you", Action: "Track",
 	},
+	{
+		Key: NeedsChangesWaiting, What: "Change orders to sign", Module: "order",
+		Unit: "admin", Screen: "approvals", View: "Change orders · waiting on you", Action: "Sign",
+		// Manager Home's Approvals is manager-gated, and only managers sign or apply a change order.
+		ManagerOnly: true,
+	},
 }
 
 // NeedsSourceByKey indexes the catalog. Built once at init; never mutated.
@@ -165,7 +171,7 @@ type NeedsPolicy struct {
 }
 
 // DefaultNeedsSources is what a build with no readable policy serves, per job shape, the same rows
-// 0201 seeds, in Go.
+// 0201 seeds (as amended by 0411), in Go.
 //
 // WHY A CODE COPY EXISTS AT ALL. The hotkey map made this call first (DefaultHotkeys / 0164) and the
 // reasoning carries: an unreadable config table must not TAKE AWAY the queue somebody used
@@ -174,18 +180,20 @@ type NeedsPolicy struct {
 // a dealer decided this shape has no sources, and empty is respected as the answer.
 //
 // The cost is a copy that can drift, and it is paid the way this codebase always pays it: a drift
-// test reads 0201 and asserts the two agree (widget_test.go).
+// test reads 0201 and 0411 and asserts the two agree (widget_test.go).
 var DefaultNeedsSources = map[string][]NeedsPolicy{
 	ProfileAdmin: {
 		{SourceKey: NeedsApprovals, Position: 0, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 		{SourceKey: NeedsAREscalation, Position: 1, Visible: true, WarnAt: 1, StopAt: 3},
 		{SourceKey: NeedsUnassigned, Position: 2, Visible: true, WarnAt: 1, StopAt: 5},
 		{SourceKey: NeedsParkedTickets, Position: 3, Visible: true, WarnAt: 3, StopAt: 10, StaleMins: 120},
+		{SourceKey: NeedsChangesWaiting, Position: 4, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 	},
 	ProfileManager: {
 		{SourceKey: NeedsApprovals, Position: 0, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 		{SourceKey: NeedsAREscalation, Position: 1, Visible: true, WarnAt: 1, StopAt: 3},
 		{SourceKey: NeedsParkedTickets, Position: 2, Visible: true, WarnAt: 3, StopAt: 10, StaleMins: 120},
+		{SourceKey: NeedsChangesWaiting, Position: 3, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 	},
 	ProfileYard: {
 		{SourceKey: NeedsUnassigned, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
@@ -220,22 +228,23 @@ var logisticsManagerNeeds = []NeedsPolicy{
 
 // procurementManagerNeeds is the procurement manager's own policy, the Go copy of 0392 §1: the
 // gaps the yard reports and where each purchase order got to come first, and approvals stay (the
-// AR escalation and the parked tickets are the controller's and the counter's work, not the buyer's).
+// AR escalation and the parked tickets are the controller's and the buyer's work is receiving).
 var procurementManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsOpenShortages, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
 	{SourceKey: NeedsReceivingDifferences, Position: 1, Visible: true, WarnAt: 1, StopAt: 3},
 	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 }
 
-// branchManagerNeeds is the branch manager's own policy, the Go copy of 0392 §2: the branch manager
-// commits a delivery date and stands behind it when dispatch escalates, so the two dispatch sources
-// lead (with the dock shape's edges), and the manager shape's three rows follow.
+// branchManagerNeeds is the branch manager's own policy, the Go copy of 0392 §2 as amended by 0411:
+// the branch manager commits a delivery date and stands behind it when dispatch escalates, so the two
+// dispatch sources lead (with the dock shape's edges), and the manager shape's rows follow.
 var branchManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsDueToCommit, Position: 0, Visible: true, WarnAt: 1, StopAt: 3},
 	{SourceKey: NeedsUnassigned, Position: 1, Visible: true, WarnAt: 1, StopAt: 5},
 	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 	{SourceKey: NeedsAREscalation, Position: 3, Visible: true, WarnAt: 1, StopAt: 3},
 	{SourceKey: NeedsParkedTickets, Position: 4, Visible: true, WarnAt: 3, StopAt: 10, StaleMins: 120},
+	{SourceKey: NeedsChangesWaiting, Position: 5, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 }
 
 // defaultNeedsFor is the fallback policy for one profile: a job shape serves its own row set from

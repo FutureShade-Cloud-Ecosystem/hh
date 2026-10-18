@@ -254,7 +254,9 @@ func w6bReceivingDifferences(svc *purchasing.Service) dashboard.NeedsFunc {
 
 // -- order · change orders waiting on THIS manager (0411) ---------------------------------------
 //
-// SKELETON: the names the tests build on; the build replaces the body.
+// Counts through the order module's own cross-order queue (PENDING_FINANCE and APPROVED), counting a
+// row when the caller's next_actions on it offer sign_apply or apply, so the queue row and the doors
+// follow one changeActions rule.
 
 // changeQueueReader is the narrow read the adapter needs from the order module: the cross order change
 // queue, which applies the caller's branch grants and computes each row's next_actions for the caller.
@@ -264,6 +266,42 @@ type changeQueueReader interface {
 
 func ordersChangesWaiting(q changeQueueReader) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
-		return dashboard.NeedsMeasure{}, errors.New("dashboard: change orders waiting is not built yet")
+		m := dashboard.NeedsMeasure{}
+		for _, status := range []string{"PENDING_FINANCE", "APPROVED"} {
+			cursor := ""
+			for pageNo := 0; pageNo < 50; pageNo++ {
+				page, err := q.ListChangeQueue(ctx, order.ChangeQueueRequest{
+					Status: status,
+					Cursor: cursor,
+					Limit:  200,
+				})
+				if err != nil {
+					return dashboard.NeedsMeasure{}, err
+				}
+				for _, item := range page.Items {
+					actionable := false
+					for _, a := range item.NextActions {
+						if a == "sign_apply" || a == "apply" {
+							actionable = true
+							break
+						}
+					}
+					if !actionable {
+						continue
+					}
+					m.Count++
+					if at := w6bParseStamp(item.RequestedAt); !at.IsZero() {
+						if m.Oldest.IsZero() || at.Before(m.Oldest) {
+							m.Oldest = at
+						}
+					}
+				}
+				if page.NextKey == "" || len(page.Items) == 0 {
+					break
+				}
+				cursor = page.NextKey
+			}
+		}
+		return m, nil
 	}
 }

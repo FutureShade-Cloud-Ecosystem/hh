@@ -41,8 +41,8 @@ export function isLiveHref(href: string): boolean {
 }
 
 /**
- * The live app one needs source belongs to. The three yard manager sources and
- * approvals are this app's own views (needsRowTarget answers those first);
+ * The live app one needs source belongs to. The yard manager sources, approvals,
+ * and change orders are this app's own views (needsRowTarget answers those first);
  * dispatch has no app yet and answers null.
  */
 const NEEDS_APP: Readonly<Record<string, string>> = Object.freeze({

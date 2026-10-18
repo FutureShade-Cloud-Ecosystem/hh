@@ -190,7 +190,7 @@ func TestTheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
 // and stands behind it when dispatch escalates, so the two dispatch sources join the queue ahead
 // of the book, and the approvals, the AR edge and the parked tickets stay.
 func TestTheBranchManagerCommitsDeliveries(t *testing.T) {
-	want := []string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets}
+	want := []string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets, NeedsChangesWaiting}
 	got := needsKeys(defaultNeedsFor(ProfileManagerBranch))
 	if len(got) != len(want) {
 		t.Fatalf("the branch manager's fallback is %v, want %v", got, want)

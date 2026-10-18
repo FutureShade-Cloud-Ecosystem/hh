@@ -791,12 +791,17 @@ func TestCarryoverPairsAreTheCatalogsOwn(t *testing.T) {
 	}
 }
 
-// The Go fallback policy and 0201's seed must agree, or an unreadable table would silently change
-// which sources a role sees (the DefaultHotkeys drift gate, applied to the needs queue).
+// The Go fallback policy and 0201's seed (as amended by 0411) must agree, or an unreadable table
+// would silently change which sources a role sees (the DefaultHotkeys drift gate, applied to the
+// needs queue).
 func TestDefaultNeedsSourcesMatchTheMigrationSeed(t *testing.T) {
 	b, err := os.ReadFile("../../db/migrations/0201_dashboard_widgets.sql")
 	if err != nil {
 		t.Fatalf("0201 must be readable: %v", err)
+	}
+	b0411, err := os.ReadFile("../../db/migrations/0411_needs_you_change_orders.sql")
+	if err != nil {
+		t.Fatalf("0411 must be readable: %v", err)
 	}
 	re := regexp.MustCompile(`\(\s*'([a-z]+)',\s*'([a-z0-9._]+)',\s*(\d+),\s*(true|false),\s*(\d+),\s*(\d+),\s*(\d+)\)`)
 	got := map[string][]NeedsPolicy{}
@@ -807,7 +812,7 @@ func TestDefaultNeedsSourcesMatchTheMigrationSeed(t *testing.T) {
 		}
 		return n
 	}
-	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+	for _, m := range re.FindAllStringSubmatch(string(b)+"\n"+string(b0411), -1) {
 		got[m[1]] = append(got[m[1]], NeedsPolicy{
 			SourceKey: m[2], Position: atoi(m[3]), Visible: m[4] == "true",
 			WarnAt: atoi(m[5]), StopAt: atoi(m[6]), StaleMins: atoi(m[7]),

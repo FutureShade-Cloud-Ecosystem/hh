@@ -364,11 +364,11 @@ func TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.
 		[]string{NeedsOpenShortages, NeedsReceivingDifferences, NeedsApprovals})
 }
 
-// TestIntegration_0392_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6: the two
-// dispatch sources lead, the manager shape's three follow.
+// TestIntegration_0392_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6 (plus
+// 0411's change orders source): the two dispatch sources lead, the manager shape's rows follow.
 func TestIntegration_0392_TheBranchManagerCommitsDeliveries(t *testing.T) {
 	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
-		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
+		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets, NeedsChangesWaiting})
 }
 
 // TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending pins the seeded rows of 2D gap 12:
