@@ -21,14 +21,14 @@ test("the sales manager's needs row opens the approvals view on the kind they de
   await expect(page.locator("[data-approval]").first().locator(".detail")).toContainText("Quote Q-2001");
 });
 
-test("the five kinds of the closed vocabulary sit as tabs, the decided one first", async ({ page }) => {
+test("the five kinds of the closed vocabulary and the change queue sit as tabs, the decided one first", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='sales-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
-  await expect(tabs).toHaveCount(5);
+  await expect(tabs).toHaveCount(6);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0"]);
+  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 2"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 

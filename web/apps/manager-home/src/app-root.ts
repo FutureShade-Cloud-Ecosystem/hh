@@ -36,7 +36,7 @@ import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
 import { BuilderApi } from "./builder-api.js";
 import { BuilderDesk } from "./builder-desk.js";
-import { ManagerApi, type BranchRef, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { ManagerApi, type BranchRef, type ChangeOrder, type ChangeOrderQueueRow, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
@@ -61,7 +61,7 @@ import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { WeightsApi } from "./weights-api.js";
 import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
-import { waitingKinds } from "./approvals-logic.js";
+import { keyForSignApply, waitingKinds } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
@@ -212,7 +212,16 @@ export class ManagerHomeApp extends HHElement {
     resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
   };
   #receiving: ReceivingModel = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
-  #approvals: ApprovalsModel = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
+  #approvals: ApprovalsModel = {
+    phase: "loading",
+    kind: APPROVAL_KINDS[0].kind,
+    rows: [],
+    changeOrders: [],
+    changeOrderDetails: new Map(),
+    error: "",
+    refusal: "",
+    busyId: "",
+  };
   #drivers: DriversModel = {
     phase: "loading", branchName: "", groups: [], trucks: [], runCount: 0, idleWords: "", error: "", refused: "",
   };
@@ -377,7 +386,17 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     if (action === "decide") {
-      void this.#decide(control?.getAttribute("data-approval-id") ?? "", control?.getAttribute("data-decision") === "approve");
+      const id = control?.getAttribute("data-approval-id") ?? "";
+      const isApprove = control?.getAttribute("data-decision") === "approve";
+      if (this.#approvals.kind === "CHANGE_ORDER" && !isApprove) {
+        void this.#changeOrderReject(id);
+      } else {
+        void this.#decide(id, isApprove);
+      }
+      return;
+    }
+    if (action === "sign-apply") {
+      void this.#changeOrderSignApply(control?.getAttribute("data-approval-id") ?? "");
       return;
     }
     const flow = control?.getAttribute("data-flow");
@@ -673,7 +692,16 @@ export class ManagerHomeApp extends HHElement {
       resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
     };
     this.#receiving = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
-    this.#approvals = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
+    this.#approvals = {
+      phase: "loading",
+      kind: APPROVAL_KINDS[0].kind,
+      rows: [],
+      changeOrders: [],
+      changeOrderDetails: new Map(),
+      error: "",
+      refusal: "",
+      busyId: "",
+    };
     this.#quickBar = { phase: "loading", actions: [] };
     this.#quickAdmin = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
     this.#drivers = { phase: "loading", branchName: "", groups: [], trucks: [], runCount: 0, idleWords: "", error: "", refused: "" };
@@ -1666,32 +1694,87 @@ export class ManagerHomeApp extends HHElement {
   // picked while this was in flight wins: the late answer is dropped.
   #approvalsOpening = 0;
 
+  // The idempotency key for the one-tap change-order sign-and-apply in flight:
+  // generated once per press and reused if the same press retries after a
+  // network failure. Cleared when the press is answered.
+  #pendingChangeOrderSign: { id: string; key: string } | null = null;
+
   async #openApprovals(): Promise<void> {
     const opening = ++this.#approvalsOpening;
-    this.#approvals = { ...this.#approvals, phase: "loading", rows: [], error: "", refusal: "" };
+    this.#approvals = {
+      ...this.#approvals,
+      phase: "loading",
+      rows: [],
+      changeOrders: [],
+      changeOrderDetails: new Map(),
+      error: "",
+      refusal: "",
+    };
     this.requestUpdate();
-    const all = await this.#api.approvals("", true);
+    const [all, pendingFinance, approved] = await Promise.all([
+      this.#api.approvals("", true),
+      this.#api.changeOrders("PENDING_FINANCE"),
+      this.#api.changeOrders("APPROVED"),
+    ]);
+    const changeOrderQueue: ChangeOrderQueueRow[] = [];
+    if (pendingFinance.ok) changeOrderQueue.push(...pendingFinance.value);
+    if (approved.ok) changeOrderQueue.push(...approved.value);
+    // The view opens on the first waiting approvals kind the core does not refuse, as it always has; the change
+    // orders tab shows its count but is never the opening tab, so a person lands where the approvals board puts them.
     const candidates = all.ok ? waitingKinds(all.value) : [];
     for (const kind of candidates) {
+      if (opening !== this.#approvalsOpening) return;
+      if (kind === "CHANGE_ORDER") {
+        await this.#setChangeOrders(changeOrderQueue);
+        return;
+      }
       const result = await this.#api.approvals(kind);
       if (opening !== this.#approvalsOpening) return;
       if (result.ok) {
-        this.#approvals = { ...this.#approvals, kind, phase: "ready", rows: result.value, error: "", refusal: "" };
+        this.#approvals = {
+          ...this.#approvals,
+          kind,
+          phase: "ready",
+          rows: result.value,
+          changeOrders: changeOrderQueue,
+          changeOrderDetails: new Map(),
+          error: "",
+          refusal: "",
+        };
         this.requestUpdate();
         return;
       }
     }
     if (opening !== this.#approvalsOpening) return;
-    this.#approvals = { ...this.#approvals, kind: APPROVAL_KINDS[0].kind };
+    this.#approvals = { ...this.#approvals, kind: APPROVAL_KINDS[0].kind, changeOrders: changeOrderQueue };
     await this.#loadApprovals();
   }
 
   async #loadApprovals(): Promise<void> {
     this.#approvals = { ...this.#approvals, phase: "loading", error: "", refusal: "" };
     this.requestUpdate();
+    if (this.#approvals.kind === "CHANGE_ORDER") {
+      const [pendingFinance, approved] = await Promise.all([
+        this.#api.changeOrders("PENDING_FINANCE"),
+        this.#api.changeOrders("APPROVED"),
+      ]);
+      const changeOrderQueue: ChangeOrderQueueRow[] = [];
+      if (pendingFinance.ok) changeOrderQueue.push(...pendingFinance.value);
+      if (approved.ok) changeOrderQueue.push(...approved.value);
+      await this.#setChangeOrders(changeOrderQueue);
+      return;
+    }
     const result = await this.#api.approvals(this.#approvals.kind);
     if (result.ok) {
-      this.#approvals = { ...this.#approvals, phase: "ready", rows: result.value, error: "", refusal: "" };
+      this.#approvals = {
+        ...this.#approvals,
+        phase: "ready",
+        rows: result.value,
+        changeOrders: [],
+        changeOrderDetails: new Map(),
+        error: "",
+        refusal: "",
+      };
     } else {
       // A kind this caller does not decide is the core's own words plus the
       // plain sentence naming who decides it; anything else is a load error.
@@ -1700,10 +1783,32 @@ export class ManagerHomeApp extends HHElement {
         ...this.#approvals,
         phase: refusal !== "" ? "refused" : "error",
         rows: [],
+        changeOrders: [],
+        changeOrderDetails: new Map(),
         error: refusal !== "" ? "" : `The approvals list did not load. ${errorWords(result.error)}`,
         refusal,
       };
     }
+    this.requestUpdate();
+  }
+
+  async #setChangeOrders(changeOrderQueue: readonly ChangeOrderQueueRow[]): Promise<void> {
+    const details = new Map<string, ChangeOrder>();
+    const detailResults = await Promise.all(changeOrderQueue.map((row) => this.#api.changeOrder(row.id)));
+    for (let i = 0; i < changeOrderQueue.length; i += 1) {
+      const result = detailResults[i];
+      if (result.ok) details.set(changeOrderQueue[i].id, result.value);
+    }
+    this.#approvals = {
+      ...this.#approvals,
+      kind: "CHANGE_ORDER",
+      phase: "ready",
+      rows: [],
+      changeOrders: changeOrderQueue,
+      changeOrderDetails: details,
+      error: "",
+      refusal: "",
+    };
     this.requestUpdate();
   }
 
@@ -1741,6 +1846,51 @@ export class ManagerHomeApp extends HHElement {
           result.error,
           result.status,
         ),
+      };
+    }
+    this.#approvals = { ...this.#approvals, busyId: "" };
+    this.requestUpdate();
+  }
+
+  async #changeOrderSignApply(id: string): Promise<void> {
+    if (id === "" || this.#approvals.busyId !== "") return;
+    const sign = keyForSignApply(this.#pendingChangeOrderSign, id);
+    this.#pendingChangeOrderSign = sign.pending;
+    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
+    this.requestUpdate();
+    const result = await this.#api.changeOrderSignApply(id, sign.pending.key);
+    if (result.ok) {
+      this.#pendingChangeOrderSign = null;
+      await this.#loadApprovals();
+      await this.#refreshLanding();
+    } else {
+      this.#approvals = {
+        ...this.#approvals,
+        error: decideRefusalWords("CHANGE_ORDER", result.error, result.status),
+      };
+    }
+    this.#approvals = { ...this.#approvals, busyId: "" };
+    this.requestUpdate();
+  }
+
+  async #changeOrderReject(id: string): Promise<void> {
+    if (id === "" || this.#approvals.busyId !== "") return;
+    const note = this.#approvals.declineReason ?? "";
+    if (note.trim() === "") {
+      this.#approvals = { ...this.#approvals, error: "A note is needed to decline." };
+      this.requestUpdate();
+      return;
+    }
+    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
+    this.requestUpdate();
+    const result = await this.#api.changeOrderReject(id, note.trim());
+    if (result.ok) {
+      await this.#loadApprovals();
+      await this.#refreshLanding();
+    } else {
+      this.#approvals = {
+        ...this.#approvals,
+        error: decideRefusalWords("CHANGE_ORDER", result.error, result.status),
       };
     }
     this.#approvals = { ...this.#approvals, busyId: "" };

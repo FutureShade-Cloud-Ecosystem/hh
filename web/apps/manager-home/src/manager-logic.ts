@@ -310,13 +310,16 @@ export function welcomeLine(roleLabel: string): string {
 
 // -- approvals by kind --------------------------------------------------------------------------------
 
-/** The closed kind vocabulary, in the core's own order, with the words a person reads. */
+/** The closed kind vocabulary, in the core's own order, with the words a person reads; then the order module's change
+ * queue (CHANGE_ORDER), which is not an approvals kind: the view reads it from the change queue route, never the
+ * approvals kind filter. */
 export const APPROVAL_KINDS: readonly { readonly kind: string; readonly word: string }[] = Object.freeze([
   { kind: "MARGIN_BELOW_MINIMUM", word: "Margin" },
   { kind: "CREDIT_LIMIT_EXCEEDED", word: "Credit" },
   { kind: "COD_CONSTRAINT", word: "Cash On Demand" },
   { kind: "JE_OVER_THRESHOLD", word: "Journal entry" },
   { kind: "FREIGHT_ABOVE_QUOTE", word: "Freight above quote" },
+  { kind: "CHANGE_ORDER", word: "Change orders" },
 ]);
 
 export function kindWord(kind: string): string {
@@ -336,6 +339,7 @@ export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.f
   COD_CONSTRAINT: "Cash On Demand approvals are decided by the financial controller and the general manager.",
   JE_OVER_THRESHOLD: "Journal entry approvals are decided by the financial controller and the general manager.",
   FREIGHT_ABOVE_QUOTE: "Freight approvals are decided by the financial controller and the general manager.",
+  CHANGE_ORDER: "Change orders are signed by a manager of the branch, and over the finance threshold by a named approver.",
 });
 
 /** Map a kind refusal to plain words naming who decides it: no enum on screen, ever. */

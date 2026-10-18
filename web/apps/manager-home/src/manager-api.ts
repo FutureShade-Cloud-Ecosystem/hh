@@ -18,6 +18,7 @@ import {
   staffBranches,
   staffDashboard,
   staffIdentity,
+  staffOrder,
   staffPurchasing,
   staffTasks,
   type IdentityPolicyType,
@@ -160,6 +161,54 @@ export interface ApprovalRow {
   readonly subject_ref: string;
   readonly amount_cents: number;
   readonly status: string;
+}
+
+// -- change orders ---------------------------------------------------------------------------------
+
+export interface ChangeOrderQueueRow {
+  readonly id: string;
+  readonly change_no: string;
+  readonly order_id: string;
+  readonly order_no: string;
+  readonly branch_id: string;
+  readonly status: string;
+  readonly reason: string;
+  readonly delta_cents: number;
+  readonly finance_threshold_cents: number;
+  readonly finance_required: boolean;
+  readonly requested_by_role: string;
+  readonly requested_at: string;
+  readonly yard_ack_note: string;
+  readonly next_actions: readonly string[];
+}
+
+export interface ChangeOrderLine {
+  readonly seq: number;
+  readonly op: string;
+  readonly line_no: number | null;
+  readonly product_id: string;
+  readonly product_name: string;
+  readonly description: string;
+  readonly qty_base_before: number;
+  readonly qty_base_after: number;
+  readonly unit_price_cents: number;
+  readonly line_delta_cents: number;
+}
+
+export interface ChangeOrder {
+  readonly id: string;
+  readonly change_no: string;
+  readonly order_no: string;
+  readonly order_id: string;
+  readonly status: string;
+  readonly reason: string;
+  readonly delta_cents: number;
+  readonly finance_threshold_cents: number;
+  readonly finance_required: boolean;
+  readonly requested_by_role: string;
+  readonly yard_ack_note: string;
+  readonly lines: readonly ChangeOrderLine[];
+  readonly next_actions: readonly string[];
 }
 
 // -- the caller's branch ---------------------------------------------------------------------------
@@ -332,6 +381,61 @@ export function toApprovalRow(raw: unknown): ApprovalRow {
   };
 }
 
+export function toChangeOrderQueueRow(raw: unknown): ChangeOrderQueueRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    change_no: text(r.change_no),
+    order_id: text(r.order_id),
+    order_no: text(r.order_no),
+    branch_id: text(r.branch_id),
+    status: text(r.status),
+    reason: text(r.reason),
+    delta_cents: num(r.delta_cents),
+    finance_threshold_cents: num(r.finance_threshold_cents),
+    finance_required: r.finance_required === true,
+    requested_by_role: text(r.requested_by_role),
+    requested_at: text(r.requested_at),
+    yard_ack_note: text(r.yard_ack_note),
+    next_actions: list(r.next_actions).map(text),
+  };
+}
+
+export function toChangeOrderLine(raw: unknown): ChangeOrderLine {
+  const r = bag(raw);
+  return {
+    seq: num(r.seq),
+    op: text(r.op),
+    line_no: maybeNum(r.line_no),
+    product_id: text(r.product_id),
+    product_name: text(r.product_name),
+    description: text(r.description),
+    qty_base_before: num(r.qty_base_before),
+    qty_base_after: num(r.qty_base_after),
+    unit_price_cents: num(r.unit_price_cents),
+    line_delta_cents: num(r.line_delta_cents),
+  };
+}
+
+export function toChangeOrder(raw: unknown): ChangeOrder {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    change_no: text(r.change_no),
+    order_no: text(r.order_no),
+    order_id: text(r.order_id),
+    status: text(r.status),
+    reason: text(r.reason),
+    delta_cents: num(r.delta_cents),
+    finance_threshold_cents: num(r.finance_threshold_cents),
+    finance_required: r.finance_required === true,
+    requested_by_role: text(r.requested_by_role),
+    yard_ack_note: text(r.yard_ack_note),
+    lines: list(r.lines).map(toChangeOrderLine),
+    next_actions: list(r.next_actions).map(text),
+  };
+}
+
 export function toBranchRef(raw: unknown): BranchRef {
   const r = bag(raw);
   return { id: text(r.id), code: text(r.code), name: text(r.name) };
@@ -424,6 +528,32 @@ export class ManagerApi {
   async decideApproval(id: string, approve: boolean, reason: string): Promise<Result<true>> {
     const answer = await staffIdentity.identityDecideApproval(this.#client, id, { approve, reason });
     return answer.ok ? { ok: true, value: true } : answer;
+  }
+
+  /** Change orders waiting on this caller: PENDING_FINANCE and APPROVED only. */
+  async changeOrders(status: "PENDING_FINANCE" | "APPROVED"): Promise<Result<readonly ChangeOrderQueueRow[]>> {
+    const answer = await staffOrder.orderListChangeQueue(this.#client, { status });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.items).map(toChangeOrderQueueRow) };
+  }
+
+  /** The full change order with its lines. */
+  async changeOrder(id: string): Promise<Result<ChangeOrder>> {
+    const answer = await staffOrder.orderGetChange(this.#client, id);
+    return answer.ok ? { ok: true, value: toChangeOrder(answer.value) } : answer;
+  }
+
+  /** Sign when needed and apply in one tap. The key is generated once per press and reused on retry. */
+  async changeOrderSignApply(id: string, idempotencyKey: string): Promise<Result<ChangeOrder>> {
+    const answer = await staffOrder.orderChangeSignApply(this.#client, id, {}, { idempotencyKey });
+    return answer.ok ? { ok: true, value: toChangeOrder(answer.value) } : answer;
+  }
+
+  /** Decline a change order with a note. */
+  async changeOrderReject(id: string, note: string): Promise<Result<ChangeOrder>> {
+    const answer = await staffOrder.orderChangeReject(this.#client, id, { note });
+    return answer.ok ? { ok: true, value: toChangeOrder(answer.value) } : answer;
   }
 
   // -- WALK-C10: Manager Home Landing (boards final, change 10) ---------------------------------
