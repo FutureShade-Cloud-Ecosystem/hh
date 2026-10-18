@@ -149,6 +149,38 @@ func TestIntegration_Membership_Managed_By_Owner_Or_Admin(t *testing.T) {
 	}
 }
 
+// isolateYardTrentonMembers snapshots the given users' rows in #yard-trenton, clears the ones named in clear
+// (the leg's precondition: that target is not yet seated), and registers a cleanup that deletes whatever the
+// leg left for those users and puts the snapshot back, so the leg neither depends on nor leaves membership
+// state in a database it shares with the rest of the package.
+func isolateYardTrentonMembers(ctx context.Context, t *testing.T, pool *pgxpool.Pool, users []string, clear ...string) {
+	t.Helper()
+	var snap []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(jsonb_agg(to_jsonb(m)), '[]'::jsonb) FROM msg_members m
+		 WHERE m.channel_id = $1 AND m.user_id = ANY($2::uuid[])`, chYardTrenton, users).Scan(&snap); err != nil {
+		t.Fatalf("snapshot the yard room members: %v", err)
+	}
+	if len(clear) > 0 {
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = ANY($2::uuid[])`, chYardTrenton, clear); err != nil {
+			t.Fatalf("clear the target's seat: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		if _, err := pool.Exec(c,
+			`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = ANY($2::uuid[])`, chYardTrenton, users); err != nil {
+			t.Errorf("restore the yard room members: %v", err)
+			return
+		}
+		if _, err := pool.Exec(c,
+			`INSERT INTO msg_members SELECT * FROM jsonb_populate_recordset(null::msg_members, $1::jsonb)`, snap); err != nil {
+			t.Errorf("restore the yard room members: %v", err)
+		}
+	})
+}
+
 // A room whose membership the branch model derives (#yard-trenton,
 // auto_scope BRANCH) refuses a target the model would not derive in: the
 // Kingston yard manager cannot be seated in the Trenton yard. A target who
@@ -161,6 +193,13 @@ func TestIntegration_Membership_Branch_Derived_Rooms_Refuse_Foreign_Targets(t *t
 	svc := NewService(repo)
 
 	gm := Caller{UserID: uAlexMorgan, RoleCode: "GENERAL_MANAGER", Scope: "GLOBAL"}
+	// Isolation: the rows this leg reads and writes in #yard-trenton are put back as the leg found them, and
+	// the Trenton target starts unseated. Another leg (the money rooms sync of every persona) leaves a DERIVED
+	// row for that persona, so on a second pass over one database the add below answered the derived row and
+	// the removal refused. The leg's own SyncMembership calls derive rows for the gm and for sam; those go
+	// back too.
+	uat := uatInsideSalesID(ctx, t, pool)
+	isolateYardTrentonMembers(ctx, t, pool, []string{uAlexMorgan, uSamRivera, uat}, uat)
 	// The composition root publishes the decided matrix for the wall; the
 	// test process has no root, so the leg publishes it (and restores the
 	// previous value after).
@@ -200,7 +239,6 @@ func TestIntegration_Membership_Branch_Derived_Rooms_Refuse_Foreign_Targets(t *t
 
 	// A target who reaches the branch (the UAT inside sales persona,
 	// granted Trenton) is seatable by the admin, and removable again.
-	uat := uatInsideSalesID(ctx, t, pool)
 	seated := false
 	t.Cleanup(func() {
 		if seated {
