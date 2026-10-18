@@ -11,7 +11,8 @@
     "./src/shell-update.ts",
     "./src/phone-header.ts",
     "./src/tab-bar.ts",
-    "./src/action-bar.ts"
+    "./src/action-bar.ts",
+    "./src/field-sign-in.ts"
   ],
   "main": "src/index.ts",
   "exports": {

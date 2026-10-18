@@ -38,6 +38,7 @@ import { ShellConflictList, type ShellCardInput } from '../src/shell-cards.js';
 import { PhoneHeader } from '../src/phone-header.js';
 import { TabBar, type TabSpec, renderTabBar } from '../src/tab-bar.js';
 import { ActionBar } from '../src/action-bar.js';
+import { FieldSignIn } from '../src/field-sign-in.js';
 
 export const DEMO_TITLE = '@hardscapehouse/shell-chrome demo';
 
@@ -98,6 +99,8 @@ const PHONE_HEADERS = {
   noBranch: () => html`<hh-phone-header title="Pick queue" sync-state="idle" count="3"></hh-phone-header>`,
   zero: () => html`<hh-phone-header title="Pick queue" sync-state="idle" branch="Point Loma" count="0"></hh-phone-header>`,
   inner: () => html`<hh-phone-header title="SO-1038" sync-state="idle" count="3">${BACK}</hh-phone-header>`,
+  tabletIdle: () => html`<hh-phone-header title="Pick queue" sync-state="idle" branch="Point Loma" count="2" org="Harbor Stone Supply" user="Yard Team"></hh-phone-header>`,
+  tabletOffline: () => html`<hh-phone-header title="My run" sync-state="offline" branch="Point Loma" count="1" org="Harbor Stone Supply" user="Yard Team"></hh-phone-header>`,
 } as const;
 type PhoneHeaderVariant = keyof typeof PHONE_HEADERS;
 
@@ -135,6 +138,7 @@ export function demoSheets(): ReadonlyArray<{ tag: string; css: string }> {
     { tag: 'hh-phone-header', css: cssTextOf(PhoneHeader.styles) },
     { tag: 'hh-tab-bar', css: cssTextOf(TabBar.styles) },
     { tag: 'hh-action-bar', css: cssTextOf(ActionBar.styles) },
+    { tag: 'hh-field-sign-in', css: cssTextOf(FieldSignIn.styles) },
   ];
 }
 
@@ -340,6 +344,7 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   const bannerOffline = renderMarkup(ShellBanner, { mode: 'offline', waiting: 3 });
   const bannerOfflineEmpty = renderMarkup(ShellBanner, { mode: 'offline', waiting: 0 });
   const bannerOfflineOne = renderMarkup(ShellBanner, { mode: 'offline', waiting: 1 });
+  const bannerFieldOffline = renderMarkup(ShellBanner, { mode: 'offline', waiting: 3, field: true });
   const bannerUnreachable = renderMarkup(ShellBanner, { mode: 'unreachable', waiting: 2 });
   const bannerReadOnly = renderMarkup(ShellBanner, { mode: 'read-only' });
   const bannerAuth = renderMarkup(ShellBanner, { mode: 'auth-expired' });
@@ -348,6 +353,7 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   const cardsEmpty = renderMarkup(ShellConflictList, { cards: [] });
   const updateNoVersion = renderMarkup(ShellUpdate, { open: true, shellName: 'HH Field' });
   const updateInstalling = installingMarkup({ open: true, shellName: 'HH Field', version: 'r18' });
+  const fieldSignIn = renderMarkup(FieldSignIn, { org: 'Harbor Stone Supply', branch: 'Point Loma' });
 
   // The states that need a pointer or a key are forced here, in this page's own cells only:
   // the same declarations the element's hover and focus rules carry, held to a fixed row.
@@ -437,6 +443,7 @@ ${cell('hh-shell-rail', 'empty, expanded: the first impression', railEmpty)}
 ${cell('hh-shell-offline-banner', 'offline, three writes in the outbox', bannerOffline)}
 ${cell('hh-shell-offline-banner', 'offline, empty outbox (writes wait)', bannerOfflineEmpty)}
 ${cell('hh-shell-offline-banner', 'offline, one write waiting (the plural check)', bannerOfflineOne)}
+${cell('hh-shell-offline-banner', 'field offline strip: Offline, three waiting to send and Tap to review', bannerFieldOffline)}
 ${cell('hh-shell-offline-banner', 'the server can\'t be reached', bannerUnreachable)}
 ${cell('hh-shell-offline-banner', 'read only: a second tab owns the sync', bannerReadOnly)}
 ${cell('hh-shell-offline-banner', 'sign in expired, the work safe', bannerAuth)}
@@ -465,8 +472,17 @@ ${phoneFrameCell('phone 390, no branch chip', 390, 'noBranch')}
 ${phoneFrameCell('phone 390, nothing waiting on review', 390, 'zero')}
 ${phoneFrameCell('phone 390, an inner screen with the back control', 390, 'inner')}
 ${phoneFrameCell('tablet 834, no tab bar, the action at the bottom', 834, 'idle')}
+${phoneFrameCell('tablet 834, slim header with tenant lockup from config, synced', 834, 'tabletIdle')}
+${phoneFrameCell('tablet 834, slim header with tenant lockup from config, offline', 834, 'tabletOffline')}
+</div>
+</section>
+<section class="width-frame" data-section="field-sign-in"><h2>The Field sign-in card: single centered card with tenant monogram from config and yard PIN hint</h2>
+<div class="grid">
+${cell('hh-field-sign-in', 'Field sign-in card, phone 390', fieldSignIn, { width: 390 })}
+${cell('hh-field-sign-in', 'Field sign-in card, tablet 834', fieldSignIn, { width: 834 })}
 </div>
 </section>
 </body>
 </html>`;
 }
+

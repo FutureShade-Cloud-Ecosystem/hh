@@ -308,9 +308,16 @@
   .card {
     background: var(--hh-widget);
     border: 1px solid var(--hh-line);
+    border-left: 4px solid var(--hh-state-watch);
     border-radius: var(--hh-radius-card);
     padding: var(--hh-s-16);
     color: var(--hh-text);
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-8);
   }
   .tag {
     display: block;
@@ -319,6 +326,18 @@
     text-transform: uppercase;
     color: var(--hh-text-dim);
     font-weight: 700;
+  }
+  .warning-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding: var(--hh-s-2) var(--hh-s-8);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1.2;
   }
   .heading {
     margin: var(--hh-s-8) 0 0;
@@ -331,6 +350,34 @@
     font-size: var(--hh-s-16);
     color: var(--hh-text-dim);
   }
+  .comparison {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-12);
+  }
+  .comparison-box {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    display: grid;
+    gap: var(--hh-s-4);
+    min-width: 0;
+  }
+  .comparison-label {
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+  }
+  .comparison-value {
+    font-size: var(--hh-s-14);
+    font-weight: 600;
+    color: var(--hh-text);
+    overflow-wrap: anywhere;
+  }
   .fact {
     margin: var(--hh-s-8) 0 0;
     font-size: var(--hh-s-12);
@@ -339,9 +386,12 @@
   .row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: var(--hh-s-8);
     margin-top: var(--hh-s-16);
+  }
+  .row .btn {
+    min-height: 44px;
   }
   .list-head {
     display: flex;

@@ -219,6 +219,7 @@
 
   :host {
     display: block;
+    container-type: inline-size;
     font-family: var(--hh-font-ui);
     color-scheme: var(--hh-color-scheme);
   }
@@ -260,6 +261,37 @@
   slot[name='back']::slotted(button:focus-visible) {
     outline: 2px solid var(--hh-focus-ring);
     outline-offset: -2px;
+  }
+
+  /* Tenant lockup from config, sync pill, and user avatar: hidden on phone, shown on tablet (>= 600px). */
+  .tenant-lockup {
+    display: none;
+    align-items: center;
+    gap: var(--hh-s-8);
+    flex: none;
+    min-width: 0;
+  }
+  .tenant-monogram {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 var(--hh-s-8);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .tenant-name {
+    font-size: var(--hh-s-14);
+    font-weight: 700;
+    color: var(--hh-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* The title block: the large word and the sync dot that rides beside it. */
@@ -312,6 +344,25 @@
     line-height: 1;
   }
 
+  /* The tablet sync pill: hidden on phone, shown on tablet (>= 600px). */
+  .sync-pill {
+    display: none;
+    flex: none;
+    align-items: center;
+    gap: var(--hh-s-8);
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid currentColor;
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .sync-pill[data-kind='good'] { color: var(--hh-state-good); }
+  .sync-pill[data-kind='busy'] { color: var(--hh-state-watch); }
+  .sync-pill[data-kind='stop'] { color: var(--hh-state-stop); }
+
   /* The bell: the r4 target, a count badge at the top-right. The badge hides
    * at zero: a bell without a count is just a bell, and the word "Notifications"
    * alone is its accessible name. */
@@ -359,4 +410,44 @@
     line-height: 1;
     display: grid;
     place-items: center;
+  }
+
+  /* User initials avatar: hidden on phone, shown on tablet (>= 600px). */
+  .user-avatar {
+    display: none;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-field);
+    border: 1px solid var(--hh-line);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  @media (min-width: 600px) {
+    .phone-row {
+      height: 48px;
+      min-height: 48px;
+      padding: 0 var(--hh-s-16);
+    }
+    .tenant-lockup {
+      display: inline-flex;
+    }
+    .title {
+      font-size: var(--hh-s-16);
+      font-weight: 600;
+    }
+    .title-block .dot {
+      display: none;
+    }
+    .sync-pill {
+      display: inline-flex;
+    }
+    .user-avatar {
+      display: inline-grid;
+    }
   }

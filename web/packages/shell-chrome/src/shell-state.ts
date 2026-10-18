@@ -331,6 +331,20 @@ export function initialsOf(name: string): string {
     .join('');
 }
 
+/** Monogram for the tenant lockup badge from tenant config: an explicit
+ * monogram wins, otherwise up to the first three words' initials, uppercased. */
+export function monogramOf(org: string, explicit = ''): string {
+  const override = explicit.trim();
+  if (override !== '') return override.toUpperCase();
+  const words = org.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '';
+  return words
+    .slice(0, 3)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
+
 // ── the sync state chip ──────────────────────────────────────────────────────────────────────────
 
 /**

@@ -19,3 +19,4 @@ export * from './shell-update.js';
 export * from './phone-header.js';
 export * from './tab-bar.js';
 export * from './action-bar.js';
+export * from './field-sign-in.js';

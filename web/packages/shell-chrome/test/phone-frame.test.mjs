@@ -21,6 +21,7 @@ import './lib/render.mjs'; // transitively sets up the DOM shim (Element, HTMLEl
 import { PhoneHeader } from '../src/phone-header.ts';
 import { TabBar, renderTabBar } from '../src/tab-bar.ts';
 import { ActionBar } from '../src/action-bar.ts';
+import { FieldSignIn } from '../src/field-sign-in.ts';
 import { parseRules, declsFor, px } from './lib/css.mjs';
 import { SHELL_SYNC_STATES } from '../src/shell-state.ts';
 
@@ -32,6 +33,7 @@ import { SHELL_SYNC_STATES } from '../src/shell-state.ts';
 if (!customElements.get('hh-phone-header')) customElements.define('hh-phone-header', PhoneHeader);
 if (!customElements.get('hh-tab-bar')) customElements.define('hh-tab-bar', TabBar);
 if (!customElements.get('hh-action-bar')) customElements.define('hh-action-bar', ActionBar);
+if (!customElements.get('hh-field-sign-in')) customElements.define('hh-field-sign-in', FieldSignIn);
 
 const phoneHeaderSrc = readFileSync(
   fileURLToPath(new URL('../src/phone-header.ts', import.meta.url)),
@@ -43,6 +45,10 @@ const tabBarSrc = readFileSync(
 );
 const actionBarSrc = readFileSync(
   fileURLToPath(new URL('../src/action-bar.ts', import.meta.url)),
+  'utf8',
+);
+const fieldSignInSrc = readFileSync(
+  fileURLToPath(new URL('../src/field-sign-in.ts', import.meta.url)),
   'utf8',
 );
 
@@ -317,24 +323,24 @@ test('FLOOR hh-action-bar: the slotted action renders at the input height, the r
   assert.ok(minHeight !== null && minHeight >= 44, `slotted action meets the 44 px target (found ${minHeight})`);
 });
 
-// ── shared floors: the package's house rules, held across all three sources ──────────────────
+// ── shared floors: the package's house rules, held across all new sources ────────────────────
 
 test('FLOOR shared: no em or en dashes anywhere in the new sources', () => {
-  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc]) {
+  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc, fieldSignInSrc]) {
     const has = /[\u2013\u2014]/.test(src);
     assert.equal(has, false, 'an em or en dash lives in the new sources');
   }
 });
 
 test('FLOOR shared: no calendar dates in the new sources', () => {
-  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc]) {
+  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc, fieldSignInSrc]) {
     const m = /\b(19|20)\d{2}\b/.exec(src);
     assert.equal(m, null, `a four digit year reads as a date: ${m?.[0]}`);
   }
 });
 
 test('FLOOR shared: no money words in the new sources', () => {
-  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc]) {
+  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc, fieldSignInSrc]) {
     for (const word of ['cents', 'freight', 'gauge', 'amount_due']) {
       assert.ok(!src.includes(word), `a money word "${word}" lives in the new sources`);
     }
@@ -342,13 +348,13 @@ test('FLOOR shared: no money words in the new sources', () => {
 });
 
 test('FLOOR shared: no listener spelling in the templates', () => {
-  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc]) {
+  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc, fieldSignInSrc]) {
     assert.ok(!/@click=|\.open=|@keydown=/.test(src), 'no listener spelling anywhere in the markup');
   }
 });
 
 test('FLOOR shared: no real person names in the new sources', () => {
-  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc]) {
+  for (const src of [phoneHeaderSrc, tabBarSrc, actionBarSrc, fieldSignInSrc]) {
     assert.ok(!/Colton|Trenton/.test(src), 'a person name is in the new sources');
   }
 });
@@ -435,7 +441,7 @@ test('hh-phone-header: tablet slim header renders tenant lockup from config, syn
         branch="Point Loma"
         count="2"
         org="Harbor Stone Supply"
-        user="Dana Yard"
+        user="Yard Team"
       ></hh-phone-header>`,
     ),
   );
@@ -445,7 +451,7 @@ test('hh-phone-header: tablet slim header renders tenant lockup from config, syn
   assert.ok(markup.includes('>Harbor Stone Supply<'), 'tenant name renders from config');
   assert.ok(markup.includes('class="sync-pill"'), 'tablet sync pill is rendered');
   assert.ok(markup.includes('Synced · just now'), 'idle sync pill shows Synced · just now');
-  assert.ok(markup.includes('data-initials="DY"'), 'user initials avatar derives from user');
+  assert.ok(markup.includes('data-initials="YT"'), 'user initials avatar derives from user');
   assert.ok(!phoneHeaderSrc.includes(['G', 'L', 'S'].join('')), 'tenant monogram is never hardcoded in source');
 });
 
@@ -473,8 +479,7 @@ test('FLOOR hh-phone-header: tablet slim header is 48 px tall at 600 px and wide
 
 // ── <hh-field-sign-in> ────────────────────────────────────────────────────────────────────────
 
-test('hh-field-sign-in: renders centered card with tenant monogram from config, fields, primary action and yard PIN hint', async () => {
-  const { FieldSignIn } = await import('../src/field-sign-in.js');
+test('hh-field-sign-in: renders centered card with tenant monogram from config, fields, primary action and yard PIN hint', () => {
   const el = new FieldSignIn();
   el.org = 'Harbor Stone Supply';
   el.branch = 'Point Loma';
@@ -488,8 +493,7 @@ test('hh-field-sign-in: renders centered card with tenant monogram from config, 
   assert.ok(markup.includes('On a shared yard tablet? Use a 4-digit yard PIN'), 'shared yard tablet PIN hint');
 });
 
-test('hh-field-sign-in: pressing Sign in fires hh-field-sign-in (bubbles, composed)', async () => {
-  const { FieldSignIn } = await import('../src/field-sign-in.js');
+test('hh-field-sign-in: pressing Sign in fires hh-field-sign-in (bubbles, composed)', () => {
   const listeners = new Map();
   const fired = [];
   const el = new FieldSignIn();
@@ -509,4 +513,9 @@ test('hh-field-sign-in: pressing Sign in fires hh-field-sign-in (bubbles, compos
   assert.equal(fired[0].type, 'hh-field-sign-in', 'event name is hh-field-sign-in');
   assert.equal(fired[0].bubbles, true, 'bubbles');
   assert.equal(fired[0].composed, true, 'composed');
+});
+
+test('FLOOR hh-field-sign-in: tokens only, no hex colour literals in the source', () => {
+  const hexes = [...fieldSignInSrc.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
+  assert.deepEqual(hexes, [], `field-sign-in.ts must stay literal-free, found: ${hexes.join(', ')}`);
 });

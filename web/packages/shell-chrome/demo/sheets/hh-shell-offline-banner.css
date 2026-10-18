@@ -332,6 +332,16 @@
     font-weight: 700;
     margin-left: auto;
   }
+  .count.count-gold {
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    border-color: transparent;
+  }
+  .review-action {
+    flex: none;
+    min-height: 44px;
+    margin-left: var(--hh-s-8);
+  }
   .sign-in {
     margin-left: auto;
   }

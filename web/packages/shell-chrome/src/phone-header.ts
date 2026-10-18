@@ -23,11 +23,18 @@
 import { css, html, nothing, type PropertyValues, type TemplateResult as Template } from 'lit';
 import { HHElement, defineElement } from '@hardscapehouse/design-system/src/base.js';
 import { baseStyles } from '@hardscapehouse/design-system/src/primitives.js';
-import { SHELL_SYNC_STATES, syncChipView, type ShellSyncState } from './shell-state.js';
+import {
+  initialsOf,
+  monogramOf,
+  SHELL_SYNC_STATES,
+  syncChipView,
+  type ShellSyncState,
+} from './shell-state.js';
 
 const styles = css`
   :host {
     display: block;
+    container-type: inline-size;
     font-family: var(--hh-font-ui);
     color-scheme: var(--hh-color-scheme);
   }
@@ -69,6 +76,37 @@ const styles = css`
   slot[name='back']::slotted(button:focus-visible) {
     outline: 2px solid var(--hh-focus-ring);
     outline-offset: -2px;
+  }
+
+  /* Tenant lockup from config, sync pill, and user avatar: hidden on phone, shown on tablet (>= 600px). */
+  .tenant-lockup {
+    display: none;
+    align-items: center;
+    gap: var(--hh-s-8);
+    flex: none;
+    min-width: 0;
+  }
+  .tenant-monogram {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 var(--hh-s-8);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .tenant-name {
+    font-size: var(--hh-s-14);
+    font-weight: 700;
+    color: var(--hh-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* The title block: the large word and the sync dot that rides beside it. */
@@ -121,6 +159,25 @@ const styles = css`
     line-height: 1;
   }
 
+  /* The tablet sync pill: hidden on phone, shown on tablet (>= 600px). */
+  .sync-pill {
+    display: none;
+    flex: none;
+    align-items: center;
+    gap: var(--hh-s-8);
+    height: 26px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    border: 1px solid currentColor;
+    font-size: var(--hh-s-12);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .sync-pill[data-kind='good'] { color: var(--hh-state-good); }
+  .sync-pill[data-kind='busy'] { color: var(--hh-state-watch); }
+  .sync-pill[data-kind='stop'] { color: var(--hh-state-stop); }
+
   /* The bell: the r4 target, a count badge at the top-right. The badge hides
    * at zero: a bell without a count is just a bell, and the word "Notifications"
    * alone is its accessible name. */
@@ -169,6 +226,46 @@ const styles = css`
     display: grid;
     place-items: center;
   }
+
+  /* User initials avatar: hidden on phone, shown on tablet (>= 600px). */
+  .user-avatar {
+    display: none;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-field);
+    border: 1px solid var(--hh-line);
+    color: var(--hh-text);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  @media (min-width: 600px) {
+    .phone-row {
+      height: 48px;
+      min-height: 48px;
+      padding: 0 var(--hh-s-16);
+    }
+    .tenant-lockup {
+      display: inline-flex;
+    }
+    .title {
+      font-size: var(--hh-s-16);
+      font-weight: 600;
+    }
+    .title-block .dot {
+      display: none;
+    }
+    .sync-pill {
+      display: inline-flex;
+    }
+    .user-avatar {
+      display: inline-grid;
+    }
+  }
 `;
 
 export class PhoneHeader extends HHElement {
@@ -180,6 +277,10 @@ export class PhoneHeader extends HHElement {
     syncState: { attribute: 'sync-state' },
     branch: { attribute: 'branch' },
     count: { type: Number, attribute: 'count' },
+    org: { attribute: 'org' },
+    monogram: { attribute: 'monogram' },
+    user: { attribute: 'user' },
+    syncNote: { attribute: 'sync-note' },
   };
 
   /** The row's large word; the slot wins when the host paints its own title. */
@@ -190,6 +291,14 @@ export class PhoneHeader extends HHElement {
   declare branch: string;
   /** The review bell's count; zero hides the badge. */
   declare count: number;
+  /** The tenant or dealer name from config for the tablet slim header. */
+  declare org: string;
+  /** Optional explicit monogram from tenant config; falls back to initials of org. */
+  declare monogram: string;
+  /** The signed-in user or role label for the tablet initials avatar. */
+  declare user: string;
+  /** Optional freshness note for the tablet sync pill. */
+  declare syncNote: string;
 
   constructor() {
     super();
@@ -197,6 +306,10 @@ export class PhoneHeader extends HHElement {
     this.syncState = 'idle';
     this.branch = '';
     this.count = 0;
+    this.org = '';
+    this.monogram = '';
+    this.user = '';
+    this.syncNote = '';
     this.state = 'ready';
   }
 
@@ -251,9 +364,26 @@ export class PhoneHeader extends HHElement {
     });
     const bellName =
       this.count > 0 ? `Notifications, ${this.count} unread` : 'Notifications';
+    const tenantMonogram = monogramOf(this.org, this.monogram);
+    const userInitials = initialsOf(this.user);
+    const pillNote =
+      this.syncNote !== ''
+        ? this.syncNote
+        : this.syncState === 'idle'
+          ? 'just now'
+          : chip.note;
+    const pillWords = pillNote !== '' ? `${chip.label} · ${pillNote}` : chip.label;
     return html`
       <header class="phone-row">
         <span class="back"><slot name="back"></slot></span>
+        ${tenantMonogram !== '' || this.org !== ''
+          ? html`<div class="tenant-lockup" data-tenant=${this.org}>
+              ${tenantMonogram !== ''
+                ? html`<span class="tenant-monogram" data-monogram=${tenantMonogram} aria-hidden="true">${tenantMonogram}</span>`
+                : nothing}
+              ${this.org !== '' ? html`<span class="tenant-name">${this.org}</span>` : nothing}
+            </div>`
+          : nothing}
         <div class="title-block">
           <span class="title">${this.title}</span>
           ${this.title !== ''
@@ -263,6 +393,10 @@ export class PhoneHeader extends HHElement {
         ${this.branch !== ''
           ? html`<span class="branch" data-branch=${this.branch}>${this.branch}</span>`
           : nothing}
+        <span class="sync-pill" data-state=${this.syncState} data-kind=${chip.kind}>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="sync-word">${pillWords}</span>
+        </span>
         <button
           class="bell"
           type="button"
@@ -275,6 +409,9 @@ export class PhoneHeader extends HHElement {
           </svg>
           ${this.count > 0 ? html`<span class="badge" aria-hidden="true">${this.count}</span>` : nothing}
         </button>
+        ${this.user !== ''
+          ? html`<span class="user-avatar" data-initials=${userInitials} role="img" aria-label=${this.user}>${userInitials}</span>`
+          : nothing}
       </header>
     `;
   }

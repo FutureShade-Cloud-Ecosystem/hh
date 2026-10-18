@@ -63,7 +63,7 @@ const scopeWords = (scope: string): { label: string; subject: string } =>
  * line. Words a person can read: the customer or subject words the row
  * carries, never an id alone. */
 function serverFact(serverState: Record<string, unknown>): string {
-  const candidates = ['customer_name', 'description', 'order_no', 'run_no', 'received_by'];
+  const candidates = ['customer_name', 'description', 'order_no', 'run_no', 'received_by', 'resolution', 'checksum'];
   for (const key of candidates) {
     const value = serverState[key];
     if (typeof value === 'string' && value !== '') return value;
@@ -71,6 +71,16 @@ function serverFact(serverState: Record<string, unknown>): string {
   const stopNo = serverState['stop_no'];
   if (typeof stopNo === 'number' && Number.isFinite(stopNo)) return `stop ${stopNo}`;
   return '';
+}
+
+/** One fact the client payload carries, for the side-by-side comparison box. */
+function clientFact(clientPayload: Record<string, unknown>): string {
+  const candidates = ['resolution', 'time_window', 'description', 'customer_name', 'order_no', 'run_no', 'mime', 'status'];
+  for (const key of candidates) {
+    const value = clientPayload[key];
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return 'Queued change on this device';
 }
 
 /** What one card says, by its kind. An unknown kind is a defect at the call
@@ -121,9 +131,16 @@ const styles = css`
   .card {
     background: var(--hh-widget);
     border: 1px solid var(--hh-line);
+    border-left: 4px solid var(--hh-state-watch);
     border-radius: var(--hh-radius-card);
     padding: var(--hh-s-16);
     color: var(--hh-text);
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-8);
   }
   .tag {
     display: block;
@@ -132,6 +149,18 @@ const styles = css`
     text-transform: uppercase;
     color: var(--hh-text-dim);
     font-weight: 700;
+  }
+  .warning-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding: var(--hh-s-2) var(--hh-s-8);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1.2;
   }
   .heading {
     margin: var(--hh-s-8) 0 0;
@@ -144,6 +173,34 @@ const styles = css`
     font-size: var(--hh-s-16);
     color: var(--hh-text-dim);
   }
+  .comparison {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-12);
+  }
+  .comparison-box {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    display: grid;
+    gap: var(--hh-s-4);
+    min-width: 0;
+  }
+  .comparison-label {
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+  }
+  .comparison-value {
+    font-size: var(--hh-s-14);
+    font-weight: 600;
+    color: var(--hh-text);
+    overflow-wrap: anywhere;
+  }
   .fact {
     margin: var(--hh-s-8) 0 0;
     font-size: var(--hh-s-12);
@@ -152,9 +209,12 @@ const styles = css`
   .row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: var(--hh-s-8);
     margin-top: var(--hh-s-16);
+  }
+  .row .btn {
+    min-height: 44px;
   }
   .list-head {
     display: flex;
@@ -193,15 +253,33 @@ const styles = css`
 function conflictCardTemplate(card: ShellCardInput): Template {
   const view = conflictCardView(card);
   const fact = serverFact(card.serverState);
+  const deviceFact = clientFact(card.clientPayload);
+  const counterFact = fact !== '' ? fact : 'Current server state';
   return html`
     <article class="card" data-card-id=${card.id} data-card-kind=${card.kind}>
-      <span class="tag">${view.tag}</span>
+      <div class="card-head">
+        <span class="tag">${view.tag}</span>
+        <span class="warning-badge" data-kind="watch">Needs review</span>
+      </div>
       <p class="heading">${view.heading}</p>
       <p class="body">${view.body}</p>
+      <div class="comparison" role="group" aria-label="Conflict comparison">
+        <div class="comparison-box" data-side="device">
+          <span class="comparison-label">YOUR DEVICE</span>
+          <span class="comparison-value">${deviceFact}</span>
+        </div>
+        <div class="comparison-box" data-side="counter">
+          <span class="comparison-label">AT THE COUNTER</span>
+          <span class="comparison-value">${counterFact}</span>
+        </div>
+      </div>
       ${fact !== '' ? html`<p class="fact">The server holds: ${fact}</p>` : nothing}
       <div class="row">
-        <button class="btn btn-secondary" type="button" data-action="dismiss-card" data-card-id=${card.id} aria-label=${`Dismiss: ${view.heading}`}>
-          Dismiss
+        <button class="btn btn-secondary" type="button" data-action="open-order" data-card-id=${card.id}>
+          Open the order
+        </button>
+        <button class="btn btn-primary" type="button" data-action="dismiss-card" data-card-id=${card.id} aria-label=${`Dismiss: ${view.heading}`}>
+          Use counter's
         </button>
       </div>
     </article>

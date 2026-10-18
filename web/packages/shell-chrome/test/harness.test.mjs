@@ -26,6 +26,10 @@ const TEXT_FILES = [
   'src/shell-banner.ts',
   'src/shell-cards.ts',
   'src/shell-update.ts',
+  'src/phone-header.ts',
+  'src/tab-bar.ts',
+  'src/action-bar.ts',
+  'src/field-sign-in.ts',
   'src/index.ts',
   'demo/demo-page.ts',
   'demo/build.mjs',
@@ -91,6 +95,10 @@ test('no hex colour literals in the element and demo sources: tokens only', () =
     'src/shell-banner.ts',
     'src/shell-update.ts',
     'src/shell-cards.ts',
+    'src/phone-header.ts',
+    'src/tab-bar.ts',
+    'src/action-bar.ts',
+    'src/field-sign-in.ts',
     'demo/demo-page.ts',
   ];
   const offences = [];
@@ -103,7 +111,19 @@ test('no hex colour literals in the element and demo sources: tokens only', () =
 // ── the import gate, over the package's own sources ──────────────────────────────────────────────
 
 test('the element sources import only lit, the design system, and their siblings', () => {
-  const sources = ['src/shell-state.ts', 'src/shell-header.ts', 'src/shell-rail.ts', 'src/shell-banner.ts', 'src/shell-cards.ts', 'src/shell-update.ts', 'src/index.ts'];
+  const sources = [
+    'src/shell-state.ts',
+    'src/shell-header.ts',
+    'src/shell-rail.ts',
+    'src/shell-banner.ts',
+    'src/shell-cards.ts',
+    'src/shell-update.ts',
+    'src/phone-header.ts',
+    'src/tab-bar.ts',
+    'src/action-bar.ts',
+    'src/field-sign-in.ts',
+    'src/index.ts',
+  ];
   const allowed = [/^lit$/, /^@hardscapehouse\/design-system\/src\/[a-z-]+\.js$/, /^\.\/[a-z-]+\.js$/];
   const offences = [];
   const statementRes = [
@@ -127,7 +147,16 @@ test('the element sources import only lit, the design system, and their siblings
 });
 
 test('the element sources never spell a template tag outside lit, and never alias it', () => {
-  const sources = ['src/shell-header.ts', 'src/shell-rail.ts', 'src/shell-banner.ts', 'src/shell-update.ts'];
+  const sources = [
+    'src/shell-header.ts',
+    'src/shell-rail.ts',
+    'src/shell-banner.ts',
+    'src/shell-update.ts',
+    'src/phone-header.ts',
+    'src/tab-bar.ts',
+    'src/action-bar.ts',
+    'src/field-sign-in.ts',
+  ];
   const offences = [];
   for (const rel of sources) {
     const src = read(rel);
@@ -214,6 +243,9 @@ const FIDELITY_CELLS = [
   ['HH Field update ready, no version', ['HH Field update ready'], ['is downloaded']],
   ['update prompt, installing: both buttons disabled', ['Installing'], ['>Update now<']],
   ['update prompt, phone 390', ['width:min(390px', 'Update now'], []],
+  ['field offline strip: Offline, three waiting to send and Tap to review', ['Offline · 3 waiting to send', 'Tap to review'], []],
+  ['tablet 834, slim header with tenant lockup from config, synced', ['Harbor Stone Supply', 'HSS', 'Synced · just now'], []],
+  ['Field sign-in card, phone 390', ['Sign in to Field', 'Work email or phone', 'Passcode or PIN', 'On a shared yard tablet? Use a 4-digit yard PIN'], []],
 ];
 
 test('the demo page carries a cell for every state the fidelity pass is asked to render', () => {

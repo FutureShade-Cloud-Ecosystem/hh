@@ -90,10 +90,30 @@ const styles = css`
     font-weight: 700;
     margin-left: auto;
   }
+  .count.count-gold {
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    border-color: transparent;
+  }
+  .review-action {
+    flex: none;
+    min-height: 44px;
+    margin-left: var(--hh-s-8);
+  }
   .sign-in {
     margin-left: auto;
   }
 `;
+
+export function fieldOfflineWords(waiting: number): { words: string; action: string } {
+  return {
+    words:
+      waiting > 0
+        ? `Offline · ${waiting} waiting to send`
+        : 'Offline · writes wait for the connection',
+    action: 'Tap to review',
+  };
+}
 
 export class ShellBanner extends HHElement {
   static styles = [baseStyles, stateStyles, styles];
@@ -103,6 +123,8 @@ export class ShellBanner extends HHElement {
     mode: { attribute: 'mode' },
     waiting: { type: Number, attribute: 'waiting' },
     cacheOnly: { type: Boolean, attribute: 'cache-only' },
+    field: { type: Boolean, attribute: 'field' },
+    variant: { attribute: 'variant' },
   };
 
   /** The connection's truth: offline, unreachable, read-only (a second
@@ -113,14 +135,41 @@ export class ShellBanner extends HHElement {
   /** An app with a read cache and no outbox: the offline and unreachable
    * words say what the screen shows, never that writes wait or send later. */
   declare cacheOnly: boolean;
+  /** Field offline strip mode: shows Offline · N waiting to send, gold pill count, and Tap to review. */
+  declare field: boolean;
+  /** Optional variant attribute ('field' enables Field offline strip words). */
+  declare variant: string;
 
   constructor() {
     super();
     this.mode = '';
     this.waiting = 0;
     this.cacheOnly = false;
+    this.field = false;
+    this.variant = '';
     this.state = 'ready';
   }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.addEventListener('click', this.#onClick);
+  }
+
+  override disconnectedCallback(): void {
+    this.removeEventListener('click', this.#onClick);
+    super.disconnectedCallback();
+  }
+
+  readonly #onClick = (event: Event): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute('data-action'));
+    if (control === undefined) return;
+    const action = control.getAttribute('data-action');
+    if (action === 'review') {
+      this.dispatchEvent(new CustomEvent('hh-shell-review', { bubbles: true, composed: true }));
+    }
+  };
 
   render(): Template {
     if (this.mode === '') return html``;
@@ -134,18 +183,24 @@ export class ShellBanner extends HHElement {
     }
     const known = this.mode as Exclude<ShellBannerMode, ''>;
     const meta = WORDS[known];
+    const isField = this.field || this.variant === 'field';
     const words =
       this.cacheOnly && (known === 'offline' || known === 'unreachable')
         ? CACHE_ONLY_WORDS[known]
-        : known === 'offline' && this.waiting > 0
-          ? `You're offline · ${this.waiting} changes in the outbox · they send when you're back`
-          : meta.words;
+        : known === 'offline' && isField
+          ? fieldOfflineWords(this.waiting).words
+          : known === 'offline' && this.waiting > 0
+            ? `You're offline · ${this.waiting} changes in the outbox · they send when you're back`
+            : meta.words;
     return html`
       <div class="banner banner-shell" role="status" data-mode=${this.mode}>
         ${icon(meta.iconName)}
         <span class="banner-text">${words}</span>
         ${known === 'offline' && this.waiting > 0 && !this.cacheOnly
-          ? html`<span class="count" aria-hidden="true">${this.waiting}</span>`
+          ? html`<span class="count ${isField ? 'count-gold' : ''}" aria-hidden="true">${this.waiting}</span>`
+          : nothing}
+        ${known === 'offline' && this.waiting > 0 && !this.cacheOnly && isField
+          ? html`<button class="btn btn-secondary review-action" type="button" data-action="review">Tap to review</button>`
           : nothing}
         ${known === 'auth-expired'
           ? html`<button class="btn btn-primary sign-in" type="button" data-action="sign-in">Sign in</button>`
@@ -157,6 +212,6 @@ export class ShellBanner extends HHElement {
 
 // The sign in action rides the host delegation the design system documents:
 // the shell listens on the element for a click on data-action="sign-in" and
-// emits its own flow from there. The element itself keeps no listeners:
-// one click contract, the kit pattern, and no listener spelling in markup.
+// emits its own flow from there.
 defineElement('hh-shell-offline-banner', ShellBanner);
+
