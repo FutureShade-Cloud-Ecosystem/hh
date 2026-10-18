@@ -11,12 +11,11 @@ test("the way in offers a card per persona and a card signs in", async ({ page, 
   await expect(page.locator("[data-channel-list]")).toBeVisible();
 });
 
-test("the channel list groups rooms and shows each unread count; the payments room is not in it for Sales", async ({ page, request }) => {
+test("the channel list groups channels and direct messages and shows each unread count; the payments room is not in it for Sales", async ({ page, request }) => {
   await openAs(page, request, "sales");
   const list = page.locator("[data-channel-list]");
-  await expect(list.getByRole("heading", { name: "Direct messages" })).toBeVisible();
-  await expect(list.getByRole("heading", { name: "Rooms" })).toBeVisible();
-  await expect(list.getByRole("heading", { name: "Branch" })).toBeVisible();
+  await expect(list.getByRole("heading", { name: "DIRECT MESSAGES" })).toBeVisible();
+  await expect(list.getByRole("heading", { name: "CHANNELS" })).toBeVisible();
   await expect(channel(page, CH.branch)).toContainText("Point Loma");
   await expect(channel(page, CH.branch).locator("[data-unread]")).toHaveText("2");
   await expect(channel(page, CH.yard).locator("[data-unread]")).toHaveText("2");
@@ -130,6 +129,8 @@ test("switching rooms while a post is in flight keeps the new room's draft, and 
   // its place: click until the room asked for is the one on screen.
   const go = (id: string, title: string) =>
     expect(async () => {
+      const back = page.locator("[data-conversation] [data-action='back']");
+      if (await back.isVisible()) await back.click();
       await channel(page, id).click();
       await expect(page.locator("[data-conversation]").getByRole("heading", { level: 2 })).toHaveText(title, { timeout: 1000 });
     }).toPass();
@@ -216,56 +217,54 @@ test("quick replies populate composer, avatar initials render, @mention chips hi
   await expect(threadPanel.locator("textarea[data-field='thread-draft']")).toBeVisible();
 });
 
-test("at tablet width the left sidebar collapses when a thread is open", async ({ page, request }) => {
-  await page.setViewportSize({ width: 1112, height: 868 });
+test("at tablet width the desk is single pane: opening a channel hides the channel list, the back chevron returns to it", async ({ page, request }) => {
+  await page.setViewportSize({ width: 834, height: 1194 });
   await openAs(page, request, "sales");
-  await channel(page, CH.yard).click();
-
   const sidebar = page.locator("[data-channel-list]");
   await expect(sidebar).toBeVisible();
+  await expect(page.locator("[data-conversation]")).toHaveCount(0);
 
-  await page.locator("[data-action='open-thread']").first().click();
-  const threadPanel = page.locator("[data-thread-panel]");
-  await expect(threadPanel).toBeVisible();
+  await channel(page, CH.yard).click();
+  await expect(page.locator("[data-conversation]")).toBeVisible();
   await expect(sidebar).toBeHidden();
 
-  await page.locator("[data-action='close-thread']").click();
-  await expect(threadPanel).toBeHidden();
+  await page.locator("[data-conversation] [data-action='back']").click();
   await expect(sidebar).toBeVisible();
+  await expect(page.locator("[data-conversation]")).toHaveCount(0);
 });
 
-test("C2: new message modal opens, lets caller select people, and starts a DM or group", async ({ page, request }) => {
+test("C2: new message sheet opens, lets caller select people, and starts a DM or group", async ({ page, request }) => {
   await openAs(page, request, "sales");
   await page.locator("[data-action='toggle-new-menu']").click();
   await page.locator("[data-action='new-message']").click();
 
-  const modal = page.locator("[data-modal='new-message']");
-  await expect(modal).toBeVisible();
-  await expect(page.locator("[data-modal-backdrop]")).toBeVisible();
-  await expect(modal.getByRole("heading", { name: "New message" })).toBeVisible();
+  const sheet = page.locator("hh-sheet[data-sheet='new-message']");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText("New channel is for admins: it is in Settings.");
 
   // Select 1 person -> DM
-  const personPriya = modal.locator("[data-person-id='a0000000-0000-4000-9000-000000000003']");
+  const personPriya = sheet.locator("[data-person-id='a0000000-0000-4000-9000-000000000003']");
   await personPriya.click();
-  await expect(modal.locator("[data-to-chips]")).toContainText("Priya Shah");
-  await expect(modal.locator("[data-action='start-conversation']")).toHaveText("Start message");
-  await modal.locator("[data-action='start-conversation']").click();
+  await expect(sheet.locator("[data-to-chips]")).toContainText("Priya Shah");
+  await expect(sheet.locator("[data-action='start-conversation']")).toHaveText("Start message");
+  await sheet.locator("[data-action='start-conversation']").click();
 
   // Opens DM
   const convo = page.locator("[data-conversation]");
   await expect(convo).toBeVisible();
   await expect(convo.locator("[data-dm-prompt]")).toContainText("This is the start of your conversation with Priya Shah");
 
-  // Open modal again and select 2 people -> Group DM
-  await page.locator("[data-action='new-dm']").click();
-  await expect(modal).toBeVisible();
-  await modal.locator("[data-person-id='a0000000-0000-4000-9000-000000000003']").click();
-  await modal.locator("[data-person-id='a0000000-0000-4000-9000-000000000005']").click();
-  const groupNameInput = modal.locator("input[data-field='group-name']");
+  // Open the sheet again and select 2 people -> Group DM.
+  await page.locator("[data-action='toggle-new-menu']").click();
+  await page.locator("[data-action='new-message']").click();
+  await expect(sheet).toBeVisible();
+  await sheet.locator("[data-person-id='a0000000-0000-4000-9000-000000000003']").click();
+  await sheet.locator("[data-person-id='a0000000-0000-4000-9000-000000000005']").click();
+  const groupNameInput = sheet.locator("input[data-field='group-name']");
   await expect(groupNameInput).toBeVisible();
   await groupNameInput.fill("Saturday runs");
-  await expect(modal.locator("[data-action='start-conversation']")).toHaveText("Start group");
-  await modal.locator("[data-action='start-conversation']").click();
+  await expect(sheet.locator("[data-action='start-conversation']")).toHaveText("Start group");
+  await sheet.locator("[data-action='start-conversation']").click();
 
   // Opens Group
   await expect(convo.locator("h2")).toHaveText("Saturday runs");
@@ -290,11 +289,11 @@ test("C2: new channel modal for admins only creates channel", async ({ page, req
   await expect(convo.locator("h2")).toHaveText("yard-julian-receiving");
 });
 
-test("C2: group DM header displays stacked initials, inline rename, Add a person, and Files tab", async ({ page, request }) => {
+test("C2: a DM or group conversation carries a Files button that opens its own files-and-photos screen", async ({ page, request }) => {
   await openAs(page, request, "sales");
   await channel(page, CH.dm).click();
-  // Open group or DM, tab strip carries Files and photos
-  await expect(page.locator("[data-conversation] [data-tab='files']")).toBeVisible();
+  const filesBtn = page.locator("[data-conversation] [data-action='open-files']");
+  await expect(filesBtn).toBeVisible();
 });
 
 test("C3: reactions can be toggled on messages and + React picker adds reaction", async ({ page, request }) => {
@@ -336,18 +335,25 @@ test("C3: edit and delete own text message within 10 minutes shows (edited) and 
   await expect(ownMsg.locator(".text")).toHaveText("This message was deleted");
 });
 
-test("C3: Mentions, Saved, and Search views open from left rail", async ({ page, request }) => {
+test("C3: Mentions, Saved, and Search views open from More and the rail", async ({ page, request }) => {
   await openAs(page, request, "sales");
 
-  // Mentions view
-  await page.locator("[data-action='nav-mentions']").click();
+  // Open the More view from the rail.
+  await page.locator("[data-action='open-more']").click();
+  await expect(page.locator("[data-view='more']")).toBeVisible();
+
+  // Mentions view from More.
+  await page.locator("[data-view='more'] [data-action='nav-mentions']").click();
   await expect(page.locator("[data-view='mentions']")).toBeVisible();
 
-  // Saved view
-  await page.locator("[data-action='nav-saved']").click();
+  // Saved view from More.
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='nav-saved']").click();
   await expect(page.locator("[data-view='saved']")).toBeVisible();
 
-  // Search view
+  // Search view from the rail's search input.
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='back']").click();
   const searchInput = page.locator("input.search-input");
   await searchInput.fill("pallet");
   await expect(page.locator("[data-view='search']")).toBeVisible();
@@ -356,7 +362,8 @@ test("C3: Mentions, Saved, and Search views open from left rail", async ({ page,
 
 test("C4 and C5: Settings view shows Membership rules, Added by hand, Event classes, and Rep assignment", async ({ page, request }) => {
   await openAs(page, request, "admin");
-  await page.locator("[data-action='open-settings']").click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-settings']").click();
 
   const settings = page.locator("[data-view='settings']");
   await expect(settings).toBeVisible();
@@ -375,7 +382,8 @@ test("C4 and C5: Settings view shows Membership rules, Added by hand, Event clas
 test("C4 and C5: Notifications opt-in view displays per-channel mode, event classes, quiet hours, and channel directory", async ({ page, request }) => {
   await openAs(page, request, "sales");
   await channel(page, CH.yard).click();
-  await page.locator("[data-action='open-notify-optin']").click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-notify-optin']").click();
 
   const notif = page.locator("[data-view='notifications-optin']");
   await expect(notif).toBeVisible();
@@ -385,18 +393,18 @@ test("C4 and C5: Notifications opt-in view displays per-channel mode, event clas
   await expect(notif.locator("[data-card='directory']")).toBeVisible();
 });
 
-test("C6: Files and photos tab shows photos grid and files list, and composer attach adds file", async ({ page, request }) => {
+test("C6: Files and photos screen shows photos grid and files list, and composer attach adds file", async ({ page, request }) => {
   await openAs(page, request, "sales");
   await channel(page, CH.yard).click();
 
-  await page.locator("[data-action='select-tab'][data-tab='files']").click();
-  const filesView = page.locator("[data-files-pane]");
+  await page.locator("[data-conversation] [data-action='open-files']").click();
+  const filesView = page.locator("[data-files-view]");
   await expect(filesView).toBeVisible();
   await expect(filesView.locator("[data-photos-grid]")).toBeVisible();
   await expect(filesView.locator("[data-files-list]")).toBeVisible();
 
   // Attach dialog from composer
-  await page.locator("[data-action='select-tab'][data-tab='messages']").click();
+  await filesView.locator("[data-action='back-from-files']").click();
   await page.locator("[data-action='attach']").click();
   const attachModal = page.locator("[data-modal='attach']");
   await expect(attachModal).toBeVisible();

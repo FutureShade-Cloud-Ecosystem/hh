@@ -160,11 +160,12 @@ export interface ChannelGroup {
   readonly channels: readonly Channel[];
 }
 
+// Two groups on the channel rail: DIRECT MESSAGES for one to one and group threads,
+// CHANNELS for every named room (team, topic, branch, approval). The desktop rail keeps the same
+// two groups; no per-kind split.
 const GROUPS: readonly { label: string; kinds: readonly Channel["kind"][] }[] = [
-  { label: "Direct messages", kinds: ["DM"] },
-  { label: "Rooms", kinds: ["TEAM", "TOPIC"] },
-  { label: "Branch", kinds: ["BRANCH"] },
-  { label: "Approvals", kinds: ["APPROVAL"] },
+  { label: "DIRECT MESSAGES", kinds: ["DM", "GROUP"] },
+  { label: "CHANNELS", kinds: ["TEAM", "TOPIC", "BRANCH", "APPROVAL"] },
 ];
 
 /** The list's groups in reading order; a group with no channel is not drawn. The core's order holds inside a group. */

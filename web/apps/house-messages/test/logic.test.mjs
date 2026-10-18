@@ -102,21 +102,23 @@ test("the composer words say how much room is left only when it is nearly gone",
   assert.match(composerState("a".repeat(8100)).words, /92 bytes left/);
 });
 
-test("channel groups: direct messages, rooms, the branch, then approvals, each in the core's order", () => {
+test("channel groups: direct messages and group threads are DIRECT MESSAGES; team, topic, branch and approvals fold into CHANNELS, each in the core's order", () => {
   const groups = channelGroups([
     ch({ id: "a", kind: "APPROVAL", name: "Approvals" }),
     ch({ id: "b", kind: "BRANCH", name: "Point Loma" }),
     ch({ id: "c", kind: "TOPIC", name: "Deliveries" }),
     ch({ id: "d", kind: "DM", name: "A colleague" }),
     ch({ id: "e", kind: "TEAM", name: "Yard" }),
+    ch({ id: "f", kind: "GROUP", name: "Saturday runs" }),
   ]);
-  assert.deepEqual(groups.map((g) => g.label), ["Direct messages", "Rooms", "Branch", "Approvals"]);
-  assert.deepEqual(groups[1].channels.map((c) => c.id), ["c", "e"]);
+  assert.deepEqual(groups.map((g) => g.label), ["DIRECT MESSAGES", "CHANNELS"]);
+  assert.deepEqual(groups[0].channels.map((c) => c.id), ["d", "f"]);
+  assert.deepEqual(groups[1].channels.map((c) => c.id), ["a", "b", "c", "e"]);
 });
 
 test("a group with no channel is not drawn", () => {
   const groups = channelGroups([ch({ kind: "TEAM" })]);
-  assert.deepEqual(groups.map((g) => g.label), ["Rooms"]);
+  assert.deepEqual(groups.map((g) => g.label), ["CHANNELS"]);
 });
 
 test("unread words: a count, a cap, and a mention", () => {

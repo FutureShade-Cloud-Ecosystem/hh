@@ -59,6 +59,8 @@ export interface DeskHost {
   readonly find: (selector: string) => Element | null;
   /** The clock, so a test pins the time words. */
   readonly now: () => number;
+  /** The current viewport width in CSS pixels, so the desk can pick the phone or tablet layout. */
+  readonly viewportWidth: () => number;
   /** Opens the server sent event stream at a path. */
   readonly openStream: (url: string) => StreamSource;
   readonly timers: Timers;
@@ -183,6 +185,13 @@ export class MessagesDesk {
   #refreshAgain = false;
   #refreshFull = false;
   #stopped = false;
+
+  /** Tablet single pane: 600 through 1099 inclusive. A wider work shell (>=1100, the desk
+     * 1440 baseline) keeps the rail-and-conversation two-pane layout. */
+  #isTablet(): boolean {
+    const width = this.#host.viewportWidth();
+    return width >= 600 && width < 1100;
+  }
 
   constructor(api: MessagesApi, host: DeskHost, meId: string, caller?: CallerInfo | null) {
     this.#api = api;
@@ -409,6 +418,7 @@ export class MessagesDesk {
 
   async #openRules(): Promise<void> {
     this.#rulesOpen = true;
+    this.#mainView = "conversation";
     this.#view = "conversation";
     this.#rulesLoading = true;
     this.#rules = null;
@@ -994,6 +1004,8 @@ export class MessagesDesk {
         this.#host.repaint();
         return true;
       case "close-modal":
+      case "close-sheet":
+      case "close-scrim":
         this.#newMsgModalOpen = false;
         this.#newChannelModalOpen = false;
         this.#attachModalOpen = false;
@@ -1046,14 +1058,39 @@ export class MessagesDesk {
         return true;
       case "open-channel":
         this.#mainView = "conversation";
+        this.#view = "conversation";
         void this.#open(id);
         return true;
       case "back":
-        if (this.#mainView !== "conversation") {
+        if (this.#mainView === "files") {
           this.#mainView = "conversation";
+        } else if (this.#mainView === "more") {
+          this.#mainView = "conversation";
+          this.#view = "list";
+        } else if (this.#mainView !== "conversation") {
+          this.#mainView = "conversation";
+          if (this.#activeId === "") this.#view = "list";
         } else {
           this.#view = "list";
         }
+        this.#host.repaint();
+        return true;
+      case "open-more":
+        this.#rulesOpen = false;
+        this.#mainView = "more";
+        this.#view = "conversation";
+        this.#host.repaint();
+        return true;
+      case "open-files":
+        if (this.#activeId !== "") {
+          this.#rulesOpen = false;
+          this.#mainView = "files";
+          void this.#loadAttachments(this.#activeId);
+        }
+        this.#host.repaint();
+        return true;
+      case "back-from-files":
+        this.#mainView = "conversation";
         this.#host.repaint();
         return true;
       case "load-older":
@@ -1437,6 +1474,7 @@ export class MessagesDesk {
       activeId: this.#activeId,
       view: this.#view,
       mainView: this.#mainView,
+      tablet: this.#isTablet(),
       totalUnread: totalUnread(this.#channels),
       live: this.#liveState,
       stale: this.#staleAt === null ? "" : `The last read failed at ${timeWords(new Date(this.#staleAt).toISOString(), this.#host.now())}. You are looking at what was read before.`,

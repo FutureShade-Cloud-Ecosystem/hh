@@ -67,7 +67,8 @@ test("the on and off choices move only when the core answers, and a refusal says
 
 test("payment notice rules: all three read off, a toggle is the caller's own and survives a reload", async ({ page, request }) => {
   await openAs(page, request, "payables-receivables");
-  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-rules']").click();
   const rules = page.locator("[data-rules]");
   await expect(rules).toContainText("Payment notices");
   for (const rule of ["ONLINE", "CROSS_BRANCH", "OWN_ORDER"]) {
@@ -77,7 +78,8 @@ test("payment notice rules: all three read off, a toggle is the caller's own and
   await expect(rules.locator("[data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
   await expect(rules.locator("[data-rule='ONLINE']")).toHaveAttribute("aria-pressed", "false");
   await page.reload();
-  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-rules']").click();
   await expect(page.locator("[data-rules] [data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -85,11 +87,13 @@ test("one person's payment rules never read as another's", async ({ browser, req
   const payables = await browser.newPage();
   const sales = await browser.newPage();
   await openAs(payables, request, "payables-receivables");
-  await payables.getByRole("button", { name: "Payment notice rules" }).click();
+  await payables.locator("[data-action='open-more']").click();
+  await payables.locator("[data-view='more'] [data-action='open-rules']").click();
   await payables.locator("[data-rules] [data-rule='ONLINE']").click();
   await expect(payables.locator("[data-rules] [data-rule='ONLINE']")).toHaveAttribute("aria-pressed", "true");
   await openAs(sales, request, "sales", false);
-  await sales.getByRole("button", { name: "Payment notice rules" }).click();
+  await sales.locator("[data-action='open-more']").click();
+  await sales.locator("[data-view='more'] [data-action='open-rules']").click();
   await expect(sales.locator("[data-rules] [data-rule='ONLINE']")).toHaveAttribute("aria-pressed", "false");
   await payables.close();
   await sales.close();
@@ -125,14 +129,16 @@ test("a notification sheet whose read failed draws no controls, only the core's 
 test("a payment rules sheet whose read failed draws no rule, writes nothing, and never shows the last read's values; Try again reads them", async ({ page, request }) => {
   await openAs(page, request, "sales");
   const rules = page.locator("[data-rules]");
-  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-rules']").click();
   await rules.locator("[data-rule='OWN_ORDER']").click();
   await expect(rules.locator("[data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
   await rules.getByRole("button", { name: "Close" }).click();
   const refuse = (route: import("@playwright/test").Route) =>
     route.request().method() === "GET" ? route.fulfill({ status: 503, json: { error: "database unavailable" } }) : route.continue();
   await page.route("**/api/v1/messaging/payment-rules", refuse);
-  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await page.locator("[data-action='open-more']").click();
+  await page.locator("[data-view='more'] [data-action='open-rules']").click();
   await expect(rules.locator("[data-rules-error]")).toContainText("Your payment notice rules");
   await expect(rules.locator("[data-action='toggle-rule']")).toHaveCount(0);
   await expect(rules.getByRole("button", { name: "Try again" })).toBeVisible();

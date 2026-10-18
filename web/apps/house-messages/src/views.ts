@@ -42,6 +42,9 @@ import type {
   SearchResults,
 } from "./messages-api.js";
 import { liveWords, type LiveState } from "./live.js";
+// hh-sheet is the design system bottom sheet primitive. It registers the hh-sheet
+// element on import, so the consumer renders <hh-sheet> in its own light DOM.
+import "@hardscapehouse/design-system/src/sheet.js";
 
 /** What the desk hands the screen to draw. */
 export interface Model {
@@ -51,7 +54,8 @@ export interface Model {
   readonly channels: readonly Channel[];
   readonly activeId: string;
   readonly view: "list" | "conversation";
-  readonly mainView: "conversation" | "mentions" | "saved" | "search" | "settings" | "notifications-optin";
+  readonly mainView: "conversation" | "mentions" | "saved" | "search" | "settings" | "notifications-optin" | "more" | "files";
+  readonly tablet: boolean;
   readonly totalUnread: number;
   readonly live: LiveState | null;
   readonly stale: string;
@@ -273,6 +277,14 @@ function renderStrip(m: Model): TemplateResult {
 
 function renderChannelItem(c: Channel, activeId: string, isDm: boolean): TemplateResult {
   const unread = unreadWord(c);
+  const isGroup = c.kind === "GROUP";
+  const avatarInner = isDm && isGroup
+    // Two-initials badge: a DM with multiple peers sits under the GROUP kind; show two stacked
+    // initials so the row reads as a group thread at a glance.
+    ? html`<span class="avatar avatar-stacked-badge" aria-hidden="true"><span>${initialsOf(channelTitle(c)).slice(0, 1)}</span><span>${initialsOf(channelTitle(c)).slice(1, 2)}</span></span>`
+    : isDm
+      ? html`<span class="avatar avatar-sm" aria-hidden="true">${initialsOf(channelTitle(c))}</span>`
+      : html`<span class="ch-prefix" aria-hidden="true">#</span>`;
   return html`
     <li>
       <button
@@ -282,14 +294,13 @@ function renderChannelItem(c: Channel, activeId: string, isDm: boolean): Templat
         data-id=${c.id}
         aria-current=${c.id === activeId ? "true" : "false"}
       >
-        ${isDm
-          ? html`<span class="avatar avatar-sm" aria-hidden="true">${initialsOf(channelTitle(c))}</span>`
-          : html`<span class="ch-prefix" aria-hidden="true">#</span>`}
+        ${avatarInner}
         <span class="ch-text">
           <span class="ch-name">${channelTitle(c)}</span>
+          ${c.latest_at && c.unread_count > 0 ? html`<span class="ch-when dim small">${timeWords(c.latest_at, Date.now())}</span>` : nothing}
         </span>
         ${c.unread_count > 0
-          ? html`<span class="${c.mentioned ? "badge badge-mention" : "badge"}" data-unread aria-label=${unread}>${c.unread_count > 99 ? "99+" : c.unread_count}</span>`
+          ? html`<span class="${c.mentioned ? "badge badge-mention" : "badge badge-gold"}" data-unread aria-label=${unread}>${c.unread_count > 99 ? "99+" : c.unread_count}</span>`
           : nothing}
       </button>
     </li>
@@ -297,11 +308,10 @@ function renderChannelItem(c: Channel, activeId: string, isDm: boolean): Templat
 }
 
 function renderRail(m: Model): TemplateResult {
-  const dmChannels = m.channels.filter((c) => c.kind === "DM" || c.kind === "GROUP");
-  const groups = channelGroups(m.channels.filter((c) => c.kind !== "DM" && c.kind !== "GROUP"));
+  const groups = channelGroups(m.channels);
 
   return html`
-    <aside class="rail" data-channel-list aria-label="Channels">
+    <aside class="rail" data-channel-list aria-label="Channels" data-tablet-list-only=${m.view === "list" ? "true" : "false"}>
       <div class="rail-top">
         <button
           type="button"
@@ -318,49 +328,21 @@ function renderRail(m: Model): TemplateResult {
             </div>
           `
           : nothing}
+        <button type="button" class="btn btn-secondary btn-more" data-action="open-more" aria-haspopup="menu">More</button>
       </div>
       <div class="search-wrap">
         <input type="search" class="search-input" placeholder="Search everything" aria-label="Search everything" />
       </div>
-      <div class="nav-links">
-        <button type="button" class="nav-row" data-action="nav-mentions">
-          <span class="nav-icon" aria-hidden="true">@</span>
-          <span>Mentions</span>
-        </button>
-        <button type="button" class="nav-row" data-action="nav-saved">
-          <span class="nav-icon" aria-hidden="true">&#9734;</span>
-          <span>Saved</span>
-        </button>
-      </div>
-      <div class="section-head">
-        <h3 class="section-title">CHANNELS</h3>
-        ${m.isAdmin ? html`<button type="button" class="btn-icon-plus" data-action="add-channel" aria-label="Add channel">+</button>` : nothing}
-      </div>
       ${groups.map(
         (g) => html`
-          <div class="ch-group">
-            <h4 class="group-title">${g.label}</h4>
+          <div class="ch-group" data-group=${g.label}>
+            <h3 class="section-title" data-group-label=${g.label}>${g.label}</h3>
             <ul class="ch-list">
-              ${g.channels.map((c) => renderChannelItem(c, m.activeId, false))}
+              ${g.channels.map((c) => renderChannelItem(c, m.activeId, c.kind === "DM" || c.kind === "GROUP"))}
             </ul>
           </div>
         `,
       )}
-      <div class="section-head">
-        <h3 class="section-title">DIRECT MESSAGES</h3>
-        <button type="button" class="btn-icon-plus" data-action="new-dm" aria-label="Add direct message">+</button>
-      </div>
-      <ul class="ch-list">
-        ${dmChannels.map((c) => renderChannelItem(c, m.activeId, true))}
-      </ul>
-      <div class="rail-foot">
-        <button type="button" class="btn-settings" data-action="open-settings">
-          ${renderGearIcon()}
-          <span>Settings</span>
-        </button>
-        <button type="button" class="link" data-action="open-rules">Payment notice rules</button>
-        <button type="button" class="link" data-action="open-notify-optin">Notification preferences</button>
-      </div>
     </aside>
   `;
 }
@@ -484,7 +466,7 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
             <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
           `
           : nothing}
-        ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
+        ${seenCount > 0 ? html`<span class="seen-chip" data-seen-by>Seen ${seenCount}</span>` : nothing}
         <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
         ${isReply
           ? nothing
@@ -663,18 +645,17 @@ function renderComposer(c: ConvoModel): TemplateResult {
               <button type="button" class="link" data-action="cancel-reply">Cancel</button>
             </div>
           `}
-      <div class="composer-box">
-        <textarea data-field="draft" rows="3" aria-label="Write a message" placeholder="Write a message"></textarea>
-        <div class="composer-actions">
-          <button type="button" class="btn btn-secondary small-btn btn-attach" data-action="attach" aria-label="Attach file">
-            ${renderPaperclipIcon()}
-          </button>
-          <span class="spacer"></span>
-          <span class="${c.composerBad ? "small words-bad" : "small dim"}" data-composer-words>${c.composerWords}</span>
-          <button type="button" class="btn btn-primary small-btn btn-send" data-action="send" ?disabled=${!c.canSend || c.sending}>Send</button>
-        </div>
+      <div class="composer-pill" data-composer-pill>
+        <button type="button" class="btn-attach-pill" data-action="attach" aria-label="Attach file">
+          ${renderPaperclipIcon()}
+        </button>
+        <textarea data-field="draft" rows="1" aria-label="Write a message" placeholder="Write a message"></textarea>
+        <button type="button" class="btn-send-pill" data-action="send" ?disabled=${!c.canSend || c.sending}>Send</button>
       </div>
-      <p class="dim small">Messages send while you are online. Nothing is saved to send later.</p>
+      <div class="composer-foot">
+        <span class="${c.composerBad ? "small words-bad" : "small dim"}" data-composer-words>${c.composerWords}</span>
+        <p class="dim small composer-footnote" data-composer-footnote>Messages send while you are online. Nothing is saved to send later.</p>
+      </div>
     </form>
   `;
 }
@@ -731,47 +712,56 @@ function renderThreadSidePanel(m: Model, c: ConvoModel): TemplateResult {
   `;
 }
 
-function renderFilesPane(c: ConvoModel): TemplateResult {
+function renderFilesView(c: ConvoModel): TemplateResult {
   const photos = c.attachments.filter((a) => a.content_type.startsWith("image/") || a.filename.endsWith(".jpg") || a.filename.endsWith(".png") || a.filename.endsWith(".webp"));
   const files = c.attachments.filter((a) => !photos.includes(a));
 
   return html`
-    <div class="files-pane" data-files-pane>
-      <div class="photos-section">
-        <h3>Photos (${photos.length})</h3>
-        <div class="photos-grid" data-photos-grid>
-          ${photos.length === 0 ? html`<p class="dim small">No photos in this room</p>` : nothing}
-          ${photos.map(
-            (p) => html`
-              <div class="photo-card" data-photo-id=${p.id}>
-                <div class="photo-thumb">[ Photo ]</div>
-                <div class="photo-info">
-                  <strong>${p.caption || p.filename}</strong>
-                  <div class="dim small">${p.author_name}</div>
-                </div>
-              </div>
-            `,
-          )}
+    <section class="convo files-view" data-files-view data-conversation>
+      <div class="convo-head">
+        <button type="button" class="btn btn-secondary small-btn back" data-action="back-from-files" aria-label="Back to conversation">Back</button>
+        <div class="titles">
+          <h2>Files and photos</h2>
+          <p class="dim small channel-topic">${channelTitle(c.channel)} \u00b7 ${c.attachments.length} item${c.attachments.length === 1 ? "" : "s"}</p>
         </div>
       </div>
-      <div class="files-section">
-        <h3>Files (${files.length})</h3>
-        <div class="files-list" data-files-list>
-          ${files.length === 0 ? html`<p class="dim small">No files in this room</p>` : nothing}
-          ${files.map(
-            (f) => html`
-              <div class="file-row" data-file-id=${f.id}>
-                <div>
-                  <strong>${f.filename}</strong>
-                  <div class="dim small">${f.author_name} \u00b7 ${formatFileSize(f.size_bytes)}</div>
+      <div class="convo-body files-pane" data-files-pane>
+        <div class="photos-section">
+          <h3>Photos (${photos.length})</h3>
+          <div class="photos-grid" data-photos-grid>
+            ${photos.length === 0 ? html`<p class="dim small">No photos in this room</p>` : nothing}
+            ${photos.map(
+              (p) => html`
+                <div class="photo-card" data-photo-id=${p.id}>
+                  <div class="photo-thumb">[ Photo ]</div>
+                  <div class="photo-info">
+                    <strong>${p.caption || p.filename}</strong>
+                    <div class="dim small">${p.author_name}</div>
+                  </div>
                 </div>
-                <button type="button" class="btn btn-secondary small-btn" data-action="open-file" data-id=${f.id}>Open full size</button>
-              </div>
-            `,
-          )}
+              `,
+            )}
+          </div>
+        </div>
+        <div class="files-section">
+          <h3>Files (${files.length})</h3>
+          <div class="files-list" data-files-list>
+            ${files.length === 0 ? html`<p class="dim small">No files in this room</p>` : nothing}
+            ${files.map(
+              (f) => html`
+                <div class="file-row" data-file-id=${f.id}>
+                  <div>
+                    <strong>${f.filename}</strong>
+                    <div class="dim small">${f.author_name} \u00b7 ${formatFileSize(f.size_bytes)}</div>
+                  </div>
+                  <button type="button" class="btn btn-secondary small-btn" data-action="open-file" data-id=${f.id}>Open full size</button>
+                </div>
+              `,
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </section>
   `;
 }
 
@@ -780,6 +770,8 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
   const isGroup = ch.kind === "GROUP";
   const tier = ch.tier === "ESCALATION" ? "Escalation" : ch.tier === "FIREHOSE" ? "Firehose" : "";
   const subtitle = isGroup ? c.groupSubtitle : ch.topic ? ch.topic : channelLine(ch);
+  // The live-state dot rides next to the title on a phone; the strip already shows the same dot on the desk.
+  const liveDotClass = m.live === "live" ? "dot dot-live" : m.live === "offline" ? "dot dot-stop" : "dot dot-watch";
 
   return html`
     <section class="convo" data-conversation>
@@ -791,57 +783,57 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
               ? html`<div class="avatar-stacked">${c.memberInitials.slice(0, 2).map((init) => html`<span class="avatar avatar-sm">${init}</span>`)}</div>`
               : html`<span class="hash" aria-hidden="true">#</span>`}
             <h2>${channelTitle(ch)}</h2>
-            ${isGroup
-              ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-add-person" style="margin-left: 8px;">Add a person</button>`
-              : nothing}
+            <span class="${liveDotClass} sync-dot" data-sync-dot aria-label="Live state"></span>
           </div>
           ${subtitle === "" ? nothing : html`<p class="dim small channel-topic ${isGroup ? "group-subtitle" : ""}">${subtitle}</p>`}
+          <p class="dim small convo-meta" data-convo-meta>${memberAndNotifyLine(ch, c)}</p>
         </div>
-        <div class="tab-strip" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            class="tab ${c.activeTab === "messages" ? "active" : ""}"
-            data-action="select-tab"
-            data-tab="messages"
-            aria-selected=${c.activeTab === "messages" ? "true" : "false"}
-          >Messages</button>
-          <button
-            type="button"
-            role="tab"
-            class="tab ${c.activeTab === "files" ? "active" : ""}"
-            data-action="select-tab"
-            data-tab="files"
-            aria-selected=${c.activeTab === "files" ? "true" : "false"}
-          >Files and photos</button>
+        <div class="convo-head-actions">
+          <button type="button" class="btn btn-secondary small-btn" data-action="open-files" aria-label="Files and photos">
+            Files
+          </button>
+          ${isGroup
+            ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-add-person" style="margin-left: 8px;">Add a person</button>`
+            : nothing}
+          ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
+          <button type="button" class="btn btn-secondary small-btn btn-notify" data-action="open-prefs" aria-label="Notifications">
+            Notifications
+          </button>
         </div>
-        ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
-        <button type="button" class="btn btn-secondary small-btn btn-notify" data-action="open-prefs" aria-label="Notifications">
-          Notifications
-        </button>
       </div>
       <div class="convo-body">
         ${c.prefs === null ? nothing : renderPrefs(ch, c.prefs)}
         ${c.queue === null ? nothing : renderQueue(c.queue, m.now)}
-        ${c.activeTab === "files"
-          ? renderFilesPane(c)
-          : c.loading
-            ? html`<p class="dim" data-loading>Loading messages</p>`
-            : html`
-                ${c.hasOlder
-                  ? html`<button type="button" class="btn btn-secondary small-btn" data-action="load-older" ?disabled=${c.olderBusy}>Earlier messages</button>`
-                  : nothing}
-                <div class="day-separator" role="separator"><span class="day-pill">Today</span></div>
-                ${c.messages.length === 0
-                  ? c.dmPrompt !== ""
-                    ? html`<div class="empty" data-empty><p class="text" data-dm-prompt>${c.dmPrompt}</p></div>`
-                    : html`<div class="empty" data-empty><strong>No messages yet</strong>Write the first one below.</div>`
-                  : html`<ul class="stream" data-stream>${c.messages.map((msg) => renderMessage(msg, c, m, false))}</ul>`}
-              `}
+        ${c.loading
+          ? html`<p class="dim" data-loading>Loading messages</p>`
+          : html`
+              ${c.hasOlder
+                ? html`<button type="button" class="btn btn-secondary small-btn" data-action="load-older" ?disabled=${c.olderBusy}>Earlier messages</button>`
+                : nothing}
+              <div class="day-separator" role="separator"><span class="day-pill">Today</span></div>
+              ${c.messages.length === 0
+                ? c.dmPrompt !== ""
+                  ? html`<div class="empty" data-empty><p class="text" data-dm-prompt>${c.dmPrompt}</p></div>`
+                  : html`<div class="empty" data-empty><strong>No messages yet</strong>Write the first one below.</div>`
+                : html`<ul class="stream" data-stream>${c.messages.map((msg) => renderMessage(msg, c, m, false))}</ul>`}
+            `}
       </div>
-      ${c.activeTab === "messages" ? renderComposer(c) : nothing}
+      ${renderComposer(c)}
     </section>
   `;
+}
+
+/** The line under the title: who is here, and the notify mode the caller has set for this room. */
+function memberAndNotifyLine(ch: Channel, c: ConvoModel): string {
+  const tier = ch.tier === "ESCALATION" ? "Escalation" : ch.tier === "FIREHOSE" ? "Firehose" : "Standard";
+  const members = c.memberInitials.length;
+  const memberWord = members === 0 ? "" : members === 1 ? "1 member" : `${members} members`;
+  const mode = notifyModeWord(c.prefs === null ? null : c.prefs.mode);
+  const parts: string[] = [];
+  if (memberWord !== "") parts.push(memberWord);
+  parts.push(`Notify: ${mode}`);
+  parts.push(tier);
+  return parts.join(" \u00b7 ");
 }
 
 function renderEmptyConvo(): TemplateResult {
@@ -854,7 +846,7 @@ function renderEmptyConvo(): TemplateResult {
 
 // ---- Modals ------------------------------------------------------------------------------------
 
-function renderNewMessageModal(m: Model): TemplateResult | typeof nothing {
+function renderNewMessageSheet(m: Model): TemplateResult | typeof nothing {
   const modal = m.newMsgModal;
   if (!modal || !modal.open) return nothing;
   const count = modal.selectedIds.size;
@@ -862,55 +854,51 @@ function renderNewMessageModal(m: Model): TemplateResult | typeof nothing {
   const selectedList = modal.roster.filter((r) => modal.selectedIds.has(r.user_id));
 
   return html`
-    <div class="modal-backdrop" data-modal-backdrop>
-      <div class="modal-dialog" data-modal="new-message" role="dialog" aria-modal="true" aria-labelledby="modal-msg-title">
-        <div class="modal-head">
-          <h2 id="modal-msg-title">New message</h2>
-          <button type="button" class="btn-close" data-action="close-modal" aria-label="Close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <label><strong>To:</strong></label>
-          <div class="to-chips-wrap" data-to-chips>
-            ${selectedList.map(
-              (p) => html`
-                <span class="chip-selected">
-                  ${p.display_name}
-                  <button type="button" class="link small" data-action="remove-person" data-id=${p.user_id}>&times;</button>
-                </span>
-              `,
-            )}
-            <input type="text" data-field="roster-search" placeholder="Type a name, role or yard..." aria-label="Search people" />
-          </div>
-          ${count >= 2
-            ? html`
-              <label><strong>Group name (optional)</strong></label>
-              <input type="text" data-field="group-name" placeholder="e.g. Saturday runs" data-value=${modal.groupName} />
-            `
-            : nothing}
-          <div class="roster-list" data-roster-list>
-            ${modal.roster.map(
-              (p) => html`
-                <button
-                  type="button"
-                  class="roster-item"
-                  data-action="toggle-person"
-                  data-person-id=${p.user_id}
-                  aria-selected=${modal.selectedIds.has(p.user_id) ? "true" : "false"}
-                >
-                  <span class="check-indicator" role="checkbox" aria-checked=${modal.selectedIds.has(p.user_id) ? "true" : "false"}>${modal.selectedIds.has(p.user_id) ? "\u2713" : ""}</span>
-                  <span class="avatar avatar-sm">${initialsOf(p.display_name)}</span>
-                  <span><strong>${p.display_name}</strong> \u00b7 <span class="dim small">${p.role_name} (${p.branch_name})</span></span>
-                </button>
-              `,
-            )}
-          </div>
-        </div>
-        <div class="modal-foot">
-          <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>
-          <button type="button" class="btn btn-primary" data-action="start-conversation" ?disabled=${count === 0}>${btnText}</button>
-        </div>
+    <hh-sheet
+      data-sheet="new-message"
+      heading="New message"
+      description="One person, or several for a named group"
+      open
+    >
+      <label class="sheet-label"><strong>To</strong></label>
+      <div class="to-chips-wrap" data-to-chips>
+        ${selectedList.map(
+          (p) => html`
+            <span class="chip-selected">
+              ${p.display_name}
+              <button type="button" class="link small" data-action="remove-person" data-id=${p.user_id} aria-label="Remove ${p.display_name}">&times;</button>
+            </span>
+          `,
+        )}
+        <input type="text" data-field="roster-search" placeholder="Type a name, role or yard..." aria-label="Search people" />
       </div>
-    </div>
+      ${count >= 2
+        ? html`
+          <label class="sheet-label"><strong>Group name (optional)</strong></label>
+          <input type="text" class="sheet-input" data-field="group-name" placeholder="e.g. Saturday runs" data-value=${modal.groupName} />
+        `
+        : nothing}
+      <p class="dim small sheet-note">New channel is for admins: it is in Settings.</p>
+      <div class="roster-list" data-roster-list>
+        ${modal.roster.map(
+          (p) => html`
+            <button
+              type="button"
+              class="roster-item"
+              data-action="toggle-person"
+              data-person-id=${p.user_id}
+              aria-selected=${modal.selectedIds.has(p.user_id) ? "true" : "false"}
+            >
+              <span class="check-indicator" role="checkbox" aria-checked=${modal.selectedIds.has(p.user_id) ? "true" : "false"}>${modal.selectedIds.has(p.user_id) ? "\u2713" : ""}</span>
+              <span class="avatar avatar-sm">${initialsOf(p.display_name)}</span>
+              <span><strong>${p.display_name}</strong> \u00b7 <span class="dim small">${p.role_name} (${p.branch_name})</span></span>
+            </button>
+          `,
+        )}
+      </div>
+      <button slot="actions" type="button" class="btn btn-secondary" data-action="close-sheet">Cancel</button>
+      <button slot="actions" type="button" class="btn btn-primary" data-action="start-conversation" ?disabled=${count === 0}>${btnText}</button>
+    </hh-sheet>
   `;
 }
 
@@ -977,6 +965,58 @@ function renderAttachModal(m: Model): TemplateResult | typeof nothing {
 }
 
 // ---- Views (Mentions, Saved, Search, Settings, Opt-in) ------------------------------------------
+
+/** The phone's "More" view: the items the rail used to carry on a tablet now
+ * live behind one entry. Back returns to the channel list; each item opens the same screen as on
+ * a tablet. The acknowledgement controls stay here too. */
+function renderMoreView(m: Model): TemplateResult {
+  const isAdmin = m.isAdmin;
+  return html`
+    <section class="convo more-view" data-view="more">
+      <div class="convo-head">
+        <button type="button" class="btn btn-secondary small-btn back" data-action="back" aria-label="Back to channels">Back</button>
+        <div class="titles">
+          <h2>More</h2>
+          <p class="dim small">Mentions, saved, settings and the rules the house follows</p>
+        </div>
+      </div>
+      <div class="convo-body more-list">
+        <button type="button" class="more-row" data-action="nav-mentions">
+          <span class="more-icon" aria-hidden="true">@</span>
+          <span class="grow">Mentions</span>
+          <span class="dim small">${m.mentionsList.length}</span>
+        </button>
+        <button type="button" class="more-row" data-action="nav-saved">
+          <span class="more-icon" aria-hidden="true">&#9734;</span>
+          <span class="grow">Saved</span>
+          <span class="dim small">${m.savedList.length}</span>
+        </button>
+        ${isAdmin
+          ? html`<button type="button" class="more-row" data-action="open-settings">
+              <span class="more-icon" aria-hidden="true">&#9881;</span>
+              <span class="grow">Settings</span>
+              <span class="dim small">Admins</span>
+            </button>`
+          : nothing}
+        <button type="button" class="more-row" data-action="open-rules">
+          <span class="more-icon" aria-hidden="true">&#36;</span>
+          <span class="grow">Payment notice rules</span>
+        </button>
+        <button type="button" class="more-row" data-action="open-notify-optin">
+          <span class="more-icon" aria-hidden="true">&#9733;</span>
+          <span class="grow">Notification preferences</span>
+        </button>
+        ${m.bubble === null
+          ? nothing
+          : html`<div class="alert alert-error" role="alert" data-more-bubble>
+              <strong>Needs your acknowledgement</strong>
+              <p>${m.bubble.body}</p>
+              <button type="button" class="btn btn-secondary" data-action="open-channel" data-id=${m.bubble.channelId}>Open ${m.bubble.channelName}</button>
+            </div>`}
+      </div>
+    </section>
+  `;
+}
 
 function renderMentionsView(m: Model): TemplateResult {
   return html`
@@ -1404,7 +1444,9 @@ export function renderDesk(m: Model): TemplateResult {
   }
 
   let centerContent: TemplateResult;
-  if (m.mainView === "mentions") {
+  if (m.mainView === "more") {
+    centerContent = renderMoreView(m);
+  } else if (m.mainView === "mentions") {
     centerContent = renderMentionsView(m);
   } else if (m.mainView === "saved") {
     centerContent = renderSavedView(m);
@@ -1414,6 +1456,8 @@ export function renderDesk(m: Model): TemplateResult {
     centerContent = renderSettingsView(m);
   } else if (m.mainView === "notifications-optin") {
     centerContent = renderNotificationsOptInView(m);
+  } else if (m.mainView === "files" && m.convo !== null) {
+    centerContent = renderFilesView(m.convo);
   } else if (m.rules !== null) {
     centerContent = renderRules(m.rules);
   } else if (m.convo === null) {
@@ -1422,18 +1466,30 @@ export function renderDesk(m: Model): TemplateResult {
     centerContent = renderConvo(m, m.convo);
   }
 
+  // Layout by viewport: desk (>=1100) keeps two panes, tablet (600-1099) and
+  // phone (<600) use single pane. The m.tablet flag is true in the single-pane range, false on
+  // the desk where the rail and conversation paint side by side.
+  const isDesk = !m.tablet;
+  const showRail = isDesk ? true : m.view === "list";
+  const showCenter = isDesk ? m.view === "conversation" || m.view === "list" : m.view === "conversation";
+  const deskClass = [
+    "desk",
+    m.view === "conversation" ? "view-conv" : "view-list",
+    m.tablet ? "tablet" : "phone",
+  ].join(" ");
+
   return html`
-    <div class="${m.view === "conversation" ? "desk view-conv" : "desk view-list"}">
+    <div class="${deskClass}">
       ${renderStrip(m)}
       ${m.error === "" ? nothing : html`<div class="alert alert-error" role="alert" data-error>${m.error}</div>`}
       ${m.notice === "" ? nothing : html`<div class="alert alert-ok" role="status" data-notice>${m.notice}</div>`}
       ${m.bubble === null ? nothing : renderBubble(m.bubble)}
       <div class="panes ${m.convo?.openThreadId ? "has-thread" : ""}">
-        ${renderRail(m)}
-        ${centerContent}
+        ${showRail ? renderRail(m) : nothing}
+        ${showCenter ? centerContent : nothing}
         ${m.convo?.openThreadId ? renderThreadSidePanel(m, m.convo) : nothing}
       </div>
-      ${renderNewMessageModal(m)}
+      ${renderNewMessageSheet(m)}
       ${renderNewChannelModal(m)}
       ${renderAttachModal(m)}
     </div>

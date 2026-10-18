@@ -64,6 +64,7 @@ export class HouseMessagesApp extends HHElement {
         repaint: () => this.requestUpdate(),
         find: (selector) => this.renderRoot.querySelector(selector),
         now: () => Date.now(),
+        viewportWidth: () => window.innerWidth,
         openStream: (url) => new EventSource(url),
         timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (handle) => window.clearTimeout(handle as number) },
       },
@@ -137,6 +138,12 @@ export class HouseMessagesApp extends HHElement {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
     this.renderRoot.addEventListener("input", this.#onHostInput);
+    // The bottom sheet primitive closes via Escape or scrim tap and fires hh-sheet-close on the
+    // host (composed: true); the consumer's desk keeps one source of truth for "is the sheet
+    // open", so this listener mirrors the event into the same press() path the cancel button
+    // uses. The composition gate forbids @event bindings in views.ts, so the listener lives
+    // here at the host and uses the data-action contract.
+    this.renderRoot.addEventListener("hh-sheet-close", this.#onSheetClose as EventListener);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -163,9 +170,19 @@ export class HouseMessagesApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onHostInput);
+    this.renderRoot.removeEventListener("hh-sheet-close", this.#onSheetClose as EventListener);
     this.#desk?.dispose();
     super.disconnectedCallback();
   }
+
+  // The sheet closed itself (Escape, scrim tap, or imperative close()): fold that into the same
+  // press() path the cancel button uses so the desk keeps one open/closed flag for the sheet.
+  readonly #onSheetClose = (_event: Event): void => {
+    if (this.#desk === null) return;
+    const closeBtn = document.createElement("button");
+    closeBtn.setAttribute("data-action", "close-sheet");
+    this.#desk.press(closeBtn);
+  };
 
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
