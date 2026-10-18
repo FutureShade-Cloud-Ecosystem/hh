@@ -173,6 +173,8 @@ const SHORTAGE_OPEN_1 = "0a000000-0000-4000-9000-0000000000e1";
 const SHORTAGE_OPEN_2 = "0a000000-0000-4000-9000-0000000000e2";
 const SHORTAGE_DONE = "0a000000-0000-4000-9000-0000000000e3";
 const PO_PARTIAL = "0b000000-0000-4000-9000-0000000000p1";
+const CHANGE_PENDING = "0f000000-0000-4000-9000-0000000000c1";
+const CHANGE_APPROVED = "0f000000-0000-4000-9000-0000000000c2";
 
 // The warranty world: two vendors, five claims across the lifecycle, one
 // settled with its recovery still outstanding, one from the public intake
@@ -266,6 +268,70 @@ function buildDispatch() {
       { id: "d1000000-0000-4000-9000-0000000000t3", branch_id: BRANCH_ID, code: "T3", name: "Truck 3 pickup", truck_type: "PICKUP", is_active: true },
     ],
   };
+}
+
+function buildChangeOrders() {
+  const pending = {
+    id: CHANGE_PENDING,
+    change_no: "CO-PLM-1001",
+    order_id: "0d000000-0000-4000-9000-0000000000o1",
+    order_no: "SO-PLM-1001",
+    branch_id: BRANCH_ID,
+    status: "PENDING_FINANCE",
+    reason: "Customer asked to add 10 cap stones",
+    delta_cents: 125000,
+    finance_threshold_cents: 100000,
+    finance_required: true,
+    requested_by_role: "Inside Sales",
+    requested_at: ago(2),
+    yard_ack_note: "Yard confirmed the cap stones are in stock",
+    next_actions: ["sign_apply", "reject"],
+    lines: [
+      {
+        seq: 1,
+        op: "ADD",
+        line_no: 3,
+        product_id: "00000000-0000-4000-9000-0000000000p2",
+        product_name: "Cap stone, charcoal blend",
+        description: "Cap stone, charcoal blend",
+        qty_base_before: 0,
+        qty_base_after: 10,
+        unit_price_cents: 12500,
+        line_delta_cents: 125000,
+      },
+    ],
+  };
+  const approved = {
+    id: CHANGE_APPROVED,
+    change_no: "CO-PLM-1002",
+    order_id: "0d000000-0000-4000-9000-0000000000o2",
+    order_no: "SO-PLM-1002",
+    branch_id: BRANCH_ID,
+    status: "APPROVED",
+    reason: "Reduce wall block by one pallet",
+    delta_cents: -45000,
+    finance_threshold_cents: 100000,
+    finance_required: false,
+    requested_by_role: "Counter Sales",
+    requested_at: ago(5),
+    yard_ack_note: "",
+    next_actions: ["sign_apply", "reject"],
+    lines: [
+      {
+        seq: 1,
+        op: "QTY",
+        line_no: 1,
+        product_id: "00000000-0000-4000-9000-0000000000p3",
+        product_name: "Seat wall block, tan blend",
+        description: "Seat wall block, tan blend",
+        qty_base_before: 5,
+        qty_base_after: 4,
+        unit_price_cents: 45000,
+        line_delta_cents: -45000,
+      },
+    ],
+  };
+  return { pending, approved, byId: { [CHANGE_PENDING]: pending, [CHANGE_APPROVED]: approved } };
 }
 
 function buildWorld() {
@@ -370,10 +436,12 @@ function buildWorld() {
       shortages: [],
     },
   ];
+  const changeOrders = buildChangeOrders();
   const world = {
     shortages,
     tasks,
     dispatch: buildDispatch(),
+    changeOrders,
     needsByProfile: {
       "manager.yard": {
         profile: "manager.yard",
@@ -1289,6 +1357,10 @@ function decidesKind(flow, kind) {
   return kind === "MARGIN_BELOW_MINIMUM" && decidesMargin(flow);
 }
 
+function decidesChangeOrders(flow) {
+  return flow === "financial-controller" || flow === "general-manager";
+}
+
 // ---- the builder's world -------------------------------------------------------------
 //
 // The widget catalog THIS caller builds from, the gallery its Add widget sheet
@@ -1523,6 +1595,7 @@ async function handle(req, res) {
     query: Object.fromEntries(url.searchParams),
     bearer: authorization.startsWith("Bearer "),
     org: req.headers["x-org"] ?? "",
+    idempotencyKey: req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"] ?? "",
     body,
   });
   if (!authorization.startsWith("Bearer ")) return refuse(res, 401, "unauthenticated");
@@ -1677,6 +1750,84 @@ async function handle(req, res) {
     approval.status = body?.approve === true ? "APPROVED" : "REJECTED";
     approval.decided_by = USERS[flow].user_id;
     return json(res, { ok: true });
+  }
+
+  // ---- change orders (HH-681 Manager Home stage 3) ----
+
+  if (req.method === "GET" && path === "/api/v1/order-changes") {
+    const status = url.searchParams.get("status") ?? "";
+    if (status !== "PENDING_FINANCE" && status !== "APPROVED") {
+      return refuse(res, 400, "status must be PENDING_FINANCE or APPROVED");
+    }
+    const items = (decidesChangeOrders(flow)
+      ? [world.changeOrders.pending, world.changeOrders.approved].filter((c) => c.status === status)
+      : []
+    ).map((c) => ({
+        id: c.id,
+        change_no: c.change_no,
+        order_id: c.order_id,
+        order_no: c.order_no,
+        branch_id: c.branch_id,
+        status: c.status,
+        reason: c.reason,
+        delta_cents: c.delta_cents,
+        finance_threshold_cents: c.finance_threshold_cents,
+        finance_required: c.finance_required,
+        requested_by_role: c.requested_by_role,
+        requested_at: c.requested_at,
+        yard_ack_note: c.yard_ack_note,
+        next_actions: scenario === "change-order-no-sign" && c.id === CHANGE_PENDING ? ["reject"] : c.next_actions,
+      }));
+    return json(res, { items, next_cursor: null, limit: 50 });
+  }
+
+  const changeMatch = path.match(/^\/api\/v1\/order-changes\/([^/]+)$/);
+  if (req.method === "GET" && changeMatch) {
+    const change = world.changeOrders.byId[changeMatch[1]];
+    if (!change) return notFound(res);
+    return json(res, change);
+  }
+
+  const signApplyMatch = path.match(/^\/api\/v1\/order-changes\/([^/]+)\/sign-apply$/);
+  if (req.method === "POST" && signApplyMatch) {
+    const change = world.changeOrders.byId[signApplyMatch[1]];
+    if (!change) return notFound(res);
+    const idempotencyKey = req.headers["idempotency-key"] ?? req.headers["Idempotency-Key"];
+    if (!idempotencyKey || typeof idempotencyKey !== "string") {
+      return refuse(res, 400, "Idempotency-Key is required");
+    }
+    const replay = world.changeOrders.replays?.[signApplyMatch[1]]?.[idempotencyKey];
+    if (replay !== undefined) return json(res, replay);
+    if (!Array.isArray(change.next_actions) || !change.next_actions.includes("sign_apply")) {
+      return refuse(res, 403, "you may not sign and apply this change");
+    }
+    if (change.status !== "PENDING_FINANCE" && change.status !== "APPROVED") {
+      return refuse(res, 409, "change is not waiting to be applied");
+    }
+    change.status = "APPLIED";
+    change.applied_at = new Date().toISOString();
+    const updated = { ...change };
+    world.changeOrders.replays = world.changeOrders.replays ?? {};
+    world.changeOrders.replays[signApplyMatch[1]] = world.changeOrders.replays[signApplyMatch[1]] ?? {};
+    world.changeOrders.replays[signApplyMatch[1]][idempotencyKey] = updated;
+    return json(res, updated);
+  }
+
+  const rejectChangeMatch = path.match(/^\/api\/v1\/order-changes\/([^/]+)\/reject$/);
+  if (req.method === "POST" && rejectChangeMatch) {
+    const change = world.changeOrders.byId[rejectChangeMatch[1]];
+    if (!change) return notFound(res);
+    const note = String(body?.note ?? "").trim();
+    if (note === "") return refuse(res, 400, "note is required");
+    if (!Array.isArray(change.next_actions) || !change.next_actions.includes("reject")) {
+      return refuse(res, 403, "you may not reject this change");
+    }
+    if (change.status === "APPLIED" || change.status === "REJECTED" || change.status === "CANCELLED") {
+      return refuse(res, 409, "change is already decided");
+    }
+    change.status = "REJECTED";
+    change.decision_note = note;
+    return json(res, change);
   }
 
   // ---- the dispatch reads the Drivers view uses ----
