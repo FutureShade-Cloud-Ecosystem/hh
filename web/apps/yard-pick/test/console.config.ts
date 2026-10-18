@@ -10,5 +10,5 @@ export default consoleHarness({
   appDir,
   appStub: { command: "node test/stub/yard-stub.mjs", portEnv: "YARD_STUB_PORT" },
   appVite: { stubPortEnv: "YARD_STUB_PORT", appPortEnv: "YARD_APP_PORT" },
-  firstPort: 56175,
+  firstPort: 28175,
 });

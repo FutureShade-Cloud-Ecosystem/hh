@@ -6,7 +6,8 @@
 // the local ports because cookies ignore ports.
 //
 // Ports come from the range given (five consecutive), free ports checked by the caller; the environment
-// overrides stay for a hand run.
+// overrides stay for a hand run. Each app's base sits below 32768, the start of the kernel's ephemeral range, so an
+// outgoing connection is never handed one of these ports while the legs run (src/console-ports.test.mjs holds it).
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 

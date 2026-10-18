@@ -202,3 +202,44 @@ func (r *PortalRoleResolver) PortalRole(ctx context.Context, platformUserID, ten
 	}
 	return role, true, nil
 }
+
+// PortalLink is the live contractor row a platform user is linked to: the
+// row id (the audit row's actor), the contractor account the `tenant` claim
+// carries, the row's email (the exchange's account match) and its role.
+type PortalLink struct {
+	PortalUserID string
+	TenantID     string
+	Email        string
+	Role         string
+}
+
+// LinkedPortalUser is the tenant exchange's linkage check (the staff gate
+// 6 counterpart): the live portal_users row for the platform user, read by
+// platform_user_id alone, because the exchange is where the tenant claim is
+// decided and so has no claim to predicate on yet. A row that is not active
+// is ErrPortalUserInactive; no row, a tombstoned row and a row whose
+// tenant_id is not yet stamped all answer ok false with a nil error (the
+// same fail closed reading PortalRole gives an unstamped row).
+func (r *PortalRoleResolver) LinkedPortalUser(ctx context.Context, platformUserID string) (PortalLink, bool, error) {
+	if platformUserID == "" {
+		return PortalLink{}, false, errors.New("identity: portal linkage check requires the platform user id")
+	}
+	var l PortalLink
+	var status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, tenant_id::text, email::text, role, status FROM portal_users
+		WHERE platform_user_id = $1
+		  AND tenant_id IS NOT NULL
+		  AND deleted_at IS NULL
+		LIMIT 1`, platformUserID).Scan(&l.PortalUserID, &l.TenantID, &l.Email, &l.Role, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PortalLink{}, false, nil
+	}
+	if err != nil {
+		return PortalLink{}, false, fmt.Errorf("identity: portal linkage read failed: %w", err)
+	}
+	if status != PortalStatusActive {
+		return PortalLink{}, false, fmt.Errorf("%w: portal_users row status %q", ErrPortalUserInactive, status)
+	}
+	return l, true, nil
+}

@@ -552,14 +552,17 @@ const TERMINAL_CHANGES = ["APPLIED", "REJECTED", "CANCELLED"];
 // The core's changeNextActions (order/change.go) for a caller of each tier.
 const MANAGER_ROLES = new Set(["sales_manager", "yard_manager", "branch_manager", "general_manager", "financial_controller"]);
 
-function changeNextActions(status, isManager) {
+function changeNextActions(status, isManager, isRequester = false) {
+  // Reject is any staff while the yard decides and a manager's alone after; cancel is the requester or a
+  // manager; sign_apply and finance_approve are a manager's (every manager is a named approver here).
+  const cancel = isManager || isRequester ? ["cancel"] : [];
   switch (status) {
     case "PENDING_YARD":
-      return ["yard_ack", "reject", "cancel"];
+      return ["yard_ack", "reject", ...cancel];
     case "PENDING_FINANCE":
-      return isManager ? ["finance_approve", "reject", "cancel"] : ["reject", "cancel"];
+      return [...(isManager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
     case "APPROVED":
-      return isManager ? ["apply", "reject", "cancel"] : ["cancel"];
+      return [...(isManager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
     default:
       return [];
   }

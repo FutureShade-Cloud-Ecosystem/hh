@@ -208,8 +208,10 @@ const PROFILES = [
   "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
   "manager.procurement", "manager.payables", "manager.controller", "manager.general",
 ];
-const SETTINGS_ADMIN_WORDS =
-  "settings: changing dealer screen settings is limited to administrators";
+const SETTINGS_ADMIN_READ_WORDS =
+  "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings";
+const SETTINGS_ADMIN_WRITE_WORDS =
+  "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings";
 
 let surfaces;
 let mine;
@@ -2242,7 +2244,7 @@ async function handle(req, res) {
 
   const configMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/config$/);
   if (req.method === "GET" && configMatch) {
-    if (!isManager(flow)) return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    if (!isManager(flow)) return refuse(res, 403, SETTINGS_ADMIN_READ_WORDS);
     const profile = url.searchParams.get("profile") ?? "";
     if (!PROFILES.includes(profile)) {
       return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
@@ -2271,7 +2273,7 @@ async function handle(req, res) {
   const itemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/items$/);
   if (req.method === "PUT" && itemsMatch) {
     if (!isManager(flow) || scenario === "refused-role-config") {
-      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+      return refuse(res, 403, SETTINGS_ADMIN_WRITE_WORDS);
     }
     const profile = String(body?.profile ?? "");
     if (!PROFILES.includes(profile)) {
@@ -2284,7 +2286,7 @@ async function handle(req, res) {
   }
   if (req.method === "DELETE" && itemsMatch) {
     if (!isManager(flow) || scenario === "refused-role-config") {
-      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+      return refuse(res, 403, SETTINGS_ADMIN_WRITE_WORDS);
     }
     const profile = url.searchParams.get("profile") ?? "";
     if (!PROFILES.includes(profile)) {

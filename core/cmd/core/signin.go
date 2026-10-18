@@ -112,7 +112,7 @@ type sessionComposition struct {
 
 // loadSessionComposition reads the key files and builds the composition.
 // A missing or unparseable current key refuses the boot.
-func loadSessionComposition(getenv func(string) string, issuer, staffAudience string) (*sessionComposition, error) {
+func loadSessionComposition(getenv func(string) string, issuer, staffAudience, tenantAudience string) (*sessionComposition, error) {
 	cfg, err := loadSessionKeyConfig(getenv)
 	if err != nil {
 		return nil, err
@@ -122,6 +122,11 @@ func loadSessionComposition(getenv func(string) string, issuer, staffAudience st
 	}
 	loaded, err := identity.LoadSessionKeys(cfg.files, issuer, staffAudience)
 	if err != nil {
+		return nil, err
+	}
+	// The tenant class mints under the same key and issuer, so the tenant
+	// leg is lit on this deployment wherever the exchange is.
+	if err := loaded.Minter.WithTenantAudience(tenantAudience); err != nil {
 		return nil, err
 	}
 	return &sessionComposition{minter: loaded.Minter, keys: loaded.Keys, exchangeTTL: cfg.exchangeTTL}, nil

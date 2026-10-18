@@ -35,6 +35,11 @@ const (
 	fxEmail    = "Person@FutureBuild.ai"
 	fxIssuer   = "hh-test-deploy"
 	fxAudience = "hh-staff"
+
+	fxTenantAud    = "hh-tenant"
+	fxPortalRow    = "44444444-4444-4444-8444-444444444444"
+	fxTenantID     = "55555555-5555-4555-8555-555555555555"
+	fxContractorEm = "Buyer@Contractor.example"
 )
 
 // ---- fakes ----
@@ -44,6 +49,9 @@ type fakeMembers struct {
 	member bool
 	err    error
 	calls  int
+	// the tenant Team reads: the org slugs of the user's ten-<slug> Teams
+	tenantOrgs []string
+	tenantErr  error
 }
 
 func (f *fakeMembers) OrgMember(_ context.Context, user, slug string) (bool, error) {
@@ -52,8 +60,12 @@ func (f *fakeMembers) OrgMember(_ context.Context, user, slug string) (bool, err
 	f.calls++
 	return f.member, f.err
 }
-func (f *fakeMembers) TenantOrgs(context.Context, string) ([]string, error) { return nil, nil }
-func (f *fakeMembers) set(m bool)                                           { f.mu.Lock(); f.member = m; f.mu.Unlock() }
+func (f *fakeMembers) TenantOrgs(context.Context, string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.tenantOrgs...), f.tenantErr
+}
+func (f *fakeMembers) set(m bool) { f.mu.Lock(); f.member = m; f.mu.Unlock() }
 
 type fakeOrgs struct {
 	ok  bool
@@ -112,6 +124,21 @@ func (f *fakeStaff) StaffRoleLabel(context.Context, string) (string, bool, error
 	return f.label, f.labelOK, f.labelErr
 }
 
+type fakePortal struct {
+	mu    sync.Mutex
+	link  identity.PortalLink
+	ok    bool
+	err   error
+	calls int
+}
+
+func (f *fakePortal) LinkedPortalUser(context.Context, string) (identity.PortalLink, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.link, f.ok, f.err
+}
+
 type fakeKnob struct {
 	hours int
 	err   error
@@ -165,6 +192,7 @@ type recordingMinter struct {
 	inner *identity.SessionMinter
 	mu    sync.Mutex
 	calls int
+	err   error // when set, MintTenantAt fails after it is counted
 	log   *[]string
 }
 
@@ -176,6 +204,19 @@ func (m *recordingMinter) MintAt(subject string, window time.Duration, at time.T
 	}
 	m.mu.Unlock()
 	return m.inner.MintAt(subject, window, at)
+}
+
+func (m *recordingMinter) MintTenantAt(subject, tenantID string, window time.Duration, at time.Time) (string, error) {
+	m.mu.Lock()
+	m.calls++
+	if m.log != nil {
+		*m.log = append(*m.log, "mint")
+	}
+	m.mu.Unlock()
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.inner.MintTenantAt(subject, tenantID, window, at)
 }
 
 // ---- the console stub ----
@@ -245,6 +286,7 @@ type fx struct {
 	knob     fakeKnob
 	audit    *fakeAudit
 	methods  *fakeMethods
+	portal   *fakePortal
 	minter   *recordingMinter
 	key      *ecdsa.PrivateKey
 	cfg      Config
@@ -287,6 +329,9 @@ func newFx(t *testing.T) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := m.WithTenantAudience(fxTenantAud); err != nil {
+		t.Fatal(err)
+	}
 	f.minter = &recordingMinter{inner: m, log: &f.order}
 	f.members = &fakeMembers{member: true}
 	f.orgs = &fakeOrgs{ok: true}
@@ -299,10 +344,16 @@ func newFx(t *testing.T) *fx {
 	f.knob = fakeKnob{hours: 8}
 	f.audit = &fakeAudit{log: &f.order}
 	f.methods = &fakeMethods{set: []string{"email_password", "google"}, callsLog: &f.order}
+	f.portal = &fakePortal{
+		link: identity.PortalLink{PortalUserID: fxPortalRow, TenantID: fxTenantID, Email: fxContractorEm, Role: identity.PortalRoleBuyer},
+		ok:   true,
+	}
+	f.members.tenantOrgs = []string{fxOrgSlug}
 	f.logBuf = &bytes.Buffer{}
 	f.cfg = Config{
 		Console: client, Members: f.members, Orgs: f.orgs, Claims: f.claims, Staff: f.staff,
 		Knob: f.knob, Audit: f.audit, Minter: f.minter, Methods: f.methods,
+		Tenant:           &TenantLeg{Portal: f.portal, Minter: f.minter},
 		AllowedDomains:   []string{"futurebuild.ai"},
 		AllowedAddresses: nil,
 		TokenTTL:         time.Hour,

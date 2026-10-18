@@ -64,7 +64,12 @@ paths:
         and, only then, writes an audit row and signs a session token. The
         token window is the shortest of the role's ceiling, the configured
         exchange window and the sign in age that remains, never under one
-        minute. No refusal says which gate failed: a refusal carries one of
+        minute. With class tenant the same route is the contractor leg: the
+        staff allow lists, the staff row and the role ceiling give way to
+        membership of the org's tenant Team, a linked ACTIVE portal row whose
+        email is the account's, and the tenant ceiling, and the token is a
+        tenant class token whose tenant claim is that row's contractor
+        account. No refusal says which gate failed: a refusal carries one of
         the shared bodies of its status.
       x-addition: "the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table"
       x-role: public
@@ -1078,7 +1083,9 @@ components:
 
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: >-
+        The non-secret identity returned on login and by the exchange; scope
+        is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required: [user_id, email, display_name, role_code, role_name, tier, scope]
       properties:
         user_id: { type: string }
@@ -1089,7 +1096,7 @@ components:
         tier: { type: integer, format: int32 }
         scope:
           type: string
-          enum: [GLOBAL, BRANCH]
+          enum: [GLOBAL, BRANCH, TENANT]
 
     IdentityLoginResponse:
       type: object
@@ -1112,6 +1119,15 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+        class:
+          type: string
+          enum: [staff, tenant]
+          description: >-
+            Optional, staff when absent. The tenant class is the contractor
+            leg: the person belongs to the org's ten-<slug> Team and has a
+            linked ACTIVE portal row whose email is the FB Console account's,
+            the sign in is an email link or Google, and the token carries the
+            row's contractor account as its tenant claim
 
     IdentityPersonaRequest:
       type: object

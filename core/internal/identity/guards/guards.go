@@ -178,11 +178,10 @@ func (g *Guards) RequireStaffPredicate(pred func(identity.StaffAuthority) bool, 
 // bearer whose portal_users row is not active answers 401 with the shared
 // unauthorized body (identity.ErrPortalUserInactive: an account-lifetime
 // fact, the same mapping RequireCapability already carries), and an
-// unreadable row answers the 503 family, fail closed. A tenant bearer with
-// no portal_users row in the token's tenant is ruled by no pin: the guard
-// keeps admitting it here while capability routes refuse it the RBAC-403
-// for lacking authority, and closing that leg is a ruling to record, never
-// a silent choice.
+// unreadable row answers the 503 family, fail closed. A tenant bearer whose
+// `tenant` claim has no portal_users row for the subject answers the
+// RBAC-403, the same refusal the capability routes give it (FROM-PRINCIPAL
+// 10: the claim is tied to a live portal row on every tenant route class).
 func (g *Guards) RequireTenant(next TenantHandler) http.Handler {
 	return g.gate.TenantScoped(func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
 		if !g.requireActivePortal(w, r, scope) {
@@ -231,17 +230,22 @@ func (g *Guards) RequireCapability(cap identity.Capability, next TenantHandler) 
 // the shared body (ADR-0020 addendum: a tenant bearer whose portal_users
 // row is not active is an authentication-lifetime refusal on every tenant
 // route), every other error answers the 503 family, fail closed, and ok
-// false with no error (no portal_users row in this tenant) proceeds
-// because no pin rules that leg: refusing it here would invent policy the
-// capability routes deliberately leave to the no-authority RBAC-403.
+// false with no error (no portal_users row for this subject in the claim's
+// tenant) answers the RBAC-403 with the shared body (FROM-PRINCIPAL 10:
+// the claim must tie to a live portal row, so the plain legs no longer
+// admit a claim the capability legs would refuse).
 func (g *Guards) requireActivePortal(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) bool {
-	_, _, err := g.portal.PortalRole(r.Context(), scope.PlatformUserID, scope.TenantID)
+	_, ok, err := g.portal.PortalRole(r.Context(), scope.PlatformUserID, scope.TenantID)
 	if err != nil {
 		if errors.Is(err, identity.ErrPortalUserInactive) {
 			authz.RefuseUnauthorized(w)
 			return false
 		}
 		authz.RefuseUnavailable(w)
+		return false
+	}
+	if !ok {
+		authz.RefuseForbidden(w)
 		return false
 	}
 	return true

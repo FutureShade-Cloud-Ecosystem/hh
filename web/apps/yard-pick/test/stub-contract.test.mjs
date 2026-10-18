@@ -434,7 +434,7 @@ test("the changes waiting on the yard answer the core's queue page, field by fie
   for (const item of res.json.items) {
     holdsWire("OrderChangeQueueItem", item, ["$.delta_cents", "$.finance_threshold_cents"]);
     assert.equal(item.status, "PENDING_YARD");
-    assert.deepEqual(item.next_actions, ["yard_ack", "reject", "cancel"]);
+    assert.deepEqual(item.next_actions, ["yard_ack", "reject"]);
     assert.ok(item.requested_by_role !== "", "the row names who raised it, by role");
   }
   // The core's order: oldest first.
@@ -475,7 +475,7 @@ test("the acknowledgement moves the ladder: under the threshold to approved, ove
   assert.equal(smallAck.json.status, "APPROVED");
   assert.equal(smallAck.json.yard_ack_note, "can still do it");
   assert.equal(smallAck.json.yard_acked_by, "d0200000-0000-4000-9000-000000000002");
-  assert.deepEqual(smallAck.json.next_actions, ["cancel"]);
+  assert.deepEqual(smallAck.json.next_actions, []);
   const bigAck = await call("POST", `/api/v1/order-changes/${big.id}/yard-ack`, { body: {} });
   assert.equal(bigAck.status, 200);
   assert.equal(bigAck.json.status, "PENDING_FINANCE", "a delta over the threshold waits on finance after the yard");

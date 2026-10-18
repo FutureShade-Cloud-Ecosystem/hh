@@ -325,9 +325,8 @@ test("a frontline caller is refused the role grid, in the core's own words", asy
   await expect(page.locator("[data-test=staff-error]")).toContainText("managers and above");
   await page.locator('.surface-link[data-surface="role-config"]').click();
 
-  // The kit's service refusal, whole: who cannot, and who can.
-  await expect(page.locator("[data-test=config-error]")).toContainText("changing dealer screen settings is limited to administrators");
-  await expect(page.locator("[data-test=config-error]")).toContainText("ask a tech admin");
+  // The kit's service refusal, whole: who can.
+  await expect(page.locator("[data-test=config-error]")).toContainText("only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings");
 });
 
 test("a refused curation write keeps the editor and says the server's words", async ({ page }) => {
@@ -339,7 +338,7 @@ test("a refused curation write keeps the editor and says the server's words", as
   await page.locator('[data-action="config-add-row"]').click();
   await page.locator('[data-action="config-save"]').click();
 
-  await expect(page.locator("[data-test=config-save-error]")).toContainText("limited to administrators");
+  await expect(page.locator("[data-test=config-save-error]")).toContainText("only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings");
   await expect(page.locator("[data-test=config-editor]")).toBeVisible();
   await page.request.post("/_stub/reset");
 });

@@ -21,14 +21,14 @@ test("the sales manager's needs row opens the approvals view on the kind they de
   await expect(page.locator("[data-approval]").first().locator(".detail")).toContainText("Quote Q-2001");
 });
 
-test("the five kinds of the closed vocabulary sit as tabs, the decided one first", async ({ page }) => {
+test("the five kinds of the closed vocabulary and the change queue sit as tabs, the decided one first", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='sales-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
-  await expect(tabs).toHaveCount(5);
+  await expect(tabs).toHaveCount(6);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0"]);
+  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 2"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
@@ -113,4 +113,23 @@ test("a sales manager with only freight raises waiting opens on Margin, not on a
   await expect(page.getByText("No Margin approvals waiting.")).toBeVisible();
   await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
   await expect(page.locator("[data-test='approvals-refusal']")).toHaveCount(0);
+});
+
+// The approvals' tone words are TEXT colours (approvals-styles.ts), and the home's bar segments use the same
+// tone-* names for a FILL (styles.ts). Both sheets reach the same shadow root, so a metric value or a margin
+// cell once took a fill of nearly its own ink and could not be read. A tone word paints no background.
+test("a tone word on the margin and credit cards paints no fill behind its text", async ({ request, page }) => {
+  await resetStub(request);
+  await page.goto("/");
+  await page.locator("[data-flow='general-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
+  for (const kind of ["Margin", "Credit"]) {
+    await page.locator(".kind-tab", { hasText: kind }).click();
+    const toned = page.locator(".metric-val[class*='tone-'], td[class*='tone-'], .meta-value[class*='tone-']");
+    await expect(toned.first()).toBeVisible();
+    const fills = await toned.evaluateAll((els) => els.map((el) => `${el.textContent?.trim()} on ${getComputedStyle(el).backgroundColor}`));
+    expect(fills.length).toBeGreaterThan(0);
+    for (const fill of fills) expect(fill, `${kind}: ${fill}`).toMatch(/ on rgba\(0, 0, 0, 0\)$/);
+  }
 });

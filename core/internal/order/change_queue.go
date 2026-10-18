@@ -15,11 +15,10 @@ package order
 // MONEY: no money is computed here. delta_cents and finance_threshold_cents are the numbers stored
 // when the delta was priced at request time (ruling 2 in change.go), passed through unchanged.
 //
-// NEXT ACTIONS are the ones GetChange gives this caller (changeNextActions), narrowed one step
-// further on a PENDING_FINANCE row: finance_approve is dropped when the caller is not a named
-// ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch, so a list never offers a button the
-// finance-approve route would refuse. Every row is still shown, so a manager who is not a named
-// approver sees the queue and can reject or cancel. The row stays visible, only the action narrows.
+// NEXT ACTIONS are the ones GetChange gives this caller, from the one function both read
+// (Service.changeActions): sign_apply and finance_approve are dropped on a PENDING_FINANCE row when the
+// caller is not a named ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch, so a list never offers
+// a button the route would refuse. Every row is still shown; only the actions narrow.
 
 import (
 	"context"
@@ -136,31 +135,10 @@ func (s *Service) ListChangeQueue(ctx context.Context, in ChangeQueueRequest) (C
 	for i := range items {
 		it := &items[i]
 		it.RequestedByRole = labels[it.requestedByID]
-		it.NextActions = changeNextActions(it.Status, caller.IsManager())
-		if it.Status != ChangeStatusPendingFinance || !caller.IsManager() || s.finance == nil {
-			continue
-		}
-		ok, seen := approver[it.BranchID]
-		if !seen {
-			ok = s.finance.CheckApprover(ctx, PolicyOrderChangeOverThreshold, it.BranchID, caller.UserID) == nil
-			approver[it.BranchID] = ok
-		}
-		if !ok {
-			it.NextActions = withoutAction(it.NextActions, "finance_approve")
-		}
+		it.NextActions = s.changeActions(ctx, caller, it.Status, it.BranchID, it.requestedByID, approver)
 	}
 	page.Items = items
 	return page, nil
-}
-
-func withoutAction(actions []string, drop string) []string {
-	out := make([]string, 0, len(actions))
-	for _, a := range actions {
-		if a != drop {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 func (h *Handler) listChangeQueue(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

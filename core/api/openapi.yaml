@@ -9341,7 +9341,7 @@ paths:
       tags:
         - staff-identity
       summary: Exchange a FB Console JWT and an org slug for a core session token
-      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. With class tenant the same route is the contractor leg: the staff allow lists, the staff row and the role ceiling give way to membership of the org's tenant Team, a linked ACTIVE portal row whose email is the account's, and the tenant ceiling, and the token is a tenant class token whose tenant claim is that row's contractor account. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
       x-addition: the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table
       x-role: public
       security: []
@@ -15108,7 +15108,7 @@ paths:
       tags:
         - staff-order
       summary: List change requests across orders by status, oldest first
-      description: The cross order read behind "changes waiting on the yard" (status PENDING_YARD, Yard Pick) and "changes waiting on you" (status PENDING_FINANCE, Manager Home). The caller sees the changes of its own branches and no other branch's. Rows are ordered oldest first with the id as the tie-break, paged by an opaque cursor. delta_cents and finance_threshold_cents are the numbers stored when the delta was priced at request time; nothing is recomputed. next_actions are the ones the single read gives this caller, and on a PENDING_FINANCE row finance_approve is dropped when the caller is not a named ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch (the row stays listed). Absent status lists every status.
+      description: The cross order read behind "changes waiting on the yard" (status PENDING_YARD, Yard Pick) and "changes waiting on you" (status PENDING_FINANCE, Manager Home). The caller sees the changes of its own branches and no other branch's. Rows are ordered oldest first with the id as the tie-break, paged by an opaque cursor. delta_cents and finance_threshold_cents are the numbers stored when the delta was priced at request time; nothing is recomputed. next_actions are the ones the single read gives this caller, from the same function, and on a PENDING_FINANCE row sign_apply and finance_approve are dropped when the caller is not a named ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch (the row stays listed). reject is offered to staff while the yard decides and to managers alone afterwards; cancel to the requester and managers. Absent status lists every status.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -15374,6 +15374,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OrderChange"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/order-changes/{changeId}/sign-apply:
+    post:
+      operationId: orderChangeSignApply
+      tags:
+        - staff-order
+      summary: Sign (when finance is owed) and apply a change in one tap (manager only)
+      description: "From PENDING_FINANCE records the finance signature (a named ORDER_CHANGE_OVER_THRESHOLD approver when the approvals are configured) and applies; from APPROVED applies; PENDING_YARD answers 409. The signature and the apply are one transaction under the order lock. The apply re-assesses the order's tax at the rate in force the day the order was created and refuses (409, nothing written) a tax it cannot reproduce. The required Idempotency-Key makes a press safe to repeat: the same key on the same change answers 200 with the first answer and writes nothing; the same key on another change, or a new key on an applied change, answers 409. An optional body carries the finance note."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - quote-desk
+          - manager-home
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: A UUID chosen once per press and resent unchanged on every retry of it.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      responses:
+        "200":
+          description: The applied change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -38466,7 +38520,7 @@ components:
           format: password
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: The non-secret identity returned on login and by the exchange; scope is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required:
         - user_id
         - email
@@ -38494,6 +38548,7 @@ components:
           enum:
             - GLOBAL
             - BRANCH
+            - TENANT
     IdentityLoginResponse:
       type: object
       required:
@@ -38518,6 +38573,12 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "Optional, staff when absent. The tenant class is the contractor leg: the person belongs to the org's ten-<slug> Team and has a linked ACTIVE portal row whose email is the FB Console account's, the sign in is an email link or Google, and the token carries the row's contractor account as its tenant claim"
     IdentityPersonaRequest:
       type: object
       required:
@@ -43347,6 +43408,7 @@ components:
             type: string
             enum:
               - yard_ack
+              - sign_apply
               - finance_approve
               - apply
               - reject

@@ -2736,7 +2736,7 @@ export type IdentityUser = {
   role_code: string;
   role_name: string;
   tier: number;
-  scope: "GLOBAL" | "BRANCH";
+  scope: "GLOBAL" | "BRANCH" | "TENANT";
 };
 export type IdentityLoginResponse = {
   token: string;
@@ -2745,6 +2745,7 @@ export type IdentityLoginResponse = {
 export type IdentityExchangeRequest = {
   jwt: string;
   org: string;
+  class?: "staff" | "tenant";
 };
 export type IdentityPersonaRequest = {
   persona: string;
@@ -4153,7 +4154,7 @@ export type OrderChange = {
   decision_note?: string;
   applied_at?: string;
   lines: OrderChangeLine[];
-  next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
+  next_actions: ("yard_ack" | "sign_apply" | "finance_approve" | "apply" | "reject" | "cancel")[];
 };
 export type OrderChangeQueueItem = {
   id: string;

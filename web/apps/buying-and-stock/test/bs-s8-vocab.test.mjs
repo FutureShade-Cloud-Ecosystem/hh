@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { functionBody } from "./_slice.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, "..");
@@ -20,9 +21,7 @@ const src = (rel) => readFileSync(join(appDir, rel), "utf8");
 
 test("the stock lookup panel reserves the word (not Allocated) in its table header and cell", () => {
   const source = src("src/inventory/inventory-views.ts");
-  const lookupStart = source.indexOf("function lookupPane(");
-  const lookupEnd = source.indexOf("// ---- browse");
-  const lookupRange = source.slice(lookupStart, lookupEnd);
+  const lookupRange = functionBody(source, "lookupPane");
   assert.ok(
     /<th class="num">Reserved<\/th>/.test(lookupRange),
     "the lookup table header must read Reserved, not Allocated",
@@ -43,9 +42,7 @@ test("the stock lookup panel reserves the word (not Allocated) in its table head
 
 test("the stock lookup footnote names the same vocabulary: on hand minus reserved", () => {
   const source = src("src/inventory/inventory-views.ts");
-  const lookupStart = source.indexOf("function lookupPane(");
-  const lookupEnd = source.indexOf("// ---- browse");
-  const lookupRange = source.slice(lookupStart, lookupEnd);
+  const lookupRange = functionBody(source, "lookupPane");
   assert.ok(
     /Available is on hand minus reserved\. A negative available is stock sold before its receipt, by design\./.test(lookupRange),
     "the footnote must read 'on hand minus reserved'",
