@@ -155,6 +155,11 @@ for (const size of SIZES) {
       await page.locator(".view-link", { hasText: "Approvals" }).click();
       await expect(page.locator("[data-test='approvals-refusal']")).toBeVisible();
       await check(page, "approvals");
+
+      // Change orders, the new HH-681 tab, in both themes.
+      await page.locator(".kind-tab", { hasText: "Change orders" }).click();
+      await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Change orders");
+      await check(page, "change orders");
     });
   }
 }

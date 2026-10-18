@@ -26,9 +26,9 @@ test("the five kinds of the closed vocabulary sit as tabs, the decided one first
   await page.locator("[data-flow='sales-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
-  await expect(tabs).toHaveCount(5);
+  await expect(tabs).toHaveCount(6);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0"]);
+  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 0"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
