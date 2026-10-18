@@ -177,6 +177,22 @@ func (s *Service) changeApplyHooks(actor, orderID, key, note string) changeApply
 				if note != "" {
 					reason += ": " + note
 				}
+				// The one tap that signs leaves the signature on the trail as the separate finance approve
+				// route does: a CHANGE_FINANCE_APPROVED row naming the signer, on this transaction, written
+				// before the applied row. It carries no client_id, so the replay lookup reads only the
+				// applied row and is unchanged.
+				if ev.SignedBy != "" {
+					if err := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
+						Action: audit.ActOrderChanged, EntityType: "order", EntityID: ev.OrderID,
+						ActorID: ev.SignedBy, Purpose: "ORDER_CHANGE_ORDER", Reason: reason,
+						Extra: map[string]any{
+							"field": "change_order", "outcome": "CHANGE_FINANCE_APPROVED", "status": ChangeStatusApproved,
+							"policy": PolicyOrderChangeOverThreshold,
+						},
+					}); err != nil {
+						return fmt.Errorf("audit: %w", err)
+					}
+				}
 				if err := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
 					Action: audit.ActOrderChanged, EntityType: "order", EntityID: ev.OrderID,
 					ActorID: actor, Purpose: "ORDER_CHANGE_ORDER", Reason: reason,
