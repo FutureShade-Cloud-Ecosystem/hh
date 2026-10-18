@@ -871,3 +871,91 @@ func TestIntegration_S3_AnApprovedChangeLeavesNoSignatureRow(t *testing.T) {
 		t.Fatalf("%d CHANGE_APPLIED rows, want 1", rows)
 	}
 }
+
+// - second read round: the note never touches the reason, a decline cannot race a yard ack -
+
+// TestIntegration_S3_ANoteWithASevenDigitRunDoesNotBreakTheReplay: the audit boundary redacts the WHOLE reason
+// when it carries a run of seven digits, so a signer's note ("PO 4471234") that rode in the reason erased the
+// change number and made a replay of the same key on the same change answer ErrChangeKeyReused. The reason is
+// the change number alone; the note rides its own allowlisted key.
+func TestIntegration_S3_ANoteWithASevenDigitRunDoesNotBreakTheReplay(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
+	s3CleanOutbox(t, pool, ord)
+	svc := s3Service(t, pool, 6000, s3RateBps)
+	co := s3RaisePendingFinance(t, svc, ord)
+
+	first, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, "PO 4471234 approved by the controller")
+	if err != nil {
+		t.Fatalf("sign and apply: %v", err)
+	}
+	second, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, "PO 4471234 approved by the controller")
+	if err != nil {
+		t.Fatalf("replay of the same key on the same change = %v, want the first answer", err)
+	}
+	if second.Status != ChangeStatusApplied || second.AppliedAt != first.AppliedAt {
+		t.Fatalf("replay = %q applied %q, first applied %q: want the same answer", second.Status, second.AppliedAt, first.AppliedAt)
+	}
+	if got := w5aLineQty(t, pool, ord, 1); got != 20 {
+		t.Fatalf("line qty = %v after the replay, want 20 (applied once)", got)
+	}
+	if n := s3Outbox(t, pool, co.ID); n != 1 {
+		t.Fatalf("%d outbox rows after the replay, want 1", n)
+	}
+	for _, outcome := range []string{"CHANGE_FINANCE_APPROVED", "CHANGE_APPLIED"} {
+		var rows, named int
+		var reason string
+		if err := pool.QueryRow(context.Background(), `
+			SELECT count(*), count(*) FILTER (WHERE changes->>'change_no' = $3), COALESCE(max(changes->>'reason'), '')
+			  FROM audit_log
+			 WHERE entity_type = 'order' AND entity_id = $1::uuid AND changes->>'outcome' = $2`,
+			ord, outcome, co.ChangeNo).Scan(&rows, &named, &reason); err != nil {
+			t.Fatalf("read audit: %v", err)
+		}
+		if rows != 1 || named != 1 || reason != co.ChangeNo {
+			t.Fatalf("%s: %d row(s), %d naming the change, reason %q; want 1 row naming %q with the change number alone as its reason",
+				outcome, rows, named, reason, co.ChangeNo)
+		}
+	}
+}
+
+// racyStore reads a change as it stands, then lets the yard acknowledge it before the decision is written: the
+// window between closeChange's unlocked read and its guarded UPDATE, made deterministic.
+type racyStore struct {
+	*Repository
+	t     *testing.T
+	armed bool
+}
+
+func (r *racyStore) GetChangeOrder(ctx context.Context, id string) (ChangeOrder, error) {
+	stale, err := r.Repository.GetChangeOrder(ctx, id)
+	if err == nil && r.armed && stale.Status == ChangeStatusPendingYard {
+		r.armed = false
+		if _, err := r.Repository.RecordYardAck(ctx, id, w5aUser, "", nextStatusAfterYardAck(stale.FinanceRequired)); err != nil {
+			r.t.Fatalf("racing yard ack: %v", err)
+		}
+	}
+	return stale, err
+}
+
+// TestIntegration_S3_ANonManagerRejectCannotRaceAYardAck: the read says PENDING_YARD, the yard acks before the
+// UPDATE, and the change is now waiting on finance: a frontline reject must be refused, not recorded.
+func TestIntegration_S3_ANonManagerRejectCannotRaceAYardAck(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
+	s3CleanOutbox(t, pool, ord)
+	svc := s3Service(t, pool, 6000, s3RateBps)
+	co, err := w5aRaise(t, svc, s3Mgr(), ord, "20")
+	if err != nil {
+		t.Fatalf("raise: %v", err)
+	}
+	svc.store = &racyStore{Repository: NewRepository(pool), t: t, armed: true}
+
+	frontline := identity.ContextWithStaff(context.Background(), w5aStaff(false))
+	if _, err := svc.RejectChange(frontline, co.ID, "no"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a frontline reject that raced a yard ack = %v, want ErrForbidden", err)
+	}
+	if s := s3Status(t, pool, co.ID); s != ChangeStatusPendingFinance {
+		t.Fatalf("status = %q, want PENDING_FINANCE: the frontline reject must not land", s)
+	}
+}
