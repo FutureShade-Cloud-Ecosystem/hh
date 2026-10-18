@@ -31,10 +31,14 @@
 
    THE GOLD RULE (carried unchanged). The brand gold #FFC313 is a SURFACE, never
    an ink. Every gold fill carries the near-black --hh-accent-ink #0B1725 in
-   BOTH themes, never white: white on gold measures 1.61:1. On light surfaces
-   the gold ROLE as ink is carried by dark-gold #896400 (--hh-accent-text),
-   which is what the brand's own site does; it is also the focus ring, which is
-   why a keyboard ring is visible in Light Mode (a gold ring there is 1.35:1 and
+   BOTH themes (theme-INVARIANT, kept from the navy design; the design system's
+   accent-ink is a separate near-black, not the page color), never white:
+   white on gold measures 1.61:1. Brand mode ground flipped from navy
+   (#0F2944) to charcoal (#16191D, row 1763 palette B); the gold fill still
+   carries the same near-black ink in both halves. On light surfaces the gold
+   ROLE as ink is carried by dark-gold #896400 (--hh-accent-text), which is
+   what the brand's own site does; it is also the focus ring, which is why a
+   keyboard ring is visible in Light Mode (a gold ring there is 1.35:1 and
    fails WCAG 1.4.11).
 
    THE MEASURED BARS (carried unchanged). 4.5:1 (WCAG AA) for anything read as
@@ -57,44 +61,57 @@
    a label, or a pattern change), and disabled controls change COLOUR, not
    opacity (a token swap, never a fade). */
 
-/* BRAND MODE (decision log rows 1047 item 10 and 1119, option A). The dark half of this
-   sheet is the brand mode: the HH badge's own navy #0F2944 as the page, calmer than the
-   richer blue (#071827) it replaced, with the gold family held invariant so the frame reads
-   as the brand. The token NAMES are the dark set's, so nothing that consumes them changes;
-   only the values moved. The stop state ink took one minimal step (#F07C6C to #F17E6E)
-   because the board did not measure it on the raised widget (4.48:1 there, 4.69:1 now), and the raised widget took one step darker (#1A3856 to #193653)
-   so the hh-pro identity blue reads on it (4.42:1 on the board's value, 4.55:1 now). The state inks, the fills, the stripe and the elevations are
-   carried as they were. The text and boundary pairs on the new surfaces are pinned in
-   test/brand-mode.test.mjs. Light stays the default theme. The dark half still lives in
-   :root, and the data-theme attribute is still absent for it. */
+/* BRAND MODE (decision log row 1763, palette B charcoal, reversing row 1119). The dark half of
+   this sheet is the brand mode: charcoal (page #16191D, card #1F2328, line #3A4046), the
+   neutral ground the board build kit pairs with earthy accent colours. Row 1763 reverses the
+   earlier navy (rows 1047 item 10 and 1119 option A); every accepted walk board is drawn
+   against this ground in its charcoal twin. The token NAMES are the dark set's, so nothing
+   that consumes them changes; only the values moved. The dark-half inherits the kit's named
+   set verbatim (page, card, line, control-line, text, text-dim, field, accent, accent-ink,
+   accent-text, state-good, state-watch, state-stop, info, disabled-fill, disabled-ink) and
+   proposes values for the named tokens it does not cover: ground sits one step off the page
+   in the same family, the widget sits between page and card, the raised widget is held at the
+   card itself so the boundary ink clears the 3:1 non-text bar (kit's charcoal stops there on
+   its own), the danger and success fills step to charcoal-tuned shades, the quote ink moves
+   from #A3BCFF (tuned for navy) to the boards' dusty blue (#86A3C9 ink, #9DB4CC links), and
+   danger text is the kit's clay. The disabled-ink
+   (#8A857C, kit) clears only 3.69:1 on the kit's disabled fill (#2A2F33); the proposed
+   charcoal disabled-ink keeps the original navy intent of "an honest grey is free" by lifting
+   it one minimal step (#9F9A91, 4.83:1 on the same fill, matching navy). The state inks, the
+   gold family, the stripe and the elevations are carried as the brand mode dictates; the text
+   and boundary pairs on the new surfaces are pinned in test/brand-mode.test.mjs. Light stays
+   the default theme. The dark half still lives in :root, and the data-theme attribute is still
+   absent for it. */
 
 :root {
   /* ── canvases and surfaces ─────────────────────────────────────────────────
-     Carried from the ERP dark theme, role for role: the page, the card one step
-     off it, and the solid line between them. The ERP paints its line SOLID (an
-     alpha flattened over the navy canvas) because tints that resolve over a
-     translucent line collapse to a wash; the same reasoning holds here. */
-  --hh-page: #0F2944;
-  --hh-card: #173550;
-  --hh-line: #2C4763;
-  /* The one input fill (round 7): dark keeps the page's own deep tone, so a field sits inset in
-     its card as it always has; the light half re-values it, see there. */
-  --hh-field: #0F2944;
+     Carried from the charcoal kit (page #16191D, card #1F2328), role for role: the page, the
+     card one step off it, and the solid line between them. The line (#3A4046, 1.68:1 on the
+     page) is a hairline, NOT a boundary: --hh-control-line below is what the secondary button
+     wears, and --hh-line is the divider only. */
+  --hh-page: #16191D;
+  --hh-card: #1F2328;
+  --hh-line: #3A4046;
+  /* The one input fill: the kit's charcoal field, one step BELOW the page (#121517 under
+     #16191D), so a field reads inset in its card. The navy half held the field equal to the
+     page; the charcoal boards draw it deeper. */
+  --hh-field: #121517;
 
   /* ── control boundary ──────────────────────────────────────────────────────
      The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
-     boundary as a shape at 3:1, and --hh-line above is a hairline (1.54:1 on
+     boundary as a shape at 3:1, and --hh-line above is a hairline (1.68:1 on
      the dark page), not a boundary. --hh-control-line is declared in BOTH
-     halves to clear 3:1 against the page AND the card (dark: 3.92 and 3.35;
-     light: 3.89 and 4.62); the secondary button's border takes it. */
-  --hh-control-line: #6B86A3;
+     halves to clear 3:1 against the page AND the card (charcoal: 3.37 and
+     3.02; light: 3.89 and 4.62); the secondary button's border takes it. */
+  --hh-control-line: #666D76;
 
   /* ── inks ──────────────────────────────────────────────────────────────────
-     Text, and the dimmed ink under it. The light half of --hh-text-dim is the
-     ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
-     page, so the value is checked, not eyeballed. */
-  --hh-text: #FFFFFF;
-  --hh-text-dim: #A9BCD0;
+     Text, and the dimmed ink under it. Charcoal flips text from pure white
+     (#FFFFFF on navy was 14.78:1) to a warm bone (#F2F1EC, 15.59:1 on the page)
+     that the kit's earthy palette reads warmer against; --hh-text-dim is the
+     kit's warm grey #A9A59C (7.18:1 on the page, 6.43:1 on the card). */
+  --hh-text: #F2F1EC;
+  --hh-text-dim: #A9A59C;
 
   /* ── the brand gold family (theme-INVARIANT, on purpose) ────────────────────
      The fill does not flip between themes, so neither does its ink: that is the
@@ -103,8 +120,8 @@
      see the light half. */
   --hh-accent: #FFC313;        /* a FILL, never an ink */
   --hh-accent-hover: #FFD45B;  /* the gold hover fill */
-  --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries: 11.23:1 on the gold, 12.74:1 on the hover */
-  /* Gold as INK, dark half: on the dark page the gold itself reads (9.20:1). */
+  --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries, theme-INVARIANT: 11.23:1 on the gold, 12.74:1 on the hover, 5.87:1 on the charcoal success fill, 4.53:1 on the light one. The kit's own `ink` (#16191D) is the charcoal page colour, not this token. */
+  /* Gold as INK, dark half: on the dark page the gold itself reads (10.97:1). */
   --hh-accent-text: #FFC313;
 
   /* The focus ring is gold-as-INK (per theme), not the gold fill: the same rule
@@ -115,36 +132,43 @@
      Quotes and their documents read in an indigo quote blue; orders and the till keep gold,
      so a conversion visibly changes colour. The roles mirror the gold family's. Brand mode
      half here, light half below. The FILL is one value in both modes and carries white (the
-     D-077 shape), so those two are re-valued by no block; on navy the control is seen by its
-     1px fill-on border (the .btn-primary pattern). The tint is the quote header band's ground,
-     written flat so the gates can measure it: light is mix(#1D4ED8, white 90%), brand mode is
-     mix(#A3BCFF, black 78%), both in srgb. Nothing here re-values the gold family, and the
-     till never consumes these. */
-  --hh-quote: #A3BCFF;         /* the accent as ink: text, borders, the focus ring's quote twin */
-  --hh-quote-fill: #1D4ED8;    /* the pressable control, one value in both modes */
-  --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 */
-  --hh-quote-link: #A3BCFF;    /* links and text actions */
-  --hh-quote-tint: #242938;    /* the quote header band's ground */
+     D-077 shape), so those two are re-valued by no block; the control is seen by its 1px
+     fill-on border, the .btn-primary pattern. The charcoal ink and link are the Quote Desk
+     boards' own dusty blues (q4 and q6 charcoal): #86A3C9 for the accent ink (6.80:1 on the
+     page, 6.09:1 on the card) and the kit's #9DB4CC for links (8.26:1, 7.40:1). The boards
+     also draw the quote button as #86A3C9 with dark ink; this sheet keeps the FILL invariant
+     (the carried rule) until that rule is ruled on. The tint is the quote header band's
+     ground, written flat so the gates can measure it: charcoal is mix(#86A3C9, black 78%) =
+     #1D242C, light is mix(#1D4ED8, white 90%). Nothing here re-values the gold
+     family, and the till never consumes these. */
+  --hh-quote: #86A3C9;         /* the accent as ink: text, borders, the focus ring's quote twin; the boards' dusty quote blue */
+  --hh-quote-fill: #1D4ED8;    /* the pressable control: theme-invariant (carried rule); brand mode sees it by its 1px fill-on border, the .btn-primary pattern */
+  --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 in both modes */
+  --hh-quote-link: #9DB4CC;    /* links and text actions, as the boards draw them */
+  --hh-quote-tint: #1D242C;    /* the quote header band's ground, mix(#86A3C9, black 78%) */
 
   /* ── status inks ───────────────────────────────────────────────────────────
-     Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
-     the theme's own page, and the values are the ERP's: #FF8F9F is 6.81:1 on
-     the dark page, #AB1C31 is 6.65:1 on the light one. */
-  --hh-danger: #FF8F9F;
-  --hh-info: #86BDF6;
-  --hh-success: #58D69B;
+     Danger, info and success AS TEXT, per theme. The charcoal danger is the
+     kit's clay, as the boards draw danger text (over limit, a short line):
+     #D9826E, 6.19:1 on the page and 5.54:1 on the card and the raised widget,
+     the same value as --hh-state-stop, one clay not two; info and success take
+     the kit's named good/info values (#9DB4CC and #8FA67B), the moss that reads
+     on charcoal (8.26:1 and 6.64:1 on page). */
+  --hh-danger: #D9826E;
+  --hh-info: #9DB4CC;
+  --hh-success: #8FA67B;
 
   /* ── the solid danger fill, per theme (the D-077 ruling, carried) ───────────
      A red tuned to be read AS TEXT wants the opposite of what a SOLID red fill
      under white ink wants, and no single red can be both. So the FILL is
-     per-theme, tuned for one white ink in both halves: white is 4.55:1 on the
-     dark fill and 5.95:1 on the light one. The fill also clears the 3:1
-     non-text bar against the page and the card in both halves. Use
-     --hh-danger for everything red that is text, border or tint, and
-     --hh-danger-fill ONLY for a solid red fill carrying white. */
-  --hh-danger-fill: #D73A51;
-  /* The edge a solid danger button wears. In brand mode the fill alone is under 3:1 on the card
-     and the raised widget (and no red can hold 4.5:1 under white ink and 3:1 there), so the
+     per-theme, tuned for one white ink in both halves. On charcoal the fill
+     #C9364C is 5.10:1 under white and clears 3:1 on the page (3.46:1), the card
+     (3.10:1) and the ground (3.68:1). On the raised widget it is under 3:1, as
+     the navy fill was, so the button's own white 1px edge is its boundary, the
+     .btn-primary pattern. Light needs none. */
+  --hh-danger-fill: #C9364C;
+  /* The edge a solid danger button wears. In brand mode the fill alone is under 3:1 on the
+     raised widget (and no red can hold 4.5:1 under white ink and 3:1 there), so the
      button's own white 1px edge is its boundary, the .btn-primary pattern. Light needs none. */
   --hh-danger-fill-edge: #FFFFFF;
   --hh-danger-fill-ink: #FFFFFF; /* theme-invariant: the fill flips so the ink need not (the D-077 shape) */
@@ -152,59 +176,66 @@
   /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
      Same ruling on green: --hh-success above is text ink; a solid green badge
      under the near-black accent ink is a second role and gets a second token.
-     The accent ink is 9.89:1 on the dark fill and 4.53:1 on the light one, and
-     both fills clear 3:1 against the page and the card (the row 987 page is
-     darker, and the light fill stepped from #319E69 to #2C9060 to keep its
-     boundary: 3.36:1 on the page, 3.99:1 on the card). Use --hh-success for
-     green text and borders, --hh-success-fill for solid fills. */
-  --hh-success-fill: #58D69B;
+     The accent ink (#0B1725) is 5.87:1 on the charcoal fill #7A9D62 and 4.53:1
+     on the light one, and the charcoal fill clears 3:1 against the page (5.73:1)
+     and the card (5.14:1). Use
+     --hh-success for green text and borders, --hh-success-fill for solid fills. */
+  --hh-success-fill: #7A9D62;
 
   /* ── state colours, and they never travel alone ─────────────────────────────
      good / watch / stop are meaning colours for marks: an icon, a dot, a pill
      fill. Every use ships with an icon or a word; that rule is tested in
-     test/kits.test.mjs. The LIGHT values are this sheet's one deliberate
-     deviation from the ERP values: #2E8B57 and #C77A15 measure 3.96:1 and
-     3.14:1 as text on the light surfaces, under the 4.5 bar, so they are
-     darkened to #1E7544 and #955B0B (4.79:1 and 4.66:1 on the worst light
-     surface), the ERP's own treatment for a value that misses AA by a little:
-     the value is adjusted minimally rather than the bar softened. The row 987
-     surfaces (the page at #E7ECF1, the widget ground darker with it) pushed
-     the previous #1F7A48 and #9A5F0C back under the bar on the page itself
-     (4.49:1 and 4.40:1), so each takes one more minimal step. */
-  --hh-state-good: #5CC48A;
-  --hh-state-watch: #F0A93A;
-  --hh-state-stop: #F17E6E;
+     test/kits.test.mjs. The charcoal set is the kit's earthy palette verbatim:
+     moss good (#8FA67B), ochre watch (#D2A858), clay stop (#D9826E). Each clears
+     4.5:1 on the page (6.64:1, 7.96:1, 6.19:1) and on the raised widget
+     (5.66:1, 6.79:1, 5.28:1). */
+  --hh-state-good: #8FA67B;
+  --hh-state-watch: #D2A858;
+  --hh-state-stop: #D9826E;
 
   /* ── disabled is a colour, not a fade ───────────────────────────────────────
      The carried rule from HH Pro: a filled control at reduced opacity still
      reads as clickable in daylight. Disabled controls DROP their fill and go
      grey. This family is the token swap the rule is implemented with, and the
      kit gate fails if any shipped source reaches for opacity or a filter
-     instead of it. Both pairs clear AA (4.83:1 dark, 5.22:1 light) even though
-     WCAG exempts disabled controls: an honest grey is free. */
-  --hh-disabled-fill: #142C46;
-  --hh-disabled-ink: #8499AD;
-  --hh-disabled-line: #28455F;
+     instead of it. The kit's disabled pair clears 3.69:1 on the kit's disabled
+     fill (#2A2F33); the charcoal sheet keeps the kit's fill #2A2F33 and lifts
+     the ink one minimal step from kit #8A857C to #9F9A91 (4.83:1 on the fill,
+     matching navy's own honest-grey intent), so the dark-half's disabled pair
+     still clears AA even though WCAG exempts disabled controls. Light is held
+     to AA at 5.22:1. */
+  --hh-disabled-fill: #2A2F33;
+  --hh-disabled-ink: #9F9A91;
+  /* The disabled boundary is a hairline in both halves (1.51:1 charcoal card,
+     2.55:1 light card); the kit does not name it. --hh-control-line above is
+     what disabled borders wear in the kit's own style. */
+  --hh-disabled-line: #3A4046;
 
   /* ── the dashboard kit's own layer ──────────────────────────────────────────
      A widget sits ONE step off the page, on its own ground; it is deliberately
-     not the card pair above. Dark steps the SURFACE and takes no shadow; light
-     keeps one surface and lifts with the shadow. */
-  --hh-ground: #0C2138;
-  --hh-widget: #142E49;
-  --hh-widget-raised: #193653;
+     not the card pair above. Charcoal steps the SURFACE and takes no shadow;
+     the ground sits one step DARKER than the page (#0F1216) so a page-level
+     card has its own well, the widget sits between the page and the card
+     (#191C20), and the raised widget is held AT the card (#1F2328) so the
+     control boundary (3:1) and the danger fill (3:1) clear there without
+     making the lift into a chalky slab. The hairline and the track keep their
+     dark-half alphas; no shadow carries a charcoal lift. */
+  --hh-ground: #0F1216;
+  --hh-widget: #191C20;
+  --hh-widget-raised: #1F2328;
   --hh-hairline: rgba(255,255,255,.07);
   --hh-track: rgba(255,255,255,.08);
   --hh-widget-shadow: none;
 
-  --hh-scrim: rgba(4, 10, 20, 0.72);
+  --hh-scrim: rgba(0, 0, 0, 0.78);
 
   /* ── the row stripe ─────────────────────────────────────────────────────────
      Carried for the list kits: alternating rows, stated as "the row's own
      ground" and "the row's own ground plus a whisper of the ink", so the pair
-     works on any surface a list is put on. 6% over the dark page, 5% over the
-     light one (near-black at 6% over white is a heavier stripe than white at
-     6% over navy, and light's dimmed ink keeps AA only at 5). A tint is not a
+     works on any surface a list is put on. 6% over the charcoal ground, 5%
+     over the light one (the charcoal half keeps the same alpha as the navy did
+     because bone ink at 6% over a charcoal ground reads the same way white at
+     6% over navy did; the light dimmed ink keeps AA only at 5). A tint is not a
      measured pair: it resolves over whatever the row sits on, and the inks on
      it are held to AA by the matrix over the underlying surfaces. */
   --hh-row: transparent;

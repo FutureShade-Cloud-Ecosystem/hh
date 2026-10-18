@@ -29,7 +29,7 @@
 
   /* Canvases, surfaces, line, inks: role for role with the base sheet. */
   --hos-deep-earth: var(--hh-page);
-  /* The one input fill: the page's deep tone in dark, the card white in light (round 7). */
+  /* The one input fill: the inset field tone in dark (one step below the charcoal page, row 1763), the card white in light (round 7). */
   --hos-field: var(--hh-field);
   --hos-slate-warm: var(--hh-card);
   --hos-line: var(--hh-line);
