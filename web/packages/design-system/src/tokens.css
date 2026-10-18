@@ -56,17 +56,16 @@
 
 /* BRAND MODE (decision log row 1763, palette B charcoal, reversing row 1119). The dark half of
    this sheet is the brand mode: charcoal (page #16191D, card #1F2328, line #3A4046), the
-   neutral ground the board build kit pairs with earthy accents. Colton ruled row 1763 with
-   "Charcoal looks awesome", reversing the earlier navy (rows 1047 item 10 and 1119 option A);
-   the WALK-C13 charcoal boards are drawn against this ground and fail on navy on the page
-   before any layout (gap report finding S7). The token NAMES are the dark set's, so nothing
+   neutral ground the board build kit pairs with earthy accent colours. Row 1763 reverses the
+   earlier navy (rows 1047 item 10 and 1119 option A); every accepted walk board is drawn
+   against this ground in its charcoal twin. The token NAMES are the dark set's, so nothing
    that consumes them changes; only the values moved. The dark-half inherits the kit's named
    set verbatim (page, card, line, control-line, text, text-dim, field, accent, accent-ink,
    accent-text, state-good, state-watch, state-stop, info, disabled-fill, disabled-ink) and
    proposes values for the named tokens it does not cover: ground sits one step off the page
    in the same family, the widget sits between page and card, the raised widget is held at the
    card itself so the boundary ink clears the 3:1 non-text bar (kit's charcoal stops there on
-   its own), the danger and success fills step to charcoal-balanced shades, the quote ink moves
+   its own), the danger and success fills step to charcoal-tuned shades, the quote ink moves
    from #A3BCFF (tuned for navy) to the boards' dusty blue (#86A3C9 ink, #9DB4CC links), and
    danger text is the kit's clay. The disabled-ink
    (#8A857C, kit) clears only 3.69:1 on the kit's disabled fill (#2A2F33); the proposed
