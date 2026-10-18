@@ -632,7 +632,8 @@ paths:
         ones the single read gives this caller, from the same function, and on
         a PENDING_FINANCE row sign_apply and finance_approve are dropped when
         the caller is not a named ORDER_CHANGE_OVER_THRESHOLD approver for the
-        change's branch (the row stays listed). reject is offered to staff
+        change's branch, or raised the change themselves (the row stays
+        listed). reject is offered to staff
         while the yard decides and to managers alone afterwards; cancel to the
         requester and managers. Absent status lists every status.
       x-role: requireStaff
@@ -732,7 +733,9 @@ paths:
         Two gates: the manager identity gate, then the approvals substrate's
         named-approver check for this branch (policy
         ORDER_CHANGE_OVER_THRESHOLD), which can only narrow. An unconfigured
-        branch fails open: any manager may sign.
+        branch fails open: any manager may sign. The manager who raised the
+        change may not sign it (separation of duties): that answers 403 "You
+        raised this change, so another manager signs it."
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -875,7 +878,10 @@ paths:
         repeat: the same key on the same change answers 200 with the first
         answer and writes nothing; the same key on another change, or a new
         key on an applied change, answers 409. An optional body carries the
-        finance note.
+        finance note. From PENDING_FINANCE the manager who raised the change
+        may not sign it (separation of duties): 403 "You raised this change,
+        so another manager signs it."; applying a change that is already
+        APPROVED stays open to its requester.
       x-role: requireManager
       x-access:
         surfaces: [quote-desk, manager-home]
