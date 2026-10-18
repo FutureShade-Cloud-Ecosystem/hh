@@ -801,3 +801,73 @@ func TestIntegration_S3_DeclineAuthorityAtEachStage(t *testing.T) {
 		t.Fatalf("the yard rejecting a PENDING_YARD change = %q, %v, want REJECTED", out.Status, err)
 	}
 }
+
+// s3AuditRows counts the order's ORDER_CHANGED rows for one change and outcome, and how many of them name the
+// actor, so the trail can be asserted row by row.
+func s3AuditRows(t *testing.T, pool *pgxpool.Pool, ord, changeNo, outcome, actor string) (rows, byActor int) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*), count(*) FILTER (WHERE actor_id = $4::uuid)
+		  FROM audit_log
+		 WHERE entity_type = 'order' AND entity_id = $1::uuid AND action = 'ORDER_CHANGED'
+		   AND changes->>'field' = 'change_order' AND changes->>'outcome' = $3
+		   AND split_part(COALESCE(changes->>'reason', ''), ':', 1) = $2`, ord, changeNo, outcome, actor).
+		Scan(&rows, &byActor); err != nil {
+		t.Fatalf("read audit rows: %v", err)
+	}
+	return
+}
+
+// TestIntegration_S3_TheOneTapLeavesTheSignatureOnTheTrail: a material delta signed through the one tap shows
+// the signature event as well as the apply, both naming the signer, exactly as the separate finance approve
+// route leaves them. A change that needed no signature leaves no finance row.
+func TestIntegration_S3_TheOneTapLeavesTheSignatureOnTheTrail(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, 6000)
+	s3CleanOutbox(t, pool, ord)
+	svc := s3Service(t, pool, 6000, s3RateBps)
+	co := s3RaisePendingFinance(t, svc, ord)
+
+	if _, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, "signed on the phone"); err != nil {
+		t.Fatalf("sign and apply: %v", err)
+	}
+	if rows, by := s3AuditRows(t, pool, ord, co.ChangeNo, "CHANGE_FINANCE_APPROVED", w5aUser); rows != 1 || by != 1 {
+		t.Fatalf("%d CHANGE_FINANCE_APPROVED rows (%d naming the signer), want exactly 1 naming the signer", rows, by)
+	}
+	if rows, by := s3AuditRows(t, pool, ord, co.ChangeNo, "CHANGE_APPLIED", w5aUser); rows != 1 || by != 1 {
+		t.Fatalf("%d CHANGE_APPLIED rows (%d naming the signer), want exactly 1 naming the signer", rows, by)
+	}
+	// The replay lookup reads the applied row's key; the signature row carries none, so a replay is unchanged.
+	if _, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, ""); err != nil {
+		t.Fatalf("replay with the same key = %v, want the first answer", err)
+	}
+	if rows, _ := s3AuditRows(t, pool, ord, co.ChangeNo, "CHANGE_FINANCE_APPROVED", w5aUser); rows != 1 {
+		t.Fatalf("%d CHANGE_FINANCE_APPROVED rows after a replay, want still 1", rows)
+	}
+	var withKey int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM audit_log WHERE entity_type = 'order' AND entity_id = $1::uuid
+		   AND changes->>'outcome' = 'CHANGE_FINANCE_APPROVED' AND changes ? 'client_id'`, ord).Scan(&withKey); err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if withKey != 0 {
+		t.Fatalf("the signature row carries a client_id, want none: the replay lookup must stay unchanged")
+	}
+}
+
+func TestIntegration_S3_AnApprovedChangeLeavesNoSignatureRow(t *testing.T) {
+	pool := intPool(t)
+	_, ord := w5aSeedOrderWithPricedLine(t, pool, "PICKING", 10, s3Immaterl)
+	s3CleanOutbox(t, pool, ord)
+	svc := s3Service(t, pool, s3Immaterl, s3RateBps)
+	co := s3RaiseApproved(t, svc, ord, "12")
+	if _, err := svc.SignApplyChange(s3Mgr(), co.ID, s3Key, ""); err != nil {
+		t.Fatalf("sign and apply: %v", err)
+	}
+	if rows, _ := s3AuditRows(t, pool, ord, co.ChangeNo, "CHANGE_FINANCE_APPROVED", w5aUser); rows != 0 {
+		t.Fatalf("%d CHANGE_FINANCE_APPROVED rows on a change that needed no signature, want 0", rows)
+	}
+	if rows, _ := s3AuditRows(t, pool, ord, co.ChangeNo, "CHANGE_APPLIED", w5aUser); rows != 1 {
+		t.Fatalf("%d CHANGE_APPLIED rows, want 1", rows)
+	}
+}
