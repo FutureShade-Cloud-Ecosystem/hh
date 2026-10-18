@@ -615,7 +615,7 @@ export class YardPickApp extends HHElement {
   // backend when the host can carry one, the first pull through the runner,
   // and the chrome fed from then on. A host that cannot carry a store leaves
   // the layer null and the app behaves online as today.
-  async #bootOffline(): Promise<void> {
+  async #bootOffline(gen: number): Promise<void> {
     if (this.#me === "") return;
     if (this.#offlineOpen === null) {
       this.#offlineOpen = (async () => {
@@ -645,15 +645,20 @@ export class YardPickApp extends HHElement {
           // not its own). The read runs even while a save or a shortage is still
           // finishing: a cycle that rests in between would otherwise leave the
           // device's queued lines on the glass after the server's row arrived.
-          if ((state === "idle" || state === "conflict") && this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
+          if (state === "idle" || state === "conflict") {
+            if (this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
+            else if (this.#view.kind === "queue" && this.#branchId !== "") void this.#loadQueue(false);
+          }
         });
       })();
     }
     await this.#offlineOpen;
     const layer = this.#yardOffline;
-    if (layer === null || this.#sessions.current === null) return;
+    if (layer === null || gen !== this.#worldGen || this.#sessions.current === null) return;
     await layer.setOnline(navigator.onLine);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     await layer.cycle();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     await this.#refreshOfflineChrome();
   }
 
@@ -670,7 +675,7 @@ export class YardPickApp extends HHElement {
     const gen = ++this.#worldGen;
     this.#phase = "loading";
     this.requestUpdate();
-    await this.#bootOffline();
+    await this.#bootOffline(gen);
     if (gen !== this.#worldGen || this.#sessions.current === null) return;
     const branches = await this.#yard.branches();
     if (gen !== this.#worldGen || this.#sessions.current === null) return;
@@ -898,7 +903,7 @@ export class YardPickApp extends HHElement {
     const held = current.ticket?.held_from_picking === true;
     if (!held) {
       if (current.task.status === "QUEUED" || current.task.status === "PUSHED") {
-        const claimed = await this.#door().claim(taskId);
+        const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
         if (!claimed.ok) {
           this.#busy = false;
           this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
