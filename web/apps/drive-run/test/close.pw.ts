@@ -19,7 +19,7 @@ test("the end of the run is one tap from the run sheet and, with stops open, nam
   await expect(card.locator("[data-close-blocked]")).toContainText(
     "Stop 1 · Bluffside Builders is not loaded yet. Every stop has to be delivered or marked not delivered before the run can be closed.",
   );
-  await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Close the run" })).toHaveCount(0);
 });
 
 test("with every stop answered the run closes, and the sheet and the end screen both say so", async ({ page, request }) => {
@@ -31,10 +31,10 @@ test("with every stop answered the run closes, and the sheet and the end screen 
   const card = page.locator("[data-close-run]");
   await expect(card).toContainText("Run finished · 2 delivered · 1 could not be delivered");
   await expect(card.locator("[data-recap-stop]")).toHaveCount(3);
-  await page.getByRole("button", { name: "Complete run" }).click();
+  await page.getByRole("button", { name: "Close the run" }).click();
   await expect(page.getByRole("status")).toContainText("RUN-R5 is closed. Thanks: that is the day.");
   await expect(card.locator("[data-close-blocked]")).toContainText("This run is closed. Nothing else is needed from you today.");
-  await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Close the run" })).toHaveCount(0);
   const closes = (await stubLog(request)).filter((c) => c.path.endsWith("/complete"));
   expect(closes).toHaveLength(1);
   expect(closes[0].method).toBe("POST");
@@ -51,7 +51,7 @@ test("a stop dispatch cancelled blocks a driver's close and says who closes it",
   await expect(page.locator("[data-close-blocked]")).toContainText(
     "Stop 3 · Valley Municipal Works is cancelled, and that is not an outcome a driver records. Ask dispatch to close this run.",
   );
-  await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Close the run" })).toHaveCount(0);
 });
 
 test("when the core refuses the close the driver reads its words and the run stays open", async ({ page, request }) => {
@@ -61,9 +61,9 @@ test("when the core refuses the close the driver reads its words and the run sta
   await failStop(page, 3, "Site not ready");
   await useScenario(request, "close-refused");
   await page.getByRole("button", { name: "End of run" }).click();
-  await page.getByRole("button", { name: "Complete run" }).click();
+  await page.getByRole("button", { name: "Close the run" }).click();
   await expect(page.getByRole("alert")).toContainText("Stop 2 (SO-1002) is on the truck, every stop must be delivered or marked not delivered before this run can be closed.");
-  await expect(page.getByRole("button", { name: "Complete run" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close the run" })).toBeVisible();
 });
 
 test("Back from the end screen returns to the run sheet", async ({ page }) => {

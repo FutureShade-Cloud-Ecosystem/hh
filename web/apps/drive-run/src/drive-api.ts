@@ -41,6 +41,7 @@ export interface DriverStop {
   readonly city: string;
   readonly postal_code: string;
   readonly instructions: string;
+  readonly gate_code: string;
   readonly pod_received_by: string;
   readonly pod_at: string;
   readonly failure_reason: string;
@@ -92,6 +93,7 @@ export function toStop(raw: unknown): DriverStop {
     city: text(r.city),
     postal_code: text(r.postal_code),
     instructions: text(r.instructions),
+    gate_code: text(r.gate_code),
     pod_received_by: text(r.pod_received_by),
     pod_at: text(r.pod_at),
     failure_reason: text(r.failure_reason),

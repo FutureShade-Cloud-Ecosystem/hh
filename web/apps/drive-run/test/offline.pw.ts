@@ -93,7 +93,7 @@ async function toTheProofScreenOffline(page: import("@playwright/test").Page): P
 async function signOffline(page: import("@playwright/test").Page): Promise<void> {
   await page.getByLabel("Full name of the person receiving").fill("  Receiver (demo)  ");
   await page.getByLabel(/confirm/i).check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
 }
 
 test("offline, the stop moves and the proof wait in the outbox, then all drain in order and the stop reads delivered", async ({ page, request }) => {

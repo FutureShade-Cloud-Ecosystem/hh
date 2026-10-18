@@ -152,7 +152,7 @@ test("a photo picked on the proof screen and sent after the signature is attache
   await page.locator("input[type=file]").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: TINY_PNG });
   await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   expect(attached).toHaveLength(0);
   release();

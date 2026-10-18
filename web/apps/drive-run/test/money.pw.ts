@@ -48,16 +48,19 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await page.getByRole("button", { name: "Not yet" }).click();
 
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await expect(page.getByRole("heading", { name: "Could not deliver" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Why could it not be delivered?" })).toBeVisible();
   screens.push(await everyWordOnScreen(page));
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator("[data-fail-sheet]").evaluate((el: Element) => {
+    const root = el as HTMLElement & { close?: () => void };
+    root.close?.();
+  });
   await page.getByRole("button", { name: "Back to my run" }).click();
 
   await page.getByRole("button", { name: "End of run" }).click();
   await expect(page.getByRole("heading", { name: "End of run" })).toBeVisible();
   screens.push(await everyWordOnScreen(page));
 
-  expect(screens.every((text) => text.includes("Bluffside") || text.includes("End of run") || text.includes("Proof") || text.includes("Could not"))).toBe(true);
+  expect(screens.every((text) => text.includes("Bluffside") || text.includes("End of run") || text.includes("Proof") || text.includes("Why could it not be delivered?"))).toBe(true);
   for (const text of screens) {
     for (const figure of FIGURES) expect(text).not.toContain(figure);
     expect(text.toLowerCase()).not.toMatch(/cents|unit_price|freight|gauge|amount_due|payment_hold/);
@@ -84,7 +87,7 @@ async function takeFirstStopEnRoute2(page: import("@playwright/test").Page): Pro
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill("Nobody on site");
-  await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.getByRole("button", { name: "Nobody on site" }).click();
+  await page.getByRole("button", { name: "Take a photo and hand it back" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
 }

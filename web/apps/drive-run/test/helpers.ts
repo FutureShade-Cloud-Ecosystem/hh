@@ -108,10 +108,12 @@ export async function deliverStop(page: Page, n: number): Promise<void> {
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Delivered" }).waitFor();
   await page.getByRole("button", { name: "Back to my run" }).click();
 }
+
+const FAIL_PRESETS = new Set(["Nobody on site", "Gate locked", "Site not ready", "Customer refused"]);
 
 /** From the run sheet: take stop `n` en route, then record it as not delivered with a reason. */
 export async function failStop(page: Page, n: number, reason: string): Promise<void> {
@@ -119,8 +121,13 @@ export async function failStop(page: Page, n: number, reason: string): Promise<v
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill(reason);
-  await page.getByRole("button", { name: "Could not deliver" }).click();
+  if (FAIL_PRESETS.has(reason)) {
+    await page.getByRole("button", { name: reason }).click();
+  } else {
+    await page.getByRole("button", { name: "Other, say what" }).click();
+    await page.locator("[data-field=other-note]").fill(reason);
+  }
+  await page.getByRole("button", { name: "Take a photo and hand it back" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
   await page.getByRole("button", { name: "Back to my run" }).click();
 }

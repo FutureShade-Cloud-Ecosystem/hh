@@ -26,7 +26,7 @@ test("a stop goes loaded, en route, and to proof of delivery with a name and a p
   await expect(page.locator("[data-photo-sent]")).toHaveCount(1);
   await page.getByRole("checkbox").check();
   await shot(page, "21-pod-ready", testInfo);
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
   await shot(page, "22-delivered", testInfo);

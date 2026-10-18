@@ -10,9 +10,9 @@ test("a stop is marked not delivered with a reason, and the handback sentence re
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill("Nobody on site");
+  await page.getByRole("button", { name: "Nobody on site" }).click();
   await shot(page, "30-could-not-deliver", testInfo);
-  await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.getByRole("button", { name: "Take a photo and hand it back" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
   await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");

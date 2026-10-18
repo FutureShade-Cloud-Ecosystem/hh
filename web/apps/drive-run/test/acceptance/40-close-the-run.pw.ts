@@ -18,7 +18,7 @@ test("the run closes from the end screen once every stop has an answer", async (
   await page.getByRole("button", { name: "End of run" }).click();
   await expect(page.locator("[data-close-run]").first()).toContainText("could not be delivered");
   await shot(page, "40-end-of-run", testInfo);
-  await page.getByRole("button", { name: "Complete run" }).click();
+  await page.getByRole("button", { name: "Close the run" }).click();
   await expect(page.getByRole("status")).toContainText(`${run.run_no} is closed.`);
   await shot(page, "41-closed", testInfo);
 

@@ -19,7 +19,7 @@ test("proof of delivery opens with the name to type and the confirmation unticke
   await expect(page.getByLabel("Full name of the person receiving")).toHaveValue("Site contact (demo)");
   await expect(page.getByRole("checkbox")).not.toBeChecked();
   await expect(page.locator(".confirm")).toContainText("not a captured signature image");
-  const sign = page.getByRole("button", { name: "Sign for this delivery" });
+  const sign = page.getByRole("button", { name: "Delivered" });
   await expect(sign).toBeDisabled();
   await expect(page.locator("[data-sign-hint]")).toHaveText("Tick the confirmation to sign.");
   await page.getByRole("checkbox").check();
@@ -34,7 +34,7 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByLabel("Full name of the person receiving").fill("  Receiving clerk  ");
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
@@ -62,7 +62,7 @@ test("a delivered stop offers no further move", async ({ page }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.getByRole("button", { name: "Delivered", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Could not deliver" })).toHaveCount(0);
@@ -84,7 +84,7 @@ test("a photo goes up as the raw picture and is counted on the proof", async ({ 
   await expect(page.locator("[data-photo-sent]")).toHaveCount(1);
   await expect(page.locator("[data-photos]")).toContainText("Photo 1 sent");
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.locator(".signed")).toContainText("1 photo on the proof");
   const photos = (await stubLog(request)).filter((c) => c.path.endsWith("/photos"));
   expect(photos).toHaveLength(1);
@@ -99,7 +99,7 @@ test("a photo that fails to send never blocks the signature", async ({ page, req
   await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.getByRole("alert")).toContainText("The photo did not send");
   await page.getByRole("checkbox").check();
-  const sign = page.getByRole("button", { name: "Sign for this delivery" });
+  const sign = page.getByRole("button", { name: "Delivered" });
   await expect(sign).toBeEnabled();
   await sign.click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
@@ -145,7 +145,7 @@ test("a photo added after delivery is folded into the proof", async ({ page, req
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await page.getByRole("button", { name: "Delivered" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await page.locator("input[type=file]").setInputFiles({ name: "late.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.locator(".signed")).toContainText("1 photo on the proof");

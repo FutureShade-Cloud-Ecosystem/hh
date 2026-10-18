@@ -1,5 +1,9 @@
-// HH Drive, sub item 4a: could not deliver. A reason in the driver's own
-// words, the handback sentence, and a stop that is closed for good.
+// HH Drive, sub item 4a: could not deliver. A reason chosen from the sheet's
+// five chips, the handback sentence once it lands, and a stop that is closed
+// for good. The fail view is the bottom sheet (hh-sheet) the design system
+// provides; the sheet's title is "Why could it not be delivered?" and the
+// confirm button reads "Take a photo and hand it back". The sheet's scrim
+// closes it (Escape and a tap on the scrim).
 import { test, expect, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
@@ -9,25 +13,46 @@ test.beforeEach(async ({ request, page }) => {
   await page.addInitScript(driverHandoff);
 });
 
+// The sheet closes through its scrim: tapping the scrim calls the sheet's
+// close path, fires hh-sheet-close, and brings the stop card back.
+async function closeFailSheet(page: import("@playwright/test").Page): Promise<void> {
+  await page.locator("[data-fail-sheet]").evaluate((el: Element) => {
+    const root = el as HTMLElement & { close?: () => void };
+    root.close?.();
+  });
+}
+
 test("could not deliver asks what stopped the delivery and says what happens to the load", async ({ page }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await expect(page.getByRole("heading", { name: "Could not deliver" })).toBeVisible();
-  await expect(page.getByLabel("What stopped this delivery?")).toBeVisible();
-  await expect(page.locator("[data-handback-words]")).toContainText("Bring the load back to the yard");
-  const confirm = page.getByRole("button", { name: "Could not deliver" });
+  // The hh-sheet paints its own title heading; the per-stop "Could not deliver"
+  // door button stays on the stop card.
+  await expect(page.getByRole("heading", { name: "Why could it not be delivered?" })).toBeVisible();
+  // Five reasons sit as buttons; the first four carry their own label.
+  await expect(page.getByRole("button", { name: "Nobody on site" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Gate locked" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Site not ready" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Customer refused" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Other, say what" })).toBeVisible();
+  // The confirm button stays grey until a reason is picked.
+  const confirm = page.getByRole("button", { name: "Take a photo and hand it back" });
   await expect(confirm).toBeDisabled();
-  await page.getByLabel("What stopped this delivery?").fill("   ");
+  await page.getByRole("button", { name: "Nobody on site" }).click();
+  await expect(confirm).toBeEnabled();
+  // The other reason opens a note field.
+  await page.getByRole("button", { name: "Other, say what" }).click();
+  const note = page.locator("[data-field=other-note]");
+  await expect(note).toBeVisible();
   await expect(confirm).toBeDisabled();
-  await page.getByLabel("What stopped this delivery?").fill("Nobody on site and the gate is locked");
+  await note.fill("Nobody on site and the gate is locked");
   await expect(confirm).toBeEnabled();
 });
 
 test("recording it sends the status and the reason, and closes the stop with the handback sentence", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill("  Nobody on site  ");
-  await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.getByRole("button", { name: "Nobody on site" }).click();
+  await page.getByRole("button", { name: "Take a photo and hand it back" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
   await expect(page.locator("[data-handback]")).toContainText("Nobody on site");
@@ -60,7 +85,7 @@ test("recording it sends the status and the reason, and closes the stop with the
 test("Back leaves the stop en route and sends nothing", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await closeFailSheet(page);
   await expect(page.locator("[data-stop-status]")).toHaveText("En route");
   expect((await stubLog(request)).filter((c) => c.body?.status === "FAILED")).toHaveLength(0);
 });

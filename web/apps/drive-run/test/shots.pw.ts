@@ -8,7 +8,7 @@
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
 import type { Page } from "@playwright/test";
-import { test, expect, TINY_PNG, driverHandoff, resetStub, useScenario } from "./helpers.js";
+import { test, expect, TINY_PNG, driverHandoff, eveningInstant, resetStub, useScenario } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.DRIVE_SHOT_DIR ?? "";
@@ -27,13 +27,13 @@ async function shot(page: Page, theme: string, width: number, order: string, nam
 
 for (const size of SIZES) {
   for (const theme of THEMES) {
-    test(`the whole walk at ${size.width} px, ${theme}`, async ({ page, request }) => {
+    test(`the whole walk at ${size.width} px, ${theme}`, async ({ page, request, browser }) => {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
       await resetStub(request);
-      const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
-      const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+      const take = (order: string, name: string, target: Page = page) => shot(target, theme, size.width, order, name);
+      const brandOn = async (target: Page = page) => {
+        if (theme === "brand") await target.getByRole("button", { name: "Brand theme" }).click();
       };
 
       // The way in, with no handoff: the driver's own card.
@@ -65,7 +65,7 @@ for (const size of SIZES) {
       await expect(page.locator("[data-photo-sent]")).toHaveCount(1);
       await page.getByRole("checkbox").check();
       await take("06", "proof-ready");
-      await page.getByRole("button", { name: "Sign for this delivery" }).click();
+      await page.getByRole("button", { name: "Delivered" }).click();
       await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
       await take("07", "stop-delivered");
       await page.getByRole("button", { name: "Back to my run" }).click();
@@ -75,9 +75,9 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Mark loaded" }).click();
       await page.getByRole("button", { name: "Mark en route" }).click();
       await page.getByRole("button", { name: "Could not deliver" }).click();
-      await page.getByLabel("What stopped this delivery?").fill("Nobody on site and the gate is locked");
+      await page.getByRole("button", { name: "Gate locked" }).click();
       await take("08", "could-not-deliver");
-      await page.getByRole("button", { name: "Could not deliver" }).click();
+      await page.getByRole("button", { name: "Take a photo and hand it back" }).click();
       await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
       await take("09", "handback");
       await page.getByRole("button", { name: "Back to my run" }).click();
@@ -93,26 +93,33 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Delivered", exact: true }).click();
       await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
       await page.getByRole("checkbox").check();
-      await page.getByRole("button", { name: "Sign for this delivery" }).click();
+      await page.getByRole("button", { name: "Delivered" }).click();
       await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
       await page.getByRole("button", { name: "Back to my run" }).click();
       await page.getByRole("button", { name: "End of run" }).click();
       await take("12", "end-of-run-ready");
-      await page.getByRole("button", { name: "Complete run" }).click();
+      await page.getByRole("button", { name: "Close the run" }).click();
       await expect(page.getByRole("status")).toContainText("is closed");
       await take("13", "run-closed");
 
-      // The two honest empty states.
-      await useScenario(request, "empty");
-      await page.goto("/");
-      await expect(page.locator("[data-empty]")).toBeVisible();
-      await brandOn();
-      await take("14", "no-run");
-      await useScenario(request, "not-driver");
-      await page.goto("/");
-      await expect(page.getByRole("alert")).toContainText("You are not set up as a driver");
-      await brandOn();
-      await take("15", "not-a-driver");
+      // The two honest empty states, each in a clean browser context so the
+      // offline store does not carry the earlier run.
+      const baseURL = new URL("/", page.url()).href;
+      for (const [scenarioName, shotNo, shotLabel] of [
+        ["empty", "14", "no-run"],
+        ["not-driver", "15", "not-a-driver"],
+      ] as const) {
+        await useScenario(request, scenarioName);
+        const ctx = await browser.newContext({ viewport: size });
+        const fresh = await ctx.newPage();
+        await fresh.clock.install({ time: eveningInstant() });
+        await fresh.addInitScript(driverHandoff);
+        await fresh.goto(baseURL);
+        await expect(fresh.locator("[data-empty]")).toContainText("No run assigned to you today.");
+        await brandOn(fresh);
+        await take(shotNo, shotLabel, fresh);
+        await ctx.close();
+      }
     });
   }
 }

@@ -87,7 +87,7 @@ const LINES = {
 };
 
 const STOPS_SEED = [
-  { n: 1, customer: "Bluffside Builders", order: "SO-1001", address: "418 Oak Hollow Road", postal: "92036", window: "AM", contact: "Site contact (demo)", phone: "619-555-0101", note: "Gate code on the paperwork. Unload on the driveway." },
+  { n: 1, customer: "Bluffside Builders", order: "SO-1001", address: "418 Oak Hollow Road", postal: "92036", window: "AM", contact: "Site contact (demo)", phone: "619-555-0101", note: "Gate code on the paperwork. Unload on the driveway.", gate_code: "4471" },
   { n: 2, customer: "Harbourview Builders", order: "SO-1002", address: "77 Kentwood Lane", postal: "92036", window: "AM", contact: "", phone: "", note: "" },
   { n: 3, customer: "Valley Municipal Works", order: "SO-1003", address: "1500 Farmers Road", postal: "92036", window: "PM", contact: "Yard lead (demo)", phone: "619-555-0103", note: "Call ahead. Forklift on site." },
 ];
@@ -138,6 +138,7 @@ function buildWorld() {
     city: "Julian",
     postal_code: seed.postal,
     ...(seed.note ? { instructions: seed.note } : {}),
+    ...(seed.gate_code ? { gate_code: seed.gate_code } : {}),
     photo_count: 0,
     created_at: created,
     weight_kg: 400 * seed.n,

@@ -30,10 +30,11 @@ import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
-import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
 import {
+  canRecordFailureReason,
   renderClose,
   renderConflicts,
   renderEntry,
@@ -43,6 +44,7 @@ import {
   renderStopDetail,
   stalenessWords,
   type EntryView,
+  type StopStep,
 } from "./views.js";
 
 import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
@@ -123,9 +125,23 @@ export class DriveRunApp extends HHElement {
   // load as an image address, and one taken before this visit shows as a tile.
   readonly #thumbs = new Map<string, string[]>();
 
-  // Could not deliver's draft: the reason in the driver's words.
+  // Could not deliver's draft: the reason in the driver's words. The sheet
+  // shows five chips; the chosen chip is #failReason, and "Other" reveals
+  // #failOtherNote whose text becomes the reason the stop carries.
   #failReason = "";
+  #failOtherNote = "";
   #closing = false;
+  // Per-stop device-only step (Navigate, Arrived, Unload, Proof, Delivered),
+  // remembered in memory while the run screen is open. When the stop status
+  // changes the step advances automatically; the driver can also push it.
+  #stopSteps = new Map<string, StopStep>();
+  // The yard's batch loader: a single control that moves every READY stop to
+  // LOADED through the existing per stop advance route.
+  #yardBusy = false;
+  // The planned departure time the dispatcher set (the brief's "leaves 7:00"
+  // line on My run). Empty until the served config or run data carries it;
+  // the subtitle reads it only when set.
+  #plannedDeparture = "";
 
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -179,13 +195,45 @@ export class DriveRunApp extends HHElement {
       return;
     }
     if (action === "open-fail") {
-      if (this.#view.kind === "stop") {
+      if (this.#view.kind === "stop" || this.#view.kind === "pod") {
+        const stopId = this.#view.id;
         this.#failReason = "";
+        this.#failOtherNote = "";
         this.#error = "";
         this.#notice = "";
-        this.#view = { kind: "fail", id: this.#view.id };
+        this.#view = { kind: "fail", id: stopId };
         this.requestUpdate();
       }
+      return;
+    }
+    // The fail sheet's reason rows are buttons with data-fail-radio; a click
+    // sets the selected reason in the model's own field. The handler lives
+    // here so the sheet's reason list reads the same shape as everything else.
+    if (this.#view.kind === "fail") {
+      const failRadio = control?.getAttribute("data-fail-radio");
+      if (typeof failRadio === "string" && failRadio !== "") {
+        this.#failReason = failRadio;
+        if (failRadio !== "Other") this.#failOtherNote = "";
+        this.requestUpdate();
+        return;
+      }
+    }
+    if (action === "mark-arrived") {
+      if (this.#view.kind !== "stop") return;
+      this.#stopSteps.set(this.#view.id, "unload");
+      this.requestUpdate();
+      return;
+    }
+    if (action === "go-to-next") {
+      const nextId = control?.getAttribute("data-next-stop-id") ?? "";
+      if (nextId !== "") {
+        this.#stopSteps.set(nextId, "navigate");
+        this.#openStop(nextId);
+      }
+      return;
+    }
+    if (action === "yard-load") {
+      void this.#yardLoad();
       return;
     }
     if (action === "confirm-fail") {
@@ -232,11 +280,18 @@ export class DriveRunApp extends HHElement {
     }
   };
 
-  // The form fields: the typed name, the recipient's confirmation, the photo.
+  // The form fields: the typed name, the recipient's confirmation, the photo,
+// and the fail sheet's note field. The fail sheet's reason rows are
+// buttons (data-fail-radio) and ride the host click listener instead.
   readonly #onField = (event: Event): void => {
     const target = event.target;
     if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "reason") {
       this.#failReason = target.value;
+      this.requestUpdate();
+      return;
+    }
+    if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "other-note") {
+      this.#failOtherNote = target.value;
       this.requestUpdate();
       return;
     }
@@ -262,6 +317,10 @@ export class DriveRunApp extends HHElement {
     // not composed), so the form listeners sit on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
     this.renderRoot.addEventListener("change", this.#onField);
+    // The fail sheet closes through Escape or scrim, both paths the hh-sheet
+    // surfaces as one hh-sheet-close event. Listening here keeps the view
+    // consistent with whatever close path the driver used.
+    this.addEventListener("hh-sheet-close", this.#onSheetClose);
     window.addEventListener("online", this.#onConnectivity);
     window.addEventListener("offline", this.#onConnectivity);
     // Some hosts deliver the platform's word late or not at all; a short
@@ -315,11 +374,25 @@ export class DriveRunApp extends HHElement {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
     this.renderRoot.removeEventListener("change", this.#onField);
+    this.removeEventListener("hh-sheet-close", this.#onSheetClose);
     window.removeEventListener("online", this.#onConnectivity);
     window.removeEventListener("offline", this.#onConnectivity);
     if (this.#connectivityWatch !== null) clearInterval(this.#connectivityWatch);
     super.disconnectedCallback();
   }
+
+  // A close path that is not the back button or the confirm button. The
+  // hh-sheet surfaces one hh-sheet-close event per user-driven close; we
+  // mirror that close to our own view by going back to the stop screen.
+  readonly #onSheetClose = (event: Event): void => {
+    if (this.#view.kind !== "fail") return;
+    if (event.target === this || (event instanceof CustomEvent && event.detail?.["reason"] !== undefined)) {
+      this.#view = { kind: "stop", id: this.#view.id };
+      this.#failReason = "";
+      this.#failOtherNote = "";
+      this.requestUpdate();
+    }
+  };
 
   // The platform's connectivity word, fed straight to the machine.
   #connectivityWatch: ReturnType<typeof setInterval> | null = null;
@@ -557,12 +630,13 @@ export class DriveRunApp extends HHElement {
   }
 
   async #recordFailure(): Promise<void> {
-    if (this.#view.kind !== "fail" || this.#busy || !canRecordFailure(this.#failReason)) return;
+    if (this.#view.kind !== "fail" || this.#busy || !canRecordFailureReason(this.#failReason, this.#failOtherNote)) return;
     const stopId = this.#view.id;
+    const reasonText = this.#failReason === "Other" ? this.#failOtherNote.trim() : this.#failReason.trim();
     this.#busy = true;
     this.#error = "";
     this.requestUpdate();
-    const result = await this.#door().advance(stopId, "FAILED", this.#failReason.trim());
+    const result = await this.#door().advance(stopId, "FAILED", reasonText);
     this.#busy = false;
     if (result.ok) {
       await this.#refreshRuns();
@@ -571,6 +645,32 @@ export class DriveRunApp extends HHElement {
     } else {
       this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
     }
+    this.requestUpdate();
+  }
+
+  // The "Mark all loaded" card on My run: one control that moves every
+  // READY stop to LOADED through the existing per stop advance route. A
+  // refusal at any stop keeps the rest going and is shown in the run sheet's
+  // error slot; once they are all loaded the card swaps to "Loaded" and
+  // greys out.
+  async #yardLoad(): Promise<void> {
+    if (this.#yardBusy) return;
+    const run = this.#runs[0];
+    if (run === undefined) return;
+    const ready = run.stops.filter((s) => s.status === "READY");
+    if (ready.length === 0) return;
+    this.#yardBusy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    let lastError = "";
+    for (const stop of ready) {
+      const result = await this.#door().advance(stop.id, "LOADED");
+      if (!result.ok) lastError = roadsideError(result.error, result.status, `Stop ${stop.stop_no} did not load. Check your signal and try again.`);
+    }
+    await this.#refreshRuns();
+    this.#yardBusy = false;
+    if (lastError !== "") this.#error = lastError;
     this.requestUpdate();
   }
 
@@ -777,6 +877,7 @@ export class DriveRunApp extends HHElement {
       if (found !== null) {
         return renderPod({
           stop: found.stop,
+          step: "proof",
           draft: { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy },
           photoBusy: this.#photoBusy,
           error: this.#error,
@@ -786,25 +887,46 @@ export class DriveRunApp extends HHElement {
     if (this.#view.kind === "fail") {
       const found = this.#findStop(this.#view.id);
       if (found !== null) {
-        return renderFail({ stop: found.stop, reason: this.#failReason, busy: this.#busy, error: this.#error });
+        return renderFail({
+          stop: found.stop,
+          reason: this.#failReason,
+          selectedReason: this.#failReason,
+          otherNote: this.#failOtherNote,
+          busy: this.#busy,
+          error: this.#error,
+        });
       }
     }
     if (this.#view.kind === "close") {
-      return renderClose({ runs: this.#runs, closing: this.#closing, error: this.#error, notice: this.#notice });
+      const photoTotal = this.#runs.reduce((acc, r) => acc + r.stops.reduce((s, st) => s + st.photo_count, 0), 0);
+      const backAt = this.#closeBackAt();
+      return renderClose({ runs: this.#runs, closing: this.#closing, error: this.#error, notice: this.#notice, photoTotal, backAt });
     }
     if (this.#view.kind === "stop") {
       const found = this.#findStop(this.#view.id);
       if (found !== null) {
-        return renderStopDetail({ ...found, busy: this.#busy, photoBusy: this.#photoBusy, error: this.#error, notice: this.#notice });
+        return renderStopDetail({
+          run: found.run,
+          stop: found.stop,
+          step: this.#stepFor(found.stop),
+          busy: this.#busy,
+          photoBusy: this.#photoBusy,
+          error: this.#error,
+          notice: this.#notice,
+        });
       }
     }
     if (this.#view.kind === "conflicts") {
       return renderConflicts({ cards: this.#openCards.length });
     }
+    const allLoaded = this.#runs[0]?.stops.every((s) => s.status !== "READY" && s.status !== "CANCELLED") ?? false;
     return html`
       ${renderRunSheet({
         phase: this.#phase,
         runs: this.#runs,
+        plannedDeparture: this.#plannedDeparture,
+        yardBusy: this.#yardBusy,
+        allLoaded,
         error: this.#error,
         notice: this.#notice,
         staleness: this.#driveOffline !== null ? stalenessWords(this.#runStaleness ?? { neverPulled: true, ageMs: null }) : "",
@@ -812,6 +934,28 @@ export class DriveRunApp extends HHElement {
       })}
       ${this.#phase === "error" ? html`<button type="button" class="btn btn-secondary big" data-action="reload" data-tap>Try again</button>` : nothing}
     `;
+  }
+
+  // The local step the device is on for a stop: derived from the run's stop
+  // status and the remembered position. Delivered sits at the final step;
+  // an open stop starts at navigate until the driver advances it on device.
+  #stepFor(stop: DriverStop): StopStep {
+    if (stop.status === "DELIVERED") return "delivered";
+    if (stop.status === "FAILED" || stop.status === "CANCELLED") return "navigate";
+    return this.#stopSteps.get(stop.id) ?? "navigate";
+  }
+
+  // The "back at the yard" line for the end of run card. The core does not
+  // yet serve a back-at instant; we use the latest stop's en_route_at in
+  // the driver's zone, or empty when nothing is recorded.
+  #closeBackAt(): string {
+    const run = this.#runs[0];
+    if (run === undefined) return "";
+    const latest = run.stops.reduce((acc, s) => {
+      const at = s.pod_at !== "" ? s.pod_at : "";
+      return at > acc ? at : acc;
+    }, "");
+    return latest !== "" ? new Intl.DateTimeFormat("en-CA", { timeZone: houseZone(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(latest)) : "";
   }
 
   // The stall strip: what the outbox's health says is stuck, in the store's
