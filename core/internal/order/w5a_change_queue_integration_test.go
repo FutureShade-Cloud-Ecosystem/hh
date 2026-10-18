@@ -10,9 +10,11 @@ package order
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -212,7 +214,10 @@ func TestIntegration_ChangeQueue_UnknownStatusAndBadCursorAre400(t *testing.T) {
 	pool := intPool(t)
 	svc := queueSvc(t, pool, 100, nil)
 	sc := w5aStaff(false)
-	for _, q := range []string{"status=NOPE", "status=PENDING_YARD&cursor=!!notbase64", "cursor=" + "dGhpcyBpcyBub3QgYSBjdXJzb3I"} {
+	// "v1:chq:junk|x" is a cursor the httpx envelope accepts (the v1: prefix) and parseChangeQueueCursor
+	// refuses, so the last case reaches the queue's own parser rather than failing in httpx.decodeCursor.
+	junk := base64.RawURLEncoding.EncodeToString([]byte("v1:chq:junk|x"))
+	for _, q := range []string{"status=NOPE", "status=PENDING_YARD&cursor=!!notbase64", "cursor=" + "dGhpcyBpcyBub3QgYSBjdXJzb3I", "cursor=" + junk} {
 		rr := queueGet(t, svc, &sc, q)
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("query %q = %d, want 400; body=%s", q, rr.Code, rr.Body.String())
@@ -280,7 +285,7 @@ func TestIntegration_ChangeQueue_NextActionsPerCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, row := has(items, yard.ID, "yard_ack"); len(row.NextActions) != len(got.NextActions) {
+	if _, row := has(items, yard.ID, "yard_ack"); !slices.Equal(row.NextActions, got.NextActions) {
 		t.Errorf("list next_actions %v differ from GetChange %v", row.NextActions, got.NextActions)
 	}
 
@@ -322,7 +327,9 @@ func TestIntegration_ChangeQueue_RequesterRoleLabel(t *testing.T) {
 	if i := queueIndex(labelled, co.ID); i < 0 || labelled[i].RequestedByRole != "Counter Sales" {
 		t.Errorf("requested_by_role not carried from the reader: %+v", labelled)
 	}
-	// The real identity reader answers without error for a real and an unknown user.
+	// The real identity reader answers without error for a real and an unknown user, and with a seeded
+	// user joined to a live grant it answers that grant's role label (the seeded gate database holds no
+	// such join, so this leg plants one and restores it).
 	staff, err := identity.NewStaffAuthorityResolver(pool)
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +337,40 @@ func TestIntegration_ChangeQueue_RequesterRoleLabel(t *testing.T) {
 	if _, err := staff.RoleLabelsForUsers(context.Background(),
 		[]string{w5aUser, "00000000-0000-4000-9000-0000000000aa"}); err != nil {
 		t.Fatalf("real RoleLabelsForUsers: %v", err)
+	}
+	ctx := context.Background()
+	platformID := "hh681-label-" + co.ID
+	var wantLabel string
+	if err := pool.QueryRow(ctx, `SELECT label FROM staff_role WHERE id = 'inside_sales'`).Scan(&wantLabel); err != nil {
+		t.Fatalf("read the role label: %v", err)
+	}
+	var orgID, grantID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO org (slug, name) VALUES ($1, 'HH-681 label org') RETURNING id::text`, platformID).Scan(&orgID); err != nil {
+		t.Fatalf("plant an org: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		WITH u AS (UPDATE users SET platform_user_id = $1 WHERE id = $2::uuid RETURNING id)
+		INSERT INTO staff_role_grant (platform_user_id, role_id, org_id)
+		SELECT $1, 'inside_sales', $3::uuid FROM u
+		RETURNING id::text`, platformID, w5aUser, orgID).Scan(&grantID); err != nil {
+		t.Fatalf("plant a live grant for the requester: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM staff_role_grant WHERE id = $1::uuid`, grantID)
+		_, _ = pool.Exec(context.Background(), `UPDATE users SET platform_user_id = NULL WHERE id = $1::uuid`, w5aUser)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM org WHERE id = $1::uuid`, orgID)
+	})
+	svc.WithRequesterRoles(staff)
+	real := queueAll(t, svc, w5aStaff(false), "PENDING_YARD")
+	if i := queueIndex(real, co.ID); i < 0 || real[i].RequestedByRole != wantLabel {
+		t.Errorf("the real reader labelled the requester %q, want the live grant's role label %q",
+			func() string {
+				if i < 0 {
+					return "(row missing)"
+				}
+				return real[i].RequestedByRole
+			}(), wantLabel)
 	}
 }
 

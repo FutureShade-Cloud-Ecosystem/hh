@@ -10,6 +10,7 @@ import {
   canDoChangeAction,
   changeActionLabel,
   changeActionPath,
+  offeredChangeActions,
   changeStageSummary,
   changeStatusChip,
   describeDelta,
@@ -47,6 +48,13 @@ test('canDoChangeAction offers only what the server listed', () => {
   const co = change({ next_actions: [ACTION_YARD_ACK, 'reject'] });
   assert.equal(canDoChangeAction(co, ACTION_YARD_ACK), true);
   assert.equal(canDoChangeAction(co, ACTION_APPLY), false);
+});
+
+test('offeredChangeActions drops an action this surface has no endpoint for (the one tap is Manager Home\'s)', () => {
+  const co = change({ next_actions: ['sign_apply', ACTION_APPLY, 'reject', 'cancel'] });
+  assert.deepEqual(offeredChangeActions(co), [ACTION_APPLY, 'reject', 'cancel']);
+  assert.deepEqual(offeredChangeActions(change()), []);
+  assert.deepEqual(offeredChangeActions(null), []);
 });
 
 test('an absent next_actions offers NOTHING (fail closed, never unlock everything)', () => {

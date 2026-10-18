@@ -6,17 +6,25 @@
 // cannot decide included, so it only names what is waiting: the view tries the
 // waiting kinds in vocabulary order and keeps the first one the core does not
 // refuse (app-root.ts), else the first kind.
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
 import { APPROVAL_KINDS, kindWord } from "./manager-logic.js";
-import type { ApprovalRow } from "./manager-api.js";
+import type { ApprovalRow, ChangeOrder, ChangeOrderQueueRow } from "./manager-api.js";
 
 /** Every kind with a waiting row, in the vocabulary's order, once each. */
-export function waitingKinds(rows: readonly Pick<ApprovalRow, "policy_type" | "status">[]): string[] {
+export function waitingKinds(
+  rows: readonly Pick<ApprovalRow, "policy_type" | "status">[],
+  changeOrderQueue: readonly ChangeOrderQueueRow[] = [],
+): string[] {
   const waiting = new Set(rows.filter((r) => r.status === "PENDING").map((r) => r.policy_type));
+  if (changeOrderQueue.length > 0) waiting.add("CHANGE_ORDER");
   return APPROVAL_KINDS.filter((k) => waiting.has(k.kind)).map((k) => k.kind);
 }
 
-export function openingKind(rows: readonly Pick<ApprovalRow, "policy_type" | "status">[]): string {
-  return waitingKinds(rows)[0] ?? APPROVAL_KINDS[0].kind;
+export function openingKind(
+  rows: readonly Pick<ApprovalRow, "policy_type" | "status">[],
+  changeOrderQueue: readonly ChangeOrderQueueRow[] = [],
+): string {
+  return waitingKinds(rows, changeOrderQueue)[0] ?? APPROVAL_KINDS[0].kind;
 }
 
 export interface MarginMetricBand {
@@ -55,6 +63,20 @@ export interface MetadataRow {
   readonly tone?: "watch" | "good" | "stop";
 }
 
+export interface ChangeOrderMetricBand {
+  readonly delta: string;
+  readonly threshold: string;
+  readonly financeRequired: string;
+}
+
+export interface ChangeOrderLineItem {
+  readonly op: string;
+  readonly product: string;
+  readonly before: string;
+  readonly after: string;
+  readonly lineDelta: string;
+}
+
 export interface ApprovalCardItem {
   readonly id: string;
   readonly kind: string;
@@ -70,6 +92,10 @@ export interface ApprovalCardItem {
   readonly marginLines?: readonly MarginLine[];
   readonly creditMetrics?: CreditMetricBand;
   readonly journalLines?: readonly JournalEntryLine[];
+  readonly changeMetrics?: ChangeOrderMetricBand;
+  readonly changeLines?: readonly ChangeOrderLineItem[];
+  readonly canSignApply?: boolean;
+  readonly canReject?: boolean;
   readonly metadata: readonly MetadataRow[];
   readonly notYours?: {
     readonly waitingOn: string;
@@ -225,6 +251,96 @@ export function toApprovalCardItem(row: ApprovalRow): ApprovalCardItem {
   };
 }
 
+export function changeOrderStatusWord(status: string): string {
+  if (status === "PENDING_FINANCE") return "Waiting on finance";
+  if (status === "APPROVED") return "Approved, ready to apply";
+  return status;
+}
+
+export function changeOrderOpWord(op: string): string {
+  if (op === "ADD") return "Add";
+  if (op === "QTY") return "Change quantity";
+  if (op === "REMOVE") return "Remove";
+  return op;
+}
+
+export function formatChangeOrderCents(cents: number): string {
+  return formatDollars(cents);
+}
+
+export function changeOrderAllowsSignApply(nextActions: readonly string[] | null | undefined): boolean {
+  return Array.isArray(nextActions) && nextActions.includes("sign_apply");
+}
+
+export function changeOrderAllowsReject(nextActions: readonly string[] | null | undefined): boolean {
+  return Array.isArray(nextActions) && nextActions.includes("reject");
+}
+
+export function nextIdempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
+export interface PendingSignApply {
+  readonly id: string;
+  readonly key: string;
+}
+
+export function keyForSignApply(
+  pending: PendingSignApply | null,
+  id: string,
+): { readonly pending: PendingSignApply; readonly reused: boolean } {
+  if (pending !== null && pending.id === id) {
+    return { pending, reused: true };
+  }
+  return { pending: { id, key: crypto.randomUUID() }, reused: false };
+}
+
+function qtyWord(qty: number): string {
+  if (!Number.isFinite(qty)) return "0";
+  const rounded = Math.round(qty * 10000) / 10000;
+  return String(rounded);
+}
+
+function changeOrderLineItem(line: ChangeOrder["lines"][number]): ChangeOrderLineItem {
+  return {
+    op: changeOrderOpWord(line.op),
+    product: line.product_name || line.description || line.product_id || "line",
+    before: qtyWord(line.qty_base_before),
+    after: qtyWord(line.qty_base_after),
+    lineDelta: formatChangeOrderCents(line.line_delta_cents),
+  };
+}
+
+export function toChangeOrderCardItem(row: ChangeOrderQueueRow, detail: ChangeOrder | null): ApprovalCardItem {
+  const isPending = row.status === "PENDING_FINANCE";
+  return {
+    id: row.id,
+    kind: "CHANGE_ORDER",
+    title: `${row.change_no} · ${row.order_no}`,
+    amount: formatChangeOrderCents(row.delta_cents),
+    summary: row.reason,
+    timeAgo: `${changeOrderStatusWord(row.status)} · requested by ${row.requested_by_role || "staff"}`,
+    status: isPending ? "PENDING" : row.status === "APPROVED" ? "APPROVED" : "REJECTED",
+    detailTitle: `${row.change_no} · ${row.order_no}`,
+    detailSubtitle: `${changeOrderStatusWord(row.status)} · ${row.reason}`,
+    canSignApply: changeOrderAllowsSignApply(row.next_actions),
+    canReject: changeOrderAllowsReject(row.next_actions),
+    changeMetrics: {
+      delta: formatChangeOrderCents(row.delta_cents),
+      threshold: formatChangeOrderCents(row.finance_threshold_cents),
+      financeRequired: row.finance_required ? "Finance signature required" : "Below finance threshold",
+    },
+    changeLines: detail ? detail.lines.map(changeOrderLineItem) : [],
+    metadata: [
+      { label: "Order", value: row.order_no },
+      { label: "Change", value: row.change_no },
+      { label: "Requested by", value: row.requested_by_role || "staff" },
+      { label: "Yard note", value: row.yard_ack_note || "None" },
+      { label: "Reason", value: row.reason },
+    ],
+  };
+}
+
 export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readonly ApprovalCardItem[] {
   const matchingRows = rows.filter((r) => r.policy_type === kind);
   if (kind === "MARGIN_BELOW_MINIMUM" && matchingRows.length === 0) {
@@ -243,7 +359,17 @@ export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readon
   return matchingRows.map(toApprovalCardItem);
 }
 
-export function kindCount(kind: string, rows: readonly ApprovalRow[]): number {
+export function changeOrderItems(
+  queue: readonly ChangeOrderQueueRow[],
+  details: ReadonlyMap<string, ChangeOrder>,
+): readonly ApprovalCardItem[] {
+  return queue.map((row) => toChangeOrderCardItem(row, details.get(row.id) ?? null));
+}
+
+export function kindCount(kind: string, rows: readonly ApprovalRow[], changeOrderQueue: readonly ChangeOrderQueueRow[] = []): number {
+  if (kind === "CHANGE_ORDER") {
+    return changeOrderQueue.length;
+  }
   const matchingRows = rows.filter((r) => r.policy_type === kind && r.status === "PENDING");
   if (matchingRows.length > 0 && kind === "FREIGHT_ABOVE_QUOTE") return matchingRows.length;
   return DEFAULT_APPROVAL_COUNTS[kind] ?? 0;

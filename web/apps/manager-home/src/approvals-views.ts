@@ -3,17 +3,20 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { APPROVAL_KINDS, kindWord } from "./manager-logic.js";
 import {
+  changeOrderItems,
   itemsForKind,
   kindCount,
   type ApprovalCardItem,
 } from "./approvals-logic.js";
-import type { ApprovalRow } from "./manager-api.js";
+import type { ApprovalRow, ChangeOrder, ChangeOrderQueueRow } from "./manager-api.js";
 import { viewHeader } from "./views.js";
 
 export interface ApprovalsModel {
   readonly phase: "loading" | "ready" | "error" | "refused";
   readonly kind: string;
   readonly rows: readonly ApprovalRow[];
+  readonly changeOrders: readonly ChangeOrderQueueRow[];
+  readonly changeOrderDetails: ReadonlyMap<string, ChangeOrder>;
   readonly error: string;
   readonly refusal: string;
   readonly busyId: string;
@@ -22,7 +25,9 @@ export interface ApprovalsModel {
 }
 
 export function renderApprovals(model: ApprovalsModel): TemplateResult {
-  const items = itemsForKind(model.kind, model.rows);
+  const items = model.kind === "CHANGE_ORDER"
+    ? changeOrderItems(model.changeOrders, model.changeOrderDetails)
+    : itemsForKind(model.kind, model.rows);
   const selected = items.find((i) => i.id === model.selectedId) ?? items[0];
 
   return html`
@@ -30,7 +35,7 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
     <div class="kind-tabs" role="tablist" aria-label="Approval kinds">
       ${APPROVAL_KINDS.map((k) => {
         const isSelected = model.kind === k.kind;
-        const count = kindCount(k.kind, model.rows);
+        const count = kindCount(k.kind, model.rows, model.changeOrders);
         return html`
           <button
             type="button"
@@ -115,7 +120,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
         ${item.status === "APPROVED" ? html` · <span class="status-approved">Approved</span>` : nothing}
         ${item.status === "REJECTED" ? html` · <span class="status-rejected">Rejected</span>` : nothing}
       </p>
-      ${item.status === "PENDING"
+      ${item.status === "PENDING" && item.kind !== "CHANGE_ORDER"
         ? html`
             <div class="row-actions card-row-actions">
               <button
@@ -141,11 +146,47 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
             </div>
           `
         : nothing}
+      ${item.status === "PENDING" && item.kind === "CHANGE_ORDER" && (item.canSignApply || item.canReject)
+        ? html`
+            <div class="row-actions card-row-actions">
+              ${item.canSignApply
+                ? html`
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      data-action="sign-apply"
+                      data-approval-id="${item.id}"
+                      ?disabled=${busyId !== ""}
+                    >
+                      Sign and apply
+                    </button>
+                  `
+                : nothing}
+              ${item.canReject
+                ? html`
+                    <button
+                      type="button"
+                      class="btn btn-danger"
+                      data-action="decide"
+                      data-approval-id="${item.id}"
+                      data-decision="reject"
+                      ?disabled=${busyId !== ""}
+                    >
+                      Decline
+                    </button>
+                  `
+                : nothing}
+            </div>
+          `
+        : nothing}
     </div>
   `;
 }
 
 function renderDetailCard(item: ApprovalCardItem, busyId: string): TemplateResult {
+  if (item.changeMetrics) {
+    return renderChangeOrderDetail(item, busyId);
+  }
   if (item.marginMetrics) {
     return renderMarginDetail(item, busyId);
   }
@@ -156,6 +197,124 @@ function renderDetailCard(item: ApprovalCardItem, busyId: string): TemplateResul
     return renderJournalEntryDetail(item);
   }
   return renderGenericDetail(item, busyId);
+}
+
+function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): TemplateResult {
+  const metrics = item.changeMetrics!;
+  return html`
+    <article class="decision-card" data-approval-detail="${item.id}">
+      <div class="decision-card-head">
+        <h2 class="decision-title">${item.detailTitle}</h2>
+        <p class="decision-subtitle">${item.detailSubtitle}</p>
+      </div>
+
+      <div class="metric-band">
+        <div class="metric-col">
+          <span class="metric-eyebrow">CHANGE DELTA</span>
+          <span class="metric-val ${item.amount.startsWith("-") ? "tone-watch" : ""}">${metrics.delta}</span>
+        </div>
+        <div class="metric-col">
+          <span class="metric-eyebrow">FINANCE THRESHOLD</span>
+          <span class="metric-val">${metrics.threshold}</span>
+        </div>
+        <div class="metric-col">
+          <span class="metric-eyebrow">FINANCE REQUIRED</span>
+          <span class="metric-val">${metrics.financeRequired}</span>
+        </div>
+      </div>
+
+      ${item.changeLines && item.changeLines.length > 0
+        ? html`
+            <div class="table-section">
+              <h3 class="section-heading">Lines changing</h3>
+              <table class="approval-table">
+                <thead>
+                  <tr>
+                    <th class="th-line">OP</th>
+                    <th class="th-line">PRODUCT</th>
+                    <th class="th-qty">BEFORE</th>
+                    <th class="th-qty">AFTER</th>
+                    <th class="th-price">LINE DELTA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${item.changeLines.map(
+                    (line) => html`
+                      <tr>
+                        <td class="td-line">${line.op}</td>
+                        <td class="td-line">
+                          <span class="table-line-name">${line.product}</span>
+                        </td>
+                        <td class="td-qty">${line.before}</td>
+                        <td class="td-qty">${line.after}</td>
+                        <td class="td-price">${line.lineDelta}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `
+        : nothing}
+
+      <div class="metadata-section">
+        ${item.metadata.map(
+          (row) => html`
+            <div class="meta-row">
+              <span class="meta-label">${row.label}</span>
+              <span class="meta-value ${row.tone ? "tone-" + row.tone : ""}">${row.value}</span>
+            </div>
+          `,
+        )}
+      </div>
+
+      <div class="decision-section">
+        <span class="decision-eyebrow">DECISION</span>
+        <div class="decision-actions">
+          ${item.canSignApply
+            ? html`
+                <button
+                  type="button"
+                  class="btn btn-primary sign-apply-btn"
+                  data-action="sign-apply"
+                  data-approval-id="${item.id}"
+                  ?disabled=${busyId !== ""}
+                >
+                  Sign and apply
+                </button>
+              `
+            : nothing}
+          ${item.canReject
+            ? html`
+                <button
+                  type="button"
+                  class="btn btn-link decline-btn"
+                  data-action="decide"
+                  data-approval-id="${item.id}"
+                  data-decision="reject"
+                  ?disabled=${busyId !== ""}
+                >
+                  Decline
+                </button>
+              `
+            : nothing}
+        </div>
+        ${item.canReject
+          ? html`
+              <div class="decline-reason-group">
+                <label class="reason-label">Reason, needed to decline</label>
+                <input
+                  type="text"
+                  class="control reason-input"
+                  placeholder="Tell the person who asked why"
+                  data-field="decline-reason"
+                />
+              </div>
+            `
+          : nothing}
+      </div>
+    </article>
+  `;
 }
 
 function renderMarginDetail(item: ApprovalCardItem, busyId: string): TemplateResult {

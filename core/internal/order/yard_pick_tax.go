@@ -87,6 +87,14 @@ SELECT ol.id::text, ol.line_total_cents, ol.tax_cents,
 		w := new(big.Rat).SetFrac64(l.origTax*l.total*100, l.origTotal)
 		weights[i] = new(big.Int).Quo(w.Num(), w.Denom()).Int64()
 	}
+	return writeLineTaxShares(ctx, tx, lines, weights, newTax)
+}
+
+// writeLineTaxShares is the one largest remainder split of a header tax across lines, shared by the yard
+// pick (weights from the original tax scaled by what a line still carries) and a change order apply
+// (weights from the lines' new totals). The shares always sum to newTax, and a line whose share is
+// unchanged is not written.
+func writeLineTaxShares(ctx context.Context, tx pgx.Tx, lines []taxedLine, weights []int64, newTax int64) error {
 	for i, share := range moneyutil.AllocateLargestRemainder(newTax, weights) {
 		if share == lines[i].current {
 			continue
@@ -96,4 +104,48 @@ SELECT ol.id::text, ol.line_total_cents, ol.tax_cents,
 		}
 	}
 	return nil
+}
+
+// orderLineTaxSumTx is the tax the order's lines carry now, read before a change order touches them.
+func orderLineTaxSumTx(ctx context.Context, tx pgx.Tx, orderID string) (int64, error) {
+	var n int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(tax_cents), 0)::bigint FROM order_lines WHERE order_id = $1`, orderID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("change apply: line tax sum: %w", err)
+	}
+	return n, nil
+}
+
+// reallocLineTaxByTotalsTx re-splits a change order's new header tax across the order's lines, weighted by
+// each line's new total (an added line has no original tax, so the yard pick weighting would give it none).
+// The caller runs it only when the lines' tax, read BEFORE the change touched them, was non zero and added
+// up to the old header tax, as an order the tax engine split does; an order whose lines carry no tax (tax
+// held on the header alone, as a quote conversion leaves it) is left exactly as it is, the same gate the
+// yard pick keeps.
+func reallocLineTaxByTotalsTx(ctx context.Context, tx pgx.Tx, orderID string, newTax int64) error {
+	rows, err := tx.Query(ctx, `
+SELECT id::text, line_total_cents, tax_cents FROM order_lines WHERE order_id = $1 ORDER BY line_no`, orderID)
+	if err != nil {
+		return fmt.Errorf("change apply: line tax read: %w", err)
+	}
+	var lines []taxedLine
+	for rows.Next() {
+		var l taxedLine
+		if err := rows.Scan(&l.id, &l.total, &l.current); err != nil {
+			rows.Close()
+			return fmt.Errorf("change apply: line tax scan: %w", err)
+		}
+		lines = append(lines, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	weights := make([]int64, len(lines))
+	for i, l := range lines {
+		weights[i] = l.total
+	}
+	return writeLineTaxShares(ctx, tx, lines, weights, newTax)
 }

@@ -4153,7 +4153,7 @@ export type OrderChange = {
   decision_note?: string;
   applied_at?: string;
   lines: OrderChangeLine[];
-  next_actions: ("yard_ack" | "finance_approve" | "apply" | "reject" | "cancel")[];
+  next_actions: ("yard_ack" | "sign_apply" | "finance_approve" | "apply" | "reject" | "cancel")[];
 };
 export type OrderChangeQueueItem = {
   id: string;
