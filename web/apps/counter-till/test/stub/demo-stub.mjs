@@ -630,7 +630,8 @@ function statusIsPostPick(status) {
 function changeNextActions(status, manager, requester = false) {
   const cancel = manager || requester ? ["cancel"] : [];
   if (status === "PENDING_YARD") return ["yard_ack", "reject", ...cancel];
-  if (status === "PENDING_FINANCE") return [...(manager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
+  // The requester is not offered the signature on their own change (separation of duties); reject stays.
+  if (status === "PENDING_FINANCE") return [...(manager && !requester ? ["sign_apply", "finance_approve"] : []), ...(manager ? ["reject"] : []), ...cancel];
   if (status === "APPROVED") return [...(manager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
   return [];
 }

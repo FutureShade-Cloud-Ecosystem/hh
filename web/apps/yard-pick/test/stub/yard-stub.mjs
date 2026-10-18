@@ -528,13 +528,14 @@ const MANAGER_ROLES = new Set(["sales_manager", "yard_manager", "branch_manager"
 
 function changeNextActions(status, isManager, isRequester = false) {
   // Reject is any staff while the yard decides and a manager's alone after; cancel is the requester or a
-  // manager; sign_apply and finance_approve are a manager's (every manager is a named approver here).
+  // manager; sign_apply and finance_approve are a manager's who did not raise the change (every manager is a named approver here).
   const cancel = isManager || isRequester ? ["cancel"] : [];
   switch (status) {
     case "PENDING_YARD":
       return ["yard_ack", "reject", ...cancel];
     case "PENDING_FINANCE":
-      return [...(isManager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
+      // The requester is not offered the signature on their own change (separation of duties); reject stays.
+      return [...(isManager && !isRequester ? ["sign_apply", "finance_approve"] : []), ...(isManager ? ["reject"] : []), ...cancel];
     case "APPROVED":
       return [...(isManager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
     default:
