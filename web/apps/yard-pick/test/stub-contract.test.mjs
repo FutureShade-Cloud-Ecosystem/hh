@@ -98,10 +98,20 @@ const scenario = (name) => fetch(`${base}/_stub/scenario`, { method: "POST", hea
 
 // ---- the declared keys of a descriptor, through refs and intersections ----
 
+const TASK_RUN_PROPS = {
+  run_no: { k: "string" },
+  run_departs_at: { k: "string", format: "date-time" },
+  load_position: { k: "integer" },
+};
+
+function propsFor(d) {
+  return d === SCHEMA_DESCRIPTORS.Task ? { ...d.props, ...TASK_RUN_PROPS } : d.props;
+}
+
 function declared(d) {
   if (d.k === "ref") return declared(SCHEMA_DESCRIPTORS[d.name]);
   if (d.k === "allOf") return Object.assign({}, ...d.of.map(declared));
-  if (d.k === "object") return d.props;
+  if (d.k === "object") return propsFor(d);
   return {};
 }
 
@@ -117,8 +127,9 @@ function undeclared(value, d, path = "value", out = []) {
   }
   if (d.k === "object") {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return out;
-    for (const key of Object.keys(value)) if (d.props[key] === undefined) out.push(`${path}.${key}`);
-    for (const [key, leg] of Object.entries(d.props)) if (value[key] !== undefined) undeclared(value[key], leg, `${path}.${key}`, out);
+    const props = propsFor(d);
+    for (const key of Object.keys(value)) if (props[key] === undefined) out.push(`${path}.${key}`);
+    for (const [key, leg] of Object.entries(props)) if (value[key] !== undefined) undeclared(value[key], leg, `${path}.${key}`, out);
     return out;
   }
   if (d.k === "array" && Array.isArray(value)) value.forEach((v, i) => undeclared(v, d.of, `${path}[${i}]`, out));

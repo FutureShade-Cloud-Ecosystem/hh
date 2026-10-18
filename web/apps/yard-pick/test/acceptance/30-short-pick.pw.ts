@@ -94,11 +94,8 @@ test("the screen tells the yard the same story in the server's words", async ({ 
   const detail = await staff(page, "GET", `/api/v1/yard/picks/${id}`);
   const first = detail.body.ticket.lines[0];
   await page.reload();
-  await page.locator("[data-pick-card]", { hasText: detail.body.ticket.order_no }).first().getByRole("button", { name: "Open" }).click();
-  // The accept above already put the pick in Picking, so the start button is there only for a pick not yet started.
+  await page.locator("[data-pick-card]", { hasText: detail.body.ticket.order_no }).first().click();
   await page.locator("[data-line]").first().waitFor();
-  const start = page.getByRole("button", { name: "Start picking" });
-  if (await start.isVisible()) await start.click();
   await page.locator("[data-line]").first().locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Take one off" }).click();

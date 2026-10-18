@@ -19,6 +19,15 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.YARD_STUB_PORT ?? 4959);
 
+// A complete 1x1 PNG so the <img src="blob:..."> on the pick screen decodes
+// and renders the bytes from the wire with naturalWidth > 0.
+const PRODUCT_IMAGE_BYTES = new Uint8Array(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNs3L4dAASTAh1N8w9MAAAAAElFTkSuQmCC",
+    "base64",
+  ),
+);
+
 // The flow table as the core's stands after the Manager Home merge (PR 298,
 // main 04194fb2): the till's pair, the yard's two, the Driver and the office
 // roles, in the table's own order. The app offers only its own card.
@@ -477,11 +486,28 @@ function ticketFor(task) {
   return base;
 }
 
+function departAt(hour, minute) {
+  const stamp = new Date(0);
+  stamp.setUTCFullYear(2026, 9, 8);
+  stamp.setUTCHours(hour, minute, 0, 0);
+  return stamp.toISOString();
+}
+
+const RUN_SEED = {
+  "0a000000-0000-4000-9000-000000000042": { run_no: "R5", run_departs_at: departAt(8, 15), load_position: 2 },
+  "0a000000-0000-4000-9000-000000000039": { run_no: "R5", run_departs_at: departAt(8, 15), load_position: 1 },
+  "0a000000-0000-4000-9000-000000000040": { run_no: "R6", run_departs_at: departAt(9, 30), load_position: 1 },
+  "0a000000-0000-4000-9000-000000000044": { run_no: "R7", run_departs_at: departAt(10, 15), load_position: 2 },
+  "0a000000-0000-4000-9000-000000000041": { run_no: "R8", run_departs_at: departAt(11, 0), load_position: 1 },
+};
+
 function taskOut(task) {
   const shortages = world.shortages.filter((s) => s.task_id === task.id);
   const open = shortages.filter((s) => s.resolved_at === "").length;
   const out = { ...task, open_shortages: open, total_shortages: shortages.length };
   if (scenario === "poisoned") out.value_cents = POISON;
+  const seed = RUN_SEED[task.id];
+  if (seed !== undefined) Object.assign(out, seed);
   return out;
 }
 
@@ -756,6 +782,7 @@ async function handle(req, res) {
 
   // ---- the routes the yard uses ----
   const changeAckMatch = /^\/api\/v1\/order-changes\/([^/]+)\/yard-ack$/.exec(path);
+  const productImageMatch = /^\/api\/v1\/products\/([^/]+)\/image$/.exec(path);
   const yardRoute =
     path.startsWith("/api/v1/yard/") ||
     path === "/api/v1/branches" ||
@@ -764,7 +791,8 @@ async function handle(req, res) {
     // The change queue and its acknowledgement (the core's order module,
     // change_queue.go): the two routes the yard's stage 2 screen calls.
     path === "/api/v1/order-changes" ||
-    (changeAckMatch !== null && req.method === "POST");
+    (changeAckMatch !== null && req.method === "POST") ||
+    (productImageMatch !== null && req.method === "GET");
   if (!yardRoute) return notFound(res);
   const authorization = req.headers.authorization ?? "";
   const raw = await readBody(req);
@@ -783,6 +811,12 @@ async function handle(req, res) {
   // The branches this login may reach. A login off the yard answers none.
   if (req.method === "GET" && path === "/api/v1/branches") {
     return json(res, scenario === "not-yard" ? [] : [BRANCH]);
+  }
+
+  if (req.method === "GET" && productImageMatch !== null) {
+    res.writeHead(200, { "Content-Type": "image/png" });
+    res.end(Buffer.from(PRODUCT_IMAGE_BYTES));
+    return;
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
@@ -1085,11 +1119,20 @@ function handleSyncPull(res, scope, url, moneyAllowed) {
   // receiving story rides the desk, and the lookup is the read seam, not this
   // slice's.
   const page = rows.filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
-  const lastSeq = page.length > 0 ? page[page.length - 1].seq : since;
+  const tombstones =
+    scope === "pick_tasks" && scenario === "empty" && since > 0
+      ? world.tasks.map((t, idx) => ({ id: t.id, seq: since + idx + 1 }))
+      : [];
+  const lastSeq =
+    tombstones.length > 0
+      ? tombstones[tombstones.length - 1].seq
+      : page.length > 0
+        ? page[page.length - 1].seq
+        : since;
   return json(res, {
     scope,
     items: page,
-    tombstones: [],
+    tombstones,
     last_seq: lastSeq,
     next_cursor: page.length === limit ? String(lastSeq) : null,
   });

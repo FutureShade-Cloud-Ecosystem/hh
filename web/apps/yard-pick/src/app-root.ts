@@ -12,8 +12,8 @@
 // for the role label and theme, assignments in updated(): the design
 // system's position gate refuses every "." and "@" binding and every bound
 // value outside the data- and aria- attributes in a dependent package. Its
-// two buttons ride data-action names and the host's click listener below
-// acts on them.
+// buttons ride data-action names and the host's click listener below acts on
+// them.
 //
 // THE FIELD MIRROR. No control carries a bound value (the gate refuses it),
 // so every input, select and textarea writes what the yard types into the
@@ -23,9 +23,10 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
+// hos-app-header and hh-sheet: the shared design-system chrome elements.
 import "@hardscapehouse/design-system/src/header.js";
-import { ApiClient, type Result } from "@hardscapehouse/api-client";
+import "@hardscapehouse/design-system/src/sheet.js";
+import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
@@ -59,7 +60,17 @@ import {
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
-import { renderChanges, renderConflicts, renderEntry, renderPick, renderQueue, stalenessWords, type EntryView } from "./views.js";
+import {
+  renderChanges,
+  renderConflicts,
+  renderEntry,
+  renderPick,
+  renderQueue,
+  stalenessWords,
+  type EntryView,
+  type PickModel,
+  type QueueModel,
+} from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -160,6 +171,10 @@ export class YardPickApp extends HHElement {
   #skidNote = "";
   #stageWhere = "";
   #resolveText = "";
+
+  // Cached blob URLs for product thumbnails on pick lines, keyed by product id.
+  readonly #imageUrls = new Map<string, string>();
+  readonly #imageInFlight = new Set<string>();
 
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -326,6 +341,19 @@ export class YardPickApp extends HHElement {
       void this.#saveSkids();
       return;
     }
+    if (action === "pick-bay") {
+      const bay = control?.getAttribute("data-bay") ?? "";
+      if (bay !== "") {
+        this.#stageWhere = bay;
+        this.requestUpdate();
+      }
+      return;
+    }
+    if (action === "close-stage") {
+      this.#stageWhere = "";
+      this.requestUpdate();
+      return;
+    }
     if (action === "stage") {
       void this.#stage();
       return;
@@ -393,8 +421,6 @@ export class YardPickApp extends HHElement {
       }
       return;
     }
-    // The reasons are radio rows, not selects: they ride data-action clicks,
-    // not change events, so nothing else needs mirroring here.
   };
 
   connectedCallback(): void {
@@ -539,6 +565,38 @@ export class YardPickApp extends HHElement {
         if (head !== null) head.focus();
       }
     }
+    // Hydrate per-line product thumbnails over the authenticated staff client.
+    void this.#hydrateProductImages();
+  }
+
+  /** Fetches each product image once over the staff client and writes a blob URL onto the line's img element. */
+  async #hydrateProductImages(): Promise<void> {
+    const imgs = Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("[data-line-img]"));
+    for (const img of imgs) {
+      const productId = img.getAttribute("data-product-id") ?? "";
+      if (productId === "") continue;
+      const cached = this.#imageUrls.get(productId);
+      if (cached !== undefined) {
+        if (img.src !== cached) img.src = cached;
+        continue;
+      }
+      if (this.#imageInFlight.has(productId)) continue;
+      this.#imageInFlight.add(productId);
+      const res = await this.#yard.productImage(productId);
+      this.#imageInFlight.delete(productId);
+      if (!res.ok) continue;
+      const bytes = res.value;
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      const blob = new Blob([copy], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      this.#imageUrls.set(productId, url);
+      for (const match of Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("[data-line-img]"))) {
+        if ((match.getAttribute("data-product-id") ?? "") === productId) {
+          match.src = url;
+        }
+      }
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -675,7 +733,7 @@ export class YardPickApp extends HHElement {
     this.#changeError = "";
     this.#error = "";
     this.#notice = "";
-    this.#loadChanges(true);
+    void this.#loadChanges(true);
   }
 
   #openChange(changeId: string): void {
@@ -817,45 +875,77 @@ export class YardPickApp extends HHElement {
 
   async #claim(taskId: string): Promise<void> {
     if (taskId === "" || this.#busy) return;
+    await this.#openPick(taskId);
+  }
+
+  async #openPick(taskId: string): Promise<void> {
+    if (taskId === "" || this.#busy) return;
     this.#busy = true;
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().claim(taskId);
-    this.#busy = false;
-    if (answer.ok) {
-      await this.#openPick(taskId);
-      this.#notice = actionDone("claim");
-    } else {
-      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.", {
+    const first = await this.#door().pick(taskId);
+    if (!first.ok) {
+      this.#busy = false;
+      this.#error = yardError(first.error, first.status, "That pick did not open. Check your signal and try again.", {
         notFound: "That pick is no longer on the board.",
       });
+      this.requestUpdate();
+      return;
     }
-    this.requestUpdate();
-  }
-
-  async #openPick(taskId: string): Promise<void> {
-    if (taskId === "") return;
-    this.#error = "";
-    this.#notice = "";
-    this.requestUpdate();
-    const answer = await this.#door().pick(taskId);
-    if (answer.ok) {
-      this.#pick = answer.value;
-      this.#view = { kind: "pick", id: taskId };
-      this.#drafts = new Map();
-      this.#qtyMirror = new Map();
-      this.#reasonMirror = new Map();
-      this.#noteMirror = new Map();
-      this.#editing = null;
-      this.#sheetFor = null;
-      this.#resolveFor = "";
-      this.#skids = null;
-      this.#skidReason = "";
-      this.#skidNote = "";
-    } else {
-      this.#error = yardError(answer.error, answer.status, "That pick did not open. Check your signal and try again.");
+    let current = first.value;
+    let openNotice = "";
+    const held = current.ticket?.held_from_picking === true;
+    if (!held) {
+      if (current.task.status === "QUEUED" || current.task.status === "PUSHED") {
+        const claimed = await this.#door().claim(taskId);
+        if (!claimed.ok) {
+          this.#busy = false;
+          this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
+            notFound: "That pick is no longer on the board.",
+          });
+          this.requestUpdate();
+          return;
+        }
+        const started = await this.#door().start(taskId);
+        if (!started.ok) {
+          this.#busy = false;
+          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+          this.requestUpdate();
+          return;
+        }
+        const reread = await this.#door().pick(taskId);
+        if (reread.ok) current = reread.value;
+        openNotice = actionDone("claim");
+      } else if (current.task.status === "ACCEPTED") {
+        const started = await this.#door().start(taskId);
+        if (!started.ok) {
+          this.#busy = false;
+          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+          this.requestUpdate();
+          return;
+        }
+        const reread = await this.#door().pick(taskId);
+        if (reread.ok) current = reread.value;
+        openNotice = actionDone("start");
+      }
     }
+    this.#busy = false;
+    this.#pick = current;
+    this.#view = { kind: "pick", id: taskId };
+    this.#notice = openNotice;
+    this.#drafts = new Map();
+    this.#qtyMirror = new Map();
+    this.#reasonMirror = new Map();
+    this.#noteMirror = new Map();
+    this.#editing = null;
+    this.#sheetFor = null;
+    this.#resolveFor = "";
+    this.#skids = null;
+    this.#skidReason = "";
+    this.#skidNote = "";
+    this.#stageWhere = "";
+    if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
     this.requestUpdate();
   }
 
@@ -1056,7 +1146,7 @@ export class YardPickApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().recordSkids(this.#view.id, this.#skids as number, this.#skidReason, this.#skidNote.trim());
+    const answer = await this.#door().recordSkids(this.#view.id, this.#skids ?? 0, this.#skidReason, this.#skidNote.trim());
     this.#busy = false;
     if (answer.ok) {
       this.#skids = answer.value.skid_count;
@@ -1150,18 +1240,42 @@ export class YardPickApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary theme-button" data-action="theme">${label}</button>`;
   }
 
+  // When signed in, the header slot carries the theme toggle, the "Changes
+  // waiting on the yard" door with its badge, the Review door, and Refresh.
+  private renderHeaderControls(): TemplateResult {
+    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
+    const waiting = this.#changesWaiting;
+    const conflicts = this.#openCards.length;
+    return html`
+      <div slot="theme" class="header-extra">
+        <button type="button" class="btn btn-secondary theme-button" data-action="theme" data-tap>${label}</button>
+        <button type="button" class="btn btn-secondary header-door" data-action="open-changes" data-changes-door data-tap>
+          <span>Changes waiting on the yard</span>
+          ${waiting !== null ? html`<span class="pill branch-pill" data-changes-count>${waiting}</span>` : nothing}
+        </button>
+        <button type="button" class="btn btn-secondary theme-button" data-action="open-conflicts" data-tap>
+          ${conflicts > 0 ? `Review ${conflicts}` : "Review"}
+        </button>
+        <button type="button" class="btn btn-secondary theme-button" data-action="reload" data-tap>Refresh</button>
+      </div>
+    `;
+  }
+
   private renderWork(): TemplateResult {
     if (this.#view.kind === "conflicts") {
       return renderConflicts({ cards: this.#openCards.length });
     }
     if (this.#view.kind === "pick" && this.#pick !== null) {
-      const drafts = [...this.#drafts.entries()].map(([order_line_no, d]) => ({
-        order_line_no,
-        qty_picked: d.qty,
-        short_reason: d.reason,
-        short_note: d.note,
-      }));
-      return renderPick({
+      const drafts: Array<{ order_line_no: number; qty_picked: string; short_reason: string; short_note: string }> = [];
+      for (const [lineNo, draft] of this.#drafts) {
+        drafts.push({
+          order_line_no: lineNo,
+          qty_picked: draft.qty,
+          short_reason: draft.reason,
+          short_note: draft.note,
+        });
+      }
+      const detail: PickModel = {
         pick: this.#pick,
         drafts,
         editing: this.#editing,
@@ -1174,7 +1288,8 @@ export class YardPickApp extends HHElement {
         notice: this.#notice,
         skids: this.#skids,
         skidReason: this.#skidReason,
-      });
+      };
+      return renderPick(detail);
     }
     if (this.#view.kind === "changes") {
       return renderChanges({
@@ -1189,7 +1304,7 @@ export class YardPickApp extends HHElement {
         sheetError: this.#changeError,
       });
     }
-    return renderQueue({
+    const model: QueueModel = {
       phase: this.#phase,
       branchName: this.#branchName,
       picks: this.#picks,
@@ -1200,7 +1315,8 @@ export class YardPickApp extends HHElement {
       changesWaiting: this.#changesWaiting,
       staleness: this.#yardOffline !== null ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null }) : "",
       conflicts: this.#openCards.length,
-    });
+    };
+    return renderQueue(model);
   }
 
   // The stall strip: what the outbox's health says is stuck, in the store's
@@ -1217,10 +1333,12 @@ export class YardPickApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderHeaderControls()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
-      <main>${this.renderWork()}</main>
+      <main>
+        ${this.renderWork()}
+      </main>
     `;
   }
 

@@ -14,9 +14,8 @@ test.beforeEach(async ({ request, page }) => {
 /** Opens the claimed pick and starts it: the state the record doors need. */
 async function openInProgress(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
 }
 
@@ -24,6 +23,16 @@ test("a claimed pick opens, starts, and shows its pull list", async ({ page }) =
   await openInProgress(page);
   await expect(page.locator("[data-pull-list]")).toContainText("Pull list · 4 lines");
   await expect(page.locator("[data-line]")).toHaveCount(4);
+  await expect(page.locator("img[data-line-img][src^='blob:']")).toHaveCount(4);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Array.from(document.querySelector("yard-pick-app")?.shadowRoot?.querySelectorAll<HTMLImageElement>("img[data-line-img]") ?? []).every(
+          (img) => img.complete && img.naturalWidth > 0,
+        ),
+      ),
+    )
+    .toBe(true);
   await expect(page.locator("[data-line]", { hasText: "Class 2 base rock gravel" })).toContainText("10 TONNE");
   await expect(page.getByRole("button", { name: "Save pick" })).toBeVisible();
 });
@@ -102,6 +111,7 @@ test("the skid stepper says Not counted until it is changed, then changes with a
   await expect(page.getByRole("button", { name: "Save skid count" })).toHaveCount(0);
   await page.getByRole("button", { name: "One skid more" }).click();
   await expect(page.locator("[data-skid-count]")).toHaveText("1");
+  await expect(page.locator("[data-skids] hh-sheet")).toHaveAttribute("open", "");
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-error]")).toContainText("Give the reason for the skid count.");
   await page.getByRole("radio", { name: "Count corrected" }).click();
@@ -121,7 +131,7 @@ test("the skids sit with the pull list, and the shortages come before the stage 
   // On SO-1040 there is no shortage and no stage above the skids; the shape is
   // proved where it bit: SO-1041 carries an open shortage.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   const shortages = page.locator("[data-shortages]");
   const stage = page.locator("[data-stage-form]");
   await expect(shortages).toBeVisible();
@@ -169,7 +179,7 @@ test("a connected record the server superseded is an error in words, never a sav
   // The boot pull must have rested first, or the record would go blind behind an in-flight cycle and meet no stale check.
   await page.goto("/");
   await expect(page.locator("[data-staleness]")).toContainText("Pulled");
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await page.waitForLoadState("networkidle");

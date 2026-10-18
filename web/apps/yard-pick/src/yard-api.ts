@@ -19,7 +19,7 @@
 // rebuilt on HH's generated client. The change reads are HH's own (there is
 // no change queue in the original), written against the core's order module
 // (core/internal/order/change_queue.go) the same way.
-import { ApiClient, staffBranches, staffOrder, staffTasks, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffBranches, staffOrder, staffProduct, staffTasks, type Result } from "@hardscapehouse/api-client";
 
 export interface YardBranch {
   readonly id: string;
@@ -52,6 +52,9 @@ export interface YardTicket {
   /** A held order waits in the queue marked: the hold is words, never a figure. */
   readonly held_from_picking: boolean;
   readonly hold_words: string;
+  readonly run_no?: string;
+  readonly run_departs_at?: string;
+  readonly load_position?: number;
 }
 
 export interface YardTask {
@@ -66,6 +69,9 @@ export interface YardTask {
   readonly stage_ref: string;
   readonly open_shortages: number;
   readonly total_shortages: number;
+  readonly run_no?: string;
+  readonly run_departs_at?: string;
+  readonly load_position?: number;
 }
 
 export interface YardShortage {
@@ -176,6 +182,17 @@ export function toLine(raw: unknown): YardLine {
   };
 }
 
+function runProps(r: Bag): { run_no?: string; run_departs_at?: string; load_position?: number } {
+  const runNo = text(r.run_no).trim();
+  const runDepartsAt = text(r.run_departs_at).trim();
+  const loadPos = typeof r.load_position === "number" && Number.isInteger(r.load_position) && r.load_position > 0 ? r.load_position : undefined;
+  return {
+    ...(runNo !== "" ? { run_no: runNo } : {}),
+    ...(runDepartsAt !== "" ? { run_departs_at: runDepartsAt } : {}),
+    ...(loadPos !== undefined ? { load_position: loadPos } : {}),
+  };
+}
+
 export function toTicket(raw: unknown): YardTicket | null {
   if (raw === null || raw === undefined) return null;
   const r = bag(raw);
@@ -191,6 +208,7 @@ export function toTicket(raw: unknown): YardTicket | null {
     source: text(r.source),
     held_from_picking: r.held_from_picking === true,
     hold_words: text(r.hold_words),
+    ...runProps(r),
   };
 }
 
@@ -208,6 +226,7 @@ export function toTask(raw: unknown): YardTask {
     stage_ref: text(r.stage_ref),
     open_shortages: num(r.open_shortages),
     total_shortages: num(r.total_shortages),
+    ...runProps(r),
   };
 }
 
@@ -311,6 +330,11 @@ export class YardApi {
   async pick(id: string): Promise<Result<YardPick>> {
     const answer = await staffTasks.yardGetPick(this.#client, id);
     return answer.ok ? { ok: true, value: toPick(answer.value) } : answer;
+  }
+
+  /** The product's reference picture, fetched through the generated binary client. */
+  async productImage(productId: string): Promise<Result<Uint8Array>> {
+    return staffProduct.productGetImage(this.#client, productId);
   }
 
   /** Claim an unclaimed pick: it becomes the caller's own. */

@@ -15,7 +15,7 @@ test.beforeEach(async ({ request, page }) => {
 /** Opens the pick that is already in progress (SO-1041). */
 async function openInProgress(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
 }
@@ -42,6 +42,7 @@ test("the shortage sheet is the board's: the asked and short figures, radio rows
   await openInProgress(page);
   await page.getByRole("button", { name: "Report a shortage" }).click();
   const sheet = page.locator("[data-shortage-sheet]");
+  await expect(sheet.locator("hh-sheet")).toHaveAttribute("open", "");
   await expect(sheet).toContainText("Short pick · line 1");
   await expect(sheet).toContainText("Flagstone, random, mixed grey");
   // The two labelled figures on one row: what was asked, and the short tile.
