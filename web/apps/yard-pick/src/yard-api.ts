@@ -5,16 +5,21 @@
 // narrow type that names only what the yard's screens use. A field the
 // projection does not name is dropped at this door and never reaches a
 // screen, so the no money rule does not rest on the server alone: the app
-// could not show a figure if one arrived. Two contract declared money fields
-// pass this door never: the held order's owed figure (the hold's own words
-// carry the fact on the ticket this file shapes) and the skid answer's
-// deposit figures (a skid deposit is the office's money, not the yard's).
+// could not show a figure if one arrived. Three contract declared money
+// shapes pass this door never: the held order's owed figure (the hold's own
+// words carry the fact on the ticket this file shapes), the skid answer's
+// deposit figures (a skid deposit is the office's money, not the yard's),
+// and the change queue's delta figure and threshold (the yard acknowledges
+// whether the work can still be done; what the change is worth is not the
+// yard's question).
 //
 // Port provenance: the call set is the original app's app/src/yard-api.ts
 // (the original HardscapeOS app, repository hardscapeos_dibbits, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab), narrowed to the pick slice and
-// rebuilt on HH's generated client.
-import { ApiClient, staffBranches, staffTasks, type Result } from "@hardscapehouse/api-client";
+// rebuilt on HH's generated client. The change reads are HH's own (there is
+// no change queue in the original), written against the core's order module
+// (core/internal/order/change_queue.go) the same way.
+import { ApiClient, staffBranches, staffOrder, staffTasks, type Result } from "@hardscapehouse/api-client";
 
 export interface YardBranch {
   readonly id: string;
@@ -105,6 +110,32 @@ export interface YardSkidAnswer {
   readonly previous_skid_count: number | null;
   readonly changed: boolean;
   readonly order_no: string;
+}
+
+/**
+ * One row of the changes waiting on the yard, as the yard reads it: the
+ * facts the row answers on and the actions the server offers this caller.
+ * The delta figure and the threshold ride the wire for other callers and
+ * stop at this door: the yard's question is "can we still do this", and the
+ * server's own next_actions decide what this screen may offer.
+ */
+export interface YardChange {
+  readonly id: string;
+  readonly change_no: string;
+  readonly order_no: string;
+  readonly status: string;
+  readonly reason: string;
+  readonly requested_by_role: string;
+  readonly requested_at: string;
+  readonly next_actions: readonly string[];
+}
+
+/** The acknowledgement's answer, as the yard reads it: the change's new stage. */
+export interface YardChangeAnswer {
+  readonly id: string;
+  readonly change_no: string;
+  readonly order_id: string;
+  readonly status: string;
 }
 
 /** One line of a pick record the yard sends: the whole set in one call, the server's own rule. */
@@ -236,6 +267,25 @@ export function toSkidAnswer(raw: unknown): YardSkidAnswer {
   };
 }
 
+export function toChange(raw: unknown): YardChange {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    change_no: text(r.change_no),
+    order_no: text(r.order_no),
+    status: text(r.status),
+    reason: text(r.reason),
+    requested_by_role: text(r.requested_by_role),
+    requested_at: text(r.requested_at),
+    next_actions: Array.isArray(r.next_actions) ? r.next_actions.filter((a): a is string => typeof a === "string") : [],
+  };
+}
+
+export function toChangeAnswer(raw: unknown): YardChangeAnswer {
+  const r = bag(raw);
+  return { id: text(r.id), change_no: text(r.change_no), order_id: text(r.order_id), status: text(r.status) };
+}
+
 /** Every call the yard's screens make. */
 export class YardApi {
   readonly #client: ApiClient;
@@ -334,4 +384,23 @@ export class YardApi {
   async resolveShortage(id: string, shortageId: string, resolution: string): Promise<Result<YardShortage>> {
     const answer = await staffTasks.yardResolveShortage(this.#client, id, shortageId, { resolution });
     return answer.ok ? { ok: true, value: toShortage(answer.value) } : answer;
-  }}
+  }
+
+  /** The changes waiting on the caller's branches, oldest first, one page. The status is the server's ladder word; the yard asks for its own stage. */
+  async changeQueue(status: "PENDING_YARD", cursor = ""): Promise<Result<{ changes: YardChange[]; nextCursor: string }>> {
+    const answer = await staffOrder.orderListChangeQueue(this.#client, {
+      status,
+      ...(cursor === "" ? {} : { cursor }),
+      limit: 50,
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: { changes: answer.value.items.map(toChange), nextCursor: answer.value.next_cursor ?? "" } };
+  }
+
+  /** Acknowledge one change for the yard, with an optional note: the word the ladder waits on. */
+  async acknowledgeChange(changeId: string, note: string): Promise<Result<YardChangeAnswer>> {
+    const trimmed = note.trim();
+    const answer = await staffOrder.orderChangeYardAck(this.#client, changeId, trimmed === "" ? {} : { note: trimmed });
+    return answer.ok ? { ok: true, value: toChangeAnswer(answer.value) } : answer;
+  }
+}

@@ -236,7 +236,7 @@ function decidePanel(model: GlModel): TemplateResult {
       <div class="gl-choices" role="radiogroup" aria-label="Your decision">
         ${choiceCard(model, "approve", approveWord, approveLine, own)} ${choiceCard(model, "decline", "Decline", declineLine, own)}
         ${row.policy_type === "MARGIN_BELOW_MINIMUM"
-          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">The core takes approve or decline only today.</span></div>`
+          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">Only approve or decline is here today.</span></div>`
           : nothing}
       </div>
       ${own
@@ -436,7 +436,7 @@ const HEADINGS: Record<GlTab, { title: string; line: string }> = {
   chart: { title: "Ledger", line: "The chart of accounts: what a journal can post to." },
   trial: { title: "Ledger", line: "The trial balance for the year or one month, and the export." },
   periods: { title: "Ledger", line: "Which months are open to posting, and the year end close." },
-  checks: { title: "Ledger", line: "Does the ledger agree with the receivables ledger and with BisTrack." },
+  checks: { title: "Ledger", line: "Does the ledger agree with the receivables ledger." },
   policy: { title: "Ledger", line: "The approval threshold and the year the books keep." },
 };
 

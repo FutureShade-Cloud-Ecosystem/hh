@@ -66,16 +66,18 @@ test("a tile filters the register to the accounts it counted, and clears", async
 test("the register's filters: overdue, promised, disputed and paid", async ({ page, request }) => {
   await openDesk(page, request);
   const pick = (word: string) => page.getByRole("group", { name: "Register filter" }).getByRole("button", { name: word, exact: true }).click();
-  await pick("Overdue");
+  await pick("Past due");
   await expect(page.locator("[data-register-row]")).toHaveCount(7);
-  await pick("Promised");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await pick("Disputed");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await expect(page.locator("[data-register-row]")).toContainText("Open dispute");
-  await pick("Paid");
-  await expect(page.locator("[data-register-row]")).toHaveCount(1);
-  await expect(page.locator("[data-register-row]")).toContainText("INV-1010");
+  await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $11,499.50");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days late");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("91 and over");
+  await pick("Current");
+  await expect(page.locator("[data-register-row]")).toHaveCount(2);
+  await expect(page.locator("[data-testid='c8-summary']")).toHaveCount(0);
+  await pick("On hold");
+  await expect(page.locator("[data-register-row]")).toHaveCount(6);
+  await pick("All");
+  await expect(page.locator("[data-register-row]")).toHaveCount(9);
 });
 
 test("aging to payment applied: Record payment on a row opens the account with the payment ready, and the server's split and balance show", async ({ page, request }) => {
@@ -909,7 +911,7 @@ test("credit holds: the sweep's holds are listed, lifting is held for this role 
   const place = page.getByRole("button", { name: /Place a hold/ });
   await expect(place).toHaveAttribute("aria-disabled", "true");
   await place.click({ force: true });
-  await expect(page.locator("[data-hold-panel]")).toContainText("no route for it yet");
+  await expect(page.locator("[data-hold-panel]")).toContainText("there is no path for it yet");
   await expect(page.locator("[data-hold-panel] fieldset[disabled]")).toBeVisible();
   await page.getByRole("button", { name: "Run the sweep" }).click({ force: true });
   await expect(page.locator("[data-error]")).toContainText("Running the sweep is the Financial Controller's");
@@ -945,7 +947,7 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await page.getByRole("button", { name: /Download PDF/ }).click({ force: true });
   await expect(page.locator("[data-error]")).toContainText("later");
   await expect(page.locator(".tab-later", { hasText: "Activity" })).toContainText("later");
-  await expect(page.locator(".tab-later", { hasText: "Contacts" })).toContainText("later");
+  await expect(page.getByRole("button", { name: "Contacts", exact: true })).toBeVisible();
 });
 
 test("the Statements tab lists every account and runs them all", async ({ page, request }) => {

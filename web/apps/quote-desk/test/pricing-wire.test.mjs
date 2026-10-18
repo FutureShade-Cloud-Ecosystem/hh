@@ -96,7 +96,7 @@ test("a created reference needs its id and version", () => {
 
 test("a floor preview reads its items and counts, and refuses a half answer", () => {
   const good = {
-    items: [{ product_id: "p1", sku: "HPV-60", name: "Holland", final_cents: 300, margin_bps: 800, floor_bps: 2500, price_uom: "sf", source: "TIER_CATEGORY", previous_final_cents: 400, previous_margin_bps: 3100, already_under_floor: false }],
+    items: [{ product_id: "p1", sku: "HPV-60", name: "Charcoal", final_cents: 300, margin_bps: 800, floor_bps: 2500, price_uom: "sf", source: "TIER_CATEGORY", previous_final_cents: 400, previous_margin_bps: 3100, already_under_floor: false }],
     evaluated: 12, not_graded: 1, no_cost: 2, truncated: false,
   };
   const p = readFloorPreview(good);
@@ -110,10 +110,10 @@ test("a floor preview reads its items and counts, and refuses a half answer", ()
   // The branch the worst grading happened at is optional: an item may carry its id with its
   // code and its name (a branch-less preview names the yard), any alone, or nothing (a change
   // that named its own branch).
-  const atYard = readFloorPreview({ ...good, items: [{ ...good.items[0], branch_id: "b1", branch_code: "KGN", branch_name: "Kingston" }] });
+  const atYard = readFloorPreview({ ...good, items: [{ ...good.items[0], branch_id: "b1", branch_code: "JUL", branch_name: "Julian" }] });
   assert.equal(atYard?.items[0]?.branchId, "b1");
-  assert.equal(atYard?.items[0]?.branchCode, "KGN");
-  assert.equal(atYard?.items[0]?.branchName, "Kingston");
+  assert.equal(atYard?.items[0]?.branchCode, "JUL");
+  assert.equal(atYard?.items[0]?.branchName, "Julian");
   assert.equal(p?.items[0]?.branchId, "");
   assert.equal(p?.items[0]?.branchCode, "");
   assert.equal(readFloorPreview({ ...good, no_cost: undefined }), null, "the count of products with no cost is part of the contract");
@@ -131,16 +131,16 @@ test("a floor preview reads the yards with no cost and the branches the cap left
   };
   const p = readFloorPreview({
     ...base,
-    no_cost_branches: [{ branch_id: "b1", branch_code: "KGN", branch_name: "Kingston", products: 3 }],
+    no_cost_branches: [{ branch_id: "b1", branch_code: "JUL", branch_name: "Julian", products: 3 }],
     not_graded_branches: 2,
   });
-  assert.deepEqual(p?.noCostBranches, [{ branchId: "b1", branchCode: "KGN", branchName: "Kingston", products: 3 }]);
+  assert.deepEqual(p?.noCostBranches, [{ branchId: "b1", branchCode: "JUL", branchName: "Julian", products: 3 }]);
   assert.equal(p?.notGradedBranches, 2);
   const unnamed = readFloorPreview({ ...base, no_cost_branches: [{ branch_id: "b1", products: 1 }] });
   assert.deepEqual(unnamed?.noCostBranches, [{ branchId: "b1", branchCode: "", branchName: "", products: 1 }]);
   assert.equal(readFloorPreview({ ...base, no_cost_branches: [{ branch_id: "b1" }] }), null, "a yard without its product count is a half answer");
   assert.equal(readFloorPreview({ ...base, no_cost_branches: [{ products: 1 }] }), null, "a count without its yard is a half answer");
-  assert.equal(readFloorPreview({ ...base, no_cost_branches: "Kingston" }), null);
+  assert.equal(readFloorPreview({ ...base, no_cost_branches: "Julian" }), null);
   assert.equal(readFloorPreview({ ...base, not_graded_branches: "2" }), null);
 });
 

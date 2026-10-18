@@ -136,16 +136,16 @@ function refused(res, status, fragment) {
 
 const decide = (as, id, approve) => call(as, "POST", `/api/v1/staff/approvals/${id}/decide`, { approve, reason: "stub" });
 
-test("the approvals queue answers the contract's page, every branch to the controller and Trenton alone to the branch manager", async () => {
+test("the approvals queue answers the contract's page, every branch to the controller and Point Loma alone to the branch manager", async () => {
   await reset();
   const mine = await call(IDS.controller, "GET", "/api/v1/staff/approvals?status=PENDING");
   assert.equal(mine.status, 200);
   holds("IdentityApprovalPage", mine.json);
   assert.equal(mine.json.items.length, 5);
   assert.equal(mine.json.next_cursor, null);
-  assert.deepEqual([...new Set(mine.json.items.map((r) => r.branch_id))].sort(), [IDS.kingston, IDS.trenton].sort());
+  assert.deepEqual([...new Set(mine.json.items.map((r) => r.branch_id))].sort(), [IDS.julian, IDS.pointLoma].sort());
   const theirs = await call(IDS.manager, "GET", "/api/v1/staff/approvals?status=PENDING");
-  assert.ok(theirs.json.items.every((r) => r.branch_id === IDS.trenton));
+  assert.ok(theirs.json.items.every((r) => r.branch_id === IDS.pointLoma));
   // The cursor walks every row once.
   const first = await call(IDS.controller, "GET", "/api/v1/staff/approvals?status=PENDING&limit=2");
   assert.equal(first.json.items.length, 2);
@@ -211,7 +211,7 @@ test("the refusals are the core's sentences, in the core's order", async () => {
 
 const BOOKS_MONTH = 9;
 const line = (account_code, debit_cents, credit_cents, memo = "") => ({ account_code, debit_cents, credit_cents, memo });
-const fresh = { branch_id: IDS.trenton, memo: "Freight accrual", source: "MANUAL" };
+const fresh = { branch_id: IDS.pointLoma, memo: "Freight accrual", source: "MANUAL" };
 
 test("the chart of accounts answers the contract's page, creates an account and refuses in the core's words and order", async () => {
   await reset();
@@ -361,6 +361,24 @@ test("the year end close sweeps net income into retained earnings and seals the 
   assert.ok(closing.lines.some((l) => l.account_code === "3900"));
   const periods = (await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items;
   assert.ok(periods.every((p) => p.status === "CLOSED"));
+});
+
+test("the legacy import check is served only where the surface config names a source", async () => {
+  await reset();
+  const config = await call(IDS.controller, "GET", "/api/v1/surfaces/money-desk/config");
+  assert.equal(config.status, 200);
+  holds("SettingsSurfaceConfig", config.json);
+  assert.equal(config.json.legacy_import_source, "bistrack");
+  const off = await fetch(`${base}/_stub/legacy-import`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "" }) });
+  assert.equal(off.status, 200);
+  const bare = await call(IDS.controller, "GET", "/api/v1/surfaces/money-desk/config");
+  assert.equal(bare.status, 200);
+  holds("SettingsSurfaceConfig", bare.json);
+  assert.equal("legacy_import_source" in bare.json, false, "a dealer with no source serves no field");
+  refused(await call(IDS.controller, "GET", "/api/v1/gl/tieout/bistrack?year=2026&month=6"), 404, "the legacy import check is not enabled for this dealer");
+  await reset();
+  const back = await call(IDS.controller, "GET", "/api/v1/gl/tieout/bistrack?year=2026&month=6");
+  assert.equal(back.status, 200, "a reset puts the first dealer's source back");
 });
 
 test("the policy, the receivables tie out, the BisTrack check and the export answer the contract", async () => {

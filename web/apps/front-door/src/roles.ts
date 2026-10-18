@@ -5,14 +5,15 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The eight roles whose logins the demo mints and whose screens this box
+//   - The roles whose logins the demo mints and whose screens this box
 //     serves are LIVE: inside_sales, sales_manager, yard_manager, yard_team,
-//     payables_receivables, procurement_manager, driver and
-//     financial_controller, labelled on the cards the way the demo adapter's
-//     contract names them ("Sales", "Sales manager", "Yard manager", "Yard
+//     payables_receivables, procurement_manager, driver,
+//     financial_controller, logistics_manager and
+//     general_manager, labelled on the cards the
+//     way the demo adapter's contract names them ("Sales", "Sales manager", "Yard manager", "Yard
 //     Team", "Payables and Receivables", "Procurement manager", "Driver",
-//     "Financial Controller" - the flows route's own labels, the same rule
-//     the till's entry view follows, so every name-based selector keeps
+//     "Financial Controller", "Logistics Manager", "General Manager" - the flows route's own
+//     labels, the same rule the till's entry view follows, so every name-based selector keeps
 //     reading exactly those words). The flow ids are the flows table's own:
 //     inside_sales -> "sales", sales_manager -> "sales-manager",
 //     yard_manager -> "yard-manager", yard_team -> "yard-team". Payables and
@@ -23,11 +24,22 @@
 //     Team's one live module is the Yard Pick app; the Driver's flow is
 //     "driver" and its one live module is HH Drive; the Financial
 //     Controller's flow is "financial-controller" and its one live module is
-//     the same Money Desk tile, on the same path.
-//   - The five others are COMING. Each shows the modules the matrix gives
-//     that role at work, manage or admin level, by the surfaces table's own
-//     names; read cells (and none) show nothing. A coming role is never
-//     tappable.
+//     the same Money Desk tile, on the same path; the Logistics Manager's
+//     flow is "logistics-manager" and its live modules are the dispatch board
+//     under /dispatch/, Manager Home and House Messages; the General Manager's
+//     flow is "general-manager" and its live modules are the Money Desk,
+//     Manager Home, House Messages and Dealer Admin; HR's flow is "hr" and
+//     both its tiles (House Messages, Dealer Admin) are live; the Branch
+//     Manager's flow is "branch-manager" and its tiles are the Counter Till,
+//     the Quote Desk, Dispatch and Load Building, Manager Home and House
+//     Messages (all live); Outside Sales' flow is "outside-sales" and its
+//     tiles are the Quote Desk and House Messages (both live). House Messages,
+//     which the matrix gives every one of the thirteen roles, is live for all
+//     thirteen under /messages/.
+//   - Any others are COMING (none today). Each shows the modules the matrix
+//     gives that role at work, manage or admin level, by the surfaces
+//     table's own names; read cells (and none) show nothing. A coming role is
+//     never tappable.
 //   - The manager's five tiles are the brief's own list: the two live
 //     modules of the box plus Manager Home, Dealer Admin and House Messages,
 //     the modules the matrix gives him at work or manage level, shown as the
@@ -67,17 +79,19 @@ const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark
 const DRIVE_TILE: ModuleTile = { name: "HH Drive", icon: "lucide:truck", href: "/drive/" };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: "/home/" };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: "/dealer-admin/" };
+// The one tile every live role holds: the matrix gives all thirteen roles the House Messages cell
+// (work level, the general manager at admin), and the app lives under /messages/.
 const HOUSE_MESSAGES_TILE: ModuleTile = {
   name: "House Messages",
   icon: "lucide:message-square",
-  href: null,
+  href: "/messages/",
 };
 // The tile says what it opens: the app under /yard/ serves the pick half, so
 // the tile carries the app's own short name, not the matrix surface's fuller
 // one ("Yard Pick and Receive", the receive half's module name, which the
 // coming chips and the buying desk's prose keep using).
 const YARD_PICK_TILE: ModuleTile = { name: "Yard Pick", icon: "lucide:forklift", href: "/yard/" };
-const DISPATCH_TILE: ModuleTile = { name: "Dispatch and Load Building", icon: "lucide:route", href: null };
+const DISPATCH_TILE: ModuleTile = { name: "Dispatch and Load Building", icon: "lucide:route", href: "/dispatch/" };
 const BUYING_AND_STOCK_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:boxes", href: null };
 
 /** A role the demo signs in today: a card on the picker, a home behind it. */
@@ -90,7 +104,12 @@ export interface LiveRole {
     | "payables_receivables"
     | "procurement_manager"
     | "driver"
-    | "financial_controller";
+    | "financial_controller"
+    | "logistics_manager"
+    | "general_manager"
+    | "hr"
+    | "branch_manager"
+    | "outside_sales";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -100,7 +119,12 @@ export interface LiveRole {
     | "payables-receivables"
     | "procurement-manager"
     | "driver"
-    | "financial-controller";
+    | "financial-controller"
+    | "logistics-manager"
+    | "general-manager"
+    | "hr"
+    | "branch-manager"
+    | "outside-sales";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -134,7 +158,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     label: "Sales",
     line: "Ring up counter sales and build quotes.",
     icon: "lucide:receipt",
-    tiles: [TILL_TILE, QUOTE_TILE],
+    tiles: [TILL_TILE, QUOTE_TILE, HOUSE_MESSAGES_TILE],
   },
   {
     id: "sales_manager",
@@ -192,37 +216,111 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:landmark",
     tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
-];
-
-/**
- * The five coming roles, in the till's entry view's own order, each with
- * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
- * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
- * HR's two are House Messages and Dealer Admin, and the matrix gives its
- * demo login nothing until the staff routes exist.
- */
-export const COMING_ROLES: readonly ComingRole[] = [
-  { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
   {
     id: "logistics_manager",
+    flow: "logistics-manager",
     label: "Logistics Manager",
-    modules: ["Dispatch and Load Building", "Manager Home", "House Messages"],
-  },
-  {
-    id: "branch_manager",
-    label: "Branch Manager",
-    modules: [
-      "Counter Till",
-      "Quote Desk",
-      "Dispatch and Load Building",
-      "Manager Home",
-      "House Messages",
-    ],
+    line: "Build the day's loads and send the trucks out.",
+    icon: "lucide:route",
+    tiles: [DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
   },
   {
     id: "general_manager",
+    flow: "general-manager",
     label: "General Manager",
-    modules: ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"],
+    line: "Decide what only leadership may decide, across both branches.",
+    icon: "lucide:shield-check",
+    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
   },
-  { id: "hr", label: "HR", modules: ["House Messages", "Dealer Admin"] },
+  {
+    id: "hr",
+    flow: "hr",
+    label: "HR",
+    line: "People, messages and the dealer's staff settings.",
+    icon: "lucide:users",
+    tiles: [HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
+  },
+  {
+    id: "branch_manager",
+    flow: "branch-manager",
+    label: "Branch Manager",
+    line: "Run the branch: the counter, quotes, dispatch and approvals.",
+    icon: "lucide:store",
+    tiles: [TILL_TILE, QUOTE_TILE, DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
+  {
+    id: "outside_sales",
+    flow: "outside-sales",
+    label: "Outside Sales",
+    line: "Build quotes in the field.",
+    icon: "lucide:file-pen-line",
+    tiles: [QUOTE_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
+
+/**
+ * The roles the decided matrix lists but this box does not mint yet. None is
+ * left: every role of ROLE-ACCESS-r3 is live (Outside Sales has no till,
+ * rows 363 and 364). The list and the disclosure that draws it stay, so a
+ * role the matrix adds later goes in here first and moves to LIVE_ROLES by
+ * the same steps.
+ */
+export const COMING_ROLES: readonly ComingRole[] = [];
+
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+
+/**
+ * The coming disclosure's heading: the count of roles still coming, written
+ * out, so it moves as each role goes live and never carries a stale number.
+ */
+export function comingHeading(count: number): string {
+  const word = COUNT_WORDS[count] ?? String(count);
+  return count === 1 ? `${word} more role is coming` : `${word} more roles are coming`;
+}
+
+/**
+ * The contractor roles: Summit Ridge Builders' five personas (the flows listing's rows of class
+ * "tenant"), each routed to the Pro app for its role. The label is the Pro kit's own word for the
+ * role (the card and the Pro frame say the same thing); the listing's own label ("Contractor
+ * owner") is the demo table's and is never shown here. A card does not mint: it opens the Pro app
+ * at its prefix with the role code (`?as=`), and the Pro app signs that persona in itself in the
+ * demo build, because a Pro app keeps its bearer in memory and nothing in web storage.
+ */
+export interface ContractorRole {
+  readonly roleCode: "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew";
+  readonly label: string;
+  readonly line: string;
+  /** The Pro app the role lands in, in the words a person reads. */
+  readonly app: "Pro Procurement" | "Pro Pay" | "Pro Field";
+  /** That app's prefix on the box. */
+  readonly prefix: "/pro-procurement/" | "/pro-pay/" | "/pro-field/";
+  readonly icon: string;
+}
+
+export const CONTRACTOR_ROLES: readonly ContractorRole[] = [
+  { roleCode: "account_admin", label: "Owner", line: "Run the account: buy, pay and see every job.", app: "Pro Procurement", prefix: "/pro-procurement/", icon: "lucide:key-round" },
+  { roleCode: "buyer", label: "Buyer", line: "Plan the jobs, order the material and pay for it.", app: "Pro Procurement", prefix: "/pro-procurement/", icon: "lucide:shopping-cart" },
+  { roleCode: "buyer_no_pay", label: "Project manager", line: "Plan the jobs and order, with payment left to accounts.", app: "Pro Procurement", prefix: "/pro-procurement/", icon: "lucide:clipboard-list" },
+  { roleCode: "ap_finance", label: "Accounts payable", line: "Pay the invoices and keep the payment methods.", app: "Pro Pay", prefix: "/pro-pay/", icon: "lucide:landmark" },
+  { roleCode: "field_crew", label: "Field crew", line: "Track the deliveries and pickups for the job.", app: "Pro Field", prefix: "/pro-field/", icon: "lucide:truck" },
+];
+
+/** One contractor card: the role and where it opens. */
+export interface ContractorEntry extends ContractorRole {
+  /** The Pro app's prefix with the persona's role code. */
+  readonly href: string;
+}
+
+/**
+ * The contractor cards the flows listing offers: a row counts only when its class is "tenant" and its
+ * role code is one the table knows; every other row (a staff flow, a class that is missing, a role the
+ * table does not hold) offers nothing. The order is the table's, never the listing's.
+ */
+export function contractorEntries(flows: unknown): readonly ContractorEntry[] {
+  if (!Array.isArray(flows)) return [];
+  const offered = new Set<string>();
+  for (const row of flows as Array<Record<string, unknown> | null>) {
+    if (row !== null && typeof row === "object" && row["class"] === "tenant" && typeof row["role_code"] === "string") offered.add(row["role_code"]);
+  }
+  return CONTRACTOR_ROLES.filter((role) => offered.has(role.roleCode)).map((role) => ({ ...role, href: `${role.prefix}?as=${role.roleCode}` }));
+}

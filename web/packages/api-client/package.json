@@ -11,7 +11,7 @@
     "./testing": "./src/testing.ts"
   },
   "scripts": {
-    "test": "node --import ./src/_ts-js-loader.mjs --test test/fixtures-live.test.mjs test/result-shape.test.mjs test/binary.test.mjs test/unions.test.mjs test/pagination.test.mjs test/transport.test.mjs test/gen-scan.test.mjs test/idempotence.test.mjs test/identity-user.test.mjs",
+    "test": "node --import ./src/_ts-js-loader.mjs --test test/fixtures-live.test.mjs test/result-shape.test.mjs test/binary.test.mjs test/unions.test.mjs test/pagination.test.mjs test/transport.test.mjs test/gen-scan.test.mjs test/idempotence.test.mjs test/core-keys.test.mjs test/identity-user.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

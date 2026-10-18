@@ -85,9 +85,9 @@ func (k dispatchDriverSessionKnob) DriverSessionHours(ctx context.Context, orgID
 	return p.DriverSessionHours, nil
 }
 
-// tasksDefaultChannelSlug is the fallback chat channel for a task EVENT
+// tasksDefaultChannelSlug is a variable, not a constant, so the demo build can point it at its own room. It is the fallback chat channel for a task EVENT
 // when the task carries no branch (the pin's constant, carried).
-const tasksDefaultChannelSlug = "yard-trenton"
+var tasksDefaultChannelSlug = "yard-trenton"
 
 // yardCounterFallbackSlug is where a counter-audience EVENT lands when the
 // branch has no counter channel (or no branch at all), the pin's constant.
@@ -169,6 +169,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// projection by ERP user id; decide-time authority never runs through
 	// it).
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
@@ -205,6 +206,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
 	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
@@ -213,7 +215,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithBranches(item5BranchDirectory{pool: pool}).
-		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+		WithVendorAddresses(item5VendorAddressBook{pool: pool}).
+		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
 	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// UNION-W4 and UNION-470: the inventory seams purchasing closes. The
@@ -223,6 +226,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
 	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
 	inventorySvc.WithDraftPOReader(invDraftPOs{svc: purchasingSvc})
+	// Change 5 slice S3: the shortfall row names the sales orders it holds up, read through the
+	// order module's seam (the 0008 tables' sole reader) rather than any second look at them.
+	inventorySvc.WithShortOrderReader(invShortOrders{svc: orderSvc})
+	// Change 5 slice S4: the browse row names the branches it is out of, read through the branches
+	// module's seam (the branch rows' owner) rather than any second look at them.
+	inventorySvc.WithBranchNameReader(invBranchNames{svc: branches.NewService(branches.NewRepository(pool))})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -231,7 +240,17 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// stream-ticket route answers 501 and clients use the Bearer stream.
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
-	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
+	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
+
+	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
+	attachmentsRepo := attachments.NewRepository(pool)
+	messagingSvc.WithAttachmentChecker(attachmentsSeamAdapter{repo: attachmentsRepo})
+	attachments.NewHandler(attachmentsRepo, log).
+		WithRoomChecker(messagingRoomChecker{repo: messagingRepo}).
+		WithRoomMirror(messagingAttachmentMirror{svc: messagingSvc}).
+		WithUserLinker(link).
+		RegisterRoutes(r, g)
+
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -271,8 +290,41 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// ride the carried audit service through the seam adapter below.
 	// Later Phase D items register their scopes beside this block, one
 	// RegisterScope per owning module.
-	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
-	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	// The key ledger (sync_op_hashes, migration 0389) is the engine's
+	// fourth guarantee: an idempotency key reused with a different body is
+	// refused, never applied.
+	syncEngine := sync.NewEngine().
+		WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log).
+		WithKeyLedger(sync.NewPgKeyLedger(pool))
+	// The pick record door (Field CP-2) runs the yard service's RecordPick under the branch fence the
+	// REST door applies: the sync store takes the staff authority seam (the subject's authority in
+	// the org, with the linked ERP user) here and the yard service, the record body, where that
+	// service is built below. A nil pool (the wiring-shape tests) wires no seam; a real boot fails
+	// fast without both.
+	var syncStaff identity.SyncStaffResolver
+	if pool != nil {
+		authority, authErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if authErr != nil {
+			panic("sync: pick record door authority resolver refused to boot: " + authErr.Error())
+		}
+		syncStaff = func(ctx context.Context, platformUserID, orgID string) (identity.StaffContext, bool, error) {
+			a, has, err := authority.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return identity.StaffContext{}, false, err
+			}
+			sc := identity.FromAuthority(a)
+			if uid, ok := link(ctx, platformUserID); ok {
+				sc.UserID = uid
+			}
+			return sc, true, nil
+		}
+	}
+	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if pool != nil {
+		// The pull carries each task's ticket, built by the same feed the REST door reads.
+		pickSync.WithPickSource(newDispatchPickSource(pool, orderRepo, log))
+	}
+	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// The yard-pick item's scopes (HH-3.5 #166): shortages and weights
@@ -285,7 +337,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	if err := syncEngine.RegisterScope("shortages", tasks.NewShortageSyncStore(pool, link)); err != nil {
+	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
@@ -337,7 +390,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
 	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
-	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
 	}
@@ -491,7 +544,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("payment_methods", payments.NewPaymentMethodsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil).WithZone(newDealerZone(pool))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -536,7 +589,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool)).WithTaxLabel(newTaxWords(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
@@ -564,6 +617,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	dispatchSvc.WithCostRoles(spine.roleCfg)
 	if !dispatchSvc.CostRolesWired() {
 		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
+	}
+	// The pod scope's typed name attestation door (Field CP-2) runs the same CapturePOD body the REST
+	// door runs; the boot fail fast keeps a deploy from serving with the door dark.
+	podSync.WithAttestor(dispatchSvc)
+	if pool != nil && !podSync.AttestDoorWired() {
+		panic("dispatch: pod attestation sync door not wired - a driver's offline proof of delivery would refuse every replay")
 	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)
@@ -598,11 +657,19 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc)
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
-	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool).WithZone(newDealerZone(pool))})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
-	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
+	orderSvc.WithDepositReleaser(newInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// The sync record door's body is the yard service, the one the REST record door runs.
+	pickSync.WithPickRecorder(yardTasksSvc)
+	// A shortage created through sync tells the counter as the REST report does, through the yard
+	// service's notifier.
+	shortageSync.WithNoticer(yardTasksSvc)
+	if pool != nil && !pickSync.PickDoorWired() {
+		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
+	}
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
 	// fail-fast keeping a deploy from serving with the yard door dark.
@@ -641,7 +708,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	ops.unionGateway = unionGateway
 	w3bPaymentsRepo := payments.NewRepository(pool)
-	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
+	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway).WithCurrency(newDealerCurrency(pool))
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
@@ -1503,6 +1570,110 @@ func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purcha
 	return v, nil
 }
 
+// w4cWarrantyCreditReader satisfies purchasing.WarrantyCreditReader over warranty_claims,
+// warranty_recovery_balances and warranty_claim_lines.
+type w4cWarrantyCreditReader struct{ pool *pgxpool.Pool }
+
+func (w w4cWarrantyCreditReader) OpenCreditForVendor(ctx context.Context, vendorID, branchID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT b.claim_id::text, b.claim_no::text, b.outstanding_cents,
+		       COALESCE(c.description, ''),
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = b.claim_id LIMIT 1)
+		  FROM warranty_recovery_balances b
+		  JOIN warranty_claims c ON c.id = b.claim_id
+		  LEFT JOIN vendors v ON v.id = b.vendor_id
+		 WHERE b.vendor_id = $1::uuid
+		   AND ($2 = '' OR b.branch_id = $2::uuid)
+		   AND b.outstanding_cents > 0
+		 ORDER BY b.accrued_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if err == nil {
+		if lineDesc != nil && *lineDesc != "" {
+			if credit.Description != "" {
+				s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+				credit.Summary = &s
+			} else {
+				credit.Description = *lineDesc
+			}
+		}
+		return &credit, nil
+	}
+
+	err = w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.vendor_id = $1::uuid
+		   AND ($2 = '' OR c.branch_id = $2::uuid)
+		   AND (c.outcome = 'VENDOR_CREDIT' OR c.phase IN ('SETTLEMENT', 'CLOSED'))
+		   AND COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents) > 0
+		 ORDER BY c.opened_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: open credit: %w", err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
+}
+
+func (w w4cWarrantyCreditReader) ClaimInfo(ctx context.Context, claimID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.id = $1::uuid`, claimID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: claim info %s: %w", claimID, err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
+}
+
 // item5BranchDirectory satisfies purchasing.BranchDirectory over
 // locations + system_settings, so the standardized PO document carries a
 // ship-to and the dealer's own name without purchasing learning either
@@ -1681,6 +1852,31 @@ func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, product
 	return out, nil
 }
 
+// invShortOrders satisfies inventory.ShortOrderReader over the order module's open-order numbers
+// read: the sales orders a shortfall row names, oldest first. Numbers and ids only cross the seam;
+// the orders tables stay this module's alone.
+// invBranchNames satisfies inventory.BranchNameReader over the branches module's name read: the
+// stock lookup's out-at line. Ids cross the seam; the branch table stays this module's alone.
+type invBranchNames struct{ svc *branches.Service }
+
+func (a invBranchNames) BranchNames(ctx context.Context, ids []string) (map[string]string, error) {
+	return a.svc.BranchNames(ctx, ids)
+}
+
+type invShortOrders struct{ svc *order.Service }
+
+func (a invShortOrders) OpenOrdersFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.ShortOrder, error) {
+	rows, err := a.svc.OpenSaleOrdersFor(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.ShortOrder, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.ShortOrder{ProductID: r.ProductID, BranchID: r.BranchID, OrderID: r.OrderID, OrderNo: r.OrderNo}
+	}
+	return out, nil
+}
+
 // inv461Nudger satisfies inventory.ProcurementNudger over messaging's
 // internal post path, refusing any tier but the NOTABLE one the module
 // asked for.
@@ -1762,4 +1958,75 @@ func (a approvalNotifierAdapter) ApprovalDecided(ctx context.Context, n identity
 			"status":      n.Status,
 		})
 	}
+}
+
+// messagingRoomChecker adapts messaging.Repository to attachments.RoomMembershipChecker.
+type messagingRoomChecker struct {
+	repo *messaging.Repository
+}
+
+func (c messagingRoomChecker) IsRoomMember(ctx context.Context, roomID, userID string) (bool, error) {
+	return c.repo.IsMember(ctx, roomID, userID)
+}
+
+func (c messagingRoomChecker) RoomExists(ctx context.Context, roomID string) (bool, error) {
+	return c.repo.ChannelExists(ctx, roomID)
+}
+
+// messagingAttachmentMirror adapts messaging.Service to attachments.RoomAttachmentMirror.
+type messagingAttachmentMirror struct {
+	svc *messaging.Service
+}
+
+func (m messagingAttachmentMirror) MirrorAttachment(ctx context.Context, channelID string, att attachments.Attachment, role string) error {
+	meta := messaging.AttachmentMeta{
+		ID:             att.ID,
+		AppwriteFileID: att.AppwriteFileID,
+		Bucket:         att.Bucket,
+		Kind:           att.Kind,
+		Mime:           att.Mime,
+	}
+	if att.SizeBytes != nil {
+		meta.SizeBytes = *att.SizeBytes
+	}
+	return m.svc.MirrorRoomAttachment(ctx, channelID, meta, att.CreatedBy, "", role)
+}
+
+// attachmentsSeamAdapter adapts attachments.Repository to messaging.AttachmentChecker.
+type attachmentsSeamAdapter struct {
+	repo *attachments.Repository
+}
+
+func (a attachmentsSeamAdapter) VerifyRoomAttachment(ctx context.Context, orgID, attachmentID, channelID string) (*messaging.AttachmentMeta, error) {
+	m, err := a.repo.VerifyRoomAttachment(ctx, orgID, attachmentID, channelID)
+	if err != nil {
+		return nil, err
+	}
+	return &messaging.AttachmentMeta{
+		ID:             m.ID,
+		AppwriteFileID: m.AppwriteFileID,
+		Bucket:         m.Bucket,
+		Kind:           m.Kind,
+		Mime:           m.Mime,
+		SizeBytes:      m.SizeBytes,
+	}, nil
+}
+
+func (a attachmentsSeamAdapter) ResolveAttachmentMetas(ctx context.Context, orgID string, attachmentIDs []string) (map[string]messaging.AttachmentMeta, error) {
+	metas, err := a.repo.ResolveAttachmentMetas(ctx, orgID, attachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	res := make(map[string]messaging.AttachmentMeta, len(metas))
+	for k, v := range metas {
+		res[k] = messaging.AttachmentMeta{
+			ID:             v.ID,
+			AppwriteFileID: v.AppwriteFileID,
+			Bucket:         v.Bucket,
+			Kind:           v.Kind,
+			Mime:           v.Mime,
+			SizeBytes:      v.SizeBytes,
+		}
+	}
+	return res, nil
 }

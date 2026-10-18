@@ -72,14 +72,14 @@ for (const size of SIZES) {
 
       await page.locator("[data-open-draft]").click();
       await page.getByRole("button", { name: "Place order" }).click();
-      await expect(page.locator("[data-notice]")).toContainText("Placed: PO-TRT-142");
+      await expect(page.locator("[data-notice]")).toContainText("Placed: PO-PLM-142");
       await take("05", "placed");
 
-      await page.locator("[data-tab-id='incoming']").first().click();
-      await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-142" })).toBeVisible();
+      await page.locator("nav.areas [data-area-id='incoming']").click();
+      await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-142" })).toBeVisible();
       await take("06", "incoming");
 
-      await page.locator("[data-tab-id='orders']").first().click();
+      await page.locator("nav.areas [data-area-id='orders']").click();
       await request.post("/_stub/wall");
       await page.locator("[data-shortfall-row]").first().getByRole("checkbox").click();
       await page.getByRole("button", { name: "Draft PO (1)" }).click();

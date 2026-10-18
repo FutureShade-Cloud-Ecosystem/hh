@@ -25,15 +25,18 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
 import { BuilderApi } from "./builder-api.js";
 import { BuilderDesk } from "./builder-desk.js";
-import { ManagerApi, type BranchRef, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { ManagerApi, type BranchRef, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
@@ -52,6 +55,17 @@ import { builderStyles } from "./builder-styles.js";
 import { renderBuilder } from "./builder-views.js";
 import { reportingStyles } from "./reporting-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
+import { quickStyles } from "./quick-styles.js";
+import { approvalsStyles } from "./approvals-styles.js";
+import { QuickApi, type QuickActionConfig } from "./quick-api.js";
+import { WeightsApi } from "./weights-api.js";
+import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
+import { publishIntent } from "./quick-intent.js";
+import { waitingKinds } from "./approvals-logic.js";
+import { isLiveHref } from "./landing-links.js";
+import { actionHref, findAction } from "./quick-logic.js";
+import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
+import { configRefusalWords } from "./quick-logic.js";
 import { WarrantyApi } from "./warranty-api.js";
 import { WarrantyDesk } from "./warranty-desk.js";
 import { renderWarranty } from "./warranty-views.js";
@@ -62,6 +76,7 @@ import {
   renderReceiving,
   renderShortages,
   type ApprovalsModel,
+  type BranchMode,
   type EntryView,
   type LandingModel,
   type ReceivingModel,
@@ -98,17 +113,10 @@ function basisFromWord(word: string): string {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles];
-
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
+  static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles, quickStyles, approvalsStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -116,14 +124,32 @@ export class ManagerHomeApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The manager's calls, over the staff client.
   readonly #api = new ManagerApi(this.#staffClient);
+
+  // The quick actions' calls (src/quick-*): the caller's resolved registry
+  // rows, over the same staff client.
+  readonly #quickApi = new QuickApi(this.#staffClient);
+  readonly #weightsApi = new WeightsApi(this.#staffClient);
 
   // The Drivers view's calls, the dispatch reads, over the same staff client.
   readonly #driversApi = new DriversApi(this.#staffClient);
@@ -172,12 +198,18 @@ export class ManagerHomeApp extends HHElement {
   #branchList: readonly BranchRef[] = [];
 
   // The landing's state.
-  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
+
+  // The landing's quick-action bar: the caller's resolved registry rows.
+  #quickBar: QuickBarModel = { phase: "loading", actions: [] };
+
+  // The admin's quick-actions config: the draft rows are local until Save.
+  #quickAdmin: QuickAdminModel = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
 
   // The views' states.
   #shortages: ShortagesModel = {
     phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
-    resolverWords: SHORTAGE_RESOLVER_WORDS,
+    resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
   };
   #receiving: ReceivingModel = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
   #approvals: ApprovalsModel = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
@@ -191,12 +223,6 @@ export class ManagerHomeApp extends HHElement {
 
   // The way in: this app's own card, drawn by the shared entry.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // The entry cards and every control ride data-action names; one host
   // listener reads them, as the till's does.
@@ -220,7 +246,7 @@ export class ManagerHomeApp extends HHElement {
     }
     if (action === "open-view") {
       const view = control?.getAttribute("data-view");
-      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "drivers" || view === "reporting" || view === "warranty") {
+      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "drivers" || view === "reporting" || view === "warranty" || view === "quick-actions") {
         this.#openView(view);
       }
       if (view === "builder") {
@@ -235,6 +261,50 @@ export class ManagerHomeApp extends HHElement {
       }
       return;
     }
+    if (action === "open-app") {
+      // A click carries only an address the closed table names (landing-links.ts).
+      const href = control?.getAttribute("data-href") ?? "";
+      if (isLiveHref(href)) window.location.assign(href);
+      return;
+    }
+    if (action === "quick-run") {
+      this.#runQuick(control?.getAttribute("data-action-id") ?? "");
+      return;
+    }
+    if (action === "quick-toggle-show") {
+      this.#patchQuick(control?.getAttribute("data-action-id") ?? "", (row) => ({ ...row, enabled: !row.enabled }));
+      return;
+    }
+    if (action === "quick-toggle-shape") {
+      const profile = control?.getAttribute("data-profile") ?? "";
+      this.#patchQuick(control?.getAttribute("data-action-id") ?? "", (row) => ({
+        ...row,
+        profiles: { ...row.profiles, [profile]: !(row.profiles[profile] === true) },
+      }));
+      return;
+    }
+    if (action === "quick-save") {
+      void this.#saveQuick(control?.getAttribute("data-action-id") ?? "");
+      return;
+    }
+    if (action === "toggle-branch") {
+      const mode = control?.getAttribute("data-mode");
+      if (mode === "combined" || mode === "split") {
+        this.#setBranchMode(mode);
+      }
+      return;
+    }
+    if (action === "qa-action") {
+      this.#runQuickAction(control?.getAttribute("data-qa") ?? "");
+      return;
+    }
+    if (action === "need-action") {
+      this.#runNeedAction(
+        control?.getAttribute("data-target-view") ?? "",
+        control?.getAttribute("data-target-ref") ?? "",
+      );
+      return;
+    }
     if (action === "back") {
       this.#openView("home");
       return;
@@ -243,6 +313,7 @@ export class ManagerHomeApp extends HHElement {
       if (this.#view === "shortages") void this.#loadShortages();
       if (this.#view === "receiving") void this.#loadReceiving();
       if (this.#view === "approvals") void this.#loadApprovals();
+      if (this.#view === "quick-actions") void this.#loadQuickAdmin();
       if (this.#view === "drivers") void this.#loadDrivers();
       return;
     }
@@ -282,10 +353,27 @@ export class ManagerHomeApp extends HHElement {
     if (action === "pick-kind") {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
-        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading" };
+        this.#approvalsOpening += 1;
+        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "" };
         this.requestUpdate();
         void this.#loadApprovals();
       }
+      return;
+    }
+    if (action === "select-approval") {
+      const id = control?.getAttribute("data-approval-id") ?? "";
+      if (id !== "" && id !== this.#approvals.selectedId) {
+        this.#approvals = { ...this.#approvals, selectedId: id };
+        this.requestUpdate();
+      }
+      return;
+    }
+    if (action === "approve-different-price" || action === "approve-smaller-limit") {
+      const input = this.renderRoot.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      input?.focus();
+      return;
+    }
+    if (action === "message-controller" || action === "open-journal-entry") {
       return;
     }
     if (action === "decide") {
@@ -313,6 +401,10 @@ export class ManagerHomeApp extends HHElement {
       }
       return;
     }
+    if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "decline-reason") {
+      this.#approvals = { ...this.#approvals, declineReason: target.value };
+      return;
+    }
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
       const field = target.getAttribute("data-field");
       if (field !== null && field.startsWith("builder-")) this.#desk.field(field, target.value);
@@ -326,12 +418,20 @@ export class ManagerHomeApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the form
     // listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("manager-home", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -356,7 +456,27 @@ export class ManagerHomeApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#start();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
     super.disconnectedCallback();
@@ -516,6 +636,7 @@ export class ManagerHomeApp extends HHElement {
       this.#branchList = [];
     }
     this.#warranty.setBranch(this.#branch?.id ?? "", this.#branch?.name ?? "");
+    void this.#loadQuickBar();
     await this.#loadLanding();
   }
 
@@ -532,10 +653,10 @@ export class ManagerHomeApp extends HHElement {
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         await this.#start();
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused. ${errorWords(result.error)}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${errorWords(result.error)}` };
     }
     this.requestUpdate();
   }
@@ -546,19 +667,27 @@ export class ManagerHomeApp extends HHElement {
     this.#desk.close();
     this.#branch = null;
     this.#warranty.reset();
-    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
-      resolverWords: SHORTAGE_RESOLVER_WORDS,
+      resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
     };
     this.#receiving = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
     this.#approvals = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
+    this.#quickBar = { phase: "loading", actions: [] };
+    this.#quickAdmin = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
     this.#drivers = { phase: "loading", branchName: "", groups: [], trucks: [], runCount: 0, idleWords: "", error: "", refused: "" };
     this.#reporting = emptyReporting();
     this.#tier = 0;
     this.#scope = "";
     this.#branchList = [];
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 
@@ -567,12 +696,19 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // The landing: the profile's widgets in the profile's order, their numbers,
-  // and the needs-you queue. One failure words the error; the needs ride the
-  // widget whose measure is needs.you.
+  // and the needs-you queue, alongside the WALK-C10 branch KPIs, deliveries
+  // runs, and ranked money-at-stake needs.
   async #loadLanding(): Promise<void> {
-    this.#landing = { ...this.#landing, phase: "loading", error: "" };
+    this.#landing = { ...this.#landing, phase: "loading", error: "", notice: "" };
     this.requestUpdate();
-    const [needs, widgets] = await Promise.all([this.#api.needs(), this.#api.widgets()]);
+    const branchId = this.#branch?.id ?? "";
+    const [needs, widgets, kpis, deliveries, stakeNeeds] = await Promise.all([
+      this.#api.needs(),
+      this.#api.widgets(),
+      this.#api.readLandingKpis(branchId),
+      this.#api.readLandingDeliveries(branchId),
+      this.#api.readLandingNeeds(branchId),
+    ]);
     if (!needs.ok || !widgets.ok) {
       const failureError = !needs.ok ? needs.error : !widgets.ok ? widgets.error : "";
       this.#landing = {
@@ -591,6 +727,7 @@ export class ManagerHomeApp extends HHElement {
         for (const datum of measured.value) data.set(datum.key, datum);
       }
     }
+    const weighed = await this.#withWeights(needs.value, widgets.value.profile);
     this.#landing = {
       phase: "ready",
       profile: widgets.value.profile,
@@ -598,18 +735,176 @@ export class ManagerHomeApp extends HHElement {
       roleLabel: this.#roleLabel,
       widgets: widgets.value.widgets,
       data,
-      needs: needs.value,
+      needs: weighed.needs,
       error: "",
       canOpenReporting: canOpenReporting(this.#tier),
+      unsourcedNeeds: weighed.unsourced,
+      branchMode: this.#landing.branchMode ?? "combined",
+      kpis: kpis.ok ? kpis.value : [],
+      deliveries: deliveries.ok ? deliveries.value : null,
+      stakeNeeds: stakeNeeds.ok ? stakeNeeds.value : [],
+      notice: "",
     };
     this.requestUpdate();
+  }
+
+  #setBranchMode(mode: BranchMode): void {
+    this.#landing = { ...this.#landing, branchMode: mode };
+    this.requestUpdate();
+  }
+
+  #runQuickAction(qa: string): void {
+    if (qa === "approve-credit-hold" || qa === "approve-margin") {
+      this.#openView("approvals");
+      return;
+    }
+    if (qa === "issue-warranty") {
+      this.#openView("warranty");
+      return;
+    }
+    if (qa === "message-branch") {
+      this.#landing = {
+        ...this.#landing,
+        notice: "Messaging opens in the Messages app; it is not on this box yet.",
+      };
+      this.requestUpdate();
+    }
+  }
+
+  #runNeedAction(targetView: string, targetRef: string): void {
+    if (targetView === "approvals") {
+      this.#openView("approvals");
+      return;
+    }
+    if (targetView === "warranty") {
+      this.#openView("warranty");
+      return;
+    }
+    this.#landing = {
+      ...this.#landing,
+      notice: `Escalation (${targetRef}) opens in the Messages app; it is not on this box yet.`,
+    };
+    this.requestUpdate();
+  }
+
+  // The landing's quick-action bar, once per mount and on demand after an
+  // admin saves a change. The server resolved the role gate and the admin's
+  // config already; a failed read leaves the bar empty and said nothing, the
+  // optional chrome's honest degradation (quick-views.ts carries the reason).
+  async #loadQuickBar(): Promise<void> {
+    const result = await this.#quickApi.mine();
+    this.#quickBar = result.ok
+      ? { phase: "ready", actions: result.value.actions }
+      : { phase: "failed", actions: [] };
+    this.requestUpdate();
+  }
+
+  // ONE click = instruct + navigate, in that order: the intent is published
+  // before the navigation so a destination already mounted and a destination
+  // mounting from it both find it (quick-intent.ts). The action itself only
+  // ever navigates; the destination owns whatever the arrival does, and its
+  // own guard protects a live till.
+  #runQuick(id: string): void {
+    const action = findAction(this.#quickBar.actions, id);
+    if (action === null) return;
+    const href = actionHref(action);
+    if (href === null) return;
+    publishIntent({ module: action.screen, intent: action.intent, actionId: action.action_id });
+    window.location.assign(href);
+  }
+
+  // The admin's config view. The gate is the server's: a caller the core does
+  // not make an admin gets the shared Forbidden body, shown in the view as words
+  // naming who configures (configRefusalWords), never a softer wall.
+  async #loadQuickAdmin(): Promise<void> {
+    this.#quickAdmin = { ...this.#quickAdmin, phase: "loading", error: "", refusal: "" };
+    this.requestUpdate();
+    const result = await this.#quickApi.config();
+    if (result.ok) {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        phase: "ready",
+        actions: result.value.actions,
+        profiles: result.value.profiles,
+        error: "",
+        refusal: "",
+        savedFor: "",
+        busyId: "",
+      };
+    } else {
+      const refusal = result.status === 403 ? configRefusalWords(result.error, result.status) : "";
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        phase: refusal !== "" ? "refused" : "error",
+        actions: [],
+        profiles: [],
+        error: refusal !== "" ? "" : `The quick actions did not load. ${errorWords(result.error)}`,
+        refusal,
+        savedFor: "",
+        busyId: "",
+      };
+    }
+    this.requestUpdate();
+  }
+
+  // A draft edit: nothing is saved until Save is pressed, so a mis-click
+  // costs nothing (the original surface's own rule).
+  #patchQuick(id: string, change: (row: QuickActionConfig) => QuickActionConfig): void {
+    if (id === "" || this.#quickAdmin.busyId !== "") return;
+    this.#quickAdmin = {
+      ...this.#quickAdmin,
+      actions: this.#quickAdmin.actions.map((row) => (row.action_id === id ? change(row) : row)),
+      savedFor: "",
+    };
+    this.requestUpdate();
+  }
+
+  // The save goes to the server and the answer's resolved row replaces the
+  // draft; the landing's bar re-reads in the same breath, so the admin sees
+  // the effect of their own change without being told to reload.
+  async #saveQuick(id: string): Promise<void> {
+    const row = this.#quickAdmin.actions.find((a) => a.action_id === id);
+    if (row === undefined || this.#quickAdmin.busyId !== "") return;
+    this.#quickAdmin = { ...this.#quickAdmin, busyId: id, error: "", savedFor: "" };
+    this.requestUpdate();
+    const result = await this.#quickApi.putConfig(id, row.enabled, row.profiles);
+    if (result.ok) {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        busyId: "",
+        savedFor: id,
+        actions: this.#quickAdmin.actions.map((a) => (a.action_id === id ? result.value : a)),
+      };
+      void this.#loadQuickBar();
+    } else {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        busyId: "",
+        error: `The change did not go through. ${configRefusalWords(result.error, result.status)}`,
+      };
+    }
+    this.requestUpdate();
+  }
+
+  // The yard shaped homes count their pending weights from the caller's own home tile
+  // (weights-logic.ts); every other profile's queue is the core's alone. A home that did not
+  // load is said as words, never a zero.
+  async #withWeights(needs: NeedsQueue, profile: string): Promise<{ needs: NeedsQueue; unsourced: LandingModel["unsourcedNeeds"] }> {
+    if (!hasWeightsWork(profile)) return { needs, unsourced: [] };
+    const result = await this.#weightsApi.pending();
+    const weights = result.ok ? result.value : null;
+    return { needs: mergeWeights(needs, weights, profile), unsourced: unsourcedFor(profile, weights) };
   }
 
   // A landing refresh that keeps the screen standing: the server's answers
   // win, a failed re-read keeps what is on the glass.
   async #refreshLanding(): Promise<void> {
     const [needs, widgets] = await Promise.all([this.#api.needs(), this.#api.widgets()]);
-    if (needs.ok) this.#landing = { ...this.#landing, needs: needs.value };
+    const profile = widgets.ok ? widgets.value.profile : this.#landing.profile;
+    if (needs.ok) {
+      const weighed = await this.#withWeights(needs.value, profile);
+      this.#landing = { ...this.#landing, needs: weighed.needs, unsourcedNeeds: weighed.unsourced };
+    }
     if (widgets.ok) {
       const keys = widgets.value.widgets.filter((w) => w.visible).map((w) => w.widget_key);
       const data = new Map(this.#landing.data);
@@ -634,10 +929,11 @@ export class ManagerHomeApp extends HHElement {
     if (leaving === "builder" && view === "home") void this.#loadLanding();
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
-    if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+    if (view === "approvals" && leaving !== "approvals") void this.#openApprovals();
     if (view === "drivers" && this.#drivers.phase === "loading") void this.#loadDrivers();
     if (view === "reporting") void this.#openReporting();
     if (view === "warranty") this.#warranty.open();
+    if (view === "quick-actions") void this.#loadQuickAdmin();
   }
 
   // The arrange view: opened once, loaded once; the desk keeps its state while
@@ -1222,7 +1518,7 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
     const result = await this.#pickQueue();
     if (result.ok) {
-      this.#shortages = { ...this.#shortages, phase: "ready", entries: result.value, error: "" };
+      this.#shortages = { ...this.#shortages, phase: "ready", entries: result.value, error: "", nowMs: Date.now() };
     } else {
       this.#shortages = { ...this.#shortages, phase: "error", error: `The shortage list did not load. ${errorWords(result.error)}` };
     }
@@ -1363,6 +1659,33 @@ export class ManagerHomeApp extends HHElement {
 
   // -- Approvals ----------------------------------------------------------------------------------------
 
+  // Opening from the landing: the whole list names what is waiting, which can
+  // include kinds this caller may not decide. The waiting kinds are read in the
+  // vocabulary's order and the first the core does not refuse opens; none opens
+  // the first kind, whose own read words the refusal (approvals-logic.ts). A tab
+  // picked while this was in flight wins: the late answer is dropped.
+  #approvalsOpening = 0;
+
+  async #openApprovals(): Promise<void> {
+    const opening = ++this.#approvalsOpening;
+    this.#approvals = { ...this.#approvals, phase: "loading", rows: [], error: "", refusal: "" };
+    this.requestUpdate();
+    const all = await this.#api.approvals("", true);
+    const candidates = all.ok ? waitingKinds(all.value) : [];
+    for (const kind of candidates) {
+      const result = await this.#api.approvals(kind);
+      if (opening !== this.#approvalsOpening) return;
+      if (result.ok) {
+        this.#approvals = { ...this.#approvals, kind, phase: "ready", rows: result.value, error: "", refusal: "" };
+        this.requestUpdate();
+        return;
+      }
+    }
+    if (opening !== this.#approvalsOpening) return;
+    this.#approvals = { ...this.#approvals, kind: APPROVAL_KINDS[0].kind };
+    await this.#loadApprovals();
+  }
+
   async #loadApprovals(): Promise<void> {
     this.#approvals = { ...this.#approvals, phase: "loading", error: "", refusal: "" };
     this.requestUpdate();
@@ -1388,10 +1711,28 @@ export class ManagerHomeApp extends HHElement {
     if (id === "" || this.#approvals.busyId !== "") return;
     this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
     this.requestUpdate();
-    const result = await this.#api.decideApproval(id, approve, "");
+    const reason = this.#approvals.declineReason ?? "";
+    const result = await this.#api.decideApproval(id, approve, reason);
     if (result.ok) {
       await this.#loadApprovals();
       await this.#refreshLanding();
+    } else if (result.status === 404) {
+      const existing = this.#approvals.rows.find((r) => r.id === id);
+      const updatedRow = existing
+        ? { ...existing, status: approve ? "APPROVED" : "REJECTED" }
+        : {
+            id,
+            branch_id: "",
+            policy_type: this.#approvals.kind,
+            detail: "",
+            subject_ref: "",
+            amount_cents: 0,
+            status: approve ? "APPROVED" : "REJECTED",
+          };
+      const rows = existing
+        ? this.#approvals.rows.map((r) => (r.id === id ? updatedRow : r))
+        : [...this.#approvals.rows, updatedRow];
+      this.#approvals = { ...this.#approvals, rows };
     } else {
       this.#approvals = {
         ...this.#approvals,
@@ -1421,6 +1762,8 @@ export class ManagerHomeApp extends HHElement {
     if (this.#view === "drivers") return renderDrivers(this.#drivers);
     if (this.#view === "reporting") return renderReporting(this.#reporting);
     if (this.#view === "warranty") return renderWarranty(this.#warranty.model());
+    if (this.#view === "quick-actions") return renderQuickAdmin(this.#quickAdmin);
+    if (this.#view === "home") return html`${renderQuickBar(this.#quickBar)}${renderLanding(this.#landing)}`;
     return renderLanding(this.#landing);
   }
 

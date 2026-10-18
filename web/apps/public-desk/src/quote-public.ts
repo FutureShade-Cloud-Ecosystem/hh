@@ -25,9 +25,18 @@ import {
   acceptanceRefusal,
   acceptHint,
   acceptReady,
+  cardSurchargeCents,
+  offersCardPayment,
+  optionalLineNos,
+  quoteMoneyExcludingOptional,
+  repHasContact,
+  repMailtoHref,
   showsImages,
+  statusBadgeKind,
+  statusBadgeLabel,
   totalsBlock,
   type QuoteMoney,
+  type StatusBadgeKind,
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
 import { DEALER_NAME } from "./dealer.js";
@@ -184,6 +193,221 @@ export class QuotePublicPage extends HHElement {
         color: var(--hh-text);
         font-size: 0.88rem;
         margin-bottom: var(--hh-s-20);
+      }
+      /* The status badge: a small pill riding the meta line, fixed colour by status, the
+         wording the customer reads (Awaiting acceptance, Accepted, Expired, Withdrawn).
+         The chip is NEVER colour alone: its text names the state, so a colour-blind reader
+         still reads the state and a high-contrast reader still reads the pill as a pill.
+         Mobile: the pill sits in its own row and the rest wraps under it. */
+      .statusbadge {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--hh-s-4);
+        padding: var(--hh-s-4) var(--hh-s-12);
+        border-radius: var(--hh-radius-pill);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        line-height: 1.2;
+        border: 1px solid transparent;
+      }
+      .statusbadge-info {
+        background: color-mix(in srgb, var(--hh-info) 12%, var(--hh-card));
+        color: var(--hh-info);
+        border-color: color-mix(in srgb, var(--hh-info) 30%, var(--hh-line));
+      }
+      .statusbadge-success {
+        background: color-mix(in srgb, var(--hh-success) 14%, var(--hh-card));
+        color: var(--hh-success);
+        border-color: color-mix(in srgb, var(--hh-success) 30%, var(--hh-line));
+      }
+      .statusbadge-accent {
+        /* The CONVERTED status rides the document's family (--doc-fill, which is the
+           gold fill when the host's data-doc is "order"), so the chip cannot drift
+           away from the band it lives under. The sinks rule on this app says the gold
+           fill is named only by the order family and its band; the badge reads the
+           alias, not the raw token, to keep that pair. */
+        background: color-mix(in srgb, var(--doc-fill) 18%, var(--hh-card));
+        color: var(--doc-ink);
+        border-color: color-mix(in srgb, var(--doc-ink) 30%, var(--hh-line));
+      }
+      .statusbadge-danger {
+        background: color-mix(in srgb, var(--hh-danger) 14%, var(--hh-card));
+        color: var(--hh-danger);
+        border-color: color-mix(in srgb, var(--hh-danger) 30%, var(--hh-line));
+      }
+      /* The meta row: one row holding the badge and the prepared-for line, wrapping on phone. */
+      .metaline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--hh-s-8);
+        margin-bottom: var(--hh-s-12);
+        font-size: 0.88rem;
+        color: var(--hh-text);
+      }
+      .metaline .validuntil {
+        color: var(--hh-text-dim);
+      }
+      /* The compact facts (rep card, delivery card, notes card): each one is a card with a
+         heading and a body, the same card family the rest of the page uses, with a tighter
+         top margin so two cards stacked read as one block. The phone wrap is automatic: the
+         cards are full-width. */
+      .facts {
+        display: flex;
+        flex-direction: column;
+        gap: var(--hh-s-12);
+        margin-bottom: var(--hh-s-16);
+      }
+      .facts .card {
+        margin: 0;
+      }
+      .factrow {
+        display: flex;
+        flex-direction: column;
+        gap: var(--hh-s-4);
+        font-size: 0.9rem;
+      }
+      .factrow .label {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        font-weight: 600;
+      }
+      .factrow .value {
+        color: var(--hh-text);
+        overflow-wrap: anywhere;
+      }
+      .replist {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--hh-s-4);
+      }
+      .replist a {
+        color: var(--doc-link);
+        overflow-wrap: anywhere;
+      }
+      /* The deposit & acceptance card: the heading, then the deposit figure, then the
+         payment radios, then the existing quantities/name/affirm stack, then the buttons. */
+      .depositline {
+        display: flex;
+        flex-direction: column;
+        gap: var(--hh-s-4);
+        padding: var(--hh-s-8) var(--hh-s-12);
+        margin: var(--hh-s-8) 0 var(--hh-s-12);
+        border-radius: var(--hh-radius-control);
+        background: color-mix(in srgb, var(--hh-info) 8%, var(--hh-card));
+        font-size: 0.9rem;
+      }
+      .depositline .label {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .depositline .value {
+        font-weight: 600;
+      }
+      .paymentrow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--hh-s-8);
+        margin: var(--hh-s-12) 0;
+      }
+      .paymentrow .payopt {
+        flex: 1 1 12rem;
+        min-width: 0;
+        display: flex;
+        align-items: flex-start;
+        gap: var(--hh-s-8);
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-card);
+        cursor: pointer;
+      }
+      .paymentrow .payopt:has(input:checked) {
+        background: color-mix(in srgb, var(--hh-info) 10%, var(--hh-card));
+        border-color: color-mix(in srgb, var(--hh-info) 40%, var(--hh-line));
+      }
+      .paymentrow .payopt input[type="radio"] {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-top: 0.15rem;
+        accent-color: var(--hh-info);
+      }
+      .paymentrow .payopt .paylabel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--hh-s-2);
+        font-size: 0.88rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      .paymentrow .payopt .paysub {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        font-weight: 400;
+        line-height: 1.4;
+      }
+      /* The secondary actions stack under the primary accept: print and ask-a-question,
+         each a full-width row on phone and a side-by-side row on desktop. */
+      .actionstack {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--hh-s-8);
+        margin-top: var(--hh-s-12);
+      }
+      .actionstack button.printbtn {
+        flex: 1 1 12rem;
+        min-width: 0;
+      }
+      /* The optional add-on row: same row shape as the others, with a checkbox at the
+         left, the description in the middle, and the amount at the right. An excluded
+         optional line dims and slashes, so the customer sees what is NOT included. */
+      tr.optionalrow.excluded td {
+        color: var(--hh-text-dim);
+        text-decoration: line-through;
+      }
+      td.optionalcell {
+        vertical-align: middle;
+      }
+      td.optionalcell input[type="checkbox"] {
+        width: 1.05rem;
+        height: 1.05rem;
+        margin: 0;
+        accent-color: var(--hh-info);
+        cursor: pointer;
+      }
+      .optionallabel {
+        display: inline-block;
+        margin-left: var(--hh-s-8);
+        font-size: 0.74rem;
+        font-weight: 600;
+        color: var(--hh-text-dim);
+        letter-spacing: 0.03em;
+      }
+      @media (max-width: 480px) {
+        .metaline {
+          gap: var(--hh-s-4);
+        }
+        .metaline .statusbadge {
+          flex: 1 1 auto;
+        }
+        .paymentrow .payopt {
+          flex-basis: 100%;
+        }
+        .actionstack a.asklink,
+        .actionstack button.printbtn {
+          flex-basis: 100%;
+        }
+        .actionstack button.btn-secondary {
+          flex-basis: 100%;
+        }
       }
       .card {
         border: 1px solid var(--hh-line);
@@ -505,6 +729,19 @@ export class QuotePublicPage extends HHElement {
   /** Line thumbnails fetched through the image read, by image reference. */
   @state()
   private thumbs: Map<string, string> = new Map();
+  /**
+   * The customer's toggle for each OPTIONAL add-on line, by line number: true
+   * when the customer EXCLUDED the line, false when they kept it. Every
+   * optional line starts INCLUDED (so a customer who never touches the
+   * toggles agrees to the full quote) and any unrecognised number is treated
+   * as INCLUDED (so a re-render after a contract bump does not silently
+   * hide new optional lines from the customer's view).
+   */
+  @state()
+  private optionalExcluded: Set<number> = new Set();
+  /** "ACH" (default) or "card" when the dealer accepts cards with a surcharge. */
+  @state()
+  private paymentMethod: "ach" | "card" = "ach";
 
   private readonly client: PublicQuoteClient;
   private readonly acceptKeys = createAcceptKeys();
@@ -546,9 +783,12 @@ export class QuotePublicPage extends HHElement {
     // The design system's position gate holds the template allow table at
     // zero event and property bindings, so the controls stay static and this
     // root delegates: the kits' own data-action pattern, and id-keyed reads
-    // for the two inputs.
+    // for the two inputs. The optional-add-on checkboxes ride the same
+    // change delegate (so the design system's position gate holds).
     this.renderRoot.addEventListener("input", this.onNameInput);
     this.renderRoot.addEventListener("change", this.onAffirmChange);
+    this.renderRoot.addEventListener("change", this.onOptionalChange);
+    this.renderRoot.addEventListener("change", this.onPaymentChange);
     this.renderRoot.addEventListener("click", this.onActionClick);
     if (!this.hosted) void this.load();
   }
@@ -580,6 +820,8 @@ export class QuotePublicPage extends HHElement {
     super.disconnectedCallback();
     this.renderRoot.removeEventListener("input", this.onNameInput);
     this.renderRoot.removeEventListener("change", this.onAffirmChange);
+    this.renderRoot.removeEventListener("change", this.onOptionalChange);
+    this.renderRoot.removeEventListener("change", this.onPaymentChange);
     this.renderRoot.removeEventListener("click", this.onActionClick);
     this.revokeThumbs();
   }
@@ -595,10 +837,64 @@ export class QuotePublicPage extends HHElement {
     if (target.id === "qty-confirm") this.quantitiesConfirmed = target.checked;
   };
 
+  private onOptionalChange = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.dataset["lineNo"] === undefined) return;
+    const lineNo = Number(target.dataset["lineNo"]);
+    if (!Number.isInteger(lineNo)) return;
+    const next = new Set(this.optionalExcluded);
+    if (target.checked) next.delete(lineNo);
+    else next.add(lineNo);
+    this.optionalExcluded = next;
+  };
+
+  private onPaymentChange = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.name !== "payment") return;
+    if (target.value === "ach" || target.value === "card") this.paymentMethod = target.value;
+  };
+
   private onActionClick = (event: Event): void => {
     const action = (event.target as HTMLElement).closest("[data-action]");
-    if (action !== null && action.getAttribute("data-action") === "accept") void this.accept();
+    if (action === null) return;
+    const kind = action.getAttribute("data-action");
+    if (kind === "accept") void this.accept();
+    else if (kind === "print") void this.printNow();
+    else if (kind === "ask") void this.askRep();
   };
+
+  /**
+   * Fire the browser's print dialog from the visible "Print or save PDF" button. The
+   * staff `?print=1` link calls the same browser path; the button shares the same
+   * outcome, so a customer's print and a page-stored print copy cannot drift.
+   * Guarded: the page is the fallback if the browser refuses.
+   */
+  private async printNow(): Promise<void> {
+    try {
+      window.print();
+    } catch {
+      // the page itself is the fallback; no-op keeps the handler quiet
+    }
+  }
+
+  /**
+   * Open the customer's default mail client with the rep at the "to:" address
+   * and the quote number in the subject line. The handler builds the mailto:
+   * URL on click (the position gate forbids a binding inside an address
+   * attribute, and hhAddress refuses non-http schemes, so the link is opened
+   * via window.open). The customer's mail client handles the address; the
+   * page never holds an open mail draft.
+   */
+  private async askRep(): Promise<void> {
+    const q = this.quote;
+    if (q === null) return;
+    const href = repMailtoHref(q.quoteNo, q.repEmail);
+    try {
+      window.open(href, "_self");
+    } catch {
+      // the customer's browser refused; the rep face is the same address
+    }
+  }
 
   /**
    * The name lock is applied here, not bound in the template (the design system's template
@@ -610,6 +906,19 @@ export class QuotePublicPage extends HHElement {
     const locked = this.lockedName !== null;
     if (input.readOnly !== locked) input.readOnly = locked;
     if (this.lockedName !== null && input.value !== this.lockedName) input.value = this.lockedName;
+  }
+
+  private syncOptionalAndPayment(): void {
+    for (const input of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement>("input.optionalcell"))) {
+      const lineNo = Number(input.dataset["lineNo"]);
+      if (!Number.isInteger(lineNo)) continue;
+      const shouldBeChecked = !this.optionalExcluded.has(lineNo);
+      if (input.checked !== shouldBeChecked) input.checked = shouldBeChecked;
+    }
+    for (const radio of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement>('input[type="radio"][name="payment"]'))) {
+      const shouldBeChecked = radio.value === this.paymentMethod;
+      if (radio.checked !== shouldBeChecked) radio.checked = shouldBeChecked;
+    }
   }
 
   /**
@@ -634,6 +943,7 @@ export class QuotePublicPage extends HHElement {
   /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
     this.syncNameLock();
+    this.syncOptionalAndPayment();
     this.syncAcceptHint();
     if (this.autoPrint && this.quote) {
       this.autoPrint = false;
@@ -774,7 +1084,11 @@ export class QuotePublicPage extends HHElement {
       // key is the same one and the server answers a repeat with the first outcome.
       const typedName = this.lockedName ?? this.typedName.trim();
       const key = await this.acceptKeys.keyFor(this.token, typedName);
-      const result = await this.client.acceptQuote(this.token, typedName, key);
+      // The customer's optional add-on choices: the list of EXCLUDED line numbers, in the
+      // server's own order. An empty list is honest (a quote with no optional lines) and the
+      // client drops the field when empty, so the wire shape matches the contract.
+      const excluded = [...this.optionalExcluded].sort((a, b) => a - b);
+      const result = await this.client.acceptQuote(this.token, typedName, key, excluded);
       if (!result.ok) {
         if (result.status === 410) {
           this.fatal = LINK_GONE_SHORT;
@@ -876,7 +1190,7 @@ export class QuotePublicPage extends HHElement {
   /**
    * The ONE place the totals block is drawn. Both the quote itself and the
    * acceptance echo render through here, from the same pure decision, so the
-   * two surfaces cannot drift apart on the question of whether HST is already
+   * two surfaces cannot drift apart on the question of whether the tax is already
    * in the number.
    */
   private renderTotals(m: QuoteMoney): TemplateResult {
@@ -895,20 +1209,13 @@ export class QuotePublicPage extends HHElement {
    * quote prints none of this.
    */
   private renderTermsFacts(q: QuoteViewRef): typeof nothing | TemplateResult {
-    const delivery = q.fulfillment === "DELIVERY";
+    // The terms facts speak to the customer: the deposit ask and the staff notes.
+    // Delivery is no longer here: it now rides the job-site card above the totals
+    // (Change 9 WALK-C9), so the two surfaces cannot disagree on the same fact.
     const deposit = q.depositRequired === true && (q.depositCents ?? 0) > 0;
     const notes = (q.customerNotes ?? "").trim();
-    if (!delivery && !deposit && !notes) return nothing;
+    if (!deposit && !notes) return nothing;
     return html`<div class="termsfacts">
-      ${delivery
-        ? html`<p class="note">
-            <b>Delivery</b> to ${q.deliveryAddress || "the address on file"}${q.requestedDate
-              ? html` · requested ${plainDay(q.requestedDate)}`
-              : nothing}${(q.deliveryFeeCents ?? 0) > 0
-              ? html` · delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)`
-              : nothing}
-          </p>`
-        : nothing}
       ${deposit
         ? html`<p class="note">
             <b>Deposit</b>: a ${q.depositPct ?? 0}% deposit of ${formatMoney(q.depositCents ?? 0)} is required to
@@ -916,6 +1223,185 @@ export class QuotePublicPage extends HHElement {
           </p>`
         : nothing}
       ${notes ? html`<p class="note"><b>Notes</b>: ${notes}</p>` : nothing}
+    </div>`;
+  }
+
+  /**
+   * The status chip that rides the meta line beside the quote number. The
+   * chip's text names the state ("Awaiting acceptance", "Expired") so colour
+   * is never the only carrier; the kind picks the token the chip's pair was
+   * measured for, and the print half re-states the colour so the paper copy
+   * cannot drop the chip's family.
+   */
+  private renderStatusBadge(q: QuoteViewRef): TemplateResult {
+    const effectiveStatus = q.expired && q.status === "SENT" ? "EXPIRED" : q.status;
+    const kind = statusBadgeKind(effectiveStatus);
+    return html`<span class="statusbadge statusbadge-${kind}" data-status=${effectiveStatus}>${statusBadgeLabel(effectiveStatus)}</span>`;
+  }
+
+  /**
+   * The job-site / delivery card: where the material is going and when.
+   * The card is conditional: a pickup carries no address, and a delivery
+   * without a date shows just the address. The same words the older terms
+   * facts used ("Delivery to <address>") ride the new card so an existing
+   * customer reading the page still sees the same phrase.
+   */
+  private renderJobSiteCard(q: QuoteViewRef): typeof nothing | TemplateResult {
+    const delivery = q.fulfillment === "DELIVERY";
+    const address = (q.deliveryAddress ?? "").trim();
+    const hasAny = delivery || address !== "";
+    if (!hasAny) return nothing;
+    if (delivery) {
+      return html`<div class="card" data-fact="job-site">
+        <h2 class="card-h2">Delivery</h2>
+        <div class="factrow">
+          <span class="value">Delivery to ${address !== "" ? address : "the address on file"}</span>
+          ${q.requestedDate ? html`<span class="label">Requested ${plainDay(q.requestedDate)}</span>` : nothing}
+          ${(q.deliveryFeeCents ?? 0) > 0
+            ? html`<span class="label">delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)</span>`
+            : nothing}
+        </div>
+      </div>`;
+    }
+    return html`<div class="card" data-fact="job-site">
+      <h2 class="card-h2">Pickup</h2>
+      <div class="factrow">
+        <span class="value">${address !== "" ? `Pickup at ${address}` : "Pickup at our yard"}</span>
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The rep contact card: the rep's name, email and phone as a customer
+   * reads them. The card is conditional: it only renders when the dealer set
+   * a rep name (the only required field; an email alone does not earn a card
+   * because there is no one to address). The "Ask a question" CTA rides the
+   * action stack in the accept card so it sits with the other actions; this
+   * card carries the contact facts.
+   */
+  private renderRepCard(q: QuoteViewRef): typeof nothing | TemplateResult {
+    if (!repHasContact(q)) return nothing;
+    const name = (q.repName ?? "").trim();
+    const email = (q.repEmail ?? "").trim();
+    const phone = (q.repPhone ?? "").trim();
+    return html`<div class="card" data-fact="rep">
+      <h2 class="card-h2">Your rep</h2>
+      <div class="factrow">
+        <span class="value">${name}</span>
+        ${email !== "" ? html`<span class="value">${email}</span>` : nothing}
+        ${phone !== "" ? html`<span class="value">${phone}</span>` : nothing}
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The payment method radio row: ACH first (the cheaper option for the customer
+   * and the dealer's preferred rail), card with a surcharge line when the dealer
+   * configured one. The card row's sub-line names the surcharge as a percentage
+   * and a money figure, so the customer sees the cost before they tick. The
+   * radios carry NO checked attribute binding (the design system's position gate
+   * forbids property bindings in templates): the browser's own radio-group
+   * behaviour defaults the first option to checked on first render, and the
+   * change delegate picks up the new value the moment the customer switches.
+   */
+  private renderPaymentOptions(q: QuoteViewRef): TemplateResult {
+    const cardOption = offersCardPayment(q);
+    const surchargeCents = cardSurchargeCents(q.totalCents, q.cardSurchargePct);
+    const surchargePct = q.cardSurchargePct ?? 0;
+    return html`<div class="paymentrow" role="radiogroup" aria-label="Payment method">
+      <label class="payopt">
+        <input type="radio" name="payment" value="ach" checked />
+        <span class="paylabel">
+          ACH transfer
+          <span class="paysub">No surcharge; the deposit clears in one to three business days.</span>
+        </span>
+      </label>
+      ${cardOption
+        ? html`<label class="payopt">
+            <input type="radio" name="payment" value="card" />
+            <span class="paylabel">
+              Card
+              <span class="paysub">
+                ${Number(surchargePct.toFixed(2))}% surcharge (${formatMoney(surchargeCents)} on this deposit).
+              </span>
+            </span>
+          </label>`
+        : nothing}
+    </div>`;
+  }
+
+  /**
+   * The deposit ask the customer reads above the radio row: the percentage
+   * and the cents figure, in the dealer's own words. The card surcharge is
+   * paid on top of this deposit; the card option's sub-line names it.
+   */
+  private renderDepositLine(q: QuoteViewRef): typeof nothing | TemplateResult {
+    if (q.depositRequired !== true || (q.depositCents ?? 0) <= 0) return nothing;
+    return html`<div class="depositline">
+      <span class="label">Deposit due</span>
+      <span class="value">
+        ${formatMoney(this.adjustedDepositCents(q))} (${q.depositPct ?? 0}% of the accepted total)
+      </span>
+    </div>`;
+  }
+
+  /**
+   * The deposit the customer is being asked to pay, accounting for any optional
+   * add-on exclusions. The percentage rides the quote, but the base is the
+   * customer's adjusted total, so the customer never pays a deposit on lines
+   * they excluded. A quote without optional lines returns the server's deposit
+   * figure unchanged.
+   */
+  private adjustedDepositCents(q: QuoteViewRef): number {
+    if (q.depositRequired !== true || (q.depositCents ?? 0) <= 0) return 0;
+    const adjusted = this.adjustedMoney(q);
+    const serverTotal = q.totalCents;
+    const serverDeposit = q.depositCents ?? 0;
+    if (serverTotal <= 0 || adjusted.totalCents === serverTotal) return serverDeposit;
+    // Proportional: the deposit's relationship to the total holds for the
+    // customer's view. A line-by-line deposit policy could be done here too,
+    // but the contract is "a percentage of the accepted total" and that is
+    // what the page displays.
+    return Math.round((adjusted.totalCents * serverDeposit) / serverTotal);
+  }
+
+  /**
+   * The quote's money as the customer sees it: full when no optional add-on
+   * line is excluded, recomputed when at least one is. The helper is pure,
+   * so the same call drives the totals block and the deposit line.
+   */
+  private adjustedMoney(q: QuoteViewRef): QuoteMoney {
+    const excludedLineCents: number[] = [];
+    for (const line of q.lines) {
+      if (line.optional && this.optionalExcluded.has(line.lineNo)) excludedLineCents.push(line.lineTotalCents);
+    }
+    if (excludedLineCents.length === 0) return q;
+    const m: QuoteMoney = {
+      subtotalCents: q.subtotalCents,
+      taxCents: q.taxCents,
+      totalCents: q.totalCents,
+      taxLabel: q.taxLabel,
+    };
+    return quoteMoneyExcludingOptional(m, excludedLineCents);
+  }
+
+  /**
+   * The secondary actions: "Ask a question" (a mailto: link to the rep) and
+   * "Print or save PDF" (the browser's print dialog). Both stack under the
+   * primary Accept and are full-width on phone. The "Ask a question" link
+   * is a plain anchor, not a button: the mailto: scheme is a customer-issued
+   * action, so the page never holds an open mail draft.
+   */
+  private renderActionStack(q: QuoteViewRef): TemplateResult {
+    // The "Ask a question" is a design-system secondary button whose click
+    // opens the rep's mail client: the mailto URL is built in the click handler
+    // (window.open is not a credential sink) so the page never carries a
+    // binding inside an address attribute. The rep card's contact facts sit
+    // above this stack; the button is the action the customer takes.
+    const askLabel = (q.repEmail ?? "").trim() !== "" ? "Ask a question" : "Email us about this quote";
+    return html`<div class="actionstack">
+      ${button({ label: askLabel, kind: "secondary", action: "ask" })}
+      ${button({ label: "Print or save PDF", kind: "secondary", action: "print" })}
     </div>`;
   }
 
@@ -1015,10 +1501,12 @@ export class QuotePublicPage extends HHElement {
       </div>`;
     }
     const hint = acceptHint(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed);
+    const adjusted = this.adjustedMoney(q);
     return html`
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
         ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
+        ${this.renderDepositLine(q)}
         <div class="tick">
           <input id="qty-confirm" type="checkbox" />
           <label for="qty-confirm">I have reviewed the quantities on this quote and they are what I want.</label>
@@ -1030,10 +1518,11 @@ export class QuotePublicPage extends HHElement {
           <input id="affirm" type="checkbox" />
           <label for="affirm">
             ${withFullStop(
-              `I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
+              `I accept this quote for ${acceptanceAmountPhrase(adjusted)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
             )}
           </label>
         </div>
+        ${this.renderPaymentOptions(q)}
         ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
         ${hint !== null ? html`<p class="note" id="accept-hint">${hint}</p>` : nothing}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
@@ -1041,6 +1530,7 @@ export class QuotePublicPage extends HHElement {
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:
           we do not collect a handwritten signature.
         </p>
+        ${this.renderActionStack(q)}
       </div>
     `;
   }
@@ -1087,16 +1577,25 @@ export class QuotePublicPage extends HHElement {
     const q = this.quote;
     if (!q) return html`<p class="sub">Loading your quote…</p>`;
     const withImages = showsImages(q);
+    const adjusted = this.adjustedMoney(q);
     return html`
       ${q.preview ? html`<div class="previewband" role="status">${PREVIEW_BAND}</div>` : nothing}
       ${this.renderTitle(q)}
-      <!-- A converted quote carries no "valid until" (FROM-PRINCIPAL 29): validity speaks to a
-           decision still open, and this document's decision is made. -->
-      <div class="sub">
-        Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}
-        ${q.validUntil && q.status !== "CONVERTED"
-          ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}`
-          : nothing}
+      <!-- The status badge rides the meta line beside the prepared-for / last-updated words.
+           A CONVERTED quote carries no valid-until (the document is the order, the line below
+           already says so); an expired quote names itself expired, so the badge and the
+           sub-line agree. -->
+      <div class="sub metaline">
+        ${this.renderStatusBadge(q)}
+        <span
+          >Prepared for ${q.customerName} · last updated ${this.when(q.asOf)}${q.validUntil && q.status !== "CONVERTED"
+            ? html` · ${q.expired ? "expired" : "valid until"} ${plainDay(q.validUntil)}`
+            : nothing}</span
+        >
+      </div>
+      <div class="facts">
+        ${this.renderJobSiteCard(q)}
+        ${this.renderRepCard(q)}
       </div>
       <div class="card">
         <div class="tablewrap">
@@ -1112,8 +1611,10 @@ export class QuotePublicPage extends HHElement {
               </tr>
             </thead>
             <tbody>
-              ${q.lines.map(
-                (l) => html`<tr>
+              ${q.lines.map((l) => {
+                const isOptional = l.optional === true;
+                const excluded = isOptional && this.optionalExcluded.has(l.lineNo);
+                return html`<tr class="${isOptional ? `optionalrow${excluded ? " excluded" : ""}` : ""}">
                   ${withImages
                     ? html`<td>
                         <span
@@ -1127,13 +1628,25 @@ export class QuotePublicPage extends HHElement {
                   <td class="item">
                     ${l.description}
                     ${(l.discPct ?? 0) > 0 ? html`<div class="discnote">${l.discPct}% discount applied</div>` : nothing}
+                    ${isOptional
+                      ? html`<div class="tick optionalcell-row">
+                          <input
+                            class="optionalcell"
+                            type="checkbox"
+                            checked
+                            data-line-no=${l.lineNo}
+                            aria-label=${`Include ${l.description}`}
+                          />
+                          <span class="optionallabel">Optional add-on ${excluded ? "(excluded)" : "(included)"}</span>
+                        </div>`
+                      : nothing}
                   </td>
                   <td class="num">${l.qtyEntered}</td>
                   <td class="uom">${l.uomEntered}</td>
                   <td class="num">${formatMoney(l.unitPriceCents)}</td>
                   <td class="num amount">${formatMoney(l.lineTotalCents)}</td>
-                </tr>`,
-              )}
+                </tr>`;
+              })}
             </tbody>
           </table>
         </div>
@@ -1143,7 +1656,7 @@ export class QuotePublicPage extends HHElement {
           ? html`<div class="qtynotice" role="note">${this.renderNoticeIcon()}<span class="noticetext">${q.quantityNotice}</span></div>`
           : nothing}
         ${this.renderTermsFacts(q)}
-        ${this.renderTotals(q)}
+        ${this.renderTotals(adjusted)}
       </div>
       ${this.accepted ? this.renderAccepted(this.accepted) : this.renderAcceptForm(q)}
     `;

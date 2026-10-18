@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -60,6 +61,13 @@ type SyncStore struct {
 	pool   *pgxpool.Pool
 	orders OrderReader
 	link   identity.UserIDLinker
+	// recorder and staff are the pick record door's seams (syncpick.go).
+	recorder PickRecorder
+	staff    identity.SyncStaffResolver
+	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
+	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
+	tickets PickSource
+	log     *slog.Logger
 }
 
 // NewSyncStore wires the adapter; nil seams are legal only where the
@@ -94,6 +102,9 @@ type syncRow struct {
 	task    Task
 	seq     int64
 	deleted bool
+	// picked is what the yard recorded pulling on the task (task_pick_lines), attached for the
+	// reads a device or a conflict envelope sees; empty until a pick is recorded.
+	picked []PickedLine
 }
 
 // scanSyncRow reads the 30-target row. The 28 Task targets re-declare
@@ -135,7 +146,7 @@ func scanSyncRow(row rowScanner) (syncRow, error) {
 // schema pins, the same json tags the module's own surface serves (a
 // marshal round trip, so omitempty and the DECIMAL-as-string legs land
 // exactly as the REST surface writes them).
-func taskData(t Task) (map[string]any, error) {
+func taskData(t Task, picked []PickedLine) (map[string]any, error) {
 	raw, err := json.Marshal(t)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: sync projection: %w", err)
@@ -143,6 +154,17 @@ func taskData(t Task) (map[string]any, error) {
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("tasks: sync projection decode: %w", err)
+	}
+	if len(picked) > 0 {
+		rawPicked, err := json.Marshal(picked)
+		if err != nil {
+			return nil, fmt.Errorf("tasks: sync projection picked: %w", err)
+		}
+		var lines []any
+		if err := json.Unmarshal(rawPicked, &lines); err != nil {
+			return nil, fmt.Errorf("tasks: sync projection picked decode: %w", err)
+		}
+		data["picked"] = lines
 	}
 	return data, nil
 }
@@ -152,7 +174,7 @@ func taskData(t Task) (map[string]any, error) {
 func rowStateOf(r syncRow) (sync.RowState, error) {
 	rs := sync.RowState{ID: r.task.ID, Seq: r.seq, Deleted: r.deleted}
 	if !r.deleted {
-		data, err := taskData(r.task)
+		data, err := taskData(r.task, r.picked)
 		if err != nil {
 			return sync.RowState{}, err
 		}
@@ -179,25 +201,46 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		return nil, nil, fmt.Errorf("tasks: sync pull: %w", err)
 	}
 	defer rows.Close()
-	items := []sync.Entity{}
-	tombstones := []sync.Tombstone{}
+	page := make([]syncRow, 0, limit)
 	for rows.Next() {
 		r, err := scanSyncRow(rows)
 		if err != nil {
 			return nil, nil, fmt.Errorf("tasks: sync pull scan: %w", err)
 		}
+		page = append(page, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("tasks: sync pull: %w", err)
+	}
+	rows.Close()
+	// The page's recorded pick lines ride in one query, after the page query's connection is back.
+	ptrs := make([]*syncRow, len(page))
+	for i := range page {
+		ptrs[i] = &page[i]
+	}
+	if err := s.attachPicked(ctx, s.pool, ptrs...); err != nil {
+		return nil, nil, err
+	}
+	reach := s.ticketReach(ctx, f)
+	items := []sync.Entity{}
+	tombstones := []sync.Tombstone{}
+	for _, r := range page {
 		if r.deleted {
 			tombstones = append(tombstones, sync.Tombstone{ID: r.task.ID, Seq: r.seq})
 			continue
 		}
-		data, err := taskData(r.task)
+		data, err := taskData(r.task, r.picked)
 		if err != nil {
 			return nil, nil, err
 		}
+		// A transient source fault fails the page: the engine answers 503 and the device retries this
+		// cursor, where a ticket-less row would be cached until the task next moves (its seq is the
+		// only thing that re-sends it).
+		if err := s.attachTicketData(ctx, reach, r.task.BranchID, r.task.OrderID, data); err != nil {
+			s.logger().Error("tasks: sync pull ticket read failed", "task", r.task.ID, "order", r.task.OrderID, "err", err)
+			return nil, nil, fmt.Errorf("tasks: sync pull ticket: %w", err)
+		}
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("tasks: sync pull: %w", err)
 	}
 	return items, tombstones, nil
 }
@@ -226,6 +269,10 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: sync find applied: %w", err)
 	}
+	if err := s.attachPicked(ctx, s.pool, &r); err != nil {
+		return sync.RowState{}, false, err
+	}
+	// No ticket here: only the row's seq leaves an applied replay (see DecorateServerState).
 	rs, err := rowStateOf(r)
 	return rs, true, err
 }
@@ -233,7 +280,16 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 // Load reads one row by id under the org predicate; a row outside the
 // caller's org is the same as an absent one (existence never leaks).
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	// No ticket here: Load serves the update and delete paths and the replay, which use the seq and the
+	// task fields. The ticket rides where the row leaves, the conflict envelope (DecorateServerState).
 	return s.load(ctx, s.pool, f, id)
+}
+
+// DecorateServerState attaches the ticket to the row a conflict envelope shows the device, under the
+// caller's branch reach and with a source fault leaving the envelope without it (an envelope is a
+// reply to a write, not a cursor feed, so it degrades and logs). It is the engine's one call for it.
+func (s *SyncStore) DecorateServerState(ctx context.Context, f sync.ScopeFilter, row *sync.RowState) {
+	s.attachTicket(ctx, s.ticketReach(ctx, f), row)
 }
 
 // pickQuerier is the read surface a pool and a transaction share, so one
@@ -241,6 +297,7 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 // already hold a transaction (their own connection).
 type pickQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // load is Load over a querier. A caller inside a transaction passes the
@@ -261,6 +318,9 @@ func (s *SyncStore) load(ctx context.Context, db pickQuerier, f sync.ScopeFilter
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: sync load: %w", err)
 	}
+	if err := s.attachPicked(ctx, db, &r); err != nil {
+		return sync.RowState{}, false, err
+	}
 	rs, err := rowStateOf(r)
 	return rs, true, err
 }
@@ -274,6 +334,7 @@ func (s *SyncStore) load(ctx context.Context, db pickQuerier, f sync.ScopeFilter
 var writableFields = map[string]bool{
 	"id":             true,
 	"status":         true,
+	"picked":         true,
 	"photo_url":      true,
 	"stage_location": true,
 	"stage_ref":      true,
@@ -418,6 +479,9 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	if err := checkWritable(fields); err != nil {
 		return sync.RowState{}, err
 	}
+	if _, record := fields["picked"]; record {
+		return s.writePicked(ctx, f, id, key, fields)
+	}
 	status, hasStatus := fields["status"].(string)
 	if hasStatus && !validStatus(status) {
 		return sync.RowState{}, fmt.Errorf("tasks: unknown status %q: %w", status, sync.ErrOpRefused)
@@ -541,4 +605,82 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 	}
 	rs.Deleted = true
 	return rs, nil
+}
+
+// WithPickSource wires the ticket feed the pull attaches. It is the same PickSource the REST door
+// reads, so there is one builder of a ticket and the two doors cannot drift.
+func (s *SyncStore) WithPickSource(p PickSource) *SyncStore {
+	s.tickets = p
+	return s
+}
+
+// ticketReach resolves the caller's staff authority once and returns the branch test the ticket
+// attach applies to every row of a read: the same authority the record door and the REST doors
+// fence on (CanAccessBranch; GLOBAL reaches all). An authority that cannot be resolved, a caller with
+// no active staff standing, or an unwired resolver returns nil, and nil attaches nothing: the row
+// still ships with its task fields, the ticket (customer, order number, lines) does not.
+func (s *SyncStore) ticketReach(ctx context.Context, f sync.ScopeFilter) func(branch string) bool {
+	if s.tickets == nil || s.staff == nil {
+		return nil
+	}
+	sc, has, err := s.staff(ctx, f.Actor, f.OrgID)
+	if err != nil || !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return nil
+	}
+	return sc.CanAccessBranch
+}
+
+// attachTicket sets the ticket on a read row's projection (see attachTicketData).
+func (s *SyncStore) attachTicket(ctx context.Context, reach func(string) bool, rs *sync.RowState) {
+	if rs.Deleted || rs.Data == nil {
+		return
+	}
+	orderID, _ := rs.Data["order_id"].(string)
+	branch, _ := rs.Data["branch_id"].(string)
+	// A one row read (a conflict envelope, a replay) degrades to the row without its ticket and logs,
+	// as the REST decorate does; only the cursor feed has to fail so a device retries.
+	if err := s.attachTicketData(ctx, reach, branch, orderID, rs.Data); err != nil {
+		s.logger().Warn("tasks: sync row ticket read failed", "task", rs.ID, "order", orderID, "err", err)
+	}
+}
+
+func (s *SyncStore) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
+}
+
+// attachTicketData sets data["ticket"] to the order's pick ticket, the leg the device's pick screen
+// composes from, and only when the caller's authority reaches the row's branch (reach, from
+// ticketReach; nil attaches nothing). The pull is org scoped and the sync filter carries no branch, so
+// this is the fence the REST enumeration doors have ("branch out of scope"). A source that does not
+// know the order (ErrUnknownOrder) leaves the row without a ticket; any other fault is returned, and
+// the Pull fails its page on it. The sync core's filter carries no role, so the cost
+// gate fails closed here: the one money figure of a ticket (still owed) is held out for every caller,
+// as blankTicketMoney does for a role the rule refuses; the hold mark and its words stay. It runs only
+// on the pool reads (Pull, Load, FindApplied), never inside a write transaction, so it never asks the
+// pool for a second connection while holding one.
+func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) bool, branch, orderID string, data map[string]any) error {
+	if s.tickets == nil || reach == nil || orderID == "" || data == nil || !reach(branch) {
+		return nil
+	}
+	t, err := s.tickets.PickTicket(ctx, orderID)
+	if errors.Is(err, ErrUnknownOrder) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	t.StillOwedCents = 0
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	var v map[string]any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	data["ticket"] = v
+	return nil
 }

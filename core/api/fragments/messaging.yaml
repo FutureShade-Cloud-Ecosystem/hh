@@ -40,8 +40,10 @@ paths:
         BRANCH room) is never answered here. Slugs in the system namespaces
         (dm-, rep-, approvals-, chosen or derived) are refused with 400. A
         channel naming a branch the caller does not reach is refused with
-        403; BRANCH, DM and APPROVAL kinds are structural or
-        system-provisioned and are refused with 400.
+        403; BRANCH, DM, APPROVAL and GROUP kinds are structural,
+        system-provisioned or routed through their own doors (a group room
+        goes through POST /api/v1/messaging/groups) and are refused with
+        400.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -72,6 +74,157 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}:
+    delete:
+      operationId: messagingDeleteChannel
+      tags: [staff-messaging]
+      summary: Archive one room the caller manages
+      description: >-
+        Change 7 ruling 7 hand on the room's settings panel: the manager
+        flips the channel to is_archived = true and the channel leaves every
+        list-my-channels read. The wall is the same one membership
+        management carries (room owner or house messages admin, the role
+        matrix's Admin cell on house-messages), not a plain member. An
+        archived room answers 409 already-archived, never a re-archive: the
+        manager wall already wrote the truth, and the second call is not a
+        keep-state. The archive is soft: the row stays for the read path
+        (the audit trail), the channel leaves every list. The body's
+        channel_deleted / is_admin fields are the audit pair the rooms panel
+        records; the work is the DELETE itself.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelDelete"
+      responses:
+        "200":
+          description: The channel is archived
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    patch:
+      operationId: messagingRenameChannel
+      tags: [staff-messaging]
+      summary: Rename a group room; any member may, and a system line records it
+      description: >-
+        Renaming is the group room's own move (the change 7 ruling): any
+        member of the group may rename it, the new name shows to every
+        member through the ordinary channel reads, and the rename writes a
+        system line naming who renamed the group and to what. A caller who
+        is not a member is refused with 403, an unknown room is 404, an
+        empty name is 400, and a room of any other kind (a direct message's
+        name is its parties', a channel's name is its founders') refuses
+        with 409.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelRename"
+      responses:
+        "200":
+          description: The renamed room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}/visibility:
+    patch:
+      operationId: messagingPatchChannelVisibility
+      tags: [staff-messaging]
+      summary: Flip one room's visibility PUBLIC/PRIVATE
+      description: >-
+        Change 7 ruling 7 hand on the room's settings panel: the manager
+        flips PUBLIC/PRIVATE and the room's directory entry changes (a
+        PRIVATE room hides behind the membership wall, the branch model
+        keeps what it derives, and the membership-management wall carries
+        hand-add). The wall is the same one membership management carries
+        (room owner or house messages admin, the role matrix's Admin cell
+        on house-messages), not a plain member. An invalid value is
+        refused in shape the migration's CHECK already permits.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelVisibilityPatch"
+      responses:
+        "200":
+          description: The visibility was flipped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/directory:
+    get:
+      operationId: messagingListDirectory
+      tags: [staff-messaging]
+      summary: List the PUBLIC channels the caller can see, with the caller's membership state
+      description: >-
+        Walk change 7 ruling 7 directory. Returns every non-archived PUBLIC
+        channel of kind TEAM, TOPIC, or BRANCH that the caller's branch reach
+        can see, plus the caller's membership state (joined bool,
+        membership_source DERIVED/EXPLICIT/empty, member_count). DM and
+        APPROVAL rooms are excluded (the directory is the team's hand-built
+        rooms, not the system namespaces). A branch-scoped caller sees only
+        rooms whose branch_id they reach; a GLOBAL caller sees every branch.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The directory entries the caller can see
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingDirectoryList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/messaging/dms:
     post:
@@ -117,7 +270,115 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/messaging/people:
+    get:
+      operationId: messagingListPeople
+      tags: [staff-messaging]
+      summary: List the org's active staff for the New message picker
+      description: >-
+        The staffer readable roster the New message picker lists: every
+        active staffer of the caller's org, each with a display name, a
+        role label (the role catalog's display name, never the code) and a
+        branch label. The shape carries no email, no phone, no permission
+        or cost field and no tier. The caller is on the list, flagged
+        is_me. The wall follows the direct message rule: a direct message
+        names no branch, so the picker reaches every branch's staff of the
+        org, exactly the people a direct message may be opened with, less
+        the holders of the platform SUPER_ADMIN role, who are no dealer's
+        staffer and are never listed (the direct message route itself
+        still opens one by id). Ordered by display name then id; cursor
+        paginated.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: false
+          description: Case insensitive contains match on display name
+          schema: { type: string }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of people
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPersonPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/groups:
+    post:
+      operationId: messagingCreateGroup
+      tags: [staff-messaging]
+      summary: Start a group room with an optional name and any set of staffers
+      description: >-
+        A group is the change 7 ruling's named room: any staffer may start
+        one, membership is explicit (never rule filled, like a direct
+        message's), and the room spans branches, so the people named need
+        reach no branch the caller holds. The name is optional: a group
+        started with no name takes its members' display names as its name
+        until a member renames it. The caller is seated as the group's owner
+        and every named staffer as an explicit member; a staffer who is not
+        active is refused with 403 and an id that names no staffer is 404.
+        There is no convergence: every call starts a new group.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingGroupCreate"
+      responses:
+        "201":
+          description: The group room as started, the caller its owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/messaging/channels/{id}/members:
+    get:
+      operationId: messagingListChannelMembers
+      tags: [staff-messaging]
+      summary: List the channel's membership rows with the audit pair
+      description: >-
+        Walk change 7 ruling 7 rules read. Returns every membership row of
+        the channel with the audit fields the Settings > Membership rules
+        "Added by hand" panel shows: user_id, display_name, role, source,
+        added_reason, added_by. The caller must be a member of the channel
+        (the membership wall is the same wall the other reads carry).
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The channel's membership rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMembersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: messagingAddChannelMember
       tags: [staff-messaging]
@@ -133,8 +394,11 @@ paths:
         role matrix gives Admin on house-messages (the general manager),
         everyone else is 403; and on a room whose membership the branch
         model derives, a target who reaches neither the room's branch nor
-        every branch is 403. A user who is not an active staffer is 404 or
-        403.
+        every branch is 403. A group room is the change 7 ruling's exception
+        to the manager rule: any member may add any staffer by hand, of any
+        branch (a group spans branches), and the fresh seat writes a system
+        line naming who was added and by whom. A user who is not an active
+        staffer is 404 or 403.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
@@ -147,7 +411,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MessagingDMCreate"
+              $ref: "#/components/schemas/MessagingChannelMemberAdd"
       responses:
         "200":
           description: The membership row as seated
@@ -203,6 +467,135 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}/join:
+    post:
+      operationId: messagingJoinChannel
+      tags: [staff-messaging]
+      summary: Self-join a PUBLIC channel the caller reaches
+      description: >-
+        Walk change 7 ruling 7 self-join. A staffer who reaches the channel's
+        branch may join a PUBLIC TEAM or TOPIC channel (PRIVATE rooms refuse
+        403; DM and APPROVAL refuse 403/409; money rooms with member_roles
+        refuse 403 unless the caller holds a listed role). The seat is
+        EXPLICIT MEMBER; an already-seated caller is a no-op (a re-join never
+        downgrades DERIVED or OWNER).
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The seated member row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}/leave:
+    post:
+      operationId: messagingLeaveChannel
+      tags: [staff-messaging]
+      summary: Self-leave a channel the caller belongs to
+      description: >-
+        Walk change 7 ruling 7 self-leave. A caller may leave a channel whose
+        seat is EXPLICIT MEMBER. A DERIVED row is refused with 409 (the
+        "Joined by rule, you stay" wall, the role and branch model owns the
+        row); the last OWNER refuses with 409 (a channel keeps its owner);
+        DM and APPROVAL refuse with 409 (fixed membership).
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The leave echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/membership-rules:
+    get:
+      operationId: messagingListMembershipRules
+      tags: [staff-messaging]
+      summary: List every channel's membership rule the caller can see
+      description: >-
+        Walk change 7 ruling 7 rules collection read. Returns each channel's
+        rule row (auto_scope, auto_role, visibility) plus the directory's
+        read shape (name, kind, branch_id). The collection is scoped the
+        same way as the directory: PUBLIC, non-archived, branch-reach wall.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The membership rules the caller can see
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMembershipRulesList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/messaging/channels/{id}/membership-rule:
+    put:
+      operationId: messagingUpdateMembershipRule
+      tags: [staff-messaging]
+      summary: Update one room's membership rule (admin only)
+      description: >-
+        Walk change 7 ruling 7 rules write. Updates the channel's
+        auto_scope (empty, BRANCH, or GLOBAL), auto_role (a role code or "*"
+        for any), and visibility (PUBLIC or PRIVATE) in one transaction.
+        The wall is admin-only: only a role the role matrix gives Admin on
+        house-messages (the roleconfig publish) may write a room's rule.
+        The write commits the change plus a channel-feed bump in one
+        transaction; the next SyncMembership reconciles the derived seats.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingMembershipRule"
+      responses:
+        "200":
+          description: The rule as updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMembershipRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/messaging/channels/{id}/messages:
     get:
@@ -261,6 +654,87 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}:
+    patch:
+      operationId: messagingEditMessage
+      tags: [staff-messaging]
+      summary: Edit the caller's own message inside the edit window
+      description: >-
+        Change 7 (ruling 6): a person edits only their own text messages,
+        only inside the edit window the dealer's messaging policy keeps.
+        The walls answer in their own words: not the author is 403, a
+        system message or a forced acknowledgement notice is 409 (a notice
+        is never editable once sent, a correction is a new notice), a
+        deleted message is 409, a closed window is 409. Offline devices
+        carry the change through the messages sync scope's fresh seq; the
+        sync write path itself still refuses an edit of a sent message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          description: The message being edited
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingMessageEdit"
+      responses:
+        "200":
+          description: The edited message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: messagingDeleteMessage
+      tags: [staff-messaging]
+      summary: Delete the caller's own message inside the edit window
+      description: >-
+        Change 7 (ruling 6): a person deletes only their own text messages,
+        only inside the edit window. The deletion is a tombstone: the body
+        is dropped in the row, deleted_at is stamped, and the answer is the
+        tombstone the surface renders in place. The same walls as the edit,
+        minus the tombstone one: deleting a tombstone again answers it as
+        it stands (200). Offline devices are told through the messages sync
+        scope's fresh seq; the sync write path itself still refuses a
+        delete of a sent message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          description: The message being deleted
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The tombstoned message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/messaging/channels/{id}/threads/{rootID}:
     get:
@@ -385,8 +859,202 @@ paths:
               schema:
                 $ref: "#/components/schemas/MessagingAckProgress"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/messaging/channels/{id}/attachments:
+    get:
+      operationId: messagingListChannelAttachments
+      tags: [staff-messaging]
+      summary: List all files and photos shared in a room
+      description: >-
+        Returns photos, files, and member count for a channel, group room,
+        or direct message room, ordered newest first.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Photos and files in the room with member count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelAttachmentsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: messagingCreateChannelAttachment
+      tags: [staff-messaging]
+      summary: Share a file or photo in a room
+      description: >-
+        Registers or links an attachment to a channel or message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelAttachmentCreate"
+      responses:
+        "201":
+          description: The created room attachment item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageAttachment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}/reactions:
+    put:
+      operationId: messagingAddReaction
+      tags: [staff-messaging]
+      summary: Seat the caller's reaction on one message, idempotently
+      description: >-
+        A reaction is none on EVENT, approval or other system messages (the
+        change 7 ruling): a system message refuses with 409. A replay of the
+        same (message, caller, emoji) lands once and changes nothing; the
+        answer is the message's fresh summary with mine answered for the
+        caller.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingReactionPut"
+      responses:
+        "200":
+          description: The message's fresh reaction summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingReactionSummary"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}:
+    delete:
+      operationId: messagingRemoveReaction
+      tags: [staff-messaging]
+      summary: Remove the caller's one emoji from one message
+      description: >-
+        The emoji rides the path, URL escaped. The refusal and the idempotence
+        are the add's: a system message refuses with 409, and removing what is
+        not there is a 200 whose summary reports the caller's end state.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: emoji
+          in: path
+          required: true
+          description: The reaction key (an emoji or a short word chip)
+          schema: { type: string }
+      responses:
+        "200":
+          description: The message's fresh reaction summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingReactionSummary"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}/seen-by:
+    get:
+      operationId: messagingMessageSeenBy
+      tags: [staff-messaging]
+      summary: Read the seen-by arithmetic for one message
+      description: >-
+        The board's "Seen N": the exact count of the room's members whose read
+        cursor stands at or past the message's created_at, the author excepted
+        (nobody is seen by their own post; a system message, whose author is
+        nobody, counts every member past it). readers names them, newest read
+        first, capped while the count stays exact.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The seen-by count and readers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingSeenBy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/mentions:
+    get:
+      operationId: messagingListMentions
+      tags: [staff-messaging]
+      summary: List the messages naming the caller or the caller's role
+      description: >-
+        The mentions view (the change 7 ruling): every message in a room the
+        caller belongs to that names the caller, by person or by one of the
+        caller's own role codes, newest first, cursor paginated by the same
+        keyset the message stream uses. Deleted messages never appear.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of mention messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessagePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/messaging/unacked:
     get:
@@ -736,6 +1404,66 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/messaging/notification-settings:
+    get:
+      operationId: messagingGetNotificationSettings
+      tags: [staff-messaging]
+      summary: Get the caller's notification-settings envelope
+      description: >-
+        Returns the caller's full notification-settings envelope: the closed
+        6-item event-category set in board order (with the per-category default
+        filled when no row exists for that category) and the caller's
+        quiet-hours row (with shipped defaults when no row). The user id comes
+        from the verified staff identity, never from the path or body, so no
+        route reads another staffer's notification choices.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's full notification-settings envelope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotificationSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: messagingPutNotificationSettings
+      tags: [staff-messaging]
+      summary: Upsert the caller's notification-settings envelope
+      description: >-
+        Partial upsert: event_prefs and quiet_hours are both optional and may
+        be sent together or alone. Per-category fields are pointers so an
+        omitted field keeps the caller's current value on the upsert
+        (omitted-fields-keep-their-current-value). Unknown category names
+        return 400, malformed HH:MM and unresolvable timezones return 400.
+        The user id comes from the verified staff identity, so one staffer's
+        PUT cannot alter another's stored rows.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingNotificationSettingsPatch"
+      responses:
+        "200":
+          description: The caller's full notification-settings envelope after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotificationSettings"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/messaging/rep-assignments:
     get:
       operationId: messagingListRepAssignments
@@ -1027,20 +1755,216 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v1/messaging/saved:
+    get:
+      operationId: messagingListSaved
+      tags: [staff-messaging]
+      summary: List the caller's saved messages
+      description: Only the caller's own rows, inside rooms they still belong to and the hot window. Deleted messages render with an empty body.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Saved messages ordered by saved time then message id, descending
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagingSavedList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: messagingSaveMessage
+      tags: [staff-messaging]
+      summary: Save one message for the caller
+      description: The message must be live and in a room the caller belongs to. Replaying the save keeps the original saved time.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessagingSavedSave" }
+      responses:
+        "200":
+          description: The saved message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagingSavedItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/saved/{messageID}:
+    delete:
+      operationId: messagingUnsaveMessage
+      tags: [staff-messaging]
+      summary: Remove one of the caller's saved messages
+      description: Idempotent for the caller, including when the row is already absent.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: messageID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: The saved row is absent }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/search:
+    get:
+      operationId: messagingSearch
+      tags: [staff-messaging]
+      summary: Search messages, people, and reachable channels
+      description: >-
+        Messages are live rows inside the caller's current rooms and the hot window.
+        People are active staff in the caller's org, excluding platform administrators.
+        Channels are public rooms or rooms the caller belongs to. The limit applies to each scope.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          description: Case-insensitive contains match; pattern wildcards are treated literally
+          schema: { type: string, minLength: 2 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, format: int32, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: The three scoped result lists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagingSearchResults" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   schemas:
+    MessagingSearchMessage:
+      type: object
+      required: [message_id, channel_id, channel_slug, channel_name, author_id, author_name, kind, body, created_at]
+      properties:
+        message_id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        channel_slug: { type: string }
+        channel_name: { type: string }
+        author_id: { type: string }
+        author_name: { type: string }
+        kind:
+          type: string
+          enum: [TEXT, EVENT, APPROVAL]
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+
+    MessagingSearchPerson:
+      type: object
+      description: A staff directory result; never includes email or phone
+      required: [user_id, display_name, role_code, role_label, branch_label]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role_code: { type: string }
+        role_label: { type: string }
+        branch_label: { type: string }
+
+    MessagingSearchChannel:
+      type: object
+      required: [id, slug, name, kind, topic, is_member]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL, GROUP]
+        topic: { type: string }
+        is_member: { type: boolean }
+
+    MessagingSearchResults:
+      type: object
+      required: [messages, people, channels]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingSearchMessage" }
+        people:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingSearchPerson" }
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingSearchChannel" }
+
+    MessagingSavedSave:
+      type: object
+      required: [message_id]
+      properties:
+        message_id: { type: string, format: uuid }
+
+    MessagingSavedItem:
+      type: object
+      required: [message_id, channel_id, channel_slug, channel_name, author_id, author_name, kind, body, created_at, saved_at]
+      properties:
+        message_id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        channel_slug: { type: string }
+        channel_name: { type: string }
+        author_id: { type: string }
+        author_name: { type: string }
+        kind:
+          type: string
+          enum: [TEXT, EVENT, APPROVAL]
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        saved_at: { type: string, format: date-time }
+
+    MessagingSavedList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingSavedItem" }
+
     MessagingChannel:
       type: object
       description: >-
         One conversation surface. unread_count, mentioned and latest_at are
         populated only in the list-my-channels projection; they are
-        per-caller, not intrinsic to the channel.
-      required: [id, kind, name, topic, tier, is_archived, created_at, unread_count, mentioned]
+        per-caller, not intrinsic to the channel. visibility is the change 7
+        ruling 7 hand: PUBLIC rooms list in the directory and accept any
+        member the branch and role model approves; PRIVATE rooms are
+        wall-only (the room owner or house messages admin hands members in,
+        the audit row records the reason).
+      required: [id, kind, name, topic, tier, visibility, is_archived, created_at, unread_count, mentioned]
       properties:
         id: { type: string, format: uuid }
         kind:
           type: string
-          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL]
+          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL, GROUP]
         branch_id: { type: string }
         slug: { type: string }
         name: { type: string }
@@ -1048,6 +1972,9 @@ components:
         tier:
           type: string
           enum: [STANDARD, ESCALATION, FIREHOSE]
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
         is_archived: { type: boolean }
         created_at: { type: string, format: date-time }
         unread_count: { type: integer, format: int32 }
@@ -1070,7 +1997,9 @@ components:
         One caller-founded channel. Slug is optional: an empty slug is
         derived from the name, so the same founding twice converges on one
         room. BranchID optionally scopes a TEAM channel to one yard the
-        caller reaches.
+        caller reaches. Visibility defaults to PUBLIC when unset (the room's
+        settings panel default, change 7 ruling 7 hand: a PRIVATE room hides
+        from the directory behind the membership wall).
       required: [kind, name]
       properties:
         kind:
@@ -1080,6 +2009,9 @@ components:
         topic: { type: string }
         slug: { type: string }
         branch_id: { type: string, format: uuid }
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
 
     MessagingDMCreate:
       type: object
@@ -1088,12 +2020,36 @@ components:
       properties:
         user_id: { type: string, format: uuid }
 
+    MessagingGroupCreate:
+      type: object
+      description: >-
+        One new group room. The name is optional (a group started with no
+        name takes its members' display names until a member renames it) and
+        so is the set: the caller is always a member and its owner, and each
+        named staffer is seated as an explicit member. There is no
+        convergence; every call starts a new group.
+      properties:
+        name: { type: string }
+        member_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MessagingChannelRename:
+      type: object
+      description: The group room's new name; a system line records who renamed it
+      required: [name]
+      properties:
+        name: { type: string }
+
     MessagingChannelMember:
       type: object
       description: >-
         One membership row. DERIVED rows are the role and branch model's and
         are never hand-removable; EXPLICIT rows are the seat this surface
-        writes.
+        writes. added_reason and added_by are the change 7 ruling 7 hand on
+        the row's audit: a fresh seat writes the manager's text reason and
+        the user id who added them, and a re-seat reads them back whatever
+        they are.
       required: [channel_id, user_id, role, source, joined_at]
       properties:
         channel_id: { type: string, format: uuid }
@@ -1105,6 +2061,199 @@ components:
           type: string
           enum: [DERIVED, EXPLICIT]
         joined_at: { type: string, format: date-time }
+        added_reason: { type: string }
+        added_by: { type: string, format: uuid }
+
+    MessagingChannelMemberAdd:
+      type: object
+      description: >-
+        The change 7 ruling 7 body for POST /api/v1/messaging/channels/{id}/members.
+        user_id names the staff member being seated (active); added_reason is
+        the manager's text reason the staff member reads in the row audit
+        (Settings > Membership rules "Added by hand"); added_by is the user
+        id of the manager who wrote the row (the audit pair). role is always
+        MEMBER here; an OWNER is the room's founder and is not
+        hand-assignable.
+      required: [user_id, role]
+      properties:
+        user_id: { type: string, format: uuid }
+        role:
+          type: string
+          enum: [MEMBER]
+        added_reason: { type: string }
+        added_by: { type: string, format: uuid }
+
+    MessagingChannelVisibilityPatch:
+      type: object
+      description: >-
+        The change 7 ruling 7 body for PATCH /api/v1/messaging/channels/{id}/visibility.
+        visibility is PUBLIC (a directory room, hand-add opens or branch model
+        keeps) or PRIVATE (a wall room, hand-add only and the directory hides
+        it). An invalid value is refused in shape the migration's CHECK already
+        permits.
+      required: [visibility]
+      properties:
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
+
+    MessagingMembershipRule:
+      type: object
+      description: >-
+        The Settings > Membership rules write body (item 3b's rule write).
+        auto_scope is empty (hand-built), BRANCH (the branch model's
+        reach), or GLOBAL (every active staff derives in). auto_role is a
+        role code or "*" (any role qualifies; the wildcard the SQL reads).
+        visibility is PUBLIC or PRIVATE (the room's settings panel default,
+        private for now).
+      required: [auto_scope, auto_role, visibility]
+      properties:
+        auto_scope:
+          type: string
+          enum: ["", BRANCH, GLOBAL]
+        auto_role:
+          type: string
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
+
+    MessagingMembershipRuleEntry:
+      type: object
+      description: >-
+        One row of GET /api/v1/messaging/membership-rules: a channel's
+        rule (auto_scope, auto_role, visibility) plus the directory's read
+        shape (channel_id, name, kind, branch_id). The admin's "Settings >
+        Membership rules" panel reads the collection.
+      required: [channel_id, name, kind, auto_scope, auto_role, visibility]
+      properties:
+        channel_id: { type: string, format: uuid }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [TEAM, TOPIC, BRANCH]
+        branch_id: { type: string }
+        auto_scope:
+          type: string
+          enum: ["", BRANCH, GLOBAL]
+        auto_role: { type: string }
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
+
+    MessagingMembershipRulesList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/membership-rules.
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingMembershipRuleEntry"
+
+    MessagingDirectoryEntry:
+      type: object
+      description: >-
+        One row of GET /api/v1/messaging/directory: a PUBLIC, non-archived
+        channel (TEAM, TOPIC, BRANCH) with the caller's own membership
+        state. joined=true with source=DERIVED means the role and branch
+        model derived them in; joined=true with source=EXPLICIT means they
+        hand-joined or were hand-added; member_count is the room's current
+        seat count (DERIVED + EXPLICIT).
+      required: [channel_id, kind, name, joined, membership_source, member_count]
+      properties:
+        channel_id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [TEAM, TOPIC, BRANCH]
+        branch_id: { type: string }
+        name: { type: string }
+        topic: { type: string }
+        slug: { type: string }
+        joined: { type: boolean }
+        membership_source:
+          type: string
+          enum: ["", DERIVED, EXPLICIT]
+        member_count: { type: integer, format: int32 }
+
+    MessagingDirectoryList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/directory.
+      required: [channels]
+      properties:
+        channels:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/MessagingDirectoryEntry"
+
+    MessagingChannelMemberEntry:
+      type: object
+      description: >-
+        One row of GET /api/v1/messaging/channels/{id}/members: the
+        channel's membership with the audit fields the Settings >
+        Membership rules "Added by hand" panel shows.
+      required: [user_id, role, source, joined_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role:
+          type: string
+          enum: [MEMBER, OWNER]
+        source:
+          type: string
+          enum: [DERIVED, EXPLICIT]
+        added_reason: { type: string }
+        added_by: { type: string, format: uuid }
+        joined_at: { type: string, format: date-time }
+
+    MessagingChannelMembersList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/channels/{id}/members.
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingChannelMemberEntry"
+
+    MessagingChannelDelete:
+      type: object
+      description: >-
+        The change 8 ruling 8 body for DELETE /api/v1/messaging/channels/{id}.
+        The body's acknowledgement pair (channel_deleted=true, is_admin=true)
+        is the keep-state the manager's hand-add screen records. The body is
+        not strictly required (the repository's archive is the work), but the
+        schema names the audit pair the rooms panel shows.
+      properties:
+        channel_deleted: { type: boolean }
+        is_admin: { type: boolean }
+
+    MessagingPerson:
+      type: object
+      description: >-
+        One staffer of the caller's org on the New message picker's roster.
+        The shape carries no email, no phone, no permission or cost field
+        and no tier. role_label is the role catalog's display name and
+        branch_label the person's granted branches' display names joined
+        with a comma and a space; either is empty when the person holds
+        none. is_me flags the caller's own row.
+      required: [user_id, display_name, role_label, branch_label, is_me]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role_label: { type: string }
+        branch_label: { type: string }
+        is_me: { type: boolean }
+
+    MessagingPersonPage:
+      type: object
+      description: The roster page envelope, the contract's shared page shape
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingPerson" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
 
     MessagingMessage:
       type: object
@@ -1159,6 +2308,91 @@ components:
           type: [string, "null"]
           format: date-time
         created_at: { type: string, format: date-time }
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+        reactions:
+          type: array
+          description: >-
+            The reaction summary, one row per emoji in the order the emoji
+            were first given; absent on a message with no reactions and on
+            every payload that predates the feature.
+          items:
+            $ref: "#/components/schemas/MessagingReactionCount"
+
+    MessageAttachment:
+      type: object
+      description: >-
+        One file or photo attached to a message or channel.
+      required: [id, filename, content_type, size_bytes, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id:
+          type: [string, "null"]
+          format: uuid
+        channel_id:
+          type: [string, "null"]
+          format: uuid
+        attachment_id:
+          type: [string, "null"]
+          format: uuid
+        filename: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        storage_key: { type: string }
+        kind:
+          type: string
+          enum: [photo, document]
+        uploaded_by:
+          type: [string, "null"]
+          format: uuid
+        sender_name:
+          type: string
+          description: Resolved display name of the uploader
+        appwrite_file_id:
+          type: string
+          description: File ID in Appwrite storage
+        bucket:
+          type: string
+          description: Storage bucket
+        created_at: { type: string, format: date-time }
+
+    MessagingChannelAttachmentsResponse:
+      type: object
+      description: >-
+        All files and photos shared in a room with member count.
+      required: [photos, files, member_count]
+      properties:
+        photos:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+        member_count:
+          type: integer
+          format: int32
+
+    MessagingChannelAttachmentCreate:
+      type: object
+      description: >-
+        Payload to upload or link an attachment to a channel or message.
+      required: [attachment_id, filename]
+      properties:
+        attachment_id: { type: string, format: uuid }
+        message_id:
+          type: [string, "null"]
+          format: uuid
+        filename: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        kind:
+          type: string
+          enum: [photo, document]
+        storage_key: { type: string }
 
     MessagingEventRef:
       type: object
@@ -1237,6 +2471,14 @@ components:
           format: uuid
           description: Set to reply inside a thread
 
+    MessagingMessageEdit:
+      type: object
+      required: [body]
+      description: >-
+        The edit body, the message's new wording, bounded as a post is.
+      properties:
+        body: { type: string }
+
     MessagingAckRequest:
       type: object
       description: An empty body is valid and means the default method TAP
@@ -1257,6 +2499,66 @@ components:
           type: string
           enum: [TAP, QUICK_REPLY, VOICE]
         acked_at: { type: string, format: date-time }
+
+    MessagingReactionPut:
+      type: object
+      description: The reaction body, one emoji or a short word chip
+      required: [emoji]
+      properties:
+        emoji:
+          type: string
+          description: >-
+            The reaction key; trimmed, non-empty, at most 64 bytes, so a
+            composed emoji sequence and every word chip the boards draw fit
+            and a body-sized blob does not.
+
+    MessagingReactionCount:
+      type: object
+      description: One emoji's line of a reaction summary (the board's "Thanks 1" chip)
+      required: [emoji, count, mine]
+      properties:
+        emoji: { type: string }
+        count:
+          type: integer
+          format: int32
+          description: How many members reacted with this emoji
+        mine:
+          type: boolean
+          description: Whether the READER is one of them; answered per read, never stored
+
+    MessagingReactionSummary:
+      type: object
+      description: The message's reaction summary; empty when nothing reacts
+      required: [reactions]
+      properties:
+        reactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingReactionCount"
+
+    MessagingSeenByReader:
+      type: object
+      description: One member the seen-by read names
+      required: [user_id, display_name]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+
+    MessagingSeenBy:
+      type: object
+      description: >-
+        The seen-by read model: the exact count of the room's members past the
+        message, the author excepted, plus the readers themselves (newest read
+        first, capped while the count stays exact)
+      required: [count, readers]
+      properties:
+        count:
+          type: integer
+          format: int32
+        readers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingSeenByReader"
 
     MessagingAckProgress:
       type: object
@@ -1429,6 +2731,118 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
+
+    MessagingPersonEventPref:
+      type: object
+      description: >-
+        One user's answer for one event-category. The closed 6-item category set
+        (in board order) is the schema's copy of messaging.EventCategories so a
+        value the code does not know can never be stored. updated_at is the row's
+        last-write timestamp; absent when the user has no stored row.
+      required: [user_id, event_category, in_app, push]
+      properties:
+        user_id: { type: string, format: uuid }
+        event_category:
+          type: string
+          enum:
+            - orders_released_and_blocked
+            - stock_received
+            - credit_holds_and_credit_owed
+            - deliveries_scheduled
+            - payments
+            - approvals_waiting_on_me
+        in_app: { type: boolean }
+        push: { type: boolean }
+        updated_at: { type: string, format: date-time }
+
+    MessagingPersonEventPrefPut:
+      type: object
+      description: >-
+        Per-category upsert body. category is required; in_app and push are
+        optional so an omitted field keeps the caller's current value (the
+        omitted-fields-keep-their-current-value rule).
+      required: [category]
+      properties:
+        category:
+          type: string
+          enum:
+            - orders_released_and_blocked
+            - stock_received
+            - credit_holds_and_credit_owed
+            - deliveries_scheduled
+            - payments
+            - approvals_waiting_on_me
+        in_app: { type: boolean }
+        push: { type: boolean }
+
+    MessagingQuietHours:
+      type: object
+      description: >-
+        One user's quiet-hours row. start_local and end_local are 24-hour HH:MM
+        in the user's timezone; overnight windows (start > end) are supported.
+        timezone defaults to America/Los_Angeles. bypass_user_ids is the DM
+        carve-out (ruling 8): DMs from these people still ring as drawn on the
+        board.
+      required: [user_id, enabled, start_local, end_local, timezone, bypass_user_ids]
+      properties:
+        user_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        start_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        end_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        timezone: { type: string }
+        bypass_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+
+    MessagingQuietHoursPut:
+      type: object
+      description: >-
+        Quiet-hours upsert body. Every field is optional; the service merges over
+        the caller's current row. Timezone falls back to UTC on a bad value at
+        the predicate boundary, so the handler refuses bad timezones (400)
+        before any row is written.
+      properties:
+        enabled: { type: boolean }
+        start_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        end_local:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        timezone: { type: string }
+        bypass_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MessagingNotificationSettings:
+      type: object
+      description: >-
+        The full notification-settings envelope. event_prefs is the closed
+        6-item category set in board order (with per-category defaults when no
+        row exists). quiet_hours is the user's quiet-hours row (with shipped
+        defaults when no row exists).
+      required: [event_prefs, quiet_hours]
+      properties:
+        event_prefs:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingPersonEventPref" }
+        quiet_hours: { $ref: "#/components/schemas/MessagingQuietHours" }
+
+    MessagingNotificationSettingsPatch:
+      type: object
+      description: >-
+        The partial-upsert body for PUT /notification-settings. event_prefs and
+        quiet_hours are both optional and may be sent together or alone.
+      properties:
+        event_prefs:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingPersonEventPrefPut" }
+        quiet_hours: { $ref: "#/components/schemas/MessagingQuietHoursPut" }
 
     MessagingRepAssignment:
       type: object

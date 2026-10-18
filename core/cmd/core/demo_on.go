@@ -90,16 +90,18 @@ type demoServeConfig struct {
 	// The fields below it that the console mode needs (issuer and the FB
 	// Console values) stay empty in the demo mode, whose composition is the
 	// one this file always made.
-	signin         signinMode
-	issuer         string
-	appwriteURL    string
-	appwriteProj   string
-	appwriteKey    string
-	databaseURL    string
-	staffAudience  string
-	tenantAudience string
-	tokenTTL       time.Duration
-	listenAddr     string
+	signin           signinMode
+	issuer           string
+	appwriteURL      string
+	appwriteProj     string
+	appwriteKey      string
+	persona          personaConfig
+	databaseURL      string
+	staffAudience    string
+	tenantAudience   string
+	tokenTTL         time.Duration
+	listenAddr       string
+	visitorAllowance int
 }
 
 func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
@@ -131,11 +133,12 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 		return demoServeConfig{}, err
 	}
 	cfg := demoServeConfig{
-		signin:         mode,
-		databaseURL:    databaseURL,
-		staffAudience:  staff,
-		tenantAudience: tenant,
-		listenAddr:     addr,
+		signin:           mode,
+		databaseURL:      databaseURL,
+		staffAudience:    staff,
+		tenantAudience:   tenant,
+		listenAddr:       addr,
+		visitorAllowance: demo.VisitorAllowance(getenv(demo.VisitorAllowanceVar)),
 	}
 	if mode == signinConsole {
 		// The console mode runs the real issuer and FB Console membership,
@@ -157,6 +160,12 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 		}
 		if len(missing) > 0 {
 			return demoServeConfig{}, fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+		}
+		// The persona route's caller rule is declared by every console
+		// copy of the demo build, with no default.
+		cfg.persona, err = loadPersonaConfig(getenv)
+		if err != nil {
+			return demoServeConfig{}, err
 		}
 		return cfg, nil
 	}
@@ -473,11 +482,24 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 			return nil, err
 		}
 		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
+		// The persona route (item 7c): the tap-a-role entry under the real
+		// sign in. It mints the persona's own session with the same signing
+		// key, behind the copy's declared caller rule. Console mode only.
+		pers, err := buildPersona(personaDeps{
+			cfg: demoCfg.persona, log: log, verify: verifier, session: session, orgs: orgs, staff: staff,
+			knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)}, audit: money.auditSvc,
+		})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
 		methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
 		if err != nil {
 			pool.Close()
 			return nil, err
 		}
+		r.Handle("POST /api/v1/auth/persona", g.Public(pers))
 		r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
 	}
 
@@ -486,15 +508,20 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// public leg the tenant config uses. The module builds on this file's
 	// issuer, the org resolver and the staff resolver above, the audit
 	// recorder the money spine already writes its trail with, and the
-	// closed flow table; the per-address limit arrives by constructor too
-	// and the wiring names none, so the default allowance stands.
+	// closed flow table; the per-visitor limit arrives by constructor too,
+	// read from HH_DEMO_MINT_VISITOR_ALLOWANCE once at boot, while the
+	// address ceiling stays at DefaultAddressCeiling whatever the visitor
+	// allowance is set to.
 	//
 	// Registered in the demo mode only. Under the console mode the old mint
 	// routes are not registered and answer 404: a copy that signs real
 	// sessions has no credential-free mint.
 	var demoMint func(string) (string, error)
 	if demoCfg.signin == signinDemo {
-		mint, err := demo.NewMint(demo.MintDeps{Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+		mint, err := demo.NewMint(demo.MintDeps{
+			Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc,
+			Limit: demo.NewAddressLimit(demoCfg.visitorAllowance, 0, nil),
+		})
 		if err != nil {
 			pool.Close()
 			return nil, err
@@ -511,13 +538,17 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	}, nil
 }
 
-// demoConsoleMembership is the seam item 7 fills: under the console mode
-// the demo build's membership is FB Console's behind its cache, and item 7
-// wraps it in the composite that answers the persona subjects from a static
-// source compiled into this build only. Until then it is the console source
-// alone, exactly the default build's.
+// demoConsoleMembership is the demo build's console mode membership: the
+// composite that answers the persona subjects from a static source compiled
+// into this build only, and every other subject from FB Console behind its
+// cache (state note section 5). A subject with a colon never reaches FB
+// Console, and a subject without one is never looked up in the static map.
 func demoConsoleMembership(cfg demoServeConfig) (authz.MembershipSource, error) {
-	return consoleMembership(cfg.appwriteURL, cfg.appwriteProj, cfg.appwriteKey)
+	console, err := consoleMembership(cfg.appwriteURL, cfg.appwriteProj, cfg.appwriteKey)
+	if err != nil {
+		return nil, err
+	}
+	return membership.NewComposite(console)
 }
 
 // demoRoleConfig is the default's demo path: the decided default document

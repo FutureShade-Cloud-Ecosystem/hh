@@ -36,6 +36,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -188,7 +189,12 @@ type StatementService struct {
 	outbox StatementOutbox
 	audit  audit.Recorder
 	clock  func() time.Time
+	zone   houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source: a statement run is cut at the dealer's own
+// calendar day. Nil keeps the Ontario dealer's.
+func (s *StatementService) WithZone(src houseday.Source) *StatementService { s.zone = src; return s }
 
 // NewStatementService builds the service.
 func NewStatementService(store statementStore) *StatementService {
@@ -225,7 +231,11 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}
-	asOf = houseClock(asOf)
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return StatementRun{}, nil, err
+	}
+	asOf = houseClockIn(zone, asOf)
 
 	// The caller's branch reach (branch_reach.go). A caller who reaches one branch files its run under
 	// that branch, so the run can be read back by the same reach and no other.
@@ -288,7 +298,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 		st := Statement{
 			RunID: runID, CustomerID: r.CustomerID, CustomerName: r.CustomerName, AsOfDate: asOf,
 			CurrentCents: r.CurrentCents, Days30Cents: r.Days30Cents, Days60Cents: r.Days60Cents,
-			Days90PlusCents: r.Days90PlusCents, ClosingCents: r.TotalCents,
+			Days90PlusCents: r.Days60To90Cents + r.Days90PlusCents, ClosingCents: r.TotalCents,
 			DeliveryStatus: DeliveryNotQueued,
 		}
 		st.HTML = RenderStatementHTML(header, r, lines, asOf)
@@ -447,15 +457,15 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 		b.WriteString(`<th style="padding:8px 4px;font-size:12px;text-align:right;border-bottom:1px solid #ccc">` + th + `</th>`)
 	}
 	b.WriteString(`</tr></thead><tbody><tr>`)
-	for _, v := range []int64{r.CurrentCents, r.Days30Cents, r.Days60Cents, r.Days90PlusCents} {
+	for _, v := range []int64{r.CurrentCents, r.Days30Cents, r.Days60Cents, r.Days60To90Cents + r.Days90PlusCents} {
 		b.WriteString(`<td style="padding:10px 4px;text-align:right">` + Money(v) + `</td>`)
 	}
 	b.WriteString(`<td style="padding:10px 4px;text-align:right;font-weight:700">` + Money(r.TotalCents) + `</td>`)
 	b.WriteString(`</tr></tbody></table>`)
 
-	if r.Days90PlusCents > 0 {
+	if over60 := r.Days60To90Cents + r.Days90PlusCents; over60 > 0 {
 		b.WriteString(`<p style="margin-top:20px;padding:12px;background:#fff4f4;border-left:3px solid #b00">` +
-			`<strong>` + Money(r.Days90PlusCents) + `</strong> of this balance is more than 60 days past due. ` +
+			`<strong>` + Money(over60) + `</strong> of this balance is more than 60 days past due. ` +
 			`Please contact our office to arrange payment.</p>`)
 	}
 	b.WriteString(`<footer style="margin-top:32px;color:#777;font-size:11px">Statement generated ` +

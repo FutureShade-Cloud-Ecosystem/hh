@@ -3,15 +3,14 @@
 // never throwing. Every route here is a route the core already serves
 // (core/internal/inventory); no route here changes the core.
 //
-// THE ENVELOPE KEYS ARE THE CORE'S. Ten of these reads answer under a
-// domain-named key (on_hand, moves, pending, branches, reservations,
-// transfers, lines, pairs, reorder_points; browse under rows), not under the
-// items key the contract's page schemas declare; the shortfall worklist and
-// every counts route answer under items, as FROM-PRINCIPAL 72 settled for the
-// worklist. The row readers below read the keys the core actually writes, so
-// the desk never shows an empty table against a server that answered. The
-// divergence is recorded in the lane's report; the generated types still say
-// items, so the readers take the answers through one honest cast each.
+// THE ENVELOPE KEYS ARE THE CORE'S, AND THE CONTRACT SAYS THEM. Ten of these
+// reads answer under a domain-named key (on_hand, moves, pending, branches,
+// reservations, transfers, lines, pairs, reorder_points; browse under rows,
+// with its total and the echoed page); the contract moved to those keys, so
+// the generated types carry them and the readers below are typed access with
+// no cast. A list the core can write as null (it has no nil guard on branches,
+// reservations, transfers, reorder points or browse's facets) reads as empty.
+// The shortfall worklist and every counts route answer under items.
 import {
   staffBranches,
   staffInventory,
@@ -24,32 +23,33 @@ import {
   type InventoryBrowseRow,
   type InventoryFacet,
   type InventoryInTransitLine,
-  type InventoryInTransitLinePage,
-  type InventoryMovePage,
+  type InventoryInTransitLineList,
+  type InventoryMoveList,
   type InventoryOnHand,
-  type InventoryOnHandPage,
+  type InventoryOnHandList,
   type InventoryPendingFulfilment,
-  type InventoryPendingFulfilmentPage,
-  type InventoryBranchStockPage,
-  type InventoryBrowsePage,
+  type InventoryPendingFulfilmentList,
+  type InventoryBranchStockList,
+  type InventoryBrowseResult,
   type InventoryReorderPoint,
-  type InventoryReorderPointPage,
+  type InventoryReorderPointList,
   type InventoryReservation,
-  type InventoryReservationPage,
+  type InventoryReservationList,
   type InventoryReserveInput,
   type InventoryReserveResult,
   type InventoryReceiptResult,
   type InventoryStockMove,
   type InventoryTransitDaysPair,
-  type InventoryTransitDaysPairPage,
+  type InventoryTransitDaysPairList,
   type InventoryTransfer,
-  type InventoryTransferPage,
+  type InventoryTransferList,
   type InventoryReleaseRequest,
   type InventoryReleaseResult,
   type InventoryExpireResult,
   type InventorySetTransitDaysInput,
   type InventoryNudgeResult,
   type InventoryCreatePOResult,
+  type Product,
   type ProductPage,
   type PurchasingIncomingLinePage,
   type PurchasingPOPage,
@@ -57,36 +57,29 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 
-// ---- the shapes the core really writes -------------------------------------------------------------
+// ---- the shapes the core writes --------------------------------------------------------------------
 
-type Body = Record<string, unknown>;
-
-function list<T>(body: unknown, key: string): T[] {
-  const rows = (body as Body)[key];
-  return Array.isArray(rows) ? (rows as T[]) : [];
+/** The on-hand rows. */
+export function onHandRows(page: InventoryOnHandList): InventoryOnHand[] {
+  return page.on_hand;
 }
 
-/** The on-hand page under the core's key. */
-export function onHandRows(page: Partial<InventoryOnHandPage>): InventoryOnHand[] {
-  return list(page, "on_hand");
+/** The move ledger. */
+export function moveRows(page: InventoryMoveList): InventoryStockMove[] {
+  return page.moves;
 }
 
-/** The move ledger under the core's key. */
-export function moveRows(page: Partial<InventoryMovePage>): InventoryStockMove[] {
-  return list(page, "moves");
+/** The deferred fulfilment lines. */
+export function pendingRows(page: InventoryPendingFulfilmentList): InventoryPendingFulfilment[] {
+  return page.pending;
 }
 
-/** The deferred fulfilment lines under the core's key. */
-export function pendingRows(page: Partial<InventoryPendingFulfilmentPage>): InventoryPendingFulfilment[] {
-  return list(page, "pending");
+/** The four-bucket per-branch rows. */
+export function branchRows(page: InventoryBranchStockList): InventoryBranchStock[] {
+  return page.branches ?? [];
 }
 
-/** The four-bucket per-branch rows under the core's key. */
-export function branchRows(page: Partial<InventoryBranchStockPage>): InventoryBranchStock[] {
-  return list(page, "branches");
-}
-
-/** Browse's page: the core writes rows, facets, total and the echoed page. */
+/** Browse's page: the rows, the facets, the honest total and the echoed page. */
 export interface BrowseAnswer {
   readonly rows: InventoryBrowseRow[];
   readonly facets: InventoryFacet[];
@@ -95,40 +88,33 @@ export interface BrowseAnswer {
   readonly offset: number;
 }
 
-export function browseAnswer(page: Partial<InventoryBrowsePage>): BrowseAnswer {
-  const body = page as Body;
-  return {
-    rows: list(body, "rows"),
-    facets: list(body, "facets"),
-    total: typeof body.total === "number" ? body.total : 0,
-    limit: typeof body.limit === "number" ? body.limit : 60,
-    offset: typeof body.offset === "number" ? body.offset : 0,
-  };
+export function browseAnswer(page: InventoryBrowseResult): BrowseAnswer {
+  return { rows: page.rows, facets: page.facets ?? [], total: page.total, limit: page.limit, offset: page.offset };
 }
 
-/** The active holds under the core's key. */
-export function reservationRows(page: Partial<InventoryReservationPage>): InventoryReservation[] {
-  return list(page, "reservations");
+/** The active holds. */
+export function reservationRows(page: InventoryReservationList): InventoryReservation[] {
+  return page.reservations ?? [];
 }
 
-/** The transfers under the core's key, lines included. */
-export function transferRows(page: Partial<InventoryTransferPage>): InventoryTransfer[] {
-  return list(page, "transfers");
+/** The transfers, lines included. */
+export function transferRows(page: InventoryTransferList): InventoryTransfer[] {
+  return page.transfers ?? [];
 }
 
-/** The truck's contents for one product, under the core's key. */
-export function incomingRows(body: unknown): InventoryInTransitLine[] {
-  return list(body, "lines");
+/** The truck's contents for one product. */
+export function incomingRows(page: InventoryInTransitLineList): InventoryInTransitLine[] {
+  return page.lines;
 }
 
-/** Every ordered branch pair under the core's key. */
-export function transitPairs(page: Partial<InventoryTransitDaysPairPage>): InventoryTransitDaysPair[] {
-  return list(page, "pairs");
+/** Every ordered branch pair. */
+export function transitPairs(page: InventoryTransitDaysPairList): InventoryTransitDaysPair[] {
+  return page.pairs;
 }
 
-/** The managed replenishment lines under the core's key. */
-export function pointRows(page: Partial<InventoryReorderPointPage>): InventoryReorderPoint[] {
-  return list(page, "reorder_points");
+/** The managed replenishment lines. */
+export function pointRows(page: InventoryReorderPointList): InventoryReorderPoint[] {
+  return page.reorder_points ?? [];
 }
 
 // ---- the door --------------------------------------------------------------------------------------
@@ -150,27 +136,32 @@ export class InventoryApi {
     return staffProduct.productList(this.#client, { active: true, limit: 200 });
   }
 
-  onHand(productId: string): Promise<Result<InventoryOnHandPage>> {
+  /** One product's own record: the list price and the sale unit the stock lookup's header reads. */
+  product(id: string): Promise<Result<Product>> {
+    return staffProduct.productGet(this.#client, id);
+  }
+
+  onHand(productId: string): Promise<Result<InventoryOnHandList>> {
     return staffInventory.inventoryOnHand(this.#client, { product_id: productId });
   }
 
-  moves(productId: string, branchId?: string): Promise<Result<InventoryMovePage>> {
+  moves(productId: string, branchId?: string): Promise<Result<InventoryMoveList>> {
     return staffInventory.inventoryListMoves(this.#client, { product_id: productId, ...(branchId ? { branch_id: branchId } : {}) });
   }
 
-  pending(branchId?: string): Promise<Result<InventoryPendingFulfilmentPage>> {
+  pending(branchId?: string): Promise<Result<InventoryPendingFulfilmentList>> {
     return staffInventory.inventoryListPendingFulfilment(this.#client, branchId ? { branch_id: branchId } : undefined);
   }
 
-  branchStock(productId: string, branchId?: string): Promise<Result<InventoryBranchStockPage>> {
+  branchStock(productId: string, branchId?: string): Promise<Result<InventoryBranchStockList>> {
     return staffInventory.inventoryBranchStock(this.#client, { product_id: productId, ...(branchId ? { branch_id: branchId } : {}) });
   }
 
-  browse(text: string): Promise<Result<InventoryBrowsePage>> {
+  browse(text: string): Promise<Result<InventoryBrowseResult>> {
     return staffInventory.inventoryBrowse(this.#client, { text, limit: 60 });
   }
 
-  transitDays(): Promise<Result<InventoryTransitDaysPairPage>> {
+  transitDays(): Promise<Result<InventoryTransitDaysPairList>> {
     return staffInventory.inventoryListTransitDays(this.#client);
   }
 
@@ -178,7 +169,7 @@ export class InventoryApi {
     return staffInventory.inventoryPutTransitDays(this.#client, body);
   }
 
-  reservations(branchId?: string): Promise<Result<InventoryReservationPage>> {
+  reservations(branchId?: string): Promise<Result<InventoryReservationList>> {
     return staffInventory.inventoryListReservations(this.#client, branchId ? { branch_id: branchId } : undefined);
   }
 
@@ -202,7 +193,7 @@ export class InventoryApi {
     return staffInventory.inventoryPutAllocationPolicy(this.#client, policy);
   }
 
-  transfers(branchId?: string): Promise<Result<InventoryTransferPage>> {
+  transfers(branchId?: string): Promise<Result<InventoryTransferList>> {
     return staffInventory.inventoryListTransfers(this.#client, branchId ? { branch_id: branchId } : undefined);
   }
 
@@ -226,7 +217,7 @@ export class InventoryApi {
     return staffInventory.inventoryCancelTransfer(this.#client, id);
   }
 
-  incomingTransfers(productId: string): Promise<Result<InventoryInTransitLinePage>> {
+  incomingTransfers(productId: string): Promise<Result<InventoryInTransitLineList>> {
     return staffInventory.inventoryListIncomingTransfers(this.#client, { product_id: productId });
   }
 
@@ -234,7 +225,7 @@ export class InventoryApi {
     return staffInventory.inventoryReceivePO(this.#client, { po_id: poId, lines });
   }
 
-  reorderPoints(branchId?: string): Promise<Result<InventoryReorderPointPage>> {
+  reorderPoints(branchId?: string): Promise<Result<InventoryReorderPointList>> {
     return staffInventory.inventoryListReorderPoints(this.#client, branchId ? { branch_id: branchId } : undefined);
   }
 

@@ -39,6 +39,16 @@ export const purchStyles = css`
   .badge-row { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .btn-danger { white-space: nowrap; }
   .mono { font-family: var(--hh-font-mono); }
+  /* The vendor codes table's wordy columns keep a readable floor: the mono code columns hold
+     their own width, the words wrap at spaces, and the table scrolls inside its card rather
+     than crushing a cell to its longest word. */
+  [data-codes] td.full { min-width: 12rem; }
+  [data-codes] td[data-label="Vendor unit"] { min-width: 10rem; }
+  /* The Receiving queue's Expected column shows a relative day ("in 2 days", "in 4 days")
+     that must never truncate to "in 2 da...". A nowrap floor lets the word breathe and the
+     table scroll on the inside of its card at narrow widths instead of crushing the cell. */
+  [data-queue] th[data-expected-col],
+  [data-queue] td[data-expected-col] { white-space: nowrap; min-width: 6.5rem; }
   td.warn { color: var(--hh-state-watch); font-weight: 700; }
   td.warn::before { content: ""; }
   .variance-note { margin: var(--hh-s-4) 0 0; font-size: 13px; }

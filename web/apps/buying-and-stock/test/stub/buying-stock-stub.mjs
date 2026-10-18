@@ -32,9 +32,19 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "inside-sales", role_code: "inside_sales", label: "Inside sales" },
 ];
 
 const USERS = {
+  "inside-sales": {
+    user_id: "de110000-0000-4000-9000-0000000000a2",
+    email: "inside.sales@hh-demo.invalid",
+    display_name: "Inside sales (demo)",
+    role_code: "inside_sales",
+    role_name: "Inside sales",
+    tier: 2,
+    scope: "BRANCH",
+  },
   "procurement-manager": {
     user_id: "de110000-0000-4000-9000-000000000008",
     email: "procurement.manager@hh-demo.invalid",
@@ -153,6 +163,18 @@ const GLS_VENDORS = [
 
 const ALL_VENDORS = [...VENDORS, ...GLS_VENDORS];
 
+const VENDOR_WARRANTY_CREDITS = {
+  [uuid("a", 1)]: {
+    claim_id: "c1000000-0000-4000-8000-000000000104",
+    claim_no: "WCL-104",
+    amount_cents: 26400,
+    description: "8 pieces of Paver 60mm Slate",
+    summary: "8 pieces of Paver 60mm Slate",
+    vendor_id: uuid("a", 1),
+    vendor_name: "Alcli (demo)",
+  },
+};
+
 // The managed lines: what the worklist grades. Quantities are base units.
 const PRODUCTS = [
   { n: 1, sku: "DBS-RYMAR-TURF", name: "Rymar Artificial Turf 40mm", uom: "pc", vendor: 4, onHand: 1200, reserved: 900, point: 600, reorderQty: 600, multiple: 600, cost: 3100, lead: 7 },
@@ -185,10 +207,10 @@ const GLS_STOCK_SEED = {
 };
 
 const GLS_PRODUCTS = [
-  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: {} },
-  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: {} },
-  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: {} },
-  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: {} },
+  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, list: 11_900, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: {} },
+  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, list: 7_900, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: {} },
+  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, list: 9_800, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: {} },
+  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, list: 3_200, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: {} },
 ];
 
 function seedStock() {
@@ -197,6 +219,13 @@ function seedStock() {
   }
 }
 seedStock();
+
+// One invented image slot for every trade product: a 1 by 1 transparent PNG, the bytes the image
+// read serves so the lookup's thumbs show a served picture and a leg can tell it from the fallback.
+const PRODUCT_IMAGE_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 const glsProduct = (n) => GLS_PRODUCTS.find((p) => p.n === n);
 const glsId = (n) => uuid("f", 100 + n);
@@ -221,6 +250,14 @@ const GLS_PENDING = [
   { order: "SO-3302", product: 3, qty: 3, saleType: "COLLECT_LATER" },
 ];
 
+// The open sales orders each managed line's shortfall holds up (change 5 slice S3), oldest first.
+// The turf row holds up five, so the row names the oldest three and counts two more; the
+// dimensional row one; nothing waits on the stone row and its row carries neither key.
+const SHORT_SALES_ORDERS = {
+  1: ["SO-3305", "SO-3311", "SO-3312", "SO-3318", "SO-3324"],
+  2: ["SO-3314"],
+};
+
 const REASON_CODES = [
   { code: "DAMAGE", description: "Damaged / broken stock write-down", account: "5200" },
   { code: "SHRINK", description: "Shrinkage / theft / unaccounted loss", account: "5200" },
@@ -244,12 +281,17 @@ function productRow(p) {
   const short = Math.max(p.point - projected, 0);
   const suggested = short === 0 ? 0 : Math.ceil(short / p.multiple) * p.multiple;
   const vendor = ALL_VENDORS.find((v) => v.n === p.vendor);
+  // The orders the shortfall holds up (change 5 slice S3): at most three numbers, oldest first,
+  // plus the count of the rest, and neither key when nothing waits, the core's shape.
+  const waiting = SHORT_SALES_ORDERS[p.n] ?? [];
+  const shortNos = waiting.slice(0, 3);
+  const shortMore = Math.max(waiting.length - 3, 0);
   return {
     product_id: uuid("f", p.n),
     sku: p.sku,
     product_name: p.name,
     branch_id: BRANCH,
-    branch_code: "TRT",
+    branch_code: "PLM",
     uom: p.uom,
     on_hand_base: p.onHand,
     reserved_base: p.reserved,
@@ -268,6 +310,7 @@ function productRow(p) {
     avg_cost_cents: p.cost,
     suggested_value_cents: suggested * p.cost,
     ...(draft === undefined ? {} : { draft_po_id: draft.id, draft_po_no: draft.no }),
+    ...(shortNos.length === 0 ? {} : { short_order_nos: shortNos, short_order_more: shortMore }),
   };
 }
 
@@ -276,7 +319,7 @@ function reset() {
   for (const s of SEEDED_POS) {
     world.pos.push({
       id: uuid("c", s.n),
-      no: `PO-TRT-${s.n}`,
+      no: `PO-PLM-${s.n}`,
       vendor: s.vendor,
       status: s.status,
       expect: s.expect === null ? null : dayOffset(s.expect),
@@ -285,6 +328,12 @@ function reset() {
       lines: s.lines.map((l) => ({ id: uuid("d", ++world.lineCounter), ...l })),
     });
   }
+  // What is coming in for the trade products (change 5 slice S4's coming-in table): one placed
+  // order buying the paver, promised in a few days. Not in the register the buyers' screen draws,
+  // which is the po world's own list above.
+  world.glsIncoming = [
+    { product: 1, no: "PO-PLM-0151", vendor: 5, branch: PLM, expected: dayOffset(4), qty: 240, received: 0, status: "ORDERED" },
+  ];
   resetInventoryWorld();
 }
 
@@ -400,7 +449,7 @@ const BRANCH_VIEWS = {
 };
 
 const branchCode = (id) => BRANCH_VIEWS[id]?.code ?? "";
-const branchName = (id) => (id === BRANCH ? "Trenton yard" : BRANCH_VIEWS[id]?.name ?? "");
+const branchName = (id) => (id === BRANCH ? "Loma yard" : BRANCH_VIEWS[id]?.name ?? "");
 
 reset();
 
@@ -424,6 +473,9 @@ function lineView(l, n) {
 
 function poView(po) {
   const vendor = ALL_VENDORS.find((v) => v.n === po.vendor);
+  const subtotal = po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0);
+  const applied = po.warranty_credit_applied_cents ?? 0;
+  const netTotal = po.net_total_cents ?? Math.max(0, subtotal - applied);
   const view = {
     id: po.id,
     po_no: po.no,
@@ -439,9 +491,13 @@ function poView(po) {
     ...(flags.costsHidden
       ? {}
       : {
-          subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
-          subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+          subtotal_cents: subtotal,
+          subtotal_cad_cents: subtotal,
+          warranty_credit_applied_cents: applied,
+          net_total_cents: netTotal,
         }),
+    ...(po.warranty_claim_id !== undefined && po.warranty_claim_id !== null ? { warranty_claim_id: po.warranty_claim_id } : {}),
+    ...(po.warranty_claim_no !== undefined && po.warranty_claim_no !== null ? { warranty_claim_no: po.warranty_claim_no } : {}),
     created_at: po.created,
     updated_at: po.created,
   };
@@ -451,7 +507,21 @@ function poView(po) {
 }
 
 function poDetail(po) {
-  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: purch.receiptsFor(po.id) };
+  const detail = {
+    ...poView(po),
+    lines: po.lines.map((l, i) => lineView(l, i + 1)),
+    receipts: purch.receiptsFor(po.id),
+  };
+  const credit = VENDOR_WARRANTY_CREDITS[detail.vendor_id];
+  if (credit && po.status === "DRAFT") {
+    if (po.warranty_claim_id === credit.claim_id || (po.warranty_credit_applied_cents ?? 0) === 0) {
+      detail.open_warranty_credit = credit;
+      if (po.warranty_claim_id === credit.claim_id && !detail.warranty_claim_no) {
+        detail.warranty_claim_no = credit.claim_no;
+      }
+    }
+  }
+  return detail;
 }
 
 // ---- inventory and counts view helpers -------------------------------------------------------------
@@ -530,6 +600,9 @@ function browseRow(p) {
   const buckets = Object.keys(p.stock);
   const onHand = buckets.reduce((sum, b) => sum + p.stock[b].onHand, 0);
   const reserved = buckets.reduce((sum, b) => sum + p.stock[b].allocated, 0);
+  // The branches whose record shows nothing available (change 5 slice S4): the core writes the
+  // names byte-absent when there are none, so the stub does the same.
+  const outAt = buckets.filter((b) => p.stock[b].onHand - p.stock[b].allocated <= 0).map(branchName);
   return {
     product_id: glsId(p.n),
     sku: p.sku,
@@ -550,6 +623,7 @@ function browseRow(p) {
     available_base: onHand - reserved,
     in_transit_base: 0,
     avg_cost_cents: p.cost,
+    ...(outAt.length > 0 ? { out_at_branches: outAt } : {}),
   };
 }
 
@@ -749,7 +823,7 @@ let role = "procurement-manager";
 // Switches a test can set: cost hidden from the caller (the purchasing policy), the mail transport
 // failing, the untagged send refused by policy, and the answer to the next write lost on the way back.
 const flags = { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false };
-// The reach covers the Trenton buyer branch and the two Gable yards the inventory and counts areas read.
+// The reach covers the main buyer branch and the two Gable yards the inventory and counts areas read.
 const reach = () => (fenced ? [] : [BRANCH, PLM, JUL]);
 // The caller's seat on this surface, per the role matrix: the procurement manager holds manage,
 // the yard manager work, payables and receivables read. roleMode names the seat the writes test.
@@ -781,7 +855,7 @@ const MANAGE_MOVES = new Set([
   "sheet-approve",
   "sheet-post",
 ]);
-const SEAT_LEVEL = { procurement: 2, yard: 1, payables: 0 };
+const SEAT_LEVEL = { procurement: 2, yard: 1, payables: 0, sales: 0 };
 // The seat answers the token the caller carries (the sub names the demo
 // account, as the counts gate reads it); a test token with no sub sits at
 // the switch's seat.
@@ -789,6 +863,7 @@ function seatFor(req) {
   const sub = callerOf(req);
   if (sub.endsWith("000000000003")) return "yard";
   if (sub.endsWith("0000000000a1")) return "payables";
+  if (sub.endsWith("0000000000a2")) return "sales";
   return roleMode;
 }
 const seatPasses = (move, seat) => {
@@ -885,6 +960,24 @@ async function handle(req, res) {
     if (!account) return refuse(res, 404, "not found");
     return json(res, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
+  // One product's own record and its image, the two reads the contract words public (the catalogue
+  // and the picture a customer sees): served before the staff gate, as the core serves them. The
+  // image is the same invented slot for every trade product, one byte row, so a leg can see a
+  // served picture and the app's fallback stays honest for an id with none.
+  const productImage = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (method === "GET" && productImage) {
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productImage[1]);
+    if (gls === undefined) return refuse(res, 404, "not found");
+    res.writeHead(200, { "Content-Type": "image/png" });
+    res.end(PRODUCT_IMAGE_BYTES);
+    return;
+  }
+  const productOne = path.match(/^\/api\/v1\/products\/([^/]+)$/);
+  if (method === "GET" && productOne) {
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productOne[1]);
+    if (gls === undefined) return refuse(res, 404, "not found");
+    return json(res, { ...catalogueRow(gls), list_price_cents: gls.list, list_price_uom: gls.uom });
+  }
 
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
@@ -894,6 +987,48 @@ async function handle(req, res) {
     flags.dropNext = false;
     res.end = () => req.socket.destroy();
   }
+  // The role wall answers before ANY handler, the shared body the gate writes: the purchasing
+  // parts answer their own routes, so a wall behind them would never see the call. The moves map
+  // to the wall the core puts in front of each: the po_writers list on the order writes, the work
+  // level on receiving, the manage level on the rest.
+  const sheetPath = path.match(/^\/api\/v1\/counts\/sheets\/([^/]+)(\/(freeze|counts|approve|post|cancel))?$/);
+  const isSheetWrite = sheetPath !== null && sheetPath[3] !== undefined && method === "POST";
+  const moveOf = (p) => {
+    if (p === "/api/v1/inventory/receive") return "receive";
+    if (p === "/api/v1/inventory/nudge-procurement") return "nudge";
+    if (p === "/api/v1/inventory/reservations") return "reserve";
+    if (p === "/api/v1/inventory/reservations/release") return "release";
+    if (p === "/api/v1/inventory/reservations/expire") return "expire";
+    if (p === "/api/v1/inventory/allocation-policy") return "policy-put";
+    if (p === "/api/v1/inventory/transfers") return "transfer-create";
+    if (/^\/api\/v1\/inventory\/transfers\/[^/]+\/(ship|receive|cancel)$/.test(p)) return `transfer-${p.split("/").pop()}`;
+    if (p === "/api/v1/inventory/reorder-points") return "point-put";
+    if (p === "/api/v1/inventory/reorder-points/bootstrap") return "bootstrap";
+    if (p === "/api/v1/inventory/shortfall/create-po") return "po-writer";
+    // The order writes the core walls to the po_writers list (change 5 slice S4's sales fence):
+    // drafting, editing lines, placing, sending, promising and the delivery method.
+    if (p === "/api/v1/purchasing/pos") return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines$/.test(p)) return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/lines\/[^/]+$/.test(p)) return "po-writer";
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/(transition|expected-date|delivery-method|send|apply-warranty-credit)$/.test(p)) return "po-writer";
+    // Receiving goods is work, not buying: the yard's move, the same wall the core's work level is.
+    if (/^\/api\/v1\/purchasing\/pos\/[^/]+\/receive$/.test(p)) return "receive";
+    if (p === "/api/v1/counts/sheets" && !isSheetWrite) return "sheet-create";
+    if (isSheetWrite) return `sheet-${sheetPath[3]}`;
+    return "";
+  };
+  const move = moveOf(path);
+  const seat = seatFor(req);
+  if (move !== "" && method !== "GET") {
+    if (move === "po-writer") {
+      // The po_writers list is the wall: the Procurement Manager, the General
+      // Manager and the super admin; every other role is refused at the gate.
+      if (seat !== "procurement") return json(res, { error: "Forbidden" }, 403);
+    } else if (!seatPasses(move, seat)) {
+      return json(res, { error: "Forbidden" }, 403);
+    }
+  }
+
   if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----
@@ -914,7 +1049,7 @@ async function handle(req, res) {
   }
   if (method === "GET" && path === "/api/v1/branches") {
     return json(res, [
-      { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
+      { id: BRANCH, code: "STB", name: "Loma yard", address: { line1: "1 Yard Road", city: "Point Loma", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
       { id: PLM, code: "PLM", name: "Point Loma yard", address: { line1: "410 Harbor Drive", city: "San Diego", province: "CA", postal: "92101", country: "US" }, is_default: false, is_system_default: false, is_active: true },
       { id: JUL, code: "JUL", name: "Julian yard", address: { line1: "7 Main Street", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
     ]);
@@ -933,6 +1068,32 @@ async function handle(req, res) {
   if (method === "GET" && path === "/api/v1/purchasing/incoming") {
     const productId = url.searchParams.get("product_id");
     if (productId === null || productId === "") return refuse(res, 400, "product_id is required");
+    // The trade products' arrivals (change 5 slice S4's coming-in table), the same line shape the
+    // po world's answer carries; the two id spaces are disjoint, so a GLS id never falls through.
+    const gls = GLS_PRODUCTS.find((p) => glsId(p.n) === productId);
+    if (gls !== undefined) {
+      const rows = world.glsIncoming
+        .filter((g) => g.product === gls.n)
+        .map((g) => {
+          const vendor = ALL_VENDORS.find((v) => v.n === g.vendor);
+          return {
+            po_id: glsId(40 + g.product),
+            po_no: g.no,
+            po_line_id: glsId(60 + g.product),
+            status: g.status,
+            vendor_id: uuid("a", vendor.n),
+            vendor_name: vendor.name,
+            branch_id: g.branch,
+            expected_at: g.expected,
+            qty_ordered_base: g.qty,
+            qty_received_base: g.received,
+            qty_outstanding_base: g.qty - g.received,
+            uom: gls.uom,
+            unit_cost_cents: gls.cost,
+          };
+        });
+      return json(res, { items: rows, next_cursor: null });
+    }
     const lines = [];
     for (const po of world.pos) {
       if (po.status === "RECEIVED" || po.status === "CLOSED" || po.status === "CANCELLED") continue;
@@ -1076,37 +1237,6 @@ async function handle(req, res) {
       row.at = NOW_ISO();
     }
     return json(res, transitPair(row.from, row.to, row));
-  }
-
-  const sheetPath = path.match(/^\/api\/v1\/counts\/sheets\/([^/]+)(\/(freeze|counts|approve|post|cancel))?$/);
-  const isSheetWrite = sheetPath !== null && sheetPath[3] !== undefined && method === "POST";
-  const moveOf = (p) => {
-    if (p === "/api/v1/inventory/receive") return "receive";
-    if (p === "/api/v1/inventory/nudge-procurement") return "nudge";
-    if (p === "/api/v1/inventory/reservations") return "reserve";
-    if (p === "/api/v1/inventory/reservations/release") return "release";
-    if (p === "/api/v1/inventory/reservations/expire") return "expire";
-    if (p === "/api/v1/inventory/allocation-policy") return "policy-put";
-    if (p === "/api/v1/inventory/transfers") return "transfer-create";
-    if (/^\/api\/v1\/inventory\/transfers\/[^/]+\/(ship|receive|cancel)$/.test(p)) return `transfer-${p.split("/").pop()}`;
-    if (p === "/api/v1/inventory/reorder-points") return "point-put";
-    if (p === "/api/v1/inventory/reorder-points/bootstrap") return "bootstrap";
-    if (p === "/api/v1/inventory/shortfall/create-po") return "po-writer";
-    if (p === "/api/v1/counts/sheets" && !isSheetWrite) return "sheet-create";
-    if (isSheetWrite) return `sheet-${sheetPath[3]}`;
-    return "";
-  };
-  // The role wall answers before any handler, the shared body the gate writes.
-  const move = moveOf(path);
-  const seat = seatFor(req);
-  if (move !== "" && method !== "GET") {
-    if (move === "po-writer") {
-      // The po_writers list is the wall: the Procurement Manager, the General
-      // Manager and the super admin; every other role is refused at the gate.
-      if (seat !== "procurement") return json(res, { error: "Forbidden" }, 403);
-    } else if (!seatPasses(move, seat)) {
-      return json(res, { error: "Forbidden" }, 403);
-    }
   }
 
   // Reservations: the list under the core's key, a hold through the policy.
@@ -1459,7 +1589,7 @@ async function handle(req, res) {
     const vendor = ALL_VENDORS.find((v) => uuid("a", v.n) === vendorId);
     const n = world.counter++;
     const po = {
-      id: uuid("c", n), no: `PO-TRT-${n}`, vendor: vendor.n, status: "DRAFT", expect: null,
+      id: uuid("c", n), no: `PO-PLM-${n}`, vendor: vendor.n, status: "DRAFT", expect: null,
       method: "UNKNOWN", created: NOW_ISO(),
       lines: lines.map((l) => ({ id: uuid("d", ++world.lineCounter), product: PRODUCTS.find((p) => uuid("f", p.n) === l.product_id).n, qty: l.qty_base, cost: l.unit_cost_cents })),
     };
@@ -1683,7 +1813,7 @@ async function handle(req, res) {
     const n = world.counter++;
     const po = {
       id: uuid("c", n),
-      no: `PO-TRT-${n}`,
+      no: `PO-PLM-${n}`,
       vendor: p.vendor,
       status: "DRAFT",
       expect: null,
@@ -1736,6 +1866,32 @@ async function handle(req, res) {
       po.method = body.delivery_method;
       return json(res, poDetail(po));
     }
+  }
+  const applyCredit = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/apply-warranty-credit$/);
+  if (applyCredit && method === "POST") {
+    const po = world.pos.find((p) => p.id === applyCredit[1]);
+    if (po === undefined) return refuse(res, 404, "not found");
+    if (po.status !== "DRAFT") return refuse(res, 409, `cannot apply warranty credit to a ${po.status} purchase order`);
+    const subtotal = po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0);
+    if (subtotal <= 0) return refuse(res, 400, "cannot apply warranty credit to an order with no lines or zero total");
+
+    const body = (await readBody(req)) ?? {};
+    const vendorId = uuid("a", po.vendor);
+    const credit = VENDOR_WARRANTY_CREDITS[vendorId];
+    if (!credit || credit.amount_cents <= 0) {
+      return refuse(res, 400, `vendor ${vendorId} has no open warranty credit`);
+    }
+
+    let creditToApply = credit.amount_cents;
+    if (body.amount_cents !== undefined && body.amount_cents > 0) {
+      creditToApply = body.amount_cents;
+    }
+    const applied = Math.min(creditToApply, subtotal);
+    po.warranty_credit_applied_cents = applied;
+    po.warranty_claim_id = credit.claim_id;
+    po.warranty_claim_no = credit.claim_no;
+    po.net_total_cents = Math.max(0, subtotal - applied);
+    return json(res, poDetail(po));
   }
   const line = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines\/([^/]+)$/);
   if (line && (method === "DELETE" || method === "PUT")) {

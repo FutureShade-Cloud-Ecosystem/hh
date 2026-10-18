@@ -1,13 +1,17 @@
 // The acceptance legs' own harness: the app and the stub on this app's
-// acceptance pair in the Pro cycle's range (stub 56850, app 56851), so the
-// unit and surface legs' pair (56810, 56811) stays free. The same shape as
+// acceptance pair on free ports taken at config load (overridable inline with
+// PRO_ACC_STUB and PRO_ACC_PORT), so the unit and surface legs' pair never overlaps it. The same shape as
 // Buying and Stock's acceptance.config.ts.
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { freePorts } from "@hardscapehouse/pro-kit/test-stub/free-port.mjs";
 
 const appDir = fileURLToPath(new URL("..", import.meta.url));
-const appPort = process.env.PRO_ACC_PORT ?? "56851";
-const stubPort = process.env.PRO_ACC_STUB ?? "56850";
+const [freeApp, freeStub] = await freePorts(2);
+process.env.PRO_ACC_PORT ??= freeApp;
+process.env.PRO_ACC_STUB ??= freeStub;
+const appPort = process.env.PRO_ACC_PORT;
+const stubPort = process.env.PRO_ACC_STUB;
 
 export default defineConfig({
   testDir: "./acceptance",

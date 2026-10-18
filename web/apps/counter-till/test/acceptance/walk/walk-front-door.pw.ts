@@ -13,18 +13,22 @@
 //
 // What the walk holds, in order:
 //
-//   the picker renders: the eight live role cards with their calls to act,
-//     the demo badge, and the five coming roles in their disclosure;
+//   the picker renders: the live role cards with their calls to act,
+//     the demo badge, and no coming disclosure (every role is live);
 //   a Sales sign in lands on the Sales home: the role's name as the title,
 //     the two live module tiles, the header word;
 //   the Counter Till tile opens the till signed in as Sales, no second
 //     picker: the adopted handoff lands on the loaded counter;
-//   back at the front door the picker is up again: the handoff is one
-//     shot, the till took the key it carried (the seam's own rule);
+//   back at the front door the role home is up again, not the picker:
+//     FRONT_DOOR_SESSION_KEY stays in this tab's session storage so
+//     same-tab reloads and sibling module visits stay signed in
+//     (decision log row 1040); the key is cleared only on Switch role
+//     or Sign out;
 //   the Quote Desk tile opens the desk signed in as Sales, no second
-//     picker either: the desk's adopt (PR 202) takes the handoff's key
-//     the same one shot way, and back at the front door the picker is up
-//     again for the same reason;
+//     picker: the desk's adopt (PR 202) finds the same key the till
+//     left in this tab's session storage and rides it the same way, and
+//     back at the front door the role home is up again for the same
+//     reason;
 //   a Sales manager sign in shows the manager's five tiles, the not yet
 //     modules receding under Coming next;
 //   a not yet module opens its coming soon page and returns;
@@ -122,10 +126,8 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   await expect(badge).toContainText("Demo");
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toContainText("Sign in as Sales");
-  const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Five more roles are coming");
-  await disclosure.getByText("Five more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(5);
+  // Every role of the matrix is live: no coming disclosure is drawn.
+  await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
 
   // ── Sales signs in, and the home shows the two live tiles ───────────────
   await signInFrontDoor(page, "Sales");
@@ -148,31 +150,37 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
 
-  // ── back at the front door the picker is up again: the handoff was
-  // one shot, the till took the key it carried (the custody mirror the
-  // till rewrote may remain; the front door's own key is the spent one) ──
+  // ── back at the front door the Sales role home is up again: under row
+  // 1040, the same-tab reload and the sibling module visit stay signed in
+  // because FRONT_DOOR_SESSION_KEY lives in this tab's session storage
+  // (the picker is only what an unsigned tab gets, not what a signed-in
+  // one does).
   await page.goto("/");
-  await expectPicker(page);
-  expect(await storedKeys(page)).not.toContain(FRONT_DOOR_SESSION_KEY);
+  await expect(page.getByTestId("home-title")).toHaveText("Sales");
+  await expect(page.getByTestId("header-word")).toHaveText("Sales");
+  expect(await storedKeys(page)).toContain(FRONT_DOOR_SESSION_KEY);
 
   // ── the Quote Desk opens signed in, no second picker ────────────────────
-  // The desk's adopt (PR 202) took the handoff's key the same one shot
-  // way the till does: the landing is held by the desk's own chrome, the
-  // adopted role's name in the design system's shared header (header-word,
-  // round 7's edit: the desk has no session bar of its own) and the quote
-  // list, and the desk's entry cards never render.
-  await signInFrontDoor(page, "Sales");
+  // The desk's adopt (PR 202) finds the same key the till left in this
+  // tab's session storage; the landing is held by the desk's own chrome,
+  // the adopted role's name in the design system's shared header
+  // (header-word, round 7's edit: the desk has no session bar of its own)
+  // and the quote list, and the desk's entry cards never render. From the
+  // restored Sales home above there is no second sign-in tap here.
   await page.getByRole("button", { name: "Quote Desk", exact: true }).click();
   await expect(page).toHaveURL(/\/quote\/$/);
   await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: SIGN_ANSWER_MS });
   await expect(page.getByTestId("qb-list")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
 
-  // ── back at the front door the picker is up again: the handoff was
-  // one shot, the desk took the key it carried ────────────────────────────
+  // ── back at the front door the Sales role home is up again, the key
+  // still held, and Switch role is the one move that clears it ──────────
   await page.goto("/");
+  await expect(page.getByTestId("home-title")).toHaveText("Sales");
+  expect(await storedKeys(page)).toContain(FRONT_DOOR_SESSION_KEY);
+  await page.getByRole("button", { name: "Switch role", exact: true }).click();
   await expectPicker(page);
-  expect(await storedKeys(page)).not.toContain(FRONT_DOOR_SESSION_KEY);
+  expect(await storedKeys(page)).toEqual([]);
 
   // ── the Sales manager's home shows the five tiles, the not yet modules
   // under Coming next ──────────────────────────────────────────────────────

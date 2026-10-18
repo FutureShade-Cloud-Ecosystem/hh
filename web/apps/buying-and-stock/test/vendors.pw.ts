@@ -122,10 +122,10 @@ test("the order a vendor quoted is found however it was written, and a miss read
   await openArea(page, request, "Vendors");
   await page.getByRole("button", { name: "Find the order" }).click();
   await expect(page.locator("[data-lookup-error]")).toHaveText("Type the order number the vendor quoted.");
-  await page.locator("[data-v-ref]").fill("#po trt 66");
+  await page.locator("[data-v-ref]").fill("#po plm 66");
   await page.getByRole("button", { name: "Find the order" }).click();
   const found = page.locator("[data-order-found]");
-  await expect(found).toContainText("PO-TRT-66");
+  await expect(found).toContainText("PO-PLM-66");
   await expect(found).toContainText("Alcli (demo)");
   await expect(found).toContainText("Received");
   await page.locator("[data-v-ref]").fill("PO-9999");

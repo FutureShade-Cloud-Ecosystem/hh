@@ -18,7 +18,7 @@ export function yardHandoff(): void {
     tokenExpiresAtMs: Date.now() + 3_600_000,
     flow: "yard-team",
     roleLabel: "Yard Team",
-    user: { userId: "d0200000-0000-4000-9000-000000000002", email: "yard.demo@dibbits.example", name: "Yard persona (demo)" },
+    user: { userId: "d0200000-0000-4000-9000-000000000002", email: "yard.demo@hh-demo.invalid", name: "Yard persona (demo)" },
     roleCode: "yard_team",
     roleName: "Yard Team",
     tier: 3,
@@ -36,10 +36,32 @@ export async function resetStub(request: APIRequestContext): Promise<void> {
   if (!response.ok()) throw new Error(`stub reset failed: ${response.status()}`);
 }
 
-/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled). */
+/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled, change-decided). */
 export async function useScenario(request: APIRequestContext, name: string): Promise<void> {
   const response = await request.post("/_stub/scenario", { data: { name } });
   if (!response.ok()) throw new Error(`stub scenario failed: ${response.status()}`);
+}
+
+/**
+ * The server reassigns a ticket out from under the device: the status moves
+ * to CANCELLED and the row's seq moves with it, so a queued write named at the
+ * older seq lands stale, and the server wins story plays for real.
+ */
+export async function reassignTicket(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/reassign", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
+}
+
+/** The desk changes an OPEN ticket: its seq moves and it stays open (a record based on the older seq is superseded). */
+export async function touchTicket(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/touch", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub touch failed: ${response.status()}`);
+}
+
+/** The desk settles a shortage while the device cannot hear it. */
+export async function deskResolve(request: APIRequestContext, shortageId: string): Promise<void> {
+  const response = await request.post("/_stub/desk-resolve", { data: { shortage_id: shortageId } });
+  if (!response.ok()) throw new Error(`stub desk resolve failed: ${response.status()}`);
 }
 
 export interface LoggedCall {

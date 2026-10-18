@@ -1737,6 +1737,7 @@ name = "hh-field"
 version = "0.0.1"
 dependencies = [
  "hh-shell-core",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -1748,10 +1749,29 @@ dependencies = [
 name = "hh-shell-core"
 version = "0.0.1"
 dependencies = [
+ "jni 0.21.1",
  "keyring",
+ "ndk-context",
+ "reqwest",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
+ "tokio",
+ "webpki-roots",
+ "zeroize",
+]
+
+[[package]]
+name = "hh-work"
+version = "0.0.1"
+dependencies = [
+ "hh-shell-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-updater",
 ]
 
 [[package]]
@@ -4974,8 +4994,20 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
+ "tokio-macros",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -5553,6 +5585,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

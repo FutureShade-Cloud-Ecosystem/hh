@@ -110,13 +110,37 @@ type PO struct {
 	// gets a purchase order with no money key on it at all.
 	SubtotalCadCents int64 `json:"-"`
 
-	SubtotalCents int64     `json:"-"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	SubtotalCents int64 `json:"-"`
+
+	// Warranty credit applied up to subtotal, ruling R3.
+	WarrantyCreditAppliedCents int64   `json:"-"`
+	WarrantyClaimID            *string `json:"warranty_claim_id,omitempty"`
+	WarrantyClaimNo            *string `json:"warranty_claim_no,omitempty"`
+	NetTotalCents              int64   `json:"-"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// POCosts contributes `subtotal_cents` + `subtotal_cad_cents` for an allowed caller and nothing
 	// whatsoever for a refused one. Stamped by exactly one producer (costLens.costs).
 	POCosts
+}
+
+// OpenWarrantyCredit describes available or applied vendor warranty credit.
+type OpenWarrantyCredit struct {
+	ClaimID     string  `json:"claim_id"`
+	ClaimNo     string  `json:"claim_no"`
+	AmountCents int64   `json:"amount_cents"`
+	Description string  `json:"description"`
+	Summary     *string `json:"summary,omitempty"`
+	VendorID    *string `json:"vendor_id,omitempty"`
+	VendorName  *string `json:"vendor_name,omitempty"`
+}
+
+// ApplyWarrantyCreditRequest carries the parameters for applying warranty credit.
+type ApplyWarrantyCreditRequest struct {
+	ClaimID     *string `json:"claim_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
 }
 
 // POLine is one purchasing_po_lines row plus the derived outstanding quantity the receiving worklist reads.
@@ -142,8 +166,9 @@ type POLine struct {
 // PODetail is a PO with its lines and its receipts.
 type PODetail struct {
 	PO
-	Lines    []POLine  `json:"lines"`
-	Receipts []Receipt `json:"receipts"`
+	Lines              []POLine            `json:"lines"`
+	Receipts           []Receipt           `json:"receipts"`
+	OpenWarrantyCredit *OpenWarrantyCredit `json:"open_warranty_credit,omitempty"`
 }
 
 // Receipt is one receiving event.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -63,6 +64,13 @@ func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
 	plantedIDs[strings.ToLower(payRecUserID)] = true
 	plantedIDs[strings.ToLower(buyerUserID)] = true
 	plantedIDs[strings.ToLower(controllerUserID)] = true
+	plantedIDs[strings.ToLower(gmUserID)] = true
+	plantedIDs[strings.ToLower(hrUserID)] = true
+	plantedIDs[strings.ToLower(bmUserID)] = true
+	plantedIDs[strings.ToLower(osUserID)] = true
+	for _, p := range flows.Personas() {
+		plantedIDs[strings.ToLower(p.UserID)] = true
+	}
 	plantedEmails := make(map[string]bool, len(plantedUserEmails))
 	for _, e := range plantedUserEmails {
 		plantedEmails[strings.ToLower(e)] = true

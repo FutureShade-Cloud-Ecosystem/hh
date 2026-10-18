@@ -822,8 +822,11 @@ paths:
       summary: Download a financial statement as a native workbook
       description: >-
         The same builder backs the finance module's own format=xlsx route, so
-        the two doors cannot drift. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+        the two doors cannot drift. Gated as the finance reads it mirrors: a
+        manager, and a branch outside the caller's reach (or no branch from a
+        branch scoped caller) is the shared 403. The body is a binary workbook,
+        not JSON.
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
         level: read
@@ -869,7 +872,7 @@ paths:
       tags: [staff-export]
       summary: Download the general-ledger transaction export as a native workbook
       description: The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
         level: read
@@ -914,7 +917,7 @@ paths:
       description: >-
         Reads the same service and filter as the audit list, so the file is
         the screen's rows. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireAdmin
       x-access:
         surfaces: [dealer-admin]
         level: read

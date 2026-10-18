@@ -8,9 +8,9 @@
 // receiving screens, drawn to HH's design system.
 import { html, nothing, type TemplateResult } from "lit";
 import type { PurchasingPODetail, PurchasingPOSend, PurchasingReceipt, PurchasingWorklistItem } from "@hardscapehouse/api-client";
-import { areaHead, confirmBox, dateOnly, emptyState, errorNote, loadFailed, loadingNote, noticeBox, pill, segs } from "../purch/purch-views.js";
+import { areaHead, confirmBox, emptyState, errorNote, loadFailed, loadingNote, noticeBox, pill, segs } from "../purch/purch-views.js";
 import { formatMoney, formatQty } from "../purch/purch-money.js";
-import { deliveryWord, relativeDay, statusTone, statusWord, type Tone } from "../po/po-logic.js";
+import { deliveryWord, whenWords, statusTone, statusWord, type Tone } from "../po/po-logic.js";
 import { BASES, basisWord } from "../landed/landed-logic.js";
 import { receivable, sendOutcome } from "./receiving-logic.js";
 
@@ -42,7 +42,11 @@ const noteAt = (model: ReceivingModel, at: ErrorAt): TemplateResult => (model.er
 
 // ---- the queue -------------------------------------------------------------------------------------------
 
+// The queue's Value open column is the managers' (change 5, R5): the column stands only where the
+// answer itself carries the values; where the policy hides them it is not drawn at all, never a
+// stub cell in it.
 function queue(model: ReceivingModel): TemplateResult {
+  const showValues = model.worklist.some((w) => w.value_open_cents !== undefined);
   return html`
     <section class="panel" aria-label="Orders to receive" data-queue>
       <div class="panel-head">
@@ -54,24 +58,22 @@ function queue(model: ReceivingModel): TemplateResult {
         : html`
             <div class="scroll">
               <table class="stack">
-                <thead><tr><th>Order</th><th>State</th><th>Expected</th><th class="num">Open lines</th><th class="num">Value open</th></tr></thead>
+                <thead><tr><th>Order</th><th>State</th><th data-expected-col>Expected</th><th class="num">Open lines</th>${showValues ? html`<th class="num">Value open</th>` : nothing}</tr></thead>
                 <tbody>
                   ${model.worklist.map((w) => {
-                    const date = dateOnly(w.expected_at);
-                    const rel = date === "" ? "" : relativeDay(date, model.today);
+                    const words = whenWords(w.expected_at, model.today);
                     return html`<tr data-queue-row data-po-no=${w.po_no} aria-current="${model.po !== null && model.po.id === w.po_id ? "true" : "false"}">
                       <td class="full" data-label="Order"><button type="button" class="link-inline" data-action="open-order" data-po-id=${w.po_id}>${w.po_no}</button><span class="small dim">${w.vendor_name} · ${model.branchNames.get(w.branch_id) ?? ""}</span></td>
                       <td data-label="State">${pill(statusTone(w.status), statusWord(w.status))}</td>
-                      <td data-label="Expected">${date === "" ? html`<span class="nodate">no date</span>` : html`${rel === "" ? nothing : html`<span class="who">${rel}</span>`}<span class="small dim">${date}</span>`}</td>
+                      <td data-expected-col data-label="Expected">${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who">${words}</span>`}</td>
                       <td class="num" data-label="Open lines">${w.open_lines}</td>
-                      <td class="num" data-label="Value open">${w.value_open_cents === undefined ? html`<span class="dim">hidden</span>` : formatMoney(w.value_open_cents)}</td>
+                      ${w.value_open_cents === undefined ? nothing : html`<td class="num" data-label="Value open">${formatMoney(w.value_open_cents)}</td>`}
                     </tr>`;
                   })}
                 </tbody>
               </table>
             </div>
           `}
-      <p class="foot dim">Receiving moves goods into stock. Ordered, Partial and Received are set by it, never by a button.</p>
     </section>
   `;
 }
@@ -141,7 +143,7 @@ function receiptsBlock(model: ReceivingModel, po: PurchasingPODetail): TemplateR
                 ${po.receipts.map(
                   (r) => html`<tr data-receipt-row data-grn=${r.grn_no}>
                     <td class="code" data-label="Receipt">${r.grn_no}</td>
-                    <td data-label="Received">${dateOnly(r.received_at)}</td>
+                    <td data-label="Received">${whenWords(r.received_at, model.today)}</td>
                     ${model.hidden ? nothing : html`<td class="num" data-label="Value">${formatMoney(r.value_cad_cents)}</td>`}
                     <td data-label="Landed cost">${r.landed_cost_id === undefined || r.landed_cost_id === "" ? html`<span class="dim">none</span>` : pill("good", "Applied")}</td>
                     <td class="pick"><button type="button" class="btn btn-secondary small-btn" data-action="open-receipt" data-receipt-id=${r.id}>Open</button></td>
@@ -223,7 +225,7 @@ function documentAndSends(model: ReceivingModel, po: PurchasingPODetail): Templa
                 ${model.sends.map((s) => {
                   const out = sendOutcome(s);
                   return html`<tr data-send-row>
-                    <td data-label="Sent">${dateOnly(s.sent_at)}</td>
+                    <td data-label="Sent">${whenWords(s.sent_at, model.today)}</td>
                     <td data-label="To">${s.recipient}</td>
                     <td data-label="How it was chosen">${s.recipient_kind === "VENDOR_CONTACT" ? "Tagged ordering contact" : "Address on the vendor record"}</td>
                     <td data-label="Result">${pill(out.tone, s.status === "DELIVERED" ? "Delivered" : s.status === "QUEUED" ? "Queued" : "Failed")}${s.detail === undefined || s.detail === "" ? nothing : html`<span class="small dim">${s.detail}</span>`}</td>
@@ -246,7 +248,7 @@ function documentAndSends(model: ReceivingModel, po: PurchasingPODetail): Templa
 }
 
 function orderPanel(model: ReceivingModel, po: PurchasingPODetail): TemplateResult {
-  const date = dateOnly(po.expected_at);
+  const expected = whenWords(po.expected_at, model.today);
   return html`
     <section class="panel" aria-label=${`Order ${po.po_no}`} data-order-panel>
       <div class="panel-head">
@@ -256,7 +258,7 @@ function orderPanel(model: ReceivingModel, po: PurchasingPODetail): TemplateResu
       <dl class="facts">
         <dt>Vendor</dt><dd>${po.vendor_name}</dd>
         <dt>Branch</dt><dd>${model.branchNames.get(po.branch_id) ?? "Your branch"}</dd>
-        <dt>Expected</dt><dd>${date === "" ? "no date" : date}</dd>
+        <dt>Expected</dt><dd>${expected === "" ? "no date" : expected}</dd>
         <dt>Arrives</dt><dd>${deliveryWord(po.delivery_method)}</dd>
         ${model.hidden ? nothing : html`<dt>Order value</dt><dd data-order-value>${formatMoney(po.subtotal_cents)}</dd>`}
       </dl>

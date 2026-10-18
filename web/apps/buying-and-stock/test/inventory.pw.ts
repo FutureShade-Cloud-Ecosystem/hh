@@ -18,7 +18,7 @@ test("the areas bar holds every purchasing area and Inventory and Cycle counts, 
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   const bar = page.locator("nav.areas");
-  for (const [id, label] of [["orders", "Purchase orders"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
+  for (const [id, label] of [["orders", "Purchase orders"], ["incoming", "Incoming"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
     await expect(bar.locator(`[data-area-id="${id}"]`)).toHaveText(label);
   }
   await expect(bar.locator('[data-area-id="orders"][aria-current="true"]')).toBeVisible();
@@ -32,8 +32,13 @@ test("the stock lookup answers the per-branch buckets and the ledger for the pav
   const plmRow = page.locator("[data-onhand-row]", { hasText: "Point Loma" });
   await expect(plmRow).toContainText("400");
   await expect(plmRow).toContainText("340");
+  // One vocabulary (change 5, R6): the stock word is Reserved everywhere, Inventory included.
+  await expect(plmRow.locator("td[data-label='Reserved']")).toHaveCount(1);
+  await expect(page.locator("[data-onhand-row]").first().locator("td[data-label='Allocated']")).toHaveCount(0);
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved");
   await expect(page.locator("[data-move-row]").first()).toBeVisible();
   await expect(page.locator("[data-lookup]").locator("[data-move-row]").first()).toContainText("Receipt");
+  await expect(page.locator("[data-lookup]").locator("[data-move-row]").first().locator("td[data-label='When']")).toHaveText("today");
 });
 
 test("a product that has never moved says so plainly, never as a fault", async ({ page, request }) => {
@@ -172,17 +177,17 @@ test("shipping more than the yard holds is refused in the server's own words", a
 
 test("receiving asks first, names the order, the yard and the quantity, then the stock lands", async ({ page, request }) => {
   await openInventory(page, request, "receive");
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await expect(order).toBeVisible();
   await order.getByRole("button", { name: "Receive" }).click();
   const confirm = page.locator("[data-receive-confirm]");
   await expect(confirm).toBeVisible();
-  await expect(confirm).toContainText("PO-TRT-136");
-  await expect(confirm).toContainText("Trenton yard");
+  await expect(confirm).toContainText("PO-PLM-136");
+  await expect(confirm).toContainText("Loma yard");
   await expect(confirm).toContainText("10 pc");
   await confirm.getByRole("button", { name: "Confirm receive" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PO-TRT-136 received");
-  await expect(page.locator('[data-receive-order="PO-TRT-136"]')).toHaveCount(0);
+  await expect(page.locator("[data-notice]")).toContainText("PO-PLM-136 received");
+  await expect(page.locator('[data-receive-order="PO-PLM-136"]')).toHaveCount(0);
 });
 
 test("a read-only role is refused the receive in words that name who may", async ({ page, request }) => {
@@ -192,7 +197,7 @@ test("a read-only role is refused the receive in words that name who may", async
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   await showArea(page, "inventory");
   await tab(page, "receive").click();
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await order.getByRole("button", { name: "Receive" }).click();
   await page.locator("[data-receive-confirm]").getByRole("button", { name: "Confirm receive" }).click();
   await expect(page.locator("[data-error]")).toContainText("Receiving an order into stock is a work move");
@@ -265,10 +270,10 @@ test("a yard manager receives the buyer's order and is refused the truck's paper
   await showArea(page, "inventory");
   // Receiving is the yard manager's work: the confirm names the facts, the stock lands.
   await tab(page, "receive").click();
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await order.getByRole("button", { name: "Receive" }).click();
   await page.locator("[data-receive-confirm]").getByRole("button", { name: "Confirm receive" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PO-TRT-136 received");
+  await expect(page.locator("[data-notice]")).toContainText("PO-PLM-136 received");
   // Raising a transfer is a manage seat's move: refused in the ruled words.
   await tab(page, "transfers").click();
   await page.locator('[data-field="tr-from"]').selectOption({ label: "Point Loma yard" });
@@ -286,4 +291,17 @@ test("on a phone the inventory tables stack with their labels and the page never
   await expect(page.locator("[data-onhand-row]").first()).toBeVisible();
   const sideways = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   expect(sideways).toBe(false);
+});
+
+test("the stock lookup's table says Reserved for the bucket and the footnote names it (no Allocated)", async ({ page, request }) => {
+  await openInventory(page, request, "lookup");
+  await runLookup(page, "GLS-PAV-60 Copperline Paver 60mm");
+  // The header reads Reserved, and every cell in that column carries the same data-label.
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Reserved")')).toBeVisible();
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Allocated")')).toHaveCount(0);
+  const firstCell = page.locator("[data-onhand-row]").first().locator('td[data-label="Reserved"]');
+  await expect(firstCell).toBeVisible();
+  // The footnote names the same vocabulary, so a worker reads the meaning once.
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved.");
+  await expect(page.locator("[data-lookup]")).not.toContainText("minus allocated");
 });

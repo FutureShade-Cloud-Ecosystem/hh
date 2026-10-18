@@ -5,8 +5,8 @@
 // test/tax-stub-contract.test.mjs, so it cannot drift in silence.
 //
 // What it copies from the core, on purpose, quirks included:
-// - the lists are keyed by name (rates, profiles, pending_profiles, evidence) where the contract says a page of
-//   items, and an empty list is null, not [] (a Go nil slice);
+// - the lists are keyed by name (rates, profiles, pending_profiles, evidence), as the contract declares; an
+//   empty rates, profiles or evidence list is null, not [] (a Go nil slice), while the queue is never null;
 // - reads are a manager's (tier 1 or 2), rate, profile, config, recompute writes are an administrator's (tier 1),
 //   and capturing evidence is any staff member's;
 // - the evidence record carries the mask only: the raw number is masked and thrown away, never stored or echoed;
@@ -40,6 +40,7 @@ export const IDS = {
 // only with evidence attached (core evidenceGatedReasons).
 export const LEGAL_REASONS = [
   "STD_ON_HST_13",
+  "STD_SALES_TAX",
   "ON_FN_POS_8",
   "FED_S87_GOODS_ON_RES",
   "FED_S87_VENDOR_DELIVERY",
@@ -378,7 +379,8 @@ export function createTaxWorld() {
       case "POST /api/v1/tax/profiles":
         return upsertProfile(input);
       case "GET /api/v1/tax/review-queue":
-        return listBody("pending_profiles", profilesOrdered().filter((p) => p.status === "PENDING").map(profileView));
+        // The queue is the core's own slice, never null (make([]StatusCardProfile, 0)), unlike the other three.
+        return { status: 200, body: { pending_profiles: profilesOrdered().filter((p) => p.status === "PENDING").map(profileView) } };
       case "GET /api/v1/tax/config":
         return { status: 200, body: configView(world.config) };
       case "POST /api/v1/tax/config":

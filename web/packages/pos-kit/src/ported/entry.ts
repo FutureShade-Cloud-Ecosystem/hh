@@ -4,7 +4,7 @@
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other five roles of the decided matrix as coming: shown in a
+// then the other four roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
 // exist in this release (the roles with a live card at the front door are
 // not listed here). When the flows route answers nothing (a default-build
@@ -27,13 +27,7 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
  * so there is no third card either). Coming means coming: a disabled control
  * that drops its fill and goes grey, never a faded one.
  */
-export const COMING_ROLES: readonly string[] = [
-  "Outside Sales",
-  "Logistics Manager",
-  "Branch Manager",
-  "General Manager",
-  "HR",
-];
+export const COMING_ROLES: readonly string[] = [];
 
 export type FlowsState =
   | { kind: "loading" }
@@ -62,6 +56,11 @@ const FLOW_ICONS: Record<string, string> = {
   "payables-receivables": "lucide:landmark",
   "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
+  "general-manager": "lucide:shield-check",
+  hr: "lucide:users",
+  "branch-manager": "lucide:store",
+  "logistics-manager": "lucide:route",
+  "outside-sales": "lucide:file-pen-line",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -70,6 +69,11 @@ const FLOW_BLURBS: Record<string, string> = {
   "payables-receivables": "Chase overdue accounts and work the bounced payments.",
   "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
+  "general-manager": "Decide what only leadership may decide.",
+  hr: "People, messages and the dealer's staff settings.",
+  "branch-manager": "Run the branch: the counter, quotes, dispatch and approvals.",
+  "logistics-manager": "Build the day's loads and send the trucks out.",
+  "outside-sales": "Build quotes in the field.",
 };
 
 export const entryStyles = css`
@@ -200,7 +204,17 @@ export const entryStyles = css`
 /** The stage column: every state the entry shows lives on it, centred. */
 const stage = (content: TemplateResult): TemplateResult => html`<div class="stage">${content}</div>`;
 
-export function renderEntry(view: EntryView): TemplateResult {
+/**
+ * The words a host may change on the entry page. The defaults are the till's own. A dispatch or
+ * yard app says its own thing and shows no Coming list (the front door already carries it).
+ */
+export interface EntryCopy {
+  readonly headline?: string;
+  readonly intro?: string;
+  readonly coming?: boolean;
+}
+
+export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
   if (view.flows.kind === "loading") {
     return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
   }
@@ -230,8 +244,8 @@ export function renderEntry(view: EntryView): TemplateResult {
 		</p>`);
 	}
 	return stage(html`
-		<h2 class="headline">Who is at the counter?</h2>
-		<p class="intro">Tap a role to open the till:</p>
+		<h2 class="headline">${copy.headline ?? "Who is at the counter?"}</h2>
+		<p class="intro">${copy.intro ?? "Tap a role to open the till:"}</p>
 		<div class="cards">
 			${tillFlows.map(
         (flow) => html`
@@ -257,7 +271,9 @@ export function renderEntry(view: EntryView): TemplateResult {
       )}
     </div>
     ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
-    <section class="coming-card">
+    ${copy.coming === false || COMING_ROLES.length === 0
+      ? nothing
+      : html`<section class="coming-card">
       <h2 class="coming-heading">Coming</h2>
       <ul class="coming" aria-label="Coming roles">
         ${COMING_ROLES.map(
@@ -271,6 +287,6 @@ export function renderEntry(view: EntryView): TemplateResult {
           `,
         )}
       </ul>
-    </section>
+    </section>`}
   `);
 }

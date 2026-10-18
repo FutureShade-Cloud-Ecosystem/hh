@@ -32,10 +32,11 @@ import { describeHits, scanPayload } from "./_lib/fence.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tasksDir = join(appDir, "..", "..", "..", "core", "internal", "tasks");
+const orderDir = join(appDir, "..", "..", "..", "core", "internal", "order");
 const httpxDir = join(appDir, "..", "..", "..", "core", "internal", "platform", "httpx");
 const authzDir = join(appDir, "..", "..", "..", "core", "internal", "platform", "authz");
 
-const coreSource = [tasksDir, httpxDir, authzDir]
+const coreSource = [tasksDir, orderDir, httpxDir, authzDir]
   .flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".go") && !f.endsWith("_test.go")).map((f) => readFileSync(join(dir, f), "utf8")))
   .join("\n");
 
@@ -163,10 +164,10 @@ function refused(res, status, fragment) {
   assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
 }
 
-const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const FULL_LINES = (id) => [
-  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
+  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
 ];
 
 test("the demo way in answers the contract's shapes", async () => {
@@ -182,12 +183,12 @@ test("the branches read answers the contract's row shape", async () => {
   const res = await call("GET", "/api/v1/branches");
   assert.equal(res.status, 200);
   for (const branch of res.json) holds("Branch", branch);
-  assert.equal(res.json[0].id, TRENTON);
+  assert.equal(res.json[0].id, POINT_LOMA);
 });
 
 test("the pick queue answers the core's page and entry shapes, field by field", async () => {
   await reset();
-  const res = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`);
+  const res = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`);
   assert.equal(res.status, 200);
   holdsShape("TaskPickQueuePage", res.json);
   assert.equal(res.json.items.length, 5);
@@ -211,7 +212,7 @@ test("the pick queue answers the core's page and entry shapes, field by field", 
 
 test("one pick answers the detail: the task, the ticket, the whole shortage history, what was pulled", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const inProgress = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000041");
   const res = await call("GET", `/api/v1/yard/picks/${inProgress.task.id}`);
   assert.equal(res.status, 200);
@@ -224,7 +225,7 @@ test("one pick answers the detail: the task, the ticket, the whole shortage hist
 
 test("claim and start walk the lifecycle the generic tasks routes own", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const unclaimed = queue.find((e) => e.task.order_id === "0b000000-0000-4000-9000-000000000039");
   const claimed = await call("POST", `/api/v1/tasks/${unclaimed.task.id}/claim`);
   assert.equal(claimed.status, 200);
@@ -282,7 +283,7 @@ test("the money fence follows the cost list: the yard persona receives no figure
   // and the owed figure is byte-absent (ruling 91: absence, not zero).
   const minted = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-team" } });
   assert.equal(minted.status, 200);
-  const queue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: minted.json.token });
+  const queue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`, { token: minted.json.token });
   assert.equal(queue.status, 200);
   const held = queue.json.items.find((e) => e.ticket?.held_from_picking === true);
   assert.ok(held, "the world holds no held ticket to fence");
@@ -292,7 +293,7 @@ test("the money fence follows the cost list: the yard persona receives no figure
   // figure, the contract's declared money held to the descriptor.
   const manager = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-manager" } });
   assert.equal(manager.status, 200);
-  const managerQueue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: manager.json.token });
+  const managerQueue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`, { token: manager.json.token });
   assert.equal(managerQueue.status, 200);
   const managerHeld = managerQueue.json.items.find((e) => e.ticket?.held_from_picking === true);
   assert.ok(managerHeld, "the manager's queue holds no held ticket");
@@ -345,7 +346,7 @@ test("staging answers the task with its spot and its handle", async () => {
 
 test("the refusals carry the core's statuses, envelope and sentences", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const held = queue.find((e) => e.task.order_id === "0b000000-0000-4000-9000-000000000044");
   const mine = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000040");
   const inProgress = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000041");
@@ -385,7 +386,7 @@ test("the refusals carry the core's statuses, envelope and sentences", async () 
   refused(await call("POST", `/api/v1/yard/picks/${inProgress.task.id}/shortages/3a000000-0000-4000-9000-000000000002/resolve`, { body: { resolution: "" } }), 400, "resolution is required");
   refused(await call("POST", `/api/v1/yard/picks/${inProgress.task.id}/shortages/3a000000-0000-4000-9000-000000000002/resolve`, { body: { resolution: "Settled" } }), 409, "shortage already resolved");
   // The caller.
-  const anon = await fetch(`${base}/api/v1/yard/pick-queue?branch_id=${TRENTON}`);
+  const anon = await fetch(`${base}/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`);
   assert.equal(anon.status, 401);
   refused({ status: 401, json: await anon.json() }, 401, "unauthenticated");
 });
@@ -398,4 +399,144 @@ test("the shortage resolvers list wall answers the role gate's shared body", asy
   // Byte for byte the gate's own body (core/internal/platform/authz/middleware.go).
   assert.deepEqual(res.json, { error: "Forbidden" });
   assert.ok(coreSource.includes('BodyForbidden    = []byte(`{"error":"Forbidden"}`)'), "the core's Forbidden body changed: the stub must follow it");
+});
+
+// ---- the changes waiting on the yard (the core's change queue, stage 2) ----
+//
+// The queue item and the acknowledgement's answer carry the contract's own
+// money (the delta figure and the threshold, a line's unit and line figures),
+// sent to every caller of these routes with no cost gate: the till renders
+// them, the yard's projection drops them (payload.test.mjs proves that
+// half). Here the stub is held to the descriptor WITH those fields expected,
+// the held ticket's pattern.
+
+const POISON = 987654;
+
+test("the changes waiting on the yard answer the core's queue page, field by field", async () => {
+  await reset();
+  const res = await call("GET", "/api/v1/order-changes?status=PENDING_YARD");
+  assert.equal(res.status, 200);
+  holdsShape("OrderChangeQueuePage", res.json);
+  assert.equal(res.json.limit, 50);
+  assert.equal(res.json.next_cursor, null);
+  assert.equal(res.json.items.length, 2);
+  for (const item of res.json.items) {
+    holdsWire("OrderChangeQueueItem", item, ["$.delta_cents", "$.finance_threshold_cents"]);
+    assert.equal(item.status, "PENDING_YARD");
+    assert.deepEqual(item.next_actions, ["yard_ack", "reject", "cancel"]);
+    assert.ok(item.requested_by_role !== "", "the row names who raised it, by role");
+  }
+  // The core's order: oldest first.
+  assert.ok(res.json.items[0].requested_at <= res.json.items[1].requested_at);
+  assert.equal(res.json.items[0].change_no, "CO-2043");
+});
+
+test("the change queue is paged, and a malformed cursor is refused in the core's words", async () => {
+  await reset();
+  const first = await call("GET", "/api/v1/order-changes?status=PENDING_YARD&limit=1");
+  assert.equal(first.status, 200);
+  assert.equal(first.json.items.length, 1);
+  assert.ok(first.json.next_cursor, "a full page holds a next cursor");
+  const second = await call("GET", `/api/v1/order-changes?status=PENDING_YARD&limit=1&cursor=${encodeURIComponent(first.json.next_cursor)}`);
+  assert.equal(second.status, 200);
+  assert.equal(second.json.items.length, 1);
+  assert.equal(second.json.next_cursor, null);
+  assert.notEqual(second.json.items[0].id, first.json.items[0].id, "the second page repeats no row");
+  refused(await call("GET", "/api/v1/order-changes?cursor=not%20a%20cursor"), 400, "cursor is malformed");
+});
+
+test("the acknowledgement moves the ladder: under the threshold to approved, over to finance", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/order-changes?status=PENDING_YARD")).json.items;
+  const small = rows.find((c) => c.change_no === "CO-2042");
+  const big = rows.find((c) => c.change_no === "CO-2043");
+  const smallAck = await call("POST", `/api/v1/order-changes/${small.id}/yard-ack`, { body: { note: "can still do it" } });
+  assert.equal(smallAck.status, 200);
+  holdsWire("OrderChange", smallAck.json, [
+    "$.delta_cents",
+    "$.finance_threshold_cents",
+    "$.lines[0].line_delta_cents",
+    "$.lines[0].price_uom",
+    "$.lines[0].unit_price_cents",
+    "$.lines[0].unit_price_cents",
+    "$.lines[0].unit_price_cents",
+  ]);
+  assert.equal(smallAck.json.status, "APPROVED");
+  assert.equal(smallAck.json.yard_ack_note, "can still do it");
+  assert.equal(smallAck.json.yard_acked_by, "d0200000-0000-4000-9000-000000000002");
+  assert.deepEqual(smallAck.json.next_actions, ["cancel"]);
+  const bigAck = await call("POST", `/api/v1/order-changes/${big.id}/yard-ack`, { body: {} });
+  assert.equal(bigAck.status, 200);
+  assert.equal(bigAck.json.status, "PENDING_FINANCE", "a delta over the threshold waits on finance after the yard");
+  // Both rows have left the yard's stage of the ladder.
+  const after = await call("GET", "/api/v1/order-changes?status=PENDING_YARD");
+  assert.equal(after.json.items.length, 0);
+});
+
+test("the acknowledgement's refusals carry the core's statuses, envelope and sentences", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/order-changes?status=PENDING_YARD")).json.items;
+  const first = rows[0];
+  // Acknowledged once, the second press is the race the core refuses by name.
+  // The core assembles the sentence from two literals (ErrChangeTerminal plus
+  // the ack's own words, change.go YardAck), so each piece is held to the
+  // source and to the stub's envelope separately.
+  const firstAck = await call("POST", `/api/v1/order-changes/${first.id}/yard-ack`, { body: {} });
+  assert.equal(firstAck.status, 200);
+  const race = await call("POST", `/api/v1/order-changes/${first.id}/yard-ack`, { body: {} });
+  assert.equal(race.status, 409);
+  holds("Error", race.json);
+  for (const fragment of ["this change order is already closed", "the yard has already acknowledged this change"]) {
+    assert.ok(race.json.error.includes(fragment), `the refusal does not carry "${fragment}"`);
+    assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
+  }
+  // An unknown change is the bare not found, the change surface's own word.
+  refused(await call("POST", "/api/v1/order-changes/00000000-0000-4000-9000-0000000000ff/yard-ack", { body: {} }), 404, "not found");
+  // An unknown ladder word is refused with the closed vocabulary.
+  refused(await call("GET", "/api/v1/order-changes?status=NOPE"), 400, "unknown status");
+  // The route is staff gated like every other yard read.
+  const anon = await fetch(`${base}/api/v1/order-changes?status=PENDING_YARD`);
+  assert.equal(anon.status, 401);
+});
+
+test("a colleague's acknowledgement the screen never saw is the race the core refuses", async () => {
+  await reset();
+  await scenario("change-decided");
+  const rows = (await call("GET", "/api/v1/order-changes?status=PENDING_YARD")).json.items;
+  assert.equal(rows.length, 2, "the stale screen still shows the row");
+  const res = await call("POST", `/api/v1/order-changes/${rows[0].id}/yard-ack`, { body: { note: "late" } });
+  assert.equal(res.status, 409);
+  holds("Error", res.json);
+  for (const fragment of ["this change order is already closed", "the yard has already acknowledged this change"]) {
+    assert.ok(res.json.error.includes(fragment), `the refusal does not carry "${fragment}"`);
+    assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
+  }
+});
+
+test("the poisoned scenario lays figures on the change reads too", async () => {
+  await reset();
+  await scenario("poisoned");
+  // The poison is deliberately off contract (extra keys, inflated figures):
+  // the row is judged on the facts it must still carry and on the fields the
+  // projection must drop, never held to the declared list.
+  const rows = (await call("GET", "/api/v1/order-changes?status=PENDING_YARD")).json.items;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].change_no, "CO-2043");
+  assert.equal(rows[0].status, "PENDING_YARD");
+  assert.equal(rows[0].delta_cents, POISON, "the poison must sit on the field the projection must drop");
+  const ack = await call("POST", `/api/v1/order-changes/${rows[0].id}/yard-ack`, { body: {} });
+  assert.equal(ack.status, 200);
+  assert.equal(ack.json.status, "PENDING_FINANCE");
+  assert.equal(ack.json.delta_cents, POISON);
+  assert.equal(ack.json.lines[0].unit_price_cents, POISON);
+});
+
+test("a cancelled or done pick takes no record, in the core's words and class", async () => {
+  await reset();
+  const id = "0a000000-0000-4000-9000-000000000040";
+  const record = () => call("PUT", `/api/v1/yard/picks/${id}/lines`, { body: { lines: FULL_LINES() } });
+  assert.equal((await record()).status, 200);
+  const reassigned = await call("POST", "/_stub/reassign", { body: { task_id: id } });
+  assert.equal(reassigned.status, 200);
+  refused(await record(), 409, "this pick was cancelled, its record cannot change");
 });

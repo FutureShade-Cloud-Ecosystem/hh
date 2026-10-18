@@ -302,6 +302,14 @@ type InvoiceWriter struct {
 	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
 	audit     audit.Recorder       // deposit_cancel.go; nil = the settlement audits nothing
 	now       func() time.Time
+	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+}
+
+// WithZone binds the dealer's business day zone source: the issue and due days of every document the
+// writer raises are filed in the dealer's own calendar. Nil keeps the Ontario dealer's.
+func (w *InvoiceWriter) WithZone(src houseday.Source) *InvoiceWriter {
+	w.zone = src
+	return w
 }
 
 // WithAudit binds the recorder the deposit cancel settlement stamps its rows
@@ -552,8 +560,12 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	// yard has not reached, so an evening invoice would be dated tomorrow and age a day early from
 	// the moment it is written. The due date counts the terms from the SAME day the document is
 	// issued, so the two dates can never name different "todays".
-	issueDate := houseday.Today(w.now)
-	dueDate := houseday.AddDays(w.now, terms)
+	zone, err := houseday.ResolveTx(ctx, w.zone, ctxTx)
+	if err != nil {
+		return InvoiceDoc{}, err
+	}
+	issueDate := zone.Today(w.now)
+	dueDate := zone.AddDays(w.now, terms)
 
 	var doc InvoiceDoc
 	var covered *InvoiceDoc

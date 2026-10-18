@@ -28,7 +28,7 @@ test("the five kinds of the closed vocabulary sit as tabs, the decided one first
   const tabs = page.locator(".kind-tab");
   await expect(tabs).toHaveCount(5);
   const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin", "Credit", "Cash On Demand", "Journal entry", "Freight above quote"]);
+  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
@@ -39,10 +39,10 @@ test("a margin approval decides through the core's route and the queue empties",
   const row = page.locator("[data-approval]").first();
   await row.getByRole("button", { name: "Approve" }).click();
   await expect(row.locator(".meta")).toContainText("Approved");
-  // Back on the landing the queue is empty: the row is absent, not zero.
+  // Back on the landing the approvals row is absent, not zero; the sales manager's other rows stay.
   await page.getByRole("button", { name: "Back to Home" }).click();
   await expect(page.locator("[data-needs='approvals.waiting']")).toHaveCount(0);
-  await expect(page.locator("[data-widget='needs.you'] .needs-empty")).toContainText("Nothing is waiting on you right now.");
+  await expect(page.locator("[data-needs='ar.escalation']")).toHaveCount(1);
 });
 
 test("a kind the caller does not decide is said in plain words naming who decides it, no enum on screen", async ({ page }) => {
@@ -58,7 +58,9 @@ test("a kind the caller does not decide is said in plain words naming who decide
   await expect(page.locator("[data-approval]")).toHaveCount(0);
 });
 
-test("the yard manager decides no kind, and every tab says who does", async ({ page }) => {
+test("a caller who decides no kind, and every tab says who does", async ({ request, page }) => {
+  // The yard manager's own strip carries no Approvals link; the plain profile's does, and the wall is the core's.
+  await useScenario(request, "plain-profile");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Approvals" }).click();
@@ -79,4 +81,36 @@ test("a rejection records its own word beside the request", async ({ page }) => 
   const row = page.locator("[data-approval]").first();
   await row.getByRole("button", { name: "Reject" }).click();
   await expect(row.locator(".meta")).toContainText("Rejected");
+});
+
+test("the controller's Review opens on Freight above quote, where the two raises are waiting", async ({ request, page }) => {
+  await resetStub(request);
+  await useScenario(request, "freight-only");
+  await page.goto("/");
+  await page.locator("[data-flow='financial-controller']").click();
+  await page.locator("[data-needs='approvals.waiting'] button", { hasText: "Review" }).click();
+  const selected = page.locator(".kind-tab[aria-selected='true']");
+  await expect(selected).toContainText("Freight above quote");
+  await expect(page.locator("[data-approval]")).toHaveCount(2);
+});
+
+test("a caller with Margin waiting opens on Margin, the first kind", async ({ request, page }) => {
+  await resetStub(request);
+  await page.goto("/");
+  await page.locator("[data-flow='general-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  // The general manager decides every kind and the margin one waits too, so Margin is first and has its row.
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
+  await expect(page.locator("[data-approval]")).toHaveCount(1);
+});
+
+test("a sales manager with only freight raises waiting opens on Margin, not on a refused Freight tab", async ({ request, page }) => {
+  await resetStub(request);
+  await useScenario(request, "freight-only");
+  await page.goto("/");
+  await page.locator("[data-flow='sales-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.getByText("No Margin approvals waiting.")).toBeVisible();
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
+  await expect(page.locator("[data-test='approvals-refusal']")).toHaveCount(0);
 });

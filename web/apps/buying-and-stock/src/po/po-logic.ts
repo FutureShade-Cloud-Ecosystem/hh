@@ -15,6 +15,7 @@ import type {
   PurchasingPO,
   PurchasingPOPage,
 } from "@hardscapehouse/api-client";
+import { formatMoney } from "./po-money.js";
 
 // ---- the shapes the core really writes ------------------------------------------------------------
 
@@ -160,6 +161,24 @@ export function draftOf(row: InventoryShortfallRow): DraftMarker | null {
   return { id: row.draft_po_id, no: row.draft_po_no ?? "" };
 }
 
+// ---- the sales orders a shortfall holds up ---------------------------------------------------------
+
+/**
+ * The worklist row's reason, in the board's words: "Short for SO-n". The orders are named oldest
+ * first, the order the core gives them, and what the row carries past its names is a count, never
+ * a list cut short (change 5, R7). The core names at most three and counts the rest; neither key
+ * on the row means nothing waits, and "" draws no tag.
+ */
+export function shortOrderWords(row: Pick<InventoryShortfallRow, "short_order_nos" | "short_order_more">): string {
+  const named = (row.short_order_nos ?? []).filter((n) => n !== "");
+  if (named.length === 0) return "";
+  const more = row.short_order_more ?? 0;
+  if (more > 0) return `Short for ${named.join(", ")} and ${more} more`;
+  if (named.length === 1) return `Short for ${named[0] ?? ""}`;
+  const last = named[named.length - 1] ?? "";
+  return `Short for ${named.slice(0, -1).join(", ")} and ${last}`;
+}
+
 // ---- dates as the yard reads them -------------------------------------------------------------------------
 
 function dayNumber(date: string): number | null {
@@ -182,6 +201,20 @@ export function relativeDay(date: string, today: string): string {
   if (d === 1) return "tomorrow";
   if (d === -1) return "yesterday";
   return d > 0 ? `in ${d} days` : `${-d} days ago`;
+}
+
+/**
+ * A stamp as the screen words it: the day's relative words when it sits within sixty days
+ * of today ("today", "3 days ago", "in 4 days"), the day itself when it does not, and ""
+ * when there is no stamp. The exact value rides no title: the design system's position gate
+ * allows a bound value only on class, role, d and the data- and aria- attributes outside
+ * the till's ported surface, so the words stand alone.
+ */
+export function whenWords(stamp: string | null | undefined, today: string): string {
+  if (stamp === null || stamp === undefined || stamp === "") return "";
+  const date = stamp.slice(0, 10);
+  const rel = relativeDay(date, today);
+  return rel === "" ? date : rel;
 }
 
 /** What has landed against an order, as the register's small line: "6 of 10 pc landed". "" when nothing is known. */
@@ -208,4 +241,39 @@ export function dateWords(date: string, today: string): string {
   const words = `${DAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
   const rel = relativeDay(check.date, today);
   return rel === "" ? words : `${words} (${rel})`;
+}
+
+// ---- warranty credit words -------------------------------------------------------------------------
+
+export interface OpenWarrantyCreditShape {
+  claim_id?: string;
+  claim_no?: string;
+  amount_cents?: number;
+  description?: string;
+  summary?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+}
+
+/**
+ * Words for the credit strip:
+ * "Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)"
+ */
+export function openWarrantyCreditStripText(credit: OpenWarrantyCreditShape): string {
+  const amountStr = formatMoney(credit.amount_cents);
+  const claim = credit.claim_no ? ` from ${credit.claim_no}` : "";
+  const desc = credit.description ? ` (${credit.description})` : "";
+  return `Open warranty credit · ${amountStr}${claim}${desc}`;
+}
+
+export function applyWarrantyCreditButtonText(amountCents: number | null | undefined): string {
+  return `Apply ${formatMoney(amountCents)} to this PO`;
+}
+
+export function appliedWarrantyCreditLabel(claimNo?: string | null): string {
+  return claimNo ? `Warranty credit applied · ${claimNo}` : "Warranty credit applied";
+}
+
+export function totalDueVendorLabel(vendorName?: string | null): string {
+  return vendorName ? `Total due to ${vendorName}` : "Total due to vendor";
 }

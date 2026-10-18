@@ -58,7 +58,7 @@ func TestIntegration_Membership_DM_Is_Fixed_At_Two_Parties(t *testing.T) {
 
 	// No one seats a third party in a direct message, not even the room's
 	// own opener (its OWNER row).
-	if _, err := svc.AddMember(ctx, gm, dm.ID, uSamRivera); !errors.Is(err, ErrMembershipFixed) {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: dm.ID, UserID: uSamRivera}); !errors.Is(err, ErrMembershipFixed) {
 		t.Fatalf("a third party into a dm must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, dm.ID, uSamRivera); ok {
@@ -96,9 +96,11 @@ func TestIntegration_Membership_Managed_By_Owner_Or_Admin(t *testing.T) {
 	// previous value after).
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	// The room is setup for the owner pen, founded through the repository
+	// seam (the route's founding is the admins' pen now), sam stays OWNER.
+	room, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Owner wall probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found room: %v", err)
 	}
@@ -107,14 +109,14 @@ func TestIntegration_Membership_Managed_By_Owner_Or_Admin(t *testing.T) {
 	})
 
 	// The owner seats a member.
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("owner seats casey: %v", err)
 	}
 
 	// A plain member (Casey, not the owner, not an admin) manages nobody.
 	casey := Caller{UserID: uCaseyDoyle, RoleCode: "YARD_MANAGER", Scope: "BRANCH",
 		Branches: map[string]bool{branchKingston: true}}
-	if _, err := svc.AddMember(ctx, casey, room.ID, uAlexMorgan); !errors.Is(err, ErrNotChannelOwner) {
+	if _, err := svc.AddMember(ctx, casey, AddMemberInput{ChannelID: room.ID, UserID: uAlexMorgan}); !errors.Is(err, ErrNotChannelOwner) {
 		t.Fatalf("a plain member seating someone must refuse, got %v", err)
 	}
 	if err := svc.RemoveMember(ctx, casey, room.ID, uSamRivera); !errors.Is(err, ErrNotChannelOwner) {
@@ -124,16 +126,16 @@ func TestIntegration_Membership_Managed_By_Owner_Or_Admin(t *testing.T) {
 	// The admin cell (general_manager) manages the room once a member: the
 	// assertMember wall still runs first, so an admin outside the room
 	// manages nothing (no one adds themselves to a room they are not in).
-	if _, err := svc.AddMember(ctx, gm, room.ID, uSamRivera); !errors.Is(err, ErrNotMember) {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: room.ID, UserID: uSamRivera}); !errors.Is(err, ErrNotMember) {
 		t.Fatalf("an admin outside the room must meet the member wall, got %v", err)
 	}
-	if _, err := svc.AddMember(ctx, sam, room.ID, uAlexMorgan); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uAlexMorgan}); err != nil {
 		t.Fatalf("owner seats the gm: %v", err)
 	}
 	if err := svc.RemoveMember(ctx, gm, room.ID, uCaseyDoyle); err != nil {
 		t.Fatalf("admin removes a plain member: %v", err)
 	}
-	if _, err := svc.AddMember(ctx, gm, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("admin seats the member back: %v", err)
 	}
 
@@ -172,7 +174,7 @@ func TestIntegration_Membership_Branch_Derived_Rooms_Refuse_Foreign_Targets(t *t
 	}
 
 	// Casey (Kingston only) is not derivable into #yard-trenton.
-	if _, err := svc.AddMember(ctx, gm, chYardTrenton, uCaseyDoyle); !errors.Is(err, ErrTargetNotInBranch) {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: chYardTrenton, UserID: uCaseyDoyle}); !errors.Is(err, ErrTargetNotInBranch) {
 		t.Fatalf("a Kingston target in the Trenton yard must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, chYardTrenton, uCaseyDoyle); ok {
@@ -185,7 +187,7 @@ func TestIntegration_Membership_Branch_Derived_Rooms_Refuse_Foreign_Targets(t *t
 	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
 		t.Fatalf("sync sam: %v", err)
 	}
-	m, err := svc.AddMember(ctx, gm, chYardTrenton, uSamRivera)
+	m, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: chYardTrenton, UserID: uSamRivera})
 	if err != nil {
 		t.Fatalf("add over a derived row: %v", err)
 	}
@@ -207,7 +209,7 @@ func TestIntegration_Membership_Branch_Derived_Rooms_Refuse_Foreign_Targets(t *t
 				chYardTrenton, uat)
 		}
 	})
-	if _, err := svc.AddMember(ctx, gm, chYardTrenton, uat); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: chYardTrenton, UserID: uat}); err != nil {
 		t.Fatalf("a Trenton target in the Trenton yard: %v", err)
 	}
 	seated = true

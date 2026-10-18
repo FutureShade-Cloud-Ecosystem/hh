@@ -23,18 +23,22 @@
 // row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
-import type { YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
+import type { YardChange, YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
   SHORT_REASONS,
   actionLabel,
   ageLabel,
+  canAcknowledge,
+  changeStatusWord,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
   nextAction,
   orderHandle,
   pickSummary,
+  isLocalLine,
+  RECORD_WAITING_WORDS,
   priorityWord,
   qtyLabel,
   qtyText,
@@ -109,6 +113,21 @@ export interface QueueModel {
   readonly error: string;
   readonly notice: string;
   readonly moreBehind: boolean;
+  /** The waiting changes' count as the last read left it, or null when it is not known. */
+  readonly changesWaiting: string | null;
+  /** How stale the store's yard world is, in words ("Pulled 2 min ago"). */
+  readonly staleness: string;
+  /** The open conflict cards: the Review door names the count. */
+  readonly conflicts: number;
+}
+
+/** The staleness words for a scope: reads answer from the device, so the
+ * board says when the world last came down. Relative words only. */
+export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
+  if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
+  const minutes = Math.floor(staleness.ageMs / 60_000);
+  if (minutes < 1) return "Pulled just now";
+  return `Pulled ${minutes} min ago`;
 }
 
 function pickCard(entry: YardPick, me: string, busy: boolean): TemplateResult {
@@ -187,14 +206,33 @@ export function renderQueue(model: QueueModel): TemplateResult {
   return html`
     <div class="branch-row">
       <span class="pill branch-pill" data-branch>${model.branchName !== "" ? model.branchName : "This yard"}</span>
+      <button type="button" class="btn btn-secondary" data-action="open-conflicts" data-tap>
+        ${model.conflicts > 0 ? `Review ${model.conflicts}` : "Review"}
+      </button>
       <button type="button" class="btn btn-secondary" data-action="reload" data-tap>Refresh</button>
     </div>
     <h1>Pick queue</h1>
+    <button type="button" class="btn btn-secondary big door-row" data-action="open-changes" data-changes-door data-tap>
+      <span>Changes waiting on the yard</span>
+      ${model.changesWaiting !== null ? html`<span class="pill branch-pill" data-changes-count>${model.changesWaiting}</span>` : nothing}
+    </button>
+    ${model.staleness !== "" ? html`<p class="dim small" data-staleness>${model.staleness}</p>` : nothing}
     ${renderMessages(model.error, model.notice)}
     ${body}
     ${model.picks.length > 0 || model.phase === "ready"
       ? html`<p class="dim small queue-footnote" data-queue-footnote>${QUEUE_FOOTNOTE}</p>`
       : nothing}
+  `;
+}
+
+/** The conflict card list: every outcome the sync came back with, dismissible,
+ * never deletable (the dismiss is the store's own, and it keeps the row). */
+export function renderConflicts(model: { cards: number }): TemplateResult {
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
+    <h1>Review</h1>
+    <p class="dim small">What the server answered while you worked. A card is dismissed when you have read it; the record stays.</p>
+    <hh-shell-conflict-list data-conflict-list></hh-shell-conflict-list>
   `;
 }
 
@@ -349,6 +387,7 @@ function pullList(model: PickModel): TemplateResult {
     <section class="card" data-pull-list>
       <h3>Pull list · ${pick.ticket.lines.length} ${pick.ticket.lines.length === 1 ? "line" : "lines"}</h3>
       ${summary !== "" ? html`<p class="dim" data-pick-summary>${summary}</p>` : nothing}
+      ${pick.picked.some(isLocalLine) ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>` : nothing}
       <ul class="lines">${pick.ticket.lines.map((l) => lineRow(model, l, recorded.get(l.line_no)))}</ul>
     </section>
   `;
@@ -541,6 +580,113 @@ export function renderPick(model: PickModel): TemplateResult {
         ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : t.status === "IN_PROGRESS" ? stageCard() : nothing}
       </div>
     </div>
+  `;
+}
+
+// ---- the changes waiting on the yard (change orders, the yard's stage) ----
+
+export interface ChangesModel {
+  readonly phase: "loading" | "ready" | "error";
+  readonly changes: readonly YardChange[];
+  readonly moreBehind: boolean;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly notice: string;
+  /** The change whose sheet is open, or null. */
+  readonly sheet: YardChange | null;
+  /** What the note field holds, mirrored, so a re-render never eats a typed word. */
+  readonly sheetNote: string;
+  /** A refused acknowledgement's own line, shown in the sheet. */
+  readonly sheetError: string;
+}
+
+/**
+ * The change sheet: the row's facts, and the acknowledge. The yard answers
+ * one question here, "can we still do this", so the sheet carries what the
+ * row carried and no figure; the button is the server's own offer (it
+ * renders only where next_actions names yard_ack), and the refusal lands in
+ * the sheet, in the server's words.
+ */
+function changeSheet(model: ChangesModel, change: YardChange): TemplateResult {
+  return html`
+    <section class="card sheet change-sheet" data-change-sheet data-change-id=${change.id}>
+      <p class="sheet-head" tabindex="-1">Change ${change.change_no} · ${change.order_no}</p>
+      <p class="dim">"${change.reason}"</p>
+      <p class="dim small">asked by ${change.requested_by_role !== "" ? change.requested_by_role : "the counter"} · waiting ${ageLabel(change.requested_at, new Date())}</p>
+      <p class="pill" data-change-status>${changeStatusWord(change.status)}</p>
+      <p class="sheet-banner">Acknowledging tells the counter the yard can still do this. It does not change the order.</p>
+      ${model.sheetError !== "" ? html`<p class="alert alert-error" role="alert" data-change-error>${model.sheetError}</p>` : nothing}
+      ${canAcknowledge(change)
+        ? html`
+            <span class="field-label">Note for the counter (optional)</span>
+            <input
+              class="text-field"
+              type="text"
+              autocomplete="off"
+              data-field="change-note"
+              placeholder="Something the counter should know"
+              ?disabled=${model.busy}
+              aria-label="A note for the counter, optional"
+            />
+            <div class="actions">
+              <button type="button" class="btn btn-primary big" data-action="ack-change" ?disabled=${model.busy} data-tap>Acknowledge</button>
+              <button type="button" class="btn btn-secondary big" data-action="close-change-sheet" ?disabled=${model.busy} data-tap>Not now</button>
+            </div>
+          `
+        : html`<p class="hint">This change is waiting on someone else.</p>`}
+    </section>
+  `;
+}
+
+/** One waiting change, the board's row shape: what it is, who asked, how long it has waited. */
+function changeRow(change: YardChange): TemplateResult {
+  return html`
+    <section class="card change-card" data-change-row data-change-id=${change.id}>
+      <button
+        type="button"
+        class="line-row"
+        data-action="open-change"
+        data-change-id=${change.id}
+        aria-label=${`Change ${change.change_no} on ${change.order_no}`}
+        data-tap
+      >
+        <span class="line-main">
+          <span class="line-desc" data-change-no>${change.order_no}</span>
+          <span class="line-sub">"${change.reason}"</span>
+          <span class="line-sub">asked by ${change.requested_by_role !== "" ? change.requested_by_role : "the counter"} · waiting ${ageLabel(change.requested_at, new Date())}</span>
+        </span>
+        <span class="status status-active" data-change-status>${changeStatusWord(change.status)}</span>
+      </button>
+    </section>
+  `;
+}
+
+/** The yard's own stage of the ladder: the changes the counter has asked the yard to answer. */
+export function renderChanges(model: ChangesModel): TemplateResult {
+  let body: TemplateResult;
+  if (model.phase === "loading" && model.changes.length === 0) {
+    body = html`<p class="dim" role="status">Checking for changes.</p>`;
+  } else if (model.phase === "ready" && model.changes.length === 0) {
+    body = html`
+      <div class="card empty" data-changes-empty>
+        <p class="empty-head">Nothing is waiting on the yard.</p>
+        <p class="dim">The counter raises a change on an order once the pick has started. It lands here for you to acknowledge.</p>
+      </div>
+    `;
+  } else {
+    body = html`
+      ${model.changes.map(changeRow)}
+      ${model.moreBehind
+        ? html`<button type="button" class="btn btn-secondary big" data-action="more-changes" data-tap>Show more behind</button>`
+        : nothing}
+    `;
+  }
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
+    <h1>Changes waiting on the yard</h1>
+    ${renderMessages(model.error, model.notice)}
+    ${model.sheet !== null ? changeSheet(model, model.sheet) : nothing}
+    ${body}
   `;
 }
 

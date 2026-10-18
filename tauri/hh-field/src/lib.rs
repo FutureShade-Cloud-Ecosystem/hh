@@ -1,3 +1,5 @@
+mod auth;
+
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(feature = "probe")]
@@ -7,8 +9,8 @@ use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
 // The contract's service name: `ai.futurebuild.hh.<profile>`, which is the
 // profile's own identifier. One source: the profile model is the definition
-// (the test below pins the two together). Rust side only: item 7's auth
-// commands are the writers; the webview holds no keychain command.
+// (the test below pins the two together). Rust side only: the auth commands
+// are the writers; the webview holds no keychain command.
 #[cfg_attr(not(feature = "probe"), allow(dead_code))]
 fn keychain_service() -> &'static str {
     profiles::field().identifier
@@ -26,8 +28,12 @@ fn open_store(app: &tauri::AppHandle) -> Result<Store, String> {
 
 // The blocking helper keeps long calls (a keyring unlock prompt, the store's
 // SQLite work) on a blocking thread, never on the main thread or an async worker.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // PROBE SCAFFOLDING: the webview may not read or write the custody slot in a
@@ -63,7 +69,10 @@ async fn run_statement(
 }
 
 #[tauri::command]
-async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store>) -> Result<(), String> {
+async fn run_atomic(
+    statements: Vec<SqlStatement>,
+    store: tauri::State<'_, Store>,
+) -> Result<(), String> {
     let store = store.inner().clone();
     blocking(move || store.atomic(statements)).await
 }
@@ -86,6 +95,26 @@ fn probe_report(app: tauri::AppHandle, json: String) {
     if std::env::var_os("HH_PROBE4_EXIT").is_some() {
         app.exit(0);
     }
+}
+
+// The Android Keystore debug leg (feature `custody-proof`, off by default):
+// one line, `HH_CUSTODY_PROOF ok Stored` on the first launch and
+// `HH_CUSTODY_PROOF ok PersistedAndCleared` on the next, or `failed <step>`.
+// The value is a fixed non secret string under a proof address no real
+// session uses.
+#[cfg(feature = "custody-proof")]
+fn run_custody_proof() {
+    use hh_shell_core::custody;
+    let address = custody::Address::console_session(profiles::field().identifier, "custody-proof")
+        .expect("the proof address is valid");
+    let backend = custody::platform_custody();
+    tauri::async_runtime::spawn_blocking(move || {
+        let line = match custody::self_check(backend.as_ref(), &address) {
+            Ok(done) => format!("ok {done:?}"),
+            Err(step) => format!("failed {step}"),
+        };
+        println!("HH_CUSTODY_PROOF {line}");
+    });
 }
 
 // One startup line naming the profile the shell is running (the gates and
@@ -139,15 +168,31 @@ pub fn run() {
             keychain_delete,
             probe_report,
             run_statement,
-            run_atomic
+            run_atomic,
+            auth::auth_sign_in,
+            auth::auth_resume,
+            auth::auth_exchange,
+            auth::auth_sign_out
         ]);
     #[cfg(not(feature = "probe"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![run_statement, run_atomic]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
     builder
         .setup(|app| {
             let profile = profiles::field();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
             app.manage(open_store(app.handle()).expect("the profile's store opens"));
+            // The sign in commands' state: custody and the Console client, built
+            // from the profile's fixed configuration (never the webview's).
+            app.manage(auth::AuthState::for_profile());
+            #[cfg(feature = "custody-proof")]
+            run_custody_proof();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height);
@@ -213,16 +258,26 @@ mod tests {
         // Probe 4 review round 1, P2 2: the webview's SQL grant must never be
         // open. The store's engine is the core's fixed file behind two
         // commands, and the capability names exactly those two.
-        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let cap: serde_json::Value =
+            serde_json::from_str(CAPABILITY).expect("the capability parses");
         let perms: Vec<&str> = cap["permissions"]
             .as_array()
             .expect("a permissions list")
             .iter()
             .map(|p| p.as_str().expect("permission names are strings"))
             .collect();
-        assert!(perms.contains(&"allow-run-statement"), "run_statement is allowed by name");
-        assert!(perms.contains(&"allow-run-atomic"), "run_atomic is allowed by name");
-        assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
+        assert!(
+            perms.contains(&"allow-run-statement"),
+            "run_statement is allowed by name"
+        );
+        assert!(
+            perms.contains(&"allow-run-atomic"),
+            "run_atomic is allowed by name"
+        );
+        assert!(
+            !CAPABILITY.contains("sql:"),
+            "no open SQL grant reaches a real build"
+        );
     }
 
     // The ACL manifest and the merged capabilities that tauri-build wrote for
@@ -239,45 +294,54 @@ mod tests {
         // Rust side (AUTH-SHELL-CONTRACT r6); the webview's only interface is
         // the auth_* commands of item 7. A keychain grant here would let any
         // script in the window read it back with one invoke.
-        assert!(!CAPABILITY.contains("keychain"), "default.json must hold no keychain grant");
+        assert!(
+            !CAPABILITY.contains("keychain"),
+            "default.json must hold no keychain grant"
+        );
     }
 
     #[cfg(not(feature = "probe"))]
     #[test]
     fn a_default_build_declares_no_keychain_command_in_its_acl_manifest() {
         for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
-            assert!(!built.contains("keychain"), "a keychain command or grant is in the default build's ACL");
-            assert!(!built.contains("probe"), "probe scaffolding is in the default build's ACL");
+            assert!(
+                !built.contains("keychain"),
+                "a keychain command or grant is in the default build's ACL"
+            );
+            assert!(
+                !built.contains("probe"),
+                "probe scaffolding is in the default build's ACL"
+            );
         }
-        assert!(BUILT_ACL_MANIFEST.contains("run_statement"), "the store's commands are declared");
-        assert!(BUILT_ACL_MANIFEST.contains("run_atomic"), "the store's commands are declared");
+        assert!(
+            BUILT_ACL_MANIFEST.contains("run_statement"),
+            "the store's commands are declared"
+        );
+        assert!(
+            BUILT_ACL_MANIFEST.contains("run_atomic"),
+            "the store's commands are declared"
+        );
     }
 
     #[test]
     fn the_keychain_service_is_the_profiles_identifier() {
-        // AUTH-SHELL-CONTRACT r5: the service is ai.futurebuild.hh.<profile>,
-        // one entry per profile and project; the account dimension and the
-        // writers are the sign in item (item 7), not this crate.
+        // AUTH-SHELL-CONTRACT r6: the service is ai.futurebuild.hh.<profile>
+        // and the account console-session:<project id>, one entry per profile
+        // and project. The address is built by the core's custody module from
+        // the profile's identifier; the webview names neither part.
         assert_eq!(keychain_service(), profiles::field().identifier);
         assert_eq!(keychain_service(), "ai.futurebuild.hh.field");
-        assert!(keychain_service().starts_with("ai.futurebuild.hh."));
-        // The real slot set is the session token only (the probe build adds
-        // its own scaffolding slot); the webview's own token stays in memory
-        // per the contract.
-        let slots: Vec<&str> = hh_shell_core::keychain::Slot::ALL
-            .iter()
-            .map(|s| s.name())
-            .collect();
-        #[cfg(feature = "probe")]
-        let expected = ["session_token", "probe"];
-        #[cfg(not(feature = "probe"))]
-        let expected = ["session_token"];
-        assert_eq!(slots, expected);
+        let address =
+            hh_shell_core::custody::Address::console_session(keychain_service(), "proj-1")
+                .expect("the Field identifier forms a custody address");
+        assert_eq!(address.service(), "ai.futurebuild.hh.field");
+        assert_eq!(address.account(), "console-session:proj-1");
     }
 
     #[test]
     fn the_field_update_channel_is_configured_with_placeholders() {
-        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
+        let conf: serde_json::Value =
+            serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
         let updater = &conf["plugins"]["updater"];
         let endpoint = updater["endpoints"]
             .as_array()
@@ -295,14 +359,142 @@ mod tests {
         // from FB Vault with the signing pair the principal holds, never
         // committed. A real key is a long base64 minisign blob; this pin
         // fails the day someone pastes one into a tracked file.
-        let pubkey = updater["pubkey"].as_str().expect("the updater has a pubkey");
+        let pubkey = updater["pubkey"]
+            .as_str()
+            .expect("the updater has a pubkey");
         assert_eq!(pubkey, "PLACEHOLDER: the release verify public key comes from FB Vault at the first signed release");
         // Release builds produce the signed update artifacts (the CLI asks
         // for the signing key from the build environment, never from git).
-        assert_eq!(conf["bundle"]["createUpdaterArtifacts"], serde_json::json!(true));
+        assert_eq!(
+            conf["bundle"]["createUpdaterArtifacts"],
+            serde_json::json!(true)
+        );
         assert!(
             MANIFEST.contains("Field only"),
             "the manifest still carries the permission rationale"
         );
+    }
+
+    // ---- item 7: the four auth commands -----------------------------------
+
+    const AUTH_COMMANDS: [&str; 4] = [
+        "auth_sign_in",
+        "auth_resume",
+        "auth_exchange",
+        "auth_sign_out",
+    ];
+    const AUTH_PERMISSIONS: [&str; 4] = [
+        "allow-auth-sign-in",
+        "allow-auth-resume",
+        "allow-auth-exchange",
+        "allow-auth-sign-out",
+    ];
+    const AUTH_SOURCE: &str = include_str!("auth.rs");
+
+    #[test]
+    fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
+        let cap: serde_json::Value =
+            serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+        for name in AUTH_PERMISSIONS {
+            assert!(perms.contains(&name), "{name} is allowed by name");
+        }
+        // No wildcard or whole-set grant of the app's commands.
+        assert!(
+            perms.iter().all(|p| !p.contains('*')),
+            "no wildcard permission"
+        );
+        // Local only: a capability with a `remote` block reaches remote URLs;
+        // `local: false` would drop the bundled origin. Neither is present.
+        assert!(
+            cap.get("remote").is_none(),
+            "the default capability names no remote URL"
+        );
+        assert!(cap
+            .get("local")
+            .is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(
+            cap["windows"],
+            serde_json::json!(["main"]),
+            "the main window only"
+        );
+        assert!(cap.get("webviews").is_none(), "no extra webview is granted");
+        // The shell never opens remote domain IPC.
+        assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
+        // The probe capability, which is not in a normal build, grants none of them.
+        const PROBE_CAPABILITY: &str = include_str!("../capabilities-probe/probe.json");
+        assert!(
+            !PROBE_CAPABILITY.contains("auth"),
+            "the probe capability grants no auth command"
+        );
+    }
+
+    #[cfg(not(feature = "probe"))]
+    #[test]
+    fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
+        for name in AUTH_COMMANDS {
+            assert!(
+                BUILT_ACL_MANIFEST.contains(name),
+                "{name} is declared in the ACL manifest"
+            );
+        }
+        for name in AUTH_PERMISSIONS {
+            assert!(
+                BUILT_CAPABILITIES.contains(name),
+                "{name} is granted in the merged capabilities"
+            );
+        }
+    }
+
+    #[test]
+    fn no_auth_command_takes_an_endpoint_a_project_or_a_core_url() {
+        // AUTH-SHELL-CONTRACT r6, "Commands are fenced": those three values
+        // are fixed in the Rust profile, never an argument. Read every
+        // command signature in the auth module.
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let mut commands = 0;
+        for chunk in production.split("#[tauri::command]").skip(1) {
+            commands += 1;
+            let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
+            for banned in [
+                "endpoint", "project", "core_url", "url", "jwt", "secret", "token",
+            ] {
+                assert!(
+                    !signature.contains(banned),
+                    "a command signature mentions {banned}: {signature}"
+                );
+            }
+        }
+        assert_eq!(commands, 4, "exactly the four contract commands");
+    }
+
+    #[test]
+    fn the_auth_module_prints_and_logs_nothing() {
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        for banned in [
+            "println!",
+            "eprintln!",
+            "print!(",
+            "dbg!",
+            "log::",
+            "tracing::",
+            "info!(",
+            "warn!(",
+            "error!(",
+        ] {
+            assert!(!production.contains(banned), "auth.rs contains {banned}");
+        }
+    }
+
+    #[test]
+    fn the_custody_proof_is_not_a_default_feature() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("default = []"), "no default feature");
+        assert!(manifest.contains("custody-proof = []"));
     }
 }

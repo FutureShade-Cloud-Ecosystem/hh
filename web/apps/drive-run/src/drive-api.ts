@@ -12,7 +12,8 @@
 // Port provenance: the call set is the original app's app/src/dispatch-api.ts
 // (the original HardscapeOS app, repository hardscapeos_dibbits, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab), rebuilt on HH's generated client.
-import { ApiClient, staffDispatch, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffDispatch, staffSettings, type Result } from "@hardscapehouse/api-client";
+import { houseDay, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export interface DriverLine {
   readonly line_no: number;
@@ -49,6 +50,9 @@ export interface DriverStop {
   readonly load_count: number;
   readonly created_at: string;
   readonly photos: readonly DriverPhoto[];
+  /** True while this device holds the stop's signature and the server has not
+   * taken it yet (the offline layer sets it; the direct api never does). */
+  readonly proof_waiting: boolean;
 }
 
 export interface DriverRun {
@@ -97,6 +101,7 @@ export function toStop(raw: unknown): DriverStop {
     load_count: num(r.load_count),
     created_at: text(r.created_at),
     photos,
+    proof_waiting: r.proof_waiting === true,
   };
 }
 
@@ -117,12 +122,38 @@ export function toRun(raw: unknown): DriverRun {
   };
 }
 
+/** A stalling connection must not hold the day: the zone read gives up after a few seconds. */
+const ZONE_READ_TIMEOUT_MS = 4_000;
+
 /** Every call the driver's screens make. */
 export class DriveApi {
   readonly #client: ApiClient;
 
   constructor(client: ApiClient) {
     this.#client = client;
+  }
+
+  /**
+   * The dealer's day to ask for runs on. The dealer's zone is served on the drive-run surface's
+   * config read (business_zone) and held by the kit; a read that fails keeps the Ontario default,
+   * so the driver still gets a day, never a blank screen.
+   */
+  async dealersDay(now: Date = new Date()): Promise<string> {
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS });
+    if (config.ok) serveHouseZoneFrom(config.value);
+    return houseDay(now);
+  }
+
+  /**
+   * The dealer's day with whether this call's config read actually served a zone. The offline
+   * layer persists the served zone into the store and never a failed read's fallback: a cold
+   * start with no signal then restores the last served zone instead of the Ontario default.
+   */
+  async servedDealersDay(now: Date = new Date()): Promise<{ day: string; served: boolean }> {
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS });
+    const served = config.ok;
+    if (config.ok) serveHouseZoneFrom(config.value);
+    return { day: houseDay(now), served };
   }
 
   /** The runs assigned to this login on one day. The day is the dealer's, named by the caller. */

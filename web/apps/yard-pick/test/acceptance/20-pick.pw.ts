@@ -3,14 +3,14 @@
 // (PR 274's mint row and the yard routes on main) and proved on the demo
 // image; this machine cannot build the image.
 import { expect, test } from "./helpers.js";
-import { TRENTON, arriveFromFrontDoor, queue, shot, staff } from "./helpers.js";
+import { POINT_LOMA, arriveFromFrontDoor, queue, shot, staff } from "./helpers.js";
 
-/** One open pick at Trenton, claimed by nobody yet. */
+/** One open pick at Point Loma, claimed by nobody yet. */
 async function anUnclaimedPick(page: import("@playwright/test").Page): Promise<any> {
   const answer = await queue(page);
   expect(answer.status).toBe(200);
   const open = (answer.body.items as any[]).filter((e) => e.task.status === "QUEUED" || e.task.status === "PUSHED");
-  expect(open.length, "the demo seed has open picks at Trenton").toBeGreaterThan(0);
+  expect(open.length, "the demo seed has open picks at Point Loma").toBeGreaterThan(0);
   return open[0];
 }
 
@@ -78,16 +78,16 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled in full");
   await page.getByRole("button", { name: "One skid more" }).click();
-  await page.getByLabel("The reason for the skid count").selectOption("COUNT_CORRECTION");
+  await page.locator('[data-reason-group="skid"] [data-reason="COUNT_CORRECTION"]').click();
   await page.getByRole("button", { name: "Save skid count" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("skids");
+  await expect(page.locator("[data-notice]")).toContainText(/now holds \d+ skids?\./);
   await page.getByLabel("The stage location").fill("Bay 3");
   await page.getByRole("button", { name: "Stage", exact: true }).click();
   await expect(page.locator("[data-notice]")).toContainText("Staged at Bay 3");
   await shot(page, "pick-walked", testInfo);
 });
 
-test("Trenton is the only branch the board names", async ({ page }) => {
+test("Point Loma is the only branch the board names", async ({ page }) => {
   await arriveFromFrontDoor(page);
-  await expect(page.locator("[data-branch]")).toHaveText(/Trenton/);
+  await expect(page.locator("[data-branch]")).toHaveText(/Point Loma/);
 });

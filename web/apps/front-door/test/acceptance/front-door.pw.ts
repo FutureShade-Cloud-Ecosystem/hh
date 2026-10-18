@@ -1,23 +1,14 @@
 // The front door's acceptance spec: the seven behaviours the D2 brief names,
 // plus the Yard Team card's live leg and the driver's, walked in a real browser against the
-// stubbed harness. The coming labels are
-// written here rather than read from the app, so a catalog that forgets a
-// role fails here and not in front of a visitor (the till's entry test's own
-// rule).
+// stubbed harness. The card labels are written here rather than read from
+// the app, so a catalog that forgets a role fails here and not in front of a
+// visitor (the till's entry test's own rule).
 //
 // The mint the stub answers carries a JWT-shaped token whose exp claim is one
 // hour out, so the app's validated custody adopts it for real; the token
 // clearing the brief asks the suite to prove is read straight out of
 // sessionStorage, both of the app's keys.
 import { expect, test, type Page } from "@playwright/test";
-
-const COMING_LABELS = [
-  "Outside Sales",
-  "Logistics Manager",
-  "Branch Manager",
-  "General Manager",
-  "HR",
-];
 
 const SESSION_KEY = "hh-demo.front-door.session.v1";
 const MIRROR_KEY = "hh-auth.session.v2";
@@ -44,7 +35,7 @@ async function storedFlow(page: Page): Promise<string | null> {
 
 async function stubArmsRefusal(page: Page, flow: string): Promise<void> {
   const armed = await page.request.post("/_stub/refuse", {
-    data: { status: 429, error: "the demo mint limit is spent for now, wait a moment and tap again", flows: [flow] },
+    data: { status: 429, error: "too many sign-ins just now, wait a moment and tap again", flows: [flow] },
   });
   expect(armed.ok()).toBe(true);
 }
@@ -64,7 +55,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the eight live cards and the five coming rows", async ({ page }) => {
+test("the picker renders the live cards and the coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -75,6 +66,7 @@ test("the picker renders the eight live cards and the five coming rows", async (
   await expect(sales).toContainText("Sign in as Sales");
   await expect(sales).toContainText("Counter Till");
   await expect(sales).toContainText("Quote Desk");
+  await expect(sales).toContainText("House Messages");
 
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toBeVisible();
@@ -136,27 +128,58 @@ test("the picker renders the eight live cards and the five coming rows", async (
   await expect(controller).toContainText("Sign in as Financial Controller");
   await expect(controller).toContainText("Money Desk");
 
-  // Coming recedes: the disclosure starts collapsed and opens to today's
-  // list, unchanged, its rows disabled with their muted chips.
-  const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Five more roles are coming");
-  const coming = page.getByRole("list", { name: "Coming roles" });
-  await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Five more roles are coming").click();
-  await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(5);
-  for (const label of COMING_LABELS) {
-    const row = coming.getByRole("listitem").filter({ hasText: label });
-    await expect(row).toBeVisible();
-    const control = row.getByRole("button", { name: label, exact: true });
-    await expect(control).toBeDisabled();
-    await expect(row).toContainText("Coming");
-    await expect(row.locator(".chip").first()).toBeVisible();
-  }
-  // Outside Sales has no till in the decided matrix: the row says so by omission.
-  await expect(
-    coming.getByRole("listitem").filter({ hasText: "Outside Sales" }),
-  ).not.toContainText("Counter Till");
+  // The General Manager's card is live: the Money Desk, Manager Home and
+  // Dealer Admin open, House Messages is not built yet and reads as a chip.
+  const general = page.getByRole("button", { name: "General Manager", exact: true });
+  await expect(general).toBeVisible();
+  await expect(general).toBeEnabled();
+  await expect(general).toContainText("Sign in as General Manager");
+  await expect(general).toContainText("Money Desk");
+  await expect(general).toContainText("Manager Home");
+  await expect(general).toContainText("Dealer Admin");
+
+  // HR's card is live: House Messages
+  // reads as a chip, never as a link, and Dealer Admin opens.
+  const hr = page.getByRole("button", { name: "HR", exact: true });
+  await expect(hr).toBeVisible();
+  await expect(hr).toBeEnabled();
+  await expect(hr).toContainText("Sign in as HR");
+  await expect(hr).toContainText("House Messages");
+  await expect(hr).toContainText("Dealer Admin");
+
+  // The Branch Manager's card is live: the Counter Till, Quote Desk,
+  // Dispatch and Load Building and Manager Home open, House Messages reads as a
+  // chip.
+  const branch = page.getByRole("button", { name: "Branch Manager", exact: true });
+  await expect(branch).toBeVisible();
+  await expect(branch).toBeEnabled();
+  await expect(branch).toContainText("Sign in as Branch Manager");
+  await expect(branch).toContainText("Counter Till");
+  await expect(branch).toContainText("Dispatch and Load Building");
+
+  // The Logistics Manager's card is live with the dispatch board as its first tile.
+  const logistics = page.getByRole("button", { name: "Logistics Manager", exact: true });
+  await expect(logistics).toBeVisible();
+  await expect(logistics).toBeEnabled();
+  await expect(logistics).toContainText("Build the day's loads and send the trucks out.");
+  await expect(logistics).toContainText("Sign in as Logistics Manager");
+  await expect(logistics).toContainText("Dispatch and Load Building");
+  await expect(logistics).toContainText("Manager Home");
+
+  // Outside Sales' card is live: the Quote Desk opens, House Messages reads as
+  // a chip, and no till is offered (the matrix gives the role none).
+  const outside = page.getByRole("button", { name: "Outside Sales", exact: true });
+  await expect(outside).toBeVisible();
+  await expect(outside).toBeEnabled();
+  await expect(outside).toContainText("Sign in as Outside Sales");
+  await expect(outside).toContainText("Quote Desk");
+  await expect(outside).toContainText("House Messages");
+  await expect(outside).not.toContainText("Counter Till");
+
+  // Every role of the matrix is live, so nothing is left to recede: the coming
+  // disclosure is not drawn at all.
+  await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
 });
 
 test("the header carries the brand, the demo badge and the Pick a role word when not signed in", async ({ page }) => {
@@ -198,10 +221,99 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
   for (const name of ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
-  // The manager's not-yet modules recede under their own word.
-  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
+  // All five are on the box (Dealer Admin at /dealer-admin/, House Messages at
+  // /messages/), so nothing recedes under the coming-next word.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
+  await expect(page.getByRole("button", { name: "Dealer Admin", exact: true })).toHaveAttribute("data-href", "/dealer-admin/");
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   expect(await storedFlow(page)).toBe("sales-manager");
+});
+
+// L-card for the coming roles cycle: the role signs in from its card and the
+// home shows exactly the matrix tiles, each live tile on its own prefix and
+// each tile whose app is not on the box yet with no link (it reads "coming").
+test("a General Manager sign in shows the matrix tiles, all four live", async ({ page }) => {
+  await signIn(page, "General Manager");
+  await expect(page.getByTestId("header-word")).toHaveText("General Manager");
+  for (const [name, href] of [
+    ["Money Desk", "/money-desk/"],
+    ["Manager Home", "/home/"],
+    ["House Messages", "/messages/"],
+    ["Dealer Admin", "/dealer-admin/"],
+  ] as const) {
+    const tile = page.getByRole("button", { name, exact: true });
+    await expect(tile).toBeVisible();
+    await expect(tile).toHaveAttribute("data-href", href);
+  }
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  expect(await storedFlow(page)).toBe("general-manager");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("an HR sign in shows Dealer Admin and House Messages live", async ({ page }) => {
+  await signIn(page, "HR");
+  await expect(page.getByTestId("header-word")).toHaveText("HR");
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  const admin = page.getByRole("button", { name: "Dealer Admin", exact: true });
+  await expect(admin).toBeVisible();
+  await expect(admin).toHaveAttribute("data-href", "/dealer-admin/");
+  const messages = page.getByRole("button", { name: "House Messages", exact: true });
+  await expect(messages).toBeVisible();
+  await expect(messages).toHaveAttribute("data-href", "/messages/");
+  expect(await storedFlow(page)).toBe("hr");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("a Branch Manager sign in shows the matrix tiles, all five live", async ({ page }) => {
+  await signIn(page, "Branch Manager");
+  await expect(page.getByTestId("header-word")).toHaveText("Branch Manager");
+  for (const [name, href] of [
+    ["Counter Till", "/till/"],
+    ["Quote Desk", "/quote/"],
+    ["Dispatch and Load Building", "/dispatch/"],
+    ["Manager Home", "/home/"],
+    ["House Messages", "/messages/"],
+  ] as const) {
+    const tile = page.getByRole("button", { name, exact: true });
+    await expect(tile).toBeVisible();
+    await expect(tile).toHaveAttribute("data-href", href);
+  }
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  expect(await storedFlow(page)).toBe("branch-manager");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("a Logistics Manager sign in shows the matrix tiles, all three live", async ({ page }) => {
+  await signIn(page, "Logistics Manager");
+  await expect(page.getByTestId("header-word")).toHaveText("Logistics Manager");
+  for (const [name, href] of [
+    ["Dispatch and Load Building", "/dispatch/"],
+    ["Manager Home", "/home/"],
+    ["House Messages", "/messages/"],
+  ] as const) {
+    const tile = page.getByRole("button", { name, exact: true });
+    await expect(tile).toBeVisible();
+    await expect(tile).toHaveAttribute("data-href", href);
+  }
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  expect(await storedFlow(page)).toBe("logistics-manager");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("an Outside Sales sign in shows the Quote Desk and House Messages tiles and no till", async ({ page }) => {
+  await signIn(page, "Outside Sales");
+  await expect(page.getByTestId("header-word")).toHaveText("Outside Sales");
+  const quote = page.getByRole("button", { name: "Quote Desk", exact: true });
+  await expect(quote).toBeVisible();
+  await expect(quote).toHaveAttribute("data-href", "/quote/");
+  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  const messages = page.getByRole("button", { name: "House Messages", exact: true });
+  await expect(messages).toBeVisible();
+  await expect(messages).toHaveAttribute("data-href", "/messages/");
+  expect(await storedFlow(page)).toBe("outside-sales");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
 
 test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", async ({ page }) => {
@@ -212,10 +324,10 @@ test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", asy
   await expect(yardTile).toContainText("Open the Yard Pick");
   await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
   await expect(page.getByTestId("header-word")).toHaveText("Yard Team");
-  // House Messages is the role's other matrix module and is not on the box
-  // yet: it recedes under the coming-next word instead of a live tile.
-  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  // House Messages is the role's other matrix module and is live on the box:
+  // a live tile that opens /messages/, so nothing of this role is coming next.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
   expect(await storedFlow(page)).toBe("yard-team");
   expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
@@ -223,11 +335,11 @@ test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", asy
 test("a Driver sign in shows the HH Drive tile, which navigates to /drive/", async ({ page }) => {
   await signIn(page, "Driver");
   // The driver's two tiles: HH Drive (live, opens /drive/) and House Messages
-  // (closed, the polite coming-soon page).
+  // (live, opens /messages/).
   const drive = page.getByRole("button", { name: "HH Drive", exact: true });
   await expect(drive).toBeVisible();
   await expect(drive).toContainText("Open the HH Drive");
-  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
   await expect(page.getByTestId("header-word")).toHaveText("Driver");
   expect(await storedFlow(page)).toBe("driver");
   // The HH Drive tile carries the box's /drive/ prefix, the same one the
@@ -273,9 +385,11 @@ test("a manager sign in, a Switch role, then a Sales sign in leaves the manager'
   expect(await storedFlow(page)).toBe("sales");
   await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toBeVisible();
-  for (const name of ["Manager Home", "Dealer Admin", "House Messages"]) {
+  for (const name of ["Manager Home", "Dealer Admin"]) {
     await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
   }
+  // House Messages is Sales' own tile too (the matrix gives it at work level).
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
 });
 
@@ -284,7 +398,7 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toContainText(
-    "Demo sign-in refused: the demo mint limit is spent for now, wait a moment and tap again",
+    "Sign-in did not go through. too many sign-ins just now, wait a moment and tap again",
   );
   expect(await storedKeys(page)).toEqual([]);
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
@@ -294,15 +408,18 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
 });
 
-test("the manager's not-yet modules open the coming-soon page and back again", async ({ page }) => {
+test("the manager's five tiles all open an app of the box, so none leads to the coming-soon page", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await page.getByRole("button", { name: "House Messages", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /House Messages/ })).toBeVisible();
-  await expect(page.getByText("not on this demo box yet")).toBeVisible();
-  // The header stays: the demo badge, the role's name, the two controls.
-  await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
-  await page.getByRole("button", { name: "Back to Sales manager" }).click();
-  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  for (const [name, href] of [
+    ["Counter Till", "/till/"],
+    ["Quote Desk", "/quote/"],
+    ["Manager Home", "/home/"],
+    ["Dealer Admin", "/dealer-admin/"],
+    ["House Messages", "/messages/"],
+  ] as const) {
+    await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute("data-href", href);
+  }
+  await expect(page.getByText("not on this demo box yet")).toHaveCount(0);
 });
 
 test("a reload in the same tab resumes the role home from the stored session", async ({ page }) => {
@@ -310,4 +427,46 @@ test("a reload in the same tab resumes the role home from the stored session", a
   await page.reload();
   await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
+});
+
+// The contractor entry: the flows listing carries each row's class, and a tenant row is a contractor
+// persona routed to the Pro app for its role. The card does not mint; it opens the app with the role.
+const CONTRACTOR_CARDS: ReadonlyArray<[label: string, app: string, path: string]> = [
+  ["Owner", "Pro Procurement", "/pro-procurement/?as=account_admin"],
+  ["Buyer", "Pro Procurement", "/pro-procurement/?as=buyer"],
+  ["Project manager", "Pro Procurement", "/pro-procurement/?as=buyer_no_pay"],
+  ["Accounts payable", "Pro Pay", "/pro-pay/?as=ap_finance"],
+  ["Field crew", "Pro Field", "/pro-field/?as=field_crew"],
+];
+
+test("the contractor accounts section lists the five roles, each naming the Pro app it opens", async ({ page }) => {
+  const section = page.getByTestId("contractor-section");
+  await expect(section).toBeVisible();
+  await expect(section).toContainText("Summit Ridge Builders buys from Gable Landscape Supply.");
+  await expect(page.getByTestId("contractor-card")).toHaveCount(5);
+  for (const [label, app] of CONTRACTOR_CARDS) {
+    const card = section.getByRole("button", { name: label, exact: true });
+    await expect(card).toBeEnabled();
+    await expect(card).toContainText(app);
+    await expect(card).toContainText(`Open ${app} as ${label}`);
+  }
+  // The staff cards are untouched.
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+});
+
+for (const [label, , path] of CONTRACTOR_CARDS) {
+  test(`the ${label} card opens its Pro app with the role, and mints nothing at the front door`, async ({ page }) => {
+    // The harness serves the front door alone, so the navigation target is answered by a stand-in page.
+    await page.route("**/pro-*/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>Pro</title>" }));
+    await page.getByTestId("contractor-section").getByRole("button", { name: label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\\?")}$`));
+    expect(await storedKeys(page)).toEqual([]);
+  });
+}
+
+test("a flows listing that fails shows no contractor cards and leaves the staff cards working", async ({ page }) => {
+  expect((await page.request.post("/_stub/listing-fails")).ok()).toBe(true);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await expect(page.getByTestId("contractor-section")).toHaveCount(0);
 });

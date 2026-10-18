@@ -21,7 +21,9 @@
 // Manager Home app's yard manager, and the live role logins the roles
 // roadmap adds one reviewed row at a time (the yard personas, Payables and
 // Receivables and the Procurement Manager and the Financial Controller
-// after PRs 300 and 303). A new flow is an edit here, reviewed, never a
+// after PRs 300 and 303, and the Logistics Manager of the dispatch board, then
+// the coming roles cycle's four: General Manager, HR, Branch Manager and
+// Outside Sales). A new flow is an edit here, reviewed, never a
 // runtime input: the entry page may only ever offer what this file lists.
 package flows
 
@@ -172,7 +174,7 @@ var accounts = map[string]Account{
 	"yard-team": {
 		Flow:           "yard-team",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
-		Email:          "yard.demo@dibbits.example",
+		Email:          "yard.demo@" + ReservedDomain,
 		DisplayName:    "Yard persona (demo)",
 		Label:          "Yard Team",
 		Role:           "yard_team",
@@ -180,7 +182,7 @@ var accounts = map[string]Account{
 	"driver": {
 		Flow:           "driver",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000003",
-		Email:          "driver.demo@dibbits.example",
+		Email:          "driver.demo@" + ReservedDomain,
 		DisplayName:    "Driver persona (demo)",
 		Label:          "Driver",
 		Role:           "driver",
@@ -207,6 +209,18 @@ var accounts = map[string]Account{
 		Label:          "Procurement manager",
 		Role:           "procurement_manager",
 	},
+	// The Logistics Manager, the dispatch board's first role: the dispatch
+	// persona migration 0200 plants, whose id and display name the populate
+	// keeps. The label is the roles catalog's own spelling, the front door
+	// card's word.
+	"logistics-manager": {
+		Flow:           "logistics-manager",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000001",
+		Email:          "dispatch.demo@" + ReservedDomain,
+		DisplayName:    "Dispatch persona (demo)",
+		Label:          "Logistics Manager",
+		Role:           "logistics_manager",
+	},
 	"financial-controller": {
 		Flow:           "financial-controller",
 		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
@@ -214,6 +228,50 @@ var accounts = map[string]Account{
 		DisplayName:    "Financial controller (demo)",
 		Label:          "Financial Controller",
 		Role:           "financial_controller",
+	},
+	// The General Manager, the first of the coming roles cycle's five
+	// logins (global, tier one). The id block is the cycle's own, so the
+	// five rows cannot collide with the role lanes' blocks.
+	"general-manager": {
+		Flow:           "general-manager",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000001",
+		Email:          "general.manager@" + ReservedDomain,
+		DisplayName:    "General manager (demo)",
+		Label:          "General Manager",
+		Role:           "general_manager",
+	},
+	// HR, the second of the coming roles cycle's logins (global, tier one):
+	// no Manager Home, no selling surface; its cells are House Messages and
+	// Dealer Admin.
+	"hr": {
+		Flow:           "hr",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000002",
+		Email:          "hr@" + ReservedDomain,
+		DisplayName:    "HR (demo)",
+		Label:          "HR",
+		Role:           "hr",
+	},
+	// The Branch Manager, the third of the coming roles cycle's logins
+	// (branch scoped, tier two): the branch's own floor, quotes, dispatch
+	// and Manager Home.
+	"branch-manager": {
+		Flow:           "branch-manager",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000003",
+		Email:          "branch.manager@" + ReservedDomain,
+		DisplayName:    "Branch manager (demo)",
+		Label:          "Branch Manager",
+		Role:           "branch_manager",
+	},
+	// Outside Sales, the last of the coming roles cycle's logins (branch
+	// scoped, tier three): the field seller who works quotes at the Quote
+	// Desk and holds no till.
+	"outside-sales": {
+		Flow:           "outside-sales",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000005",
+		Email:          "outside.sales@" + ReservedDomain,
+		DisplayName:    "Outside sales (demo)",
+		Label:          "Outside Sales",
+		Role:           "outside_sales",
 	},
 	// Summit Ridge Builders' five contractor personas, one per portal role
 	// the core stores (identity/portal.go), role labels only on screens.
@@ -287,6 +345,11 @@ func All() []Account {
 		accounts["payables-receivables"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
+		accounts["logistics-manager"],
+		accounts["general-manager"],
+		accounts["hr"],
+		accounts["branch-manager"],
+		accounts["outside-sales"],
 		accounts["contractor-account-admin"],
 		accounts["contractor-buyer"],
 		accounts["contractor-buyer-no-pay"],

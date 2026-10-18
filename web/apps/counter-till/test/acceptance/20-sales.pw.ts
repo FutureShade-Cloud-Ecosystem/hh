@@ -2,10 +2,10 @@
 // drawer, a sale, a contractor's pavers, an account that cannot carry the
 // sale on account, tender and receipt, parked sales, a return within 250.00,
 // a return above it that commits with no approval at the demo dealer, a
-// Kingston sale refused, and beyond the till.
+// Julian sale refused, and beyond the till.
 // The Driver, yard manager, Yard Team and Financial Controller cards are live
 // on the front door, so the till's entry serves the two Counter Till roles
-// only: none of those rows is in the coming list.
+// only: none of those rows is in the till (no coming list is drawn).
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -16,7 +16,7 @@ import {
   SEEDED,
   SEEDED_IDS,
   TOP_BAR_CLIP,
-  TRENTON_ID,
+  POINT_LOMA_ID,
   apiPicture,
   cad,
   dollars,
@@ -47,31 +47,38 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the five coming roles untapped, the yard manager, the yard team, the driver and the financial controller start at the front door, and the banner", async ({
+test("the way in: the picker with all thirteen live role cards and no coming list, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  // The yard manager, the Yard Team and the Driver are flows the demo mints
-  // (the front door shows the cards), but the till's entry serves the
-  // matrix's Counter Till roles only; they sign in at the front door, so no
-  // card of theirs renders here.
-  await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
-  // The coming roles: shown, labelled Coming, and dead controls. The yard
-  // manager, the Yard Team and the Driver are not among them: their cards
-  // live on the front door now.
-  for (const role of ["Outside Sales", "Branch Manager", "General Manager", "HR"]) {
-    const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
-    await expect(coming).toBeDisabled();
+  // The multi app image serves the front door at /: the picker names its own
+  // word and carries the thirteen live role cards, the till's two roles among
+  // them, and the demo badge states the box.
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
+  for (const role of [
+    "Sales",
+    "Sales manager",
+    "Yard manager",
+    "Yard Team",
+    "Driver",
+    "Payables and Receivables",
+    "Procurement manager",
+    "Financial Controller",
+    "Logistics Manager",
+    "General Manager",
+    "HR",
+    "Branch Manager",
+    "Outside Sales",
+  ]) {
+    await expect(page.getByRole("button", { name: role, exact: true })).toBeVisible();
   }
-  // The yard manager, the Yard Team, Payables and Receivables and the
-  // Financial Controller have live cards on the front door, so the till's
-  // list drops them, as it dropped the Driver: its coming list is the front
-  // door's coming rows.
-  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller"]) {
+  const badge = page.getByRole("note");
+  await expect(badge).toContainText("Demo");
+  // No role is coming: every role of the matrix signs in at the front door,
+  // so the picker draws no coming disclosure and no coming list.
+  await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);
@@ -83,7 +90,7 @@ test("the drawer: the branch's MAIN counter drawer, found open with the till's o
   await signIn(page, "Sales");
   // The identity line names the invented dealer and the branch, not the
   // migrated trading name; the session bar says the drawer is open.
-  await expect(page.getByTestId("pagectx")).toContainText("Hardscape House (demo), Trenton");
+  await expect(page.getByTestId("pagectx")).toContainText("Gable Landscape Supply, Point Loma");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
   // The surface carries no float figure, so the core's own Z report holds it:
   // MAIN is open with the float the till opens it with, $300.00, the
@@ -98,9 +105,9 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(595));
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(595));
   // The box's policy word is MANAGER_UP and the clerk is frontline (tier 3),
   // so the till refuses the whole margin surface (P3-10: the surface follows
   // the policy word): no margin cells, and the glance is refused server-side
@@ -109,8 +116,8 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   // The line carries a quantity input and no price field anywhere: the price
   // is text, and the one textbox of the line is its quantity.
-  await expect(holland.getByRole("textbox")).toHaveCount(1);
-  await expect(holland.getByRole("textbox")).toHaveAttribute("aria-label", /^Quantity: /);
+  await expect(charcoal.getByRole("textbox")).toHaveCount(1);
+  await expect(charcoal.getByRole("textbox")).toHaveAttribute("aria-label", /^Quantity: /);
   await expect(page.getByTestId("pos-lines").getByRole("textbox")).toHaveCount(1);
   await shot(page, "sales-03-sale", testInfo);
 });
@@ -120,10 +127,10 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
 }, testInfo) => {
   await signIn(page, "Sales");
   // The contractor's own price: below the $5.95 list the drop row shows.
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(524));
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(524));
   // The policy word refuses the clerk the whole margin surface (P3-10), on
   // this contractor ticket as on any other: the price stands, the column does
   // not. The manager's till is the allowed side's proof (30-manager).
@@ -136,15 +143,15 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   // the proof the line is genuinely below the bulk category's floor of 20
   // percent; the refused surface states no margin for it (P3-10), and rings
   // it regardless.
-  await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
-  await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
-  const granular = lineRow(page, "Granular A (demo)");
+  await pickCustomer(page, "Fieldstone", "Fieldstone Pools and Patios");
+  await searchAndAdd(page, "DEMO-AGG-BASE", "Class 2 base rock");
+  const granular = lineRow(page, "Class 2 base rock");
   await expect(granular.locator(".lprice")).toHaveText(cad(2925));
   const bearer = await mint(page, "sales");
   const manager = await mint(page, "sales-manager");
   const glanced = await staffPost(page, manager, "/api/v1/pos/margin-glance", {
-    branch_id: TRENTON_ID,
-    customer_id: SEEDED_IDS.quinteC03,
+    branch_id: POINT_LOMA_ID,
+    customer_id: SEEDED_IDS.fieldstoneC03,
     customer_type: "CONTRACTOR",
     lines: [{ product_id: SEEDED_IDS.granularA, qty_entered: 1, uom_entered: "T" }],
   });
@@ -172,15 +179,17 @@ test("an account that cannot carry the sale on account: refused in words, nothin
   await signIn(page, "Sales");
   // DEMO-C07 is a no credit account (zero day terms, no credit line): item
   // 9's ring refuses the on account shape itself, before the credit gate
-  // runs, and the till shows the server's own words for the $6.72 the sale
-  // would have booked on the account.
+  // runs, and the till shows the server's own words, naming the figure the
+  // sale would have booked on the account: the preview card's own total, the
+  // same server answer the refusal must carry.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   await openStep(page, "payment");
+  const previewTotal = (await page.getByTestId("pos-preview-total").innerText()).replace(/^Total\s*/, "").trim();
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
   const refusal = page.getByRole("alert").filter({ hasText: "cannot carry" });
-  await expect(refusal).toContainText("This account cannot carry $6.72 on account.");
+  await expect(refusal).toContainText(`This account cannot carry ${previewTotal} on account.`);
   await expect(refusal).toContainText("Pay in full now, or take a deposit with the balance due later.");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await shot(page, "sales-05-credit-refused", testInfo);
@@ -193,7 +202,7 @@ test("tender and receipt: cash with change due, held against the core's own read
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum edging 8 ft");
   // The pre-ring payment step, held against the core's own prices (rows 985
   // and 661, round 7): the card's shape is the Subtotal row, then the Tax and
   // Total rows the server's sale-preview states (three rows, never the
@@ -257,8 +266,16 @@ test("tender and receipt: cash with change due, held against the core's own read
   // The customer row is required on every sale: the walk-in sale prints the
   // counter's own word beside the walk-in account.
   expect(printedText).toContain("Customer: Walk-in");
-  expect(printedText).toContain("Hardscape House (demo)");
-  expect(printedText).toContain("12 Yard Gate Road");
+  expect(printedText).toContain("Gable Landscape Supply");
+  // The letterhead carries the demo branch's own address, as the core's
+  // branch read states it: the world moved to San Diego and the street
+  // re-seeded, so the leg reads the address off the branch row instead of
+  // pinning a street that can move again.
+  const branches = await staffGet(page, bearer, "/api/v1/branches");
+  const branchRows = branches.body as unknown as Array<Record<string, unknown>>;
+  const branch = branchRows.find((row) => row.id === POINT_LOMA_ID) ?? branchRows[0];
+  const address = branch.address as { line1?: string };
+  expect(printedText).toContain(address.line1 as string);
   // The letterhead's honesty pin: the first dealer's real trading name never
   // prints. The name rides encoded (the name sweep's own discipline), so the
   // assertion ships without the name anywhere in the tree.
@@ -316,7 +333,7 @@ test("tender and receipt: a card sale says no card was charged, on the tender an
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-BRUSSELS", "Brussels Dimensional, Sandstone (demo)");
+  await searchAndAdd(page, "DEMO-PAV-SANDSTONE", "Dimensional paver, sandstone");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Card", exact: true }).click();
   await expect(page.getByText("TEST MODE: simulated terminal")).toBeVisible();
@@ -334,17 +351,19 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
   await signIn(page, "Sales");
   const bearer = await mint(page, "sales");
   const balanceOf = async (): Promise<number> => {
+    // C02 answers the Ridgeview name the demo world's own dictionary gave
+    // it; the search reads the same word the picker types.
     const read = await staffGet(
       page,
       bearer,
-      `/api/v1/customers/search?q=Bay%20Ridge&branch_id=${TRENTON_ID}`,
+      `/api/v1/customers/search?q=Ridgeview&branch_id=${POINT_LOMA_ID}`,
     );
     const rows = read.body as unknown as Array<Record<string, unknown>>;
     return rows[0].open_balance_cents as number;
   };
   const balanceBefore = await balanceOf();
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-STEP-SLAB", "Step Slab 24x48, Natural (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-STEP-SLAB", "Step slab 24x48, natural");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   const rung = await ring(page);
@@ -373,7 +392,7 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch (demo)");
+  await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black cedar mulch");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   const dialog = await openParked(page);
@@ -381,14 +400,14 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   // What the world left waiting counts first: the seed's walk-in ticket is
   // among it, and the ticket just parked comes on top.
   const waiting = await parked.count();
-  await expect(dialog).toContainText(SEEDED.trentonTicket);
+  await expect(dialog).toContainText(SEEDED.pointLomaTicket);
   await expect(dialog).toContainText("Saved carts for this branch");
-  await expect(dialog).not.toContainText(SEEDED.kingstonTicket);
+  await expect(dialog).not.toContainText(SEEDED.julianTicket);
   expect(waiting).toBeGreaterThanOrEqual(2);
   await shot(page, "sales-07-parked", testInfo);
   // Pick the seeded walk-in ticket up, as anyone at this counter may: it
   // prices fresh through the engine.
-  await parked.filter({ hasText: SEEDED.trentonTicket }).getByRole("button", { name: "Resume" }).click();
+  await parked.filter({ hasText: SEEDED.pointLomaTicket }).getByRole("button", { name: "Resume" }).click();
   await expect(dialog).toHaveCount(0);
   await openStep(page, "items");
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
@@ -399,8 +418,8 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   await page.getByRole("button", { name: "Park ticket" }).click();
   const again = await openParked(page);
   await expect(again.locator(".ticket")).toHaveCount(waiting);
-  await expect(again).not.toContainText(SEEDED.trentonTicket);
-  await expect(again).not.toContainText(SEEDED.kingstonTicket);
+  await expect(again).not.toContainText(SEEDED.pointLomaTicket);
+  await expect(again).not.toContainText(SEEDED.julianTicket);
 });
 
 test("a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total", async ({
@@ -412,18 +431,18 @@ test("a two order return: lines from both orders, one credit note in cash, and t
   // one credit note, each order's return with its number, and the drawer's expected cash drops by the
   // note's total, the server's figure read off the Done step.
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   const first = await ringCash(page, "20.00");
   await page.goto("/");
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum edging 8 ft");
   const second = await ringCash(page, "60.00");
 
   await openReturns(page);
-  await page.getByLabel("Search name or account number").fill("Bay Ridge");
-  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  await page.getByLabel("Search name or account number").fill("Ridgeview");
+  await page.getByRole("button", { name: /Ridgeview Outdoor Living/ }).click();
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
   const orderOne = page.getByTestId("returns-order").filter({ hasText: first.order_no });
   const orderTwo = page.getByTestId("returns-order").filter({ hasText: second.order_no });
@@ -472,29 +491,33 @@ test("a two order return: lines from both orders, one credit note in cash, and t
 test("a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other", async ({
   page,
 }, testInfo) => {
-  // Item 10, the swap: a cash sale is rung to the Bay Ridge account, then Returns takes its line back to
+  // Item 10, the swap: a cash sale is rung to the Ridgeview account, then Returns takes its line back to
   // stock and the replacement goods (the server prices them) are paid by the credit. The leftover goes back
   // by the original tender, cash from the drawer, so the drawer's expected cash drops by exactly the
   // leftover the Done step states. The figures are the server's: the preview before and the commit after
   // must say the same new order total.
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  await setQuantity(page, "Holland Paver, Charcoal (demo)", "40");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  await setQuantity(page, "Interlocking paver 60 mm, charcoal", "40");
   const rung = await ringCash(page, "400.00");
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
   const before = await expectedCash(page, bearer, drawerId);
 
   await openReturns(page);
-  await page.getByLabel("Search name or account number").fill("Bay Ridge");
-  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  await page.getByLabel("Search name or account number").fill("Ridgeview");
+  await page.getByRole("button", { name: /Ridgeview Outdoor Living/ }).click();
   const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
   await expect(order).toHaveCount(1);
+  // The disposition on an unpicked line picks one unit of it (the draft's
+  // own rule); this story returns the whole line of 40, so the quantity is
+  // typed first, the way a person walks the stepper's input.
+  await order.getByLabel(/Return quantity: Interlocking paver/).fill("40");
   await order.getByRole("button", { name: "Return to stock" }).first().click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByLabel("Search replacement goods").fill("Aluminum");
-  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum Edging 8ft/ }).first().click();
+  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum edging 8 ft/ }).first().click();
   const swap = page.getByTestId("returns-swap");
   await expect(swap.getByTestId("swap-new-total")).toBeVisible();
   const centsOf = (text: string): number => {
@@ -524,7 +547,7 @@ test("a walk in return: found by its receipt number, cash or card only, and the 
   // receipt or order number. The account rail is not offered (it goes back to cash or card), and a cash
   // refund moves the drawer's expected cash by exactly the note's total, the server's figure on Done.
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum edging 8 ft");
   const rung = await ringCash(page, "60.00");
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
@@ -553,28 +576,41 @@ test("a walk in return: found by its receipt number, cash or card only, and the 
   await shot(page, "sales-12-walk-in-return-done", testInfo);
 });
 
-test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({
+test("beyond the till: the reload keeps the session, sign out ends it, and a fresh page starts at the front door", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  // The page tells the tester a reload ends the session, and the box works
-  // exactly that way: the mint lives in the tab alone, so a signed in reload
-  // returns the cards, not the till.
+  // The testers' page states the box's own contract: reloading in the same
+  // tab keeps the session until sign out (the till's custody mirror holds
+  // it), and a new tab starts at the front door. The box works exactly that
+  // way.
   const signedIn = await page.screenshot({ fullPage: true });
   await page.reload();
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
   await settle(page);
-  // The picture holds the claim's two halves: the till as it stood signed in,
-  // and the page the reload left, the cards and nobody's till.
+  // The picture holds the claim's two halves: the till as it stood signed
+  // in, and the till the reload left, still signed in under the same role.
   const afterReload = await page.screenshot({ fullPage: true });
   await shotParts(page, "sales-11-beyond", testInfo, [signedIn, afterReload]);
-  // Sign out lands on the same place, deliberately.
-  await signIn(page, "Sales");
+  // The testers' page states the third half of the claim: a NEW tab in the same browser
+  // context, while THIS tab is still signed in, starts at the front door, not under
+  // custody. Session storage is per-tab, so the new tab has no hh-demo.front-door.session.v1
+  // key, sees the cards page, and shows no signed-in role. Prove it before clicking Sign
+  // out, because Sign out is the later half of the claim and the new-tab proof belongs to
+  // the reload half.
+  const freshTab = await page.context().newPage();
+  await freshTab.goto("/");
+  await expect(freshTab.getByTestId("header-word")).toHaveText("Pick a role");
+  await expect(freshTab.getByTestId("signed-in-role")).toHaveCount(0);
+  await freshTab.close();
+  // Signing out ends the session, deliberately: the till returns to its
+  // entry cards.
   await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  // And a fresh page is nobody's till either.
+  // A fresh page starts at the front door, and the till is nobody's either.
   await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
 });

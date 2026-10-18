@@ -22,10 +22,13 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
@@ -68,9 +71,13 @@ import {
   effectiveVerdict,
   type PlatformHotkeyView,
 } from "./hotkey-logic.js";
-import { SURFACES, isSurfaceId } from "./surfaces.js";
+import { SURFACE_GROUPS, SURFACES, isSurfaceId } from "./surfaces.js";
+import { renderDelivery } from "./views-delivery.js";
+import { renderSignInMethods } from "./views-sign-in-methods.js";
+import { renderChatRules } from "./views-chat-rules.js";
 import { dealerStyles } from "./styles.js";
 import { pricingStyles } from "./pricing-styles.js";
+import { warrantyStyles } from "./warranty-styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
@@ -95,6 +102,18 @@ import { AdminWork, isAdminWorkSurface } from "./admin-work.js";
 import { PricingApi } from "./pricing-api.js";
 import { pricingAttrs, PricingController } from "./pricing-controller.js";
 import { renderPricing } from "./views-pricing.js";
+import { WarrantyApi, type VendorAgreementView } from "./warranty-api.js";
+import { renderWarranty, type AgreementRowView, type AgreementsSection, type ThresholdSection, type WarrantyModel } from "./views-warranty.js";
+import {
+  allowanceFault,
+  allowanceWords,
+  nextAgreementFor,
+  parseAllowancePct,
+  parseThresholdDollars,
+  thresholdFault,
+  warrantyRefusalWords,
+} from "./warranty-logic.js";
+import { moneyWords } from "./pricing-logic.js";
 import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
@@ -218,18 +237,52 @@ const emptySettingsModel = (): SettingsModel => ({
   },
 });
 
-export class DealerAdminApp extends HHElement {
-  static styles = [baseStyles, dealerStyles, pricingStyles];
+const emptyWarrantyModel = (): WarrantyModel => ({
+  threshold: {
+    phase: "loading",
+    words: "",
+    cents: 0,
+    draft: "",
+    busy: false,
+    notice: "",
+    error: "",
+    fault: "",
+  },
+  agreements: {
+    phase: "loading",
+    words: "",
+    rows: [],
+  },
+});
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
+/** One agreement read row as the view's model carries it, controls at rest. */
+const toAgreementRow = (v: VendorAgreementView): AgreementRowView => ({
+  vendor_id: v.vendor_id,
+  vendor_no: v.vendor_no,
+  vendor_name: v.vendor_name,
+  kind: v.agreement_kind,
+  period: v.period,
+  allowanceBp: v.allowance_bp,
+  busy: false,
+  error: "",
+});
+
+/** The view row's wire shape, what the kind switch decides from. */
+const toAgreementLike = (row: AgreementRowView): {
+  agreement_kind: string;
+  period?: string;
+  allowance_bp: number;
+} => ({
+  agreement_kind: row.kind,
+  period: row.period,
+  allowance_bp: row.allowanceBp,
+});
+
+export class DealerAdminApp extends HHElement {
+  static styles = [baseStyles, dealerStyles, pricingStyles, warrantyStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -237,10 +290,23 @@ export class DealerAdminApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The dealer's calls, over the staff client.
@@ -279,6 +345,9 @@ export class DealerAdminApp extends HHElement {
 
   // The deployment settings' calls, over the staff client.
   readonly #settingsApi = new SettingsApi(this.#staffClient);
+
+  // The warranty surface's calls, over the staff client.
+  readonly #warrantyApi = new WarrantyApi(this.#staffClient);
   // The pricing surface: its own controller, door and model, so this file
   // carries only the wiring (the listener branches and the router line).
   readonly #pricing = new PricingController(new PricingApi(this.#staffClient), () => this.requestUpdate());
@@ -311,6 +380,9 @@ export class DealerAdminApp extends HHElement {
   // The deployment settings surface's state.
   #settings: SettingsModel = emptySettingsModel();
 
+  // The warranty surface's state.
+  #warranty: WarrantyModel = emptyWarrantyModel();
+
   // The way in: this app's own door, one card per demo role.
   #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
     flows: { kind: "loading" },
@@ -320,12 +392,6 @@ export class DealerAdminApp extends HHElement {
 
   // The copied mark's timer, cleared on disconnect and sign out.
   #copiedTimer = 0;
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // Every control rides data-action names; one host listener reads them, as
   // the till's and Manager Home's do.
@@ -345,7 +411,9 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     if (action === "open-surface") {
-      const surface = control?.getAttribute("data-surface") ?? "";
+      let surface = control?.getAttribute("data-surface") ?? "";
+      if (surface === "roles") surface = "role-config";
+      if (surface === "sign-in") surface = "sign-in-methods";
       if (isSurfaceId(surface)) {
         this.#surface = surface;
         // A surface loads its own reads the first time it is opened.
@@ -354,6 +422,7 @@ export class DealerAdminApp extends HHElement {
         if (isAdminWorkSurface(surface)) this.#admin.open(surface);
         if (surface === "role-config" && this.#roleConfig.phase === "loading") void this.#loadRoleConfig();
         if (surface === "deployment" && this.#settings.brand.phase === "loading") void this.#loadSettings();
+        if (surface === "warranty" && this.#warranty.threshold.phase === "loading") void this.#loadWarranty();
         if (surface === "pricing") void this.#pricing.open();
         this.requestUpdate();
       }
@@ -522,6 +591,20 @@ export class DealerAdminApp extends HHElement {
       void this.#saveTourStep();
       return;
     }
+    if (action === "reload-warranty") {
+      void this.#loadWarranty();
+      return;
+    }
+    if (action === "warranty-save-threshold") {
+      void this.#saveWarrantyThreshold();
+      return;
+    }
+    if (action === "warranty-kind") {
+      const vendor = control?.getAttribute("data-vendor") ?? "";
+      const kind = control?.getAttribute("data-kind") ?? "";
+      if (vendor !== "" && kind !== "") void this.#switchWarrantyKind(vendor, kind);
+      return;
+    }
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -561,6 +644,21 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     const action = target.getAttribute("data-action") ?? "";
+    if (action === "warranty-period") {
+      const vendor = target.getAttribute("data-vendor") ?? "";
+      const period = target instanceof HTMLSelectElement ? target.value : "";
+      if (vendor !== "" && period !== "") void this.#changeWarrantyPeriod(vendor, period);
+      return;
+    }
+    if (field === "warranty-allowance") {
+      // The percent answers on change (blur or Enter): the input's words go
+      // to basis points and the row writes whole, the same immediate write
+      // the kind switch and the period make.
+      const vendor = target.getAttribute("data-vendor") ?? "";
+      const words = target instanceof HTMLInputElement ? target.value : "";
+      if (vendor !== "") void this.#saveWarrantyAllowance(vendor, words);
+      return;
+    }
     if (action === "assign-role") {
       const id = target.getAttribute("data-user-id") ?? "";
       const roleName = target instanceof HTMLSelectElement ? target.value : "";
@@ -669,6 +767,18 @@ export class DealerAdminApp extends HHElement {
     if (field === "tour-line") this.#patchSettingsTour({ editLine: value });
     if (field === "tour-route") this.#patchSettingsTour({ editRoute: value });
     if (field === "tour-anchor") this.#patchSettingsTour({ editAnchor: value });
+    if (field === "warranty-threshold") {
+      // The threshold answers on change like the settings' own fields: the
+      // words land in the draft, and a value that is not dollars names the
+      // fault on the glass before any write.
+      if (this.#warranty.threshold.phase !== "ready") return;
+      const cents = parseThresholdDollars(value);
+      if (cents === null) {
+        this.#patchWarrantyThreshold({ draft: value, fault: "Type the threshold as dollars, like $50.00." });
+        return;
+      }
+      this.#patchWarrantyThreshold({ draft: value, fault: thresholdFault(cents), error: "" });
+    }
   };
 
   // Enter opens the focused trail row; Escape closes the drawer.
@@ -687,14 +797,22 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // change, input and keydown do not leave this element's own shadow root,
     // so their listeners sit on the root itself.
     this.renderRoot.addEventListener("change", this.#onHostChange);
     this.renderRoot.addEventListener("input", this.#onHostInput);
     this.renderRoot.addEventListener("keydown", this.#onHostKeydown);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("dealer-admin", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -717,7 +835,27 @@ export class DealerAdminApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#start();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     this.renderRoot.removeEventListener("input", this.#onHostInput);
@@ -820,6 +958,29 @@ export class DealerAdminApp extends HHElement {
     for (const [field, on] of Object.entries(policyFlags)) {
       const el = this.renderRoot.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
       if (el !== null && el.checked !== on) el.checked = on;
+    }
+    // The warranty surface's fields mirror the model the same way: the
+    // threshold reads back as the person's words while they stand and the
+    // core's own dollars word when they do not, and each fixed allowance row
+    // reads back as its percent word, so a fresh read or a saved answer
+    // lands as the server says, never the person's stale words.
+    if (this.#warranty.threshold.phase === "ready") {
+      const threshold = this.renderRoot.querySelector<HTMLInputElement>('[data-field="warranty-threshold"]');
+      const words = this.#warranty.threshold.draft !== "" ? this.#warranty.threshold.draft : moneyWords(this.#warranty.threshold.cents);
+      if (threshold !== null && threshold.value !== words) threshold.value = words;
+    }
+    for (const row of this.#warranty.agreements.rows) {
+      if (row.kind === "claim_by_claim") continue;
+      const select = this.renderRoot.querySelector<HTMLSelectElement>(
+        `select[data-action="warranty-period"][data-vendor="${row.vendor_id}"]`,
+      );
+      if (select !== null && select.value !== row.period) select.value = row.period;
+      if (row.kind !== "fixed_allowance") continue;
+      const el = this.renderRoot.querySelector<HTMLInputElement>(
+        `[data-field="warranty-allowance"][data-vendor="${row.vendor_id}"]`,
+      );
+      const words = allowanceWords(row.allowanceBp);
+      if (el !== null && el.value !== words) el.value = words;
     }
     // The pricing editors' fields mirror the controller's model the same
     // way, checkbox included.
@@ -1494,6 +1655,162 @@ export class DealerAdminApp extends HHElement {
     this.#patchSettingsTour({ busy: false, notice: "Saved. The step says your line.", view: fresh.ok ? fresh.value : s.view });
   }
 
+  // -- the warranty surface ---------------------------------------------------------------------------
+
+  #patchWarranty(patch: Partial<WarrantyModel>): void {
+    this.#warranty = { ...this.#warranty, ...patch };
+    this.requestUpdate();
+  }
+
+  #patchWarrantyThreshold(patch: Partial<ThresholdSection>): void {
+    this.#patchWarranty({ threshold: { ...this.#warranty.threshold, ...patch } });
+  }
+
+  #patchWarrantyAgreements(patch: Partial<AgreementsSection>): void {
+    this.#patchWarranty({ agreements: { ...this.#warranty.agreements, ...patch } });
+  }
+
+  #patchWarrantyRow(vendorId: string, patch: Partial<AgreementRowView>): void {
+    this.#patchWarrantyAgreements({
+      rows: this.#warranty.agreements.rows.map((r) => (r.vendor_id === vendorId ? { ...r, ...patch } : r)),
+    });
+  }
+
+  /**
+   * The two reads, in parallel: the threshold's policy and the vendors'
+   * agreements. A refused section costs only itself; the other card stands.
+   */
+  async #loadWarranty(): Promise<void> {
+    this.#warranty = emptyWarrantyModel();
+    this.requestUpdate();
+    const policyRead = this.#warrantyApi.policy();
+    const agreementsRead = this.#warrantyApi.agreements();
+    const policy = await policyRead;
+    if (!policy.ok) {
+      this.#patchWarrantyThreshold({
+        phase: policy.status === 403 ? "refused" : "error",
+        words: warrantyRefusalWords(errorWords(policy.error), policy.status),
+      });
+    } else {
+      this.#patchWarrantyThreshold({ phase: "ready", cents: policy.value.claim_threshold_cents });
+    }
+    const agreements = await agreementsRead;
+    if (!agreements.ok) {
+      this.#patchWarrantyAgreements({
+        phase: agreements.status === 403 ? "refused" : "error",
+        words: warrantyRefusalWords(errorWords(agreements.error), agreements.status),
+      });
+    } else {
+      this.#patchWarrantyAgreements({ phase: "ready", rows: agreements.value.map(toAgreementRow) });
+    }
+  }
+
+  /** The threshold save: parse first (the fault names the rule), then the write goes to the server. */
+  async #saveWarrantyThreshold(): Promise<void> {
+    const s = this.#warranty.threshold;
+    if (s.phase !== "ready" || s.busy) return;
+    const field = this.renderRoot.querySelector<HTMLInputElement>('[data-field="warranty-threshold"]');
+    const cents = parseThresholdDollars(field?.value ?? "");
+    if (cents === null) {
+      this.#patchWarrantyThreshold({ error: "", fault: "Type the threshold as dollars, like $50.00." });
+      return;
+    }
+    const fault = thresholdFault(cents);
+    if (fault !== "") {
+      this.#patchWarrantyThreshold({ error: "", fault });
+      return;
+    }
+    this.#patchWarrantyThreshold({ busy: true, notice: "", error: "", fault: "" });
+    // A policy write is a policy write: it goes to the server now and never
+    // queues.
+    const result = await this.#warrantyApi.putPolicy(cents);
+    if (!result.ok) {
+      this.#patchWarrantyThreshold({ busy: false, error: warrantyRefusalWords(errorWords(result.error), result.status) });
+      return;
+    }
+    this.#patchWarrantyThreshold({
+      busy: false,
+      cents: result.value.claim_threshold_cents,
+      draft: "",
+      notice: "Saved. The till and Manager Home read the new threshold.",
+    });
+  }
+
+  /** One vendor's kind switch: the payload lands sane in one click, the write goes to the server. */
+  async #switchWarrantyKind(vendorId: string, kind: string): Promise<void> {
+    const row = this.#warranty.agreements.rows.find((r) => r.vendor_id === vendorId);
+    if (row === undefined || row.busy) return;
+    await this.#putWarrantyAgreement(vendorId, nextAgreementFor(toAgreementLike(row), kind));
+  }
+
+  /** One vendor's period change on the kind it already carries. */
+  async #changeWarrantyPeriod(vendorId: string, period: string): Promise<void> {
+    const row = this.#warranty.agreements.rows.find((r) => r.vendor_id === vendorId);
+    if (row === undefined || row.busy || row.kind === "claim_by_claim") return;
+    if (period !== "monthly" && period !== "quarterly") return;
+    await this.#putWarrantyAgreement(vendorId, {
+      agreement_kind: row.kind as "periodic_credit_note" | "fixed_allowance",
+      period,
+      allowance_bp: row.allowanceBp,
+    });
+  }
+
+  /** One vendor's fixed allowance percent, parsed to basis points before the write. */
+  async #saveWarrantyAllowance(vendorId: string, words: string): Promise<void> {
+    const row = this.#warranty.agreements.rows.find((r) => r.vendor_id === vendorId);
+    if (row === undefined || row.busy || row.kind !== "fixed_allowance") return;
+    const bp = parseAllowancePct(words);
+    if (bp === null) {
+      this.#patchWarrantyRow(vendorId, { error: "Type the allowance as a percent, like 1% of purchases." });
+      return;
+    }
+    const fault = allowanceFault(bp);
+    if (fault !== "") {
+      this.#patchWarrantyRow(vendorId, { error: fault });
+      return;
+    }
+    await this.#putWarrantyAgreement(vendorId, {
+      agreement_kind: "fixed_allowance",
+      period: row.period as "monthly" | "quarterly",
+      allowance_bp: bp,
+    });
+  }
+
+  /**
+   * The one agreement write path: busy on the row, the write awaited, the
+   * row replaced from the server's read-back on success, the refusal's own
+   * words on the row on a failure. Nothing queues.
+   */
+  async #putWarrantyAgreement(
+    vendorId: string,
+    put: { agreement_kind: string; period: "monthly" | "quarterly" | undefined; allowance_bp: number },
+  ): Promise<void> {
+    this.#patchWarrantyRow(vendorId, { busy: true, error: "" });
+    const result = await this.#warrantyApi.putAgreement(vendorId, {
+      agreement_kind: put.agreement_kind as "claim_by_claim" | "periodic_credit_note" | "fixed_allowance",
+      period: put.period,
+      allowance_bp: put.allowance_bp,
+    });
+    if (!result.ok) {
+      this.#patchWarrantyRow(vendorId, { busy: false, error: warrantyRefusalWords(errorWords(result.error), result.status) });
+      return;
+    }
+    const saved = result.value;
+    const replacement: AgreementRowView = {
+      vendor_id: vendorId,
+      vendor_no: saved.vendor_no,
+      vendor_name: saved.vendor_name,
+      kind: saved.agreement_kind,
+      period: saved.period,
+      allowanceBp: saved.allowance_bp,
+      busy: false,
+      error: "",
+    };
+    this.#patchWarrantyAgreements({
+      rows: this.#warranty.agreements.rows.map((r) => (r.vendor_id === vendorId ? replacement : r)),
+    });
+  }
+
   // -- the hotkeys surface ---------------------------------------------------------------------------
 
   async #loadHotkeys(): Promise<void> {
@@ -1735,10 +2052,10 @@ export class DealerAdminApp extends HHElement {
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         await this.#start();
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused. ${errorWords(result.error)}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${errorWords(result.error)}` };
     }
     this.requestUpdate();
   }
@@ -1752,10 +2069,17 @@ export class DealerAdminApp extends HHElement {
     this.#audit = emptyAuditModel();
     this.#roleConfig = emptyRoleConfigModel();
     this.#settings = emptySettingsModel();
+    this.#warranty = emptyWarrantyModel();
     this.#auditDetailGen += 1;
     this.#admin.signOut();
     this.#pricing.reset();
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 
@@ -1766,22 +2090,30 @@ export class DealerAdminApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
-  // The app's own left list: one row per registry surface.
+  // The app's own left list: grouped navigation rail per Change 11 boards.
   private renderSurfaceList(): TemplateResult {
     return html`
       <nav class="surface-list" aria-label="Dealer Admin surfaces">
-        ${SURFACES.map(
-          (s) => html`
-            <button
-              type="button"
-              class="surface-link"
-              data-action="open-surface"
-              data-surface=${s.id}
-              aria-current=${this.#surface === s.id ? "true" : "false"}
-            >
-              <span class="title">${s.title}</span>
-              <span class="blurb">${s.blurb}</span>
-            </button>
+        ${SURFACE_GROUPS.map(
+          (group) => html`
+            <div class="nav-group">
+              <div class="nav-group-title">${group.name}</div>
+              <div class="nav-group-items">
+                ${group.surfaces.map(
+                  (s) => html`
+                    <button
+                      type="button"
+                      class="surface-link"
+                      data-action="open-surface"
+                      data-surface=${s.id}
+                      aria-current=${this.#surface === s.id ? "true" : "false"}
+                    >
+                      <span class="title">${s.title}</span>
+                    </button>
+                  `,
+                )}
+              </div>
+            </div>
           `,
         )}
       </nav>
@@ -1797,9 +2129,13 @@ export class DealerAdminApp extends HHElement {
     }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
-    if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
+    if (this.#surface === "role-config" || this.#surface === "roles") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
+    if (this.#surface === "warranty") return renderWarranty(this.#warranty);
     if (this.#surface === "pricing") return renderPricing(this.#pricing.model);
+    if (this.#surface === "delivery") return renderDelivery();
+    if (this.#surface === "sign-in-methods" || this.#surface === "sign-in") return renderSignInMethods();
+    if (this.#surface === "chat-rules") return renderChatRules();
     return renderStaff(this.#staff);
   }
 

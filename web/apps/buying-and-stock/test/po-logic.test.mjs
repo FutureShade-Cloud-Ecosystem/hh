@@ -13,10 +13,16 @@ import {
   isOpen,
   poRows,
   refusalWords,
+  shortOrderWords,
   shortfallRows,
   statusTone,
   statusWord,
   validateExpectedDate,
+  whenWords,
+  openWarrantyCreditStripText,
+  applyWarrantyCreditButtonText,
+  appliedWarrantyCreditLabel,
+  totalDueVendorLabel,
 } from "../src/po/po-logic.ts";
 import { costCentsFromTyped, formatMoney, formatQty } from "../src/po/po-money.ts";
 
@@ -124,7 +130,7 @@ test("quantities read plainly, with the unit unless it is a piece", () => {
 });
 
 test("a row carries the draft that does not cover it, or none", () => {
-  assert.deepEqual(draftOf({ draft_po_id: "d1", draft_po_no: "PO-TRT-142" }), { id: "d1", no: "PO-TRT-142" });
+  assert.deepEqual(draftOf({ draft_po_id: "d1", draft_po_no: "PO-PLM-142" }), { id: "d1", no: "PO-PLM-142" });
   assert.equal(draftOf({}), null);
   assert.equal(draftOf({ draft_po_id: "" }), null);
 });
@@ -139,6 +145,17 @@ test("promised days read against today, and far dates are left to the date", () 
   assert.equal(relativeDay("soon", "2031-03-02"), "");
 });
 
+test("a stamp on screen reads as words against today, and a far day falls back to its day", () => {
+  assert.equal(whenWords("2031-03-04", "2031-03-02"), "in 2 days");
+  assert.equal(whenWords("2031-03-02T14:05:00Z", "2031-03-02"), "today");
+  assert.equal(whenWords("2031-03-01T09:00:00Z", "2031-03-02"), "yesterday");
+  assert.equal(whenWords("2031-02-20T09:00:00Z", "2031-03-02"), "10 days ago");
+  assert.equal(whenWords("2032-03-04", "2031-03-02"), "2032-03-04");
+  assert.equal(whenWords("soon", "2031-03-02"), "soon");
+  assert.equal(whenWords(undefined, "2031-03-02"), "");
+  assert.equal(whenWords("", "2031-03-02"), "");
+});
+
 test("what has landed reads as a count against what was ordered", () => {
   assert.equal(landedWords([{ qty_ordered_base: 10, qty_received_base: 6, uom: "pc" }]), "6 of 10 pc landed");
   assert.equal(landedWords([{ qty_ordered_base: 4, qty_received_base: 1, uom: "pc" }, { qty_ordered_base: 6, qty_received_base: 5, uom: "pc" }]), "6 of 10 pc landed");
@@ -151,4 +168,59 @@ test("the promised date reads as words with its days from today", () => {
   assert.equal(dateWords("2031-03-04", "2025-01-01"), "Tuesday 4 March 2031");
   assert.equal(dateWords("2031-02-30", "2031-02-27"), "");
   assert.equal(dateWords("", "2031-02-27"), "");
+});
+
+test("open warranty credit strip text names amount, claim number and description", () => {
+  assert.equal(
+    openWarrantyCreditStripText({
+      claim_no: "WCL-104",
+      amount_cents: 26400,
+      description: "8 pieces of Paver 60mm Slate",
+    }),
+    "Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)",
+  );
+  assert.equal(
+    openWarrantyCreditStripText({
+      claim_no: "WCL-104",
+      amount_cents: 26400,
+    }),
+    "Open warranty credit · $264.00 from WCL-104",
+  );
+  assert.equal(
+    openWarrantyCreditStripText({
+      amount_cents: 26400,
+    }),
+    "Open warranty credit · $264.00",
+  );
+});
+
+test("apply warranty credit button text formats the amount to apply", () => {
+  assert.equal(applyWarrantyCreditButtonText(26400), "Apply $264.00 to this PO");
+  assert.equal(applyWarrantyCreditButtonText(null), "Apply (no figure) to this PO");
+});
+
+test("applied warranty credit label names the claim number when present", () => {
+  assert.equal(appliedWarrantyCreditLabel("WCL-104"), "Warranty credit applied · WCL-104");
+  assert.equal(appliedWarrantyCreditLabel(null), "Warranty credit applied");
+  assert.equal(appliedWarrantyCreditLabel(undefined), "Warranty credit applied");
+});
+
+test("total due vendor label names the vendor when present", () => {
+  assert.equal(totalDueVendorLabel("Alcli (demo)"), "Total due to Alcli (demo)");
+  assert.equal(totalDueVendorLabel(null), "Total due to vendor");
+  assert.equal(totalDueVendorLabel(undefined), "Total due to vendor");
+});
+
+test("the sales orders a shortfall holds up read as one reason: the oldest first, the rest as a count", () => {
+  // The ruling on the board's "Short for SO-n" tag (change 5, R7): the orders are named
+  // oldest first, and what the row carries past its names is a count, never a list cut short.
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3314"], short_order_more: 0 }), "Short for SO-3314");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311"], short_order_more: 0 }), "Short for SO-3305 and SO-3311");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311", "SO-3312"], short_order_more: 0 }), "Short for SO-3305, SO-3311 and SO-3312");
+  // The core names at most three and counts the rest: the row's own shape.
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305", "SO-3311", "SO-3312"], short_order_more: 2 }), "Short for SO-3305, SO-3311, SO-3312 and 2 more");
+  assert.equal(shortOrderWords({ short_order_nos: ["SO-3305"], short_order_more: 4 }), "Short for SO-3305 and 4 more");
+  // Nothing waits, or the orders seam is unbound: neither key, no tag.
+  assert.equal(shortOrderWords({}), "");
+  assert.equal(shortOrderWords({ short_order_nos: [], short_order_more: 0 }), "");
 });

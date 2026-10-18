@@ -330,7 +330,27 @@ test('the walk finds this package and names the workspace packages it must also 
   // which packages the gate scans, not the order it met them in.
   assert.deepEqual(
     dependentPackages().map((d) => d.name).sort(),
-    ['@hardscapehouse/buying-and-stock', '@hardscapehouse/counter-till', '@hardscapehouse/dealer-admin', '@hardscapehouse/drive-run', '@hardscapehouse/front-door', '@hardscapehouse/manager-home', '@hardscapehouse/money-desk', '@hardscapehouse/pro-field', '@hardscapehouse/pro-kit', '@hardscapehouse/pro-pay', '@hardscapehouse/pro-procurement', '@hardscapehouse/public-desk', '@hardscapehouse/quote-desk', '@hardscapehouse/role-template', '@hardscapehouse/shell-chrome', '@hardscapehouse/yard-pick'],
+    [
+      '@hardscapehouse/buying-and-stock',
+      '@hardscapehouse/counter-till',
+      '@hardscapehouse/dealer-admin',
+      '@hardscapehouse/dispatch-board',
+      '@hardscapehouse/drive-run',
+      '@hardscapehouse/front-door',
+      '@hardscapehouse/house-messages',
+      '@hardscapehouse/manager-home',
+      '@hardscapehouse/money-desk',
+      '@hardscapehouse/pro-field',
+      '@hardscapehouse/pro-kit',
+      '@hardscapehouse/pro-pay',
+      '@hardscapehouse/pro-procurement',
+      '@hardscapehouse/public-desk',
+      '@hardscapehouse/quote-desk',
+      '@hardscapehouse/role-template',
+      '@hardscapehouse/shell-chrome',
+      '@hardscapehouse/work-shell',
+      '@hardscapehouse/yard-pick',
+    ],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });

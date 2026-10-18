@@ -4,52 +4,27 @@
 // Nothing about the person comes from a local table.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { tenantAuth, tenantDashboard } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession } from "../src/session.ts";
 import { stubAdapter } from "../src/stub-adapter.ts";
+import { demoTenantAdapter } from "../src/demo-adapter.ts";
+import { ROLE_LABELS } from "../src/capabilities.ts";
 import { tenantClient } from "../src/client.ts";
 import { can } from "../src/capabilities.ts";
 import { PERSONAS, STUB_PASSWORD } from "../test-stub/tenant-data.mjs";
+import { spawnStub } from "../test-stub/spawn-stub.mjs";
 
-const pkgDir = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-let child;
+let stub;
 let base;
 
-// A free port inside the Pro cycle's own range (the kit's block is 56800 to 56809), never an ephemeral one.
-async function freePort(start, count) {
-  for (let port = start; port < start + count; port += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return port;
-  }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
-
 before(async () => {
-  const port = await freePort(56802, 2);
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(pkgDir, "test-stub", "tenant-stub.mjs")], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("the stub did not start");
+  stub = await spawnStub();
+  base = stub.base;
 });
 
-// End the stub by its own door: no signal is ever sent to a process.
+// End the stub by its own door and await its exit: no signal is ever sent to a process.
 after(async () => {
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+  await stub.stop();
 });
 
 const sessionFor = () => new InMemoryTenantSession({ adapter: stubAdapter({ baseUrl: base }), baseUrl: base });
@@ -103,4 +78,25 @@ test("after sign out the old token is not accepted and no bearer is sent", async
   const refused = await tenantDashboard.tenantGetDashboard(client);
   assert.equal(refused.ok, false);
   assert.equal(refused.status, 401);
+});
+
+test("the demo adapter signs each of the five roles in through the stub's demo routes, role from tenant me", async () => {
+  for (const persona of Object.values(PERSONAS)) {
+    const session = new InMemoryTenantSession({ adapter: demoTenantAdapter({ baseUrl: base }), baseUrl: base });
+    const result = await session.signInWith({ method: "persona", roleLabel: ROLE_LABELS[persona.role] });
+    assert.equal(result.ok, true, persona.role);
+    assert.equal(session.profile().role, persona.role);
+    for (const [capability, held] of Object.entries(session.profile().capabilities)) assert.equal(held, can(persona.role, capability));
+    const dashboard = await tenantDashboard.tenantGetDashboard(tenantClient(session, { baseUrl: base }));
+    assert.equal(dashboard.ok, can(persona.role, "view_billing"), persona.role);
+    if (!dashboard.ok) assert.equal(dashboard.status, 403);
+    await session.signOut();
+  }
+});
+
+test("the demo email link signs a role in by its demo address", async () => {
+  const session = new InMemoryTenantSession({ adapter: demoTenantAdapter({ baseUrl: base }), baseUrl: base });
+  const result = await session.signInWith({ method: "email_link", email: "ap_finance@hh-demo.invalid" });
+  assert.equal(result.ok, true);
+  assert.equal(session.profile().role, "ap_finance");
 });

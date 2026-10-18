@@ -1,6 +1,5 @@
 // The tax slice's plain logic: the rate a person types, the words for what the core stores, which rows are in
-// force, how the core's list shapes are read, and every refusal in words with none of the core's Ontario words
-// left in it.
+// force, and every refusal in words with none of the core's Ontario words left in it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -15,7 +14,6 @@ import {
   isDay,
   isProfileCode,
   isUuid,
-  listOf,
   periodWords,
   profileStatusWord,
   profileTone,
@@ -153,18 +151,6 @@ test("dates read from their digits and a real day is the only day accepted", () 
   assert.match(hostDay(new Date(2030, 0, 5)), /^2030-01-05$/);
   assert.ok(isUuid("7a000000-0000-4000-8000-000000000001"));
   assert.ok(!isUuid("order 12"));
-});
-
-test("a list is read as a bare array, as its name, as a page, or as a Go nil slice, and nothing else", () => {
-  assert.deepEqual(listOf([1], "rates"), [1]);
-  assert.deepEqual(listOf({ rates: [1, 2] }, "rates"), [1, 2]);
-  assert.deepEqual(listOf({ rates: null }, "rates"), []);
-  assert.deepEqual(listOf({ items: [3] }, "rates"), [3]);
-  assert.equal(listOf({}, "rates"), null);
-  assert.equal(listOf({ rates: "x" }, "rates"), null);
-  assert.equal(listOf({ profiles: [1] }, "rates"), null);
-  assert.equal(listOf(null, "rates"), null);
-  assert.equal(listOf("rates", "rates"), null);
 });
 
 const OLD_WORDS = /HST|GST|PST|CAD|Ontario|band.card|TCRD|status card|First Nation|\bON_|FED_|FNGST|avalara/i;

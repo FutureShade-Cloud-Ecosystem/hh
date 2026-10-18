@@ -2329,7 +2329,7 @@ components:
         A quote's terms strip plus summary money and per-line builder extras.
         The staff quote resource is the canonical dealer_quote (DECISIONS.md
         D8).
-      required: [quote_id, deposit_required, deposit_pct, include_images, customer_notes, contact_name, project_job, customer_po, fulfillment, delivery_address, delivery_fee_cents, deposit_cents, subtotal_cents, tax_cents, total_cents, lines]
+      required: [quote_id, deposit_required, deposit_pct, include_images, customer_notes, contact_name, project_job, customer_po, fulfillment, delivery_address, delivery_fee_cents, deposit_cents, subtotal_cents, tax_cents, total_cents, tax_label, lines]
       properties:
         quote_id: { type: string, format: uuid }
         deposit_required: { type: boolean }
@@ -2350,6 +2350,7 @@ components:
         deposit_cents: { type: integer, format: int64 }
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         total_cents: { type: integer, format: int64 }
         lines:
           type: array
@@ -2488,7 +2489,7 @@ components:
         What an anonymous share-link holder sees: a hand-built allowlist, not
         a projection of the staff model, so no staff-only field can leak. The
         staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [quote_no, customer_name, status, expired, lines, subtotal_cents, tax_cents, total_cents, as_of, acceptable, quantity_notice]
+      required: [quote_no, customer_name, status, expired, lines, subtotal_cents, tax_cents, total_cents, tax_label, as_of, acceptable, quantity_notice]
       properties:
         quote_no: { type: string }
         quantity_notice:
@@ -2507,6 +2508,7 @@ components:
           items: { $ref: "#/components/schemas/QuotePublicLine" }
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         total_cents: { type: integer, format: int64 }
         as_of:
           type: string
@@ -2582,7 +2584,7 @@ components:
         customer's own record does not depend on a careful reading of the
         page. The staff quote resource is the canonical dealer_quote
         (DECISIONS.md D8).
-      required: [quote_no, typed_name, accepted_at, subtotal_cents, tax_cents, total_cents, quantities_confirmed]
+      required: [quote_no, typed_name, accepted_at, subtotal_cents, tax_cents, total_cents, tax_label, quantities_confirmed]
       properties:
         quote_no: { type: string }
         typed_name: { type: string }
@@ -2592,6 +2594,7 @@ components:
         accepted_at: { type: string, format: date-time }
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         total_cents: { type: integer, format: int64 }
         repeat_acceptance:
           type: boolean

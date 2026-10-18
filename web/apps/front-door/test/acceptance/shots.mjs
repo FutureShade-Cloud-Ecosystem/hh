@@ -60,12 +60,14 @@ async function walk(prefix, viewport, theme) {
   await settle(page);
   await page.screenshot({ path: join(outDir, `${prefix}front-door-01-picker.png`), fullPage: true });
 
-  // The opened disclosure: the coming list's content, today's rows and
-  // their muted chips.
-  await page.getByTestId("coming-disclosure").getByText("Five more roles are coming").click();
-  await page.getByRole("list", { name: "Coming roles" }).waitFor();
-  await settle(page);
-  await page.locator(".coming-card").screenshot({ path: join(outDir, `${prefix}front-door-04-coming.png`) });
+  // The opened disclosure: drawn only while a role is still coming. With every
+  // role live there is no disclosure to open and no shot to take.
+  if ((await page.getByTestId("coming-disclosure").count()) > 0) {
+    await page.getByTestId("coming-disclosure").locator("summary").click();
+    await page.getByRole("list", { name: "Coming roles" }).waitFor();
+    await settle(page);
+    await page.locator(".coming-card").screenshot({ path: join(outDir, `${prefix}front-door-04-coming.png`) });
+  }
 
   // Sales signed in: the role home with the two live tiles.
   await page.getByRole("button", { name: "Sales", exact: true }).click();
@@ -83,7 +85,7 @@ async function walk(prefix, viewport, theme) {
   await page.screenshot({ path: join(outDir, `${prefix}front-door-03-sales-manager-home.png`) });
 
   // Switch role again, then the Yard Team's home: the live Yard Pick tile
-  // and House Messages under the coming-next word.
+  // and House Messages as a live tile.
   await page.getByRole("button", { name: "Switch role", exact: true }).click();
   await page.getByRole("button", { name: "Yard Team", exact: true }).waitFor();
   await page.getByRole("button", { name: "Yard Team", exact: true }).click();

@@ -133,12 +133,58 @@ handle /money-desk/* {
 	file_server
 }
 
+handle /dispatch/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dispatch/index.html
+	file_server
+}
+
 handle /dealer-admin/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
 	root * /srv/app
 	try_files {path} /dealer-admin/index.html
+	file_server
+}
+
+handle /messages/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /messages/index.html
+	file_server
+}
+
+# The Pro contractor apps (Pro Procurement, Pro Pay, Pro Field), each behind the same gate.
+handle /pro-procurement/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-procurement/index.html
+	file_server
+}
+
+handle /pro-pay/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-pay/index.html
+	file_server
+}
+
+handle /pro-field/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-field/index.html
 	file_server
 }
 
@@ -168,6 +214,18 @@ handle /quote.html {
 	}
 	root * /srv/app
 	rewrite * /q/index.html?{query}
+	file_server
+}
+
+# The front door's runtime configuration: its own exact handle, behind the same
+# phrase gate (the browser sends its authentication entry same origin), and no
+# try_files, so a file that is missing is a 404 and the page says "missing" and
+# never takes the page's own HTML for a damaged file.
+handle /config.json {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
 	file_server
 }
 

@@ -9,7 +9,7 @@
 // The sign in adapter is the stub only where Vite serves a development build
 // (import.meta.env.DEV is replaced at build time, so a production bundle
 // carries only the named seam, realExchangeAdapter, which refuses in plain
-// words until the auth lead's go fills it). The shells cycle owns the real
+// words until the auth lead's go fills it; the demo build, Vite mode "demo", carries the demo adapter). The shells cycle owns the real
 // shell and the offline store, which goes behind this app's FieldPort
 // (src/port.ts) without touching a screen.
 //
@@ -27,6 +27,10 @@ import {
   InMemoryTenantSession,
   appOf,
   realExchangeAdapter,
+  demoTenantAdapter,
+  signInFromCard,
+  demoRoleFromAddress,
+  otherAppAddress,
   roleLabel,
   stubAdapter,
   tenantClient,
@@ -35,7 +39,7 @@ import {
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
-import type { SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
+import type { HHProSignIn, SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
@@ -160,7 +164,7 @@ export class ProFieldApp extends HHElement {
 
   constructor() {
     super();
-    const adapter = import.meta.env.DEV ? stubAdapter() : realExchangeAdapter();
+    const adapter = import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter();
     this.#session = new InMemoryTenantSession({ adapter });
     this.#client = tenantClient(this.#session);
     this.#port = liveFieldPort(this.#client);
@@ -315,7 +319,7 @@ export class ProFieldApp extends HHElement {
   };
 
   readonly #onSignIn = (event: Event): void => {
-    void this.#signIn((event as CustomEvent<SignInSubmit>).detail);
+    void this.#signIn((event as CustomEvent<SignInSubmit | SignInMethodChoice>).detail);
   };
 
   readonly #onSelect = (event: Event): void => {
@@ -331,7 +335,7 @@ export class ProFieldApp extends HHElement {
       return;
     }
     const target = appOf(app);
-    if (target !== undefined) window.location.assign(target.path);
+    if (target !== undefined) window.location.assign(otherAppAddress(target.path, this.#session.profile()?.role, import.meta.env.MODE === "demo"));
   };
 
   readonly #onSignOut = (): void => {
@@ -340,8 +344,14 @@ export class ProFieldApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
+    if (import.meta.env.MODE === "demo") {
+      const asked = demoRoleFromAddress(window.location.search);
+      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("pro-signin-submit", this.#onSignIn);
+    this.addEventListener("pro-signin-method", this.#onSignIn);
     this.addEventListener("pro-surface-select", this.#onSelect);
     this.addEventListener("pro-sign-out", this.#onSignOut);
     this.renderRoot.addEventListener("input", this.#onField);
@@ -365,6 +375,7 @@ export class ProFieldApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onClick);
     this.removeEventListener("pro-signin-submit", this.#onSignIn);
+    this.removeEventListener("pro-signin-method", this.#onSignIn);
     this.removeEventListener("pro-surface-select", this.#onSelect);
     this.removeEventListener("pro-sign-out", this.#onSignOut);
     this.renderRoot.removeEventListener("input", this.#onField);
@@ -380,11 +391,15 @@ export class ProFieldApp extends HHElement {
     root.setAttribute("data-brand", "hh-pro");
     if (this.#session.profile() === null) root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", "light");
-    const signin = this.renderRoot.querySelector("hh-pro-signin") as (HTMLElement & { dealerName: string; message: string; busy: boolean }) | null;
+    const signin = this.renderRoot.querySelector("hh-pro-signin") as HHProSignIn | null;
     if (signin !== null) {
       signin.dealerName = this.#dealerName;
       signin.message = this.#signinMessage;
       signin.busy = this.#signinBusy;
+      const options = this.#session.options();
+      signin.methods = options.methods;
+      signin.refused = options.refused;
+      signin.personas = options.personas;
     }
     // The instructions field's first value, set once when the order opens: the
     // control is never bound, so its typed words would otherwise be lost on a
@@ -430,11 +445,11 @@ export class ProFieldApp extends HHElement {
     }
   }
 
-  async #signIn(input: SignInSubmit): Promise<void> {
+  async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#signinBusy = true;
     this.#signinMessage = "";
     this.requestUpdate();
-    const result = await this.#session.signIn(input.email, input.password);
+    const result = await signInFromCard(this.#session, input);
     this.#signinBusy = false;
     if (result.ok) {
       this.#signinMessage = "";

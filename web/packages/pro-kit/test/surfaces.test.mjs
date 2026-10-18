@@ -7,7 +7,7 @@ import { PRO_APPS, appOf, surfaceOf, openSurfaces } from "../src/surfaces.ts";
 
 test("the three apps hold the surfaces the board names, in the board's order", () => {
   assert.deepEqual(PRO_APPS.map((a) => a.label), ["Pro Procurement", "Pro Pay", "Pro Field"]);
-  assert.deepEqual(appOf("procurement").surfaces.map((s) => s.label), ["Board", "Catalog", "Quote studio", "Projects"]);
+  assert.deepEqual(appOf("procurement").surfaces.map((s) => s.label), ["Today", "Board", "Projects", "Catalog", "Quotes"]);
   assert.deepEqual(appOf("pay").surfaces.map((s) => s.label), ["Invoices", "Payment methods", "Statements"]);
   assert.deepEqual(appOf("field").surfaces.map((s) => s.label), ["Tracking", "Deliveries", "Pickups"]);
 });
@@ -44,4 +44,21 @@ test("each role sees exactly the surfaces its capabilities open", () => {
   assert.ok(ap.some((g) => g.app.key === "pay"));
   assert.equal(surfaceOf("procurement", "board").capability, "submit_rfq");
   assert.equal(ap.find((g) => g.app.key === "procurement")?.surfaces.some((s) => s.id === "board") ?? false, false);
+});
+
+test("Pro Procurement offers only what its routes accept: Today reads the dashboard, every buying surface needs submit_rfq", () => {
+  const procurement = appOf("procurement");
+  assert.equal(surfaceOf("procurement", "today").capability, "view_billing");
+  for (const id of ["board", "projects", "catalog", "quotes"]) assert.equal(surfaceOf("procurement", id).capability, "submit_rfq", id);
+  assert.equal(surfaceOf("procurement", "quote-studio"), undefined);
+  assert.equal(procurement.surfaces.some((s) => /studio/i.test(s.label)), false);
+  // Accounts payable lacks the buy trio: it is offered Today and no buying surface.
+  const ap = openSurfaces(new Set(CAPABILITIES.filter((c) => can("ap_finance", c)))).find((g) => g.app.key === "procurement");
+  assert.deepEqual(ap.surfaces.map((s) => s.id), ["today"]);
+  // The project manager holds the buy trio: every surface.
+  const pm = openSurfaces(new Set(CAPABILITIES.filter((c) => can("buyer_no_pay", c)))).find((g) => g.app.key === "procurement");
+  assert.deepEqual(pm.surfaces.map((s) => s.id), procurement.surfaces.map((s) => s.id));
+  // The field crew sees no Procurement entry at all.
+  const crew = openSurfaces(new Set(CAPABILITIES.filter((c) => can("field_crew", c))));
+  assert.equal(crew.some((g) => g.app.key === "procurement"), false);
 });

@@ -29,7 +29,7 @@ test("a figure in cents inside the core's sentence reads as dollars, and the res
     detailWords("Journal entry at/over the maker-checker threshold (750000 cents) awaiting approval"),
     "Journal entry at/over the maker-checker threshold ($7,500.00) awaiting approval",
   );
-  assert.equal(detailWords("quote DEMO-TRT-Q1 line 1: 12 percent discount, margin 1630 bps against the 2000 bps floor"), "quote DEMO-TRT-Q1 line 1: 12 percent discount, margin 1630 bps against the 2000 bps floor");
+  assert.equal(detailWords("quote DEMO-PLM-Q1 line 1: 12 percent discount, margin 1630 bps against the 2000 bps floor"), "quote DEMO-PLM-Q1 line 1: 12 percent discount, margin 1630 bps against the 2000 bps floor");
   assert.equal(detailWords(""), "");
 });
 
@@ -86,12 +86,12 @@ test("any other refusal keeps the core's own sentence, capitalised and ended", (
 
 test("a floor request reads in words: the quote, the line, the discount, the margins, no id and no bps", () => {
   const sentence =
-    "quote DEMO-TRT-Q1 line 1 (62e4ad55-5a14-5945-80ee-866864a6c774): 12 percent discount, resulting margin 1630 bps against the 2000 bps floor";
-  assert.deepEqual(floorFigures(sentence), { quote: "DEMO-TRT-Q1", line: "1", discount: "12%", marginAsked: "16.3%", floorMargin: "20.0%" });
+    "quote DEMO-PLM-Q1 line 1 (62e4ad55-5a14-5945-80ee-866864a6c774): 12 percent discount, resulting margin 1630 bps against the 2000 bps floor";
+  assert.deepEqual(floorFigures(sentence), { quote: "DEMO-PLM-Q1", line: "1", discount: "12%", marginAsked: "16.3%", floorMargin: "20.0%" });
   const words = floorWords(sentence);
-  assert.equal(words, "Quote DEMO-TRT-Q1, line 1: a 12% discount asked, margin 16.3% against the 20.0% floor.");
+  assert.equal(words, "Quote DEMO-PLM-Q1, line 1: a 12% discount asked, margin 16.3% against the 20.0% floor.");
   assert.ok(!words.includes("62e4ad55") && !words.includes("bps"));
-  assert.equal(floorFigures("Freight on DEMO-KGN-O01 is being raised"), null);
+  assert.equal(floorFigures("Freight on DEMO-JUL-O01 is being raised"), null);
   assert.equal(floorWords("something else"), null);
   assert.equal(bpsWords("2000"), "20.0%");
   assert.equal(bpsWords("95"), "0.9%");

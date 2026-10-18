@@ -59,7 +59,7 @@ for (const mode of ["Light", "Brand"] as const) {
     test(`Convert's review at ${width} in ${mode}: no header, label or figure breaks inside a word or number`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       const seeded = await page.request.post("/_stub/seed-quote", {
-        data: { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }, { p: "p-holland-60", q: 120 }] },
+        data: { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }, { p: "p-charcoal-60", q: 120 }] },
       });
       const id = ((await seeded.json()) as { id: string }).id;
       await page.goto("/");

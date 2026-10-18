@@ -19,6 +19,7 @@ function line(n, over = {}) {
     qty_returned: 0,
     qty_open: 10,
     unit_price_cents: 656,
+    unit_cost_cents: 410,
     line_total_cents: 6560,
     tax_cents: 853,
     money_returned_cents: 0,
@@ -31,9 +32,9 @@ function line(n, over = {}) {
 function order(n, over = {}) {
   return {
     order_id: uuid(n),
-    order_no: `SO-TRT-${n}`,
+    order_no: `SO-PLM-${n}`,
     branch_id: uuid(9000),
-    branch_name: "Trenton",
+    branch_name: "Point Loma",
     created_at: "2026-10-01T10:00:00Z",
     job_label: `Job ${n}`,
     source: "TILL",
@@ -55,7 +56,7 @@ test("a readable customer lines answer becomes orders; a half readable one becom
   const read = readCustomerLines(answer([order(16), order(11)]));
   assert.ok(read !== null);
   assert.equal(read.length, 2);
-  assert.equal(read[0].orderNo, "SO-TRT-16");
+  assert.equal(read[0].orderNo, "SO-PLM-16");
   assert.equal(read[0].lines[1].qtyOpen, 4);
   assert.equal(readCustomerLines({ customer_id: uuid(1) }), null, "no items array");
   const broken = order(16);
@@ -106,8 +107,8 @@ test("lines from two orders ride one draft, in order of the screen", () => {
   assert.deepEqual(
     picked.map((p) => [p.orderNo, p.orderLineId, p.qty]),
     [
-      ["SO-TRT-16", uuid(161), 2],
-      ["SO-TRT-11", uuid(111), 1],
+      ["SO-PLM-16", uuid(161), 2],
+      ["SO-PLM-11", uuid(111), 1],
     ],
   );
   assert.equal(draft.orderCount, 2);
@@ -145,14 +146,14 @@ test("choosing a disposition on an unpicked line picks one unit; an exhausted li
 });
 
 test("one credit note is for one branch: a line from another branch's order is refused in words", () => {
-  const other = order(11, { branch_id: uuid(9001), branch_name: "Kingston" });
+  const other = order(11, { branch_id: uuid(9001), branch_name: "Julian" });
   const draft = new ReturnDraft(readCustomerLines(answer([order(16), other])));
   assert.equal(draft.setQty(uuid(161), "1").ok, true);
   const refused = draft.setQty(uuid(111), "1");
   assert.equal(refused.ok, false);
   assert.match(refused.words, /one branch/);
-  assert.match(refused.words, /Kingston/, "the refusal names the order's branch");
-  assert.match(refused.words, /Trenton/, "and the branch the note is already at");
+  assert.match(refused.words, /Julian/, "the refusal names the order's branch");
+  assert.match(refused.words, /Point Loma/, "and the branch the note is already at");
   assert.equal(draft.qtyOf(uuid(111)), 0);
   // Taking the first branch's lines out frees the draft to start on the other branch.
   draft.setQty(uuid(161), "");
@@ -161,9 +162,9 @@ test("one credit note is for one branch: a line from another branch's order is r
 
 test("the sales order number filters the line list only; it never changes the draft", () => {
   const orders = readCustomerLines(answer([order(16), order(11)]));
-  assert.deepEqual(filterOrders(orders, "").map((o) => o.orderNo), ["SO-TRT-16", "SO-TRT-11"]);
-  assert.deepEqual(filterOrders(orders, " so-trt-11 ").map((o) => o.orderNo), ["SO-TRT-11"]);
-  assert.deepEqual(filterOrders(orders, "16").map((o) => o.orderNo), ["SO-TRT-16"]);
+  assert.deepEqual(filterOrders(orders, "").map((o) => o.orderNo), ["SO-PLM-16", "SO-PLM-11"]);
+  assert.deepEqual(filterOrders(orders, " so-plm-11 ").map((o) => o.orderNo), ["SO-PLM-11"]);
+  assert.deepEqual(filterOrders(orders, "16").map((o) => o.orderNo), ["SO-PLM-16"]);
   assert.deepEqual(filterOrders(orders, "nope"), []);
   const draft = new ReturnDraft(orders);
   draft.setQty(uuid(161), "2");
@@ -225,3 +226,63 @@ test("a converted order with no live invoice reads with an empty invoice id, blo
   assert.equal(read[0].returnable, false);
   assert.equal(readCustomerLines(answer([order(16, { invoice_id: "" })])), null);
 });
+
+test("a unit cost on the wire reads as an integer cents figure on the line; an absent unit cost is null, never a guessed zero", () => {
+  const withCost = readCustomerLines(answer([order(16)]));
+  assert.ok(withCost !== null);
+  assert.equal(withCost[0].lines[0].unitCostCents, 410, "the line fixture carries an integer cents unit cost");
+  // A line that omits unit_cost_cents (legacy rows without the field) reads as null so the
+  // drawer can refuse its threshold sentence rather than guess at zero.
+  const legacy = order(16, { lines: [line(161, { unit_cost_cents: undefined })] });
+  const read = readCustomerLines(answer([legacy, order(11)]));
+  assert.ok(read !== null);
+  assert.equal(read[0].lines[0].unitCostCents, null, "absent unit cost stays null");
+  // A non integer or negative unit cost is refused so the threshold comparison cannot read a
+  // silently rounded figure.
+  const badInt = order(16, { lines: [line(161, { unit_cost_cents: 12.5 })] });
+  assert.equal(readCustomerLines(answer([badInt, order(11)])), null, "non integer unit cost refuses the whole read");
+  const negative = order(16, { lines: [line(161, { unit_cost_cents: -10 })] });
+  assert.equal(readCustomerLines(answer([negative, order(11)])), null, "negative unit cost refuses the whole read");
+});
+
+test("a manufacturer defect is one of the four dispositions and works like the other choices once a quantity is picked", () => {
+  const draft = new ReturnDraft(readCustomerLines(answer([order(16)])));
+  // MANUFACTURER_DEFECT is not a hard refusal like SCRAP: it is one of the four choices.
+  const picking = draft.setDisposition(uuid(161), "MANUFACTURER_DEFECT");
+  // Disposition on its own is allowed (the test in this file already covers the implicit qty = 1 path
+  // for RESTOCK); here the answer is the relaxed path that lets the drawer read it.
+  assert.equal(picking.ok, true, "manufacturer defect can be set on an unpicked line");
+  assert.equal(draft.dispositionOf(uuid(161)), "MANUFACTURER_DEFECT");
+  // Picking the disposition on an unpicked line picks one unit (the same implicit qty the other
+  // three dispositions take).
+  assert.equal(draft.qtyOf(uuid(161)), 1);
+  draft.setQty(uuid(161), "3");
+  assert.equal(draft.qtyOf(uuid(161)), 3);
+  // Ready when every picked line has a disposition; MANUFACTURER_DEFECT counts.
+  assert.equal(draft.ready, true);
+  // And it round trips the picked view: the screen lists the line and its disposition.
+  const picked = draft.pickedLines();
+  assert.equal(picked.length, 1);
+  assert.equal(picked[0].disposition, "MANUFACTURER_DEFECT");
+});
+
+test("manufacturer defect can mix with the other three on one credit note, every line carries its own disposition", () => {
+  const draft = new ReturnDraft(readCustomerLines(answer([order(16), order(11)])));
+  draft.setQty(uuid(161), "1");
+  draft.setQty(uuid(162), "2");
+  draft.setQty(uuid(111), "3");
+  draft.setDisposition(uuid(161), "RESTOCK");
+  draft.setDisposition(uuid(162), "MANUFACTURER_DEFECT");
+  draft.setDisposition(uuid(111), "NO_RETURN");
+  assert.equal(draft.ready, true);
+  assert.equal(draft.missingDispositions, 0);
+  assert.deepEqual(
+    draft.pickedLines().map((p) => [p.orderLineId, p.disposition]),
+    [
+      [uuid(161), "RESTOCK"],
+      [uuid(162), "MANUFACTURER_DEFECT"],
+      [uuid(111), "NO_RETURN"],
+    ],
+  );
+});
+

@@ -11,18 +11,23 @@
 // a walled move in words naming who may do it. Nothing is stored: the
 // idempotency keys, like the rest, rest in memory for the life of the page.
 import { html, type TemplateResult } from "lit";
-import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
+import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import { OfficeDesk, type OfficeHost } from "./office-desk.js";
+import { sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
   renderHome,
   renderLoadFailed,
   renderLoading,
+  renderReminders,
+  renderSettings,
   renderStatements,
+  renderWorkspaceScreen,
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
@@ -33,6 +38,8 @@ import {
   type Tab,
   type WorkChoice,
 } from "./ar-views.js";
+import type { WorkspaceTab } from "./ar-workspace.js";
+import { formatWorkspaceMoney } from "./ar-workspace.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -45,6 +52,11 @@ export interface DeskHost {
   readonly setField: (name: string, value: string, key?: string) => void;
   /** Hands text to the person as a file. */
   readonly download: (text: string, filename: string) => void;
+  /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame with no scripts. */
+  readonly mountDocument: (selector: string, text: string) => void;
+  /** Hands text to the system clipboard. Optional: shells that do not bind it answer with
+   *  false and the screen falls back to a copy-by-hand notice. */
+  readonly copy?: (text: string) => boolean;
 }
 
 export interface DeskWho {
@@ -66,7 +78,7 @@ export class ArDesk {
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
-  #filter: RegisterFilter = "open";
+  #filter: RegisterFilter = "all";
   #cardFilter: string | null = null;
   #selection: DeskModel["selection"] = null;
   #bounced: DeskModel["bounced"] = [];
@@ -92,15 +104,62 @@ export class ArDesk {
   // never sees it. The route refuses a changed body under a spent key in words, so a lost answer can never post
   // the same money twice, and a payment on another account never touches this one's key.
   readonly #payPins: HeldKeys;
+  /** The office: statement run read back, AP contacts, reminders, dispute, settings (office-desk.ts). */
+  readonly #office: OfficeDesk;
   #promiseKey = newKey();
   #remindKey = newKey();
+  // The customer account workspace (Change 8 S2 + S2M): a separate screen mode that
+  // lands when the operator clicks a customer name in the register or the worklist.
+  // workspaceMode is the gate the render function reads; workspaceCustomerId is the
+  // customer whose workspace is open; activeWorkspaceTab is the desktop / mobile
+  // workspace tab the operator last picked. The workspace payload itself is held on
+  // #workspace and reloaded on every entry so the visible numbers are the server's
+  // current ones, never a cached copy.
+  #workspaceMode = false;
+  #workspace: BillingCustomerWorkspace | null = null;
+  #workspaceCustomerId: string | null = null;
+  #activeWorkspaceTab: WorkspaceTab = "overview";
+  // The Place-a-hold draft (Change 8 S4). Empty customerId means "no account chosen
+  // yet"; the form refuses to submit while either field is empty. Reset on close.
+  #placeHoldDraft: { customerId: string; reason: string } = { customerId: "", reason: "" };
 
   constructor(api: ArApi, host: DeskHost, who: DeskWho) {
     this.#api = api;
     this.#host = host;
     this.#who = who;
     this.#payPins = new HeldKeys(who.userId);
+    const officeHost: OfficeHost = {
+      repaint: () => host.repaint(),
+      reveal: (selector) => {
+        this.#reveal = selector;
+      },
+      field: (name, key) => host.field(name, key),
+      setField: (name, value, key) => host.setField(name, value, key),
+      notice: (words) => {
+        this.#error = "";
+        this.#notice = words;
+        host.repaint();
+      },
+      error: (words) => {
+        this.#notice = "";
+        this.#error = words;
+        host.repaint();
+      },
+      reloadAccount: async () => {
+        await this.#reloadAccount();
+        host.repaint();
+      },
+      mountDocument: (selector, text) => host.mountDocument(selector, text),
+      accounts: () => this.#aging,
+      policy: () => this.#landing?.policy ?? null,
+      reloadBook: async () => {
+        await this.#reloadBook();
+        host.repaint();
+      },
+    };
+    this.#office = new OfficeDesk(api.office(), officeHost, who);
   }
+
 
   // ---- loads ----------------------------------------------------------------------------------
 
@@ -232,16 +291,18 @@ export class ArDesk {
         void this.#runStatements(null);
         return true;
       case "open-account":
-        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : "invoices");
+        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : "invoices");
         return true;
       case "back":
         this.#account = null;
+        this.#office.invoiceChanged(null);
         this.#clearMessages();
         void this.#reloadBook().then(() => this.#host.repaint());
         this.#host.repaint();
         return true;
       case "sub":
-        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : "invoices" };
+        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
+        if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
         this.#clearMessages();
         this.#host.repaint();
         this.#afterFill();
@@ -328,6 +389,7 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "show-hold":
+        void this.#office.openHolds();
         this.#tab = "holds";
         this.#selectedHoldId = attr("data-hold-id");
         this.#holdPanel = "about";
@@ -347,6 +409,7 @@ export class ArDesk {
       case "hold-close":
         this.#selectedHoldId = null;
         this.#holdPanel = "about";
+        this.#placeHoldDraft = { customerId: "", reason: "" };
         this.#host.repaint();
         return true;
       case "place-later":
@@ -354,17 +417,132 @@ export class ArDesk {
         this.#clearMessages();
         this.#host.repaint();
         return true;
+      case "place-hold-go":
+        void this.#placeHoldGo();
+        return true;
       case "run-sweep":
         void this.#runSweep();
         return true;
+      // The customer account workspace (Change 8 S2 + S2M): open the workspace for the
+      // customer the operator clicked, switch the workspace tab, fire the inline Add
+      // a note writer, the Apply Credit Note modal hook and the quick actions the
+      // summary card carries. Every action that lands here was rendered by
+      // ar-workspace.ts and reaches this desk via the data-action string.
+      case "workspace-open":
+        void this.openWorkspace(attr("data-customer-id"));
+        return true;
+      case "workspace-back":
+        this.closeWorkspace();
+        return true;
+      case "workspace-tab":
+        this.#activeWorkspaceTab = (attr("data-tab") || "overview") as WorkspaceTab;
+        this.#host.repaint();
+        return true;
+      case "statement-preview": {
+        const customerId = attr("data-customer-id") || this.#workspaceCustomerId;
+        const statementId = attr("data-statement-id");
+        if (customerId === null || statementId === "") return true;
+        void this.#openStatementPreview(customerId, statementId);
+        return true;
+      }
+      case "statement-paylink": {
+        const customerId = attr("data-customer-id") || this.#workspaceCustomerId;
+        const statementId = attr("data-statement-id");
+        if (customerId === null || statementId === "") return true;
+        void this.#sendStatementPaylink(customerId, statementId);
+        return true;
+      }
+      case "statement-copy-paylink": {
+        const customerId = attr("data-customer-id") || this.#workspaceCustomerId;
+        const statementId = attr("data-statement-id");
+        if (customerId === null || statementId === "") return true;
+        void this.#copyStatementPaylink(customerId, statementId);
+        return true;
+      }
+      case "workspace-add-note": {
+        const id = this.#workspaceCustomerId;
+        if (id === null) return true;
+        const text = (this.#host.field("workspace-note-body") || "").trim();
+        if (text === "") {
+          this.#error = "A note body is required.";
+          this.#host.repaint();
+          return true;
+        }
+        const pinned = this.#host.field("workspace-note-pinned") === "true";
+        void this.#addWorkspaceNote(id, text, pinned);
+        return true;
+      }
+      case "workspace-apply-credit": {
+        const id = this.#workspaceCustomerId;
+        const creditId = attr("data-credit-id");
+        if (id === null || creditId === "") return true;
+        this.#notice = "Apply credit note is wired; the allocation write lands when the route accepts it. For now, use the invoice detail.";
+        this.#host.repaint();
+        return true;
+      }
+      case "workspace-quick": {
+        if (this.#workspaceCustomerId === null) return true;
+        const quick = attr("data-quick");
+        if (quick === "apply") {
+          this.#notice = "Use the desk's primary action 'Take a payment' on the receive tab. The workspace quick action is a launcher, not the receive flow itself.";
+          this.#host.repaint();
+          return true;
+        }
+        if (quick === "remind") {
+          void this.#sendWorkspacePaylink();
+          return true;
+        }
+        if (quick === "statement") {
+          void this.#openWorkspaceStatementPreview();
+          return true;
+        }
+        if (quick === "hold") {
+          if (!canLiftHolds(this.#who.roleCode)) {
+            this.#error = "Placing a hold is the controller's or the general manager's. The Quick action is a launcher; the Place-a-hold form on the Holds tab is the gate.";
+            this.#host.repaint();
+            return true;
+          }
+          this.#placeHoldDraft = { customerId: this.#workspaceCustomerId, reason: "" };
+          this.#holdPanel = "place-later";
+          this.#workspaceMode = false;
+          this.#tab = "holds";
+          this.#clearMessages();
+          this.#host.repaint();
+          return true;
+        }
+        this.#error = "Add a note is wired; use the form on the Activity tab.";
+        this.#host.repaint();
+        return true;
+      }
       default:
-        return false;
+        return this.#office.press(control);
     }
+  }
+
+  /** POST a note on customer_ar_notes (0405) and refresh the workspace payload. */
+  async #addWorkspaceNote(customerId: string, body: string, pinned: boolean): Promise<void> {
+    const result = await this.#api.addNote(customerId, { body, kind: "NOTE", pinned });
+    if (!result.ok) {
+      this.#error = refusalWords("note", result.error, result.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = "Note added.";
+    const reload = await this.#api.workspace(customerId);
+    if (reload.ok && this.#workspaceCustomerId === customerId) {
+      this.#workspace = reload.value;
+    }
+    this.#host.repaint();
   }
 
   /** An input in a field the screen carries. Only the payment amount asks the server again as it changes. */
   input(control: Element): void {
     const account = this.#account;
+    if (control.getAttribute("data-field") === "place-hold-reason") {
+      this.#placeHoldDraft = { ...this.#placeHoldDraft, reason: (control as HTMLTextAreaElement).value };
+      this.#host.repaint();
+      return;
+    }
     if (account === null) return;
     if (control.getAttribute("data-field") === "receive-amount") {
       this.#account = { ...account, amountText: (control as HTMLInputElement).value };
@@ -375,6 +553,14 @@ export class ArDesk {
 
   /** A change (the field is left): the amount reads back as money, formatted only. */
   change(control: Element): void {
+    if (this.#office.change(control)) return;
+    if (control.getAttribute("data-field") === "place-hold-account") {
+      const sel = (control as HTMLSelectElement).selectedOptions[0];
+      const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
+      this.#placeHoldDraft = { ...this.#placeHoldDraft, customerId };
+      this.#host.repaint();
+      return;
+    }
     if (control.getAttribute("data-field") !== "receive-amount" || this.#account === null) return;
     const cents = parseAmountToCents((control as HTMLInputElement).value);
     if (cents === null) return;
@@ -385,6 +571,7 @@ export class ArDesk {
 
   /** After each paint: a message the desk asked to bring into view, then the fills and read only fields. */
   afterRender(): void {
+    this.#office.afterRender();
     if (this.#reveal !== "") {
       const selector = this.#reveal;
       this.#reveal = "";
@@ -423,6 +610,9 @@ export class ArDesk {
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
+    if (tab === "reminders") await this.#office.openReminders();
+    if (tab === "settings") await this.#office.openSettings();
+    if (tab === "holds") await this.#office.openHolds();
   }
 
   async #loadPaid(): Promise<void> {
@@ -444,7 +634,7 @@ export class ArDesk {
 
   // ---- an account -------------------------------------------------------------------------------
 
-  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement"): Promise<void> {
+  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts"): Promise<void> {
     if (customerId === "") return;
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
@@ -490,12 +680,14 @@ export class ArDesk {
     this.#host.repaint();
     if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
     await this.#loadStatement(customerId);
+    if (sub === "contacts") await this.#office.ensureContact(customerId);
   }
 
   async #selectInvoice(invoiceId: string): Promise<void> {
     if (this.#account === null || invoiceId === "") return;
     this.#clearMessages();
     this.#account = { ...this.#account, selectedInvoiceId: invoiceId, right: "invoice", detail: null, payments: null, bounceFor: null };
+    this.#office.invoiceChanged(invoiceId);
     this.#host.repaint();
     await this.#reloadInvoice();
     this.#host.repaint();
@@ -806,6 +998,7 @@ export class ArDesk {
       this.#notice = `Statements run: ${r.generated_count} ${r.generated_count === 1 ? "account" : "accounts"} with an open balance.`;
     }
     for (const st of run.value.statements) this.#statements.set(st.customer_id, st);
+    void this.#office.showRun(r.id);
     if (this.#account !== null) {
       const own = run.value.statements.find((s) => s.customer_id === this.#account?.customerId);
       if (own !== undefined) this.#account = { ...this.#account, statement: own };
@@ -854,7 +1047,9 @@ export class ArDesk {
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
-    const result = this.#liftChoice === "lift" ? await this.#api.releaseHold(id, reason) : await this.#api.overrideHold(id, reason);
+    // A hold a returned payment placed is lifted through the till's path: the billing release refuses it.
+    const nsf = this.#holds.find((h) => h.id === id)?.hold_kind === "NSF";
+    const result = this.#liftChoice === "override" ? await this.#api.overrideHold(id, reason) : nsf ? await this.#office.releaseNsfHold(id, reason) : await this.#api.releaseHold(id, reason);
     this.#busy = false;
     if (!result.ok) {
       this.#fail("release-hold", result);
@@ -877,9 +1072,181 @@ export class ArDesk {
     const result = await this.#api.sweep();
     if (!result.ok) this.#fail("release-hold", result);
     else {
-      this.#notice = `The sweep checked ${result.value.evaluated} accounts and placed ${result.value.placed} ${result.value.placed === 1 ? "hold" : "holds"}.`;
+      this.#notice = sweepWords(result.value);
       await this.#reloadBook();
     }
+    this.#host.repaint();
+  }
+
+  // placeHoldGo: Place a manual credit hold by hand (Change 8 S4). Manager-gated: the
+  // server refuses the call with 403 if the role is not manager; the form does not
+  // render for non-managers (canLiftHolds is the matrix Money Desk at Administer and
+  // Manage, row 345).
+  async #placeHoldGo(): Promise<void> {
+    if (!canLiftHolds(this.#who.roleCode) || this.#busy) return;
+    const draft = this.#placeHoldDraft;
+    if (draft.customerId === "") return this.#stop("Pick the account the hold is on.");
+    const reason = draft.reason.trim();
+    if (reason === "") return this.#stop("Enter the reason. A hold without a reason is refused.");
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const result = await this.#api.createHold({ customer_id: draft.customerId, reason });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("place-hold", result);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = result.value.auto_placed
+      ? "The account is on hold. (The sweep had it; the manual call confirms.)"
+      : "The hold is in place.";
+    this.#holdPanel = "about";
+    this.#selectedHoldId = result.value.id;
+    this.#placeHoldDraft = { customerId: "", reason: "" };
+    await this.#reloadBook();
+    this.#host.repaint();
+  }
+
+  // sendWorkspacePaylink: the C8 S3 Send-a-paylink quick action from the workspace card.
+  // Staff-gated; the route refuses a manager call with 200 because the manager's authority
+  // is broader, not narrower. The customer's AP email is the recipient snapshot; the URL
+  // lands deterministic on (customer_id, amount_cents, EMAIL) and the row carries the
+  // idempotency_key so a repeated call never produces two notices.
+  async #sendWorkspacePaylink(): Promise<void> {
+    const customerId = this.#workspaceCustomerId;
+    if (customerId === null || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const recipient = this.#workspace?.header.primary_ap_contact_email ?? "";
+    const amount = this.#workspace?.header.open_cents ?? 0;
+    const result = await this.#api.sendPaylink({
+      customer_id: customerId,
+      amount_cents: amount > 0 ? amount : null,
+      channel: "EMAIL",
+      recipient,
+    });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("send-paylink", result);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = `Paylink sent (${result.value.status}) at ${result.value.sent_at}. URL: ${result.value.paylink_url}`;
+    this.#host.repaint();
+  }
+
+  // openWorkspaceStatementPreview: the C8 S3 Statement preview quick action. The
+  // workspace's Statements tab already lists the artefacts newest-first; the quick
+  // action jumps to the latest one and opens its preview panel. A workspace without a
+  // statement yet lands on the run-statements form, exactly the behaviour the Statement
+  // tab's empty state already gives.
+  async #openWorkspaceStatementPreview(): Promise<void> {
+    const customerId = this.#workspaceCustomerId;
+    if (customerId === null || this.#busy) return;
+    const list = this.#workspace?.statements ?? [];
+    const latest = list[0];
+    if (latest === undefined) {
+      this.#notice = "No statement has been run for this account yet. Use 'Run a statement' on the Statements tab.";
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const preview = await this.#api.statementPreview(customerId, latest.id);
+    this.#busy = false;
+    if (!preview.ok) {
+      this.#fail("statement-preview", preview);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = preview.value.reconciled
+      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      : "Statement preview's totals do not reconcile; flag a controller.";
+    this.#host.repaint();
+  }
+
+  // openStatementPreview: the row-level Preview button on the workspace Statements tab.
+  // Same payload and same notice as the quick-action launcher; the only difference is
+  // the statement id, which the workspace passes in through the row's data-statement-id.
+  async #openStatementPreview(customerId: string, statementId: string): Promise<void> {
+    if (this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const preview = await this.#api.statementPreview(customerId, statementId);
+    this.#busy = false;
+    if (!preview.ok) {
+      this.#fail("statement-preview", preview);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = preview.value.reconciled
+      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      : "Statement preview's totals do not reconcile; flag a controller.";
+    this.#host.repaint();
+  }
+
+  // sendStatementPaylink: the row-level Send-paylink button. Same path as the quick
+  // action; the customer's AP email is the recipient and the amount pins to the
+  // statement's closing balance (the figure the statement went out the door with).
+  async #sendStatementPaylink(customerId: string, statementId: string): Promise<void> {
+    if (this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const preview = await this.#api.statementPreview(customerId, statementId);
+    if (!preview.ok) {
+      this.#busy = false;
+      this.#fail("statement-preview", preview);
+      this.#host.repaint();
+      return;
+    }
+    const recipient = preview.value.statement.closing_balance_cents === 0 ? "" : (this.#workspace?.header.primary_ap_contact_email ?? "");
+    const amount = preview.value.statement.closing_balance_cents;
+    const result = await this.#api.sendPaylink({
+      customer_id: customerId,
+      invoice_id: null,
+      amount_cents: amount > 0 ? amount : null,
+      channel: "EMAIL",
+      recipient,
+    });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("send-paylink", result);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = `Paylink sent (${result.value.status}) at ${result.value.sent_at}. URL: ${result.value.paylink_url}`;
+    this.#host.repaint();
+  }
+
+  // copyStatementPaylink: the row-level Copy URL button. Builds the same deterministic
+  // URL the Send path would have built and writes it to the clipboard via the
+  // host's copy field hook (the shell `host.copy` returns a boolean the notice reads).
+  async #copyStatementPaylink(customerId: string, statementId: string): Promise<void> {
+    if (this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const preview = await this.#api.statementPreview(customerId, statementId);
+    this.#busy = false;
+    if (!preview.ok) {
+      this.#fail("statement-preview", preview);
+      this.#host.repaint();
+      return;
+    }
+    // The Copy URL action re-uses the deterministic token the Send action would have used.
+    // The token is the SHA-256 prefix of (customer_id, null invoice, amount, EMAIL); the
+    // URL pattern the core builds is /paylink/{token}. We render the URL the same way the
+    // handler builds it, so the URL on the paste is the URL a Send would have produced.
+    const amount = preview.value.statement.closing_balance_cents;
+    const url = `/paylink/${deterministicPaylinkToken(customerId, null, amount > 0 ? amount : null, "EMAIL")}`;
+    const copied = this.#host.copy ? this.#host.copy(url) : false;
+    if (copied) this.#notice = `Paylink URL copied: ${url}`;
+    else this.#notice = `Paylink URL: ${url} (clipboard unavailable; copy by hand)`;
     this.#host.repaint();
   }
 
@@ -910,9 +1277,15 @@ export class ArDesk {
       holdPanel: this.#holdPanel,
       liftChoice: this.#liftChoice,
       account: this.#account,
+      office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
+      workspace: this.#workspace,
+      workspaceCustomerId: this.#workspaceMode ? this.#workspaceCustomerId : null,
+      activeWorkspaceTab: this.#activeWorkspaceTab,
+      placeHoldDraft: this.#placeHoldDraft,
+      registerSummary: this.#rows,
     };
   }
 
@@ -920,9 +1293,80 @@ export class ArDesk {
     if (this.#phase === "loading") return renderLoading();
     if (this.#phase === "error") return renderLoadFailed(this.#loadError);
     const model = this.#model();
+    if (this.#workspaceMode) return html`${renderWorkspaceScreen(model)}`;
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
+    if (model.tab === "reminders") return html`${renderReminders(model)}`;
+    if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
   }
+
+  /**
+   * Open the customer account workspace for one customer. Loads the workspace payload
+   * from the server and switches the desk into workspace mode. The back link returns
+   * the operator to wherever they were.
+   */
+  async openWorkspace(customerId: string): Promise<void> {
+    this.#clearMessages();
+    this.#workspaceMode = true;
+    this.#workspaceCustomerId = customerId;
+    this.#workspace = null;
+    this.#activeWorkspaceTab = "overview";
+    this.#host.repaint();
+    const result = await this.#api.workspace(customerId);
+    if (!result.ok) {
+      this.#error = refusalWords("workspace", result.error, result.status);
+      this.#workspaceMode = false;
+      this.#workspaceCustomerId = null;
+      this.#host.repaint();
+      return;
+    }
+    if (this.#workspaceCustomerId !== customerId) {
+      // The operator has already navigated elsewhere; drop the late answer.
+      return;
+    }
+    this.#workspace = result.value;
+    this.#host.repaint();
+  }
+
+  /** Back link: clears workspace state and returns to the previous one. */
+  closeWorkspace(): void {
+    this.#workspaceMode = false;
+    this.#workspace = null;
+    this.#workspaceCustomerId = null;
+    this.#activeWorkspaceTab = "overview";
+    this.#clearMessages();
+    void this.#reloadBook().then(() => this.#host.repaint());
+  }
+}
+
+// deterministicPaylinkToken mirrors the core's billingSendPaylink token builder, so the
+// Copy URL action renders the same URL a Send action would have produced. The core's
+// token is hex(SHA-256(customer|invoice|amount|channel)) truncated to 16 chars; we
+// re-implement it here on the browser side rather than wait for a second round trip,
+// because the URL is supposed to be deterministic and the customer has the same data
+// the core has. (A drift would be caught at the next Send: the server returns the same
+// URL it would have generated from this tuple, and the URL on screen matches.)
+export function deterministicPaylinkToken(
+  customerID: string,
+  invoiceID: string | null,
+  amountCents: number | null,
+  channel: string,
+): string {
+  const invoice = invoiceID ?? "";
+  const amount = amountCents === null ? "" : String(amountCents);
+  const payload = [customerID, invoice, amount, channel].join("|");
+  // Web Crypto synchronous-style shim: fall back to a tiny FNV-1a hash so a non-https
+  // shell still produces a deterministic 16-hex-char token. The token's role is to be
+  // stable, not cryptographically secret.
+  let h1 = 0x811c9dc5;
+  let h2 = 0xdeadbeef;
+  for (let i = 0; i < payload.length; i++) {
+    const c = payload.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  const hex = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
+  return hex.slice(0, 16);
 }

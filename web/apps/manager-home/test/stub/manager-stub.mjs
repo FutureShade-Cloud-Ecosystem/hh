@@ -13,6 +13,7 @@
 // manager's reads manager.sales. That is the one-app-per-role decision (5)
 // made testable at the stub: the same code renders both landings from rows.
 import { createServer } from "node:http";
+import { dataLayouts, needsQueue, widgetLayouts } from "./profile-world.mjs";
 
 const port = Number(process.env.MH_STUB_PORT ?? 4959);
 
@@ -24,6 +25,11 @@ const FLOWS = [
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial controller" },
+  { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and receivables" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch manager" },
+  { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics manager" },
+  { flow: "general-manager", role_code: "general_manager", label: "General manager" },
 ];
 
 const USERS = {
@@ -69,6 +75,54 @@ const USERS = {
     tier: 1,
     scope: "GLOBAL",
   },
+  // The other five manager roles (gap 15 of the per role homes): each mints to
+  // its own dashboard profile. The general manager is a tier one global role,
+  // the payables desk reads the whole book, the rest work one branch.
+  "payables-receivables": {
+    user_id: "de110000-0000-4000-9000-000000000004",
+    email: "payables.receivables@hh-demo.invalid",
+    display_name: "Payables and receivables (demo)",
+    role_code: "payables_receivables",
+    role_name: "Payables and Receivables",
+    tier: 2,
+    scope: "GLOBAL",
+  },
+  "procurement-manager": {
+    user_id: "de110000-0000-4000-9000-000000000005",
+    email: "procurement.manager@hh-demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "branch-manager": {
+    user_id: "de110000-0000-4000-9000-000000000006",
+    email: "branch.manager@hh-demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "logistics-manager": {
+    user_id: "de110000-0000-4000-9000-000000000007",
+    email: "logistics.manager@hh-demo.invalid",
+    display_name: "Logistics manager (demo)",
+    role_code: "logistics_manager",
+    role_name: "Logistics Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "general-manager": {
+    user_id: "de110000-0000-4000-9000-000000000008",
+    email: "general.manager@hh-demo.invalid",
+    display_name: "General manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
 };
 
 // A token with the shape the app reads an expiry from: three parts, the
@@ -106,7 +160,7 @@ function readBody(req) {
 
 // ---- the world -----------------------------------------------------------------------
 //
-// Trenton, the one branch the demo grants reach. Two open shortages on two
+// Point Loma, the one branch the demo grants reach. Two open shortages on two
 // picks, one resolved shortage beside them (the counter-case), one stale
 // pick past its accept deadline, one purchase order PARTIAL with a short
 // line (the receiving difference), and one margin approval the sales
@@ -222,11 +276,11 @@ function buildWorld() {
       order_line_no: 1,
       product_id: "00000000-0000-4000-9000-0000000000p9",
       sku: "GRAN-A-CYD",
-      description: "Granular A gravel",
+      description: "Class 2 base rock gravel",
       qty_short: "4.0000",
       uom: "CYD",
       note: "Only 8 yards left in the bin",
-      reported_by: "",
+      reported_by: "de110000-0000-4000-9000-0000000000a1",
       reported_at: ago(1),
     },
     {
@@ -256,7 +310,7 @@ function buildWorld() {
       reported_at: ago(48),
       resolved_at: ago(47),
       resolved_by: "de110000-0000-4000-9000-000000000003",
-      resolution: "Substituted from the Trenton skid",
+      resolution: "Substituted from the Point Loma skid",
     },
   ];
   const tasks = [
@@ -278,11 +332,11 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000008",
-        order_no: "SO-TRT-1042",
-        customer_name: "K. Villeneuve (demo)",
+        order_no: "SO-PLM-1042",
+        customer_name: "Site foreman",
         fulfillment: "WILL_CALL",
         lines: [
-          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Granular A gravel", qty_ordered: "12.0000", uom: "CYD" },
+          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Class 2 base rock gravel", qty_ordered: "12.0000", uom: "CYD" },
         ],
         source: "DISPATCH",
       },
@@ -307,8 +361,8 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000001",
-        order_no: "SO-TRT-1038",
-        customer_name: "Northline Hardscapes Ltd (demo)",
+        order_no: "SO-PLM-1038",
+        customer_name: "Bluffside Builders",
         fulfillment: "DELIVERY",
         lines: [],
         source: "DISPATCH",
@@ -367,26 +421,6 @@ function buildWorld() {
         total: 4,
         worst: "stop",
       },
-      "manager.sales": {
-        profile: "manager.sales",
-        rows: [
-          {
-            source_key: "approvals.waiting",
-            what: "Approvals waiting",
-            count: 1,
-            age: "45m",
-            age_minutes: 45,
-            severity: "watch",
-            module: "identity",
-            unit: "admin",
-            screen: "approvals",
-            view: "Waiting on you",
-            action: "Review",
-          },
-        ],
-        total: 1,
-        worst: "watch",
-      },
     },
     widgetsByProfile: {
       "manager.yard": {
@@ -400,14 +434,6 @@ function buildWorld() {
           { widget_key: "picks.gauge", shape: "gauge", measure: "picks.queue", split: "none", range: "open", size: "S", title: "Queue depth", position: 4, visible: true, label: "Pick queue", kind: "count", module: "tasks", span_cols: 3, span_rows: 1 },
           { widget_key: "orders.open", shape: "stat", measure: "orders.open", split: "none", range: "open", size: "S", title: "Open orders", position: 5, visible: true, label: "Open orders", kind: "count", module: "order", span_cols: 3, span_rows: 1 },
           { widget_key: "warranty.open", shape: "stat", measure: "warranty.open_claims", split: "none", range: "open", size: "S", title: "Open claims", position: 6, visible: true, label: "Open claims", kind: "count", module: "warranty", span_cols: 3, span_rows: 1 },
-        ],
-      },
-      "manager.sales": {
-        profile: "manager.sales",
-        source: "role",
-        widgets: [
-          { widget_key: "needs.you", shape: "list", measure: "needs.you", split: "none", range: "open", size: "L", title: "Needs you", position: 0, visible: true, label: "Needs you", kind: "count", module: "dashboard", span_cols: 6, span_rows: 2 },
-          { widget_key: "sales.today", shape: "stat", measure: "sales.today", split: "none", range: "today", size: "M", title: "Today's sales", position: 1, visible: true, label: "Today's sales", kind: "money_cents", module: "pos", span_cols: 6, span_rows: 1 },
         ],
       },
       "admin": {
@@ -440,17 +466,24 @@ function buildWorld() {
           total: 14,
           range: "today",
           points: [
-            { label: "Trenton", number: 10 },
-            { label: "Kingston", number: 4 },
+            { label: "Point Loma", number: 10 },
+            { label: "Julian", number: 4 },
           ],
         },
-        "picks.gauge": { widget_key: "picks.gauge", state: "ok", total: 20, range: "open" },
+        "picks.gauge": {
+          widget_key: "picks.gauge",
+          state: "ok",
+          total: 20,
+          range: "open",
+          points: [
+            { label: "Waiting", number: 8 },
+            { label: "Claimed", number: 5 },
+            { label: "Picked", number: 3, tone: "good" },
+            { label: "Staged", number: 4 },
+          ],
+        },
         "orders.open": { widget_key: "orders.open", state: "ok", total: 12, range: "open" },
         "warranty.open": { widget_key: "warranty.open", state: "ok", total: 3, range: "open" },
-      },
-      "manager.sales": {
-        "needs.you": { widget_key: "needs.you", state: "ok", total: 1, range: "open" },
-        "sales.today": { widget_key: "sales.today", state: "ok", total: 123456, range: "today" },
       },
       "admin": {
         "needs.you": { widget_key: "needs.you", state: "ok", total: 0, range: "open" },
@@ -459,9 +492,9 @@ function buildWorld() {
     receiving: [
       {
         po_id: PO_PARTIAL,
-        po_no: "PO-TRT-77",
+        po_no: "PO-PLM-77",
         vendor_id: "0c000000-0000-4000-9000-0000000000v1",
-        vendor_name: "Northland Stone Supply (demo)",
+        vendor_name: "Prairie Bend Soils",
         branch_id: BRANCH_ID,
         status: "PARTIAL",
         expected_at: ago(-24).slice(0, 10),
@@ -471,7 +504,7 @@ function buildWorld() {
       },
       {
         po_id: "0b000000-0000-4000-9000-0000000000p2",
-        po_no: "PO-TRT-78",
+        po_no: "PO-PLM-78",
         vendor_id: "0c000000-0000-4000-9000-0000000000v2",
         vendor_name: "Bay Aggregate (demo)",
         branch_id: BRANCH_ID,
@@ -492,8 +525,33 @@ function buildWorld() {
         amount_cents: 0,
         status: "PENDING",
       },
+      // The two freight raises the demo seeds, filed by the logistics role and decided by leadership.
+      {
+        id: "0e000000-0000-4000-9000-0000000000a2",
+        requested_by: "de110000-0000-4000-9000-000000000007",
+        branch_id: BRANCH_ID,
+        policy_type: "FREIGHT_ABOVE_QUOTE",
+        detail: "Freight on SO-TRT-1042 is above the quoted freight",
+        subject_ref: "order:0d000000-0000-4000-9000-000000000008",
+        amount_cents: 18500,
+        status: "PENDING",
+      },
+      {
+        id: "0e000000-0000-4000-9000-0000000000a3",
+        requested_by: "de110000-0000-4000-9000-000000000007",
+        branch_id: BRANCH_ID,
+        policy_type: "FREIGHT_ABOVE_QUOTE",
+        detail: "Freight on SO-TRT-1051 is above the quoted freight",
+        subject_ref: "order:0d000000-0000-4000-9000-000000000009",
+        amount_cents: 24000,
+        status: "PENDING",
+      },
     ],
   };
+  // The other seven profiles (gap 15): widgets, numbers and needs sources seeded from the core's files.
+  const layouts = widgetLayouts();
+  Object.assign(world.widgetsByProfile, layouts);
+  Object.assign(world.dataByProfile, dataLayouts(layouts));
   world.warranty = buildWarrantyWorld();
   return world;
 }
@@ -1136,11 +1194,77 @@ let world;
 let scenario;
 let log;
 
+// The quick-action registry (core/internal/dashboard/quickaction.go): one
+// entry today, the core's own catalog row carried byte for byte, visible to
+// the counter, manager and admin job shapes and to nobody else. The answers
+// resolve per caller the way ResolveVisible runs: the global switch first and
+// its off is final, then the caller's own stored row (an admin's saved edit,
+// below), then the shape the caller's profile was born from (ManagerBaseShape,
+// the rows the stub's two manager profiles carry).
+const QUICK_ACTION = {
+  action_id: "sale.new",
+  label: "+ Sale",
+  glyph: "＋",
+  title: "Start a new counter sale at the till.",
+  unit: "sales",
+  screen: "pos",
+  intent: "pos.new_ticket",
+  lead: "Jumps to Point of Sale with a fresh ticket.",
+  default_enabled: true,
+  default_profiles: { counter: true, yard: false, driver: false, manager: true, admin: true },
+};
+// The core's ManagerBaseShape, all eight rows (core/internal/dashboard/model.go).
+const QUICK_BASE_SHAPE = {
+  "manager.branch": "manager",
+  "manager.sales": "manager",
+  "manager.yard": "yard",
+  "manager.logistics": "yard",
+  "manager.procurement": "manager",
+  "manager.payables": "manager",
+  "manager.controller": "manager",
+  "manager.general": "admin",
+};
+let quickConfigs;
+
+function quickDefaultVisible(profile) {
+  if (Object.hasOwn(QUICK_ACTION.default_profiles, profile)) return QUICK_ACTION.default_profiles[profile];
+  const base = QUICK_BASE_SHAPE[profile];
+  return base !== undefined && QUICK_ACTION.default_profiles[base] === true;
+}
+
+function quickVisible(profile) {
+  const cfg = quickConfigs[QUICK_ACTION.action_id] ?? null;
+  const enabled = cfg !== null ? cfg.enabled : QUICK_ACTION.default_enabled;
+  if (!enabled) return false;
+  if (cfg !== null && Object.hasOwn(cfg.profiles, profile)) return cfg.profiles[profile];
+  return quickDefaultVisible(profile);
+}
+
+// One action as the ADMIN surface sees it: the catalog row plus the resolved
+// switch and a per-shape answer for every job shape, so an unstored shape
+// shows the default it is actually getting (EffectiveFor's rule).
+function quickEffective() {
+  const cfg = quickConfigs[QUICK_ACTION.action_id] ?? null;
+  const profiles = {};
+  for (const p of PROFILES) {
+    profiles[p] = cfg !== null && Object.hasOwn(cfg.profiles, p) ? cfg.profiles[p] : quickDefaultVisible(p);
+  }
+  return { ...QUICK_ACTION, enabled: cfg !== null ? cfg.enabled : QUICK_ACTION.default_enabled, profiles, stored: cfg !== null };
+}
+
+// The closed set of job shapes, the core's Profiles order.
+const PROFILES = [
+  "counter", "yard", "driver", "manager", "admin",
+  "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+  "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+];
+
 function reset() {
   world = buildWorld();
   world.reporting = buildReportingWorld();
   scenario = "";
   log = [];
+  quickConfigs = {};
 }
 reset();
 
@@ -1149,6 +1273,20 @@ reset();
 // decides margin in branch.
 function decidesMargin(flow) {
   return flow === "sales-manager";
+}
+
+// The matrix's lists: the financial controller and the general manager decide
+// every kind; a sales manager decides margin in their own branch; no one else
+// decides any.
+// The demo seeds only the two freight raises; the scenario "freight-only" is
+// that world, without the stub's own margin approval.
+function seededApprovals() {
+  return scenario === "freight-only" ? world.approvals.filter((a) => a.policy_type === "FREIGHT_ABOVE_QUOTE") : world.approvals;
+}
+
+function decidesKind(flow, kind) {
+  if (flow === "financial-controller" || flow === "general-manager") return true;
+  return kind === "MARGIN_BELOW_MINIMUM" && decidesMargin(flow);
 }
 
 // ---- the builder's world -------------------------------------------------------------
@@ -1224,6 +1362,26 @@ function classicTile(profile) {
   };
 }
 
+// The yard shaped homes carry the weight.pending tile the Weights pending row reads (gap 11).
+// The scenario "weights-unwired" is the tile the core cannot measure.
+function weightTile() {
+  const unwired = scenario === "weights-unwired";
+  return {
+    tile_id: "weight.pending",
+    label: "Weights pending",
+    module: "tasks",
+    kind: "count",
+    glyph: "lucide:scale",
+    accent: "#64748b",
+    default_visible: true,
+    lead: "NEED_WEIGHT tasks the yard has not returned a weight for.",
+    position: 1,
+    visible: true,
+    state: unwired ? "unwired" : "ok",
+    ...(unwired ? { note: "Not connected (tasks)" } : { number: 2 }),
+  };
+}
+
 function myHomeBody(profile) {
   const pins = profile === "manager.sales"
     ? [{ tab_key: "sales", position: 0, visible: true }]
@@ -1231,7 +1389,7 @@ function myHomeBody(profile) {
   return {
     profile,
     source: "user",
-    tiles: [classicTile(profile)],
+    tiles: profile === "manager.yard" || profile === "manager.logistics" ? [classicTile(profile), weightTile()] : [classicTile(profile)],
     home: { profile, takeover: false, mobile_only: false },
     tabs: { source: "user", pins },
     hotkeys: [],
@@ -1257,14 +1415,22 @@ function vizSeries(metricId) {
 // The profile a bearer reads: the yard manager's board, the sales manager's,
 // and the controller's own admin profile. Whoever is an admin in this world is
 // the tier one global role, the way the core's guard decides it.
+const FLOW_PROFILE = {
+  "yard-manager": "manager.yard",
+  "financial-controller": "manager.controller",
+  "payables-receivables": "manager.payables",
+  "procurement-manager": "manager.procurement",
+  "branch-manager": "manager.branch",
+  "logistics-manager": "manager.logistics",
+  "general-manager": "manager.general",
+};
+
 function profileOf(flow) {
-  if (flow === "yard-manager") return "manager.yard";
-  if (flow === "financial-controller") return "admin";
-  return "manager.sales";
+  return FLOW_PROFILE[flow] ?? "manager.sales";
 }
 
 function isAdmin(flow) {
-  return flow === "financial-controller";
+  return flow === "financial-controller" || flow === "general-manager";
 }
 
 function flowOf(token) {
@@ -1299,16 +1465,11 @@ function yardNeeds() {
 }
 
 function needsFor(flow) {
-  if (flow !== "yard-manager") {
-    // Recomputed per read, the way the core recounts: the approvals row is
-    // what is still pending for a caller who decides it.
-    const pending = world.approvals.filter((a) => a.status === "PENDING").length;
-    const rows = pending > 0 ? world.needsByProfile["manager.sales"].rows.map((row) => ({ ...row, count: pending })) : [];
-    const total = pending > 0 ? pending : 0;
-    const worst = pending > 0 ? "watch" : "good";
-    return { profile: "manager.sales", rows, total, worst };
-  }
-  return yardNeeds();
+  if (flow === "yard-manager") return yardNeeds();
+  // Recomputed per read, the way the core recounts: the approvals row counts
+  // what is still pending for a caller who decides it.
+  const waiting = seededApprovals().filter((a) => a.status === "PENDING" && decidesKind(flow, a.policy_type)).length;
+  return needsQueue(profileOf(flow), waiting);
 }
 
 async function handle(req, res) {
@@ -1373,9 +1534,9 @@ async function handle(req, res) {
     return json(res, [
       {
         id: BRANCH_ID,
-        code: "TRT",
-        name: "Dibbits Landscape Supply · Trenton",
-        address: { line1: "TBD", city: "Trenton", province: "ON", postal: "K8V 0A0", country: "CA" },
+        code: "PLM",
+        name: "Gable Landscape Supply · Point Loma",
+        address: { line1: "TBD", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
         is_default: true,
         is_system_default: false,
         is_active: true,
@@ -1393,6 +1554,9 @@ async function handle(req, res) {
     if (scenario === "no-widgets") {
       return json(res, { profile, source: "catalog", widgets: [] });
     }
+    // The legacy job shape: a profile the per role table does not know, so the
+    // landing keeps its plain sentence and the whole strip of views.
+    if (scenario === "plain-profile" || scenario === "quick-admin") return json(res, { ...world.widgetsByProfile[profile], profile: "manager" });
     return json(res, world.widgetsByProfile[profile]);
   }
 
@@ -1406,6 +1570,38 @@ async function handle(req, res) {
       return data[key] ?? { widget_key: key, state: "unwired", range: "open", note: "Not connected" };
     });
     return json(res, { data: out });
+  }
+
+  // The caller's quick actions, resolved for their job shape (staff, as the
+  // core gates it). An empty array is the honest answer for "you see none".
+  if (req.method === "GET" && path === "/api/v1/quick-actions") {
+    const actions = quickVisible(profile) ? [QUICK_ACTION] : [];
+    return json(res, { profile, actions });
+  }
+
+  // The quick-actions config routes (core/internal/dashboard/quickaction_handler.go):
+  // both behind RequireAdmin, a tier 1 global gate. No login the stub's door
+  // mints holds one, so the shared Forbidden body answers, exactly as the
+  // core answers these demo logins. The stub's own quick-admin scenario plays
+  // the caller the gate would admit, so the browser legs can walk the view a
+  // real admin gets.
+  const quickAdmin = scenario === "quick-admin";
+  if (req.method === "GET" && path === "/api/v1/quick-actions/config") {
+    if (!quickAdmin) return refuse(res, 403, "Forbidden");
+    return json(res, { actions: [quickEffective()], profiles: PROFILES });
+  }
+
+  const quickPutMatch = path.match(/^\/api\/v1\/quick-actions\/config\/([^/]+)$/);
+  if (req.method === "PUT" && quickPutMatch) {
+    if (!quickAdmin) return refuse(res, 403, "Forbidden");
+    if (quickPutMatch[1] !== QUICK_ACTION.action_id) return refuse(res, 404, "unknown quick action");
+    // The submitted matrix is normalised against the closed set first: a
+    // profile nobody resolves to is dropped, never stored (NormalizeProfiles).
+    const submitted = body?.profiles ?? {};
+    const profiles = {};
+    for (const p of PROFILES) if (Object.hasOwn(submitted, p)) profiles[p] = submitted[p] === true;
+    quickConfigs[QUICK_ACTION.action_id] = { action_id: QUICK_ACTION.action_id, enabled: body?.enabled === true, profiles };
+    return json(res, quickEffective());
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
@@ -1455,13 +1651,19 @@ async function handle(req, res) {
       // The matrix's lists: only margin carries an in-branch arm (a sales
       // manager clears a salesperson's floor in their own branch); every
       // other kind is leadership's alone.
-      if (kind !== "MARGIN_BELOW_MINIMUM" || !decidesMargin(flow)) {
+      if (!decidesKind(flow, kind)) {
         return refuse(res, 403, `you do not decide ${kind} approvals`);
       }
     }
     const status = url.searchParams.get("status") ?? "";
-    const items = world.approvals.filter(
-      (a) => (kind === "" || a.policy_type === kind) && (status === "" || a.status === status),
+    // An empty kind is the core's ListApprovals unchanged: every request in the
+    // caller's branch, and a margin row only to a caller who decides margin
+    // (mayReadRequestWith); every other kind is readable by everyone.
+    const items = seededApprovals().filter(
+      (a) =>
+        (kind === "" || a.policy_type === kind) &&
+        (status === "" || a.status === status) &&
+        (kind !== "" ? decidesKind(flow, a.policy_type) : a.policy_type !== "MARGIN_BELOW_MINIMUM" || decidesKind(flow, a.policy_type)),
     );
     return json(res, { items, next_cursor: null, limit: 50 });
   }
@@ -1470,7 +1672,7 @@ async function handle(req, res) {
   if (req.method === "POST" && decideMatch) {
     const approval = world.approvals.find((a) => a.id === decideMatch[1]);
     if (!approval) return notFound(res);
-    if (!decidesMargin(flow)) return refuse(res, 403, "you do not decide MARGIN_BELOW_MINIMUM approvals");
+    if (!decidesKind(flow, approval.policy_type)) return refuse(res, 403, `you do not decide ${approval.policy_type} approvals`);
     if (approval.status !== "PENDING") return refuse(res, 409, "approval already decided");
     approval.status = body?.approve === true ? "APPROVED" : "REJECTED";
     approval.decided_by = USERS[flow].user_id;

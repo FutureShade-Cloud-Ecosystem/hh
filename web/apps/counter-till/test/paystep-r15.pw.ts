@@ -33,8 +33,8 @@ async function toPayment(page: Page, search: string, name: string, willCall = tr
   await page.getByPlaceholder("Search name or account #…").fill(search);
   await page.locator("button.row").filter({ hasText: name }).first().click();
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   if (willCall) await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
@@ -62,7 +62,7 @@ test("the sentence under the lines follows the account: credit, Cash On Demand, 
   await expect(page.getByTestId("deposit-sentence")).toHaveText(COD_SENTENCE);
 
   await page.goto("/");
-  await toPayment(page, "C07", "Lachance Retail");
+  await toPayment(page, "C07", "Homeowner B Retail");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
   const sentence = page.getByTestId("deposit-sentence");
   await expect(sentence).toContainText("This account cannot carry this sale on account: pay in full now, or take a deposit with the balance due later.");
@@ -83,7 +83,7 @@ test("at desktop the payment step stands in two columns, at 390 it stacks, the s
   await expect(card).toContainText("Fenwick Builders Ltd");
   await expect(card).toContainText(/Outstanding\s*\$[\d,]+\.\d\d/i);
   await expect(card).toContainText(/Credit available\s*\$[\d,]+\.\d\d/i);
-  await expect(page.getByTestId("pay-lines")).toContainText("Holland Stone 60 mm");
+  await expect(page.getByTestId("pay-lines")).toContainText("Charcoal Stone 60 mm");
   await expect(page.getByTestId("pay-fulfil")).toContainText("Will-call");
   await expect(page.getByTestId("pay-fulfil").getByRole("button", { name: "Delivery" })).toBeVisible();
 
@@ -139,7 +139,7 @@ test("the Pay balance result card wears board 02's green success border", async 
   if (!(await dot.isVisible())) await openButton.click({ timeout: 3_000 }).catch(() => undefined);
   await expect(dot).toContainText("Open");
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await page.getByTestId("pay-balance-method-CASH").click();
   await page.getByTestId("pay-balance-take").click();

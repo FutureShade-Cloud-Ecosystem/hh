@@ -10,5 +10,11 @@ import "@hardscapehouse/design-system/src/tokens.css";
 // --hh-font-ui's first name never resolves and every user sees a fallback.
 import "./fonts.css";
 import "@hardscapehouse/pos-kit/src/ported/styles/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./index.js";
-import "./app-root.js";
+import { loadAppRuntime } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+
+// The served config decides the app's custody before the element is built, so the element loads after it.
+void loadAppRuntime().then(() => import("./app-root.js"));
+
+applyTenantTitle("Quote Desk");

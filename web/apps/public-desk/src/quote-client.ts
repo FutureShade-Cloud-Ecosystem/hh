@@ -26,6 +26,15 @@ export interface QuoteLineRef {
   preDiscountTotalCents: number | null;
   /** The thumbnail reference; absent is honest, and no image is the honest tile. */
   imageRef: string | null;
+  /**
+   * True when this line is an OPTIONAL add-on the customer may include or exclude
+   * before accepting: the dealer quoted it separately and the customer's view must
+   * let them choose. Absent or false is a required line. The customer's choice is
+   * recorded by line number on the accept payload; the page never sends a list of
+   * included optional lines, only the excluded set, because the server's contract
+   * defaults to include.
+   */
+  optional: boolean;
 }
 
 export interface QuoteViewRef {
@@ -38,6 +47,8 @@ export interface QuoteViewRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word. */
+  taxLabel: string;
   asOf: string;
   acceptable: boolean;
   /** True only on the staff preview of this page: nothing has been sent, and nothing can be accepted. */
@@ -55,6 +66,18 @@ export interface QuoteViewRef {
   quantityNotice: string | null;
   /** The order a CONVERTED quote became; honoured only while the status is CONVERTED, as the view fences it. */
   orderNo: string | null;
+  /** The rep's display name; absent is honest, the rep card then drops. */
+  repName: string | null;
+  /** The rep's email for a customer's "Ask a question"; absent is honest. */
+  repEmail: string | null;
+  /** The rep's phone for a customer's "Ask a question"; absent is honest. */
+  repPhone: string | null;
+  /**
+   * The dealer's card surcharge percentage, the surcharge added when the customer
+   * pays by card instead of ACH. Absent or null means the dealer does not accept
+   * cards with a surcharge; the page then offers ACH only.
+   */
+  cardSurchargePct: number | null;
 }
 
 export interface AcceptanceRef {
@@ -64,6 +87,8 @@ export interface AcceptanceRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word. */
+  taxLabel: string;
   /** The server's echo that the quantities were confirmed; false when it did not say. */
   quantitiesConfirmed: boolean;
 }
@@ -133,6 +158,16 @@ function integerAt(record: Record<string, unknown>, key: string): number | null 
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
+/**
+ * A real number, not necessarily an integer: a percentage can carry decimals
+ * ("2.9" for a card surcharge). NaN and Infinity refuse. Absent or non-number
+ * is null, which the page reads as "not configured".
+ */
+function numberAt(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function booleanAt(record: Record<string, unknown>, key: string): boolean | null {
   const value = record[key];
   return typeof value === "boolean" ? value : null;
@@ -154,6 +189,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
   const subtotalCents = integerAt(record, "subtotal_cents");
   const taxCents = integerAt(record, "tax_cents");
   const totalCents = integerAt(record, "total_cents");
+  const taxLabel = stringAt(record, "tax_label");
   const asOf = stringAt(record, "as_of");
   const acceptable = booleanAt(record, "acceptable");
   if (
@@ -165,6 +201,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     subtotalCents === null ||
     taxCents === null ||
     totalCents === null ||
+    taxLabel === null ||
     asOf === null ||
     acceptable === null
   ) {
@@ -202,6 +239,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
       discPct: integerAt(row, "disc_pct"),
       preDiscountTotalCents: integerAt(row, "pre_discount_total_cents"),
       imageRef: stringAt(row, "image_ref"),
+      optional: booleanAt(row, "optional") === true,
     });
   }
   return {
@@ -214,6 +252,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     subtotalCents,
     taxCents,
     totalCents,
+    taxLabel,
     asOf,
     acceptable,
     preview: booleanAt(record, "preview") === true,
@@ -228,6 +267,10 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     deliveryFeeCents: integerAt(record, "delivery_fee_cents"),
     quantityNotice: stringAt(record, "quantity_notice"),
     orderNo: status === "CONVERTED" ? stringAt(record, "order_no") : null,
+    repName: stringAt(record, "rep_name"),
+    repEmail: stringAt(record, "rep_email"),
+    repPhone: stringAt(record, "rep_phone"),
+    cardSurchargePct: numberAt(record, "card_surcharge_pct"),
   };
 }
 
@@ -245,10 +288,11 @@ export function validateAcceptance(value: unknown): AcceptanceRef | null {
   const subtotalCents = integerAt(record, "subtotal_cents");
   const taxCents = integerAt(record, "tax_cents");
   const totalCents = integerAt(record, "total_cents");
-  if (quoteNo === null || typedName === null || acceptedAt === null || subtotalCents === null || taxCents === null || totalCents === null) {
+  const taxLabel = stringAt(record, "tax_label");
+  if (quoteNo === null || typedName === null || acceptedAt === null || subtotalCents === null || taxCents === null || totalCents === null || taxLabel === null) {
     return null;
   }
-  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents, quantitiesConfirmed: booleanAt(record, "quantities_confirmed") === true };
+  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents, taxLabel, quantitiesConfirmed: booleanAt(record, "quantities_confirmed") === true };
 }
 
 const QUANTITIES_REFUSAL_WORDS = /reviewed the quantities on this quote/;
@@ -304,12 +348,18 @@ export class PublicQuoteClient {
    * The typed name acceptance: the server seals the name, the figures and the
    * moment. The idempotency key is the same on every attempt of one
    * acceptance, so a repeat answers the first outcome and records nothing.
+   * The excluded optional lines, when present, are the customer's choice to
+   * drop optional add-ons BEFORE accepting; the page sends nothing when none
+   * are excluded, so the wire shape matches the contract for every quote
+   * without optional add-ons.
    */
-  async acceptQuote(token: string, typedName: string, idempotencyKey: string): Promise<Result<AcceptanceRef>> {
+  async acceptQuote(token: string, typedName: string, idempotencyKey: string, excludedOptionalLineNos: ReadonlyArray<number> = []): Promise<Result<AcceptanceRef>> {
+    const body: Record<string, unknown> = { typed_name: typedName, accepted: true, quantities_confirmed: true };
+    if (excludedOptionalLineNos.length > 0) body["excluded_optional_lines"] = [...excludedOptionalLineNos];
     const result = await publicApi.quotePublicAcceptQuote(
       this.#client,
       token,
-      { typed_name: typedName, accepted: true, quantities_confirmed: true },
+      body as { typed_name: string; accepted: boolean; quantities_confirmed: boolean },
       { idempotencyKey },
     );
     if (!result.ok) return result;

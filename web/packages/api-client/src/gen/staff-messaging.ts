@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessageAttachment, MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelAttachmentCreate, MessagingChannelAttachmentsResponse, MessagingChannelCreate, MessagingChannelDelete, MessagingChannelList, MessagingChannelMember, MessagingChannelMemberAdd, MessagingChannelMembersList, MessagingChannelRename, MessagingChannelVisibilityPatch, MessagingCustomerInbound, MessagingDMCreate, MessagingDirectoryList, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMembershipRule, MessagingMembershipRulesList, MessagingMessage, MessagingMessageEdit, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotificationSettings, MessagingNotificationSettingsPatch, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingReactionPut, MessagingReactionSummary, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingSavedItem, MessagingSavedList, MessagingSavedSave, MessagingSearchResults, MessagingSeenBy, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -37,6 +37,72 @@ export async function messagingCreateChannel(
   });
 }
 
+export async function messagingDeleteChannel(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelDelete,
+  call?: ApiCallOptions
+): Promise<Result<{ status?: string }>> {
+  return client.request<{ status?: string }>({
+    method: "DELETE",
+    path: "/api/v1/messaging/channels/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingDeleteChannel",
+  });
+}
+
+export async function messagingRenameChannel(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelRename,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingRenameChannel",
+  });
+}
+
+export async function messagingListChannelAttachments(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannelAttachmentsResponse>> {
+  return client.request<MessagingChannelAttachmentsResponse>({
+    method: "GET",
+    path: "/api/v1/messaging/channels/{id}/attachments",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListChannelAttachments",
+  });
+}
+
+export async function messagingCreateChannelAttachment(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelAttachmentCreate,
+  call?: ApiCallOptions
+): Promise<Result<MessageAttachment>> {
+  return client.request<MessageAttachment>({
+    method: "POST",
+    path: "/api/v1/messaging/channels/{id}/attachments",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingCreateChannelAttachment",
+  });
+}
+
 export async function messagingListHouseQueue(
   client: ApiClient,
   id: string | number,
@@ -54,10 +120,55 @@ export async function messagingListHouseQueue(
   });
 }
 
+export async function messagingJoinChannel(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannelMember>> {
+  return client.request<MessagingChannelMember>({
+    method: "POST",
+    path: "/api/v1/messaging/channels/{id}/join",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingJoinChannel",
+  });
+}
+
+export async function messagingLeaveChannel(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<{ status: "ok" }>> {
+  return client.request<{ status: "ok" }>({
+    method: "POST",
+    path: "/api/v1/messaging/channels/{id}/leave",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingLeaveChannel",
+  });
+}
+
+export async function messagingListChannelMembers(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannelMembersList>> {
+  return client.request<MessagingChannelMembersList>({
+    method: "GET",
+    path: "/api/v1/messaging/channels/{id}/members",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListChannelMembers",
+  });
+}
+
 export async function messagingAddChannelMember(
   client: ApiClient,
   id: string | number,
-  body: MessagingDMCreate,
+  body: MessagingChannelMemberAdd,
   call?: ApiCallOptions
 ): Promise<Result<MessagingChannelMember>> {
   return client.request<MessagingChannelMember>({
@@ -84,6 +195,23 @@ export async function messagingRemoveChannelMember(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingRemoveChannelMember",
+  });
+}
+
+export async function messagingUpdateMembershipRule(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingMembershipRule,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMembershipRule>> {
+  return client.request<MessagingMembershipRule>({
+    method: "PUT",
+    path: "/api/v1/messaging/channels/{id}/membership-rule",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingUpdateMembershipRule",
   });
 }
 
@@ -121,6 +249,40 @@ export async function messagingPostMessage(
   });
 }
 
+export async function messagingEditMessage(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  body: MessagingMessageEdit,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessage>> {
+  return client.request<MessagingMessage>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}",
+    pathParams: { id, msgID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingEditMessage",
+  });
+}
+
+export async function messagingDeleteMessage(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessage>> {
+  return client.request<MessagingMessage>({
+    method: "DELETE",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}",
+    pathParams: { id, msgID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingDeleteMessage",
+  });
+}
+
 export async function messagingAckMessage(
   client: ApiClient,
   id: string | number,
@@ -152,6 +314,57 @@ export async function messagingGetAckProgress(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingGetAckProgress",
+  });
+}
+
+export async function messagingAddReaction(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  body: MessagingReactionPut,
+  call?: ApiCallOptions
+): Promise<Result<MessagingReactionSummary>> {
+  return client.request<MessagingReactionSummary>({
+    method: "PUT",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/reactions",
+    pathParams: { id, msgID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingAddReaction",
+  });
+}
+
+export async function messagingRemoveReaction(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  emoji: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingReactionSummary>> {
+  return client.request<MessagingReactionSummary>({
+    method: "DELETE",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/reactions/{emoji}",
+    pathParams: { id, msgID, emoji },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingRemoveReaction",
+  });
+}
+
+export async function messagingMessageSeenBy(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingSeenBy>> {
+  return client.request<MessagingSeenBy>({
+    method: "GET",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}/seen-by",
+    pathParams: { id, msgID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingMessageSeenBy",
   });
 }
 
@@ -218,6 +431,36 @@ export async function messagingListThread(
   });
 }
 
+export async function messagingPatchChannelVisibility(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelVisibilityPatch,
+  call?: ApiCallOptions
+): Promise<Result<{ status?: string }>> {
+  return client.request<{ status?: string }>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}/visibility",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingPatchChannelVisibility",
+  });
+}
+
+export async function messagingListDirectory(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<MessagingDirectoryList>> {
+  return client.request<MessagingDirectoryList>({
+    method: "GET",
+    path: "/api/v1/messaging/directory",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListDirectory",
+  });
+}
+
 // The document also declares success as 201; the client
 // types the lowest declared success code (200).
 export async function messagingCreateDM(
@@ -280,6 +523,21 @@ export async function messagingExport(
   });
 }
 
+export async function messagingCreateGroup(
+  client: ApiClient,
+  body: MessagingGroupCreate,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "POST",
+    path: "/api/v1/messaging/groups",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingCreateGroup",
+  });
+}
+
 export async function messagingClaimHouseConversation(
   client: ApiClient,
   convID: string | number,
@@ -310,6 +568,62 @@ export async function messagingInboundCustomer(
   });
 }
 
+export async function messagingListMembershipRules(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMembershipRulesList>> {
+  return client.request<MessagingMembershipRulesList>({
+    method: "GET",
+    path: "/api/v1/messaging/membership-rules",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListMembershipRules",
+  });
+}
+
+export async function messagingListMentions(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessagePage>> {
+  return client.request<MessagingMessagePage>({
+    method: "GET",
+    path: "/api/v1/messaging/mentions",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListMentions",
+  });
+}
+
+export async function messagingGetNotificationSettings(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<MessagingNotificationSettings>> {
+  return client.request<MessagingNotificationSettings>({
+    method: "GET",
+    path: "/api/v1/messaging/notification-settings",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingGetNotificationSettings",
+  });
+}
+
+export async function messagingPutNotificationSettings(
+  client: ApiClient,
+  body: MessagingNotificationSettingsPatch,
+  call?: ApiCallOptions
+): Promise<Result<MessagingNotificationSettings>> {
+  return client.request<MessagingNotificationSettings>({
+    method: "PUT",
+    path: "/api/v1/messaging/notification-settings",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingPutNotificationSettings",
+  });
+}
+
 export async function messagingGetPaymentRules(
   client: ApiClient,
   call?: ApiCallOptions
@@ -337,6 +651,21 @@ export async function messagingPutPaymentRule(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingPutPaymentRule",
+  });
+}
+
+export async function messagingListPeople(
+  client: ApiClient,
+  opts?: { q?: string; cursor?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingPersonPage>> {
+  return client.request<MessagingPersonPage>({
+    method: "GET",
+    path: "/api/v1/messaging/people",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListPeople",
   });
 }
 
@@ -397,6 +726,67 @@ export async function messagingPreviewRepRoute(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingPreviewRepRoute",
+  });
+}
+
+export async function messagingListSaved(
+  client: ApiClient,
+  opts?: { limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingSavedList>> {
+  return client.request<MessagingSavedList>({
+    method: "GET",
+    path: "/api/v1/messaging/saved",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListSaved",
+  });
+}
+
+export async function messagingSaveMessage(
+  client: ApiClient,
+  body: MessagingSavedSave,
+  call?: ApiCallOptions
+): Promise<Result<MessagingSavedItem>> {
+  return client.request<MessagingSavedItem>({
+    method: "POST",
+    path: "/api/v1/messaging/saved",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingSaveMessage",
+  });
+}
+
+export async function messagingUnsaveMessage(
+  client: ApiClient,
+  messageID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<unknown>> {
+  return client.request<unknown>({
+    method: "DELETE",
+    path: "/api/v1/messaging/saved/{messageID}",
+    pathParams: { messageID },
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingUnsaveMessage",
+  });
+}
+
+export async function messagingSearch(
+  client: ApiClient,
+  opts: { q: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingSearchResults>> {
+  return client.request<MessagingSearchResults>({
+    method: "GET",
+    path: "/api/v1/messaging/search",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingSearch",
   });
 }
 

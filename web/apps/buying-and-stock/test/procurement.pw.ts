@@ -4,7 +4,7 @@
 // words. The stub is held to the core's shapes and sentences by
 // test/stub-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { test, expect, openHome, resetStub, lowContrast } from "./helpers.js";
+import { test, expect, openHome, resetStub, lowContrast, showArea } from "./helpers.js";
 
 const gapRow = (page: Page) => page.locator("[data-shortfall-row]", { hasText: "DBS-BRUS-DIM" });
 
@@ -17,13 +17,15 @@ async function draftTheGap(page: Page): Promise<void> {
 test("the way in with no handoff offers this role's own card", async ({ page, request }) => {
   await resetStub(request);
   await page.goto("/");
-  // The surface's three roles now hold cards here (the inventory and counts
-  // areas brought the yard manager and Payables and Receivables in), and the
-  // procurement manager's card is this app's landing role.
-  await expect(page.locator("[data-flow]")).toHaveCount(3);
+  // The surface's four roles now hold cards here (the inventory and counts
+  // areas brought the yard manager and Payables and Receivables in; the stock
+  // lookup brings Inside sales in, the read only seat), and the procurement
+  // manager's card is this app's landing role.
+  await expect(page.locator("[data-flow]")).toHaveCount(4);
   await expect(page.locator('[data-flow="procurement-manager"]')).toContainText("Procurement manager");
   await expect(page.locator('[data-flow="yard-manager"]')).toContainText("Yard manager");
   await expect(page.locator('[data-flow="payables-receivables"]')).toContainText("Payables and Receivables");
+  await expect(page.locator('[data-flow="inside-sales"]')).toContainText("Inside sales");
 });
 
 test("the header names the role as the reference does, and the theme control is a small button", async ({ page, request }) => {
@@ -71,6 +73,8 @@ test("every text is 4.5 to 1 or better in both themes: home, the drafted K08 row
 test("the card lands on the home and the K08 gap is the hot, picked row of the worklist", async ({ page, request }) => {
   await openHome(page, request);
   await expect(page.getByRole("heading", { name: "Buying and Stock", level: 1 })).toBeVisible();
+  // The chrome names the app, as the board's selector does: never the design system's spare word.
+  await expect(page.locator("hos-app-header .brand-product")).toHaveText("HH Buying and Stock");
   await expect(page.locator("[data-shortfall-row]")).toHaveCount(3);
   const gap = page.locator("[data-shortfall-row][data-hot]");
   await expect(gap).toHaveCount(1);
@@ -78,22 +82,31 @@ test("the card lands on the home and the K08 gap is the hot, picked row of the w
   await expect(gap).toContainText("-40");
   await expect(gap).toContainText("240");
   await expect(gap.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("[data-k08-note]")).toContainText("K08");
+  // The design notes are gone from the screen: the row and the button carry the whole story.
+  await expect(page.locator("[data-k08-note]")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Draft PO (1)" })).toBeEnabled();
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
   await expect(page.locator("[data-po-row]")).toHaveCount(4);
 });
 
-test("the worklist shows every column the read carries, with the vendor the draft will go to", async ({ page, request }) => {
+test("the worklist shows one product column, the vendor under the name, as the board draws it", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openHome(page, request);
   const heads = (await page.locator("[data-worklist] th").allTextContents()).map((t) => t.trim());
-  for (const name of ["SKU", "Product", "On hand", "Reserved", "In transit", "On order", "Projected", "Point", "Short by", "Suggest", "Vendor"]) {
+  for (const name of ["Product", "On hand", "Reserved", "In transit", "On order", "Projected", "Point", "Short by", "Suggest"]) {
     expect(heads).toContain(name);
   }
+  // One product column: the SKU and Vendor columns the old table carried are gone from the head.
+  // The SKU lives on the draft's lines; the vendor rides under the name in the product cell.
+  expect(heads).not.toContain("SKU");
+  expect(heads).not.toContain("Vendor");
   const row = gapRow(page);
-  await expect(row).toContainText("Alcli (demo)");
+  const cell = row.locator("td[data-label='Product']");
+  await expect(cell).toContainText("Brussels Dimensional");
+  await expect(cell).toContainText("Alcli (demo)");
   await expect(row).toContainText("200");
+  await expect(row.locator("td[data-label='SKU']")).toHaveCount(0);
+  await expect(row.locator("td[data-label='Vendor']")).toHaveCount(0);
   // The worklist fits its card at the reference width: no column is cut off.
   const clipped = await page.evaluate(() => {
     const root = document.querySelector("buying-and-stock-app")!.shadowRoot!;
@@ -101,6 +114,17 @@ test("the worklist shows every column the read carries, with the vendor the draf
     return box.scrollWidth - box.clientWidth;
   });
   expect(clipped).toBeLessThanOrEqual(0);
+});
+
+test("the shortfall row names the sales orders it holds up, oldest first with a count", async ({ page, request }) => {
+  await openHome(page, request);
+  // The turf row holds up five orders: the row names the oldest three and counts the two more,
+  // the core's own window (change 5, R7). The dimensional row holds up one. Nothing waits on the
+  // stone row, and its row draws no tag at all.
+  const turf = page.locator("[data-shortfall-row]", { hasText: "DBS-RYMAR-TURF" });
+  await expect(turf.locator("[data-short-order]")).toHaveText("Short for SO-3305, SO-3311, SO-3312 and 2 more");
+  await expect(gapRow(page).locator("[data-short-order]")).toHaveText("Short for SO-3314");
+  await expect(page.locator("[data-shortfall-row]", { hasText: "DBS-AGG-34CLEAR" }).locator("[data-short-order]")).toHaveCount(0);
 });
 
 test("Draft PO goes grey when the pick is cleared", async ({ page, request }) => {
@@ -117,7 +141,7 @@ test("shortfall to a draft: the vendor, its code, the line at the suggested quan
   const panel = page.locator("[data-draft]");
   await expect(panel).toContainText("New purchase order from the shortfall");
   await expect(panel).toContainText("Alcli (demo)");
-  await expect(panel).toContainText("Trenton yard");
+  await expect(panel).toContainText("Loma yard");
   const line = panel.locator("[data-draft-line]");
   await expect(line).toHaveCount(1);
   await expect(line).toContainText("DBS-BRUS-DIM");
@@ -126,7 +150,7 @@ test("shortfall to a draft: the vendor, its code, the line at the suggested quan
   await expect(line).toContainText("$8.40");
   await expect(line).toContainText("$2,016.00");
   await expect(panel.locator("[data-draft-total]")).toContainText("$2,016.00");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-142" })).toContainText("Draft");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-142" })).toContainText("Draft");
   await expect(panel.locator("[data-callout]")).toContainText("Place moves the order to Ordered.");
 });
 
@@ -143,7 +167,7 @@ test("delivery is a three way control, and the choice is saved with the draft", 
   // The date reads as words under the field as it is typed, before anything is saved.
   await expect(page.locator("[data-date-words]")).toContainText("Tuesday 4 March 2031");
   await page.getByRole("button", { name: "Save draft" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Draft PO-TRT-142 saved");
+  await expect(page.locator("[data-notice]")).toContainText("Draft PO-PLM-142 saved");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
   await page.locator("[data-open-draft]").click();
   await expect(page.locator("[data-method='PICKUP']")).toHaveAttribute("aria-pressed", "true");
@@ -253,7 +277,7 @@ test("the existing draft note keeps space under it before the order's facts", as
   });
   await page.getByRole("button", { name: "Draft PO (1)" }).click();
   const existing = page.locator("[data-existing-draft]");
-  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  await expect(existing).toContainText("A draft was already open: PO-PLM-142.");
   // The facts list (Order, Vendor, Ship to) sits below the note with air between, not flush.
   const gapPx = await page.evaluate(() => {
     const root = document.querySelector("buying-and-stock-app")!.shadowRoot!;
@@ -296,12 +320,12 @@ test("a draft made behind the screen's back is named when the press drafts again
   await page.getByRole("button", { name: "Draft PO (1)" }).click();
   const panel = page.locator("[data-draft]");
   await expect(panel).toBeVisible();
-  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-143");
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-PLM-143");
   const existing = panel.locator("[data-existing-draft]");
-  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  await expect(existing).toContainText("A draft was already open: PO-PLM-142.");
   await expect(existing).toContainText("Drafted, not placed");
   await existing.locator("[data-open-draft]").click();
-  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-142");
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-PLM-142");
 });
 
 test("a draft does not cover the shortfall: the K08 row stays, reading drafted not placed, with the draft's link", async ({ page, request }) => {
@@ -312,7 +336,7 @@ test("a draft does not cover the shortfall: the K08 row stays, reading drafted n
   const row = gapRow(page);
   await expect(row).toHaveCount(1);
   await expect(row).toContainText("Drafted, not placed");
-  await expect(row.locator("[data-open-draft]")).toHaveText("PO-TRT-142");
+  await expect(row.locator("[data-open-draft]")).toHaveText("PO-PLM-142");
   await expect(row).toHaveAttribute("data-hot", "true");
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
   // With the draft's words in the row, the worklist and the register still show every column and every pill whole.
@@ -323,10 +347,10 @@ test("a draft does not cover the shortfall: the K08 row stays, reading drafted n
   expect(clipped, "worklist then register: pixels cut off").toEqual([0, 0]);
   // The row's own pick is closed: a second draft for the same gap is not offered.
   await expect(row.getByRole("checkbox")).toBeDisabled();
-  await expect(row.getByRole("checkbox")).toHaveAccessibleName("Drafted, PO-TRT-142");
+  await expect(row.getByRole("checkbox")).toHaveAccessibleName("Drafted, PO-PLM-142");
   // The link opens the draft again.
   await row.locator("[data-open-draft]").click();
-  await expect(page.locator("[data-draft]")).toContainText("PO-TRT-142");
+  await expect(page.locator("[data-draft]")).toContainText("PO-PLM-142");
 });
 
 test("a draft is placed and seen incoming, and only the placed order closes the gap", async ({ page, request }) => {
@@ -335,37 +359,71 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
   await page.locator("[data-field='expected']").fill("2031-03-04");
   await page.getByRole("button", { name: "Place order" }).click();
   const notice = page.locator("[data-notice]");
-  await expect(notice.locator("strong")).toContainText("Placed: PO-TRT-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
+  await expect(notice.locator("strong")).toContainText("Placed: PO-PLM-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
   await expect(notice).toContainText("Moved to Ordered, promised 2031-03-04. It shows under Incoming. The yard team receives it in Yard Pick and Receive.");
   await expect(notice).not.toContainText("the core reads");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
-  const register = page.locator("[data-po-row]", { hasText: "PO-TRT-142" });
+  const register = page.locator("[data-po-row]", { hasText: "PO-PLM-142" });
   await expect(register).toContainText("Ordered");
   await expect(register).toContainText("$2,016.00");
-  const incoming = page.locator("[data-incoming-row]", { hasText: "PO-TRT-142" });
-  await expect(incoming).toContainText("2031-03-04");
-  await expect(incoming).toContainText("Alcli (demo)");
   await expect(gapRow(page)).toHaveCount(0);
   await expect(page.locator("[data-tile='below-point']")).toContainText("2");
+  await showArea(page, "incoming");
+  const incoming = page.locator("[data-incoming-row]", { hasText: "PO-PLM-142" });
+  await expect(incoming).toContainText("2031-03-04");
+  await expect(incoming).toContainText("Alcli (demo)");
+  await expect(incoming).toContainText("Brussels Dimensional");
 });
 
 test("promised dates read as days from today, and a part received order reads how much landed", async ({ page, request }) => {
   await openHome(page, request);
-  // The desk's own tabs: the orders and what is incoming. The other areas ride the area switcher above them.
-  await expect(page.locator("nav.tabs")).toHaveText(/Purchase orders\s*Incoming/);
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" })).toContainText("in 2 days");
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-136" })).toContainText("in 4 days");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-67" })).toContainText("6 of 10 pc landed");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-67" })).toContainText("Partial");
+  // The PO screen has no second row of tabs: Incoming is its own area on the switcher above.
+  await expect(page.locator("nav.tabs")).toHaveCount(0);
+  await expect(page.locator("nav.areas").getByRole("button", { name: "Incoming" })).toBeVisible();
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-67" })).toContainText("6 of 10 pc landed");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-67" })).toContainText("Partial");
   await expect(page.locator("[data-tile='incoming']")).toContainText("arrivals with a promised date");
+  await showArea(page, "incoming");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" })).toContainText("in 2 days");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-136" })).toContainText("in 4 days");
+});
+
+test("Incoming is its own area: the tile leads to it and its table lists every line still to arrive", async ({ page, request }) => {
+  await openHome(page, request);
+  // The tile's link is the area's own press, not the desk's old tab.
+  await page.locator("[data-tile='incoming']").getByRole("button", { name: "Open incoming" }).click();
+  await expect(page.locator("nav.areas [data-area-id='incoming'][aria-current='true']")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Incoming", level: 1 })).toBeVisible();
+  const heads = (await page.locator("[data-incoming] th").allTextContents()).map((t) => t.trim());
+  for (const name of ["PO", "Vendor", "Product", "Quantity", "Expected", "How"]) {
+    expect(heads).toContain(name);
+  }
+  // One row per line still to arrive, soonest promised first: 141 in two days, 136 in four, and
+  // the part received order's four pieces still coming, undated, at the foot.
+  const rows = page.locator("[data-incoming-row]");
+  await expect(rows).toHaveCount(3);
+  const first = rows.nth(0);
+  await expect(first).toContainText("PO-PLM-141");
+  await expect(first).toContainText("Techo Bloc (demo)");
+  await expect(first).toContainText("Techo Bloc Paver 60mm");
+  // Pieces draw bare, every other unit beside the figure (the app's own quantity words).
+  await expect(first.locator("td[data-label='Quantity']")).toHaveText("12");
+  await expect(first).toContainText("in 2 days");
+  await expect(first).toContainText("Vendor truck");
+  const last = rows.nth(2);
+  await expect(last).toContainText("PO-PLM-67");
+  await expect(last.locator("td[data-label='Quantity']")).toHaveText("4");
+  await expect(last).toContainText("no date");
+  await expect(last).toContainText("Vendor truck");
 });
 
 test("an order placed without a promised date shows no date, never an invented one", async ({ page, request }) => {
   await openHome(page, request);
   await draftTheGap(page);
   await page.getByRole("button", { name: "Place order" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Placed: PO-TRT-142");
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-142" })).toContainText("no date");
+  await expect(page.locator("[data-notice]")).toContainText("Placed: PO-PLM-142");
+  await showArea(page, "incoming");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-142" })).toContainText("no date");
 });
 
 test("a draft with its line removed is refused by the server in its own words, beside the button", async ({ page, request }) => {
@@ -382,7 +440,7 @@ test("Cancel draft cancels the order it drafted and the row is plain again", asy
   await draftTheGap(page);
   await page.getByRole("button", { name: "Cancel draft" }).click();
   await expect(page.locator("[data-draft]")).toHaveCount(0);
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-142" })).toContainText("Cancelled");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-142" })).toContainText("Cancelled");
   await expect(gapRow(page)).not.toContainText("Drafted, not placed");
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
 });
@@ -407,12 +465,13 @@ test("the orders screen has no vendor bill control of its own, the bills live in
 
 test("an order the yard has received reads Received, as an outline word and never a button", async ({ page, request }) => {
   await openHome(page, request);
-  await request.post("/_stub/receive", { data: { po_no: "PO-TRT-141" } });
+  await request.post("/_stub/receive", { data: { po_no: "PO-PLM-141" } });
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  const row = page.locator("[data-po-row]", { hasText: "PO-TRT-141" });
+  const row = page.locator("[data-po-row]", { hasText: "PO-PLM-141" });
   await expect(row).toContainText("Received");
   await expect(row.getByRole("button")).toHaveCount(0);
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" })).toHaveCount(0);
+  await showArea(page, "incoming");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" })).toHaveCount(0);
 });
 
 test.skip("PENDING: the yard team receives the placed order in Yard Pick and Receive (waits for Yard receiving)", async () => {
@@ -439,24 +498,74 @@ test("on a phone every worklist figure is on screen, none hidden behind a sidewa
   await page.setViewportSize({ width: 390, height: 844 });
   await openHome(page, request);
   const row = gapRow(page);
-  for (const label of ["Short by", "Suggest", "Projected", "Vendor", "Reserved", "In transit", "Point"]) {
+  for (const label of ["Short by", "Suggest", "Projected", "Product", "Reserved", "In transit", "Point"]) {
     await expect(row.locator(`td[data-label="${label}"]`)).toBeVisible();
   }
+  // The vendor rides under the name in the product cell, so it is on screen too.
+  await expect(row.locator("td[data-label='Product']")).toContainText("Alcli (demo)");
   const box = await row.locator("[data-field-short]").boundingBox();
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 });
 
-test("on a phone the incoming row keeps the PO, the vendor and the expected date, and hides how it is coming and the line count", async ({ page, request }) => {
+test("on a phone the incoming table stacks: every cell keeps its label, and the page does not scroll sideways", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openHome(page, request);
-  const row = page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" });
+  await showArea(page, "incoming");
+  const row = page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" });
   await expect(row).toBeVisible();
+  for (const label of ["PO", "Vendor", "Product", "Quantity", "Expected", "How"]) {
+    await expect(row.locator(`td[data-label="${label}"]`)).toBeVisible();
+  }
   await expect(row).toContainText("Techo Bloc (demo)");
   await expect(row.locator("[data-expected]")).toBeVisible();
-  // The two wide screen columns are hidden on a phone, and the testers' page says so.
-  await expect(row.locator("td.opt2")).toHaveCount(2);
-  await expect(row.locator("td.opt2").first()).toBeHidden();
-  await expect(row.locator("td.opt2").nth(1)).toBeHidden();
   const sideways = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(await sideways()).toBeLessThanOrEqual(0);
 });
+
+test("when the vendor has an open warranty credit, the draft renders the credit strip and can apply it without changing line costs", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  const panel = page.locator("[data-draft]");
+  await expect(panel).toBeVisible();
+
+  // Credit strip names the credit, amount, claim and description
+  const strip = panel.locator("[data-warranty-credit-strip]");
+  await expect(strip).toBeVisible();
+  await expect(strip.locator("[data-credit-headline]")).toContainText("Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)");
+
+  // Apply button is present
+  const applyBtn = strip.getByRole("button", { name: "Apply $264.00 to this PO" });
+  await expect(applyBtn).toBeVisible();
+
+  // Line unit cost and subtotal before applying credit
+  const line = panel.locator("[data-draft-line]");
+  await expect(line).toContainText("$8.40");
+  await expect(line).toContainText("$2,016.00");
+  await expect(panel.locator("[data-draft-total]")).toContainText("$2,016.00");
+
+  // Apply the credit
+  await applyBtn.click();
+
+  // Strip now displays the Applied badge
+  await expect(strip.locator("[data-credit-applied-badge]")).toBeVisible();
+  await expect(strip.locator("[data-credit-applied-badge]")).toHaveText("Applied");
+  await expect(applyBtn).toHaveCount(0);
+
+  // Line unit cost remains unchanged (Ruling R3)
+  await expect(line).toContainText("$8.40");
+  await expect(line).toContainText("$2,016.00");
+
+  // Draft totals reflect the 3-row breakdown
+  const subtotalRow = panel.locator("[data-row-lines-subtotal]");
+  await expect(subtotalRow).toContainText("Lines subtotal");
+  await expect(subtotalRow.locator("[data-lines-subtotal]")).toHaveText("$2,016.00");
+
+  const creditRow = panel.locator("[data-row-credit-applied]");
+  await expect(creditRow).toContainText("Warranty credit applied · WCL-104");
+  await expect(creditRow.locator("[data-warranty-credit-applied]")).toHaveText("-$264.00");
+
+  const dueRow = panel.locator("[data-row-total-due]");
+  await expect(dueRow).toContainText("Total due to Alcli (demo)");
+  await expect(dueRow.locator("[data-total-due-vendor]")).toHaveText("$1,752.00");
+});
+
