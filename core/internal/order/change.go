@@ -113,6 +113,10 @@ var (
 	ErrChangeNotApproved = errors.New("order: this change is not approved")
 	// ErrChangeTerminal, a decision was attempted on a change that is already applied/rejected/withdrawn.
 	ErrChangeTerminal = errors.New("order: this change order is already closed")
+	// ErrChangeSelfSign, the finance signature is refused to the manager who raised the change: a manager may
+	// not sign what they requested themselves (separation of duties). Another manager signs; applying a change
+	// that is already APPROVED stays open to the requester.
+	ErrChangeSelfSign = errors.New("order: you raised this change, so another manager signs it")
 	// ErrChangeNoLines, a request with no delta rows. An empty change is not a change.
 	ErrChangeNoLines = errors.New("order: a change order must carry at least one line change")
 	// ErrChangeNotConfigured, the change-order store is not wired (a scaffold/fake store).

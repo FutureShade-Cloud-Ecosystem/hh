@@ -34,11 +34,12 @@ const (
 // fake records it and answers an APPLIED change; every other write is unreachable in these legs.
 type stage3Store struct {
 	*fakeStore
-	change     ChangeOrder
-	queue      []ChangeQueueItem
-	signCalls  []signApplyWrite
-	closeCalls []string
-	closeFrom  [][]string
+	change       ChangeOrder
+	queue        []ChangeQueueItem
+	signCalls    []signApplyWrite
+	closeCalls   []string
+	financeCalls []string
+	closeFrom    [][]string
 }
 
 var _ changeStore = (*stage3Store)(nil)
@@ -59,8 +60,11 @@ func (f *stage3Store) ListChangeOrders(context.Context, string) ([]ChangeOrder, 
 func (f *stage3Store) RecordYardAck(context.Context, string, string, string, string) (ChangeOrder, error) {
 	return ChangeOrder{}, errors.New("unreachable")
 }
-func (f *stage3Store) RecordFinanceApproval(context.Context, string, string, string, string) (ChangeOrder, error) {
-	return ChangeOrder{}, errors.New("unreachable")
+func (f *stage3Store) RecordFinanceApproval(_ context.Context, _, actor, _, next string) (ChangeOrder, error) {
+	f.financeCalls = append(f.financeCalls, actor)
+	out := f.change
+	out.Status = next
+	return out, nil
 }
 func (f *stage3Store) CloseChangeOrder(_ context.Context, _, target, _, _ string, allowedFrom []string) (ChangeOrder, error) {
 	f.closeCalls = append(f.closeCalls, target)
