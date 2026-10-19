@@ -447,10 +447,16 @@ func (h *RegisterHandler) trackOpen(w http.ResponseWriter, r *http.Request) {
 
 // -- plumbing -----------------------------------------------------------------------------------
 
+// errBodyNotJSON is the route's answer to a body it could not read at all. It is a 400, not a 422:
+// on the received payment route a 422 is exclusively the pre-write refusal for a JSON body the route
+// read and checked, so a desk holding an idempotency key never mistakes a body mangled in flight for
+// the route refusing a body it saw (FP 186 and 187).
+var errBodyNotJSON = errors.New("the request body must be JSON")
+
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxRegisterBody))
 	if err := dec.Decode(v); err != nil {
-		return httpx.BadRequestf("the request body must be JSON")
+		return errBodyNotJSON
 	}
 	return nil
 }
@@ -459,6 +465,7 @@ func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err e
 	var bad httpx.BadRequestError
 	var sd *SupplierDepositNotCreditable
 	var nsi payments.NoSuchInvoiceError
+	var rc payments.ReplayConflictError
 	switch {
 	case errors.As(err, &nsi):
 		// A missing invoice, another account's, and one outside a scoped caller's branch reach all
@@ -476,6 +483,13 @@ func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err e
 		// door's answer for the day one lands.
 		httpx.ErrorWith(w, http.StatusConflict, SupplierDepositNotCreditableWords,
 			map[string]any{"code": SupplierDepositNotCreditableCode})
+	case errors.As(err, &rc):
+		// The replay judgement's own refusal (a spent key on a different payment or another
+		// account) answers 409 Conflict, so a client reads a spent key by status alone, never by
+		// matching words in the error string.
+		httpx.Error(w, http.StatusConflict, rc.Msg)
+	case errors.Is(err, errBodyNotJSON):
+		httpx.Error(w, http.StatusBadRequest, errBodyNotJSON.Error())
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusUnprocessableEntity, bad.Msg)
 	default:

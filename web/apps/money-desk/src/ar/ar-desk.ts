@@ -749,8 +749,8 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
-    // The pick ceiling holds for a preview too: the route would refuse this body ahead of its replay
-    // judgement, so the split area says the route's words and no such body is sent.
+    // The pick ceiling holds for a preview too: the browser refuses this body locally in the route's
+    // words before it is sent, while the server answers the replay judgement ahead of validateApply.
     if (account.picked.length > MAX_APPLY_INVOICES) {
       this.#account = { ...account, preview: null, previewError: pickCeilingWords(account.picked.length) };
       this.#host.repaint();
@@ -779,8 +779,9 @@ export class ArDesk {
     const reference = this.#host.field("receive-reference").trim();
     if (cents === null || cents === 0) return this.#stopApply("Enter the amount received, such as $100.00.");
     if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Pick all open takes every open invoice.");
-    // The route's own ceiling, said here so the body is never sent: a pick over it is refused ahead of
-    // the route's replay judgement, which would end a held key for a body the desk could refuse itself.
+    // The route's own ceiling, said here so the body is never sent: the browser refuses a pick over it
+    // locally, while the server answers the replay judgement ahead of validateApply, so a held key is
+    // never ended by a body the desk could refuse itself.
     // The guard is a stop before the wire, so the button and any held key are untouched by it.
     if (account.picked.length > MAX_APPLY_INVOICES) return this.#stopApply(pickCeilingWords(account.picked.length));
     if (reference === "") return this.#stopApply("Enter a reference, such as a cheque number.");
@@ -804,19 +805,8 @@ export class ArDesk {
     this.#busy = false;
     if (!result.ok) {
       const outcome = paymentOutcome(result.error, result.status, heldKey !== undefined);
-      if (outcome.kind === "recorded") {
-        // The route's replay refusal is how it says the earlier press landed: the outcome is known,
-        // the payment is ended, and the account is reloaded so the person reads the server's balances.
-        this.#payPins.delete(account.customerId);
-        this.#endApplyForm();
-        this.#notice = outcome.words;
-        this.#reveal = "[data-notice]";
-        await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
-        this.#host.repaint();
-        return;
-      }
       if (outcome.kind === "recorded-other") {
-        // The route's refusal is its own answer for the held key: the earlier press landed as a different
+        // The route's 409 is its own answer for the held key: the earlier press landed as a different
         // payment and THIS form's payment was not recorded. The key ends; the form stays filled so this
         // cheque can be pressed again as a new payment, and the account reloads so the check the words
         // ask for reads the server's balances.

@@ -1025,34 +1025,21 @@ async function handle(req, res) {
 
   // The received payment route (core/internal/billing register_service.go ApplyReceivedPayment and
   // core/internal/payments received_apply.go), its checks in the core's order and its sentences word for word:
-  // the service's three checks, then the request's, then the replay judgement (never on a preview), then the
-  // locks in id order (a missing or another account's invoice is a 404, one not open is refused), then one
-  // branch per payment, then the ceiling. Every refusal is a 422 but the 404. The split is the server's: oldest
+  // the service's key check, then the replay judgement (never on a preview) BEFORE the request's own checks,
+  // then the locks in id order (a missing or another account's invoice is a 404, one not open is refused), then
+  // one branch per payment, then the ceiling. An unreadable body is a 400, a spent key's conflict is a 409, and
+  // every other refusal is a 422 but the 404. The split is the server's: oldest
   // first by issue date, due date, invoice number and id whatever order the list came in, one line per named
   // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     const isUuid = (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
     const key = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
     const ids = Array.isArray(body.invoice_ids) ? body.invoice_ids : [];
     const method_ = typeof body.method === "string" ? body.method.trim().toUpperCase() : "";
     const preview = body.preview === true;
     if (key === "") return refuse(res, 422, "recording a payment needs an idempotency key");
-    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 422, "a payment amount must be greater than zero");
-    if (ids.length === 0) return refuse(res, 422, "a payment must be applied to at least one invoice");
-    if (!["EFT", "CHEQUE", "CARD", "CASH"].includes(method_)) return refuse(res, 422, "tender must be one of EFT, CHEQUE, CARD, CASH");
-    if (!isUuid(body.customer_id)) return refuse(res, 422, "customer id must be a uuid");
-    if (ids.length > 100) return refuse(res, 422, "a received payment may name at most 100 invoices; record it as more than one payment");
-    const seen = new Set();
-    for (const raw of ids) {
-      if (!isUuid(raw)) return refuse(res, 422, "invoice ids must be uuids");
-      const id = raw.trim().toLowerCase();
-      if (seen.has(id)) return refuse(res, 422, `the same invoice is named twice: ${id}`);
-      seen.add(id);
-    }
-    const named = [...seen].sort();
-    const customerId = body.customer_id.trim().toLowerCase();
     const reference = typeof body.reference === "string" ? body.reference : "";
     const oldestFirst = (rows) =>
       [...rows].sort((a, b) => {
@@ -1076,13 +1063,26 @@ async function handle(req, res) {
         stays_open_cents: Math.max(after - inv.holdback_cents, 0),
       };
     };
+    // The replay judgement runs BEFORE the body validation (FP 186 and 187), and its refusals are
+    // 409 Conflict so a client reads a spent key by status alone: whatever malformed body the retry
+    // carries under the held key, the answer is the conflict, never a fresh key's validation words.
     if (!preview) {
       const first = world.keys.get(`apply:${key}`);
       if (first !== undefined) {
-        if (first.fingerprint.customer !== customerId) return refuse(res, 422, "that idempotency key already recorded a payment for another account; use a new key");
+        if (!isUuid(body.customer_id) || first.fingerprint.customer !== body.customer_id.trim().toLowerCase()) return refuse(res, 409, "that idempotency key already recorded a payment for another account; use a new key");
+        // The named list is normalised the way Go's normalisedInvoiceIDs does it: an empty list, a
+        // non uuid id, or an id named twice cannot match the stored payment's list.
+        const replaySeen = new Set();
+        let listMatches = ids.length > 0;
+        for (const raw of ids) {
+          if (!isUuid(raw)) { listMatches = false; break; }
+          const id = raw.trim().toLowerCase();
+          if (replaySeen.has(id)) { listMatches = false; break; }
+          replaySeen.add(id);
+        }
         const same =
-          first.fingerprint.amount === body.amount_cents && first.fingerprint.method === method_ && first.fingerprint.reference === reference && first.fingerprint.named.join(",") === named.join(",");
-        if (!same) return refuse(res, 422, "that idempotency key already recorded a different payment; use a new key");
+          listMatches && Number.isInteger(body.amount_cents) && first.fingerprint.amount === body.amount_cents && first.fingerprint.method === method_ && first.fingerprint.reference === reference && first.fingerprint.named.join(",") === [...replaySeen].sort().join(",");
+        if (!same) return refuse(res, 409, "that idempotency key already recorded a different payment; use a new key");
         const lines = oldestFirst(first.invoices.map((id) => invById(id))).map((inv) => {
           const line = lineFor(inv, first.applied.get(inv.id) ?? 0);
           return { ...line, outcome: line.applied_cents > 0 ? (inv.balance_cents === 0 ? "CLOSES" : "PART") : "NONE", balance_after_cents: inv.balance_cents, stays_open_cents: payableOf(inv) };
@@ -1090,6 +1090,20 @@ async function handle(req, res) {
         return send(res, 200, { ...first.answer, lines, replayed: true });
       }
     }
+    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 422, "a payment amount must be greater than zero");
+    if (ids.length === 0) return refuse(res, 422, "a payment must be applied to at least one invoice");
+    if (!["EFT", "CHEQUE", "CARD", "CASH"].includes(method_)) return refuse(res, 422, "tender must be one of EFT, CHEQUE, CARD, CASH");
+    if (!isUuid(body.customer_id)) return refuse(res, 422, "customer id must be a uuid");
+    if (ids.length > 100) return refuse(res, 422, "a received payment may name at most 100 invoices; record it as more than one payment");
+    const seen = new Set();
+    for (const raw of ids) {
+      if (!isUuid(raw)) return refuse(res, 422, "invoice ids must be uuids");
+      const id = raw.trim().toLowerCase();
+      if (seen.has(id)) return refuse(res, 422, `the same invoice is named twice: ${id}`);
+      seen.add(id);
+    }
+    const named = [...seen].sort();
+    const customerId = body.customer_id.trim().toLowerCase();
     const picked = [];
     for (const id of named) {
       const inv = invById(id);
@@ -1155,7 +1169,7 @@ async function handle(req, res) {
   mWorkspace = path.match(/^\/api\/v1\/billing\/ar\/customers\/([^/]+)\/notes$/);
   if (mWorkspace && method === "POST") {
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (typeof body.body !== "string" || body.body.trim() === "") return refuse(res, 422, "note body is required");
     if (body.body.length > 4096) return refuse(res, 422, "note body exceeds 4096 characters");
     return send(res, 201, { note: workspaceAddNote(mWorkspace[1], body) });
@@ -1188,7 +1202,7 @@ async function handle(req, res) {
     const inv = invById(m[1]);
     if (!inv) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") return refuse(res, 400, "recording a payment needs an idempotency key");
     if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 400, "a payment amount must be greater than zero");
     const replay = world.keys.get(body.idempotency_key);
@@ -1221,7 +1235,7 @@ async function handle(req, res) {
     const inv = invById(m[1]);
     if (!inv) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") return refuse(res, 400, "recording a promise needs an idempotency key");
     if (!Number.isInteger(body.promised_cents) || body.promised_cents <= 0) return refuse(res, 400, "a promise names an amount greater than zero");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.promised_date))) return refuse(res, 400, "the promised date must be a calendar date (YYYY-MM-DD)");
@@ -1262,7 +1276,7 @@ async function handle(req, res) {
     const p = world.payments.find((x) => x.id === m[1]);
     if (!p) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     p.status = "BOUNCED";
     p.fee_cents = officeWorld.state().nsf.fee_cents;
@@ -1531,7 +1545,7 @@ async function handle(req, res) {
 
   if (method === "POST" && path === "/api/v1/ar/register/statements") {
     const body = await readBody(req);
-    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (!Array.isArray(body.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice");
     const custs = new Set();
     for (const id of body.invoice_ids) {
