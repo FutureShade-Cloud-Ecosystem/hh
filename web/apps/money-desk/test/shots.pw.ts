@@ -33,7 +33,10 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       const take = (screen: string, state: string, on: Page = page) => shot(on, theme, size.width, screen, state);
       const brandOn = async (on: Page = page) => {
-        if (theme === "brand") await on.getByRole("button", { name: "Theme: Light" }).click();
+        if (theme === "brand") {
+          await on.locator("hh-shell-header button.account").click();
+          await on.getByRole("button", { name: "Theme: Light" }).click();
+        }
       };
 
       await openDesk(page, request);

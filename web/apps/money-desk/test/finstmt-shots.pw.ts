@@ -31,7 +31,10 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       await openStatements(page, request);
-      if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+      if (theme === "brand") {
+        await page.locator("hh-shell-header button.account").click();
+        await page.getByRole("button", { name: "Theme: Light" }).click();
+      }
       await take("01", "income");
       await page.locator('[data-account="4000"] [data-action="fs-drill"]:visible').first().click();
       await expect(page.locator("[data-tie]")).toBeVisible();
