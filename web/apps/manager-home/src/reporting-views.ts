@@ -422,7 +422,7 @@ function renderSavedViews(model: ReportingModel): TemplateResult {
       <div class="saved-save">
         <label class="field">
           <span class="field-label">Save these parameters as</span>
-          <input type="text" class="text-field" data-field="save-name" aria-label="Saved view name" placeholder="Such as This month, Trenton" autocomplete="off" />
+          <input type="text" class="text-field" data-field="save-name" aria-label="Saved view name" placeholder="Such as This month, Point Loma" autocomplete="off" />
         </label>
         <label class="field share-field">
           <span class="field-label">Shared</span>

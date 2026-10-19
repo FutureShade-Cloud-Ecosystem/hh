@@ -689,7 +689,7 @@ export const KpiDemo = {
       {
         id: "warranty-1",
         title: "Warranty: RT-1017 · needs a claim",
-        body: "Holland paver 60 mm, 12 defective, over the $50 threshold. Copperline Pavers.",
+        body: "Ridgeway paver 60 mm, 12 defective, over the $50 threshold. Copperline Pavers.",
         amountLabel: "$100.80",
         action: "issue-warranty",
         actionLabel: "Issue warranty claim",
