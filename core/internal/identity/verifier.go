@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -104,6 +105,11 @@ type Config struct {
 	HTTPClient *http.Client
 	// Now is the clock. nil selects time.Now.
 	Now func() time.Time
+	// Revocations, when set, is consulted for every verified token that
+	// carries a jti: a token whose id is revoked answers the credential
+	// refusal "token revoked" (HH-678). nil means no revocation check
+	// runs (the verifier alone, tests, deployments without the store).
+	Revocations RevocationChecker
 }
 
 // Verifier verifies bearer tokens. It holds no per-request state and is
@@ -120,6 +126,11 @@ type Verifier struct {
 	algs        map[Alg]bool
 	skew        time.Duration
 	now         func() time.Time
+	// revocationsMu guards revocations, which is set once at boot by
+	// SetRevocations after the pool exists (the composition builds the
+	// verifier before the pool) and then only read.
+	revocationsMu sync.Mutex
+	revocations   RevocationChecker
 }
 
 // NewVerifier validates the configuration and returns the verifier. It
@@ -189,7 +200,17 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 		algs:        algs,
 		skew:        cfg.ClockSkew,
 		now:         cfg.Now,
+		revocations: cfg.Revocations,
 	}, nil
+}
+
+// SetRevocations attaches the revocation source after construction. The
+// composition root builds the verifier before the database pool exists, so
+// the store lands here once at boot, before the first request is served.
+func (v *Verifier) SetRevocations(r RevocationChecker) {
+	v.revocationsMu.Lock()
+	v.revocations = r
+	v.revocationsMu.Unlock()
 }
 
 // tokenHeader is the decoded JWS protected header.
@@ -259,6 +280,9 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 		if tok.Class != ClassMachine {
 			return Token{}, credentialErr("machine key set token does not carry the machine audience")
 		}
+		if err := v.checkRevocation(ctx, tok); err != nil {
+			return Token{}, err
+		}
 		return tok, nil
 	}
 	key, ok, err := v.keys.KeyByID(ctx, hdr.KeyID)
@@ -282,7 +306,31 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 		// no default key exists, so no machine token verifies anywhere.
 		return Token{}, credentialErr("audience not accepted")
 	}
+	if err := v.checkRevocation(ctx, tok); err != nil {
+		return Token{}, err
+	}
 	return tok, nil
+}
+
+// checkRevocation consults the revocation source for a verified token that
+// carries a jti (HH-678). A token with no jti (the testers' synthetic tokens,
+// machine credentials) skips the check, and a verifier with no source set
+// skips it for everything: the check exists only where the store does.
+func (v *Verifier) checkRevocation(ctx context.Context, tok Token) error {
+	v.revocationsMu.Lock()
+	revocations := v.revocations
+	v.revocationsMu.Unlock()
+	if revocations == nil || tok.JTI == "" {
+		return nil
+	}
+	revoked, err := revocations.IsRevoked(ctx, tok.JTI)
+	if err != nil {
+		return operationalErr("revocation source unavailable")
+	}
+	if revoked {
+		return credentialErr("token revoked")
+	}
+	return nil
 }
 
 // peekAudience reads the aud claim of an unverified payload. It exists
@@ -413,6 +461,7 @@ func (v *Verifier) claimsFrom(claimsJSON []byte) (Token, error) {
 		Subject:   raw.Subject,
 		IssuedAt:  iat,
 		ExpiresAt: exp,
+		JTI:       raw.ID,
 	}
 	if class == ClassTenant {
 		if raw.TenantLink == "" {
@@ -520,6 +569,11 @@ func (e *VerifyError) Error() string { return "identity: " + e.msg }
 
 // Class reports the failure class.
 func (e *VerifyError) Class() ErrorClass { return e.class }
+
+// Reason reports the static failure word (for example "token revoked"),
+// so a caller outside the package can branch on the refusal's own
+// vocabulary. It is static text; it never carries token content.
+func (e *VerifyError) Reason() string { return e.msg }
 
 // validJWKSURL surfaces a misconfigured JWK Set URL through construction
 // instead of at first fetch.
