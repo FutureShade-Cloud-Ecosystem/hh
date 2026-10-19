@@ -1,0 +1,370 @@
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+    :host {
+      /* The host is a fixed positioning context for the scrim and the dialog.
+       * display: contents lets the scrim and the dialog position themselves
+       * against the viewport without an extra box the host contributes.
+       * The closing and opening of the sheet do not change the host's box. */
+      display: contents;
+    }
+    .scrim {
+      /* The full-viewport dim layer; sits behind the dialog. The fill is
+       * the scrim token, so the page reads dimmed; the overlay's visibility rides display: none vs the layout on the
+       * .hh-sheet--closed class, not an opacity transition (the package's
+       * no-opacity gate keeps the disabled colour swap as the only state
+       * indicator). */
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      background: var(--hh-scrim);
+    }
+    .scrim.hh-sheet--closed {
+      /* The sheet is closed: the scrim is removed from layout and does not
+       * capture clicks. The class drives the toggle so the template's
+       * binding position stays on the gate-allowed class form. */
+      display: none;
+    }
+    .dialog {
+      /* The bottom-anchored panel. On phone (<600) it spans the viewport
+       * width; on tablet and up it is centred and capped at 560px.
+       * The radius rounds the top corners; the bottom corners stay square
+       * (the panel sits at the bottom edge). */
+      position: fixed;
+      z-index: 91;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      max-width: 100vw;
+      width: 100vw;
+      max-height: 90vh;
+      overflow: auto;
+      background: var(--hh-card);
+      color: var(--hh-text);
+      border-top-left-radius: var(--hh-radius-card);
+      border-top-right-radius: var(--hh-radius-card);
+      padding: calc(var(--hh-s-8) + env(safe-area-inset-top, 0px))
+               var(--hh-s-20)
+               calc(var(--hh-s-20) + env(safe-area-inset-bottom, 0px))
+               var(--hh-s-20);
+      box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+      transform: translateY(0);
+      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .dialog.hh-sheet--closed {
+      /* The sheet is closed: the dialog is removed from layout. The
+       * transition would not play on a display: none element anyway. */
+      display: none;
+    }
+    @media (min-width: 600px) {
+      .dialog {
+        /* Centred bottom-anchored panel: at most 560px wide,
+         * sit at the bottom of the viewport, soft-cornered all round
+         * (no edge sits against the page chrome at this size). */
+        left: 50%;
+        right: auto;
+        transform: translate(-50%, 0);
+        width: calc(100vw - 2 * var(--hh-s-20));
+        max-width: 560px;
+        border-top-left-radius: var(--hh-radius-card);
+        border-top-right-radius: var(--hh-radius-card);
+        border-bottom-left-radius: var(--hh-radius-card);
+        border-bottom-right-radius: var(--hh-radius-card);
+        margin-bottom: calc(var(--hh-s-20) + env(safe-area-inset-bottom, 0px));
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      /* Reduced motion: the dialog appears in place, with no transform transition. */
+      .dialog {
+        transition: none;
+      }
+    }
+    .grabber {
+      /* The grabber bar: a small pill the sheet wears at the top so the
+       * user has a visual cue they can drag. The drag is not wired (the
+       * close paths are Escape, the scrim and close()), but the cue is the
+       * standard affordance a phone sheet carries. */
+      width: 36px;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--hh-control-line, currentColor);
+      margin: 0 auto var(--hh-s-16);
+    }
+    .title {
+      margin: 0 0 var(--hh-s-8) 0;
+      font-size: var(--hh-s-20);
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .title:empty {
+      /* A sheet without a title keeps no extra blank: the description
+       * slot, when present, takes the same vertical slot. */
+      display: none;
+    }
+    .description {
+      margin: 0 0 var(--hh-s-16) 0;
+      font-size: var(--hh-s-16);
+      line-height: 1.4;
+      color: var(--hh-text-dim);
+    }
+    .description:empty {
+      display: none;
+    }
+    .rows {
+      /* The default slot: whatever the consumer puts in (a list, a
+       * paragraph, a form) paints here. The max-height keeps long rows
+       * scrollable inside the sheet, not the page. */
+      margin-bottom: var(--hh-s-20);
+      max-height: 60vh;
+      overflow: auto;
+    }
+    .rows:empty {
+      margin-bottom: 0;
+    }
+    .actions {
+      /* The full-width primary action slot. The flex column with the
+       * default align-items: stretch pulls the slotted button to the
+       * container's width on the cross axis. */
+      display: flex;
+      flex-direction: column;
+      gap: var(--hh-s-8);
+    }
+    /* The slotted button: the consumer's light-DOM button is what the user
+     * taps. The slot moves it into the sheet's layout, but the slot does
+     * not carry the design system's button styles (they live in
+     * baseStyles, which only paints inside the sheet's own shadow DOM). The
+     * ::slotted(button) selector applies the styles the consumer would
+     * have written themselves: full width, the input height, the design
+     * system's font. A consumer who wants a different button can set their
+     * own styles in light DOM and the rule below yields to a higher-
+     * specificity author rule. */
+    .actions::slotted(button) {
+      width: 100%;
+      min-height: var(--hh-h-input, 44px);
+      font-family: inherit;
+      font-size: var(--hh-s-16, 16px);
+      font-weight: 600;
+      border-radius: var(--hh-radius-control, 8px);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .actions:empty {
+      display: none;
+    }
+  

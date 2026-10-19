@@ -3,9 +3,9 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { Attachment, AttachmentCreate, AttachmentLink, OrderActivity, OrderCancelRequest, OrderChange, OrderChangeNoteRequest, OrderChangeRaiseRequest, OrderChangesResponse, OrderDuplicateCheck, OrderDuplicatePreview, OrderDuplicateRequest, OrderDuplicateResult, OrderEditHistory, OrderEditResult, OrderGroupStatusRequest, OrderHeaderEditRequest, OrderHistory, OrderInvoicePolicyRequest, OrderLineAddRequest, OrderLineQtyEditRequest, OrderNote, OrderNoteCreateRequest, OrderNoteEditRequest, OrderReservationsResponse, OrderResyncResult, OrderShipmentGroup, OrderShipmentInvoiceResult, OrderShipmentPlan, OrderShipmentPlanRequest, OrderTransitionResult, OrderView } from "./types.js";
+import type { Attachment, AttachmentCreate, AttachmentLink, OrderActivity, OrderCancelRequest, OrderChange, OrderChangeNoteRequest, OrderChangeQueuePage, OrderChangeRaiseRequest, OrderChangesResponse, OrderDuplicateCheck, OrderDuplicatePreview, OrderDuplicateRequest, OrderDuplicateResult, OrderEditHistory, OrderEditResult, OrderGroupStatusRequest, OrderHeaderEditRequest, OrderHistory, OrderInvoicePolicyRequest, OrderLineAddRequest, OrderLineQtyEditRequest, OrderNote, OrderNoteCreateRequest, OrderNoteEditRequest, OrderReservationsResponse, OrderResyncResult, OrderShipmentGroup, OrderShipmentInvoiceResult, OrderShipmentPlan, OrderShipmentPlanRequest, OrderTransitionResult, OrderView } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient, type ApiCallOptions } from "../http.js";
+import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
 export async function createAttachment(
   client: ApiClient,
@@ -51,6 +51,21 @@ export async function createAttachmentLink(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "createAttachmentLink",
+  });
+}
+
+export async function orderListChangeQueue(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; status?: "PENDING_YARD" | "PENDING_FINANCE" | "APPROVED" | "APPLIED" | "REJECTED" | "CANCELLED" },
+  call?: ApiCallOptions
+): Promise<Result<OrderChangeQueuePage>> {
+  return client.request<OrderChangeQueuePage>({
+    method: "GET",
+    path: "/api/v1/order-changes",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "orderListChangeQueue",
   });
 }
 
@@ -132,6 +147,27 @@ export async function orderChangeReject(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "orderChangeReject",
+  });
+}
+
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
+export async function orderChangeSignApply(
+  client: ApiClient,
+  changeId: string | number,
+  body: { note?: string },
+  call?: ApiKeyedCallOptions
+): Promise<Result<OrderChange>> {
+  return client.request<OrderChange>({
+    method: "POST",
+    path: "/api/v1/order-changes/{changeId}/sign-apply",
+    pathParams: { changeId },
+    body,
+    idempotencyKey: call?.idempotencyKey,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "orderChangeSignApply",
   });
 }
 

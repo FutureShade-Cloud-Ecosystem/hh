@@ -98,9 +98,12 @@ type PickTicket struct {
 	// so the yard knows why it waits rather than wondering why its task
 	// refuses to claim or stage. The mark is words; the doors (Claim, Stage)
 	// are what refuse.
-	HeldFromPicking bool   `json:"held_from_picking,omitempty"`
-	HoldWords       string `json:"hold_words,omitempty"`
-	StillOwedCents  int64  `json:"still_owed_cents,omitempty"`
+	HeldFromPicking bool       `json:"held_from_picking,omitempty"`
+	HoldWords       string     `json:"hold_words,omitempty"`
+	StillOwedCents  int64      `json:"still_owed_cents,omitempty"`
+	RunNo           string     `json:"run_no,omitempty"`
+	RunDepartsAt    *time.Time `json:"run_departs_at,omitempty"`
+	LoadPosition    int        `json:"load_position,omitempty"`
 }
 
 // PickSource feeds the yard pick queue. It is the ONLY thing tasks needs to know about whatever
@@ -335,7 +338,10 @@ type PickQueueEntry struct {
 	// Picked is what the yard actually pulled, line by line (0187). Absent until somebody records a
 	// pick, which reads correctly as "nobody has written down what was pulled" rather than as
 	// "nothing was pulled".
-	Picked []PickedLine `json:"picked,omitempty"`
+	Picked       []PickedLine `json:"picked,omitempty"`
+	RunNo        string       `json:"run_no,omitempty"`
+	RunDepartsAt *time.Time   `json:"run_departs_at,omitempty"`
+	LoadPosition int          `json:"load_position,omitempty"`
 }
 
 // PickedLine is one line of a pick ticket as the yard actually pulled it (a task_pick_lines row,

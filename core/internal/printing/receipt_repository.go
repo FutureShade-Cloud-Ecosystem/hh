@@ -9,6 +9,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -227,7 +228,7 @@ func (r *Repository) ReadBranchHeader(ctx context.Context, branchID string) (bra
 	if r.pool == nil {
 		return branchHeader{}, errNoPool
 	}
-	h := branchHeader{HSTRateBps: 1300, QuantityNotice: defaultQuantityNotice}
+	h := branchHeader{HSTRateBps: settings.DefaultHSTRateBps, QuantityNotice: defaultQuantityNotice}
 	var addr []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT name, code::text, address FROM locations WHERE id = $1::uuid`, branchID).

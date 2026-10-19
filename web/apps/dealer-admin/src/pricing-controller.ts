@@ -549,7 +549,7 @@ export interface BreaksModel {
 }
 
 export interface PricingModel {
-  readonly tab: PricingTab["id"];
+  readonly tab: PricingTab["id"] | "payment-terms" | "terms";
   /** The categories catalog: every tab's picker names. */
   readonly categories: readonly CategoryRow[];
   readonly categoriesPhase: LoadPhase;
@@ -928,9 +928,9 @@ export class PricingController {
     this.#setMargin({ phase: "ready", rows: result.value });
   }
 
-  setTab(tab: PricingTab["id"]): void {
+  setTab(tab: string): void {
     if (this.model.tab === tab) return;
-    this.#set({ tab });
+    this.#set({ tab: tab as PricingModel["tab"] });
   }
 
   /**

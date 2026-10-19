@@ -562,6 +562,7 @@ func (s *Service) Schedule(ctx context.Context, in ScheduleInput) (Stop, error) 
 		TimeWindow: in.TimeWindow, ContactName: in.ContactName, ContactPhone: in.ContactPhone,
 		AddressLine: in.AddressLine, City: in.City, PostalCode: in.PostalCode,
 		Latitude: in.Latitude, Longitude: in.Longitude, Instructions: in.Instructions,
+		GateCode:    in.GateCode,
 		CommitState: commitState, RequestedDate: requested,
 		WeightKg: in.WeightKg, VolumeM3: in.VolumeM3, PalletPositions: in.PalletPositions,
 		ValueCents: valueCents,
@@ -654,6 +655,7 @@ func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (Run, error)
 	run, err := s.repo.InsertRun(ctx, Run{
 		BranchID: in.BranchID, ScheduledDate: in.ScheduledDate,
 		TruckID: in.TruckID, DriverID: in.DriverID, Notes: in.Notes,
+		RunDepartsAt: in.RunDepartsAt,
 	}, caller.UserID)
 	if err != nil {
 		return Run{}, err

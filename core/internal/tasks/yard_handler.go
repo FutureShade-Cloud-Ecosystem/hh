@@ -196,6 +196,11 @@ func parseFeedPositionCursor(key string) (int, bool) {
 }
 
 func (h *Handler) pickDetail(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	// The detail hands out the ticket (customer, order number, lines): the same branch fence the
+	// write doors and the board have, so a task id from a pull is not a key to another branch.
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	e, err := h.svc.PickDetail(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeYardErr(w, r, err)
@@ -391,7 +396,7 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
 	case errors.Is(err, ErrAboveOrdered):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrOrderRefused):
+	case errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):
 		httpx.Error(w, http.StatusConflict, "shortage already resolved")

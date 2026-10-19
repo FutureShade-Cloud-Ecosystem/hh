@@ -4,7 +4,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createAppwriteAccountSurface } from "../src/appwrite-adapter.ts";
-import { PlatformUnreachableError } from "../src/index.ts";
+import { PlatformRefusedError, PlatformUnreachableError } from "../src/index.ts";
 
 const ENDPOINT = "https://console.example.test/v1";
 const PROJECT = "fake-project";
@@ -47,7 +47,7 @@ const GOOD_ANSWER = {
 
 // The world: a fake FB Console and a fake core behind one fetch.
 // coreAnswers and consoleAnswers are queues of {status, body} per route key.
-function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbackHeader = false, throwOn = null } = {}) {
+function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbackHeader = false, throwOn = null, accountStatus = 200 } = {}) {
   // Any touch of any storage that writes fails the test loudly.
   Object.defineProperty(globalThis, "localStorage", { value: throwingStorage(), configurable: true });
   Object.defineProperty(globalThis, "sessionStorage", { value: throwingStorage(), configurable: true });
@@ -76,6 +76,7 @@ function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbac
       jwtSeq += 1;
       return json(201, { jwt: `fake.jwt.${jwtSeq}` }, fallback);
     }
+    if (u === `${ENDPOINT}/account` && accountStatus !== 200) return json(accountStatus, { message: "simulated" });
     if (u === `${ENDPOINT}/account`) return json(200, { $id: "fake-user-1", email: "fake.user@example.invalid", name: "Fake User" }, fallback);
     throw new Error(`unexpected fake call: ${call.method} ${u}`);
   };
@@ -180,6 +181,10 @@ test("a failed JWT mint maps to a code without touching the core", async () => {
     [401, "no_session"],
     [429, "rate_limited"],
     [500, "unavailable"],
+    // shells contract r7: only a Console 401 ends a session; a 403 or 404 can be a path, project or permission fault
+    [403, "unavailable"],
+    [404, "unavailable"],
+    [418, "unavailable"],
   ];
   for (const [status, code] of table) {
     const { calls, surface } = world({ jwtAnswers: [{ status }] });
@@ -319,4 +324,19 @@ test("the package root takes no SDK dependency", async () => {
     assert.equal(/from\s+["']appwrite["']/.test(text), false, file);
     assert.equal(/from\s+["']\.\/appwrite-adapter/.test(text), false, `${file} does not import the adapter`);
   }
+});
+
+test("a refused sign in throws a PlatformRefusedError that carries the status and nothing else the screen could echo", async () => {
+  for (const status of [401, 429, 503]) {
+    const { surface } = world({ sessionAnswers: [{ status }] });
+    await assert.rejects(
+      () => surface.createEmailPasswordSession("fake.user@example.invalid", "fake-password"),
+      (error) => error instanceof PlatformRefusedError && error.status === status && !error.message.includes("fake-password"),
+    );
+  }
+});
+
+test("a refused account read throws a PlatformRefusedError with the status", async () => {
+  const { surface } = world({ accountStatus: 503 });
+  await assert.rejects(() => surface.getSession(), (e) => e instanceof PlatformRefusedError && e.status === 503);
 });

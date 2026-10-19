@@ -122,6 +122,16 @@ export function changeActionPath(action: string): string {
   return CHANGE_ACTION_PATH[action] ?? '';
 }
 
+/**
+ * offeredChangeActions is the server's next_actions narrowed to the ones this surface can perform: an action
+ * with no endpoint here (the one tap `sign_apply` is the Manager Home's, the till applies in two steps) is not
+ * rendered as a button that does nothing. An absent list offers nothing.
+ */
+export function offeredChangeActions(co: ChangeOrder | null): string[] {
+  if (!co || !Array.isArray(co.next_actions)) return [];
+  return co.next_actions.filter((a) => changeActionPath(a) !== '');
+}
+
 const CHANGE_ACTION_LABEL: Record<string, string> = {
   [ACTION_YARD_ACK]: 'Yard: acknowledge',
   [ACTION_FINANCE_APPROVE]: 'Approve (finance)',

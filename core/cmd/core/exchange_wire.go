@@ -107,9 +107,14 @@ func buildExchange(d exchangeDeps) (*exchange.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	portal, err := identity.NewPortalRoleResolver(d.pool)
+	if err != nil {
+		return nil, err
+	}
 	return exchange.New(exchange.Config{
 		Console: console, Members: raw, Orgs: d.orgs, Claims: claims, Staff: d.staff,
 		Knob: d.knob, Audit: d.audit, Minter: d.session.minter, Methods: methods,
+		Tenant:         &exchange.TenantLeg{Portal: portal, Minter: d.session.minter},
 		AllowedDomains: cfg.domains, AllowedAddresses: cfg.addresses,
 		TokenTTL: d.session.exchangeTTL, Trusted: cfg.trusted, Log: d.log,
 	})

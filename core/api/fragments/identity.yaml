@@ -64,7 +64,12 @@ paths:
         and, only then, writes an audit row and signs a session token. The
         token window is the shortest of the role's ceiling, the configured
         exchange window and the sign in age that remains, never under one
-        minute. No refusal says which gate failed: a refusal carries one of
+        minute. With class tenant the same route is the contractor leg: the
+        staff allow lists, the staff row and the role ceiling give way to
+        membership of the org's tenant Team, a linked ACTIVE portal row whose
+        email is the account's, and the tenant ceiling, and the token is a
+        tenant class token whose tenant claim is that row's contractor
+        account. No refusal says which gate failed: a refusal carries one of
         the shared bodies of its status.
       x-addition: "the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table"
       x-role: public
@@ -89,6 +94,46 @@ paths:
         "503":
           description: A dependency of the exchange could not answer; nothing was minted
 
+  /api/v1/auth/persona:
+    post:
+      operationId: identityPersona
+      tags: [staff-identity]
+      summary: Enter the demo as one persona of the fixed list
+      description: >-
+        Mounted only in the demo build under the console sign in mode, and
+        absent from the default build and from the demo mode. A persona is
+        not an FB Console user: the core mints the persona's session itself
+        with the deployment's own signing key. The subject of the token is
+        persona:<id>. On the testers' copy the caller sends the core bearer
+        of a real partner exchange and the partner must be on the pinned
+        list; a persona token cannot call it. On the public copy no bearer
+        is sent and the route is limited per address and per address and
+        persona. The token window is the persona role's session ceiling,
+        with no refresh. An id outside the fixed list and the contractor
+        personas answer the shared Forbidden body, and no refusal says which
+        check failed.
+      x-addition: "the demo build's tap-a-role entry under the real sign in (state note HH-S4-AUTH, section 5); the ERP minted demo sessions from a flow table"
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPersonaRequest"
+      responses:
+        "200":
+          description: The persona's core session token, its expiry and its staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: A dependency of the entry could not answer; nothing was minted
   /api/v1/auth/methods:
     get:
       operationId: identityAuthMethods
@@ -579,7 +624,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxRatePage"
+                $ref: "#/components/schemas/TaxRateList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -628,7 +673,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxStatusCardProfileList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -685,7 +730,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+                $ref: "#/components/schemas/TaxPendingProfileList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -777,7 +822,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxEvidencePage"
+                $ref: "#/components/schemas/TaxEvidenceList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -1038,7 +1083,9 @@ components:
 
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: >-
+        The non-secret identity returned on login and by the exchange; scope
+        is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required: [user_id, email, display_name, role_code, role_name, tier, scope]
       properties:
         user_id: { type: string }
@@ -1049,7 +1096,7 @@ components:
         tier: { type: integer, format: int32 }
         scope:
           type: string
-          enum: [GLOBAL, BRANCH]
+          enum: [GLOBAL, BRANCH, TENANT]
 
     IdentityLoginResponse:
       type: object
@@ -1072,6 +1119,24 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+        class:
+          type: string
+          enum: [staff, tenant]
+          description: >-
+            Optional, staff when absent. The tenant class is the contractor
+            leg: the person belongs to the org's ten-<slug> Team and has a
+            linked ACTIVE portal row whose email is the FB Console account's,
+            the sign in is an email link or Google, and the token carries the
+            row's contractor account as its tenant claim
+
+    IdentityPersonaRequest:
+      type: object
+      required: [persona]
+      additionalProperties: false
+      properties:
+        persona:
+          type: string
+          description: One id of the build's fixed persona list
 
     IdentityExchangeResponse:
       type: object
@@ -1317,13 +1382,22 @@ components:
     # --- tax --------------------------------------------------------------------
     TaxReasonCode:
       type: string
-      description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
+      description: >-
+        The tax decision reason vocabulary: the twelve codes the
+        tax_decision_snapshot CHECK carries and the core accepts on a rate row.
       enum:
         - STD_ON_HST_13
+        - STD_SALES_TAX
         - ON_FN_POS_8
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
         - MANUAL_TAX_REVIEW
+        - FED_S87_GOODS_ON_RES
+        - FED_S87_SERVICE_RESERVE
+        - FED_BAND_MANAGEMENT
+        - FNT_PRODUCT
+        - TREATY_OR_SELF_GOV_REVIEW
+        - RELIEF_DECLINED_EVIDENCE
 
     TaxRate:
       type: object
@@ -1342,15 +1416,17 @@ components:
         effective_to: { type: string, format: date }
         notes: { type: string }
 
-    TaxRatePage:
+    TaxRateList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key rates, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [rates]
       properties:
-        items:
-          type: array
+        rates:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/TaxRate" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxProfileStatus:
       type: string
@@ -1374,15 +1450,28 @@ components:
           $ref: "#/components/schemas/TaxProfileStatus"
         notes: { type: string }
 
-    TaxStatusCardProfilePage:
+    TaxStatusCardProfileList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key profiles, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [profiles]
       properties:
-        items:
+        profiles:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/TaxStatusCardProfile" }
+
+    TaxPendingProfileList:
+      type: object
+      description: >-
+        The core writes the PENDING profiles under the key pending_profiles,
+        with no cursor and no limit echo. An empty answer is [], never null.
+      required: [pending_profiles]
+      properties:
+        pending_profiles:
           type: array
           items: { $ref: "#/components/schemas/TaxStatusCardProfile" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxConfig:
       type: object
@@ -1426,15 +1515,17 @@ components:
           type: string
           description: A fixed banner value, not a stored column
 
-    TaxEvidencePage:
+    TaxEvidenceList:
       type: object
-      required: [items]
+      description: >-
+        The core writes this list under the key evidence, with no cursor and no
+        limit echo. The list is JSON null when nothing matches (the handler
+        has no nil guard).
+      required: [evidence]
       properties:
-        items:
-          type: array
+        evidence:
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/TaxEvidence" }
-        next_cursor: { type: [string, "null"] }
-        limit: { type: integer, format: int32 }
 
     TaxEvidenceCapture:
       type: object

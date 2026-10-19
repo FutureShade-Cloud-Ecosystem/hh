@@ -4,7 +4,7 @@
 // (mirrored here so the test never imports the app's own code), the staff
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
-import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
+import { expect, test as base, type Page, type Request, type TestInfo } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -339,30 +339,32 @@ const SIGN_ANSWER_MS = 15_000;
 const REFUSAL_RETRIES = 2;
 
 /**
- * Tap one role card on the entry page and wait for the sign-in to land: the
- * shared move of every entry-page sign-in (signIn, and the closed drawer
- * spec's own tap before its press), the pace, the tap, and then the watch.
- * The watch is a belt, not an assertion: the till either renders the
- * signed-in chrome or the entry page states a refusal, and the watched words
- * are the window refusal's own, so the belt waits and taps again only for
- * the one refusal a wait can cure, at most twice. Any other failed mint
- * reads as a stall: the answer watch runs out, then the text expect fails
- * honestly, and no window wait is spent on it. The belt exists so
- * one refused sign-in recovers in place instead of failing its test and
- * restarting the worker (a restart drops every spec file's mint memo and
- * injects the very burst the guard refuses; that cascade is what once left
- * the world's drawer closed and the run's later screens timed out on the
- * session dot).
+ * Tap one role card on the front door's picker and wait for the sign-in to
+ * land on the role home: the shared move of every entry sign-in (signIn, the
+ * way-in legs' own tap, and the closed drawer spec's tap before its press),
+ * the pace, the tap, and then the watch. The watch is a belt, not an
+ * assertion: the front door either renders the signed-in role's home or the
+ * tapped card states the mint's refusal, and the watched words are the
+ * window refusal's own (the front door puts the mint's answer in the card,
+ * not in a status role), so the belt waits and taps again only for the one
+ * refusal a wait can cure, at most twice. Any other failed mint reads as a
+ * stall: the answer watch runs out, then the text expect fails honestly,
+ * and no window wait is spent on it. The belt exists so one refused sign-in
+ * recovers in place instead of failing its test and restarting the worker
+ * (a restart drops every spec file's mint memo and injects the very burst
+ * the guard refuses; that cascade is what once left the world's drawer
+ * closed and the run's later screens timed out on the session dot).
  */
 export async function tapRoleCard(page: Page, role: Role): Promise<void> {
   const card = page.getByRole("button", { name: role, exact: true });
-  const signedIn = page.getByTestId("signed-in-role");
-  const refusal = page.getByRole("status").filter({ hasText: REFUSAL_WORDS });
+  const home = page.getByTestId("home-title");
+  const refusal = page.getByText(REFUSAL_WORDS).first();
   for (let attempt = 0; ; attempt += 1) {
     await paceMint(page);
     await card.click();
     const answer = await Promise.race([
-      signedIn
+      home
+        .filter({ hasText: role })
         .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
         .then(() => "in" as const, () => "stalled" as const),
       refusal
@@ -379,19 +381,47 @@ export async function tapRoleCard(page: Page, role: Role): Promise<void> {
   // extracted this helper). A stalled answer or a spent retry fails here
   // honestly, naming what the run waited for, with the page snapshot
   // carrying the refusal words when they are on it.
-  await expect(signedIn).toHaveText(role);
+  await expect(home).toHaveText(role);
 }
 
 /**
- * Tap a role card and wait until the till answers under that role's name and
- * has loaded: the session bar's open dot (the drawer the till finds open)
- * use), the page's context line naming the invented dealer and the branch,
- * and the parked button's count (its first read has landed).
+ * The Counter Till tile on the signed-in role home: the front door's own way
+ * into the till, the move a person makes after the card tap. The till adopts
+ * the handoff the front door wrote, so the landing is signed in with no
+ * second picker.
+ */
+export async function openCounterTill(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Counter Till", exact: true }).click();
+  await expect(page).toHaveURL(/\/till\/$/);
+}
+
+/**
+ * Sign in at the front door and open the till: the card tap lands on the
+ * role home (tapRoleCard), the Counter Till tile opens the till signed in,
+ * and the loaded till answers under the role's name: the session bar's open
+ * dot (the drawer the till finds open), the page's context line naming the
+ * invented dealer and the branch, and the parked button's count (its first
+ * read has landed).
+ *
+ * A same tab return to the front door is not the picker: the front door
+ * restores the role home for the session it still holds (its own rule,
+ * stated on the testers' page: a reload keeps the session, a new tab starts
+ * at the front door). When the role home is what "/" shows, the person's
+ * way back to the picker is Switch role, so that is the move this helper
+ * makes before the card tap.
  */
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  const card = page.getByRole("button", { name: role, exact: true });
+  const switchRole = page.getByRole("button", { name: "Switch role", exact: true });
+  // Wait for either the role card or the Switch role button to appear before deciding which
+  // path we're on; the front door's async boot can race the navigation, and an instant
+  // isVisible() right after goto() would read the pre-boot document.
+  await expect(card.or(switchRole)).toBeVisible();
+  if (await switchRole.isVisible().catch(() => false)) await switchRole.click();
+  await expect(card).toBeVisible();
   await tapRoleCard(page, role);
+  await openCounterTill(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
   await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
@@ -545,21 +575,35 @@ function shotDir(testInfo: TestInfo): string {
  * goes idle while the mint paces the tap, so the till's own reads fire after
  * the only idle the document will ever report).
  */
-type InFlight = { count: number };
+type InFlight = { requests: Set<Request> };
 const inFlight = new WeakMap<Page, InFlight>();
 
 function trackInFlight(page: Page): void {
   if (inFlight.has(page)) return;
-  const state: InFlight = { count: 0 };
+  const state: InFlight = { requests: new Set<Request>() };
   inFlight.set(page, state);
-  page.on("request", () => {
-    state.count += 1;
+  page.on("request", (req) => {
+    state.requests.add(req);
   });
-  page.on("requestfinished", () => {
-    state.count = Math.max(0, state.count - 1);
+  page.on("requestfinished", (req) => {
+    state.requests.delete(req);
   });
-  page.on("requestfailed", () => {
-    state.count = Math.max(0, state.count - 1);
+  page.on("requestfailed", (req) => {
+    state.requests.delete(req);
+  });
+  // A navigation strands whatever the leaving document had in flight (the
+  // core's answers race a goto, and an aborted fetch does not always raise
+  // its terminal event): the new document starts its own set from empty,
+  // so the stranded reads must not hold the settled word against it.
+  // The count-based version of this tracker dropped every request id on
+  // navigation, but the same fires for same-document hash navigations
+  // (#/returns); a request started before the navigation whose terminal
+  // event then subtracts from the new count could let settle resolve
+  // early. Tracking the requests themselves (by Request) means each one's
+  // start and finish are matched exactly, regardless of how the framing
+  // changed in between.
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) state.requests.clear();
   });
 }
 
@@ -587,7 +631,7 @@ export async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   await expect(page.getByText(/\bLoading\b/)).toHaveCount(0);
   await expect
-    .poll(() => inFlight.get(page)?.count ?? 0, { intervals: [100], timeout: 15_000 })
+    .poll(() => inFlight.get(page)?.requests.size ?? 0, { intervals: [100], timeout: 15_000 })
     .toBe(0);
   // Row 955: Returns is its own surface at #/returns, and the sale surface
   // (the flow stepper, the session bar's answer) is hidden while it is up

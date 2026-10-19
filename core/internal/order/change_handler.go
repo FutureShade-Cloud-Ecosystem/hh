@@ -9,12 +9,14 @@ package order
 //
 //	GET    /api/v1/orders/{id}/changes                            active in-branch staff
 //	POST   /api/v1/orders/{id}/changes                            active in-branch staff
+//	GET    /api/v1/order-changes                                  active in-branch staff  (change_queue.go)
 //	GET    /api/v1/order-changes/{changeId}                       active in-branch staff
 //	POST   /api/v1/order-changes/{changeId}/yard-ack              active in-branch staff  ← the yard
 //	POST   /api/v1/order-changes/{changeId}/finance-approve       manager + named approver
 //	POST   /api/v1/order-changes/{changeId}/reject                active in-branch staff
 //	POST   /api/v1/order-changes/{changeId}/cancel                active in-branch staff
 //	POST   /api/v1/order-changes/{changeId}/apply                 manager
+//	POST   /api/v1/order-changes/{changeId}/sign-apply            manager + named approver, Idempotency-Key
 //
 //	GET    /api/v1/orders/{id}/shipments                          active in-branch staff
 //	PUT    /api/v1/orders/{id}/shipments                          active in-branch staff
@@ -45,12 +47,14 @@ func (h *Handler) RegisterChangeRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Change orders (SCOPE:F10).
 	r.Handle("GET /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.listChanges)))
 	r.Handle("POST /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.raiseChange)))
+	r.Handle("GET /api/v1/order-changes", g.RequireStaff(h.staff(h.listChangeQueue)))
 	r.Handle("GET /api/v1/order-changes/{changeId}", g.RequireStaff(h.staff(h.getChange)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/yard-ack", g.RequireStaff(h.staff(h.yardAck)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/finance-approve", g.RequireManager(h.staff(h.financeApprove)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/reject", g.RequireStaff(h.staff(h.rejectChange)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/cancel", g.RequireStaff(h.staff(h.cancelChange)))
 	r.Handle("POST /api/v1/order-changes/{changeId}/apply", g.RequireManager(h.staff(h.applyChange)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/sign-apply", g.RequireManager(h.staff(h.signApplyChange)))
 
 	// Multi-ship (DIB-78).
 	r.Handle("GET /api/v1/orders/{id}/shipments", g.RequireStaff(h.staff(h.getShipmentPlan)))
@@ -202,6 +206,18 @@ func (h *Handler) applyChange(w http.ResponseWriter, r *http.Request, _ guards.S
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// signApplyChange is the one tap: sign when a signature is owed, then apply, once. The Idempotency-Key
+// header is required; a replay of the same key answers 200 with the first answer.
+func (h *Handler) signApplyChange(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	out, err := h.svc.SignApplyChange(r.Context(), r.PathValue("changeId"),
+		r.Header.Get("Idempotency-Key"), decodeNote(w, r))
+	if err != nil {
+		h.writeChangeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 // - multi-ship -
 
 func (h *Handler) getShipmentPlan(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
@@ -300,7 +316,7 @@ func (h *Handler) writeChangeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrChangeFinanceRequired):
 		httpx.Error(w, http.StatusConflict,
 			"this change is over the finance threshold and has not been approved")
-	case errors.Is(err, ErrChangeNotApproved), errors.Is(err, ErrChangeTerminal),
+	case errors.Is(err, ErrChangeNotApproved), errors.Is(err, ErrChangeTerminal), errors.Is(err, ErrChangeKeyReused),
 		errors.Is(err, ErrGroupIllegalTransition), errors.Is(err, ErrShipPlanIncomplete),
 		errors.Is(err, ErrInvoicePolicyFrozen):
 		httpx.Error(w, http.StatusConflict, err.Error())

@@ -10,8 +10,14 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
+import { widgetLink } from "./landing-links.js";
+import { roleWords } from "./role-words.js";
+import { gaugeSegments } from "./widget-shapes.js";
 import type {
   ApprovalRow,
+  LandingDeliveries,
+  LandingKpi,
+  LandingNeedRow,
   NeedsQueue,
   NeedsRow,
   QueueEntry,
@@ -33,6 +39,7 @@ import {
   needsRowTarget,
   pickedWords,
   qtyWords,
+  shortageCard,
   rangeWord,
   severityWord,
   shareNote,
@@ -42,6 +49,9 @@ import {
 } from "./manager-logic.js";
 
 // -- the landing -------------------------------------------------------------------------------------
+
+/** Whether the four TODAY KPIs render as one combined number each, or stacked per branch. */
+export type BranchMode = "combined" | "split";
 
 export interface LandingModel {
   readonly phase: "loading" | "ready" | "error";
@@ -54,6 +64,18 @@ export interface LandingModel {
   readonly error: string;
   /** Whether the landing draws the reporting link: the core's manager roles only, mirrored from the mint's tier. */
   readonly canOpenReporting: boolean;
+  /** The needs rows the core could not measure on this profile, said in words (weights-logic.ts). */
+  readonly unsourcedNeeds: typeof UNSOURCED_NEEDS;
+  /** WALK-C10: combined vs side-by-side branch mode on the four money KPIs and deliveries summary. */
+  readonly branchMode?: BranchMode;
+  /** WALK-C10: the four money KPI cards (Sales today, Gross margin, AR overdue, Cash collected today). */
+  readonly kpis?: readonly LandingKpi[];
+  /** WALK-C10: the Deliveries today card with branch run columns. */
+  readonly deliveries?: LandingDeliveries | null;
+  /** WALK-C10: Needs you, by money at stake ranked rows with inline actions. */
+  readonly stakeNeeds?: readonly LandingNeedRow[];
+  /** WALK-C10: landing-level notice for actions whose destination view is not on this box yet. */
+  readonly notice?: string;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -76,25 +98,33 @@ export function renderLanding(model: LandingModel): TemplateResult {
   const shown = model.widgets.filter((w) => w.visible);
   const large = shown.filter((w) => w.size === "L");
   const strip = shown.filter((w) => w.size !== "L");
+  const words = roleWords(model.profile);
+  const branchMode: BranchMode = model.branchMode ?? "combined";
+  const kpis = model.kpis ?? [];
+  const deliveries = model.deliveries ?? null;
+  const stakeNeeds = model.stakeNeeds ?? [];
+  const notice = model.notice ?? "";
   return html`
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
-      <p class="page-sub">Your day at a glance.</p>
+      <p class="page-sub">${words.sub}</p>
       <div class="head-actions">
         <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
       </div>
     </header>
+    ${notice !== "" ? html`<p class="notice-line landing-notice" role="status">${notice}</p>` : nothing}
     <p class="eyebrow">Today</p>
     <div class="bento">
-      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, index === 0))}
+      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0, model.profile))}
     </div>
     <div class="strip">
-      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, false))}
+      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false, model.profile))}
       ${UNSOURCED_TILES.map((t) => renderUnsourcedTile(t))}
     </div>
+    ${renderC10Landing(branchMode, kpis, deliveries, stakeNeeds)}
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals", "drivers", "warranty"] as const).map((v) => html`
+      ${words.views.map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
       ${model.canOpenReporting ? html`
@@ -103,6 +133,118 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </nav>
   `;
 }
+
+export function renderC10Landing(
+  branchMode: BranchMode,
+  kpis: readonly LandingKpi[],
+  deliveries: LandingDeliveries | null,
+  stakeNeeds: readonly LandingNeedRow[],
+): TemplateResult | typeof nothing {
+  if (kpis.length === 0 && deliveries === null && stakeNeeds.length === 0) return nothing;
+  return html`
+    <div class="c10-landing" data-test="c10-landing">
+      <section class="quick-actions" data-test="c10-quick-actions" aria-label="Quick actions">
+        <h2 class="section-eyebrow">Quick actions</h2>
+        <div class="quick-actions-row">
+          <button type="button" class="qa-pill primary" data-action="qa-action" data-qa="approve-credit-hold">Approve credit hold</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="issue-warranty">Issue warranty claim</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="approve-margin">Approve margin</button>
+          <button type="button" class="qa-pill" data-action="qa-action" data-qa="message-branch">Message a branch</button>
+        </div>
+      </section>
+      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures today">
+        <div class="today-head">
+          <h2 class="section-eyebrow">Today</h2>
+          <div class="branch-toggle" role="group" aria-label="Branch scope">
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>Both branches combined</button>
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Point Loma beside Julian</button>
+          </div>
+        </div>
+        <div class="kpi-row kpi-row-${branchMode}">
+          ${kpis.map((kpi) => renderKpiCard(kpi, branchMode))}
+        </div>
+      </section>
+      ${deliveries === null ? nothing : renderDeliveriesCard(deliveries, branchMode)}
+      ${stakeNeeds.length === 0 ? nothing : renderNeedsYouCard(stakeNeeds)}
+    </div>
+  `;
+}
+
+export function renderKpiCard(kpi: LandingKpi, mode: BranchMode): TemplateResult {
+  if (mode === "split") {
+    return html`
+      <article class="kpi-card kpi-card-split">
+        <h3 class="kpi-title">${kpi.title}</h3>
+        <div class="kpi-branch">
+          <span class="kpi-branch-label">Point Loma</span>
+          <span class="kpi-branch-value ${kpi.kind}">${kpi.pointLoma.value}</span>
+        </div>
+        <div class="kpi-branch">
+          <span class="kpi-branch-label">Julian</span>
+          <span class="kpi-branch-value ${kpi.kind}">${kpi.julian.value}</span>
+        </div>
+      </article>
+    `;
+  }
+  return html`
+    <article class="kpi-card kpi-card-combined">
+      <h3 class="kpi-title">${kpi.title}</h3>
+      <span class="kpi-value ${kpi.kind}">${kpi.combined.value}</span>
+      <p class="kpi-compare">${kpi.combined.compare}</p>
+    </article>
+  `;
+}
+
+export function renderDeliveriesCard(d: LandingDeliveries, mode: BranchMode): TemplateResult {
+  const summary = mode === "split"
+    ? `${d.pointLomaCount - 3} from Point Loma, ${d.julianCount} from Julian. 5 done, 6 on the road, 3 still to leave.`
+    : d.summary;
+  const count = mode === "split" ? d.pointLomaCount + d.julianCount - 3 : d.count;
+  return html`
+    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Deliveries today">
+      <div class="deliveries-head">
+        <h2 class="section-eyebrow">Deliveries today</h2>
+        <span class="deliveries-count">${count}</span>
+      </div>
+      <p class="deliveries-summary">${summary}</p>
+      <div class="runs-row">
+        ${d.runs.map((run) => html`
+          <div class="run">
+            <span class="run-id">${run.runId} ${run.branch}</span>
+            <span class="run-when">${run.when}</span>
+            <span class="run-stops">${run.stops}</span>
+          </div>
+        `)}
+      </div>
+    </section>
+  `;
+}
+
+export function renderNeedsYouCard(rows: readonly LandingNeedRow[]): TemplateResult {
+  return html`
+    <section class="needs-stake-card" data-test="c10-needs-stake" aria-label="Needs you, by money at stake">
+      <h2 class="section-eyebrow">Needs you, by money at stake</h2>
+      <ol class="needs-stake-list">
+        ${rows.map((row) => renderNeedStakeRow(row))}
+      </ol>
+    </section>
+  `;
+}
+
+export function renderNeedStakeRow(row: LandingNeedRow): TemplateResult {
+  const accentClass = `accent-${row.accent}`;
+  return html`
+    <li class="need-row ${accentClass}">
+      <div class="need-body">
+        <p class="need-title">${row.title}</p>
+        <p class="need-words">${row.body}</p>
+      </div>
+      <span class="need-amount">${row.amountLabel}</span>
+      <button type="button" class="need-action" data-action="need-action" data-need=${row.id} data-target-view=${row.targetView} data-target-ref=${row.targetRef}>${row.actionLabel}</button>
+    </li>
+  `;
+}
+
 
 /** A tile the widget catalog has no measure for: a tile in the grid with its words, never a number. */
 function renderUnsourcedTile(t: { readonly title: string; readonly words: string }): TemplateResult {
@@ -121,25 +263,40 @@ function renderWidget(
   w: WidgetView,
   datum: WidgetDatum | undefined,
   needs: NeedsQueue | null,
+  unsourced: typeof UNSOURCED_NEEDS,
   first: boolean,
+  profile: string,
 ): TemplateResult {
   if (w.measure === "needs.you") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
-        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs)}
+        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs, unsourced, profile)}
       </article>
     `);
   }
   const figure = figureFor(datum, w.kind);
   const caption = rangeWord(datum?.range !== "" && datum !== undefined ? datum.range : w.range);
   const hero = first && w.shape === "stat" && w.span_cols >= 6;
-  const foot = html`<p class="tile-foot">${NOT_HERE}</p>`;
+  const foot = renderFoot(w, profile);
   if (w.shape === "board" || w.shape === "bars") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
         ${renderBars(datum, w, w.shape === "bars")}
+        ${foot}
+      </article>
+    `);
+  }
+  // A trend stays its figure: the core measures it over the metric's first dimension, which is the
+  // branch for the sales measures, so its points are a comparison and no time series to draw.
+  if (w.shape === "gauge" && figure !== null && datum !== undefined) {
+    return placed(w, html`
+      <article class="card" data-widget=${w.widget_key}>
+        <h2 class="card-title">${w.title}</h2>
+        <p class="figure small">${figure}</p>
+        <p class="card-sub">${caption}</p>
+        ${renderGauge(datum, w)}
         ${foot}
       </article>
     `);
@@ -156,6 +313,40 @@ function renderWidget(
       ${foot}
     </article>
   `);
+}
+
+/**
+ * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
+ * honest coming words only where no app exists. A link never carries a figure of its own.
+ */
+function renderFoot(w: WidgetView, profile: string): TemplateResult {
+  const link = widgetLink(w, profile);
+  if (link.kind === "app") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-app" data-href=${link.href}>Open ${link.app}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  if (link.kind === "view") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  return html`<p class="tile-foot">${NOT_HERE}</p>`;
+}
+
+/**
+ * The gauge: the points' shares of their own sum as one segmented meter, with the tone the server
+ * named, and a legend that carries every exact figure as text. The core measures this as a count
+ * with no ceiling, so the meter shows composition, never "how full": no invented scale.
+ */
+function renderGauge(datum: WidgetDatum, w: WidgetView): TemplateResult | typeof nothing {
+  const segments = gaugeSegments(datum.points, w.kind);
+  if (segments === null) return nothing;
+  const spoken = `${w.title}: ${segments.map((g) => `${g.label} ${g.figure}`).join(", ")}`;
+  return html`
+    <div class="meter" role="img" aria-label=${spoken}>
+      ${segments.map((g) => html`<span class="seg ${g.widthClass} ${g.toneClass}"></span>`)}
+    </div>
+    <ul class="legend">
+      ${segments.map((g) => html`<li class="legend-row"><span class="swatch ${g.toneClass}" aria-hidden="true"></span><span class="label">${g.label}</span><span class="value">${g.figure}</span></li>`)}
+    </ul>
+  `;
 }
 
 function placed(w: WidgetView, body: TemplateResult): TemplateResult {
@@ -198,13 +389,13 @@ function barWidthClass(part: number, max: number): string {
 
 // -- the needs-you card --------------------------------------------------------------------------------
 
-export function renderNeedsList(needs: NeedsQueue): TemplateResult {
+export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_NEEDS, profile?: string): TemplateResult {
   const rows = needs.rows;
   // The queue link opens the first view a row names; with none on this box it is not drawn.
-  const first = rows.map((r) => needsRowTarget(r)).find((t) => t.view !== null);
+  const first = rows.map((r) => needsRowTarget(r, profile)).find((t) => t.view !== null);
   return html`
-    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row))}
-    ${UNSOURCED_NEEDS.map((u) => html`
+    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row, profile))}
+    ${unsourced.map((u) => html`
       <div class="needs-row unsourced" data-unsourced=${u.key}>
         <span class="sev" aria-hidden="true"></span>
         <div class="needs-body">
@@ -226,8 +417,8 @@ export function renderNeedsList(needs: NeedsQueue): TemplateResult {
   `;
 }
 
-function renderNeedsRow(row: NeedsRow): TemplateResult {
-  const target = needsRowTarget(row);
+function renderNeedsRow(row: NeedsRow, profile?: string): TemplateResult {
+  const target = needsRowTarget(row, profile);
   return html`
     <div class="needs-row" data-needs=${row.source_key}>
       <span class="sev ${row.severity}" aria-hidden="true"></span>
@@ -239,7 +430,9 @@ function renderNeedsRow(row: NeedsRow): TemplateResult {
       </div>
       ${target.view !== null
         ? html`<button type="button" class="row-chip" data-action="open-view" data-view=${target.view}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
-        : html`<span class="not-here">${NOT_HERE}</span>`}
+        : "href" in target
+          ? html`<button type="button" class="row-chip" data-action="open-app" data-href=${target.href} aria-label=${`${row.action}, opens ${target.app}`}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
+          : html`<span class="not-here">${NOT_HERE}</span>`}
     </div>
   `;
 }
@@ -275,6 +468,8 @@ export interface ShortagesModel {
   readonly error: string;
   readonly notice: string;
   readonly resolverWords: string;
+  /** The instant the list was read; the cards' "ago" words count from it. */
+  readonly nowMs: number;
 }
 
 export function renderShortages(model: ShortagesModel): TemplateResult {
@@ -326,6 +521,7 @@ function renderShortageTask(entry: QueueEntry, model: ShortagesModel): TemplateR
       ${done.map((s) => html`
         <div class="shortage" data-shortage=${s.id}>
           <div class="body">
+            <p class="status status-done">${shortageCard(s, model.nowMs).status}</p>
             <p class="line">${s.description}</p>
             <p class="detail">${shortageLine(s)}</p>
             <p class="resolved-word">Resolved: ${s.resolution}</p>
@@ -341,11 +537,14 @@ function renderShortageRow(entry: QueueEntry, s: QueueEntry["shortages"][number]
   if (draft !== null && draft.shortageId === s.id) {
     return renderResolvePanel(draft, entry, s, model.error);
   }
+  const card = shortageCard(s, model.nowMs);
   return html`
-    <div class="shortage" data-shortage=${s.id}>
+    <div class="shortage" data-shortage=${s.id} data-card="shortage-review">
       <div class="body">
-        <p class="line">${s.description}</p>
-        <p class="detail">${shortageLine(s)}</p>
+        <p class="status status-open">${card.status}</p>
+        <p class="line">${card.what}</p>
+        <p class="detail">${card.howMuch}</p>
+        <p class="who-when">${card.when === "" ? card.reporter : `${card.reporter} · ${card.when}`}</p>
         ${s.note !== "" ? html`<p class="detail">${s.note}</p>` : nothing}
       </div>
       <div class="row-actions">
@@ -380,7 +579,7 @@ function renderResolvePanel(draft: ResolveDraft, entry: QueueEntry, s: QueueEntr
         <p class="panel-line">${orderLabel} · ${s.description}</p>
         <p class="panel-qty">${quantityLine(entry, s)}</p>
         <div class="reported">
-          <p class="reported-who">Reported by the yard team</p>
+          <p class="reported-who">Reported by staff</p>
           ${s.note !== "" ? html`<p class="reported-note">${s.note}</p>` : nothing}
         </div>
         <div class="choices">
@@ -462,67 +661,7 @@ function renderReceivingCard(row: ReceivingRow): TemplateResult {
 
 // -- Approvals -------------------------------------------------------------------------------------------------
 
-export interface ApprovalsModel {
-  readonly phase: "loading" | "ready" | "error" | "refused";
-  readonly kind: string;
-  readonly rows: readonly ApprovalRow[];
-  readonly error: string;
-  readonly refusal: string;
-  readonly busyId: string;
-}
-
-export function renderApprovals(model: ApprovalsModel): TemplateResult {
-  return html`
-    ${viewHeader("approvals", "", "")}
-    <div class="kind-tabs" role="tablist" aria-label="Approval kinds">
-      ${APPROVAL_KINDS.map((k) => html`
-        <button type="button" class="kind-tab" role="tab" data-action="pick-kind" data-kind=${k.kind} aria-selected=${model.kind === k.kind ? "true" : "false"}>
-          ${k.word}
-        </button>
-      `)}
-    </div>
-    ${model.error !== "" ? html`<p class="error-line">${model.error}</p>` : nothing}
-    ${model.refusal !== "" ? html`<p class="refusal" data-test="approvals-refusal">${model.refusal}</p>` : nothing}
-    <div role="tabpanel" aria-label=${kindWord(model.kind)}>
-      ${model.phase === "loading"
-        ? html`<p class="notice-line">Loading ${kindWord(model.kind)} approvals…</p>`
-        : model.phase === "error"
-          ? html`<div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-view">Try again</button></div>`
-          : model.phase === "refused"
-            ? nothing
-            : model.rows.length === 0
-              ? html`<section class="sheet"><div class="list-card"><p class="notice-line">No ${kindWord(model.kind)} approvals waiting.</p></div></section>`
-              : html`
-                  <section class="sheet">
-                    <div class="list-card">
-                      ${model.rows.map((row) => renderApprovalRow(row, model.busyId))}
-                    </div>
-                  </section>
-                `}
-    </div>
-  `;
-}
-
-function renderApprovalRow(row: ApprovalRow, busyId: string): TemplateResult {
-  const pending = row.status === "PENDING";
-  return html`
-    <div class="approval" data-approval=${row.id}>
-      <p class="detail">${row.detail}</p>
-      <p class="meta">
-        ${kindWord(row.policy_type)}
-        ${row.amount_cents > 0 ? html` · <span class="amount">${money(row.amount_cents)}</span>` : nothing}
-        ${row.subject_ref !== "" ? html` · ${row.subject_ref}` : nothing}
-        ${pending ? nothing : html` · ${row.status === "APPROVED" ? "Approved" : "Rejected"}`}
-      </p>
-      ${pending
-        ? html`<div class="row-actions">
-            <button type="button" class="btn btn-primary" data-action="decide" data-approval-id=${row.id} data-decision="approve" ?disabled=${busyId !== ""}>Approve</button>
-            <button type="button" class="btn btn-danger" data-action="decide" data-approval-id=${row.id} data-decision="reject" ?disabled=${busyId !== ""}>Reject</button>
-          </div>`
-        : nothing}
-    </div>
-  `;
-}
+export { renderApprovals, type ApprovalsModel } from "./approvals-views.js";
 
 function money(cents: number): string {
   // The only money rendering in this app: the core's integer cents, formatted for a person.

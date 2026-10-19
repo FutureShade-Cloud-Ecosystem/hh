@@ -54,7 +54,6 @@ test('the gold family and the layout invariants are theme-invariant on purpose',
   const light = parseDeclarations(blocks.light);
   const invariants = [
     '--hh-accent', '--hh-accent-hover', '--hh-accent-ink',
-    '--hh-quote-fill', '--hh-quote-fill-on',
     '--brand', '--brand-hover', '--brand-fill', '--brand-fill-hover', '--brand-fill-on',
     '--cbrand', '--cbrand-on',
     '--hh-font-ui', '--hh-font-mono',

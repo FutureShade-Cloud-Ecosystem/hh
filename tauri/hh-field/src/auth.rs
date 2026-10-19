@@ -30,7 +30,11 @@ impl AuthState {
     pub fn for_profile() -> Self {
         let profile = profiles::field();
         let custody: Arc<dyn custody::Custody> = Arc::from(custody::platform_custody());
-        Self(AuthService::new(profile.identifier, &profile.auth, custody).ok().map(Arc::new))
+        Self(
+            AuthService::new(profile.identifier, &profile.auth, custody)
+                .ok()
+                .map(Arc::new),
+        )
     }
 
     fn service(&self) -> Result<Arc<AuthService>, AuthCode> {
@@ -54,7 +58,10 @@ pub async fn auth_sign_in(
     state: tauri::State<'_, AuthState>,
 ) -> Result<UserAnswer, AuthCode> {
     let service = state.service()?;
-    service.sign_in(&email, &password).await.map(|user| UserAnswer { user })
+    service
+        .sign_in(&email, &password)
+        .await
+        .map(|user| UserAnswer { user })
 }
 
 #[tauri::command]
@@ -64,13 +71,19 @@ pub async fn auth_resume(state: tauri::State<'_, AuthState>) -> Result<UserAnswe
 }
 
 #[tauri::command]
-pub async fn auth_exchange(org: String, state: tauri::State<'_, AuthState>) -> Result<ExchangeAnswer, AuthCode> {
+pub async fn auth_exchange(
+    org: String,
+    state: tauri::State<'_, AuthState>,
+) -> Result<ExchangeAnswer, AuthCode> {
     let service = state.service()?;
     service.exchange(&org).await
 }
 
 #[tauri::command]
-pub async fn auth_sign_out(app: tauri::AppHandle, state: tauri::State<'_, AuthState>) -> Result<Empty, AuthCode> {
+pub async fn auth_sign_out(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AuthState>,
+) -> Result<Empty, AuthCode> {
     let result = match state.service() {
         Ok(service) => service.sign_out().await,
         Err(code) => Err(code),

@@ -206,6 +206,59 @@ function iconPage() {
 </html>`;
 }
 
+// The sheet's own browser page: a host page that mounts <hh-sheet> open with
+// a real trigger button (the focus return lands on it) and a slotted actions
+// button (the brief's "the action slot visible and not covered" assertion has
+// something to find).
+function sheetPage() {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>hh design system sheet leg</title>
+<link rel="stylesheet" href="/tokens.css">
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "/node_modules/lit/index.js",
+      "lit/": "/node_modules/lit/",
+      "lit-html": "/node_modules/lit-html/lit-html.js",
+      "lit-html/": "/node_modules/lit-html/",
+      "lit-element": "/node_modules/lit-element/lit-element.js",
+      "lit-element/": "/node_modules/lit-element/",
+      "@lit/reactive-element": "/node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "/node_modules/@lit/reactive-element/"
+    }
+  }
+</script>
+</head>
+<body style="margin:0; padding:0; background: var(--hh-page); min-height:100vh;">
+<button type="button" id="trigger" data-testid="sheet-trigger" style="margin:24px;">Open the sheet</button>
+<hh-sheet id="sheet" heading="Pick a reason" data-testid="hh-sheet">
+  <span slot="title">Pick a reason</span>
+  <span slot="description">One of these for the change.</span>
+  <ul>
+    <li><button type="button" data-testid="row-1">Counted wrong</button></li>
+    <li><button type="button" data-testid="row-2">Wrong item</button></li>
+  </ul>
+  <button type="button" slot="actions" data-testid="sheet-action" id="sheet-action">Save</button>
+</hh-sheet>
+<script type="module">
+  import '/src/index.js';
+  await new Promise((done) => {
+    const t0 = Date.now();
+    const poll = () => (customElements.get('hh-sheet') || Date.now() - t0 > 5000 ? done() : setTimeout(poll, 25));
+    poll();
+  });
+  const sheet = document.getElementById('sheet');
+  const trigger = document.getElementById('trigger');
+  trigger.addEventListener('click', () => { sheet.open = true; });
+  window.__sheetReady = true;
+</script>
+</body>
+</html>`;
+}
+
 function startServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -235,6 +288,11 @@ function startServer() {
     if (url.pathname === '/header') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(headerPage());
+      return;
+    }
+    if (url.pathname === '/sheet') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(sheetPage());
       return;
     }
     // The per-kit sheets the harness page's declarative shadow roots link.
@@ -1207,4 +1265,196 @@ if (reason && inCI && !underBun) {
       await close();
     }
   });
+
+  // ── THE BOTTOM SHEET, in the browser ──────────────────────────────────────
+  // The brief (T2-C13-S2-SHEET-M3) demands a live check that the sheet opens,
+  // takes focus, traps Escape, accepts the scrim, and that the actions slot is
+  // visible and not covered at the two widths the kits paint at: phone
+  // (390 x 844, the iPhone Pro width) and tablet portrait (834 x 1194, the
+  // iPad Pro 11 portrait). The element page mounts the trigger and a slotted
+  // actions button; this test exercises the whole path the consumer rides.
+
+  async function openSheetAndSettle(cdp, port) {
+    await cdp.navigate(`http://127.0.0.1:${port}/sheet`);
+    return await cdp.evaluate(
+      `(async () => {
+        await new Promise((done) => {
+          const t0 = Date.now();
+          const poll = () => (window.__sheetReady && customElements.get('hh-sheet') && document.getElementById('sheet').shadowRoot ? done() : (Date.now() - t0 > 5000 ? done() : setTimeout(poll, 25)));
+          poll();
+        });
+        await new Promise((r) => setTimeout(r, 120));
+        const sheet = document.getElementById('sheet');
+        const trigger = document.getElementById('trigger');
+        trigger.focus();
+        trigger.click();
+        await new Promise((r) => setTimeout(r, 120));
+        const tag = sheet.tagName.toLowerCase();
+        const root = sheet.shadowRoot;
+        const scrim = root.querySelector('[data-action="close-scrim"]');
+        const dialog = root.querySelector('[role="dialog"]');
+        const actionSlot = root.querySelector('slot[name="actions"]');
+        // The slot itself doesn't have a box; the assigned node (the slotted
+        // button) does. The action lives where the slot assigns its content.
+        const actionAssigned = actionSlot ? actionSlot.assignedElements({ flatten: true })[0] : null;
+        const actionEl = actionAssigned || document.getElementById('sheet-action');
+        // The labelledby id resolves in the shadow root (the title element
+        // lives there, not in the light DOM).
+        const labelledBy = dialog ? dialog.getAttribute('aria-labelledby') : null;
+        const labelledByEl = labelledBy ? root.getElementById(labelledBy) : null;
+        const box = (el) => el ? (() => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; })() : null;
+        return {
+          tag,
+          hasShadow: root !== null,
+          hasScrim: scrim !== null,
+          hasDialog: dialog !== null,
+          ariaModal: dialog ? dialog.getAttribute('aria-modal') : null,
+          labelledBy,
+          labelledByPointsAtElement: labelledByEl !== null,
+          hasActionSlot: actionSlot !== null,
+          actionElTag: actionEl ? actionEl.tagName.toLowerCase() : null,
+          openAttr: sheet.hasAttribute('open'),
+          opened: sheet.open === true,
+          actionBox: box(actionEl),
+          sheetBox: box(dialog),
+          activeIsInSheet: sheet.contains(document.activeElement) || document.activeElement === sheet,
+          triggerId: trigger.id,
+        };
+      })()`,
+    );
+  }
+
+  test('hh-sheet opens, takes the dialog role, and moves focus into the sheet', async () => {
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      const out = await openSheetAndSettle(cdp, port);
+      assert.equal(out.tag, 'hh-sheet', 'the host is an hh-sheet');
+      assert.equal(out.opened, true, 'the sheet is open after the trigger');
+      assert.equal(out.openAttr, true, 'the open attribute reflects');
+      assert.equal(out.hasScrim, true, 'a scrim element with data-action="close-scrim" is in the shadow root');
+      assert.equal(out.hasDialog, true, 'a dialog with role="dialog" is in the shadow root');
+      assert.equal(out.ariaModal, 'true', 'the dialog is aria-modal="true"');
+      assert.ok(out.labelledBy, 'a labelledby attribute is present');
+      assert.equal(out.labelledByPointsAtElement, true, 'the labelledby id resolves to an element');
+      assert.equal(out.hasActionSlot, true, 'the actions slot is in the shadow root');
+      assert.ok(out.activeIsInSheet, 'focus is inside the sheet after open');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('hh-sheet closes on Escape and returns focus to the trigger that opened it', async () => {
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await openSheetAndSettle(cdp, port);
+      const out = await cdp.evaluate(
+        `(async () => {
+          const sheet = document.getElementById('sheet');
+          const trigger = document.getElementById('trigger');
+          const events = [];
+          sheet.addEventListener('hh-sheet-close', (e) => events.push({ reason: e.detail.reason, bubbles: e.bubbles, composed: e.composed }));
+          // Escape from a focusable element inside the sheet; the keydown
+          // bubbles up and the element's own listener handles it.
+          const action = document.getElementById('sheet-action');
+          action.focus();
+          await new Promise((r) => setTimeout(r, 40));
+          action.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
+          await new Promise((r) => setTimeout(r, 80));
+          return {
+            opened: sheet.open === true,
+            hasOpenAttr: sheet.hasAttribute('open'),
+            activeId: document.activeElement ? document.activeElement.id : null,
+            events,
+          };
+        })()`,
+      );
+      assert.equal(out.opened, false, 'Escape closes the sheet');
+      assert.equal(out.hasOpenAttr, false, 'the open attribute is removed on close');
+      assert.equal(out.activeId, 'trigger', `focus returns to the trigger (was ${out.activeId})`);
+      assert.equal(out.events.length, 1, `Escape fires the close event exactly once (got ${out.events.length})`);
+      assert.equal(out.events[0].reason, 'escape', 'the reason is "escape"');
+      assert.equal(out.events[0].bubbles, true, 'the event bubbles');
+      assert.equal(out.events[0].composed, true, 'the event is composed');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('hh-sheet closes on a scrim tap and fires the event with reason "scrim"', async () => {
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await openSheetAndSettle(cdp, port);
+      const out = await cdp.evaluate(
+        `(async () => {
+          const sheet = document.getElementById('sheet');
+          const trigger = document.getElementById('trigger');
+          trigger.focus();
+          const events = [];
+          sheet.addEventListener('hh-sheet-close', (e) => events.push({ reason: e.detail.reason }));
+          const scrim = sheet.shadowRoot.querySelector('[data-action="close-scrim"]');
+          scrim.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+          await new Promise((r) => setTimeout(r, 80));
+          return { opened: sheet.open === true, events };
+        })()`,
+      );
+      assert.equal(out.opened, false, 'a scrim tap closes the sheet');
+      assert.equal(out.events.length, 1, `a scrim tap fires the event exactly once (got ${out.events.length})`);
+      assert.equal(out.events[0].reason, 'scrim', 'the reason is "scrim"');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  for (const viewport of [
+    { name: 'phone 390 x 844', width: 390, height: 844 },
+    { name: 'tablet 834 x 1194', width: 834, height: 1194 },
+  ]) {
+    test(`hh-sheet action slot is visible and not covered at ${viewport.name}`, async () => {
+      const { port, close } = await startServer();
+      const cdp = await launchBrowser(binary);
+      try {
+        await cdp.setViewport(viewport.width, viewport.height);
+        const out = await openSheetAndSettle(cdp, port);
+        assert.equal(out.opened, true, `the sheet opens at ${viewport.name}`);
+        const action = out.actionBox;
+        const sheet = out.sheetBox;
+        assert.ok(action && sheet, `the slot is positioned at ${viewport.name} (action=${!!action}, sheet=${!!sheet})`);
+        // The action lives INSIDE the dialog's painted box: top is below the
+        // dialog's top, bottom is above the dialog's bottom. It cannot poke
+        // out beyond the sheet (a slot "outside" would mean the consumer's
+        // primary action is hidden behind the dimmed page).
+        assert.ok(
+          action.top >= sheet.top - 0.5,
+          `action top (${action.top.toFixed(1)}) must be inside the sheet top (${sheet.top.toFixed(1)}) at ${viewport.name}`,
+        );
+        assert.ok(
+          action.bottom <= sheet.bottom + 0.5,
+          `action bottom (${action.bottom.toFixed(1)}) must be inside the sheet bottom (${sheet.bottom.toFixed(1)}) at ${viewport.name}`,
+        );
+        // The action is laid out: width follows the dialog's cross-axis
+        // stretch, height follows the button's own min-height (the test
+        // mounts an unstyled button so the height rides whatever the sheet
+        // declares via ::slotted(); width: 100% lands either way because
+        // the flex container stretches). A non-zero box is the assertion:
+        // a zero-dimensioned element is not visible.
+        assert.ok(action.width > 0, `the action has width (got ${action.width}) at ${viewport.name}`);
+        assert.ok(action.height > 0, `the action has height (got ${action.height}) at ${viewport.name}`);
+        // The dialog sits inside the viewport: it is not pushed off the bottom
+        // edge (the brief's "not covered" is the visible-bits the user can hit).
+        assert.ok(
+          sheet.bottom <= viewport.height + 0.5,
+          `the sheet bottom (${sheet.bottom.toFixed(1)}) fits inside the viewport (${viewport.height}) at ${viewport.name}`,
+        );
+      } finally {
+        await cdp.close();
+        await close();
+      }
+    });
+  }
 }

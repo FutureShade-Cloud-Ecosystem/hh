@@ -3,9 +3,39 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { WarrantyBoard, WarrantyChecklistState, WarrantyChecklistStatePage, WarrantyChecklistTickInput, WarrantyClaim, WarrantyClaimAssignInput, WarrantyClaimEvent, WarrantyClaimEventPage, WarrantyClaimInput, WarrantyClaimPage, WarrantyEvidenceInput, WarrantyIntakePhotoPage, WarrantyPhaseTransitionInput, WarrantyProductOverride, WarrantyProductOverrideInput, WarrantyRecoveryAction, WarrantyRecoveryActionInput, WarrantyRecoveryActionPage, WarrantyRecoveryBoard, WarrantyReportBundle, WarrantySLABoard, WarrantySLASweepResult, WarrantySLATargetPage, WarrantySettlementInput, WarrantySettlementPostingPage, WarrantySettlementResult, WarrantyVendorProfile, WarrantyVendorProfileInput, WarrantyVendorProfilePage } from "./types.js";
+import type { WarrantyBoard, WarrantyChecklistState, WarrantyChecklistStatePage, WarrantyChecklistTickInput, WarrantyClaim, WarrantyClaimAssignInput, WarrantyClaimEvent, WarrantyClaimEventPage, WarrantyClaimInput, WarrantyClaimPage, WarrantyEvidenceInput, WarrantyIntakePhotoPage, WarrantyPhaseTransitionInput, WarrantyPolicy, WarrantyPolicyInput, WarrantyProductOverride, WarrantyProductOverrideInput, WarrantyRecoveryAction, WarrantyRecoveryActionInput, WarrantyRecoveryActionPage, WarrantyRecoveryBoard, WarrantyReportBundle, WarrantySLABoard, WarrantySLASweepResult, WarrantySLATargetPage, WarrantySettlementInput, WarrantySettlementPostingPage, WarrantySettlementResult, WarrantyVendorAgreement, WarrantyVendorAgreementInput, WarrantyVendorAgreementPage, WarrantyVendorProfile, WarrantyVendorProfileInput, WarrantyVendorProfilePage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
+
+export async function warrantyListVendorAgreements(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<WarrantyVendorAgreementPage>> {
+  return client.request<WarrantyVendorAgreementPage>({
+    method: "GET",
+    path: "/api/v1/warranty/agreements",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "warrantyListVendorAgreements",
+  });
+}
+
+export async function warrantyUpsertVendorAgreement(
+  client: ApiClient,
+  vendorID: string | number,
+  body: WarrantyVendorAgreementInput,
+  call?: ApiCallOptions
+): Promise<Result<WarrantyVendorAgreement>> {
+  return client.request<WarrantyVendorAgreement>({
+    method: "PUT",
+    path: "/api/v1/warranty/agreements/{vendorID}",
+    pathParams: { vendorID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "warrantyUpsertVendorAgreement",
+  });
+}
 
 export async function warrantyGetBoard(
   client: ApiClient,
@@ -287,6 +317,36 @@ export async function warrantyAckSLAAlert(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "warrantyAckSLAAlert",
+  });
+}
+
+export async function warrantyGetPolicy(
+  client: ApiClient,
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<WarrantyPolicy>> {
+  return client.request<WarrantyPolicy>({
+    method: "GET",
+    path: "/api/v1/warranty/policy",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "warrantyGetPolicy",
+  });
+}
+
+export async function warrantyPutPolicy(
+  client: ApiClient,
+  body: WarrantyPolicyInput,
+  call?: ApiCallOptions
+): Promise<Result<WarrantyPolicy>> {
+  return client.request<WarrantyPolicy>({
+    method: "PUT",
+    path: "/api/v1/warranty/policy",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "warrantyPutPolicy",
   });
 }
 

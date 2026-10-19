@@ -232,6 +232,7 @@ describe("work launcher entries", () => {
       "buying-and-stock",
       "money-desk",
       "manager-home",
+      "house-messages",
       "dealer-admin",
     ]);
   });
@@ -258,7 +259,7 @@ describe("work shell host assembly", () => {
 
   test("the front door page keeps its own launch paths: its tiles are the same hrefs the launch map ships", () => {
     const roles = readFileSync(resolve(REPO_ROOT, "web/apps/front-door/src/roles.ts"), "utf8");
-    for (const href of ["/till/", "/quote/", "/dispatch/", "/buying-and-stock/", "/home/", "/dealer-admin/", "/money-desk/"]) {
+    for (const href of ["/till/", "/quote/", "/dispatch/", "/buying-and-stock/", "/home/", "/messages/", "/dealer-admin/", "/money-desk/"]) {
       expect(roles).toContain(`href: "${href}"`);
     }
   });

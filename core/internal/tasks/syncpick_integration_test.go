@@ -12,6 +12,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -46,6 +47,9 @@ type pickDoor struct {
 	f       hhsync.ScopeFilter
 	// authority is what the staff seam answers; tests replace it.
 	authority func() (identity.StaffContext, bool, error)
+	// hold is the order double the service talks to; it can hold a pooled connection for the length of the
+	// call, as the real order module does.
+	hold *connOrder
 	// user is the linked ERP user the default authority answers.
 	user string
 	// actors records who the record body was asked to attribute to.
@@ -62,14 +66,24 @@ func (a actorSpy) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	return a.inner.RecordPick(ctx, taskID, actorID, lines)
 }
 
-func newPickDoor(t *testing.T) *pickDoor {
+func newPickDoor(t *testing.T) *pickDoor { return newPickDoorConns(t, 0) }
+
+// newPickDoorConns is newPickDoor over a pool capped at conns connections (zero keeps the default).
+func newPickDoorConns(t *testing.T, conns int32) *pickDoor {
 	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("pick record door leg: DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("pool config: %v", err)
+	}
+	if conns > 0 {
+		cfg.MaxConns = conns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -92,7 +106,8 @@ func newPickDoor(t *testing.T) *pickDoor {
 			_, _ = pool.Exec(bg, `DELETE FROM org WHERE id = $1`, o)
 		}
 	})
-	d.svc = NewService(NewRepository(pool)).WithYardOrderChanges(d.yard)
+	d.hold = &connOrder{fakeYardOrder: d.yard, pool: pool}
+	d.svc = NewService(NewRepository(pool)).WithYardOrderChanges(d.hold)
 	// The caller is a linked ERP user, as the direct door requires (taskBranchFence answers 401 without one).
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO users (email, display_name, status) VALUES ($1, 'pick door leg', 'ACTIVE') RETURNING id::text`,
@@ -467,5 +482,207 @@ func TestPickDoor_DirectDoorRecordMovesTheSeqSoServerWinsHoldsAcrossDoors(t *tes
 	}
 	if rows := d.lines(id); len(rows) != 1 || rows[0].picked != "10.0000" {
 		t.Fatalf("the newer record stands: %+v", rows)
+	}
+}
+
+// The pull carries the ticket (the REST door's builder, so one shape) and the recorded lines, holds the
+// still owed figure out, and stays inside the org.
+func TestPickDoor_PullCarriesTheTicketAndThePickedLines(t *testing.T) {
+	d := newPickDoor(t)
+	orderID := uuid.NewString()
+	row, err := d.store.Create(context.Background(), d.f, uuid.NewString(), map[string]any{"order_id": orderID})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	src := NewStubPickSource().Seed(PickTicket{
+		OrderID: orderID, OrderNo: "SO-1", Source: "DISPATCH", HeldFromPicking: true, HoldWords: "Balance due", StillOwedCents: 12345,
+		Lines: []PickLine{{LineNo: 1, Description: "Paver", QtyOrdered: "10", UOM: "EA"}, {LineNo: 2, Description: "Sand", QtyOrdered: "4", UOM: "EA"}},
+	})
+	d.store.WithPickSource(src)
+	if res := d.push(recordOp(uuid.NewString(), row.ID, pickLine(1))); res[0].Status != "applied" {
+		t.Fatalf("record: %+v %v", res[0], res[0].Error)
+	}
+
+	items, _, err := d.store.Pull(context.Background(), d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	var data map[string]any
+	for _, it := range items {
+		if it.ID == row.ID {
+			data = it.Data
+		}
+	}
+	if data == nil {
+		t.Fatal("the task did not come through the pull")
+	}
+	ticket, ok := data["ticket"].(map[string]any)
+	if !ok {
+		t.Fatalf("pulled row carries no ticket: %v", data)
+	}
+	if lines, _ := ticket["lines"].([]any); len(lines) != 2 {
+		t.Fatalf("ticket lines = %v, want 2", ticket["lines"])
+	}
+	if ticket["held_from_picking"] != true || ticket["hold_words"] != "Balance due" {
+		t.Fatalf("the hold mark must stay: %v", ticket)
+	}
+	if _, has := ticket["still_owed_cents"]; has {
+		t.Fatalf("the figure must be held out of the pull: %v", ticket)
+	}
+	if picked, _ := data["picked"].([]any); len(picked) != 1 {
+		t.Fatalf("picked = %v, want the one recorded line", data["picked"])
+	}
+	// A plain Load (the update and delete paths, the replay) pays for no ticket; the conflict envelope's
+	// decoration carries it.
+	rs, found, err := d.store.Load(context.Background(), d.f, row.ID)
+	if err != nil || !found || rs.Data["ticket"] != nil {
+		t.Fatalf("Load must carry no ticket: %v %v %v", rs.Data, found, err)
+	}
+	d.store.DecorateServerState(context.Background(), d.f, &rs)
+	if rs.Data["ticket"] == nil {
+		t.Fatalf("the conflict envelope's row carries no ticket: %v", rs.Data)
+	}
+	// Another org sees nothing, so no ticket leaves with it.
+	foreign := hhsync.ScopeFilter{OrgID: d.other, Actor: "pick-door-actor"}
+	if items, _, err := d.store.Pull(context.Background(), foreign, 0, 50); err != nil || len(items) != 0 {
+		t.Fatalf("another org's pull must be empty: %v %v", items, err)
+	}
+}
+
+// The ticket leaves only to a caller whose staff authority reaches the row's branch: a branch narrowed
+// actor pulls the other branch's row with its task fields and no ticket, GLOBAL reaches both, and an
+// authority that cannot be resolved attaches nothing (fail closed). Load and FindApplied follow the
+// same rule.
+func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
+	d := newPickDoor(t)
+	ctx := context.Background()
+	src := NewStubPickSource()
+	d.store.WithPickSource(src)
+	mk := func(branch string) (taskID, orderID string) {
+		orderID = uuid.NewString()
+		src.Seed(PickTicket{OrderID: orderID, OrderNo: "SO-" + branch[:4], CustomerName: "Walk In",
+			Lines: []PickLine{{LineNo: 1, Description: "Paver", QtyOrdered: "2", UOM: "EA"}}})
+		s := NewSyncStore(d.pool, pickDoorOrders{branch: branch}, nil)
+		row, err := s.Create(ctx, d.f, uuid.NewString(), map[string]any{"order_id": orderID})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		return row.ID, orderID
+	}
+	inA, _ := mk(d.branchA)
+	inB, _ := mk(d.branchB)
+
+	has := func(items []hhsync.Entity, id string) (present, ticket bool) {
+		for _, it := range items {
+			if it.ID == id {
+				_, ticket = it.Data["ticket"]
+				return true, ticket
+			}
+		}
+		return false, false
+	}
+	narrowed := func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{Scope: identity.ScopeBranch, Status: identity.StatusActive, UserID: d.user,
+			Branches: map[string]bool{d.branchA: true}}, true, nil
+	}
+
+	d.authority = narrowed
+	items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if p, tk := has(items, inA); !p || !tk {
+		t.Fatalf("own branch row: present=%v ticket=%v, want both", p, tk)
+	}
+	if p, tk := has(items, inB); !p || tk {
+		t.Fatalf("other branch row: present=%v ticket=%v, want the row without a ticket", p, tk)
+	}
+	decorated := func(id string) map[string]any {
+		rs, ok, err := d.store.Load(ctx, d.f, id)
+		if err != nil || !ok {
+			t.Fatalf("load %s: %v %v", id, ok, err)
+		}
+		d.store.DecorateServerState(ctx, d.f, &rs)
+		return rs.Data
+	}
+	if decorated(inB)["ticket"] != nil {
+		t.Fatal("the conflict envelope of the other branch's row carried a ticket")
+	}
+	if decorated(inA)["ticket"] == nil {
+		t.Fatal("the conflict envelope of the own branch's row lost its ticket")
+	}
+
+	// GLOBAL reaches both.
+	d.authority = func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive, UserID: d.user}, true, nil
+	}
+	items, _, _ = d.store.Pull(ctx, d.f, 0, 50)
+	if _, tk := has(items, inB); !tk {
+		t.Fatal("a GLOBAL caller must receive the other branch's ticket")
+	}
+
+	// Unresolvable authority: rows still come, no ticket anywhere.
+	for name, auth := range map[string]func() (identity.StaffContext, bool, error){
+		"error":   func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, errors.New("down") },
+		"unknown": func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, nil },
+		"inactive": func() (identity.StaffContext, bool, error) {
+			return identity.StaffContext{Scope: identity.ScopeGlobal, Status: "SUSPENDED", UserID: d.user}, true, nil
+		},
+	} {
+		d.authority = auth
+		items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+		if err != nil {
+			t.Fatalf("%s: pull must not fail: %v", name, err)
+		}
+		for _, id := range []string{inA, inB} {
+			if p, tk := has(items, id); !p || tk {
+				t.Fatalf("%s: row %s present=%v ticket=%v, want the row and no ticket", name, id, p, tk)
+			}
+		}
+	}
+}
+
+// errPickSource answers every ticket read with one fixed error.
+type errPickSource struct{ err error }
+
+func (e errPickSource) PickTicket(context.Context, string) (PickTicket, error) {
+	return PickTicket{}, e.err
+}
+func (e errPickSource) PendingTickets(context.Context, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, e.err
+}
+
+// A transient source fault fails the pull page (the engine answers 503 and the device retries the same
+// cursor) rather than shipping a ticket-less row the device would keep until the task next moves; an
+// order the source does not know, and a task with no order id, are the quiet skips.
+func TestPickDoor_PullFailsThePageOnATransientTicketFault(t *testing.T) {
+	d := newPickDoor(t)
+	ctx := context.Background()
+	row, err := d.store.Create(ctx, d.f, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	d.store.WithPickSource(errPickSource{err: errors.New("hold read: connection reset")})
+	if items, _, err := d.store.Pull(ctx, d.f, 0, 50); err == nil {
+		t.Fatalf("a transient source fault must fail the page, got %d items", len(items))
+	}
+
+	d.store.WithPickSource(errPickSource{err: fmt.Errorf("read: %w", ErrUnknownOrder)})
+	items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("an unknown order is a quiet skip: %v", err)
+	}
+	var seen bool
+	for _, it := range items {
+		if it.ID == row.ID {
+			seen = true
+			if _, has := it.Data["ticket"]; has {
+				t.Fatal("an unknown order carries no ticket")
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("the row must still come through")
 	}
 }

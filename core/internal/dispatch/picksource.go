@@ -112,6 +112,8 @@ type PickFeedTicket struct {
 	RunID         string
 	RunNo         string
 	RunStatus     string // "" when the stop is not yet on a run
+	RunDepartsAt  *time.Time
+	LoadPosition  int
 	MTOClass      string // DIB-63: STANDARD | MTO | MIXED, the picker needs it before the driver does
 	TimeWindow    string
 	Lines         []PickFeedLine
@@ -156,6 +158,8 @@ type pickFeedStop struct {
 	RunID         string
 	RunNo         string
 	RunStatus     string
+	RunDepartsAt  *time.Time
+	LoadPosition  int
 	MTOClass      string
 	TimeWindow    string
 }
@@ -457,6 +461,8 @@ func (f *PickFeed) ticket(row pickFeedStop) PickFeedTicket {
 		RunID:         row.RunID,
 		RunNo:         row.RunNo,
 		RunStatus:     row.RunStatus,
+		RunDepartsAt:  row.RunDepartsAt,
+		LoadPosition:  row.LoadPosition,
 		MTOClass:      row.MTOClass,
 		TimeWindow:    row.TimeWindow,
 		Lines:         []PickFeedLine{},

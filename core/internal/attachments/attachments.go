@@ -63,12 +63,13 @@ const (
 	OwnerStop      = "stop"
 	OwnerReceiving = "receiving"
 	OwnerQuote     = "quote"
+	OwnerChannel   = "channel"
 )
 
 // validOwnerKind reports whether k is one of D10's owner kinds.
 func validOwnerKind(k string) bool {
 	switch k {
-	case OwnerOrder, OwnerPlan, OwnerStop, OwnerReceiving, OwnerQuote:
+	case OwnerOrder, OwnerPlan, OwnerStop, OwnerReceiving, OwnerQuote, OwnerChannel:
 		return true
 	}
 	return false

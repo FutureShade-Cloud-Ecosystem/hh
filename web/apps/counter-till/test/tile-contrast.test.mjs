@@ -113,15 +113,17 @@ for (const { name, selector, size } of SELECTED) {
   }
 }
 
-// The fix's own contract: the active tile's wash rides the FIELD token, which
-// is the page's own tone in the brand half (so the brand pixels do not move)
-// and the card white in light. If the field token ever re-values in the dark
-// half, this pin fails and the brand render must be re-looked-at, not assumed.
-test("the active tile's fill base is byte-identical to the page tone in brand", () => {
+// The fix's own contract: the active tile's wash rides the FIELD token, the card
+// white in light. In the brand half the field is the charcoal set's inset tone
+// (#121517, one step below the page, as the board kit draws fields; decision log
+// row 1763), where the navy set had held it equal to the page. The value is
+// pinned so a re-value of the dark half fails here and the brand render is
+// re-looked-at, not assumed.
+const BRAND_FIELD = "#121517";
+test("the active tile's fill base is the charcoal field tone in brand", () => {
   const body = ruleBody(".fulfil button.active");
   const m = declaration(body, "background").match(/,\s*var\(\s*(--[a-z0-9-]+)\s*\)\s*\)$/);
   assert.ok(m, "the active tile's fill must end in a token base the gate can name");
   const base = resolveColor(`var(${m[1]})`, VARS.brand);
-  const page = resolveColor("var(--hos-deep-earth)", VARS.brand);
-  assert.equal(base, page, `the fill base ${m[1]} must stay the page tone in brand (${base} vs ${page})`);
+  assert.equal(base, BRAND_FIELD, `the fill base ${m[1]} must be the charcoal field tone in brand (${base} vs ${BRAND_FIELD})`);
 });

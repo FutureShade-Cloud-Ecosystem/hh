@@ -120,21 +120,99 @@ export function isOpen(status: string): boolean {
 }
 
 /** A pick nobody has taken yet: the queue's unclaimed half. */
+/** A held card is never the cached word. The row is re-sent only when the task's seq moves, and clearing
+ * the hold moves billing, not the task, so a device that pulled "held" keeps it until something else
+ * moves the task, with no Claim button to move it. Online, each held card is re-read from the server's
+ * detail read and the answer replaces it (the hold lives in the ticket); a read that does not answer
+ * keeps the cached card, which still says held, and the server's claim door decides. */
+export async function rereadHeldPicks<P extends { readonly task: { readonly id: string }; readonly ticket: { readonly held_from_picking: boolean } | null }>(
+  picks: readonly P[],
+  readOne: (id: string) => Promise<{ readonly ok: true; readonly value: P } | { readonly ok: false }>,
+): Promise<P[]> {
+  return Promise.all(
+    picks.map(async (p) => {
+      if (p.ticket?.held_from_picking !== true) return p;
+      try {
+        const answer = await readOne(p.task.id);
+        return answer.ok ? answer.value : p;
+      } catch {
+        return p;
+      }
+    }),
+  );
+}
+
 export function isUnclaimed(status: string): boolean {
   return status === "QUEUED" || status === "PUSHED";
 }
 
+/** Format an integer load position into words ("load 1st", "load 2nd", ...); empty when absent. */
+export function loadPositionWord(position: number | null | undefined): string {
+  if (typeof position !== "number" || !Number.isInteger(position) || position <= 0) return "";
+  const mod100 = position % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `load ${position}th`;
+  switch (position % 10) {
+    case 1:
+      return `load ${position}st`;
+    case 2:
+      return `load ${position}nd`;
+    case 3:
+      return `load ${position}rd`;
+    default:
+      return `load ${position}th`;
+  }
+}
+
+/** Format an RFC 3339 departure timestamp into "leaves 8:15"; empty when absent or unreadable. */
+export function departTimeWord(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (s === "") return "";
+  const plainClock = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (plainClock) return `leaves ${Number(plainClock[1])}:${plainClock[2]}`;
+  const isoClock = /T(\d{2}):(\d{2})/.exec(s);
+  if (isoClock) return `leaves ${Number(isoClock[1])}:${isoClock[2]}`;
+  return "";
+}
+
 /**
- * queueOrder sorts the board the way a yard lead reads it: open shortage
- * first (somebody at the counter is waiting on an answer), then open work
- * before finished, then priority, then oldest first. A pure comparator over
- * a copied array, it never mutates its input.
+ * Assemble the queue row's run line ("R5 · leaves 8:15 · load 2nd") from the
+ * optional fields on Task / TaskPickTicket. Any absent piece is omitted cleanly.
  */
-export function queueOrder<T extends { task: { open_shortages: number; status: string; priority: string; created_at: string } }>(
+export function runLineWords(
+  source: { readonly run_no?: string; readonly run_departs_at?: string; readonly load_position?: number } | null | undefined,
+  fallback?: { readonly run_no?: string; readonly run_departs_at?: string; readonly load_position?: number } | null | undefined,
+): string {
+  const runNo = (source?.run_no ?? fallback?.run_no ?? "").trim();
+  const departs = departTimeWord(source?.run_departs_at ?? fallback?.run_departs_at);
+  const loadPos = loadPositionWord(source?.load_position ?? fallback?.load_position);
+  return [runNo, departs, loadPos].filter((part) => part !== "").join(" · ");
+}
+
+/**
+ * queueOrder sorts the board by departure time when run_departs_at is present,
+ * and falls back to the yard lead's order (open shortage first, then open work
+ * before finished, then priority, then oldest first) when absent or tied. A
+ * pure comparator over a copied array, it never mutates its input.
+ */
+export function queueOrder<
+  T extends {
+    task: { open_shortages: number; status: string; priority: string; created_at: string; run_departs_at?: string };
+    ticket?: { run_departs_at?: string } | null;
+  },
+>(
   entries: readonly T[] | null | undefined,
 ): T[] {
   const rank: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 };
+  const departOf = (row: T): string => (row.task.run_departs_at ?? row.ticket?.run_departs_at ?? "").trim();
   return [...(entries ?? [])].sort((a, b) => {
+    const depA = departOf(a);
+    const depB = departOf(b);
+    if (depA !== "" && depB !== "") {
+      const cmp = depA.localeCompare(depB);
+      if (cmp !== 0) return cmp;
+    } else if (depA !== "" || depB !== "") {
+      return depA !== "" ? -1 : 1;
+    }
     const shortA = a.task.open_shortages > 0 ? 0 : 1;
     const shortB = b.task.open_shortages > 0 ? 0 : 1;
     if (shortA !== shortB) return shortA - shortB;
@@ -360,6 +438,88 @@ export function recordBlockedReason(lines: ReadonlyArray<{ qty_picked: string; q
   return "";
 }
 
+/** The core's refusal of a record onto a closed pick (tasks.pickClosedError, yard_short.go): the sentences are matched, and a
+ * test reads the Go source so a wording change there turns it red. */
+export const CORE_PICK_DONE = "this pick is done, its record cannot change";
+export const CORE_PICK_CANCELLED = "this pick was cancelled, its record cannot change";
+
+/**
+ * The yard's words for a record the core refused. A pick that was handed over (DONE) or cancelled takes no record, and a short
+ * the picker recorded then never reached the order: the order still bills the full quantity, which the customer sees, so the
+ * picker is told to tell the counter. Any other refusal keeps the core's own words.
+ */
+export function recordRefusalWords(error: string): string {
+  if (error.includes(CORE_PICK_DONE)) {
+    return "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
+  }
+  if (error.includes(CORE_PICK_CANCELLED)) return "This pick was cancelled, so your record was not saved. Tell the counter.";
+  return error;
+}
+
+/** The id a recorded line carries while it exists only on this device. A pull
+ * replaces the row, and the server's lines carry the server's ids. */
+export const LOCAL_LINE = "local:";
+
+/** True for a recorded line this device wrote and the server has not yet answered. */
+export function isLocalLine(line: { id: string }): boolean {
+  return line.id.startsWith(LOCAL_LINE);
+}
+
+/** What the pick says when its record is saved on the device and not yet sent. */
+export const RECORD_WAITING_WORDS = "Waiting to send: this pick's record goes as soon as you have signal.";
+
+/** The notice after a record that could not go yet (no signal): honest that the rep is told on send. */
+export function pickQueuedWords(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string }>): string {
+  const short = picked.filter((l) => lineIsShort(l.qty_ordered, l.qty_picked)).length;
+  const tail = short > 0 ? ` The ${short === 1 ? "short line goes" : "short lines go"} on backorder and the order's rep is told when it sends.` : "";
+  return `Pick saved on this device. It sends when you have signal.${tail}`;
+}
+
+/** The core's bound on the lines of one pick record (tasks.maxPickedLines); a test reads the Go constant. */
+export const MAX_PICKED_LINES = 500;
+
+const PICK_TEXT_LEGS: ReadonlyArray<readonly [string, string, boolean]> = [
+  ["product_id", "product id", false],
+  ["sku", "sku", false],
+  ["description", "description", true],
+  ["qty_ordered", "ordered quantity", false],
+  ["qty_picked", "picked quantity", false],
+  ["uom", "unit", false],
+  ["short_reason", "short reason", false],
+  ["short_note", "note", true],
+];
+
+/** A control (C0, DEL) or a bidi control (U+202A to U+202E, U+2066 to U+2069); `multiline` keeps tab, LF and CR. */
+function hasControl(value: string, multiline: boolean): boolean {
+  for (const ch of value) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c < 0x20 && !(multiline && (c === 9 || c === 10 || c === 13))) || c === 0x7f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) return true;
+  }
+  return false;
+}
+
+/**
+ * What the core's pick record door would refuse for its shape or its text,
+ * said before anything is queued (the core's rule, tasks.checkPickText and the
+ * bounds on a record): empty, more than 500 lines, or a control or bidi
+ * character in a text leg. A queued op the door refuses only comes back as a
+ * card; the picker is told here while the note is still in front of them.
+ */
+export function pickRecordProblem(lines: ReadonlyArray<object>): string {
+  if (lines.length === 0) return "Say what was picked, an empty record is not the same as a pick of nothing.";
+  if (lines.length > MAX_PICKED_LINES) return `That is more lines than any one ticket carries (max ${MAX_PICKED_LINES}).`;
+  for (const entry of lines) {
+    const line = entry as Readonly<Record<string, unknown>>;
+    for (const [key, name, multiline] of PICK_TEXT_LEGS) {
+      const value = line[key];
+      if (typeof value === "string" && hasControl(value, multiline)) {
+        return `Line ${String(line["order_line_no"])}: the ${name} cannot hold control characters, enter it as plain text.`;
+      }
+    }
+  }
+  return "";
+}
+
 /** The one-line the ticket says about itself once a pick has been recorded: what was pulled, not what is missing. */
 export function pickSummary(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string; uom: string; description?: string }> | undefined): string {
   const lines = picked ?? [];
@@ -436,6 +596,61 @@ export function skidWords(answer: { skid_count: number; previous_skid_count: num
   if (answer.previous_skid_count === null) return `${answer.order_no} now holds ${skids}.`;
   return `${answer.order_no} changed from ${answer.previous_skid_count} to ${n} skids.`;
 }
+// ---- the changes waiting on the yard ----
+
+/**
+ * The one action the yard's own screen offers on a change: acknowledge.
+ * Reject and cancel are the counter's actions (the action routes serve the
+ * quote desk), so the yard renders only what its list may do: the server's
+ * next_actions name it, and an absent list offers nothing, never everything
+ * (the till's own fail closed rule).
+ */
+export function canAcknowledge(change: { next_actions?: readonly string[] } | null | undefined): boolean {
+  return Array.isArray(change?.next_actions) && (change?.next_actions ?? []).includes("yard_ack");
+}
+
+/**
+ * What a change's state is CALLED, the till's own words for the same states
+ * (counter-till order-logic CHANGE_STATUS_LABEL): one vocabulary for one
+ * word, so a change the counter raised and the yard acknowledged reads the
+ * same on both screens. An unknown code degrades to itself, words for an
+ * underscore.
+ */
+const CHANGE_STATUS_WORD: Record<string, string> = {
+  PENDING_YARD: "With yard",
+  PENDING_FINANCE: "With finance",
+  APPROVED: "Approved",
+  APPLIED: "Applied",
+  REJECTED: "Rejected",
+  CANCELLED: "Withdrawn",
+};
+
+export function changeStatusWord(status: string): string {
+  return CHANGE_STATUS_WORD[status] ?? status.toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * What the yard reads once its acknowledgement has landed: the next stage,
+ * taken from the server's own answer and from nothing else. The ladder's
+ * remaining shape is the server's to know; no figure and no threshold is
+ * computed here.
+ */
+export function ackDoneWords(answer: { status: string }): string {
+  if (answer.status === "PENDING_FINANCE") return "Acknowledged. The change now waits on finance.";
+  if (answer.status === "APPROVED") return "Acknowledged. The change is approved and waits to be applied.";
+  return `Acknowledged. ${changeStatusWord(answer.status)}.`;
+}
+
+/**
+ * Who may acknowledge a change for the yard, named in plain words, the
+ * till's own shared sentence for the same wall (counter-till _order-change
+ * WALL_WORDS, yard_ack): a person refused by the gate must know whom to
+ * fetch. The roles are the default matrix's yard-pick work cells; a dealer's
+ * own configuration can move them, and the server's refusal always has the
+ * last word.
+ */
+export const CHANGE_ACK_WALL = "Only the yard team or the yard manager may acknowledge a change for the yard.";
+
 // ---- refusals ----
 
 /**
@@ -473,16 +688,18 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string; wall?: readonly string[] } = {},
+  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
   if (status === 403) {
     // The gate's bare body is the one 403 with no sentence: a list wall. It
     // is answered with the wall's own words naming who may, never shown as
-    // the bare "Forbidden" the gate writes.
+    // the bare "Forbidden" the gate writes. A caller may name its own wall
+    // sentence (the acknowledge shares the till's), otherwise the shortage
+    // wall's words stand.
     const plain = plainSentence(error);
-    if (plain === FORBIDDEN_BODY) return wallWords(words.wall ?? RESOLVE_WALL_NAMES);
+    if (plain === FORBIDDEN_BODY) return words.wallSentence ?? wallWords(words.wall ?? RESOLVE_WALL_NAMES);
     // A 403 that carries the server's own sentence shows it: it names who may
     // act. Only a refusal with no words gets the generic ones, and those name
     // the two roles the matrix admits to the yard surface.

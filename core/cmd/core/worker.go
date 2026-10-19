@@ -119,6 +119,9 @@ func worker(getenv func(string) string) error {
 	// DIB-191: the two NON-OWNING order observers, registering AFTER the GL
 	// consumer so both observed topics already have their primary owner.
 	order.NewLifecycleConsumer(graph.money.orderSvc, graph.tops.billingRepo, log).RegisterHandlers(dispatcher)
+	// HH-681: the order module owns order.change.applied (an applied change order); a topic with no owner
+	// is dead lettered by the dispatcher.
+	registerOrderEventOwners(dispatcher, log)
 	// MSG-01 FR-3: the messaging consumer OWNS msg.event.* and OBSERVES the
 	// raw domain topics; MUST run AFTER the gl/inventory registrations.
 	messaging.NewConsumer(graph.ops.messagingSvc, log).RegisterHandlers(dispatcher)
@@ -153,8 +156,8 @@ func worker(getenv func(string) string) error {
 	// pin's own order and wording.
 	unionCreditSweep := billing.CreditHoldSweepJob(graph.tops.creditSvc, "")
 	creditMemoRepost := billing.CreditMemoRepostJob(
-		billing.NewInvoiceWriter(pool).
-			WithCreditMemoPoster(w6cCreditMemoPoster{svc: graph.money.glSvc, rules: gl.NewRepository(pool)}).
+		newInvoiceWriter(pool).
+			WithCreditMemoPoster(w6cCreditMemoPoster{svc: graph.money.glSvc, rules: gl.NewRepository(pool), words: newTaxWords(pool)}).
 			WithDeliveredOrders(graph.money.orderSvc). // the deposit release sweep rides this job
 			WithJournalKeyReader(graph.money.glSvc),   // and asks the ledger, not gl_journals, which releases posted
 		0) // 0 = the package's batch ceiling

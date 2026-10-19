@@ -17,11 +17,12 @@ import (
 	"sort"
 	"strconv"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-const hstBps = 1300 // 13% HST, the rate the demo world prices at
+// hstBps is the rate the seed prices its documents at: 13 percent in a default build. The demo
+// build's world seam (demoseed_glsworld_tax_demo.go) sets it to the demo dealer's rate before any
+// plan is built; nothing else assigns it.
+var hstBps = 1300
 
 // taxOn is the money rule, done in integer cents with half-up rounding. The server is the
 // arithmetic authority everywhere else in this system; here the seed is writing the rows the server
@@ -61,7 +62,7 @@ func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 // system already obeys (the sales.today window, the rollup day, the ledger's period, the tax
 // assessor's today).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.In(houseday.Location()).Date()
+	y, m, d := b.in.Now.In(seedLocation()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 
@@ -788,12 +789,15 @@ func (b *builder) fleet() {
 
 func (b *builder) runs() {
 	for _, r := range demoRuns {
-		var truck, driver, dispatched, completed any
+		var truck, driver, departs, dispatched, completed any
 		if r.Truck != "" {
 			truck = demoID("truck:" + r.Truck)
 		}
 		if r.Driver != "" {
 			driver = demoID("driver:" + r.Driver)
+		}
+		if r.DepartsMin > 0 {
+			departs = b.day(r.DayOff).Add(time.Duration(r.DepartsMin) * time.Minute)
 		}
 		if r.Status == "DISPATCHED" || r.Status == "COMPLETED" {
 			dispatched = b.day(r.DayOff).Add(7 * time.Hour)
@@ -808,6 +812,7 @@ func (b *builder) runs() {
 			"scheduled_date", b.day(r.DayOff),
 			"truck_id", truck, "driver_id", driver,
 			"status", r.Status, "notes", r.Notes,
+			"departs_at", departs,
 			"dispatched_at", dispatched, "completed_at", completed,
 			"created_at", b.day(r.DayOff).Add(-6*time.Hour),
 			"updated_at", b.day(r.DayOff).Add(-6*time.Hour),
@@ -816,7 +821,7 @@ func (b *builder) runs() {
 	// The reschedule trail. Two real moves, so the history panel is not an empty state on day one.
 	b.add(insert("dispatch_reschedules", "(id)",
 		"id", demoID("resched:1"),
-		"branch_id", b.branchID(0), "entity_type", "delivery_stop",
+		"branch_id", b.branchID(1), "entity_type", "delivery_stop",
 		"entity_id", demoID("stop:SP11"),
 		"from_date", b.day(0), "to_date", b.day(1),
 		"reason", "Customer asked for the morning instead", "stops_moved", 1,
@@ -851,6 +856,7 @@ func (b *builder) stops() error {
 			"status", s.Status,
 			"time_window", s.Window,
 			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"gate_code", s.GateCode,
 			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
 			"latitude", s.Lat, "longitude", s.Lng,
 			"mto_class", s.MTOClass, "mto_note", s.MTONote,
@@ -1428,6 +1434,7 @@ func (b *builder) driverDay() {
 		"driver_id", demoID("driver:D1"),
 		"status", "DISPATCHED",
 		"notes", "Kingston, out for delivery (demo)",
+		"departs_at", departed,
 		"dispatched_at", departed,
 		"created_at", b.day(0).Add(-6*time.Hour),
 		"updated_at", departed,
@@ -1482,6 +1489,7 @@ func (b *builder) driverDay() {
 			"status", "READY",
 			"time_window", window,
 			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"gate_code", s.GateCode,
 			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
 			"latitude", s.Lat, "longitude", s.Lng,
 			"mto_class", "STANDARD", "mto_note", "",

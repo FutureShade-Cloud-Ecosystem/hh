@@ -55,6 +55,18 @@ const (
 	auditAction     = "AUTH_EXCHANGE"
 	auditEntityType = "auth.exchange"
 	auditPurpose    = "STAFF_SIGN_IN"
+	// auditPurposeTenant is the tenant leg's purpose word.
+	auditPurposeTenant = "TENANT_SIGN_IN"
+
+	// classStaff and classTenant are the body's optional class field: the
+	// staff exchange is the default, the tenant leg is asked for by name.
+	classStaff  = "staff"
+	classTenant = "tenant"
+
+	// TenantSessionCeiling bounds a tenant token's window and the sign in
+	// age of the Console session behind it: a contractor has no role knob,
+	// so the standard staff session stands.
+	TenantSessionCeiling = identity.StaffSessionTTL
 )
 
 // The static failure codes: where a refusal is recorded. They are log
@@ -90,6 +102,14 @@ const (
 	CodeLabelError   = "g8_label_error"
 	CodeAuditError   = "g8_audit_error"
 	CodeMintError    = "g8_mint_error"
+
+	// The tenant leg's own refusals (the gates it replaces or adds).
+	CodeClassBad       = "g1_class"
+	CodeTenantOff      = "g1_tenant_leg_off"
+	CodeTenantNoRow    = "g6t_no_portal_row"
+	CodeTenantInactive = "g6t_portal_inactive"
+	CodeTenantEmail    = "g6t_email_mismatch"
+	CodeTenantRowError = "g6t_portal_error"
 )
 
 // AllCodes lists every static code, for the test that keeps them distinct.
@@ -100,6 +120,7 @@ func AllCodes() []string {
 		CodeMethodNo, CodeMethodError, CodeNotMember, CodeMemberError, CodeNoAnchor, CodeAnchorError,
 		CodeNoLinkedRow, CodeInactive, CodeNoGrant, CodeStaffError, CodeCeilingError, CodeSessionError,
 		CodeSessionMiss, CodeSessionValue, CodeSignInTooOld, CodeLabelError, CodeAuditError, CodeMintError,
+		CodeClassBad, CodeTenantOff, CodeTenantNoRow, CodeTenantInactive, CodeTenantEmail, CodeTenantRowError,
 	}
 }
 
@@ -115,6 +136,9 @@ type Console interface {
 // UNCACHED source, never the per request cache.
 type Members interface {
 	OrgMember(ctx context.Context, platformUserID, orgSlug string) (bool, error)
+	// TenantOrgs lists the org slugs of the user's ten-<slug> Teams, the
+	// tenant leg's membership read.
+	TenantOrgs(ctx context.Context, platformUserID string) ([]string, error)
 }
 
 // Orgs resolves the slug against the org anchor.
@@ -132,6 +156,24 @@ type Staff interface {
 	LinkedActiveUser(ctx context.Context, platformUserID string) (userID string, ok bool, err error)
 	ResolveStaff(ctx context.Context, platformUserID, orgID string) (identity.StaffAuthority, bool, error)
 	StaffRoleLabel(ctx context.Context, roleID string) (label string, ok bool, err error)
+}
+
+// Portal is the identity module's contractor linkage read
+// (identity.PortalRoleResolver).
+type Portal interface {
+	LinkedPortalUser(ctx context.Context, platformUserID string) (identity.PortalLink, bool, error)
+}
+
+// TenantMinter is identity.SessionMinter.MintTenantAt.
+type TenantMinter interface {
+	MintTenantAt(subject, tenantID string, window time.Duration, at time.Time) (string, error)
+}
+
+// TenantLeg is what the tenant class needs beyond the staff collaborators.
+// Nil in Config means the tenant class is refused.
+type TenantLeg struct {
+	Portal Portal
+	Minter TenantMinter
 }
 
 // Auditor is audit.Service.Record.
@@ -177,6 +219,28 @@ var providerMethod = map[string]string{
 	ProviderMicrosoft: identity.MethodMicrosoft,
 }
 
+// The provider values the tenant leg accepts: the email link and Google
+// (the boards, row 1592). ProviderMagicURL is a PLACEHOLDER like Google's:
+// the value a real email link session carries has not been read, and an
+// unconfirmed value fails closed (the session is refused at the method
+// gate). The table is closed and fixed in code: the dealer's staff set
+// does not decide how a contractor signs in.
+const ProviderMagicURL = "magic-url"
+
+var tenantProviders = map[string]bool{
+	ProviderMagicURL: true,
+	ProviderGoogle:   true,
+}
+
+// portalRoleLabels names the contractor roles for the answer's user block.
+var portalRoleLabels = map[string]string{
+	identity.PortalRoleAccountAdmin: "Account admin",
+	identity.PortalRoleBuyer:        "Buyer",
+	identity.PortalRoleBuyerNoPay:   "Buyer, no pay",
+	identity.PortalRoleAPFinance:    "AP finance",
+	identity.PortalRoleFieldCrew:    "Field crew",
+}
+
 // Config is the handler's constructor input; every collaborator is
 // required.
 type Config struct {
@@ -189,6 +253,8 @@ type Config struct {
 	Audit   Auditor
 	Minter  Minter
 	Methods SignInMethods
+	// Tenant enables the contractor leg; nil refuses class tenant.
+	Tenant *TenantLeg
 
 	// AllowedDomains and AllowedAddresses are gate 4's lists, already
 	// normalised (ParseAllowList). Both empty refuses every sign in.
@@ -244,6 +310,8 @@ func New(c Config) (*Handler, error) {
 		return nil, errors.New("exchange: the sign in method reader is required")
 	case c.TokenTTL < identity.MinSessionWindow:
 		return nil, errors.New("exchange: the token window is required")
+	case c.Tenant != nil && (c.Tenant.Portal == nil || c.Tenant.Minter == nil):
+		return nil, errors.New("exchange: the tenant leg needs the portal reader and the tenant minter")
 	}
 	h := &Handler{cfg: c, domains: map[string]bool{}, addrs: map[string]bool{}, failures: map[string]int64{}}
 	for _, d := range c.AllowedDomains {
@@ -327,6 +395,9 @@ func (h *Handler) refuse400(w http.ResponseWriter, code, msg string) {
 type request struct {
 	JWT string `json:"jwt"`
 	Org string `json:"org"`
+	// Class is optional: empty or "staff" is the staff exchange, "tenant"
+	// the contractor leg.
+	Class string `json:"class"`
 }
 
 var jwtSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+={0,2}$`)
@@ -375,11 +446,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt and org only")
+		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt, org and class only")
 		return
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt and org only")
+		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt, org and class only")
 		return
 	}
 	if !wellFormedJWT(in.JWT) {
@@ -388,6 +459,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !authz.ValidOrgSlug(in.Org) {
 		h.refuse400(w, CodeBody, "org is not a valid org slug")
+		return
+	}
+	tenant := false
+	switch in.Class {
+	case "", classStaff:
+	case classTenant:
+		tenant = true
+	default:
+		h.refuse400(w, CodeClassBad, "class must be staff or tenant when given")
+		return
+	}
+	if tenant && h.cfg.Tenant == nil {
+		// The leg is not composed on this deployment. The shared 403, before
+		// any address allowance or Console call is spent on it.
+		h.refuse403(w, CodeTenantOff)
 		return
 	}
 
@@ -446,6 +532,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.refuse403(w, CodeAccountOff)
 		return
 	}
+	if tenant {
+		h.serveTenant(w, r, now, in, acct, jwt)
+		return
+	}
 	if !h.emailListed(acct.Email) {
 		h.refuse403(w, CodeEmailList)
 		return
@@ -463,13 +553,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gate 5b: the org anchor. No anchor is the same 403 as no membership.
-	orgID, ok, err := h.cfg.Orgs.ResolveSlug(ctx, in.Org)
-	if err != nil {
-		h.refuse503(w, CodeAnchorError)
-		return
-	}
+	orgID, ok := h.resolveAnchor(ctx, w, in.Org)
 	if !ok {
-		h.refuse403(w, CodeNoAnchor)
 		return
 	}
 
@@ -507,26 +592,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Gate 7b (with gate 4b): the Console session behind the JWT, read
 	// server side. No match, or a value it cannot read, is never a pass.
-	sessions, err := h.cfg.Console.UserSessions(ctx, acct.ID)
-	if err != nil {
-		h.refuse503(w, CodeSessionError)
-		return
-	}
-	var session *authz.ConsoleSession
-	if jwt.SessionID != "" {
-		for i := range sessions {
-			if sessions[i].ID == jwt.SessionID {
-				session = &sessions[i]
-				break
-			}
-		}
-	}
-	if session == nil {
-		h.refuse503(w, CodeSessionMiss)
-		return
-	}
-	if session.CreatedAt.IsZero() || session.CreatedAt.After(now.Add(sessionClockSkew)) {
-		h.refuse503(w, CodeSessionValue)
+	session, ok := h.readSession(ctx, w, now, acct.ID, jwt)
+	if !ok {
 		return
 	}
 	// Gate 4b rides the same session read: the provider maps through the
@@ -610,4 +677,142 @@ func minDuration(first time.Duration, rest ...time.Duration) time.Duration {
 		}
 	}
 	return m
+}
+
+// resolveAnchor is gate 5b, shared by both classes: the slug against the org
+// anchor. No anchor is the same 403 as no membership.
+func (h *Handler) resolveAnchor(ctx context.Context, w http.ResponseWriter, org string) (string, bool) {
+	orgID, ok, err := h.cfg.Orgs.ResolveSlug(ctx, org)
+	if err != nil {
+		h.refuse503(w, CodeAnchorError)
+		return "", false
+	}
+	if !ok {
+		h.refuse403(w, CodeNoAnchor)
+		return "", false
+	}
+	return orgID, true
+}
+
+// readSession is gate 7b's read, shared by both classes: the Console session
+// behind the JWT, read server side. No match, or a value it cannot read, is
+// never a pass.
+func (h *Handler) readSession(ctx context.Context, w http.ResponseWriter, now time.Time, userID string, jwt authz.ConsoleJWT) (*authz.ConsoleSession, bool) {
+	sessions, err := h.cfg.Console.UserSessions(ctx, userID)
+	if err != nil {
+		h.refuse503(w, CodeSessionError)
+		return nil, false
+	}
+	var session *authz.ConsoleSession
+	if jwt.SessionID != "" {
+		for i := range sessions {
+			if sessions[i].ID == jwt.SessionID {
+				session = &sessions[i]
+				break
+			}
+		}
+	}
+	if session == nil {
+		h.refuse503(w, CodeSessionMiss)
+		return nil, false
+	}
+	if session.CreatedAt.IsZero() || session.CreatedAt.After(now.Add(sessionClockSkew)) {
+		h.refuse503(w, CodeSessionValue)
+		return nil, false
+	}
+	return session, true
+}
+
+// serveTenant is the contractor leg after gate 3b. It keeps the Console
+// account half of gate 4 (verified, active) but not the staff allow lists
+// (a contractor's domain is anyone's), then replaces gates 5, 6 and 7 with
+// their tenant forms: membership of the org's ten-<slug> Team and no other,
+// a live ACTIVE portal_users row for this platform user whose email is the
+// Console account's, and the tenant ceiling. Gates 5b, 7b and 8 are the
+// staff ones. The `tenant` claim is the row's own account; nothing in the
+// request reaches it.
+func (h *Handler) serveTenant(w http.ResponseWriter, r *http.Request, now time.Time, in request, acct authz.ConsoleAccount, jwt authz.ConsoleJWT) {
+	ctx := r.Context()
+
+	// Gate 5 (tenant): exactly one tenant Team org, and it is the requested
+	// one, read from the uncached source: the per request gate's own rule.
+	orgs, err := h.cfg.Members.TenantOrgs(ctx, acct.ID)
+	if err != nil {
+		h.refuse503(w, CodeMemberError)
+		return
+	}
+	if len(orgs) != 1 || orgs[0] != in.Org {
+		h.refuse403(w, CodeNotMember)
+		return
+	}
+
+	// Gate 5b: the org anchor.
+	if _, ok := h.resolveAnchor(ctx, w, in.Org); !ok {
+		return
+	}
+
+	// Gate 6 (tenant): the live portal row. Never provisioned or linked
+	// here: a person with no linked row has no contractor account yet.
+	link, ok, err := h.cfg.Tenant.Portal.LinkedPortalUser(ctx, acct.ID)
+	switch {
+	case errors.Is(err, identity.ErrPortalUserInactive):
+		h.refuse403(w, CodeTenantInactive)
+		return
+	case err != nil:
+		h.refuse503(w, CodeTenantRowError)
+		return
+	case !ok || link.PortalUserID == "" || link.TenantID == "":
+		h.refuse403(w, CodeTenantNoRow)
+		return
+	case !strings.EqualFold(strings.TrimSpace(link.Email), strings.TrimSpace(acct.Email)):
+		// The account matches the row, or the sign in is refused: this is
+		// what lets Google in beside the email link.
+		h.refuse403(w, CodeTenantEmail)
+		return
+	}
+
+	// Gate 7b: the sign in age, server side, and gate 4b over the closed
+	// tenant provider table (the dealer's staff set is not consulted).
+	session, ok := h.readSession(ctx, w, now, acct.ID, jwt)
+	if !ok {
+		return
+	}
+	if !tenantProviders[session.Provider] {
+		h.refuse403(w, CodeMethodNo)
+		return
+	}
+	window := minDuration(TenantSessionCeiling, h.cfg.TokenTTL, session.CreatedAt.Add(TenantSessionCeiling).Sub(now))
+	window = window.Truncate(time.Second)
+	if window < MinTokenWindow {
+		h.refuse401(w, CodeSignInTooOld)
+		return
+	}
+
+	// Gate 8: the audit row first, then the token.
+	if err := h.cfg.Audit.Record(ctx, audit.SensitiveAccess{
+		Action:     auditAction,
+		EntityType: auditEntityType,
+		EntityID:   link.PortalUserID,
+		ActorID:    link.PortalUserID,
+		Purpose:    auditPurposeTenant,
+		Extra:      map[string]any{"actor_subject": acct.ID},
+	}); err != nil {
+		h.refuse503(w, CodeAuditError)
+		return
+	}
+	token, err := h.cfg.Tenant.Minter.MintTenantAt(acct.ID, link.TenantID, window, now)
+	if err != nil {
+		h.refuse503(w, CodeMintError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, response{
+		Token:       token,
+		ExpiresAtMs: (now.Unix() + int64(window/time.Second)) * 1000,
+		User: userBlock{
+			UserID: acct.ID, Email: acct.Email, DisplayName: acct.Name,
+			RoleCode: link.Role, RoleName: portalRoleLabels[link.Role],
+			Tier: 0, Scope: "TENANT",
+		},
+	})
 }

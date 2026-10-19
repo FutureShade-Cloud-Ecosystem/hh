@@ -381,10 +381,8 @@ func (r *Repository) POByVendorRef(ctx context.Context, ref string) (PO, error) 
 	defer rows.Close()
 	var found []PO
 	for rows.Next() {
-		var p PO
-		if err := rows.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
-			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt,
-			&p.Currency, &p.FXRate, &p.DeliveryMethod); err != nil {
+		p, err := scanPO(rows)
+		if err != nil {
 			return PO{}, fmt.Errorf("purchasing: scan po by vendor ref: %w", err)
 		}
 		found = append(found, p)

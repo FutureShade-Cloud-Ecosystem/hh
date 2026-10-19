@@ -49,6 +49,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	syncengine "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
 
 func main() {
@@ -348,7 +349,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// mode): the deployment's own key signs, and the core verifies its own
 	// tokens through an in process source over the same public keys, with
 	// no HTTP hop. A missing or unparseable key stops the boot here.
-	session, err := loadSessionComposition(getenv, auth.issuer, auth.staffAudience)
+	session, err := loadSessionComposition(getenv, auth.issuer, auth.staffAudience, auth.tenantAudience)
 	if err != nil {
 		return nil, err
 	}
@@ -620,6 +621,11 @@ func serve(getenv func(string) string) error {
 	// slot lock; a pool of one would hang every keyed push, so refuse to
 	// boot rather than serve a door that wedges.
 	if err := syncengine.RequireLedgerPool(graph.pool); err != nil {
+		return err
+	}
+	// A pick record holds the task row's transaction across the order call, and a sync record also holds
+	// the ledger's lock connection: three connections are the least that can finish one.
+	if err := tasks.RequireRecordPool(graph.pool); err != nil {
 		return err
 	}
 

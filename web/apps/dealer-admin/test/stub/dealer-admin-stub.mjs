@@ -208,8 +208,10 @@ const PROFILES = [
   "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
   "manager.procurement", "manager.payables", "manager.controller", "manager.general",
 ];
-const SETTINGS_ADMIN_WORDS =
-  "settings: changing dealer screen settings is limited to administrators";
+const SETTINGS_ADMIN_READ_WORDS =
+  "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings";
+const SETTINGS_ADMIN_WRITE_WORDS =
+  "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings";
 
 let surfaces;
 let mine;
@@ -436,6 +438,9 @@ function buildAssist() {
 let payments;
 let posPolicy;
 let policyHistory;
+let warrantyPolicy;
+let warrantyVendors;
+let warrantyAgreements;
 
 // The counter's org wide policy, the demo's real defaults (credit at the
 // till is on, the restocking fee is the seeded 250 basis points, the
@@ -459,6 +464,59 @@ function buildPosPolicy() {
     balance_visibility: "ALL_STAFF",
     quick_chip_set: [],
   };
+}
+
+// The walk change 6 warranty world: the claim threshold at 0396's seed
+// ($50.00), and the demo's four suppliers in the boards' own states. A
+// vendor with no row answers the default claim_by_claim, the way the core's
+// read does.
+function buildWarrantyPolicy() {
+  return { branch_id: "", claim_threshold_cents: 5000 };
+}
+
+function buildWarrantyVendors() {
+  return [
+    { id: "aa000000-0000-4000-9000-000000000001", vendor_no: "V-COPPER", name: "Copperline Pavers" },
+    { id: "aa000000-0000-4000-9000-000000000002", vendor_no: "V-GRANITE", name: "Granite Run Quarry" },
+    { id: "aa000000-0000-4000-9000-000000000003", vendor_no: "V-HERON", name: "Heronfield Stone" },
+    { id: "aa000000-0000-4000-9000-000000000004", vendor_no: "V-PRAIRIE", name: "Prairie Bend Soils" },
+  ];
+}
+
+function buildWarrantyAgreements() {
+  return {
+    "aa000000-0000-4000-9000-000000000002": { agreement_kind: "periodic_credit_note", period: "quarterly", allowance_bp: 0 },
+    "aa000000-0000-4000-9000-000000000003": { agreement_kind: "fixed_allowance", period: "quarterly", allowance_bp: 100 },
+    "aa000000-0000-4000-9000-000000000004": { agreement_kind: "periodic_credit_note", period: "monthly", allowance_bp: 0 },
+  };
+}
+
+function effectiveAgreement(vendor) {
+  const row = warrantyAgreements[vendor.id];
+  const head = { vendor_id: vendor.id, vendor_no: vendor.vendor_no, vendor_name: vendor.name };
+  if (!row || row.agreement_kind === "claim_by_claim") {
+    return { ...head, agreement_kind: "claim_by_claim", allowance_bp: 0 };
+  }
+  return { ...head, agreement_kind: row.agreement_kind, period: row.period, allowance_bp: row.allowance_bp };
+}
+
+// The agreement write's validators, in the core's own words.
+function validateAgreement(b) {
+  const kind = String(b.agreement_kind ?? "");
+  if (kind !== "claim_by_claim" && kind !== "periodic_credit_note" && kind !== "fixed_allowance") {
+    return "warranty: agreement_kind must be one of claim_by_claim, periodic_credit_note, fixed_allowance";
+  }
+  if (kind !== "claim_by_claim") {
+    const period = String(b.period ?? "");
+    if (period !== "monthly" && period !== "quarterly") {
+      return `warranty: period must be monthly or quarterly for a ${kind} agreement`;
+    }
+    const bp = Number(b.allowance_bp ?? 0);
+    if (!Number.isInteger(bp) || bp < 0 || bp > 10000) {
+      return "warranty: allowance_bp must be between 0 and 10000 (basis points of the vendor's purchases)";
+    }
+  }
+  return "";
 }
 
 // The validators the pos policy write carries, in the core's own words.
@@ -822,6 +880,9 @@ function reset() {
   payments = buildPayments();
   posPolicy = buildPosPolicy();
   policyHistory = buildPolicyHistory();
+  warrantyPolicy = buildWarrantyPolicy();
+  warrantyVendors = buildWarrantyVendors();
+  warrantyAgreements = buildWarrantyAgreements();
   policies = buildPolicies();
   rules = structuredClone(RULES_WORLD);
   overrides = structuredClone(OVERRIDES_WORLD);
@@ -1083,8 +1144,43 @@ async function handle(req, res) {
     return json(res, { saved: true });
   }
 
-  // ---- the pricing routes: the categories read, the margin policies, the floor pair ----
-  // The core's gates: the pricing reads are staff's, the writes are the
+  // ---- the walk change 6 warranty routes: the claim threshold, the vendors' credit agreements ----
+  // The gates are the core's: the reads are staff's, the writes are the
+  // manager tier's (the dealer's administrators' own). A refused read or
+  // write answers the shared Forbidden body, exactly {"error":"Forbidden"}.
+
+  if (req.method === "GET" && path === "/api/v1/warranty/policy") {
+    if (scenario === "refused-warranty") return refuse(res, 403, "Forbidden");
+    return json(res, warrantyPolicy);
+  }
+  if (req.method === "PUT" && path === "/api/v1/warranty/policy") {
+    if (!isManager(flow) || scenario === "refused-warranty") return refuse(res, 403, "Forbidden");
+    const cents = Number(body?.claim_threshold_cents);
+    if (!Number.isInteger(cents) || cents < 0) return refuse(res, 422, "warranty: claim_threshold_cents must be >= 0");
+    warrantyPolicy = { branch_id: String(body?.branch_id ?? ""), claim_threshold_cents: cents };
+    return json(res, warrantyPolicy);
+  }
+  if (req.method === "GET" && path === "/api/v1/warranty/agreements") {
+    if (scenario === "refused-warranty") return refuse(res, 403, "Forbidden");
+    const items = warrantyVendors.map(effectiveAgreement);
+    return json(res, { items });
+  }
+  const agreementMatch = path.match(/^\/api\/v1\/warranty\/agreements\/([^/]+)$/);
+  if (req.method === "PUT" && agreementMatch) {
+    if (!isManager(flow) || scenario === "refused-warranty") return refuse(res, 403, "Forbidden");
+    const vendor = warrantyVendors.find((v) => v.id === agreementMatch[1]);
+    if (!vendor) return refuse(res, 422, `warranty: unknown vendor "${agreementMatch[1]}"`);
+    const fault = validateAgreement(body ?? {});
+    if (fault !== "") return refuse(res, 422, fault);
+    const kind = String(body.agreement_kind);
+    warrantyAgreements[vendor.id] =
+      kind === "claim_by_claim"
+        ? { agreement_kind: kind }
+        : { agreement_kind: kind, period: String(body.period), allowance_bp: Number(body.allowance_bp ?? 0) };
+    return json(res, effectiveAgreement(vendor));
+  }
+
+  // ---- the pricing routes: the categories read, the margin policies, the floor pair ----  // The core's gates: the pricing reads are staff's, the writes are the
   // manager tier's. A refused read or write answers the shared Forbidden
   // body, exactly {"error":"Forbidden"}.
 
@@ -2033,9 +2129,11 @@ async function handle(req, res) {
     return json(res, { jobs });
   }
 
-  // ---- the exports (the workbook is a staff read; the messages export is RequireAdmin) ----
+  // ---- the exports (the audit workbook is RequireAdmin like the trail it mirrors; the messages export is RequireAdmin) ----
 
   if (req.method === "GET" && path === "/api/v1/exports/audit.xlsx") {
+    // Same gate as the audit read it mirrors, with the shared Forbidden body.
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
     // A double's workbook: the xlsx magic followed by filler. The route's
     // contract is the raw bytes, and the app never parses them.
     const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(1020, 7)]);
@@ -2146,7 +2244,7 @@ async function handle(req, res) {
 
   const configMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/config$/);
   if (req.method === "GET" && configMatch) {
-    if (!isManager(flow)) return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    if (!isManager(flow)) return refuse(res, 403, SETTINGS_ADMIN_READ_WORDS);
     const profile = url.searchParams.get("profile") ?? "";
     if (!PROFILES.includes(profile)) {
       return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
@@ -2175,7 +2273,7 @@ async function handle(req, res) {
   const itemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/items$/);
   if (req.method === "PUT" && itemsMatch) {
     if (!isManager(flow) || scenario === "refused-role-config") {
-      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+      return refuse(res, 403, SETTINGS_ADMIN_WRITE_WORDS);
     }
     const profile = String(body?.profile ?? "");
     if (!PROFILES.includes(profile)) {
@@ -2188,7 +2286,7 @@ async function handle(req, res) {
   }
   if (req.method === "DELETE" && itemsMatch) {
     if (!isManager(flow) || scenario === "refused-role-config") {
-      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+      return refuse(res, 403, SETTINGS_ADMIN_WRITE_WORDS);
     }
     const profile = url.searchParams.get("profile") ?? "";
     if (!PROFILES.includes(profile)) {

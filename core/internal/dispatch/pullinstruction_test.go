@@ -50,7 +50,7 @@ func TestDeliveryTicket_IsByteIdenticalToWhatThisCodeProducedBefore(t *testing.T
 			row: pickFeedStop{StopID: "s-1", BranchID: "b-1", OrderID: "o-1", OrderNo: "#SO-TRT-1041",
 				CustomerName: "Bostock Landscaping", Fulfillment: "DELIVERY", ScheduledDate: "2026-08-06",
 				StopStatus: "READY", MTOClass: "STANDARD"},
-			want: `{"OrderID":"o-1","OrderNo":"#SO-TRT-1041","BranchID":"b-1","CustomerName":"Bostock Landscaping","Fulfillment":"DELIVERY","Priority":"HIGH","Reference":"s-1","ScheduledDate":"2026-08-06","RequestedAt":"2026-08-06T00:00:00Z","StopID":"s-1","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","MTOClass":"STANDARD","TimeWindow":"","Lines":[]}`,
+			want: `{"OrderID":"o-1","OrderNo":"#SO-TRT-1041","BranchID":"b-1","CustomerName":"Bostock Landscaping","Fulfillment":"DELIVERY","Priority":"HIGH","Reference":"s-1","ScheduledDate":"2026-08-06","RequestedAt":"2026-08-06T00:00:00Z","StopID":"s-1","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","RunDepartsAt":null,"LoadPosition":0,"MTOClass":"STANDARD","TimeWindow":"","Lines":[]}`,
 		},
 		{
 			name: "on a planned run, already late, made to order",
@@ -58,7 +58,7 @@ func TestDeliveryTicket_IsByteIdenticalToWhatThisCodeProducedBefore(t *testing.T
 				CustomerName: "Rood Contracting", Fulfillment: "DELIVERY", ScheduledDate: "2026-08-05",
 				StopStatus: "READY", RunID: "r-1", RunNo: "RUN-7", RunStatus: "PLANNED", MTOClass: "MTO",
 				TimeWindow: "08:00-12:00"},
-			want: `{"OrderID":"o-2","OrderNo":"#SO-TRT-1042","BranchID":"b-1","CustomerName":"Rood Contracting","Fulfillment":"DELIVERY","Priority":"URGENT","Reference":"s-2","ScheduledDate":"2026-08-05","RequestedAt":"2026-08-05T00:00:00Z","StopID":"s-2","StopStatus":"READY","RunID":"r-1","RunNo":"RUN-7","RunStatus":"PLANNED","MTOClass":"MTO","TimeWindow":"08:00-12:00","Lines":[]}`,
+			want: `{"OrderID":"o-2","OrderNo":"#SO-TRT-1042","BranchID":"b-1","CustomerName":"Rood Contracting","Fulfillment":"DELIVERY","Priority":"URGENT","Reference":"s-2","ScheduledDate":"2026-08-05","RequestedAt":"2026-08-05T00:00:00Z","StopID":"s-2","StopStatus":"READY","RunID":"r-1","RunNo":"RUN-7","RunStatus":"PLANNED","RunDepartsAt":null,"LoadPosition":0,"MTOClass":"MTO","TimeWindow":"08:00-12:00","Lines":[]}`,
 		},
 		{
 			// THE CASE THE FALLBACK EXISTS FOR. pickFeedSelect LEFT JOINs orders and COALESCEs a
@@ -67,14 +67,14 @@ func TestDeliveryTicket_IsByteIdenticalToWhatThisCodeProducedBefore(t *testing.T
 			name: "order row unreadable, fulfilment arrives empty",
 			row: pickFeedStop{StopID: "s-3", BranchID: "b-2", OrderID: "o-3", Fulfillment: "",
 				ScheduledDate: "2026-08-09", StopStatus: "READY", MTOClass: "MIXED"},
-			want: `{"OrderID":"o-3","OrderNo":"","BranchID":"b-2","CustomerName":"","Fulfillment":"DELIVERY","Priority":"NORMAL","Reference":"s-3","ScheduledDate":"2026-08-09","RequestedAt":"2026-08-09T00:00:00Z","StopID":"s-3","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","MTOClass":"MIXED","TimeWindow":"","Lines":[]}`,
+			want: `{"OrderID":"o-3","OrderNo":"","BranchID":"b-2","CustomerName":"","Fulfillment":"DELIVERY","Priority":"NORMAL","Reference":"s-3","ScheduledDate":"2026-08-09","RequestedAt":"2026-08-09T00:00:00Z","StopID":"s-3","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","RunDepartsAt":null,"LoadPosition":0,"MTOClass":"MIXED","TimeWindow":"","Lines":[]}`,
 		},
 		{
 			name: "unparseable date stays NORMAL and carries no requested-at",
 			row: pickFeedStop{StopID: "s-4", BranchID: "b-1", OrderID: "o-4", OrderNo: "#SO-TRT-1044",
 				CustomerName: "Colton", Fulfillment: "DELIVERY", ScheduledDate: "not-a-date",
 				StopStatus: "READY", MTOClass: "STANDARD"},
-			want: `{"OrderID":"o-4","OrderNo":"#SO-TRT-1044","BranchID":"b-1","CustomerName":"Colton","Fulfillment":"DELIVERY","Priority":"NORMAL","Reference":"s-4","ScheduledDate":"not-a-date","RequestedAt":null,"StopID":"s-4","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","MTOClass":"STANDARD","TimeWindow":"","Lines":[]}`,
+			want: `{"OrderID":"o-4","OrderNo":"#SO-TRT-1044","BranchID":"b-1","CustomerName":"Colton","Fulfillment":"DELIVERY","Priority":"NORMAL","Reference":"s-4","ScheduledDate":"not-a-date","RequestedAt":null,"StopID":"s-4","StopStatus":"READY","RunID":"","RunNo":"","RunStatus":"","RunDepartsAt":null,"LoadPosition":0,"MTOClass":"STANDARD","TimeWindow":"","Lines":[]}`,
 		},
 	}
 	for _, c := range cases {

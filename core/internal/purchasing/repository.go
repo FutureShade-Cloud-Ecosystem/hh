@@ -61,12 +61,14 @@ func nullStr(s string) any {
 
 const poCols = `p.id::text, p.po_no::text, p.vendor_id::text, p.branch_id::text, p.status,
 	COALESCE(to_char(p.expected_at,'YYYY-MM-DD'),''), p.ordered_at,
-	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8, p.delivery_method`
+	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8, p.delivery_method,
+	COALESCE(p.warranty_credit_applied_cents, 0), p.warranty_claim_id::text, COALESCE(p.net_total_cents, 0)`
 
 func scanPO(row pgx.Row) (PO, error) {
 	var p PO
 	err := row.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
-		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod)
+		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod,
+		&p.WarrantyCreditAppliedCents, &p.WarrantyClaimID, &p.NetTotalCents)
 	return p, err
 }
 
@@ -187,8 +189,17 @@ func (r *Repository) ListPOs(ctx context.Context, branchID, status string) ([]PO
 		var p PO
 		if err := rows.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
 			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod,
+			&p.WarrantyCreditAppliedCents, &p.WarrantyClaimID, &p.NetTotalCents,
 			&p.LineCount, &p.SubtotalCents, &p.SubtotalCadCents); err != nil {
 			return nil, fmt.Errorf("purchasing: scan po: %w", err)
+		}
+		if p.NetTotalCents == 0 && p.WarrantyCreditAppliedCents == 0 {
+			p.NetTotalCents = p.SubtotalCents
+		} else if p.WarrantyCreditAppliedCents > 0 && p.NetTotalCents == 0 {
+			p.NetTotalCents = p.SubtotalCents - p.WarrantyCreditAppliedCents
+			if p.NetTotalCents < 0 {
+				p.NetTotalCents = 0
+			}
 		}
 		out = append(out, p)
 	}
@@ -295,6 +306,28 @@ func bumpPOHeaderSeq(ctx context.Context, q querier, poID string) error {
 		UPDATE purchasing_pos SET updated_at = now(), seq = (SELECT next_value FROM poseq) WHERE id = $1`,
 		poID); err != nil {
 		return fmt.Errorf("purchasing: bump po header seq: %w", err)
+	}
+	return nil
+}
+
+// ApplyWarrantyCredit records the warranty credit applied to a draft purchase order.
+func (r *Repository) ApplyWarrantyCredit(ctx context.Context, tx pgx.Tx, poID string, claimID *string, creditCents, netTotalCents int64) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.q(tx).Exec(ctx, poSeqCTE+`
+		UPDATE purchasing_pos
+		   SET warranty_credit_applied_cents = $2,
+		       warranty_claim_id = $3::uuid,
+		       net_total_cents = $4,
+		       updated_at = now(),
+		       seq = (SELECT next_value FROM poseq)
+		 WHERE id = $1::uuid`, poID, creditCents, claimID, netTotalCents)
+	if err != nil {
+		return fmt.Errorf("purchasing: apply warranty credit: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
 	}
 	return nil
 }
@@ -691,11 +724,18 @@ type insertBillParams struct {
 	// the paper invoice needs in order to agree with the screen.
 	Currency string
 	FXRate   float64
+	// HouseDay is the dealer's business day the service decided before the transaction opened: the
+	// bill date when none was named. Blank is the Ontario dealer's day.
+	HouseDay string
 }
 
 func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillParams) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
+	}
+	houseDay := in.HouseDay
+	if houseDay == "" {
+		houseDay = houseday.Today(nil)
 	}
 	var id string
 	err := r.q(tx).QueryRow(ctx, `
@@ -706,7 +746,7 @@ func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillPar
 		RETURNING id::text`,
 		in.BillNo, in.VendorID, in.BranchID, nullStr(in.POID), in.Match, nullStr(in.BillDate),
 		nullStr(in.DueDate), in.Subtotal, in.Tax, in.Total, nullStr(in.CreatedBy),
-		in.Currency, in.FXRate, houseday.Today(nil)).Scan(&id)
+		in.Currency, in.FXRate, houseDay).Scan(&id)
 	if isUniqueViolation(err) {
 		return "", conflict("purchasing: bill %q has already been entered for this vendor", in.BillNo)
 	}

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test 'test/*.test.mjs' test/yard-offline.node-test.mjs && playwright test",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test 'test/*.test.mjs' test/yard-offline.node-test.mjs && playwright test && playwright test --config test/console.config.ts",
     "acceptance": "playwright test --config test/acceptance.config.ts"
   },
   "dependencies": {

@@ -1,0 +1,51 @@
+// Vite configuration for the role app template.
+//
+// The seam rule: the front door's handoff reader is compiled in only on the
+// demo build. Every other mode, dev included, resolves the empty stub
+// (src/demo-account.default.ts) in place of the app's demo-account module,
+// so the key name and the reader cannot enter a default build's module graph
+// whatever the tree shaker keeps; app-root.ts's demo mode gate holds the
+// adopt call out the same way.
+//
+// The dev server proxies /api to a local stub so the app's calls answer
+// without a running core. The stub port comes from MSG_STUB_PORT so the
+// Playwright harness and a hand-run dev server can point at the same stub.
+import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+
+const stubPort = process.env.MSG_STUB_PORT ?? "4989";
+const appPort = process.env.MSG_APP_PORT ?? "4988";
+
+export default defineConfig(({ mode }) => ({
+  resolve:
+    mode === "demo"
+      ? {}
+      : {
+          alias: [
+            {
+              find: /^\.\/demo-account\.js$/,
+              replacement: fileURLToPath(new URL("./src/demo-account.default.ts", import.meta.url)),
+            },
+          ],
+        },
+  server: {
+    port: Number(appPort),
+    strictPort: true,
+    host: "127.0.0.1",
+    // MSG_NO_WATCH: the harness runs the dev server with the file watcher
+    // off, so a Playwright leg survives a box whose inotify instances other
+    // lanes' watchers have exhausted (EMFILE on boot).
+    watch: process.env.MSG_NO_WATCH ? null : undefined,
+    proxy: {
+      "/api": {
+        target: `http://127.0.0.1:${stubPort}`,
+      },
+      "/_stub": {
+        target: `http://127.0.0.1:${stubPort}`,
+      },
+    },
+  },
+  build: {
+    outDir: "dist",
+  },
+}));

@@ -49,8 +49,10 @@ import "@hardscapehouse/shell-chrome/src/shell-banner.js";
 import { bannerFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
 import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
-import { acceptSwitchRole } from "./frames.js";
+import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
+import { acceptSwitchRole, announceChromeAction } from "./frames.js";
 import { readDoorSession, writeHandoff } from "./handoff.js";
+import { requestFrameSignOut, type FrameSignOutOutcome } from "./sign-out.js";
 import { endSession } from "./switch-role.js";
 import {
   initialState,
@@ -186,6 +188,12 @@ export class WorkShellHost extends HHElement {
   /** What the shell's own sign in answered at boot: no invoke (a browser), unavailable (no Console configured), or a resumed session. */
   #consoleState: "pending" | "no-invoke" | "unavailable" | "resumed" = "pending";
   #doorPoll: ReturnType<typeof setInterval> | null = null;
+  /** The shell controls (Theme, Feedback) the framed app said it can act on; reset whenever the frame changes. */
+  #frameControls: readonly ChromeAction[] = [];
+  /** A Switch role is in flight (the frame is being asked to sign out); a second one, or the frame's own end of walk, waits on it. */
+  #leaving = false;
+  /** How the last Switch role ended, for the page's test hook: the frame answered, ran out of time, was not there, or left on its own. */
+  #leave: FrameSignOutOutcome | "ended-by-app" | "" = "";
 
   constructor() {
     super();
@@ -297,6 +305,8 @@ export class WorkShellHost extends HHElement {
     this.#state = next;
     this.#menuOpen = false;
     this.#notice = "";
+    this.#frameControls = [];
+    this.#leave = "";
     this.#handOff();
     this.requestUpdate();
   }
@@ -310,22 +320,44 @@ export class WorkShellHost extends HHElement {
   }
 
   #open(appId: string): void {
+    if (this.#leaving) return;
     const next = openApp(this.#state, appId);
     if (next === this.#state) return;
     this.#state = next;
     this.#menuOpen = false;
     this.#notice = "";
+    this.#frameControls = [];
     this.#handOff();
     this.requestUpdate();
   }
 
-  /** Switch role: the session is dropped everywhere, the door is back. Pins and stores stay for their person. */
-  #switchRole(): void {
-    this.#state = switchRole(this.#state);
+  /**
+   * Switch role: the session is dropped everywhere, the door is back. Pins and stores stay for their person.
+   *
+   * Before the frame is dropped it is ASKED to run its own sign out (item 8e): its custody, device lock and offline
+   * copy are the app's to end, and a framed app has no Sign out of its own to press. The wait is bounded
+   * (SIGN_OUT_WAIT_MS). Whether the frame answered, ran out the wait or was not there, the host then ends what IT
+   * holds: the handoff keys and the Console session (endSession). The core's token has no server side revoke (it is a
+   * stateless short token), so it is dropped from memory and left to expire. An app that ended its own walk is not
+   * asked again (it already signed out; `ask: false`).
+   */
+  async #switchRole(options: { ask: boolean } = { ask: true }): Promise<void> {
+    if (this.#leaving) return;
+    this.#leaving = true;
     this.#menuOpen = false;
+    let outcome: FrameSignOutOutcome | "ended-by-app" = "ended-by-app";
+    if (options.ask) {
+      this.#notice = "Signing out of this app.";
+      this.requestUpdate();
+      const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]');
+      outcome = await requestFrameSignOut({ frame, origin: window.location.origin, win: window });
+    }
+    this.#leave = outcome;
+    this.#state = switchRole(this.#state);
     this.#notice = "";
     void endSession({ consoleSession: this.#consoleSession });
     this.#startDoorPoll();
+    this.#leaving = false;
     this.requestUpdate();
   }
 
@@ -336,8 +368,18 @@ export class WorkShellHost extends HHElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     if (control === undefined) return;
-    if (control.getAttribute("data-action") === "switch-role") this.#switchRole();
+    const action = control.getAttribute("data-action");
+    if (action === "switch-role") void this.#switchRole();
+    if (action === "theme" || action === "feedback") this.#pressFrameControl(action);
   };
+
+  /** Theme and Feedback belong to the framed app (it holds the choice and the sender): ask its frame to press its own. */
+  #pressFrameControl(action: ChromeAction): void {
+    const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]');
+    announceChromeAction(frame?.contentWindow ?? null, window.location.origin, action);
+    this.#menuOpen = false;
+    this.requestUpdate();
+  }
 
   readonly #onSurfaceOpen = (event: CustomEvent<{ appId: string }>): void => this.#open(event.detail.appId);
   readonly #onRailSelect = (event: CustomEvent<{ key: string }>): void => this.#open(event.detail.key);
@@ -382,7 +424,13 @@ export class WorkShellHost extends HHElement {
   readonly #onMessage = (event: MessageEvent): void => {
     const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]');
     if (frame === null) return;
-    if (acceptSwitchRole(event, { origin: window.location.origin, contentWindow: frame.contentWindow })) this.#switchRole();
+    const host = { origin: window.location.origin, contentWindow: frame.contentWindow };
+    if (acceptSwitchRole(event, host)) void this.#switchRole({ ask: false });
+    const controls = acceptChromeControls(event, host);
+    if (controls !== null) {
+      this.#frameControls = controls;
+      this.requestUpdate();
+    }
   };
 
   readonly #onConnection = (): void => {
@@ -406,7 +454,7 @@ export class WorkShellHost extends HHElement {
     const roleCode = state.phase === "desk" ? state.session.roleCode : "";
     const appId = state.phase === "desk" ? (state.currentAppId ?? "") : "";
     return html`
-      <div class="shell" data-testid="ws-shell" data-phase=${state.phase} data-role=${roleCode} data-current-app=${appId} data-console=${this.#consoleState}>
+      <div class="shell" data-testid="ws-shell" data-phase=${state.phase} data-role=${roleCode} data-current-app=${appId} data-console=${this.#consoleState} data-leave=${this.#leave}>
         ${this.#fault !== "" ? this.#faultView() : state.phase === "door" ? this.#door() : this.#desk(state)}
       </div>
     `;
@@ -429,6 +477,8 @@ export class WorkShellHost extends HHElement {
 
   #desk(state: Extract<HostState, { phase: "desk" }>): TemplateResult {
     const current = state.apps.find((a) => a.id === state.currentAppId);
+    // The app's address carries the framed flag (one band: the app shows none of its own); hhAddress checks the whole.
+    const appAddress = current === undefined ? "" : framedAddress(current.path);
     return html`
       <div class="top">
         <hh-shell-header></hh-shell-header>
@@ -436,6 +486,8 @@ export class WorkShellHost extends HHElement {
           ? html`
               <div class="menu" data-testid="account-menu" role="group" aria-label="Account">
                 <p>Signed in as <strong>${state.session.roleLabel}</strong></p>
+                ${this.#frameControls.includes("theme") ? html`<button type="button" class="btn-secondary" data-action="theme">Theme</button>` : nothing}
+                ${this.#frameControls.includes("feedback") ? html`<button type="button" class="btn-secondary" data-action="feedback">Feedback</button>` : nothing}
                 <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
               </div>
             `
@@ -454,7 +506,7 @@ export class WorkShellHost extends HHElement {
                   <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
                 </div>
               `
-            : keyed(current.id, html`<iframe data-testid="app-frame" data-title=${current.name} src=${hhAddress(current.path)}></iframe>`)}
+            : keyed(current.id, html`<iframe data-testid="app-frame" data-title=${current.name} src=${hhAddress(appAddress)}></iframe>`)}
         </main>
       </div>
     `;
@@ -480,6 +532,7 @@ export class WorkShellHost extends HHElement {
     const held = new Set(apps.map((a) => a.id));
     if (header !== null) {
       header.org = DEMO_ORG_NAME;
+      header.demo = true;
       header.user = state.session.roleLabel;
       header.groups = switcherGroups({ frontends: apps, roles: [state.session.roleCode], surfaces: NO_SURFACES });
       header.breadcrumb = currentBreadcrumb({

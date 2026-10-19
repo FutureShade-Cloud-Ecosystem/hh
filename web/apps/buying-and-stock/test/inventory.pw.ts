@@ -18,7 +18,7 @@ test("the areas bar holds every purchasing area and Inventory and Cycle counts, 
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   const bar = page.locator("nav.areas");
-  for (const [id, label] of [["orders", "Purchase orders"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
+  for (const [id, label] of [["orders", "Purchase orders"], ["incoming", "Incoming"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
     await expect(bar.locator(`[data-area-id="${id}"]`)).toHaveText(label);
   }
   await expect(bar.locator('[data-area-id="orders"][aria-current="true"]')).toBeVisible();
@@ -32,8 +32,13 @@ test("the stock lookup answers the per-branch buckets and the ledger for the pav
   const plmRow = page.locator("[data-onhand-row]", { hasText: "Point Loma" });
   await expect(plmRow).toContainText("400");
   await expect(plmRow).toContainText("340");
+  // One vocabulary (change 5, R6): the stock word is Reserved everywhere, Inventory included.
+  await expect(plmRow.locator("td[data-label='Reserved']")).toHaveCount(1);
+  await expect(page.locator("[data-onhand-row]").first().locator("td[data-label='Allocated']")).toHaveCount(0);
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved");
   await expect(page.locator("[data-move-row]").first()).toBeVisible();
   await expect(page.locator("[data-lookup]").locator("[data-move-row]").first()).toContainText("Receipt");
+  await expect(page.locator("[data-lookup]").locator("[data-move-row]").first().locator("td[data-label='When']")).toHaveText("today");
 });
 
 test("a product that has never moved says so plainly, never as a fault", async ({ page, request }) => {
@@ -286,4 +291,17 @@ test("on a phone the inventory tables stack with their labels and the page never
   await expect(page.locator("[data-onhand-row]").first()).toBeVisible();
   const sideways = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   expect(sideways).toBe(false);
+});
+
+test("the stock lookup's table says Reserved for the bucket and the footnote names it (no Allocated)", async ({ page, request }) => {
+  await openInventory(page, request, "lookup");
+  await runLookup(page, "GLS-PAV-60 Copperline Paver 60mm");
+  // The header reads Reserved, and every cell in that column carries the same data-label.
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Reserved")')).toBeVisible();
+  await expect(page.locator("[data-lookup]").locator('thead th:has-text("Allocated")')).toHaveCount(0);
+  const firstCell = page.locator("[data-onhand-row]").first().locator('td[data-label="Reserved"]');
+  await expect(firstCell).toBeVisible();
+  // The footnote names the same vocabulary, so a worker reads the meaning once.
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved.");
+  await expect(page.locator("[data-lookup]")).not.toContainText("minus allocated");
 });

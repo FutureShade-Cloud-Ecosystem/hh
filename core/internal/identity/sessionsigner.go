@@ -183,7 +183,10 @@ type SessionMinter struct {
 	kid      string
 	issuer   string
 	audience string
-	now      func() time.Time
+	// tenantAudience is set once at composition (WithTenantAudience); empty
+	// means this deployment mints no tenant class token.
+	tenantAudience string
+	now            func() time.Time
 }
 
 // NewSessionMinter binds a private key to an issuer and the staff
@@ -215,11 +218,50 @@ func (m *SessionMinter) Mint(subject string, window time.Duration) (string, erro
 	return m.MintAt(subject, window, m.now())
 }
 
+// WithTenantAudience enables the tenant class mint. The audience must be
+// non empty and differ from the staff one: a token never claims both.
+func (m *SessionMinter) WithTenantAudience(tenantAudience string) error {
+	if tenantAudience == "" || tenantAudience == m.audience {
+		return errors.New("identity: the tenant audience must be set and differ from the staff audience")
+	}
+	m.tenantAudience = tenantAudience
+	return nil
+}
+
 // MintAt is Mint with an explicit issue time (tests drive their own clock).
 func (m *SessionMinter) MintAt(subject string, window time.Duration, at time.Time) (string, error) {
 	if subject == "" {
 		return "", errors.New("identity: a session token needs a subject")
 	}
+	return m.sign(map[string]any{
+		"iss": m.issuer,
+		"sub": subject,
+		"aud": m.audience,
+	}, window, at)
+}
+
+// MintTenantAt signs a tenant class token: the tenant audience and the one
+// extra claim `tenant`, the contractor account the caller bound to a live
+// portal row. The claim is the only source of the verifier's TenantID, so
+// the exchange passes the row's own value and nothing the caller sent.
+func (m *SessionMinter) MintTenantAt(subject, tenantID string, window time.Duration, at time.Time) (string, error) {
+	if m.tenantAudience == "" {
+		return "", errors.New("identity: this minter has no tenant audience")
+	}
+	if subject == "" || tenantID == "" {
+		return "", errors.New("identity: a tenant token needs a subject and a tenant account")
+	}
+	return m.sign(map[string]any{
+		"iss":    m.issuer,
+		"sub":    subject,
+		"aud":    m.tenantAudience,
+		"tenant": tenantID,
+	}, window, at)
+}
+
+// sign adds iat and exp to the identity claims and signs. The window is
+// bounded MinSessionWindow <= window <= MaxDriverSessionTTL.
+func (m *SessionMinter) sign(claimSet map[string]any, window time.Duration, at time.Time) (string, error) {
 	if window < MinSessionWindow || window > MaxDriverSessionTTL {
 		return "", errors.New("identity: the session window is outside the allowed bounds")
 	}
@@ -227,13 +269,9 @@ func (m *SessionMinter) MintAt(subject string, window time.Duration, at time.Tim
 	if err != nil {
 		return "", err
 	}
-	claims, err := json.Marshal(map[string]any{
-		"iss": m.issuer,
-		"sub": subject,
-		"aud": m.audience,
-		"iat": at.Unix(),
-		"exp": at.Add(window).Unix(),
-	})
+	claimSet["iat"] = at.Unix()
+	claimSet["exp"] = at.Add(window).Unix()
+	claims, err := json.Marshal(claimSet)
 	if err != nil {
 		return "", err
 	}

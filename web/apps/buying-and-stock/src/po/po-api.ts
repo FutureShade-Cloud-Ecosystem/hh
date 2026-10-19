@@ -19,6 +19,7 @@ import {
   type InventoryReorderResult,
   type InventoryShortfallPage,
   type ProductPage,
+  type PurchasingApplyWarrantyCreditRequest,
   type PurchasingIncomingLinePage,
   type PurchasingPODetail,
   type PurchasingPOPage,
@@ -100,5 +101,10 @@ export class PoApi {
 
   cancel(id: string): Promise<Result<PurchasingPODetail>> {
     return staffPurchasing.purchasingTransitionPO(this.#client, id, { to: "CANCELLED" });
+  }
+
+  /** Applies open vendor warranty credit to a DRAFT purchase order. */
+  applyWarrantyCredit(id: string, params: PurchasingApplyWarrantyCreditRequest = {}): Promise<Result<PurchasingPODetail>> {
+    return staffPurchasing.purchasingApplyWarrantyCredit(this.#client, id, params);
   }
 }

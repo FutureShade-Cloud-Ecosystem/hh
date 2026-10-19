@@ -29,17 +29,15 @@ package main
 // proof shim serves its guard class until HH-4.2 registers the real mint
 // surface, and the shim mints nothing.
 var notYetRegistered = map[string]string{
-	"createAttachment":              "D10 attachment surface; no implementation lane assigned",
-	"createAttachmentLink":          "D10 attachment surface; no implementation lane assigned",
 	"demoCreateSession":             "carried demo module; the credential bypass registers only on a demo box (DEMO_MODE with APP_ENV demo or dev)",
 	"demoListFlows":                 "carried demo module; the credential bypass registers only on a demo box (DEMO_MODE with APP_ENV demo or dev)",
 	"exportAuditXlsx":               "the export module carried the catalogue export; the xlsx trio has no implementing lane",
 	"exportStatementXlsx":           "the export module carried the catalogue export; the xlsx trio has no implementing lane",
 	"exportTransactionsXlsx":        "the export module carried the catalogue export; the xlsx trio has no implementing lane",
 	"feedbackCreate":                "carried module; registration is gated on the Plane bridge configuration (three environment values)",
-	"getAttachment":                 "D10 attachment surface; no implementation lane assigned",
 	"getOperatorUsage":              "operator launcher surface (D4); no implementation lane assigned",
 	"getTenantBrand":                "held for the tenant brand gap (ADR 0021 annex records the hold)",
+	"identityPersona":               "the demo build's tap-a-role entry under the real sign in; registered only in the demo build's console mode, never in the default build",
 	"identityAssignRole":            "no implementation lane assigned for the staff identity admin surface",
 	"identityChangePassword":        "no implementation lane assigned for the staff identity admin surface",
 	"identityConfirmPasswordReset":  "the D38 sign-in-methods leave-behind: the staff sign-in surface stays unregistered until HH-4.2 lands one",

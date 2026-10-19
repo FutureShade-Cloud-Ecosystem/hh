@@ -24,6 +24,7 @@ import {
   pickedWords,
   qtyWords,
   rangeWord,
+  shortageCard,
   resolutionText,
   resolveRefusalWords,
   severityWord,
@@ -94,15 +95,15 @@ test("the two new needs links open this app's views, and receiving opens Receivi
   assert.deepEqual(needsRowTarget(row("tasks.open_shortages", "Shortages · open")), { view: "shortages" });
   assert.deepEqual(needsRowTarget(row("purchasing.receiving_differences", "Receiving · short")), { view: "receiving" });
   assert.deepEqual(needsRowTarget(row("approvals.waiting", "Waiting on you")), { view: "approvals" });
-  const stale = needsRowTarget(row("tasks.stale_picks", "Picks · past deadline", "yard"));
-  assert.equal(stale.view, null);
-  assert.equal(stale.screen, "Picks · past deadline");
+  const dispatch = needsRowTarget(row("dispatch.unassigned", "Staging · unassigned", "dispatch"));
+  assert.equal(dispatch.view, null);
+  assert.equal(dispatch.screen, "Staging · unassigned");
 });
 
-test("the board rows nothing measures are said plainly, never counted", () => {
+test("the board row the core could not measure is said plainly, never counted", () => {
   assert.equal(UNSOURCED_NEEDS.length, 1);
   assert.equal(UNSOURCED_NEEDS[0].what, "Weights pending");
-  assert.match(UNSOURCED_NEEDS[0].words, /no source is wired/i);
+  assert.match(UNSOURCED_NEEDS[0].words, /not counted/i);
   assert.equal(UNSOURCED_TILES.length, 1);
   assert.equal(UNSOURCED_TILES[0].title, "Unread messages");
   assert.match(UNSOURCED_TILES[0].words, /no measure is wired/i);
@@ -148,13 +149,14 @@ test("a kind this caller does not decide becomes plain words naming who decides 
   assert.equal(approvalsRefusalWords("MARGIN_BELOW_MINIMUM", "boom", 500), "boom");
 });
 
-test("the approval kind vocabulary is the core's closed set, in its order", () => {
+test("the approval kind vocabulary is the core's closed set, in its order, then the change queue", () => {
   assert.deepEqual(
     APPROVAL_KINDS.map((k) => k.kind),
-    ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"],
+    ["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE", "CHANGE_ORDER"],
   );
   assert.equal(kindWord("COD_CONSTRAINT"), "Cash On Demand");
-  assert.equal(Object.keys(APPROVAL_DECIDER_WORDS).length, 5);
+  assert.equal(kindWord("CHANGE_ORDER"), "Change orders");
+  assert.equal(Object.keys(APPROVAL_DECIDER_WORDS).length, 6);
 });
 
 test("a receiving difference is a PARTIAL purchase order, per the ruled definition", () => {
@@ -224,4 +226,34 @@ test("the Branch Manager decides no approval kind, so no kind's words name a bra
     APPROVAL_DECIDER_WORDS.MARGIN_BELOW_MINIMUM,
     "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
   );
+});
+
+test("a shortage review card says what was short, how much, who reported it by role, when, and the status word", () => {
+  const now = Date.parse("2030-01-02T12:00:00Z");
+  const open = {
+    id: "s1", task_id: "t1", order_line_no: 2, sku: "G", description: "Granular A gravel", qty_short: "4.0000",
+    uom: "CYD", note: "Only 8 yards left", reported_by: "11111111-1111-4111-8111-111111111111",
+    reported_at: "2030-01-02T10:30:00Z", resolved_at: null, resolution: "",
+  };
+  const card = shortageCard(open, now);
+  assert.equal(card.what, "Granular A gravel");
+  assert.equal(card.howMuch, "line 2, short 4 CYD");
+  assert.equal(card.reporter, "Reported by staff");
+  assert.equal(card.when, "1h ago");
+  assert.equal(card.status, "Needs review");
+  assert.equal(card.resolved, false);
+  assert.doesNotMatch(JSON.stringify(card), /1111/);
+});
+
+test("a resolved shortage card reads Resolved with the core's resolution, and a bad time is omitted", () => {
+  const now = Date.parse("2030-01-02T12:00:00Z");
+  const done = {
+    id: "s2", task_id: "t1", order_line_no: null, sku: "", description: "Paver", qty_short: "40", uom: "PC",
+    note: "", reported_by: "", reported_at: "nonsense", resolved_at: "2030-01-02T11:00:00Z", resolution: "Substituted.",
+  };
+  const card = shortageCard(done, now);
+  assert.equal(card.status, "Resolved");
+  assert.equal(card.howMuch, "short 40 PC");
+  assert.equal(card.when, "");
+  assert.equal(card.resolved, true);
 });

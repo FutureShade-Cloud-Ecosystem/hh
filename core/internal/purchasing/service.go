@@ -14,6 +14,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -350,7 +351,23 @@ func (s *Service) GetPO(ctx context.Context, poID string) (PODetail, error) {
 	if receipts == nil {
 		receipts = []Receipt{}
 	}
-	return PODetail{PO: po, Lines: lines, Receipts: receipts}, nil
+	detail := PODetail{PO: po, Lines: lines, Receipts: receipts}
+	if s.warrantyCredit != nil {
+		if po.WarrantyClaimID != nil && *po.WarrantyClaimID != "" {
+			if info, err := s.warrantyCredit.ClaimInfo(ctx, *po.WarrantyClaimID); err == nil && info != nil {
+				detail.PO.WarrantyClaimNo = &info.ClaimNo
+				if po.Status == StatusDraft && lens.allow {
+					detail.OpenWarrantyCredit = info
+				}
+			}
+		}
+		if detail.OpenWarrantyCredit == nil && po.Status == StatusDraft && lens.allow {
+			if openCredit, err := s.warrantyCredit.OpenCreditForVendor(ctx, po.VendorID, po.BranchID); err == nil && openCredit != nil {
+				detail.OpenWarrantyCredit = openCredit
+			}
+		}
+	}
+	return detail, nil
 }
 
 // ListPOs lists branch-fenced purchase orders.
@@ -397,6 +414,82 @@ func (s *Service) AddLine(ctx context.Context, poID string, in AddLineParams) (P
 	}); err != nil {
 		return PODetail{}, err
 	}
+	return s.GetPO(ctx, poID)
+}
+
+// ApplyWarrantyCredit applies open vendor warranty credit to a draft purchase order.
+// Ruling R3: Unit prices remain unchanged; credit reduces the net total due to the vendor.
+func (s *Service) ApplyWarrantyCredit(ctx context.Context, poID string, req ApplyWarrantyCreditRequest) (PODetail, error) {
+	if !isUUIDString(poID) {
+		return PODetail{}, errNotFound
+	}
+	var claimID *string
+	var creditToApply int64
+
+	err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
+		if po.Status != StatusDraft {
+			return conflict("purchasing: cannot apply warranty credit to a %s purchase order", po.Status)
+		}
+		lines, err := s.repo.POLines(ctx, tx, poID, false)
+		if err != nil {
+			return err
+		}
+		var subtotal int64
+		for _, l := range lines {
+			subtotal += l.LineTotalCents
+		}
+		if subtotal <= 0 {
+			return badReq("purchasing: cannot apply warranty credit to an order with no lines or zero total")
+		}
+
+		claimID = req.ClaimID
+		if req.AmountCents != nil && *req.AmountCents > 0 {
+			creditToApply = *req.AmountCents
+		}
+
+		if s.warrantyCredit != nil {
+			if claimID == nil || *claimID == "" {
+				openCredit, err := s.warrantyCredit.OpenCreditForVendor(ctx, po.VendorID, po.BranchID)
+				if err != nil {
+					return fmt.Errorf("purchasing: check warranty credit: %w", err)
+				}
+				if openCredit == nil || openCredit.AmountCents <= 0 {
+					return badReq("purchasing: vendor %s has no open warranty credit", po.VendorID)
+				}
+				claimID = &openCredit.ClaimID
+				if creditToApply <= 0 {
+					creditToApply = openCredit.AmountCents
+				}
+			} else if creditToApply <= 0 {
+				info, err := s.warrantyCredit.ClaimInfo(ctx, *claimID)
+				if err != nil {
+					return fmt.Errorf("purchasing: check warranty credit: %w", err)
+				}
+				if info != nil {
+					creditToApply = info.AmountCents
+				}
+			}
+		}
+
+		if creditToApply <= 0 {
+			return badReq("purchasing: no warranty credit amount specified or available")
+		}
+
+		// Cap credit applied at the order subtotal (Ruling R3).
+		if creditToApply > subtotal {
+			creditToApply = subtotal
+		}
+		netTotal := subtotal - creditToApply
+		if netTotal < 0 {
+			netTotal = 0
+		}
+
+		return s.repo.ApplyWarrantyCredit(ctx, tx, poID, claimID, creditToApply, netTotal)
+	})
+	if err != nil {
+		return PODetail{}, err
+	}
+
 	return s.GetPO(ctx, poID)
 }
 
@@ -865,6 +958,12 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	if err != nil {
 		return BillDetail{}, err
 	}
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a connection
+	// beside the open transaction) and bound as the default bill date.
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return BillDetail{}, err
+	}
 
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
@@ -943,7 +1042,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		BillDate: strings.TrimSpace(in.BillDate), DueDate: strings.TrimSpace(in.DueDate),
 		Subtotal: subtotal, Tax: taxCad, Total: total,
 		Match: headerState, CreatedBy: caller.UserID,
-		Currency: billCur, FXRate: billFX,
+		Currency: billCur, FXRate: billFX, HouseDay: zone.Today(nil),
 	})
 	if err != nil {
 		return BillDetail{}, err

@@ -73,12 +73,61 @@ type LowMarginEntry = PricingModel["lowMargin"]["probe"]["entries"][number];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
+  const isPaymentTerms = model.tab === "payment-terms" || model.tab === "terms";
   return html`
     <header class="page-head">
       <h1>Pricing</h1>
-      <p class="page-sub">The dealer's price governance: the floors, the rules, and the records of what moved.</p>
+      <p class="page-sub">
+        ${isPaymentTerms
+          ? "The margin floors, the rules, the ladders, the imports and the ledgers. This page: when a customer pays, and what is asked up front."
+          : "The dealer's price governance: the floors, the rules, and the records of what moved."}
+      </p>
     </header>
-    <nav class="pr-tabs" role="group" aria-label="Pricing tabs">
+
+    <div class="pr-board-pills" role="tablist" aria-label="Pricing views">
+      <button
+        type="button"
+        class="pr-board-pill ${model.tab === "margin" ? "pr-board-pill-active" : ""}"
+        data-action="pr-set-tab"
+        data-tab="margin"
+      >
+        Margin floors
+      </button>
+      <button
+        type="button"
+        class="pr-board-pill ${model.tab === "rules" ? "pr-board-pill-active" : ""}"
+        data-action="pr-set-tab"
+        data-tab="rules"
+      >
+        Rules
+      </button>
+      <button
+        type="button"
+        class="pr-board-pill ${model.tab === "breaks" ? "pr-board-pill-active" : ""}"
+        data-action="pr-set-tab"
+        data-tab="breaks"
+      >
+        Ladders
+      </button>
+      <button
+        type="button"
+        class="pr-board-pill ${model.tab === "batches" ? "pr-board-pill-active" : ""}"
+        data-action="pr-set-tab"
+        data-tab="batches"
+      >
+        Imports
+      </button>
+      <button
+        type="button"
+        class="pr-board-pill ${isPaymentTerms ? "pr-board-pill-active" : ""}"
+        data-action="pr-set-tab"
+        data-tab="payment-terms"
+      >
+        Payment terms and deposits
+      </button>
+    </div>
+
+    <nav class="pr-tabs ${isPaymentTerms ? "pr-tabs-hidden" : ""}" role="group" aria-label="Pricing tabs">
       ${PRICING_TABS.map(
         (t) => html`
           <button
@@ -100,6 +149,7 @@ export function renderPricing(model: PricingModel): TemplateResult {
 function renderTab(model: PricingModel): TemplateResult {
   // The router line: one case per landed tab. The next group's commit adds
   // its case beside this one; until then the tab says plainly it is not wired.
+  if (model.tab === "payment-terms" || model.tab === "terms") return renderPaymentTermsAndDeposits();
   if (model.tab === "margin") return renderMargin(model);
   if (model.tab === "rules") return renderRules(model);
   if (model.tab === "customers") return renderCustomers(model);
@@ -114,6 +164,155 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "changelog") return renderChangeLog(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
+}
+
+export function renderPaymentTermsAndDeposits(): TemplateResult {
+  return html`
+    <section class="card" data-test="pricing-cod-card">
+      <div class="card-head">
+        <h2 class="card-title">Cash On Demand by customer class</h2>
+      </div>
+      <p class="card-sub">
+        Cash On Demand means the customer pays before the goods are released, for any fulfilment: the counter, will-call or delivery. The invoice number is issued while the invoice is unpaid.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">CUSTOMER CLASS</th>
+              <th scope="col">CASH ON DEMAND</th>
+              <th scope="col">CREDIT</th>
+              <th scope="col">TURNS ON</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Walk-in, no account</strong></td>
+              <td><span class="badge-always">ALWAYS</span></td>
+              <td>No credit is ever offered</td>
+              <td>Pay in full, or a deposit when the order waits</td>
+            </tr>
+            <tr>
+              <td><strong>Homeowner</strong></td>
+              <td><span class="badge-always">ALWAYS</span></td>
+              <td>Paid by card or cash at the order</td>
+              <td>Deposit when the order waits</td>
+            </tr>
+            <tr>
+              <td><strong>Contractor</strong></td>
+              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
+              <td>Terms 30 days once approved</td>
+              <td>Only on an account that falls past due</td>
+            </tr>
+            <tr>
+              <td><strong>Builder</strong></td>
+              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
+              <td>Terms 30 days once approved</td>
+              <td>Only on an account that falls past due</td>
+            </tr>
+            <tr>
+              <td><strong>Landscaper</strong></td>
+              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
+              <td>Terms 30 days once approved</td>
+              <td>Only on an account that falls past due</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" data-test="pricing-accounts-card">
+      <div class="card-head">
+        <h2 class="card-title">Accounts set by hand</h2>
+        <span class="count dim">3 accounts</span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ACCOUNT</th>
+              <th scope="col">SETTING</th>
+              <th scope="col">WHY</th>
+              <th scope="col">ENDS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Fieldstone Pools and Patios</strong></td>
+              <td><span class="badge-cod">CASH ON DEMAND</span></td>
+              <td>Over limit by $2,100.00, order held</td>
+              <td>Until the balance is under the limit</td>
+            </tr>
+            <tr>
+              <td><strong>Granite Edge Paving</strong></td>
+              <td><span class="badge-cod">CASH ON DEMAND</span></td>
+              <td>91 days late, $22,300.00 past due</td>
+              <td>Until the account is current</td>
+            </tr>
+            <tr>
+              <td><strong>Bluffside Builders</strong></td>
+              <td><span class="badge-cod">CASH ON DEMAND</span></td>
+              <td>On hold: promise missed, $14,820.00 past due</td>
+              <td>Until the controller releases it</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="btn btn-secondary" data-action="set-account">Set an account</button>
+      </div>
+    </section>
+
+    <section class="card" data-test="pricing-deposits-card">
+      <div class="card-head">
+        <h2 class="card-title">Deposits</h2>
+      </div>
+      <p class="card-sub">
+        A deposit is offered only when the order waits: will-call, a scheduled delivery or a special order. A sale rung and released now takes the full amount.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ORDER KIND</th>
+              <th scope="col">DEPOSIT %</th>
+              <th scope="col">DUE</th>
+              <th scope="col">BALANCE DUE</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Will-call at the branch</strong></td>
+              <td><strong>25%</strong></td>
+              <td>At the order</td>
+              <td>Before the order is released</td>
+            </tr>
+            <tr>
+              <td><strong>Scheduled delivery</strong></td>
+              <td><strong>25%</strong></td>
+              <td>At the order</td>
+              <td>Before the truck leaves</td>
+            </tr>
+            <tr>
+              <td><strong>Special order</strong></td>
+              <td><strong>50%</strong></td>
+              <td>At the order</td>
+              <td>Before the order is released</td>
+            </tr>
+            <tr>
+              <td><strong>Cash On Demand order that waits</strong></td>
+              <td><strong>25%</strong></td>
+              <td>At the order</td>
+              <td>Before the order is released</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="btn btn-primary" data-action="save-deposits">Save changes</button>
+      </div>
+    </section>
+  `;
 }
 
 // -- the margin policy tab ---------------------------------------------------------------------------

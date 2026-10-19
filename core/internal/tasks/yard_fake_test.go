@@ -123,6 +123,26 @@ func (f *fakeStore) recount(taskID string) Task {
 // It upserts by (task, line) exactly as the SQL does, because a fake whose uniqueness rule differs
 // from the schema's lets a service test pass on a shape the database would refuse.
 
+func (f *fakeStore) RecordPickLocked(ctx context.Context, taskID, actorID string, apply func(context.Context, Task) ([]PickedLineInput, error)) ([]PickedLine, error) {
+	t, ok := f.tasks[taskID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	// A pick record is a yard-pick measurement: only a PICK task carries one. Mirrors the
+	// real Repository's guard (FROM-PRINCIPAL row 2122 item 5).
+	if t.TaskType != TypePick {
+		return nil, ErrNotPickTask
+	}
+	if err := pickClosed(t.Status); err != nil {
+		return nil, err
+	}
+	lines, err := apply(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	return f.UpsertPickedLines(ctx, taskID, actorID, lines)
+}
+
 func (f *fakeStore) UpsertPickedLines(_ context.Context, taskID, actorID string, lines []PickedLineInput) ([]PickedLine, error) {
 	if _, ok := f.tasks[taskID]; !ok {
 		return nil, ErrNotFound

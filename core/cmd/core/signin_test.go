@@ -124,7 +124,7 @@ func TestSessionCompositionRefusals(t *testing.T) {
 		{"ttl not a duration", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "soon"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
 	}
 	for _, c := range cases {
-		_, err := loadSessionComposition(getenvOf(c.set), c.iss, "hh-staff")
+		_, err := loadSessionComposition(getenvOf(c.set), c.iss, "hh-staff", "hh-tenant")
 		if err == nil {
 			t.Errorf("%s: accepted", c.name)
 			continue
@@ -147,7 +147,7 @@ func TestSessionCompositionLoadsAndMints(t *testing.T) {
 		"CORE_SESSION_SIGNING_KEY_FILE": keyFile,
 		"CORE_SESSION_KEY_NEXT_FILE":    nextFile,
 	}
-	comp, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff")
+	comp, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", "hh-tenant")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +157,17 @@ func TestSessionCompositionLoadsAndMints(t *testing.T) {
 	if !key.PublicKey.Equal(comp.minter.PublicKey()) {
 		t.Fatal("minter holds another key")
 	}
+	if _, err := comp.minter.MintTenantAt("sub", "tenant-1", time.Hour, time.Now()); err != nil {
+		t.Fatalf("the composition mints no tenant token: %v", err)
+	}
+	if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", ""); err == nil {
+		t.Fatal("an empty tenant audience accepted")
+	}
+	if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", "hh-staff"); err == nil {
+		t.Fatal("a tenant audience equal to the staff one accepted")
+	}
 	env["CORE_EXCHANGE_TOKEN_TTL"] = "30m"
-	comp, err = loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff")
+	comp, err = loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", "hh-tenant")
 	if err != nil || comp.exchangeTTL != 30*time.Minute {
 		t.Fatalf("ttl: %v %v", err, comp)
 	}
@@ -199,7 +208,7 @@ func TestSessionCompositionRefusesAGroupReadableKeyFile(t *testing.T) {
 		if err := os.Chmod(keyFile, mode); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff"); err != nil {
+		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", "hh-tenant"); err != nil {
 			t.Errorf("mode %o refused: %v", mode, err)
 		}
 	}
@@ -207,7 +216,7 @@ func TestSessionCompositionRefusesAGroupReadableKeyFile(t *testing.T) {
 		if err := os.Chmod(keyFile, mode); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff"); err == nil {
+		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff", "hh-tenant"); err == nil {
 			t.Errorf("mode %o accepted at boot", mode)
 		}
 	}

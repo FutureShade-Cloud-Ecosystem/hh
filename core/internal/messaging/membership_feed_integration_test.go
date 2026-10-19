@@ -29,10 +29,13 @@ func TestIntegration_AddMember_Bumps_The_Channels_Feed_Seq(t *testing.T) {
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
 
+	// The room is setup for the owner pen and the feed legs, so it is
+	// founded through the repository seam (the module's provisioning path,
+	// ungated by the route's admin pen), keeping sam the room's OWNER.
 	sam := samCaller()
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	room, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Feed seq probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found room: %v", err)
 	}
@@ -49,7 +52,7 @@ func TestIntegration_AddMember_Bumps_The_Channels_Feed_Seq(t *testing.T) {
 	}
 
 	// The owner seats Casey; the seat is the ONLY change to the room.
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 
@@ -97,16 +100,16 @@ func TestIntegration_RemoveMember_Refreshes_The_Room_Row(t *testing.T) {
 	defer PublishRoleConfig(prev)
 
 	sam := samCaller()
-	room, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	room, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Remove feed probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found room: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 	var before int64
@@ -164,9 +167,9 @@ func TestIntegration_AddMember_RolledBack_Seat_Leaves_Seq_Unmoved(t *testing.T) 
 	defer PublishRoleConfig(prev)
 
 	sam := samCaller()
-	room, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	room, created, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Rollback feed probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil || !created {
 		t.Fatalf("found room: created=%v err=%v", created, err)
 	}
@@ -201,7 +204,7 @@ func TestIntegration_AddMember_RolledBack_Seat_Leaves_Seq_Unmoved(t *testing.T) 
 		t.Fatalf("create probe trigger: %v", err)
 	}
 
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err == nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err == nil {
 		t.Fatalf("the seat's commit must fail under the probe trigger")
 	}
 	var after int64
@@ -233,16 +236,16 @@ func TestIntegration_RemoveMember_Failed_Bump_Leaves_The_Member_Seated(t *testin
 	defer PublishRoleConfig(prev)
 
 	sam := samCaller()
-	room, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	room, created, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTeam, Name: fmt.Sprintf("Remove rollback probe %d", time.Now().UnixNano()),
-	})
+	}, uSamRivera)
 	if err != nil || !created {
 		t.Fatalf("found room: created=%v err=%v", created, err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: room.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("seat casey: %v", err)
 	}
 	var before int64

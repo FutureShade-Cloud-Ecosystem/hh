@@ -17,6 +17,20 @@ const stubPort = process.env.QD_STUB_PORT ?? "4839";
 const appPort = process.env.QD_APP_PORT ?? "4838";
 
 export default defineConfig(({ mode }) => ({
+  plugins: [
+    {
+      // The deployed demo box serves {"mode":"demo"} at /config.json (deploy/demo/Dockerfile), and the app reads
+      // it at boot to choose its custody (pos-kit boot-custody.ts). The dev server answers the same, so the
+      // harness sees the box's behaviour, and this suite's quiet-console legs see no failed request for it.
+      name: "demo-runtime-config",
+      configureServer(server) {
+        server.middlewares.use("/config.json", (_request, response) => {
+          response.setHeader("content-type", "application/json");
+          response.end('{"mode":"demo"}');
+        });
+      },
+    },
+  ],
   // The seam rule (decision log rows 893, 899 and 906; the till's own config
   // on demo/front-door is the shape): the front door's handoff reader is
   // compiled in only on the demo build. Every other mode, dev included,
