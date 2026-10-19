@@ -15,13 +15,8 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { framedByShell } from "@hardscapehouse/design-system/src/framed.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
-import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
-import "@hardscapehouse/shell-chrome/src/shell-header.js";
-import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
@@ -56,9 +51,6 @@ const DEMO_ORG = "hh-demo";
 
 export class DriveRunApp extends HHElement {
   static styles = [baseStyles, driveStyles];
-
-  // True when the Work shell frames this app: the host's band is the one band.
-  readonly #framed = framedByShell();
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
@@ -443,21 +435,6 @@ export class DriveRunApp extends HHElement {
     for (const link of Array.from(this.renderRoot.querySelectorAll("a[data-tel]"))) {
       const number = link.getAttribute("data-tel") ?? "";
       if (/^[0-9+().\-\sx]+$/.test(number)) link.setAttribute("href", `tel:${number.replace(/\s+/g, "")}`);
-    }
-    // The framed band (GAPS-r2 row G1): the board's white band above the
-    // app-local header when the app stands alone; framed by the Work shell,
-    // the host's band is the one band. The bell stands quiet: wiring its
-    // unread count is a follow-up.
-    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
-    if (band !== null) {
-      band.org = FRAMED_BAND_ORG;
-      band.demo = true;
-      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
-      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#view.kind));
-      band.groups = [];
-      band.currentKey = "";
-      band.syncState = "idle";
-      band.variant = "band";
     }
   }
 
@@ -851,7 +828,6 @@ export class DriveRunApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header signed-in demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
@@ -863,7 +839,6 @@ export class DriveRunApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         ${renderEntry(this.#entryView)}
