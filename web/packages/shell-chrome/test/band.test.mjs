@@ -13,6 +13,7 @@ import { ShellHeader } from '../src/shell-header.ts';
 import { ShellRail } from '../src/shell-rail.ts';
 import { parseRules, declsFor } from './lib/css.mjs';
 import { RAIL_PIN_KEY, railPinFromStored, railPinToStored } from '../src/shell-state.ts';
+import { framedBandAccount, framedBandBreadcrumb } from '../src/framed-band.ts';
 
 const visible = (markup) => markup.replace(/<!--.*?-->/g, '').replace(/&gt;/g, '>').replace(/&lt;/g, '<');
 
@@ -147,4 +148,19 @@ test('the stored pin mode degrades to off, never an error', () => {
   assert.equal(railPinFromStored('wide'), 'wide');
   assert.equal(railPinFromStored('spread'), 'off');
   assert.equal(railPinToStored('off'), 'off');
+});
+
+// ── the framed band's words, the composition every desk app hands the band ─
+
+test('the framed band crumb reads App > Surface, and the app alone at its front door', () => {
+  assert.equal(framedBandBreadcrumb('Counter Till', 'New sale'), 'Counter Till > New sale');
+  assert.equal(framedBandBreadcrumb('Quote Desk', 'New quote'), 'Quote Desk > New quote');
+  assert.equal(framedBandBreadcrumb('Manager Home', ''), 'Manager Home');
+});
+
+test('the account chip reads the persona name with the role label, and degrades honestly', () => {
+  assert.equal(framedBandAccount('Dana', 'General Manager'), 'Dana, General Manager');
+  assert.equal(framedBandAccount('', 'Yard Team'), 'Yard Team');
+  assert.equal(framedBandAccount('Dana', ''), 'Dana');
+  assert.equal(framedBandAccount('Yard Team', 'Yard Team'), 'Yard Team', 'one word, never doubled');
 });

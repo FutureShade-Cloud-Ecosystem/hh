@@ -1,0 +1,29 @@
+// The framed band's words (GAPS-r2 row G1): the pure composition behind the
+// white band a desk app renders above its app-local header when it stands
+// alone. The band's element is hh-shell-header in its band variant; these
+// are the strings each app hands it: the centred selector's "App > Surface"
+// and the account chip's persona name with the role label (the tier words
+// the person knows, read only; the role's RBAC never changes).
+
+/** The demo tenant's word for the band's lockup. The demo apps frame the
+ * demo tenant; the white-label tenant config leads when it lands. */
+export const FRAMED_BAND_ORG = 'Gable Landscape Supply';
+
+/** The centred selector's words: the app, then the surface the demo provides
+ * ("Counter Till > New sale"). No surface is the app's front door, named by
+ * the app alone. */
+export function framedBandBreadcrumb(appName: string, surfaceLabel: string): string {
+  const surface = surfaceLabel.trim();
+  return surface === '' ? appName : `${appName} > ${surface}`;
+}
+
+/** The account chip's words: the persona's display name with the role
+ * label ("Dana, General Manager"). One side missing renders the other; the
+ * two equal renders once, never a doubled word. */
+export function framedBandAccount(userName: string, roleLabel: string): string {
+  const name = userName.trim();
+  const role = roleLabel.trim();
+  if (name === '') return role;
+  if (role === '' || role === name) return name;
+  return `${name}, ${role}`;
+}
