@@ -327,6 +327,29 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 	}
 	var out ReturnNote
 	var replayedHere, approvedHere bool
+	// The two-transaction card refund (HH-690), the note's own shape: short tx 1 takes the
+	// ascending per-sale locks, guards every child, judges the note gate and stages every card
+	// child's attempt IN_FLIGHT, then COMMITS and releases every DB lock; the processor calls run
+	// outside any DB transaction; short tx 2 (returnAcrossInTx below) books the note against the
+	// staged reversal refs.
+	if in.RefundMethod == RefundCard && !in.railOptional {
+		err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			var txErr error
+			out, replayedHere, _, txErr = s.stageCardReturnAcrossInTx(ctx, tx, plan)
+			return txErr
+		})
+		if err != nil {
+			return s.returnAcrossFailed(ctx, plan, err)
+		}
+		if replayedHere {
+			return out, nil
+		}
+		if derr := s.dispatchStagedCardRefunds(ctx, plan.children); derr != nil {
+			return s.returnAcrossFailed(ctx, plan, derr)
+		}
+		out = ReturnNote{}
+		replayedHere = false
+	}
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
 		var txErr error
 		out, replayedHere, approvedHere, txErr = s.returnAcrossInTx(ctx, tx, plan)
@@ -336,35 +359,142 @@ func (s *Service) ReturnAcross(ctx context.Context, in ReturnAcrossInput) (Retur
 		s.settleCardRefunds(ctx, plan.children, nil)
 	}
 	if err != nil {
-		// The approval refusal writes its own audit row naming the clerk, the customer and the
-		// note's money asked for (the single path's own discipline, the note's own row).
-		var refusal ErrRefundApprovalRequired
-		if errors.As(err, &refusal) {
-			// The note's refusal row names the clerk, the CUSTOMER (the note has no id before it
-			// commits) and the money asked for, the single path's own audit discipline.
-			s.record(ctx, audit.SensitiveAccess{
-				Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: in.CustomerID,
-				ActorID: plan.actor, BranchID: plan.children[0].oc.BranchID, Purpose: "POS_RETURN",
-				Reason: refundApprovalRequiredError,
-				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
-			})
-			return ReturnNote{}, refusal
-		}
-		// A concurrent duplicate hit ux_return_notes_idem and rolled back: surface the winner.
-		if isUniqueViolationErr(err) {
-			if cached, found, ferr := s.replayNoteIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
-				s.settleCardRefunds(ctx, plan.children, nil)
-				return cached, nil
-			}
-		}
-		s.settleCardRefunds(ctx, plan.children, err)
-		return ReturnNote{}, err
+		return s.returnAcrossFailed(ctx, plan, err)
 	}
 	if replayedHere {
 		return out, nil
 	}
 	s.recordNoteCompleted(ctx, plan, out, approvedHere)
 	return out, nil
+}
+
+// returnAcrossFailed is the note's one failure path, shared by both transactions of the
+// two-transaction card refund and the plain single-transaction body (the single return's
+// returnFailed discipline, the note's own audit row).
+func (s *Service) returnAcrossFailed(ctx context.Context, plan *returnAcrossPlan, err error) (ReturnNote, error) {
+	// The approval refusal writes its own audit row naming the clerk, the customer and the
+	// note's money asked for (the single path's own discipline, the note's own row).
+	var refusal ErrRefundApprovalRequired
+	if errors.As(err, &refusal) {
+		// The note's refusal row names the clerk, the CUSTOMER (the note has no id before it
+		// commits) and the money asked for, the single path's own audit discipline.
+		s.record(ctx, audit.SensitiveAccess{
+			Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: plan.in.CustomerID,
+			ActorID: plan.actor, BranchID: plan.children[0].oc.BranchID, Purpose: "POS_RETURN",
+			Reason: refundApprovalRequiredError,
+			Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+		})
+		return ReturnNote{}, refusal
+	}
+	// A concurrent duplicate hit ux_return_notes_idem and rolled back: surface the winner.
+	if isUniqueViolationErr(err) {
+		if cached, found, ferr := s.replayNoteIfAllowed(ctx, plan.in.IdempotencyKey, plan.caller); ferr == nil && found {
+			s.settleCardRefunds(ctx, plan.children, nil)
+			return cached, nil
+		}
+	}
+	s.settleCardRefunds(ctx, plan.children, err)
+	return ReturnNote{}, err
+}
+
+// stageCardReturnAcrossInTx is short tx 1 of the note's two-transaction card refund (HH-690): the
+// ascending per-sale locks, the in-tx replay re-check, every child's guard, the swap's applied
+// distribution, the note-total gate and every card child's capture ceiling run HERE, each card
+// child's attempt is staged IN_FLIGHT, and the transaction commits before any processor call.
+func (s *Service) stageCardReturnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnAcrossPlan) (ReturnNote, bool, bool, error) {
+	in, caller := plan.in, plan.caller
+	ordered := make([]*returnPlan, len(plan.children))
+	copy(ordered, plan.children)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].oc.OrderID < ordered[j].oc.OrderID })
+	for _, child := range ordered {
+		if err := s.store.LockSaleForReturn(ctx, tx, child.oc.OrderID); err != nil {
+			return ReturnNote{}, false, false, err
+		}
+	}
+	cached, found, rerr := s.replayNoteIfAllowedTx(ctx, tx, in.IdempotencyKey, caller)
+	if rerr != nil {
+		return ReturnNote{}, false, false, rerr
+	}
+	if found {
+		return cached, true, false, nil
+	}
+	guards := make([]guardedReturn, len(plan.children))
+	var subtotal, taxTotal int64
+	for i, child := range plan.children {
+		g, gerr := s.guardReturnLines(ctx, tx, child.oc, child.in.Lines, child.in.Restock)
+		if gerr != nil {
+			return ReturnNote{}, false, false, gerr
+		}
+		guards[i] = g
+		subtotal += g.subtotal
+		taxTotal += g.taxTotal
+	}
+	noteTotal := subtotal + taxTotal
+	// A swap (10.5): the same applied distribution the booking transaction runs, so each child's
+	// staged rail amount is the amount tx 2 will book.
+	if in.swap {
+		if noteTotal != in.swapCredit {
+			return ReturnNote{}, false, false, clientErr(http.StatusConflict,
+				"pos: the credit changed while the swap was being rung (%s priced, %s now); review the swap and ring it again",
+				centsWords(in.swapCredit), centsWords(noteTotal))
+		}
+		remaining := in.swapApplied
+		for i, child := range plan.children {
+			childTotal := guards[i].subtotal + guards[i].taxTotal
+			child.applied = childTotal
+			if child.applied > remaining {
+				child.applied = remaining
+			}
+			remaining -= child.applied
+		}
+	}
+	first := plan.children[0]
+	priors := make([]int64, len(plan.children))
+	shares := make([]int64, len(plan.children))
+	for i, child := range plan.children {
+		prior, perr := s.store.SumCommittedReturnTotalsTx(ctx, tx, child.oc.OrderID)
+		if perr != nil {
+			return ReturnNote{}, false, false, perr
+		}
+		priors[i], shares[i] = prior, guards[i].subtotal+guards[i].taxTotal
+	}
+	if _, gerr := s.judgeNoteGate(noteTotal, priors, shares, caller, first); gerr != nil {
+		return ReturnNote{}, false, false, gerr
+	}
+	// D5 across the note, staged: every card child is judged against its own capture and staged
+	// HERE, before any processor call, so a note that would cross one capture refuses whole with
+	// the staging transaction rolled back (no attempt rows stand).
+	staged := false
+	for i, child := range plan.children {
+		cardCents := guards[i].subtotal + guards[i].taxTotal - child.applied
+		if child.applied == 0 {
+			sp, serr := s.railSplitFor(ctx, tx, child.oc, RefundCard, cardCents)
+			if serr != nil {
+				return ReturnNote{}, false, false, serr
+			}
+			if sp.rail == 0 && sp.offset > 0 {
+				return ReturnNote{}, false, false, clientErr(http.StatusUnprocessableEntity, "%s", sp.note)
+			}
+			cardCents = sp.rail
+		}
+		child.stagedRailTotal = cardCents
+		if cardCents <= 0 {
+			continue
+		}
+		if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", "refund:"+child.in.IdempotencyKey, cardCents); cerr != nil {
+			return ReturnNote{}, false, false, cerr
+		}
+		existing, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
+			RefundKey: "refund:" + child.in.IdempotencyKey, OrderID: child.oc.OrderID, BranchID: child.oc.BranchID,
+			CustomerID: child.oc.CustomerID, GatewayRef: child.oc.GatewayRef, AmountCents: cardCents,
+		})
+		if err != nil {
+			return ReturnNote{}, false, false, err
+		}
+		child.stagedRefundRef = existing
+		staged = true
+	}
+	return ReturnNote{}, false, staged, nil
 }
 
 // recordNoteCompleted writes the completion row of a committed note, one row for the one decision

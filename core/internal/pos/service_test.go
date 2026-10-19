@@ -52,17 +52,21 @@ type fakeStore struct {
 	signatures  []signatureRow
 
 	// -- W7 counter-v2 state --
-	policies         map[string]PosPolicy        // branch_id ("" = org default) → row
-	userWS           map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
-	userWSWrites     int                         // upsert count, the replay tests assert "no second write"
-	cachedReturns    map[string]Return           // idempotency key → committed return
-	retCtx           map[string]returnOrderCtx   // order_id → the original-sale context
-	retLines         map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
-	neverLeftShelf   map[string]bool             // order_line_id → goods that never left the shelf (the D1 case)
-	retLineOrders    map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
-	returnRows       []returnRow
-	returnLineRows   []returnLineRow
-	unbookedRefunds  []cardRefundFact
+	policies        map[string]PosPolicy        // branch_id ("" = org default) → row
+	userWS          map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
+	userWSWrites    int                         // upsert count, the replay tests assert "no second write"
+	cachedReturns   map[string]Return           // idempotency key → committed return
+	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
+	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	neverLeftShelf  map[string]bool             // order_line_id → goods that never left the shelf (the D1 case)
+	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
+	returnRows      []returnRow
+	returnLineRows  []returnLineRow
+	unbookedRefunds []cardRefundFact
+	// cardAttempts is the HH-690 two-transaction card refund's attempt
+	// ledger: refund key to its fact and status (IN_FLIGHT, UNBOOKED,
+	// BOOKED, FAILED), the fake of pos_card_refund_attempts.
+	cardAttempts     map[string]fakeCardAttempt
 	swaps            []swapRow
 	invoiceLocks     []string
 	invoiceMoney     map[string][2]int64 // invoice id to total, balance (the ruling's split)
@@ -130,6 +134,12 @@ type creditApply struct {
 	applied   int64
 }
 
+// fakeCardAttempt is one row of the fake pos_card_refund_attempts.
+type fakeCardAttempt struct {
+	fact   cardRefundFact
+	status string
+}
+
 func newFakeStore(tr *[]string) *fakeStore {
 	return &fakeStore{
 		tr:        tr,
@@ -148,6 +158,7 @@ func newFakeStore(tr *[]string) *fakeStore {
 		retLineOrders:  map[string]string{},
 		noteKeys:       map[string]ReturnNote{},
 		priorSums:      map[string]int64{},
+		cardAttempts:   map[string]fakeCardAttempt{},
 		refundPayments: map[string]string{},
 		invoiceBalance: map[string]int64{},
 		parked:         map[string]ParkedTicket{},
@@ -206,8 +217,13 @@ func (f *fakeStore) lastEvent(topic string) (map[string]any, bool) {
 
 func (f *fakeStore) RunInTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	before := f.snap()
+	beforeReturns := make(map[string]Return, len(f.cachedReturns))
+	for k, v := range f.cachedReturns {
+		beforeReturns[k] = v
+	}
 	if err := fn(nil); err != nil {
 		f.restore(before) // emulate ROLLBACK, nothing staged in this tx persists
+		f.cachedReturns = beforeReturns
 		return err
 	}
 	return nil
@@ -527,16 +543,75 @@ func (f *fakeStore) SumUnbookedCardRefundsTx(_ context.Context, _ pgx.Tx, orderI
 			sum += u.AmountCents
 		}
 	}
+	// The HH-690 attempt ledger counts the same as the table does: every
+	// IN_FLIGHT and UNBOOKED attempt of the order, the refund's own key
+	// excepted.
+	for k, a := range f.cardAttempts {
+		if a.fact.OrderID == orderID && k != except && (a.status == "IN_FLIGHT" || a.status == "UNBOOKED") {
+			sum += a.fact.AmountCents
+		}
+	}
 	return sum, nil
 }
 
-func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRefundFact, _ string) error {
+func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRefundFact, reason string) error {
 	f.unbookedRefunds = append(f.unbookedRefunds, facts...)
+	for _, fact := range facts {
+		if a, ok := f.cardAttempts[fact.RefundKey]; ok {
+			a.status, a.fact = "UNBOOKED", fact
+			f.cardAttempts[fact.RefundKey] = a
+			continue
+		}
+		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "UNBOOKED"}
+	}
+	_ = reason
 	return nil
 }
 
 func (f *fakeStore) MarkCardRefundsBooked(_ context.Context, keys []string) error {
 	f.bookedRefundKeys = append(f.bookedRefundKeys, keys...)
+	for _, k := range keys {
+		if a, ok := f.cardAttempts[k]; ok && (a.status == "IN_FLIGHT" || a.status == "UNBOOKED") {
+			a.status = "BOOKED"
+			f.cardAttempts[k] = a
+		}
+	}
+	return nil
+}
+
+// StageCardRefundAttemptTx mirrors the real staging statement's semantics
+// (repository_w7.go): an UNBOOKED attempt with its ref answers the ref, an
+// IN_FLIGHT one refuses the 409, anything else restages the key IN_FLIGHT.
+func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact cardRefundFact) (string, error) {
+	if a, ok := f.cardAttempts[fact.RefundKey]; ok {
+		if a.status == "UNBOOKED" && a.fact.RefundRef != "" {
+			return a.fact.RefundRef, nil
+		}
+		if a.status == "IN_FLIGHT" {
+			return "", clientErr(http.StatusConflict,
+				"pos: this card refund is already in flight at the processor; wait for it to finish")
+		}
+	}
+	fact.RefundRef = ""
+	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT"}
+	return "", nil
+}
+
+func (f *fakeStore) RecordCardRefundDispatched(_ context.Context, fact cardRefundFact) error {
+	a, ok := f.cardAttempts[fact.RefundKey]
+	if !ok {
+		a = fakeCardAttempt{fact: fact}
+	}
+	a.status, a.fact = "UNBOOKED", fact
+	f.cardAttempts[fact.RefundKey] = a
+	return nil
+}
+
+func (f *fakeStore) FailCardRefundAttempt(_ context.Context, refundKey, _ string) error {
+	if a, ok := f.cardAttempts[refundKey]; ok && a.status == "IN_FLIGHT" {
+		a.status = "FAILED"
+		f.cardAttempts[refundKey] = a
+	}
 	return nil
 }
 
@@ -1029,12 +1104,19 @@ type fakeCardRefunder struct {
 	called    bool
 	lastRef   string
 	lastCents int64
+	// lastTx and keyCalls pin the two-transaction card refund's dispatch
+	// shape (HH-690): the processor call carries NO open transaction and
+	// one call per refund key.
+	lastTx   pgx.Tx
+	keyCalls []string
 }
 
-func (c *fakeCardRefunder) RefundCard(_ context.Context, _ pgx.Tx, gatewayRef string, amountCents int64, _, _ string) (string, error) {
+func (c *fakeCardRefunder) RefundCard(_ context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, _, idempotencyKey string) (string, error) {
 	c.called = true
 	c.lastRef = gatewayRef
 	c.lastCents = amountCents
+	c.lastTx = tx
+	c.keyCalls = append(c.keyCalls, idempotencyKey)
 	if c.err != nil {
 		return "", c.err
 	}
