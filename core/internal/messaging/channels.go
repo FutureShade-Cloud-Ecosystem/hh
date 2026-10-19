@@ -101,16 +101,24 @@ var (
 	// ErrBadAutoScope: an unknown auto_scope on the rule write is a client fault the boundary
 	// answers with 400, so it never falls through to writeErr's 500 default.
 	ErrBadAutoScope = errors.New("messaging: auto_scope must be empty, BRANCH or GLOBAL")
+	// ErrTooManyGroupMembers: a founding set over the cap is a client fault, refused after
+	// deduplication and before any per member wall runs.
+	ErrTooManyGroupMembers = errors.New("messaging: a group may name at most 50 founding members")
 )
 
 // GroupCreateInput is one new group room: the optional name (an empty name
-// takes the founding members' display names until a member renames it) and
-// the set of staffers to seat beside the caller. Membership is explicit and
+// takes the founding members' display names until a member renames it) and the
+// set of staffers to seat beside the caller. Membership is explicit and
 // the room spans branches; the caller is its owner.
 type GroupCreateInput struct {
 	Name      string
 	MemberIDs []string
 }
+
+// maxGroupFoundingMembers caps the founding set after deduplication: the per member walls
+// (userActive, UserDisplayName) run once per named staffer, so an unbounded member_ids would
+// turn one request into an unbounded query fan.
+const maxGroupFoundingMembers = 50
 
 // CreateGroup starts a group room (change 7 rulings 3 and 4): any staffer may
 // start one, membership is explicit (never rule filled, like a DM's), and the
@@ -132,6 +140,9 @@ func (s *Service) CreateGroup(ctx context.Context, c Caller, in GroupCreateInput
 		}
 		seen[id] = true
 		members = append(members, id)
+	}
+	if len(members) > maxGroupFoundingMembers {
+		return Channel{}, ErrTooManyGroupMembers
 	}
 	for _, id := range members {
 		if err := s.repo.userActive(ctx, id); err != nil {

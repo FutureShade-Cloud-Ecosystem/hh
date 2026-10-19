@@ -957,3 +957,25 @@ func (r *fakeRealtime) PublishMessage(channelID string, m Message) {
 		m         Message
 	}{channelID, m})
 }
+
+// The founding set is capped: a group may name at most maxGroupFoundingMembers others after
+// deduplication, so the per member walls (userActive, UserDisplayName) stay bounded.
+func TestCreateGroup_FoundingMemberCap(t *testing.T) {
+	f := newFakeStore()
+	svc := svcWith(f)
+	ids := make([]string, 0, maxGroupFoundingMembers+1)
+	for i := 0; i <= maxGroupFoundingMembers; i++ {
+		ids = append(ids, fmt.Sprintf("u-group-%03d", i))
+	}
+	if _, err := svc.CreateGroup(context.Background(), Caller{UserID: uAlice}, GroupCreateInput{MemberIDs: ids}); !errors.Is(err, ErrTooManyGroupMembers) {
+		t.Fatalf("one over the cap must be refused, got %v", err)
+	}
+	at := ids[:maxGroupFoundingMembers]
+	if _, err := svc.CreateGroup(context.Background(), Caller{UserID: uAlice}, GroupCreateInput{Name: "At the cap", MemberIDs: at}); err != nil {
+		t.Fatalf("exactly at the cap founds: %v", err)
+	}
+	dup := append(append([]string{}, at...), at[0], at[1])
+	if _, err := svc.CreateGroup(context.Background(), Caller{UserID: uAlice}, GroupCreateInput{Name: "Dupes collapse", MemberIDs: dup}); err != nil {
+		t.Fatalf("duplicates collapse before the cap counts: %v", err)
+	}
+}
