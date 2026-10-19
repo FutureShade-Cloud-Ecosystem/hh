@@ -163,7 +163,11 @@ type Value struct {
 type Scope struct {
 	UserID   string
 	RoleCode string
-	Profile  string
+	// PlatformUserID and OrgID are the caller's platform identity and org, stamped by the handler from
+	// the guard-resolved caller. A tile's access rule (TileMeta.Access) asks the role gate with them.
+	PlatformUserID string
+	OrgID          string
+	Profile        string
 	// BranchIDs are the branches the caller may see. Empty WITH AllBranches false means the caller
 	// has no branch grants at all, a provider should return an empty measurement, not everything.
 	BranchIDs []string
@@ -216,6 +220,10 @@ type TileMeta struct {
 	DefaultOnProfiles map[string]bool `json:"default_on_profiles,omitempty"`
 	// Lead is the one-line explanation shown in the admin layout editor.
 	Lead string `json:"lead"`
+	// Access names the access rule a caller must pass to save this tile visible or to have it
+	// measured ("" is any staffer). The rule itself is bound by the composition root
+	// (Service.WithTileAccess); a named rule that is not bound refuses everyone. Not on the wire.
+	Access string `json:"-"`
 }
 
 // Catalog is the ordered tile catalog. ORDER IS THE FALLBACK LAYOUT: a role with no stored

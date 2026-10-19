@@ -77,7 +77,7 @@ func TestIntegration_PaymentsTodayDefaultOnLifecycle(t *testing.T) {
 		{TileID: TileSalesToday, Position: 0, Visible: true},
 		{TileID: TileARAging, Position: 1, Visible: true},
 	}
-	if _, err := svc.SaveMyLayout(ctx, userID, preCard); err != nil {
+	if _, err := svc.SaveMyLayout(ctx, Scope{UserID: userID}, preCard); err != nil {
 		t.Fatalf("SaveMyLayout (pre-card): %v", err)
 	}
 	visible("an override that is SILENT about the card", true)
@@ -85,7 +85,7 @@ func TestIntegration_PaymentsTodayDefaultOnLifecycle(t *testing.T) {
 	// The person removes it, the editor submits the complete list, card named hidden.
 	removed := append([]LayoutRow{}, preCard...)
 	removed = append(removed, LayoutRow{TileID: TilePaymentsToday, Position: 2, Visible: false})
-	if _, err := svc.SaveMyLayout(ctx, userID, removed); err != nil {
+	if _, err := svc.SaveMyLayout(ctx, Scope{UserID: userID}, removed); err != nil {
 		t.Fatalf("SaveMyLayout (removed): %v", err)
 	}
 	visible("an explicit removal", false)

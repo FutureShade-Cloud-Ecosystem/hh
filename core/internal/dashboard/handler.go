@@ -81,8 +81,17 @@ func (h *Handler) scopeFrom(r *http.Request) Scope {
 	return s
 }
 
+// scopeFor is scopeFrom plus the caller's platform identity and org, which a tile's access rule asks the
+// role gate with. The routes that save or measure tiles use it; the identity comes from the guard, never
+// from the request.
+func (h *Handler) scopeFor(r *http.Request, sc guards.StaffCaller) Scope {
+	s := h.scopeFrom(r)
+	s.PlatformUserID, s.OrgID = sc.PlatformUserID, sc.OrgID
+	return s
+}
+
 func (h *Handler) myHome(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	layout, err := h.svc.Resolve(r.Context(), h.scopeFrom(r))
+	layout, err := h.svc.Resolve(r.Context(), h.scopeFor(r, caller))
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -118,13 +127,12 @@ type layoutBody struct {
 	Tiles []LayoutRow `json:"tiles"`
 }
 
-func (h *Handler) saveMyLayout(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) saveMyLayout(w http.ResponseWriter, r *http.Request, sc guards.StaffCaller) {
 	var body layoutBody
 	if !decode(w, r, &body) {
 		return
 	}
-	caller, _ := identity.StaffContextFromContext(r.Context())
-	rows, err := h.svc.SaveMyLayout(r.Context(), caller.UserID, body.Tiles)
+	rows, err := h.svc.SaveMyLayout(r.Context(), h.scopeFor(r, sc), body.Tiles)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -132,7 +140,7 @@ func (h *Handler) saveMyLayout(w http.ResponseWriter, r *http.Request, _ guards.
 	httpx.WriteJSON(w, http.StatusOK, layoutBody{Tiles: rows})
 }
 
-func (h *Handler) resetMyLayout(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) resetMyLayout(w http.ResponseWriter, r *http.Request, sc guards.StaffCaller) {
 	caller, _ := identity.StaffContextFromContext(r.Context())
 	n, err := h.svc.ResetMyLayout(r.Context(), caller.UserID)
 	if err != nil {
@@ -142,7 +150,7 @@ func (h *Handler) resetMyLayout(w http.ResponseWriter, r *http.Request, _ guards
 	// Answer with the layout the reset LANDED ON, not just a count. The client's whole reason for
 	// calling this is "put me back on the role default"; making it re-fetch to find out what that
 	// is invites a flicker of the old layout in between.
-	layout, err := h.svc.Resolve(r.Context(), h.scopeFrom(r))
+	layout, err := h.svc.Resolve(r.Context(), h.scopeFor(r, sc))
 	if err != nil {
 		h.fail(w, err)
 		return
