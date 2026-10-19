@@ -232,13 +232,17 @@ type posStore interface {
 	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
 	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
 	MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error
-	// StageCardRefundAttemptTx, RecordCardRefundDispatched and FailCardRefundAttempt are the
-	// two-transaction card refund's attempt ledger (HH-690): short tx 1 stages the attempt
-	// IN_FLIGHT under the per-sale lock, the dispatch records the processor's answer UNBOOKED on
-	// the pool before tx 2 opens, and a refusal closes the attempt FAILED.
-	StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (existingRefundRef string, err error)
+	// StageCardRefundAttemptTx, RecordCardRefundDispatched, FailCardRefundAttempt and
+	// HoldCardRefundAttemptInFlight are the two-transaction card refund's attempt ledger (HH-690):
+	// short tx 1 stages the attempt IN_FLIGHT under the per-sale lock (answering an earlier
+	// UNBOOKED attempt's ref and amount when the restaged fact is the SAME refund), the dispatch
+	// records the processor's answer UNBOOKED on the pool before tx 2 opens, a refusal that moved
+	// no money closes the attempt FAILED, and an outcome that cannot be told holds it IN_FLIGHT
+	// with its reason so the amount stays reserved.
+	StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (existingRefundRef string, storedAmountCents int64, err error)
 	RecordCardRefundDispatched(ctx context.Context, f cardRefundFact) error
 	FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error
+	HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)

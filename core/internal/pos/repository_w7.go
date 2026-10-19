@@ -551,23 +551,32 @@ func (r *Repository) SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, or
 // StageCardRefundAttemptTx is short tx 1 of the two-transaction card refund (HH-690): inside the
 // staging transaction, under the per-sale lock, it records the attempt as IN_FLIGHT before the
 // processor is called outside any DB transaction. An earlier attempt under the SAME refund key that
-// the processor already refunded (UNBOOKED with its refund_ref) answers that ref so the caller
-// reuses it and never refunds twice; an attempt still IN_FLIGHT refuses as a 409 in words; anything
-// else (FAILED, a BOOKED row whose return is gone, an UNBOOKED row with no ref) restages the key.
-func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (string, error) {
-	var status, refundRef string
+// the processor already refunded (UNBOOKED with its refund_ref) answers that ref AND the amount the
+// processor refunded, but only when the restaged fact is the SAME refund (amount, capture and sale):
+// a same-key retry with a changed body must never book a different amount against the earlier
+// reversal (HH-690 round 2, P1-1), so any difference refuses 409 in words and leaves the row
+// UNBOOKED untouched. An attempt still IN_FLIGHT refuses as a 409 in words; anything else (FAILED,
+// a BOOKED row whose return is gone, an UNBOOKED row with no ref) restages the key.
+func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (string, int64, error) {
+	var status, refundRef, gatewayRef, orderID string
+	var amount int64
 	err := tx.QueryRow(ctx,
-		`SELECT status, refund_ref FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`, f.RefundKey).Scan(&status, &refundRef)
+		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
+		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID)
 	if err == nil {
 		if status == "UNBOOKED" && refundRef != "" {
-			return refundRef, nil
+			if amount != f.AmountCents || gatewayRef != f.GatewayRef || orderID != f.OrderID {
+				return "", 0, clientErr(http.StatusConflict,
+					"pos: that idempotency key already refunded a different card amount or sale; use a new key or book the original return")
+			}
+			return refundRef, amount, nil
 		}
 		if status == "IN_FLIGHT" {
-			return "", clientErr(http.StatusConflict,
+			return "", 0, clientErr(http.StatusConflict,
 				"pos: this card refund is already in flight at the processor; wait for it to finish")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return "", err
+		return "", 0, err
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, attempted_at, updated_at)
@@ -576,9 +585,23 @@ ON CONFLICT (refund_key) DO UPDATE
    SET status = 'IN_FLIGHT', refund_ref = '', amount_cents = EXCLUDED.amount_cents,
        last_error = '', attempted_at = now(), updated_at = now()`,
 		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.AmountCents); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return "", nil
+	return "", 0, nil
+}
+
+// HoldCardRefundAttemptInFlight records the processor's unknown-outcome error on an IN_FLIGHT
+// attempt while keeping its status IN_FLIGHT, so the amount stays reserved against the capture
+// ceiling and a retry refuses rather than calling the processor a second time (HH-690 round 2,
+// P1-2: only a decline or a not-dispatched failure is known to have moved no money).
+func (r *Repository) HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE pos_card_refund_attempts SET last_error = $2, processor_at = now(), updated_at = now()
+ WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
+	return err
 }
 
 // RecordCardRefundDispatched persists, on the pool and immediately after the processor answered
@@ -613,7 +636,9 @@ func (r *Repository) FailCardRefundAttempt(ctx context.Context, refundKey, reaso
 
 // RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every
 // processor refund that transaction made and then rolled back (D4). One row per refund key; a retry
-// that fails again refreshes the row.
+// that fails again refreshes the row. A row that already carries the processor's own reversal ref
+// keeps that ref and its amount whatever the new fact says (HH-690 round 2, P1-1): the record of
+// what the processor actually refunded is never overwritten.
 func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error {
 	if r.pool == nil {
 		return errNoPool
@@ -622,7 +647,9 @@ func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []card
 INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8)
 ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDED.last_error,
-       refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents, updated_at = now()`
+       refund_ref = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.refund_ref ELSE EXCLUDED.refund_ref END,
+       amount_cents = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.amount_cents ELSE EXCLUDED.amount_cents END,
+       updated_at = now()`
 	for _, f := range facts {
 		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason); err != nil {
 			return err

@@ -17,6 +17,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 )
@@ -357,7 +358,7 @@ func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *retu
 		if err := s.checkCardCapTx(ctx, tx, oc, "", "refund:"+in.IdempotencyKey, railTotal); err != nil {
 			return Return{}, false, false, err
 		}
-		existing, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
+		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
 			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID,
 			CustomerID: oc.CustomerID, GatewayRef: oc.GatewayRef, AmountCents: railTotal,
 		})
@@ -365,6 +366,7 @@ func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *retu
 			return Return{}, false, false, err
 		}
 		plan.stagedRefundRef = existing
+		plan.stagedRefundCents = stored
 	}
 	return Return{}, false, true, nil
 }
@@ -422,27 +424,44 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.oc.BranchID,
 			CustomerID: p.oc.CustomerID, GatewayRef: p.oc.GatewayRef, AmountCents: p.stagedRailTotal,
 		}
-		// An earlier attempt under the same key already refunded at the processor: reuse its ref.
+		// An earlier attempt under the same key already refunded at the processor: reuse its ref
+		// and ITS amount (the staging compared the bodies, so the two agree here).
 		if p.stagedRefundRef != "" {
 			fact.RefundRef = p.stagedRefundRef
+			fact.AmountCents = p.stagedRefundCents
 			p.cardRefunds = append(p.cardRefunds, fact)
 			continue
 		}
 		refundRef, err := s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
 		if err != nil {
 			reason := trimReason(err.Error())
-			for _, late := range plans[i:] {
+			// The failed child: only a decline or a not-dispatched failure is KNOWN to have
+			// moved no money, so only those close FAILED. Anything else (an unknown outcome, a
+			// transport timeout, an unclassified error) holds the attempt IN_FLIGHT with its
+			// reason: the amount stays reserved against the capture ceiling and the same-key
+			// retry refuses instead of refunding again (HH-690 round 2, P1-2).
+			if isCardRefundNoMoneyMoved(err) {
+				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), refundKey, reason); ferr != nil {
+					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
+				}
+			} else if herr := s.store.HoldCardRefundAttemptInFlight(context.WithoutCancel(ctx), refundKey, reason); herr != nil {
+				slog.Default().Warn("pos: the unknown-outcome card refund attempt could not be held", "err", herr)
+			}
+			// Every LATER child was never sent over the wire: no money can have moved for any
+			// of them, so they close FAILED whatever the failed child's own classification.
+			for _, late := range plans[i+1:] {
 				if late.in.RefundMethod != RefundCard || late.in.railOptional || late.stagedRailTotal <= 0 || late.stagedRefundRef != "" {
 					continue
 				}
 				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), "refund:"+late.in.IdempotencyKey, reason); ferr != nil {
-					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
+					slog.Default().Warn("pos: the undispatched card refund attempt could not be closed", "err", ferr)
 				}
 			}
 			s.settleCardRefunds(ctx, plans, err)
 			return clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
 		p.stagedRefundRef = refundRef
+		p.stagedRefundCents = p.stagedRailTotal
 		fact.RefundRef = refundRef
 		p.cardRefunds = append(p.cardRefunds, fact)
 		if derr := s.store.RecordCardRefundDispatched(context.WithoutCancel(ctx), fact); derr != nil {
@@ -452,6 +471,17 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 		}
 	}
 	return nil
+}
+
+// isCardRefundNoMoneyMoved answers whether a card refund failure is KNOWN to have moved no money:
+// the processor's own decline, or a failure that happened before anything reached it (HH-690
+// round 2, P1-2). Every other failure (an unknown outcome, a transport timeout, an unclassified
+// error) may have refunded, so its attempt is held open, never closed FAILED.
+func isCardRefundNoMoneyMoved(err error) bool {
+	var decline *payment.DeclineError
+	return errors.As(err, &decline) ||
+		errors.Is(err, payment.ErrProcessorDeclined) ||
+		errors.Is(err, payment.ErrProcessorNotDispatched)
 }
 
 // returnPlan is everything the return resolves BEFORE any transaction
@@ -470,10 +500,14 @@ type returnPlan struct {
 	// stagedRailTotal and stagedRefundRef are the two-transaction card refund's staging facts
 	// (HH-690): short tx 1 computed the rail total and staged the attempt, and the dispatch
 	// outside any DB transaction either holds the reversal's processor ref or an earlier
-	// UNBOOKED attempt's ref it reused. Tx 2 (commitReturnTx) reuses the ref instead of calling
-	// the processor again, and refuses in words if the sale's balance moved under it.
-	stagedRailTotal int64
-	stagedRefundRef string
+	// UNBOOKED attempt's ref it reused. stagedRefundCents is the amount the processor actually
+	// refunded under that ref (the stored amount of the reused attempt, or the fresh dispatch's
+	// own amount): tx 2 compares against IT, never against the new body's figure alone
+	// (HH-690 round 2, P1-1). Tx 2 (commitReturnTx) reuses the ref instead of calling the
+	// processor again, and refuses in words if the sale's balance moved under it.
+	stagedRailTotal   int64
+	stagedRefundRef   string
+	stagedRefundCents int64
 	// applied is the part of this return\'s total spent on a swap\'s new order (10.5): the rail moves
 	// total less applied. Set inside the swap\'s transaction once the guard has priced the note.
 	applied int64
@@ -1112,7 +1146,8 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		// refuse in words and leave the attempt UNBOOKED for reconciliation, never book a return
 		// whose money no longer matches what the processor holds.
 		if plan.stagedRefundRef != "" {
-			if plan.stagedRailTotal > 0 && railTotal != plan.stagedRailTotal {
+			if (plan.stagedRailTotal > 0 && railTotal != plan.stagedRailTotal) ||
+				(plan.stagedRefundCents > 0 && railTotal != plan.stagedRefundCents) {
 				return Return{}, clientErr(http.StatusConflict,
 					"pos: the sale's returnable balance changed while the card refund was in flight; review the sale")
 			}

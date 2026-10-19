@@ -484,7 +484,7 @@ func (s *Service) stageCardReturnAcrossInTx(ctx context.Context, tx pgx.Tx, plan
 		if cerr := s.checkCardCapTx(ctx, tx, child.oc, "", "refund:"+child.in.IdempotencyKey, cardCents); cerr != nil {
 			return ReturnNote{}, false, false, cerr
 		}
-		existing, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
+		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
 			RefundKey: "refund:" + child.in.IdempotencyKey, OrderID: child.oc.OrderID, BranchID: child.oc.BranchID,
 			CustomerID: child.oc.CustomerID, GatewayRef: child.oc.GatewayRef, AmountCents: cardCents,
 		})
@@ -492,6 +492,7 @@ func (s *Service) stageCardReturnAcrossInTx(ctx context.Context, tx pgx.Tx, plan
 			return ReturnNote{}, false, false, err
 		}
 		child.stagedRefundRef = existing
+		child.stagedRefundCents = stored
 		staged = true
 	}
 	return ReturnNote{}, false, staged, nil
