@@ -293,7 +293,9 @@ var Catalog = []TileMeta{
 	// having to be parsed out of the other.
 	{
 		ID: TilePaymentsToday, Label: "Payments today", Module: "messaging", Kind: KindMoneyCents,
-		Glyph: "💵", Accent: "#4a9e6f", Unit: "messaging", Screen: "messaging", DefaultVisible: false,
+		// HH-777: the day's payment total is the payment trail's, not a layout wish.
+		Access: AccessPaymentTrail,
+		Glyph:  "💵", Accent: "#4a9e6f", Unit: "messaging", Screen: "messaging", DefaultVisible: false,
 		// DIB-500: the owner wants this card every day WITHOUT setup, and a layout saved before the
 		// card shipped must not keep hiding it from them. DefaultOnProfiles is the mechanism (see
 		// ApplyDefaultOn): for the two leadership shapes 0157 already gates it to, a layout that

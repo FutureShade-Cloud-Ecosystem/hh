@@ -291,6 +291,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrTileForbidden) {
+		httpx.Error(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if errors.Is(err, ErrUnknownProfile) {
 		httpx.Error(w, http.StatusNotFound, err.Error())
 		return

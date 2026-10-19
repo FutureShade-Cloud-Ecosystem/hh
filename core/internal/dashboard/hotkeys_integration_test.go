@@ -51,7 +51,7 @@ func TestIntegration_DealerHotkeySeedMatchesTheCodeDefaults(t *testing.T) {
 func TestIntegration_PaymentsTodayDefaultOnLifecycle(t *testing.T) {
 	pool := testPool(t)
 	repo := NewRepository(pool)
-	svc := NewService(repo, nil)
+	svc := NewService(repo, nil).WithTileAccess(AccessPaymentTrail, func(context.Context, Scope) (bool, error) { return true, nil })
 	ctx := context.Background()
 	userID := syntheticUser(t, pool)
 

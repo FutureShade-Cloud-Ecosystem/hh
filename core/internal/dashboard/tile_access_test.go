@@ -3,6 +3,8 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 )
@@ -131,5 +133,14 @@ func TestTileAccess_UngatedTilesAreUnaffected(t *testing.T) {
 	l, _ := svc.Resolve(context.Background(), Scope{UserID: "u"})
 	if tile, _ := tileByID(l, TileSalesToday); tile.Number == nil || *tile.Number != 5 {
 		t.Fatalf("sales.today needs no rule: %+v", tile)
+	}
+}
+
+// The refusal is the caller's, a 403, never the 500 of an unclassified error.
+func TestTileAccess_ForbiddenAnswers403(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&Handler{}).fail(rec, ErrTileForbidden)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", rec.Code)
 	}
 }

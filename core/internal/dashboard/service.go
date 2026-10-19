@@ -113,13 +113,27 @@ type Service struct {
 // the money tiles). An error is a no.
 type TileAccess func(ctx context.Context, scope Scope) (bool, error)
 
-// WithTileAccess binds one named access rule. Skeleton: the rule is held and not yet asked.
+// WithTileAccess binds one named access rule.
 func (s *Service) WithTileAccess(rule string, fn TileAccess) *Service {
 	if s.tileAccess == nil {
 		s.tileAccess = map[string]TileAccess{}
 	}
 	s.tileAccess[rule] = fn
 	return s
+}
+
+// tileAllowed asks the access rule a tile names. A tile that names none is open to any staffer; a tile
+// that names a rule nobody bound, or whose rule errors, is closed: fail closed.
+func (s *Service) tileAllowed(ctx context.Context, scope Scope, meta TileMeta) bool {
+	if meta.Access == "" {
+		return true
+	}
+	fn, ok := s.tileAccess[meta.Access]
+	if !ok || fn == nil {
+		return false
+	}
+	allowed, err := fn(ctx, scope)
+	return err == nil && allowed
 }
 
 func NewService(store Store, log *slog.Logger) *Service {
@@ -266,6 +280,11 @@ func (s *Service) Resolve(ctx context.Context, scope Scope) (Layout, error) {
 	// needed on the slice.
 	var wg sync.WaitGroup
 	for i := range tiles {
+		// The same rule again at measurement (HH-777): a layout stored before the rule, or by an admin
+		// profile row, must not measure a tile this caller fails.
+		if tiles[i].Visible && !s.tileAllowed(ctx, scope, tiles[i].TileMeta) {
+			tiles[i].Visible = false
+		}
 		if !tiles[i].Visible {
 			tiles[i].State, tiles[i].Note = StateHidden, ""
 			continue
@@ -456,6 +475,13 @@ func (s *Service) SaveMyLayout(ctx context.Context, scope Scope, rows []LayoutRo
 		return nil, ErrNoCaller
 	}
 	clean := NormalizeRows(CatalogByID, rows)
+	// A layout is a wish, never an authority (HH-777): a gated tile named visible is refused unless
+	// the caller passes the tile's own rule, and nothing is stored. Named hidden is not a measurement.
+	for _, r := range clean {
+		if meta := CatalogByID[r.TileID]; r.Visible && !s.tileAllowed(ctx, scope, meta) {
+			return nil, ErrTileForbidden
+		}
+	}
 	if len(clean) == 0 {
 		// An empty override is indistinguishable from no override once stored, and storing it
 		// would mean "reset to role" silently already happened. Refuse; the client that wants a

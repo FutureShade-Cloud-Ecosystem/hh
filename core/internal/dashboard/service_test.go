@@ -117,7 +117,7 @@ func TestTileDegradesToLabelledEmDashWhenUnwired(t *testing.T) {
 		t.Run(meta.ID, func(t *testing.T) {
 			f := newFakeStore()
 			allVisible(ProfileAdmin, f)
-			svc := NewService(f, nil)
+			svc := NewService(f, nil).WithTileAccess(AccessPaymentTrail, allowAll)
 			// Wire EVERY tile except this one, so the test isolates one missing provider rather
 			// than asserting against an empty registry.
 			for _, other := range Catalog {
