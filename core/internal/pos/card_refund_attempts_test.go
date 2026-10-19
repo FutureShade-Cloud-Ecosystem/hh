@@ -323,6 +323,42 @@ func TestCardRefundAttempts_LiveRequestFenceHoldsTheSettle(t *testing.T) {
 	}
 }
 
+// The duplicate-ref fence (PR #501 round 1 P1-2): one processor ref never
+// settles a second attempt and never settles over a payment already booked
+// under it; both refuse 409 in words naming the ref.
+func TestCardRefundAttempts_DuplicateRefundRefRefuses409(t *testing.T) {
+	h := newHarness()
+	const id1 = "11111111-1111-4111-8111-1111111111e1"
+	const id2 = "11111111-1111-4111-8111-1111111111e2"
+	plantAttempt(h.store, id1, "refund:za", "order-1", "branch-trt", "IN_FLIGHT", "", "u-clerk", 4520)
+	plantAttempt(h.store, id2, "refund:zb", "order-1", "branch-trt", "IN_FLIGHT", "", "u-clerk", 4520)
+
+	// The first attempt settles REFUNDED with the shared ref.
+	if _, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id1,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_zz_same", Note: "first settle"}); err != nil {
+		t.Fatalf("the first attempt settles with the ref: %v", err)
+	}
+	// The second attempt with the SAME ref refuses in words naming it.
+	_, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id2,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_zz_same", Note: "second settle"})
+	if ce := asClientErr(t, err); ce.status != http.StatusConflict || !strings.Contains(ce.Error(), "rp_zz_same") ||
+		!strings.Contains(ce.Error(), "already recorded against another card refund") {
+		t.Fatalf("the shared ref refuses the second settle 409 in words naming it, got %d %v", ce.status, err)
+	}
+	// A ref already booked as a payment's gateway_ref refuses the same way.
+	h.store.paymentGatewayRefs["rp_zz_pay"] = true
+	_, err = h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id2,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_zz_pay", Note: "over a booked payment"})
+	if ce := asClientErr(t, err); ce.status != http.StatusConflict || !strings.Contains(ce.Error(), "rp_zz_pay") {
+		t.Fatalf("a ref already booked as a payment refuses the settle 409, got %d %v", ce.status, err)
+	}
+	// A ref nowhere else still settles.
+	if _, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id2,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_zz_own", Note: "its own ref"}); err != nil {
+		t.Fatalf("the second attempt settles with its own ref: %v", err)
+	}
+}
+
 // NOT_REFUNDED on an UNBOOKED attempt that already carries the processor's
 // reversal ref refuses: that money moved, it must be booked or settled
 // REFUNDED, never closed as not refunded.

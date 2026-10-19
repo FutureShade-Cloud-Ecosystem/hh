@@ -252,6 +252,11 @@ type posStore interface {
 	ListOpenCardRefundAttempts(ctx context.Context, statusFilter string, branches []string) ([]CardRefundAttempt, error)
 	CardRefundAttemptForUpdateTx(ctx context.Context, tx pgx.Tx, attemptID string) (CardRefundAttempt, bool, error)
 	ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error
+	// CardRefundRefUsedElsewhereTx is the duplicate-ref fence of the same
+	// settle (PR #501 round 1 P1-2): inside the resolution transaction it
+	// answers whether the named processor ref already rides another attempt
+	// row or an already booked payment.
+	CardRefundRefUsedElsewhereTx(ctx context.Context, tx pgx.Tx, refundRef, exceptRefundKey string) (onAttempt, onPayment bool, err error)
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)

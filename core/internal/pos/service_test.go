@@ -79,16 +79,19 @@ type fakeStore struct {
 	lastNoteID       string            // the most recent InsertReturnNote's id, the across path binds children with
 	returnLocks      []string          // order ids the per-sale return advisory lock was taken for, in order
 	refundPayments   map[string]string // return id → refund payment id
-	creditApplies    []creditApply
-	invoiceBalance   map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
-	parked           map[string]ParkedTicket
-	lastResumeActor  string // the actor the last resume stamped (the parked fence's who-resumed)
-	pricingDocs      map[string]PricingOrder
-	products         map[string][2]string     // product id → {sku, name}
-	stockMeta        map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
-	staff            map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
-	discountStaff    []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
-	discountReads    []SaleDiscount           // canned ReadSaleDiscounts answer
+	// paymentGatewayRefs holds the gateway refs of the fake's booked payments
+	// (the duplicate-ref fence's payment side).
+	paymentGatewayRefs map[string]bool
+	creditApplies      []creditApply
+	invoiceBalance     map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
+	parked             map[string]ParkedTicket
+	lastResumeActor    string // the actor the last resume stamped (the parked fence's who-resumed)
+	pricingDocs        map[string]PricingOrder
+	products           map[string][2]string     // product id → {sku, name}
+	stockMeta          map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
+	staff              map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	discountStaff      []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
+	discountReads      []SaleDiscount           // canned ReadSaleDiscounts answer
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -174,16 +177,19 @@ func newFakeStore(tr *[]string) *fakeStore {
 		priorSums:      map[string]int64{},
 		cardAttempts:   map[string]fakeCardAttempt{},
 		refundPayments: map[string]string{},
-		invoiceBalance: map[string]int64{},
-		parked:         map[string]ParkedTicket{},
-		pricingDocs:    map[string]PricingOrder{},
-		products:       map[string][2]string{},
-		stockMeta:      map[string]fakeStockMeta{},
-		staff:          map[string]string{},
-		pickups:        map[string]ReturnPickup{},
-		returnRequests: map[string]ReturnRequest{},
-		owing:          map[string]payBalanceOrderFacts{},
-		payByKey:       map[string]payBalanceReplayRow{},
+		// paymentGatewayRefs holds the gateway refs of the fake's booked
+		// payments (the duplicate-ref fence's payment side).
+		paymentGatewayRefs: map[string]bool{},
+		invoiceBalance:     map[string]int64{},
+		parked:             map[string]ParkedTicket{},
+		pricingDocs:        map[string]PricingOrder{},
+		products:           map[string][2]string{},
+		stockMeta:          map[string]fakeStockMeta{},
+		staff:              map[string]string{},
+		pickups:            map[string]ReturnPickup{},
+		returnRequests:     map[string]ReturnRequest{},
+		owing:              map[string]payBalanceOrderFacts{},
+		payByKey:           map[string]payBalanceReplayRow{},
 	}
 }
 
@@ -755,6 +761,29 @@ func (f *fakeStore) ApplyCardRefundResolutionTx(_ context.Context, _ pgx.Tx, att
 		return nil
 	}
 	return clientErr(http.StatusConflict, "pos: card refund attempt is already resolved")
+}
+
+// CardRefundRefUsedElsewhereTx mirrors the real duplicate-ref fence
+// (repository_w7.go): the ref on another attempt row, or on a booked
+// refund payment (the fake's refundPayments values).
+func (f *fakeStore) CardRefundRefUsedElsewhereTx(_ context.Context, _ pgx.Tx, refundRef, exceptRefundKey string) (bool, bool, error) {
+	onAttempt, onPayment := false, false
+	for k, a := range f.cardAttempts {
+		if k != exceptRefundKey && a.fact.RefundRef == refundRef {
+			onAttempt = true
+		}
+	}
+	for _, u := range f.unbookedRefunds {
+		if u.RefundKey != exceptRefundKey && u.RefundRef == refundRef {
+			onAttempt = true
+		}
+	}
+	for ref := range f.paymentGatewayRefs {
+		if ref == refundRef {
+			onPayment = true
+		}
+	}
+	return onAttempt, onPayment, nil
 }
 
 // sortStringsDesc sorts in place, descending (the fake list's determinism).

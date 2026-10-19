@@ -811,6 +811,20 @@ UPDATE pos_card_refund_attempts
 	return nil
 }
 
+// CardRefundRefUsedElsewhereTx answers, inside the settle's own transaction,
+// whether the processor's refund ref a manager names is already carried by
+// ANOTHER attempt row (one reversal booked against two attempts) or already
+// booked as a payment's gateway_ref (the refund landed on the books under
+// that ref). Either answer refuses the settle (PR #501 round 1 P1-2); the
+// partial unique index on refund_ref backs the attempt side at the table
+// itself.
+func (r *Repository) CardRefundRefUsedElsewhereTx(ctx context.Context, tx pgx.Tx, refundRef, exceptRefundKey string) (onAttempt, onPayment bool, err error) {
+	err = tx.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM pos_card_refund_attempts WHERE refund_ref = $1 AND refund_key <> $2),
+       EXISTS(SELECT 1 FROM payments WHERE gateway_ref = $1)`, refundRef, exceptRefundKey).Scan(&onAttempt, &onPayment)
+	return onAttempt, onPayment, err
+}
+
 // sumCommittedReturnTotalsQuery is the sale's committed return total. Every
 // pos_returns row is COMMITTED by the table's own CHECK constraint
 // (migration 0043 pins status to the one value 'COMMITTED'), so the sum

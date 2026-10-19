@@ -164,6 +164,17 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 			if ref == "" {
 				return clientErr(http.StatusUnprocessableEntity, "pos: resolving a card refund attempt as REFUNDED requires the processor's refund_ref")
 			}
+			// The duplicate-ref fence (PR #501 round 1 P1-2): one processor
+			// reversal ref may never ride two attempts or double-book against a
+			// payment that already landed under it.
+			onAttempt, onPayment, derr := s.store.CardRefundRefUsedElsewhereTx(ctx, tx, ref, row.RefundKey)
+			if derr != nil {
+				return derr
+			}
+			if onAttempt || onPayment {
+				return clientErr(http.StatusConflict,
+					"pos: processor ref %s is already recorded against another card refund or a booked payment; check the processor console", ref)
+			}
 			if err := s.store.ApplyCardRefundResolutionTx(ctx, tx, attemptID, "UNBOOKED", ref, actor, note); err != nil {
 				return err
 			}
