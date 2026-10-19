@@ -84,12 +84,54 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/**
+ * The neutral name the passkey prompt shows when the tenant config cannot be
+ * read (decision log row 1975, under the white label rulings): never a house
+ * name, never a dealer's name guessed at. The prompt names the dealer only
+ * when the config actually said so.
+ */
+export const DEFAULT_RP_NAME = "Workspace";
+
 export interface WebAuthnProviderOptions {
-  /** The relying party id; defaults to the serving origin when omitted. */
+  /** The relying party id; defaults to the serving origin when omitted. Changing it would orphan existing passkeys, so it is passed through untouched. */
   rpId?: string;
+  /**
+   * The name the platform prompt shows for the relying party. An explicit
+   * non-empty value wins; when omitted the provider resolves the dealer's
+   * name from the tenant config once per provider, and falls back to
+   * DEFAULT_RP_NAME when the config cannot be read (row 1975).
+   */
   rpName?: string;
+  /** Test seam: overrides how the dealer name is resolved; bypasses the tenant config read. */
+  resolveRpName?: () => Promise<string | undefined>;
+  /** Test seam: the fetch used for the tenant config read; defaults to globalThis.fetch. */
+  fetchImpl?: typeof fetch;
+  /** The tenant config endpoint consulted for dealer_name; defaults to /api/v1/tenant/config. */
+  tenantConfigUrl?: string;
   /** How long the platform prompt may take, in milliseconds. */
   timeoutMs?: number;
+}
+
+async function resolveDealerName(options?: WebAuthnProviderOptions): Promise<string | undefined> {
+  if (options?.resolveRpName !== undefined) {
+    try {
+      return await options.resolveRpName();
+    } catch {
+      return undefined;
+    }
+  }
+  const fetchImpl = options?.fetchImpl ?? (typeof globalThis.fetch === "function" ? globalThis.fetch : undefined);
+  if (fetchImpl === undefined) return undefined;
+  try {
+    const response = await fetchImpl(options?.tenantConfigUrl ?? "/api/v1/tenant/config");
+    if (!response.ok) return undefined;
+    const body: unknown = await response.json();
+    if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+    const dealerName = (body as Record<string, unknown>)["dealer_name"];
+    return typeof dealerName === "string" && dealerName.trim() !== "" ? dealerName : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -101,7 +143,8 @@ export interface WebAuthnProviderOptions {
  * server remain the authority, and the assertion is not sent anywhere.
  */
 export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): CredentialProvider {
-  const rpName = options?.rpName ?? "Hardscape House";
+  const explicitRpName = options?.rpName?.trim() !== "" ? options?.rpName?.trim() : undefined;
+  let resolvedRpName: string | undefined; // cached per provider after the first read
   const timeoutMs = options?.timeoutMs ?? 60_000;
   return {
     async isAvailable(): Promise<boolean> {
@@ -114,6 +157,13 @@ export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): C
       }
     },
     async create(): Promise<string> {
+      // Row 1975: the prompt names the dealer. An explicit non-empty rpName
+      // wins; otherwise the tenant config's dealer_name is read once and
+      // cached per provider; otherwise the neutral DEFAULT_RP_NAME. The rp id
+      // is never touched here: changing it would orphan existing passkeys.
+      const resolved = explicitRpName ?? resolvedRpName ?? (await resolveDealerName(options));
+      if (resolved !== undefined) resolvedRpName = resolved;
+      const rpName = resolved ?? DEFAULT_RP_NAME;
       const credential = await navigator.credentials.create({
         publicKey: {
           challenge: newChallengeBytes(),
