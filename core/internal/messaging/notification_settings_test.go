@@ -378,3 +378,23 @@ func TestHandler_PutNotificationSettings_BadTimezone400(t *testing.T) {
 }
 
 func stringp(s string) *string { return &s }
+
+// The category upsert loads the caller's stored category map once before the loop, not once per
+// category: a six category PUT draws one read, not six.
+func TestService_SetNotificationSettings_LoadsTheStoredCategoryMapOnce(t *testing.T) {
+	f := newFakeStore()
+	svc := svcWith(f)
+	patch := NotificationSettingsPatch{}
+	for _, cat := range EventCategories {
+		on := true
+		patch.EventPrefs = append(patch.EventPrefs, PersonEventPrefsPatch{Category: cat, InApp: &on})
+	}
+	if _, err := svc.SetNotificationSettings(context.Background(), Caller{UserID: uAlice}, patch); err != nil {
+		t.Fatalf("the whole board in one PUT: %v", err)
+	}
+	// One read loads the stored map before the loop; the second is the final envelope re-read
+	// the PUT answers with (the round-trip honesty). A read per category would answer 7.
+	if f.personPrefReads != 2 {
+		t.Fatalf("the stored category map must be loaded once before the loop, got %d reads", f.personPrefReads)
+	}
+}
