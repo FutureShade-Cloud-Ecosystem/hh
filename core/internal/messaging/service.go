@@ -136,6 +136,8 @@ type Service struct {
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The rollup's day,
 	// the day a routine event is filed under, is the dealer's own calendar day.
 	zone houseday.Source
+	// payAccess says who holds the payment trail; nil withholds every payment notice (payment_access.go).
+	payAccess PaymentAccess
 }
 
 // WithAttachmentChecker attaches the attachment checker seam.

@@ -194,3 +194,36 @@ func (f *fakeStore) setChannelBranch(channelID, branchID string) {
 var errFacts = errors.New("payment facts unavailable")
 
 func (f *fakeStore) breakPaymentFacts() { f.pay().factsErr = errFacts }
+
+// - paymentRecipientStore and PaymentAccess -
+
+var recipientStates = map[*fakeStore]map[string]PaymentRecipient{}
+
+// setRecipient seeds one staffer's platform identity, orgs and branch reach.
+func (f *fakeStore) setRecipient(userID string, r PaymentRecipient) {
+	m, ok := recipientStates[f]
+	if !ok {
+		m = map[string]PaymentRecipient{}
+		recipientStates[f] = m
+	}
+	m[userID] = r
+}
+
+// PaymentRecipient mirrors the repository: an unseeded staffer is the zero value (no platform
+// identity), which the fence reads as "the gate cannot answer for them".
+func (f *fakeStore) PaymentRecipient(_ context.Context, userID string) (PaymentRecipient, error) {
+	return recipientStates[f][userID], nil
+}
+
+// fakeTrail is a PaymentAccess keyed by platform user id; an unlisted id does not hold the trail.
+type fakeTrail struct {
+	holds map[string]bool
+	err   error
+}
+
+func (t *fakeTrail) HoldsPaymentTrail(_ context.Context, platformUserID, _ string) (bool, error) {
+	if t.err != nil {
+		return false, t.err
+	}
+	return t.holds[platformUserID], nil
+}
