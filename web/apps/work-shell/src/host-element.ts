@@ -52,6 +52,7 @@ import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } fr
 import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
 import { acceptSwitchRole, announceChromeAction } from "./frames.js";
 import { readDoorSession, writeHandoff } from "./handoff.js";
+import { resolveCoreBaseUrl } from "./core-base.js";
 import { requestFrameSignOut, type FrameSignOutOutcome } from "./sign-out.js";
 import { endSession, flushPendingRevocations } from "./switch-role.js";
 import {
@@ -192,6 +193,12 @@ export class WorkShellHost extends HHElement {
   #frameControls: readonly ChromeAction[] = [];
   /** A Switch role is in flight (the frame is being asked to sign out); a second one, or the frame's own end of walk, waits on it. */
   #leaving = false;
+  /**
+   * Where the core is for this copy (PRR-531), resolved once at boot: a native
+   * shell's asset server must not receive the revocation post. Undefined
+   * means the page's own origin (a browser copy): the calls stay relative.
+   */
+  #coreBaseUrl: string | undefined = undefined;
   /** How the last Switch role ended, for the page's test hook: the frame answered, ran out of time, was not there, or left on its own. */
   #leave: FrameSignOutOutcome | "ended-by-app" | "" = "";
 
@@ -237,6 +244,10 @@ export class WorkShellHost extends HHElement {
   // ── boot ──────────────────────────────────────────────────────────────
 
   async #boot(): Promise<void> {
+    // Where the core is, read once before anything needs it: the revocation
+    // post and its offline flush both go there. A read that cannot be made
+    // resolves nothing, and the calls stay relative (a browser copy).
+    this.#coreBaseUrl = await resolveCoreBaseUrl();
     try {
       const [profile, launch] = await Promise.all([fetchJson(PROFILE_FILE), fetchJson(LAUNCH_FILE)]);
       const read = parseProfile(profile, launch);
@@ -358,7 +369,7 @@ export class WorkShellHost extends HHElement {
     const token = this.#state.phase === "desk" ? (this.#consoleSession?.currentToken() ?? this.#state.session.token) : null;
     this.#state = switchRole(this.#state);
     this.#notice = "";
-    void endSession({ consoleSession: this.#consoleSession, token });
+    void endSession({ consoleSession: this.#consoleSession, token, coreBaseUrl: this.#coreBaseUrl });
     this.#startDoorPoll();
     this.#leaving = false;
     this.requestUpdate();
@@ -440,7 +451,7 @@ export class WorkShellHost extends HHElement {
     this.#online = navigator.onLine;
     this.requestUpdate();
     // Back online: retry any session revocation the offline moment held (HH-678).
-    if (this.#online) void flushPendingRevocations();
+    if (this.#online) void flushPendingRevocations({ coreBaseUrl: this.#coreBaseUrl });
   };
 
   #applyTheme(): void {

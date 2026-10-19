@@ -6,6 +6,8 @@
 // the Rust side's custody would resume the first person for the next one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { SESSION_MIRROR_KEY, SessionStore, ThrowSafeMirror } from "@hardscapehouse/auth";
 import { createConsoleSession } from "../src/console-session.js";
 import { FRONT_DOOR_SESSION_KEY, readDoorSession } from "../src/handoff.js";
@@ -94,4 +96,45 @@ test("a 4xx is a final answer, never retried", async () => {
   await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: refuse });
   assert.equal(calls.length, 1);
   assert.deepEqual(pendingRevocationsForTest(), [], "a 401 is not held");
+});
+
+// PRR-531: in a native Tauri profile the webview's own origin is the asset
+// server, so a relative sign-out post reaches a static file. The host resolves
+// the core's base URL from the served config and forwards it to both the
+// revocation post and the offline flush.
+const CORE = "https://core.futurebuild.ai";
+
+test("with a coreBaseUrl the revocation post reaches the core, not the asset server", async () => {
+  clearPendingRevocationsForTest();
+  const calls = [];
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: recordingFetch(calls), coreBaseUrl: CORE });
+  assert.equal(calls[0].url, `${CORE}/api/v1/auth/sign-out`);
+});
+
+test("the offline flush retries against the coreBaseUrl it is given", async () => {
+  clearPendingRevocationsForTest();
+  const offline = async () => {
+    throw new TypeError("fetch failed");
+  };
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: offline, coreBaseUrl: CORE });
+  assert.deepEqual(pendingRevocationsForTest(), [TOKEN], "the offline post is held");
+  const calls = [];
+  await flushPendingRevocations({ fetch: recordingFetch(calls), coreBaseUrl: CORE });
+  assert.equal(calls.length, 1, "the held post flushed");
+  assert.equal(calls[0].url, `${CORE}/api/v1/auth/sign-out`, "the flush posts to the core, not the asset server");
+  assert.deepEqual(pendingRevocationsForTest(), []);
+});
+
+const hostSrc = readFileSync(fileURLToPath(new URL("../src/host-element.ts", import.meta.url)), "utf8");
+
+test("the host resolves the core base once at boot and forwards it to every revocation path", () => {
+  assert.ok(/resolveCoreBaseUrl\(/.test(hostSrc), "the host resolves the core base URL through the one function");
+  assert.ok(
+    /endSession\(\{[^}]*coreBaseUrl: this\.#coreBaseUrl/.test(hostSrc),
+    "Switch role's endSession carries the resolved core base URL",
+  );
+  assert.ok(
+    /flushPendingRevocations\(\{ coreBaseUrl: this\.#coreBaseUrl \}\)/.test(hostSrc),
+    "the back-online flush carries the resolved core base URL",
+  );
 });
