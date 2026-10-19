@@ -16,10 +16,6 @@ import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./
 import { html, css, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// The shared chrome (item 5, decision log row 938): the element registers
-// itself; the app feeds it through the wiring pass below, the same
-// no-template-binding discipline the builder's client rides.
-import "@hardscapehouse/design-system/src/header.js";
 import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
@@ -69,27 +65,8 @@ export class QuoteDeskApp extends HHElement {
         background: var(--hh-page);
         color: var(--hh-text);
       }
-      /* The chrome above the work area is the shared header element
-         (hos-app-header). The theme control is the app's own, passed into
-         the element's named theme slot: it renders inside the right cluster,
-         after Switch role and Sign out, and nothing sits between the bar and
-         the work area. The control's face is the sheet's secondary button at
-         the bar's own compact size. */
-      .theme-slot {
-        display: inline-flex;
-        align-items: center;
-      }
-      .theme-slot button {
-        min-height: 0;
-        padding: 7px 12px;
-        font-size: 11px;
-        line-height: normal;
-        white-space: nowrap;
-      }
-      .theme-slot button:hover:not(:disabled) {
-        border-color: var(--hh-accent-text);
-        color: var(--hh-accent-text);
-      }
+      /* The ONE band (GAPS-r2 row G1) carries the chrome when the desk stands
+         alone; framed by the Work shell, the host's band is the one band. */
       main {
         padding: var(--hh-s-4) 0;
       }
@@ -99,9 +76,9 @@ export class QuoteDeskApp extends HHElement {
       .notice {
         margin: var(--hh-s-8) var(--hh-s-20);
       }
-      /* The desk tab strip lives below the shared header, not in it. Quotes is
+      /* The desk tab strip lives below the band, not in it. Quotes is
          always here; Pricing is manager only. The strip follows the same token
-         rules as the header and keeps the light theme look. */
+         rules as the band and keeps the light theme look. */
       .desk-tabs {
         display: flex;
         gap: var(--hh-s-4);
@@ -170,7 +147,7 @@ export class QuoteDeskApp extends HHElement {
    * as the client.
    */
   #route: DeskRoute = LIST_ROUTE;
-  /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the shared header's demo badge rides it too. */
+  /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the band's DEMO chip rides it too. */
   readonly #demoBuild = import.meta.env.MODE === "demo";
   /** Framed by the Work shell: the host renders the one board band, so the app renders none of its own. */
   readonly #framed = framedByShell();
@@ -287,22 +264,12 @@ export class QuoteDeskApp extends HHElement {
       pricing["pricing"] = this.#pricing;
       pricing["branchId"] = this.#branch?.id ?? "";
     }
-    // The shared chrome is fed the same way, not through template bindings
-    // (the design system's position gate holds this app's templates too):
-    // the role's label, the signed-in flag, the demo badge's build flag, and
-    // the theme the switcher last applied to the document, which the element
-    // re-applies under the sheet's own attribute contract.
-    const header = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-app-header");
-    if (header !== null) {
-      header.roleLabel = this.#signedInRoleLabel();
-      header.signedIn = this.#roleLabel !== null;
-      header.demo = this.#demoBuild;
-      header.theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
-    }
-    // The framed band (GAPS-r2 row G1): the board's white band above the
-    // app-local header when the desk stands alone; framed by the Work shell,
-    // the host's band is the one band. The bell stands quiet: wiring its
-    // unread count is a follow-up.
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when the desk stands alone; framed by the Work shell, the host's band is
+    // the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header
+    // used to (theme, feedback, switch role, sign out): the actions ride the
+    // band's accountMenu template and their clicks bubble back to #onHostClick.
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
       band.org = FRAMED_BAND_ORG;
@@ -313,6 +280,24 @@ export class QuoteDeskApp extends HHElement {
       band.currentKey = "";
       band.syncState = "idle";
       band.variant = "band";
+      band.theme = this.#theme.choice;
+      band.accountMenu = html`
+        ${this.#roleLabel !== null
+          ? html`<p>Signed in as <strong data-testid="signed-in-role">${this.#signedInRoleLabel()}</strong></p>`
+          : nothing}
+        ${this.#themeControl()}
+        ${this.#feedbackControl()}
+        ${this.#roleLabel !== null
+          ? html`
+              <button type="button" class="btn-secondary" data-action="switch-role" ?disabled=${this.#busy}>
+                Switch role
+              </button>
+              <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
+                Sign out
+              </button>
+            `
+          : nothing}
+      `;
     }
     // The feedback widget's sender rides the property the same way, never a
     // template binding: the widget's own seam.
@@ -405,8 +390,7 @@ export class QuoteDeskApp extends HHElement {
    * (the front door validated the mint already; this read validates the
    * record again before custody sees any of it), exactly the fields
    * #chooseFlow's mint leaves. An absent or unusable record is the ordinary
-   * direct visit; the entry page with the cards comes up, the desk's
-   * ordinary way in. The storage touch rides the auth package's throw-safe
+   * direct visit; the entry page with the cards comes up, the desk's ordinary way in. The storage touch rides the auth package's throw-safe
    * mirror, this app's sink gate's one sanctioned accessor. The shape is the
    * till's (counter-till app-root on demo/front-door 385cd8d6).
    */
@@ -737,10 +721,6 @@ export class QuoteDeskApp extends HHElement {
       ${this.#framed
         ? nothing
         : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
-      <hos-app-header data-testid="qd-bar">
-        <div class="theme-slot" slot="theme">${this.#feedbackControl()}</div>
-        <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
-      </hos-app-header>
       ${this.#surface === "desk" ? this.#deskTabs() : nothing}
       <main>
         ${this.#surface === "desk"
@@ -756,7 +736,7 @@ export class QuoteDeskApp extends HHElement {
           : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
       <!-- The feedback widget (Feature Polish): the shared panel, opened by
-           the bar's Feedback button (trigger external: no floating pill). -->
+           the band's Feedback button (trigger external: no floating pill). -->
       <hh-feedback screen="Quote Desk" trigger="external"></hh-feedback>
     `;
   }

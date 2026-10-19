@@ -1,7 +1,12 @@
 // Round 10 item 7 (rows 1040 and 1092): served under /quote/, a visit with no session goes to the front door at the
 // origin root to pick a role, never to the desk's own entry cards; a visit with the front door's key lands signed in
 // and keeps the key for the tab. Run by test/front-door-prefixed.config.ts, which serves the desk under /quote/.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
 
 const HANDOFF_KEY = "hh-demo.front-door.session.v1";
 
@@ -53,10 +58,10 @@ test("with the front door's key the desk opens, keeps the key, and a reload stil
     { key: HANDOFF_KEY, value: JSON.stringify(record()) },
   );
   await page.goto("./");
-  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key) !== null, HANDOFF_KEY)).toBe(true);
   await page.reload();
-  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
   expect(new URL(page.url()).pathname).toBe("/quote/");
 });
 
@@ -72,7 +77,8 @@ test("Sign out under the prefix drops the key and returns to the front door", as
     { key: HANDOFF_KEY, value: JSON.stringify(record()) },
   );
   await page.goto("./");
-  await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByText("front door")).toBeVisible();
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();

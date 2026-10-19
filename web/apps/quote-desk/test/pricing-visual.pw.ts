@@ -15,13 +15,23 @@ test.afterAll(async ({ request }) => {
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 async function setTheme(page: Page, word: "Light" | "Brand"): Promise<void> {
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let i = 0; i < 3; i += 1) {
-    if ((await control.textContent())?.includes(word)) return;
+    if ((await control.textContent())?.includes(word)) {
+      await page.keyboard.press("Escape");
+      return;
+    }
     await control.click();
   }
   await expect(control).toContainText(word);
+  await page.keyboard.press("Escape");
 }
 
 /** What each tab shows once it has loaded and holds rows: the shots and the checks are of these, never of a loading line. */
