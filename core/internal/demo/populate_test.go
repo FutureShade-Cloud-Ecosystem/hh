@@ -398,7 +398,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		}
 	}
 
-	// Every users row renders an invented name: the twenty-one display names
+	// Every users row renders an invented name: the nineteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
@@ -414,7 +414,6 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		osDisplayName:                true,
 		"Platform admin (demo)":      true,
 		"Demo teammate (demo)":       true,
-		"General Manager (demo)":     true,
 		"Inside Sales (demo)":        true,
 		"Counter Sales (demo)":       true,
 		"Branch Manager (demo)":      true,
