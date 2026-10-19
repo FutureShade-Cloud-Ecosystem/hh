@@ -496,7 +496,7 @@ func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaym
 		InvoiceIDs:     in.InvoiceIDs,
 		AmountCents:    in.AmountCents,
 		Preview:        in.Preview,
-		BranchIDs:      callerBranchReach(caller),
+		BranchIDs:      s.reach(ctx).IDs,
 		ReceivedBy:     caller.UserID,
 	})
 	if err != nil {
@@ -512,20 +512,6 @@ func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaym
 		}
 	}
 	return res, nil
-}
-
-// callerBranchReach answers the caller's branch reach as the money seam reads it: nil for a global
-// caller (every branch), the caller's branch ids otherwise, and an empty non-nil list for a scoped
-// caller with no grants, which reaches nothing, fail closed.
-func callerBranchReach(caller identity.StaffContext) []string {
-	if caller.Scope == identity.ScopeGlobal {
-		return nil
-	}
-	ids := make([]string, 0, len(caller.Branches))
-	for b := range caller.Branches {
-		ids = append(ids, b)
-	}
-	return ids
 }
 
 // SendReminder chases one or more documents with one tone.
