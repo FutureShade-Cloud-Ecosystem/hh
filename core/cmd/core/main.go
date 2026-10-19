@@ -40,6 +40,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/signout"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
@@ -377,6 +378,13 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		return nil, err
 	}
 
+	// Revocable sessions (HH-678): the store over the shared pool, attached
+	// to the verifier this composition built before the pool existed. From
+	// here every verification consults it, and a sign out's revocation
+	// holds across restarts and instances.
+	sessionRevocations := identity.NewSessionRevocations(pool)
+	verifier.SetRevocations(sessionRevocations)
+
 	members, err := consoleMembership(auth.appwriteURL, auth.appwriteProj, auth.appwriteKey)
 	if err != nil {
 		pool.Close()
@@ -552,6 +560,10 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		return nil, err
 	}
 	r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
+	// The sign out beside the exchange it closes (HH-678): public leg, no
+	// bearer, the token revoked by its own presentation in the body.
+	r.Handle("POST /api/v1/auth/sign-out", g.Public(signout.NewHandler(verifier, sessionRevocations)))
 
 	// The sign in screen's read of the dealer's allowed sign in methods
 	// (item 6c): public leg, the codes only, the same answer for an unknown
