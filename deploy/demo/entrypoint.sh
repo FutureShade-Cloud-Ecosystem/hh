@@ -106,10 +106,18 @@ export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
 # into a private path and the variable is pointed at the copy before any
 # core process starts; a key already 0400 or 0600 is used as-is. The key's
 # bytes are never printed and never copied anywhere else, and a missing or
-# unreadable key refuses the boot.
+# unreadable key refuses the boot. The secrets directory comes only from
+# the function's argument (never from the environment, so nothing an
+# operator or platform sets can move the copy under a served root) and
+# must live under /run/.
 # --------------------------------------------------------------------------
 # BEGIN ensure_signing_key
 ensure_signing_key() {
+	local secrets_dir="${1:-/run/hh-secrets}"
+	case "$secrets_dir" in
+		/run/*) ;;
+		*) fail "the signing key's private directory must live under /run/, and $secrets_dir does not: the entrypoint refuses to place the copy anywhere else" ;;
+	esac
 	[ "${CORE_SIGNIN_MODE:-}" = console ] || return 0
 	key_file="${CORE_SESSION_SIGNING_KEY_FILE:-}"
 	if [ -z "$key_file" ]; then
@@ -125,7 +133,6 @@ ensure_signing_key() {
 	if [ "$((0$key_mode & 0177))" -eq 0 ]; then
 		return 0
 	fi
-	secrets_dir="${hh_secrets_dir:-/run/hh-secrets}"
 	mkdir -p "$secrets_dir" || \
 		fail "the private secrets directory $secrets_dir could not be created: the mounted signing key cannot be made private"
 	chmod 0700 "$secrets_dir" 2>/dev/null || true
