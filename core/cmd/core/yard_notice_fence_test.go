@@ -223,6 +223,22 @@ func TestOrderRepNotice_AMoneylessNoticeReadsTheSameEverywhere(t *testing.T) {
 	}
 }
 
+// A summary that names a currency figure with no figureless twin is refused on the fallback
+// rather than posted: an empty twin names no figure only when the summary itself names none, and
+// the chain's office and yard routes are figureless by construction.
+func TestOrderRepNotice_AFiguredSummaryWithNoTwinIsRefused(t *testing.T) {
+	ref := fenceRef()
+	ref.SummaryNoFigures = ""
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteNone}
+	n := newNotifier(t, chat)
+	if err := n.PostTaskEvent(context.Background(), ref); err == nil {
+		t.Fatal("a figured summary with no twin must be refused on the fallback chain")
+	}
+	if len(chat.posts) != 0 {
+		t.Fatalf("no fallback copy may carry the figure: %+v", chat.posts)
+	}
+}
+
 // fenceRefWithRep returns the same notice with a RepUserID stamped so the
 // rep DM path runs (and the figuresOK closure has a role to ask about).
 func fenceRefWithRep() tasks.TaskEventRef {

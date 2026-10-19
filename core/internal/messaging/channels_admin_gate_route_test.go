@@ -92,3 +92,20 @@ func TestRoute_CreateDM_Is_Not_Gated_To_Admins(t *testing.T) {
 		t.Fatalf("frontline dm: %d %s, want 201", rec.Code, rec.Body.String())
 	}
 }
+
+// An unknown auto_scope on the rule write is a client fault the boundary answers with 400, not a
+// 500: the sentinel reaches writeErr instead of a plain error falling through to the default.
+func TestRoute_UpdateMembershipRule_BadAutoScope_Returns400(t *testing.T) {
+	fs := newAdminStore()
+	fs.plantRoom(Channel{ID: rtYardTrt, Kind: KindTeam, Slug: "yard-trt", Name: "Yard"}, rtDana)
+	mux, bearer := newFoundingRoutes(t, fs)
+	rec := adminDo(t, mux, bearer, http.MethodPut,
+		"/api/v1/messaging/channels/"+rtYardTrt+"/membership-rule",
+		[]byte(`{"visibility":"PUBLIC","auto_scope":"GALAXY"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad auto_scope: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if c, ok := fs.rooms["yard-trt"]; !ok || c.Visibility != "" {
+		t.Fatalf("a refused rule write must not run: %+v", c)
+	}
+}
