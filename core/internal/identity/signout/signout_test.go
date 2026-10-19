@@ -7,13 +7,19 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
+
+// errWriteRefused stands in for the Postgres row write failing while the
+// read path still answers (the review's write only failure shape).
+var errWriteRefused = errors.New("row write refused")
 
 const (
 	testIssuer = "hh-test-signout"
@@ -165,6 +171,85 @@ func TestSignOutTokenShapeGate(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("body %q: status = %d, want 400", body, rec.Code)
 		}
+	}
+}
+
+// P2-2 (review): when the store's row write fails, the retry on the same
+// instance must never meet the idempotent 200 arm with the row still
+// missing. First two writes fail, the third lands; a fourth call is a
+// fast idempotent no-op.
+func TestSignOutRetriesTheFailedRowWrite(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	minter, err := identity.NewSessionMinter(key, testIssuer, staffAud)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := identity.NewSessionKeySet(minter.PublicKey(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	clk := func() time.Time { return now }
+
+	var writes int
+	var writeErr error
+	revocations := identity.NewSessionRevocations(nil).
+		WithClock(clk).
+		WithWriteRow(func(_ context.Context, _ string, _, _ time.Time) error { writes++; return writeErr })
+	verifier, err := identity.NewVerifier(identity.Config{
+		KeySource: set, Issuer: testIssuer,
+		StaffAudience: staffAud, TenantAudience: tenantAud,
+		Now: clk, Revocations: revocations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(verifier, revocations)
+	token, err := minter.MintAt("console-user-flaky", time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"token":"` + token + `"}`
+
+	// First call: the row write fails, the answer is 503, while the token
+	// already reads revoked on this instance.
+	writeErr = errWriteRefused
+	if rec := post(t, h, body); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first sign out: %d %s, want 503", rec.Code, rec.Body.String())
+	}
+	_, err = verifier.Verify(context.Background(), token)
+	ve, ok := err.(*identity.VerifyError)
+	if !ok || ve.Reason() != "token revoked" {
+		t.Fatalf("verify after the failed write: %v, want token revoked", err)
+	}
+
+	// The retry while the write still fails: still 503, never the
+	// idempotent 200.
+	writeErr = errWriteRefused
+	if rec := post(t, h, body); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("retry while the write still fails: %d %s, want 503", rec.Code, rec.Body.String())
+	}
+
+	// The write lands: 200, and the row write was attempted again.
+	writeErr = nil
+	if rec := post(t, h, body); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("sign out after the write lands: %d %s", rec.Code, rec.Body.String())
+	}
+	if writes < 3 {
+		t.Fatalf("row writes attempted = %d, want at least 3", writes)
+	}
+
+	// The fourth call is idempotent and writes no further row.
+	before := writes
+	writeErr = nil
+	if rec := post(t, h, body); rec.Code != http.StatusOK {
+		t.Fatalf("idempotent call: %d %s", rec.Code, rec.Body.String())
+	}
+	if writes != before {
+		t.Fatalf("the idempotent call wrote again: %d then %d", before, writes)
 	}
 }
 

@@ -47,8 +47,16 @@ type SessionRevocations struct {
 	// instance (or before the in memory path sees it) is picked up
 	// quickly, while repeated verifications of one live token cost no
 	// query.
-	clean    map[string]time.Time
-	cleanTTL time.Duration
+	clean map[string]time.Time
+	// unpersisted names the jtis revoked in memory whose Postgres row
+	// could not be written (HH-678 P2-2): IsRevoked keeps answering true
+	// for them on this instance, while EnsurePersisted knows the row is
+	// still owed to the database.
+	unpersisted map[string]time.Time
+	cleanTTL    time.Duration
+	// writeRow, when set, replaces the pool's INSERT (tests fail the row
+	// write deterministically while reads still succeed).
+	writeRow func(ctx context.Context, jti string, exp, now time.Time) error
 }
 
 // NewSessionRevocations builds the store over the pool. A nil pool is the
@@ -56,11 +64,12 @@ type SessionRevocations struct {
 // exists): revocations are remembered and reads answer from memory alone.
 func NewSessionRevocations(pool *pgxpool.Pool) *SessionRevocations {
 	return &SessionRevocations{
-		pool:     pool,
-		now:      time.Now,
-		revoked:  map[string]time.Time{},
-		clean:    map[string]time.Time{},
-		cleanTTL: 2 * time.Second,
+		pool:        pool,
+		now:         time.Now,
+		revoked:     map[string]time.Time{},
+		clean:       map[string]time.Time{},
+		unpersisted: map[string]time.Time{},
+		cleanTTL:    2 * time.Second,
 	}
 }
 
@@ -72,12 +81,21 @@ func (s *SessionRevocations) WithClock(now func() time.Time) *SessionRevocations
 	return s
 }
 
+// WithWriteRow replaces the pool's row write (tests fail the write
+// deterministically while reads still succeed).
+func (s *SessionRevocations) WithWriteRow(f func(ctx context.Context, jti string, exp, now time.Time) error) *SessionRevocations {
+	s.writeRow = f
+	return s
+}
+
 // Revoke records the jti as revoked until exp. An empty jti or one whose
 // exp has passed writes nothing (the token is dead by itself). The in
 // memory cache is written first, so a revocation on this instance holds
-// even when the row cannot be written; with a pool, the row makes it hold
-// across restarts and instances, and up to RevocationPurgeBatch expired
-// rows are swept in the same call.
+// even when the row cannot be written; a failed row write is remembered in
+// unpersisted (so EnsurePersisted retries it on a later sign out, P2-2),
+// and with a pool the row makes the revocation hold across restarts and
+// instances, with up to RevocationPurgeBatch expired rows swept in the
+// same call.
 func (s *SessionRevocations) Revoke(ctx context.Context, jti string, exp time.Time) error {
 	now := s.now()
 	jti = strings.TrimSpace(jti)
@@ -90,21 +108,61 @@ func (s *SessionRevocations) Revoke(ctx context.Context, jti string, exp time.Ti
 	for id, e := range s.revoked {
 		if !e.After(now) {
 			delete(s.revoked, id)
+			delete(s.unpersisted, id)
 		}
 	}
 	s.mu.Unlock()
-	if s.pool == nil {
+	if s.pool == nil && s.writeRow == nil {
 		return nil
 	}
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO revoked_sessions (jti, exp, revoked_at) VALUES ($1, $2, $3)
-		 ON CONFLICT (jti) DO NOTHING`, jti, exp, now); err != nil {
+	var writeErr error
+	if s.writeRow != nil {
+		writeErr = s.writeRow(ctx, jti, exp, now)
+	} else {
+		_, writeErr = s.pool.Exec(ctx,
+			`INSERT INTO revoked_sessions (jti, exp, revoked_at) VALUES ($1, $2, $3)
+			 ON CONFLICT (jti) DO NOTHING`, jti, exp, now)
+	}
+	if writeErr != nil {
+		s.mu.Lock()
+		s.unpersisted[jti] = exp
+		s.mu.Unlock()
 		return errors.New("identity: the revocation could not be written")
 	}
-	_, _ = s.pool.Exec(ctx,
-		`DELETE FROM revoked_sessions WHERE jti IN (
-		   SELECT jti FROM revoked_sessions WHERE exp < $1 LIMIT $2)`, now, RevocationPurgeBatch)
+	s.mu.Lock()
+	delete(s.unpersisted, jti)
+	s.mu.Unlock()
+	if s.pool != nil {
+		_, _ = s.pool.Exec(ctx,
+			`DELETE FROM revoked_sessions WHERE jti IN (
+			   SELECT jti FROM revoked_sessions WHERE exp < $1 LIMIT $2)`, now, RevocationPurgeBatch)
+	}
 	return nil
+}
+
+// EnsurePersisted retries the row write when jti stands revoked in memory on this
+// instance but its Postgres insert failed on an earlier call (HH-678 P2-2). When the
+// row is already persisted (or has no pending write), it is a no-op and returns nil.
+func (s *SessionRevocations) EnsurePersisted(ctx context.Context, jti string, exp time.Time) error {
+	jti = strings.TrimSpace(jti)
+	if jti == "" {
+		return nil
+	}
+	now := s.now()
+	s.mu.Lock()
+	pendingExp, pending := s.unpersisted[jti]
+	if pending && !pendingExp.After(now) {
+		delete(s.unpersisted, jti)
+		pending = false
+	}
+	s.mu.Unlock()
+	if !pending {
+		return nil
+	}
+	if exp.IsZero() {
+		exp = pendingExp
+	}
+	return s.Revoke(ctx, jti, exp)
 }
 
 // IsRevoked reports whether the jti stands revoked. The in memory cache of
@@ -144,8 +202,11 @@ func (s *SessionRevocations) IsRevoked(ctx context.Context, jti string) (bool, e
 	if !rowExp.After(now) {
 		return false, nil
 	}
+	// The row is in the database, so any earlier failed write of it is
+	// no longer owed.
 	s.mu.Lock()
 	s.revoked[jti] = rowExp
+	delete(s.unpersisted, jti)
 	s.mu.Unlock()
 	return true, nil
 }

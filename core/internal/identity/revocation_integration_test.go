@@ -4,6 +4,7 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -84,6 +85,98 @@ func TestRevocationSurvivesACoreRestart(t *testing.T) {
 	if err == nil {
 		t.Fatal("the revoked token verified after a simulated restart")
 	}
+	ve, ok := err.(*VerifyError)
+	if !ok || ve.Class() != ClassCredential || ve.Reason() != "token revoked" {
+		t.Fatalf("err = %v, want credential token revoked", err)
+	}
+}
+
+// P2-2 (review): a row write that fails is retried by EnsurePersisted,
+// and once it lands, a brand new store over the same database (the
+// simulated restart or other instance) refuses the token too.
+func TestRevocationRetriedWriteSurvivesRestart(t *testing.T) {
+	pool := revocationTestPool(t)
+	ctx := context.Background()
+
+	m := newTestMinter(t, freshPriv(t))
+	set, err := NewSessionKeySet(m.PublicKey(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	clk := func() time.Time { return now }
+
+	var writes int
+	s := NewSessionRevocations(pool).WithClock(clk).WithWriteRow(
+		func(ctx context.Context, jti string, exp, at time.Time) error {
+			writes++
+			if writes <= 2 {
+				return errors.New("row write refused")
+			}
+			_, err := pool.Exec(ctx,
+				`INSERT INTO revoked_sessions (jti, exp, revoked_at) VALUES ($1, $2, $3)
+				 ON CONFLICT (jti) DO NOTHING`, jti, exp, at)
+			return err
+		})
+	v, err := NewVerifier(Config{
+		KeySource: set, Issuer: signerIssuer,
+		StaffAudience: signerAud, TenantAudience: signerTenant,
+		Now: clk, Revocations: s,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := m.MintAt("console-user-retry", 2*time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := v.Verify(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM revoked_sessions WHERE jti = $1`, tok.JTI)
+	})
+
+	// The first two writes fail; the revocation still holds in memory on
+	// this instance, and EnsurePersisted keeps owing the row.
+	if err := s.Revoke(ctx, tok.JTI, tok.ExpiresAt); err == nil {
+		t.Fatal("the first write refusal was not reported")
+	}
+	revoked, err := s.IsRevoked(ctx, tok.JTI)
+	if err != nil || !revoked {
+		t.Fatalf("in memory after the failed write: %v %v", revoked, err)
+	}
+	if err := s.EnsurePersisted(ctx, tok.JTI, tok.ExpiresAt); err == nil {
+		t.Fatal("the second write refusal was not reported")
+	}
+	// The third attempt lands.
+	if err := s.EnsurePersisted(ctx, tok.JTI, tok.ExpiresAt); err != nil {
+		t.Fatalf("the retried write: %v", err)
+	}
+	if writes != 3 {
+		t.Fatalf("row writes = %d, want 3", writes)
+	}
+	// A fourth call is a no-op.
+	if err := s.EnsurePersisted(ctx, tok.JTI, tok.ExpiresAt); err != nil {
+		t.Fatalf("the settled call: %v", err)
+	}
+	if writes != 3 {
+		t.Fatalf("the settled call wrote again: %d", writes)
+	}
+
+	// The brand new store (the restart or the other instance) reads the
+	// row and refuses the token.
+	fresh := NewSessionRevocations(pool).WithClock(clk)
+	freshV, err := NewVerifier(Config{
+		KeySource: set, Issuer: signerIssuer,
+		StaffAudience: signerAud, TenantAudience: signerTenant,
+		Now: clk, Revocations: fresh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = freshV.Verify(ctx, token)
 	ve, ok := err.(*VerifyError)
 	if !ok || ve.Class() != ClassCredential || ve.Reason() != "token revoked" {
 		t.Fatalf("err = %v, want credential token revoked", err)
