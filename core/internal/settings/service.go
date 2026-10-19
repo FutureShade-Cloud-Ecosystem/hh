@@ -15,7 +15,6 @@ package settings
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -86,6 +85,33 @@ type Service struct {
 	store      StoreIface
 	hooks      map[string]SurfaceHooks
 	callerFrom func(context.Context) (identity.StaffContext, bool)
+	zone       ZoneSource
+	legacy     LegacyImportSource
+}
+
+// ZoneSource answers the dealer's business day zone (an IANA name). The dealer configuration reader
+// is one; a kit built without one serves no zone and the web keeps its Ontario default.
+type ZoneSource interface {
+	BusinessZone(ctx context.Context) (string, error)
+}
+
+// WithZone serves the dealer's business day zone on every config read. Chainable at wiring time.
+func (s *Service) WithZone(z ZoneSource) *Service {
+	s.zone = z
+	return s
+}
+
+// LegacyImportSource answers the short lowercase word naming the legacy system a dealer imports from,
+// or "" when the dealer has none. The dealer configuration reader is one.
+type LegacyImportSource interface {
+	LegacyImportSource(ctx context.Context) (string, error)
+}
+
+// WithLegacyImport serves the dealer's legacy import source on every config read. Chainable at wiring
+// time; a kit built without one serves none, which is a dealer with no legacy import.
+func (s *Service) WithLegacyImport(l LegacyImportSource) *Service {
+	s.legacy = l
+	return s
 }
 
 // NewService builds the kit service over a store.
@@ -117,15 +143,29 @@ func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 	return c, nil
 }
 
-// NotAdminError is the refusal a non-admin gets at a dealer-curation write. Typed so the handler
-// can answer 403 with the sentence (the quote NotSettingsAdminError posture).
-type NotAdminError struct{ RoleCode string }
+// NotAdminError is the refusal a non-admin gets at a dealer-curation gate. Typed so the handler
+// can answer 403 with the sentence (the quote NotSettingsAdminError posture). Read and write
+// gates share the type so callers that branch on it keep one shape; Read selects the read
+// refusal's words at the broadening-with-another-profile gate, and the flag stays on the type
+// for the audit (the same way RoleCode does).
+type NotAdminError struct {
+	RoleCode string
+	Read     bool
+}
 
+// Error names the people the IsAdmin() gate admits (the four Tier-1 GLOBAL roles), never the
+// caller's role code: the person reading the words is the one refused, and the role code stays on
+// the type alone for the audit (the NotSettingsAdminError posture the Quote Desk decided). The
+// gate is s.Tier == TierLeadership && s.Scope == ScopeGlobal (staffcontext/rbac.go); the four
+// roles it admits are GENERAL_MANAGER (label "General Manager"), FINANCIAL_CONTROLLER
+// ("Financial Controller"), HR ("HR") and SUPER_ADMIN ("Platform Administrator"). Read=true
+// carries the read refusal's words for a frontline caller asking to read another profile's rows,
+// the read half of the same admin act as a write.
 func (e *NotAdminError) Error() string {
-	if e.RoleCode == "" {
-		return "settings: changing dealer screen settings is limited to administrators"
+	if e.Read {
+		return "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings"
 	}
-	return fmt.Sprintf("settings: changing dealer screen settings is limited to administrators, %s cannot do it; ask a tech admin", e.RoleCode)
+	return "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
 }
 
 // SurfaceConfig is the GET /api/v1/surfaces/{surface}/config answer.
@@ -145,6 +185,13 @@ type SurfaceConfig struct {
 	UserItems    []Item        `json:"user_items"`
 	Workspace    WorkspaceView `json:"workspace"`
 	Policy       any           `json:"policy,omitempty"`
+	// BusinessZone is the dealer's business day zone (an IANA name), so a surface names the dealer's
+	// day and not the browser's or a compiled in one. Absent when the kit has no zone source; the
+	// web then keeps its Ontario default.
+	BusinessZone string `json:"business_zone,omitempty"`
+	// LegacyImportSource names the legacy system this dealer imports from (a short lowercase word),
+	// so a surface draws the legacy import check only where there is one. Absent means none.
+	LegacyImportSource string `json:"legacy_import_source,omitempty"`
 }
 
 // ConfigOpt narrows a config read. Options rather than a fourth positional argument so the six
@@ -193,7 +240,7 @@ func (s *Service) Config(ctx context.Context, surfaceID, branchID string, opts .
 			return SurfaceConfig{}, err
 		}
 		if !caller.IsAdmin() {
-			return SurfaceConfig{}, &NotAdminError{RoleCode: caller.RoleCode}
+			return SurfaceConfig{}, &NotAdminError{RoleCode: caller.RoleCode, Read: true}
 		}
 		itemsProfile = o.profile
 	}
@@ -220,6 +267,20 @@ func (s *Service) Config(ctx context.Context, surfaceID, branchID string, opts .
 			return SurfaceConfig{}, perr
 		}
 		cfg.Policy = p
+	}
+	if s.zone != nil {
+		z, zerr := s.zone.BusinessZone(ctx)
+		if zerr != nil {
+			return SurfaceConfig{}, zerr
+		}
+		cfg.BusinessZone = z
+	}
+	if s.legacy != nil {
+		src, lerr := s.legacy.LegacyImportSource(ctx)
+		if lerr != nil {
+			return SurfaceConfig{}, lerr
+		}
+		cfg.LegacyImportSource = src
 	}
 	return cfg, nil
 }

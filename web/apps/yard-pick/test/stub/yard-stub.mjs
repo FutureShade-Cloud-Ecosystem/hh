@@ -1,8 +1,9 @@
 // Yard Pick's local stub: the demo way in, and the yard team's world
 // answered in the core's shapes. It is a development and test double only;
-// the real routes are the core's (core/internal/tasks, yard_handler.go).
-// Item 7's contract test holds every payload below to the contract's field
-// list, field by field, and every refusal to the core's own sentences.
+// the real routes are the core's (core/internal/tasks, yard_handler.go, and
+// the change queue of core/internal/order/change_queue.go). Item 7's contract
+// test holds every payload below to the contract's field list, field by
+// field, and every refusal to the core's own sentences.
 //
 // The rep notices are modelled the way the core builds them
 // (core/internal/tasks/yard_notice.go): the double records the sentence the
@@ -17,6 +18,15 @@
 import { createServer } from "node:http";
 
 const port = Number(process.env.YARD_STUB_PORT ?? 4959);
+
+// A complete 1x1 PNG so the <img src="blob:..."> on the pick screen decodes
+// and renders the bytes from the wire with naturalWidth > 0.
+const PRODUCT_IMAGE_BYTES = new Uint8Array(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNs3L4dAASTAh1N8w9MAAAAAElFTkSuQmCC",
+    "base64",
+  ),
+);
 
 // The flow table as the core's stands after the Manager Home merge (PR 298,
 // main 04194fb2): the till's pair, the yard's two, the Driver and the office
@@ -100,6 +110,23 @@ function callerRole(req) {
   return "yard_team";
 }
 
+// The caller's own id, the ack's by word (the demo mint's sub; the node legs'
+// fixed token and anything unreadable are the yard persona).
+function callerUserId(req) {
+  const token = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+      const user = Object.values(USERS).find((u) => u.user_id === payload.sub);
+      if (user !== undefined) return user.user_id;
+    } catch {
+      /* not the stub's token shape */
+    }
+  }
+  return YARD_USER;
+}
+
 // blankTicketMoney, the double of the core's (tasks/cost_gate.go): the owed
 // figure is held out of the ticket for a caller the cost list refuses. The
 // hold mark and its words stay.
@@ -160,7 +187,7 @@ const TICKETS = {
     order_id: "0b000000-0000-4000-9000-000000000042",
     order_no: "SO-1042",
     branch_id: POINT_LOMA,
-    customer_name: "Summit Ridge Builders",
+    customer_name: "Bluffside Builders",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
     priority: "URGENT",
@@ -252,6 +279,80 @@ const TASK_SEED = [
   { id: "0a000000-0000-4000-9000-000000000041", ticket: "0b000000-0000-4000-9000-000000000041", status: "IN_PROGRESS", priority: "HIGH", claimed: true, created_min: 500 },
 ];
 
+// The changes waiting on the yard (the core's change_orders, migration 0125,
+// read through the change queue of change_queue.go): one under the threshold,
+// one over it, so an acknowledgement lands on both of the ladder's next
+// stages. The delta figures are the double of the core's stored numbers, held
+// for the till's kind; the yard app's projection drops them.
+const CHANGE_SEED = [
+  {
+    id: "5c000000-0000-4000-9000-000000000002",
+    change_no: "CO-2043",
+    order_id: "0b000000-0000-4000-9000-000000000039",
+    order_no: "SO-1039",
+    branch_id: POINT_LOMA,
+    status: "PENDING_YARD",
+    reason: "Customer halved the wall block, the load is too heavy for one truck",
+    delta_cents: -63000,
+    finance_threshold_cents: 50000,
+    finance_required: true,
+    requested_by_role: "Sales Manager",
+    requested_min: 150,
+    order_status_at_request: "READY",
+    lines: [
+      {
+        seq: 1,
+        op: "QTY",
+        line_no: 1,
+        product_id: "1a000000-0000-4000-9000-0000000000b1",
+        product_name: "Retaining wall block",
+        description: "Retaining wall block, charcoal",
+        qty_entered_new: "42.0000",
+        uom_entered: "EA",
+        qty_base_before: 84,
+        qty_base_after: 42,
+        qty_delta_base: -42,
+        unit_price_cents: 1500,
+        price_uom: "EA",
+        line_delta_cents: -63000,
+      },
+    ],
+  },
+  {
+    id: "5c000000-0000-4000-9000-000000000001",
+    change_no: "CO-2042",
+    order_id: "0b000000-0000-4000-9000-000000000042",
+    order_no: "SO-1042",
+    branch_id: POINT_LOMA,
+    status: "PENDING_YARD",
+    reason: "Customer added two more pallets of the charcoal paver",
+    delta_cents: 43200,
+    finance_threshold_cents: 50000,
+    finance_required: false,
+    requested_by_role: "Inside Sales",
+    requested_min: 50,
+    order_status_at_request: "PICKING",
+    lines: [
+      {
+        seq: 1,
+        op: "QTY",
+        line_no: 1,
+        product_id: "1a000000-0000-4000-9000-0000000000a1",
+        product_name: "Charcoal paver 60 mm",
+        description: "Charcoal pavers, 12 by 12 in",
+        qty_entered_new: "72.0000",
+        uom_entered: "EA",
+        qty_base_before: 24,
+        qty_base_after: 72,
+        qty_delta_base: 48,
+        unit_price_cents: 900,
+        price_uom: "EA",
+        line_delta_cents: 43200,
+      },
+    ],
+  },
+];
+
 let world;
 let scenario;
 let log;
@@ -330,8 +431,14 @@ function buildWorld() {
   const inProgress = tasks.find((t) => t.id === "0a000000-0000-4000-9000-000000000041");
   inProgress.open_shortages = 1;
   inProgress.total_shortages = 2;
+  const nowMs = Date.now();
+  const changes = CHANGE_SEED.map((seed) => ({
+    ...seed,
+    requested_at: new Date(nowMs - seed.requested_min * 60000).toISOString(),
+  }));
   return {
     tasks,
+    changes,
     shortages: [openShortage, clearedShortage],
     picked: new Map(),
     skids: new Map(),
@@ -379,11 +486,28 @@ function ticketFor(task) {
   return base;
 }
 
+function departAt(hour, minute) {
+  const stamp = new Date(0);
+  stamp.setUTCFullYear(2026, 9, 8);
+  stamp.setUTCHours(hour, minute, 0, 0);
+  return stamp.toISOString();
+}
+
+const RUN_SEED = {
+  "0a000000-0000-4000-9000-000000000042": { run_no: "R5", run_departs_at: departAt(8, 15), load_position: 2 },
+  "0a000000-0000-4000-9000-000000000039": { run_no: "R5", run_departs_at: departAt(8, 15), load_position: 1 },
+  "0a000000-0000-4000-9000-000000000040": { run_no: "R6", run_departs_at: departAt(9, 30), load_position: 1 },
+  "0a000000-0000-4000-9000-000000000044": { run_no: "R7", run_departs_at: departAt(10, 15), load_position: 2 },
+  "0a000000-0000-4000-9000-000000000041": { run_no: "R8", run_departs_at: departAt(11, 0), load_position: 1 },
+};
+
 function taskOut(task) {
   const shortages = world.shortages.filter((s) => s.task_id === task.id);
   const open = shortages.filter((s) => s.resolved_at === "").length;
   const out = { ...task, open_shortages: open, total_shortages: shortages.length };
   if (scenario === "poisoned") out.value_cents = POISON;
+  const seed = RUN_SEED[task.id];
+  if (seed !== undefined) Object.assign(out, seed);
   return out;
 }
 
@@ -419,6 +543,147 @@ function pickedOut(p) {
 
 function findTask(id) {
   return world.tasks.find((t) => t.id === id);
+}
+
+// ---- the changes waiting on the yard (the core's change queue) ----------
+
+const CHANGE_STATUSES = ["PENDING_YARD", "PENDING_FINANCE", "APPROVED", "APPLIED", "REJECTED", "CANCELLED"];
+const TERMINAL_CHANGES = ["APPLIED", "REJECTED", "CANCELLED"];
+// The core's changeNextActions (order/change.go) for a caller of each tier.
+const MANAGER_ROLES = new Set(["sales_manager", "yard_manager", "branch_manager", "general_manager", "financial_controller"]);
+
+function changeNextActions(status, isManager, isRequester = false) {
+  // Reject is any staff while the yard decides and a manager's alone after; cancel is the requester or a
+  // manager; sign_apply and finance_approve are a manager's (every manager is a named approver here).
+  const cancel = isManager || isRequester ? ["cancel"] : [];
+  switch (status) {
+    case "PENDING_YARD":
+      return ["yard_ack", "reject", ...cancel];
+    case "PENDING_FINANCE":
+      return [...(isManager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
+    case "APPROVED":
+      return [...(isManager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
+    default:
+      return [];
+  }
+}
+
+function poisonChange(out) {
+  out.delta_cents = POISON;
+  out.finance_threshold_cents = POISON;
+  out.gauge = { value_cents: POISON, unit_price: POISON };
+  // Queue rows carry no lines; the whole change does. Both get the poison.
+  if (Array.isArray(out.lines)) out.lines = out.lines.map((l) => ({ ...l, unit_price_cents: POISON, line_delta_cents: POISON, margin: POISON }));
+  return out;
+}
+
+/** The queue row: the core's ChangeQueueItem (change_queue_repository.go). */
+function changeItemOut(change) {
+  const out = {
+    id: change.id,
+    change_no: change.change_no,
+    order_id: change.order_id,
+    order_no: change.order_no,
+    branch_id: change.branch_id,
+    status: change.status,
+    reason: change.reason,
+    delta_cents: change.delta_cents,
+    finance_threshold_cents: change.finance_threshold_cents,
+    finance_required: change.finance_required,
+    requested_by_role: change.requested_by_role,
+    requested_at: change.requested_at,
+    next_actions: changeNextActions(change.status, false),
+  };
+  if (change.yard_ack_note) out.yard_ack_note = change.yard_ack_note;
+  return scenario === "poisoned" ? poisonChange(out) : out;
+}
+
+/** The whole change: the core's ChangeOrder, the acknowledgement's answer shape. */
+function changeOut(change, isManager) {
+  const out = {
+    id: change.id,
+    order_id: change.order_id,
+    branch_id: change.branch_id,
+    change_no: change.change_no,
+    status: change.status,
+    reason: change.reason,
+    delta_cents: change.delta_cents,
+    finance_threshold_cents: change.finance_threshold_cents,
+    finance_required: change.finance_required,
+    order_status_at_request: change.order_status_at_request,
+    pick_started_at_request: true,
+    requested_by: "d0100000-0000-4000-9000-0000000000a1",
+    requested_at: change.requested_at,
+    lines: change.lines.map((l) => ({ ...l })),
+    next_actions: changeNextActions(change.status, isManager),
+  };
+  if (change.yard_acked_by) out.yard_acked_by = change.yard_acked_by;
+  if (change.yard_acked_at) out.yard_acked_at = change.yard_acked_at;
+  if (change.yard_ack_note) out.yard_ack_note = change.yard_ack_note;
+  return scenario === "poisoned" ? poisonChange(out) : out;
+}
+
+function changeQueue(res, url) {
+  const rawStatus = url.searchParams.get("status") ?? "";
+  const status = rawStatus.toUpperCase();
+  if (rawStatus !== "" && !CHANGE_STATUSES.includes(status)) {
+    return refuse(res, 400, `unknown status "${rawStatus}" (${CHANGE_STATUSES.join("|")})`);
+  }
+  if (scenario === "empty") return json(res, { items: [], next_cursor: null, limit: 50 });
+  // A yard with a full day of changes: twelve waiting rows, oldest first,
+  // the same shapes as the two seeded ones, so the phone legs can open a
+  // row below the first screen.
+  if (scenario === "changes-many") {
+    const nowMs = Date.now();
+    const rows = Array.from({ length: 12 }, (_, index) =>
+      changeItemOut({
+        id: `5c000000-0000-4000-9000-0000000001${index + 10}`,
+        change_no: `CO-21${index + 10}`,
+        order_id: "0b000000-0000-4000-9000-000000000042",
+        order_no: `SO-11${index + 10}`,
+        branch_id: POINT_LOMA,
+        status: "PENDING_YARD",
+        reason: "Customer added two more pallets of the charcoal paver",
+        requested_by_role: "Inside Sales",
+        requested_at: new Date(nowMs - (12 - index) * 60000).toISOString(),
+      }),
+    );
+    return json(res, { items: rows, next_cursor: null, limit: 50 });
+  }
+  const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50")));
+  const rows = world.changes
+    .filter((c) => status === "" || c.status === status)
+    .sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
+  const cursor = url.searchParams.get("cursor") ?? "";
+  let start = 0;
+  if (cursor !== "") {
+    if (!/^\d+$/.test(cursor)) return refuse(res, 400, "cursor is malformed");
+    start = Number(cursor);
+  }
+  const page = rows.slice(start, start + limit);
+  const next = start + limit < rows.length ? String(start + limit) : null;
+  return json(res, { items: page.map(changeItemOut), next_cursor: next, limit });
+}
+
+function yardAck(res, changeId, input, req) {
+  const change = world.changes.find((c) => c.id === changeId);
+  if (!change) return refuse(res, 404, "not found");
+  // A colleague's acknowledgement this screen never saw: the race the core
+  // refuses by name (change.go YardAck), scripted so a browser leg can meet it.
+  if (scenario === "change-decided") {
+    return refuse(res, 409, "this change order is already closed: the yard has already acknowledged this change");
+  }
+  if (change.status !== "PENDING_YARD") {
+    if (TERMINAL_CHANGES.includes(change.status)) return refuse(res, 409, "this change order is already closed");
+    return refuse(res, 409, "this change order is already closed: the yard has already acknowledged this change");
+  }
+  // The note is optional and clamped, never refused (the core's clampNote).
+  const note = String(input.note ?? "").trim().slice(0, 400);
+  change.status = change.finance_required ? "PENDING_FINANCE" : "APPROVED";
+  change.yard_acked_by = callerUserId(req);
+  change.yard_acked_at = new Date().toISOString();
+  if (note !== "") change.yard_ack_note = note;
+  return json(res, changeOut(change, MANAGER_ROLES.has(callerRole(req))));
 }
 
 const SHORT_REASONS = ["CONDENSED_SKIDS", "DAMAGED", "NOT_IN_YARD", "COUNT_CORRECTION", "OTHER"];
@@ -488,6 +753,17 @@ async function handle(req, res) {
     syncTouch("pick_tasks", task.id);
     return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
   }
+  // The desk changes an OPEN ticket (its grade): the row's seq moves and the task stays open, so a record
+  // based on the older seq is superseded (the engine's stale decision) rather than refused as closed.
+  if (req.method === "POST" && path === "/_stub/touch") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.priority = task.priority === "HIGH" ? "NORMAL" : "HIGH";
+    task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   // The rep's API read, doubled: the notices the order's rep holds.
   if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
@@ -508,7 +784,18 @@ async function handle(req, res) {
   }
 
   // ---- the routes the yard uses ----
-  const yardRoute = path.startsWith("/api/v1/yard/") || path === "/api/v1/branches" || (path.startsWith("/api/v1/tasks/") && req.method === "POST") || path.startsWith("/api/v1/sync/");
+  const changeAckMatch = /^\/api\/v1\/order-changes\/([^/]+)\/yard-ack$/.exec(path);
+  const productImageMatch = /^\/api\/v1\/products\/([^/]+)\/image$/.exec(path);
+  const yardRoute =
+    path.startsWith("/api/v1/yard/") ||
+    path === "/api/v1/branches" ||
+    (path.startsWith("/api/v1/tasks/") && req.method === "POST") ||
+    path.startsWith("/api/v1/sync/") ||
+    // The change queue and its acknowledgement (the core's order module,
+    // change_queue.go): the two routes the yard's stage 2 screen calls.
+    path === "/api/v1/order-changes" ||
+    (changeAckMatch !== null && req.method === "POST") ||
+    (productImageMatch !== null && req.method === "GET");
   if (!yardRoute) return notFound(res);
   const authorization = req.headers.authorization ?? "";
   const raw = await readBody(req);
@@ -527,6 +814,12 @@ async function handle(req, res) {
   // The branches this login may reach. A login off the yard answers none.
   if (req.method === "GET" && path === "/api/v1/branches") {
     return json(res, scenario === "not-yard" ? [] : [BRANCH]);
+  }
+
+  if (req.method === "GET" && productImageMatch !== null) {
+    res.writeHead(200, { "Content-Type": "image/png" });
+    res.end(Buffer.from(PRODUCT_IMAGE_BYTES));
+    return;
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
@@ -559,6 +852,15 @@ async function handle(req, res) {
     const next = start + limit < sorted.length ? String(start + limit) : "";
     const allowed = COST_LIST.has(callerRole(req));
     return json(res, { items: page.map((t) => entryOut(findTask(t.id), true, allowed)), next_cursor: next, limit });
+  }
+
+  // The change queue: the yard's stage of the ladder, oldest first, the
+  // core's page envelope (items, next_cursor null on the last page, limit).
+  if (req.method === "GET" && path === "/api/v1/order-changes") {
+    return changeQueue(res, url);
+  }
+  if (req.method === "POST" && changeAckMatch) {
+    return yardAck(res, changeAckMatch[1], body ?? {}, req);
   }
 
   const pickMatch = /^\/api\/v1\/yard\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
@@ -633,7 +935,7 @@ function parseQty(raw) {
 
 function recordPick(res, task, input) {
   const record = recordPickedLines(task, input.lines);
-  if (record.error) return refuse(res, 400, record.error);
+  if (record.error) return refuse(res, record.status ?? 400, record.error);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return json(res, { items: record.picked.map(pickedOut) });
@@ -787,17 +1089,18 @@ function resolveShortage(res, task, shortageId, input) {
 // rules, so a device's pulled rows and a desk's screen never disagree.
 
 
-// The stub's world, projected for the sync pull. No money anywhere: the
-// ticket's held figure rides only to a caller on the cost list, the same
-// fence the REST reads run under, and the poison scenario never reaches these
-// rows (the sync projection is the clean shape).
-function projectTaskRow(task, moneyAllowed) {
+// The stub's world, projected for the sync pull. No money anywhere: the core's
+// pull drops the ticket's held figure for every caller, the cost list included
+// (the sync filter carries no role: tasks/syncscope.go attachTicketData), and
+// the poison scenario never reaches these rows (the sync projection is the
+// clean shape). The moneyAllowed argument is kept for the callers' shape only.
+function projectTaskRow(task, _moneyAllowed) {
   return {
     id: task.id,
     seq: syncSeqOf("pick_tasks", task.id),
     data: {
       ...taskOut(task),
-      ticket: blankTicketMoney(ticketFor(task), moneyAllowed),
+      ticket: blankTicketMoney(ticketFor(task), false),
       picked: world.picked.get(task.id) ?? [],
     },
   };
@@ -819,11 +1122,20 @@ function handleSyncPull(res, scope, url, moneyAllowed) {
   // receiving story rides the desk, and the lookup is the read seam, not this
   // slice's.
   const page = rows.filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
-  const lastSeq = page.length > 0 ? page[page.length - 1].seq : since;
+  const tombstones =
+    scope === "pick_tasks" && scenario === "empty" && since > 0
+      ? world.tasks.map((t, idx) => ({ id: t.id, seq: since + idx + 1 }))
+      : [];
+  const lastSeq =
+    tombstones.length > 0
+      ? tombstones[tombstones.length - 1].seq
+      : page.length > 0
+        ? page[page.length - 1].seq
+        : since;
   return json(res, {
     scope,
     items: page,
-    tombstones: [],
+    tombstones,
     last_seq: lastSeq,
     next_cursor: page.length === limit ? String(lastSeq) : null,
   });
@@ -850,13 +1162,14 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
     };
   }
   const declared = Object.keys(fields).filter((k) => k !== "id");
-  // The core's writableFields (core/internal/tasks/syncscope.go): picked is the
-  // record door's leg (core/internal/tasks/syncpick.go), its own operation.
+  // The core's writableFields (core/internal/tasks/syncscope.go): the status,
+  // the pick record (`picked`), the photo, the stage legs. test/stub-sync-
+  // contract.test.mjs reads the Go map and holds this set to it.
   const allowed = new Set(["status", "picked", "photo_url", "stage_location", "stage_ref"]);
   for (const key of declared) {
     if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
   }
-  if (fields.picked !== undefined) return syncApplyPickRecord(task, op, declared, fields.picked);
+  if (fields.picked !== undefined) return syncApplyPicked(task, op);
   if (fields.status !== undefined) {
     const to = String(fields.status);
     if (!(TRANSITIONS[task.status] ?? []).includes(to)) {
@@ -879,37 +1192,73 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
 }
 
-// The legs one recorded line may carry through sync (syncpick.go pickedLineLegs): the direct door's
-// body keys. A local row id, task id or picked_at stamp is not on the wire.
-const PICKED_LINE_LEGS = new Set(["order_line_no", "product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"]);
-// Every C0 control, DEL and the bidi controls are refused in every text leg; the note and the
-// description keep tab, LF and CR (core/internal/tasks/yard_service.go checkPickText).
-const PICK_TEXT_BAD = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
-const PICK_TEXT_BAD_MULTILINE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+// A CANCELLED or DONE pick takes no record (core/internal/tasks/yard_short.go ErrPickClosed): both are
+// terminal and the module has no correction path for a done pick. The REST door answers 409, a sync op
+// is rejected with the same words.
+function closedPickWords(task) {
+  if (task.status === "CANCELLED") return "tasks: this pick was cancelled, its record cannot change";
+  if (task.status === "DONE") return "tasks: this pick is done, its record cannot change";
+  return "";
+}
 
-// The pick record as a sync op, the twin of the direct route: {id, picked: [line, ...]} and nothing
-// else, the same record body, the row draws a fresh seq so the pull carries the recorded lines.
-function syncApplyPickRecord(task, op, declared, lines) {
-  for (const key of declared) {
-    if (key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
+// The core's pickedLineLegs (core/internal/tasks/syncpick.go): the direct door's
+// body keys, one for one. The client's local row id, task id and picked_at do
+// not go on the wire.
+const PICKED_LINE_LEGS = new Set(["order_line_no", "product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"]);
+const PICKED_MAX_LINES = 500;
+
+// The pick record door (syncpick.go writePicked): its own operation, the lines
+// parsed for shape, then the service body's rules (recordPickedLines, the
+// direct door's), then the stamp that re-appears the task in the pull.
+function syncApplyPicked(task, op) {
+  const fields = op.payload ?? {};
+  for (const key of Object.keys(fields)) {
+    if (key !== "id" && key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
   }
-  if (!Array.isArray(lines)) return syncRejected(op, "tasks: picked must be an array of lines");
-  if (lines.length > 500) return syncRejected(op, "tasks: that is more lines than any one ticket carries (max 500)");
-  for (const [i, l] of lines.entries()) {
-    if (l === null || typeof l !== "object" || Array.isArray(l)) return syncRejected(op, `tasks: picked line ${i + 1} must be an object`);
-    for (const [k, v] of Object.entries(l)) {
-      if (!PICKED_LINE_LEGS.has(k)) return syncRejected(op, `tasks: picked line ${i + 1}: field "${k}" is not writable through sync`);
-      if (k !== "order_line_no" && typeof v !== "string") return syncRejected(op, `tasks: picked line ${i + 1}: ${k} must be a string`);
-      if (typeof v === "string" && (k === "description" || k === "short_note" ? PICK_TEXT_BAD_MULTILINE : PICK_TEXT_BAD).test(v)) {
-        return syncRejected(op, `tasks: line ${Number(l.order_line_no ?? 0)}: the ${k} cannot hold control characters, enter it as plain text`);
+  const closed = closedPickWords(task);
+  if (closed !== "") return syncRejected(op, closed);
+  const raw = fields.picked;
+  if (!Array.isArray(raw)) return syncRejected(op, "tasks: picked must be an array of lines");
+  if (raw.length === 0) return syncRejected(op, "tasks: say what was picked, an empty record is not the same as a pick of nothing");
+  if (raw.length > PICKED_MAX_LINES) return syncRejected(op, `tasks: that is more lines than any one ticket carries (max ${PICKED_MAX_LINES})`);
+  for (let i = 0; i < raw.length; i += 1) {
+    const line = raw[i];
+    if (line === null || typeof line !== "object" || Array.isArray(line)) return syncRejected(op, `tasks: picked line ${i + 1} must be an object`);
+    for (const [key, value] of Object.entries(line)) {
+      if (!PICKED_LINE_LEGS.has(key)) return syncRejected(op, `tasks: picked line ${i + 1}: field "${key}" is not writable through sync`);
+      if (key === "order_line_no") {
+        if (typeof value !== "number" || !Number.isInteger(value)) return syncRejected(op, `tasks: picked line ${i + 1}: order_line_no must be an integer`);
+      } else if (typeof value !== "string") {
+        return syncRejected(op, `tasks: picked line ${i + 1}: ${key} must be a string`);
       }
     }
   }
-  const recorded = recordPickedLines(task, lines);
-  if (recorded.error) return syncRejected(op, recorded.error);
+  const record = recordPickedLines(task, raw);
+  if (record.error) return syncRejected(op, record.error);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
+}
+
+// The service body's text rule (tasks.checkPickText): every C0 control, DEL and
+// the bidi controls are refused in every text leg; the note and the
+// description keep tab, LF and CR.
+const PICK_TEXT_LEGS = [
+  ["product_id", "product id", false], ["sku", "sku", false], ["description", "description", true],
+  ["qty_ordered", "ordered quantity", false], ["qty_picked", "picked quantity", false], ["uom", "unit", false],
+  ["short_reason", "short reason", false], ["short_note", "note", true],
+];
+
+function pickTextRefusal(line) {
+  for (const [key, name, multiline] of PICK_TEXT_LEGS) {
+    for (const ch of String(line[key] ?? "")) {
+      const c = ch.codePointAt(0);
+      if ((c < 0x20 && !(multiline && (c === 9 || c === 10 || c === 13))) || c === 0x7f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) {
+        return `line ${Number(line.order_line_no ?? 0)}: the ${name} cannot hold control characters, enter it as plain text`;
+      }
+    }
+  }
+  return "";
 }
 
 // The record half of the REST route: validate the
@@ -920,6 +1269,8 @@ function recordPickedLines(task, lines) {
   if (list.length === 0) return { error: "say what was picked, an empty record is not the same as a pick of nothing" };
   const seen = new Set();
   for (const l of list) {
+    const text = pickTextRefusal(l);
+    if (text !== "") return { error: text };
     const lineNo = Number(l.order_line_no ?? 0);
     if (!(lineNo > 0)) return { error: "every recorded line needs the ticket's own line number" };
     if (seen.has(lineNo)) return { error: `line ${lineNo} was sent twice, one number per line` };
@@ -944,6 +1295,8 @@ function recordPickedLines(task, lines) {
       if (reason === "OTHER" && note === "") return { error: `line ${lineNo}: say what happened in the note when the reason is OTHER` };
     }
   }
+  const closed = closedPickWords(task);
+  if (closed !== "") return { error: closed, status: 409 };
   const picked = list.map((l) => {
     const lineNo = Number(l.order_line_no);
     const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};
@@ -1024,7 +1377,12 @@ function syncApplyShortageCreate(op) {
   };
   world.shortages.push(shortage);
   const t = findTask(shortage.task_id);
-  if (t) t.updated_at = new Date().toISOString();
+  if (t) {
+    // The core's create bumps the parent task's pick seq (the task projection
+    // carries the shortage counts), so the task row re-appears in the pull.
+    t.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", t.id);
+  }
   syncTouch("shortages", id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
 }

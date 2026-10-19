@@ -7,14 +7,24 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { goMaxPickedLines } from "./_lib/gosets.mjs";
+import { CORE_PICK_CANCELLED, CORE_PICK_DONE, recordRefusalWords } from "../src/yard-logic.ts";
 import {
+  MAX_PICKED_LINES,
   MAX_SKIDS,
+  isLocalLine,
+  pickQueuedWords,
+  pickRecordProblem,
   RESOLVE_WALL_NAMES,
   SHORT_REASONS,
   FORBIDDEN_BODY,
+  CHANGE_ACK_WALL,
+  ackDoneWords,
   actionDone,
   actionLabel,
   ageLabel,
+  canAcknowledge,
+  changeStatusWord,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -327,4 +337,110 @@ test("the role gate's bare Forbidden body is answered with the wall's plain word
   assert.equal(wallWords(RESOLVE_WALL_NAMES), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback", { wall: ["Yard Manager"] }), "That is not yours to settle. Only the Yard Manager may resolve a shortage.");
+});
+
+// ---- the changes waiting on the yard (change orders, stage 2) ----
+
+test("the yard's acknowledge is offered only when the server's next_actions name it", () => {
+  assert.equal(canAcknowledge({ next_actions: ["yard_ack", "reject", "cancel"] }), true);
+  assert.equal(canAcknowledge({ next_actions: ["reject", "cancel"] }), false);
+  // An absent list offers nothing, never everything: the till's own fail closed rule.
+  assert.equal(canAcknowledge({}), false);
+  assert.equal(canAcknowledge(null), false);
+  assert.equal(canAcknowledge(undefined), false);
+});
+
+test("a change's state reads in the words the till uses for the same states", () => {
+  assert.equal(changeStatusWord("PENDING_YARD"), "With yard");
+  assert.equal(changeStatusWord("PENDING_FINANCE"), "With finance");
+  assert.equal(changeStatusWord("APPROVED"), "Approved");
+  assert.equal(changeStatusWord("APPLIED"), "Applied");
+  assert.equal(changeStatusWord("REJECTED"), "Rejected");
+  assert.equal(changeStatusWord("CANCELLED"), "Withdrawn");
+  assert.equal(changeStatusWord("SOMETHING_ELSE"), "something else");
+});
+
+test("the acknowledgement's words name the next stage from the server's answer, never a figure", () => {
+  assert.equal(ackDoneWords({ status: "APPROVED" }), "Acknowledged. The change is approved and waits to be applied.");
+  assert.equal(ackDoneWords({ status: "PENDING_FINANCE" }), "Acknowledged. The change now waits on finance.");
+  assert.equal(ackDoneWords({ status: "APPLIED" }), "Acknowledged. Applied.");
+});
+
+test("the acknowledge wall names who may act, in the till's own shared sentence", () => {
+  assert.equal(CHANGE_ACK_WALL, "Only the yard team or the yard manager may acknowledge a change for the yard.");
+  assert.equal(yardError("Forbidden", 403, "fallback", { wallSentence: CHANGE_ACK_WALL }), CHANGE_ACK_WALL);
+  // Without the override the bare body keeps the shortage wall's words, as before.
+  assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
+});
+
+// ---- the pick record door's client rules (item 6c) ----
+
+test("the client's bound on a record is the core's (tasks.maxPickedLines, read from the Go source)", () => {
+  assert.equal(MAX_PICKED_LINES, goMaxPickedLines());
+});
+
+test("pickRecordProblem names what the door would refuse, in words, and lets a clean record through", () => {
+  const line = { order_line_no: 1, product_id: "", sku: "A", description: "d", qty_ordered: "4", qty_picked: "4", uom: "EA", short_reason: "", short_note: "" };
+  assert.equal(pickRecordProblem([line]), "");
+  assert.match(pickRecordProblem([]), /Say what was picked/);
+  assert.match(pickRecordProblem(Array.from({ length: MAX_PICKED_LINES + 1 }, () => line)), /more lines than any one ticket carries/);
+  assert.match(pickRecordProblem([{ ...line, short_note: "a\u0000" }]), /Line 1: the note cannot hold control characters/);
+  assert.match(pickRecordProblem([{ ...line, sku: "a\n" }]), /the sku cannot hold control characters/);
+  assert.match(pickRecordProblem([{ ...line, description: "a\u202e" }]), /the description cannot hold control characters/);
+  assert.equal(pickRecordProblem([{ ...line, short_note: "a\n\tb\r", description: "x\ny" }]), "", "a note and a description keep tab, LF and CR");
+});
+
+test("a line is local while only this device holds it, and the queued words do not claim the rep was told", () => {
+  assert.equal(isLocalLine({ id: "local:t:1" }), true);
+  assert.equal(isLocalLine({ id: "2a000000-0000-4000-9000-000000000001" }), false);
+  const words = pickQueuedWords([{ qty_ordered: "6", qty_picked: "4" }, { qty_ordered: "2", qty_picked: "2" }]);
+  assert.match(words, /saved on this device/i);
+  assert.match(words, /when it sends/);
+  assert.doesNotMatch(words, /has been told/);
+});
+
+// ---- the refusal of a record onto a closed pick (item 6c, FROM-PRINCIPAL 49) ----
+
+test("the sentences the client matches are the core's (yard_short.go pickClosedError), so a wording change there turns this red", () => {
+  const goSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "core", "internal", "tasks", "yard_short.go"), "utf8");
+  assert.ok(goSource.includes(`"tasks: ${CORE_PICK_DONE}"`), "the done sentence is the core's");
+  assert.ok(goSource.includes(`"tasks: ${CORE_PICK_CANCELLED}"`), "the cancelled sentence is the core's");
+});
+
+test("a record refused on a handed over or cancelled pick says what the picker must tell the counter", () => {
+  assert.equal(
+    recordRefusalWords(`tasks: ${CORE_PICK_DONE}`),
+    "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.",
+  );
+  assert.equal(recordRefusalWords(`tasks: ${CORE_PICK_CANCELLED}`), "This pick was cancelled, so your record was not saved. Tell the counter.");
+  assert.equal(recordRefusalWords("line 1: that is more than was ordered"), "line 1: that is more than was ordered", "other refusals keep the core's words");
+});
+
+// ---- a held card is never the cached word (row 2122, P2-1) ----
+
+test("a cached held card is released after the re-read: the server's ticket wins, and an unanswered read keeps the cached card", async () => {
+  const { rereadHeldPicks } = await import("../src/yard-logic.ts");
+  const pick = (id, held) => ({
+    task: { id, status: "QUEUED", claimed_by: "" },
+    ticket: { order_id: `o-${id}`, held_from_picking: held, hold_words: held ? "Balance due" : "", lines: [] },
+    shortages: [],
+    picked: [],
+  });
+  const cached = [pick("a", true), pick("b", false), pick("c", true), pick("d", true)];
+  const asked = [];
+  const answers = {
+    a: { ok: true, value: pick("a", false) }, // paid since: released
+    c: { ok: true, value: pick("c", true) }, // still held
+    d: { ok: false, status: 0, error: "offline" }, // unreachable: the cached card stays
+  };
+  const next = await rereadHeldPicks(cached, async (id) => {
+    asked.push(id);
+    return answers[id];
+  });
+  assert.deepEqual(asked.sort(), ["a", "c", "d"], "only the held cards are re-read");
+  assert.equal(next[0].ticket.held_from_picking, false, "the paid hold shows Claim again");
+  assert.equal(next[1], cached[1], "an unheld card is untouched");
+  assert.equal(next[2].ticket.held_from_picking, true);
+  assert.equal(next[3], cached[3], "offline the card still says held and the server's claim door decides");
+  assert.equal(next.length, cached.length);
 });

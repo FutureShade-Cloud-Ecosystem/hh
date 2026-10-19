@@ -21,7 +21,7 @@ const (
 type ChargeRequest struct {
 	CustomerID     string
 	AmountCents    int64
-	Currency       string // ISO 4217, from the dealer's configuration (USD by default)
+	Currency       string // ISO 4217, the dealer's currency (CAD for a dealer with none wired; Run settlement per currency is unconfirmed, Q in §4.2)
 	MethodToken    string // durable vault token (a stored method) ...
 	Nonce          string // ... OR a one-time hosted-field nonce (add-at-checkout)
 	IdempotencyKey string

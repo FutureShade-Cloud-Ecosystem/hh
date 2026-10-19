@@ -36,7 +36,7 @@ export async function resetStub(request: APIRequestContext): Promise<void> {
   if (!response.ok()) throw new Error(`stub reset failed: ${response.status()}`);
 }
 
-/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled). */
+/** Switches the stub to a named scenario (empty, not-yard, poisoned, resolve-walled, change-decided). */
 export async function useScenario(request: APIRequestContext, name: string): Promise<void> {
   const response = await request.post("/_stub/scenario", { data: { name } });
   if (!response.ok()) throw new Error(`stub scenario failed: ${response.status()}`);
@@ -50,6 +50,12 @@ export async function useScenario(request: APIRequestContext, name: string): Pro
 export async function reassignTicket(request: APIRequestContext, taskId: string): Promise<void> {
   const response = await request.post("/_stub/reassign", { data: { task_id: taskId } });
   if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
+}
+
+/** The desk changes an OPEN ticket: its seq moves and it stays open (a record based on the older seq is superseded). */
+export async function touchTicket(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/touch", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub touch failed: ${response.status()}`);
 }
 
 /** The desk settles a shortage while the device cannot hear it. */

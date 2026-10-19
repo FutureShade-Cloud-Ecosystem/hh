@@ -9,6 +9,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_NAMES } from "../src/gen/manifest.ts";
+import { SCHEMA_DESCRIPTORS } from "../src/gen/descriptors.ts";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const genDir = join(packageDir, "src", "gen");
@@ -56,4 +57,27 @@ test("the generated manifest agrees with the generated types module", (t) => {
     assert.ok(declared.has(name), `${name} is declared in types.ts`);
   }
   assert.equal(declared.has("Error"), true, "the contract's Error envelope is a wire type");
+});
+
+test("dispatch and yard pick descriptors carry stop gate code, run departure time, and truck load position", (t) => {
+  assert.deepEqual(SCHEMA_DESCRIPTORS.DispatchStop.props.gate_code, { k: "string" });
+  assert.deepEqual(SCHEMA_DESCRIPTORS.DispatchScheduleInput.props.gate_code, { k: "string" });
+  assert.deepEqual(SCHEMA_DESCRIPTORS.DispatchRun.props.run_departs_at, {
+    k: "union",
+    of: [{ k: "string" }, { k: "null" }],
+  });
+  assert.deepEqual(SCHEMA_DESCRIPTORS.DispatchCreateRunInput.props.run_departs_at, {
+    k: "union",
+    of: [{ k: "string" }, { k: "null" }],
+  });
+  for (const schemaName of ["TaskPickTicket", "TaskPickQueueEntry"]) {
+    const props = SCHEMA_DESCRIPTORS[schemaName].props;
+    assert.deepEqual(props.run_no, { k: "string" }, `${schemaName}.run_no`);
+    assert.deepEqual(
+      props.run_departs_at,
+      { k: "union", of: [{ k: "string" }, { k: "null" }] },
+      `${schemaName}.run_departs_at`,
+    );
+    assert.deepEqual(props.load_position, { k: "integer" }, `${schemaName}.load_position`);
+  }
 });

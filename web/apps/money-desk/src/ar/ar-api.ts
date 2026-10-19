@@ -14,15 +14,24 @@ import {
   staffBranches,
   staffTill,
   type ApiClient,
+  type BillingAddCustomerNoteInput,
+  type BillingAddCustomerNoteResult,
   type BillingAgingPage,
   type BillingApplyPaymentAnswer,
   type BillingApplyPaymentLine,
   type BillingARLanding,
+  type BillingARWorklistResponse,
+  type BillingCreateHoldRequest,
+  type BillingCreditHold,
   type BillingCreditHoldPage,
+  type BillingCustomerWorkspace,
   type BillingInvoiceDetail,
   type BillingPromiseView,
   type BillingRegisterPage,
+  type BillingSendPaylinkRequest,
+  type BillingSendPaylinkResult,
   type BillingStatement,
+  type BillingStatementPreview,
   type Branch,
   type BillingEvaluationResult,
   type BillingHoldOverrideResult,
@@ -37,6 +46,8 @@ import {
   type TillPaymentHistory,
 } from "@hardscapehouse/api-client";
 
+import { OfficeApi } from "./office-api.js";
+
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
 export type ApplyAnswer = BillingApplyPaymentAnswer;
@@ -49,8 +60,17 @@ export class ArApi {
     this.#client = client;
   }
 
+  /** The receivables office's door, over the same client. */
+  office(): OfficeApi {
+    return new OfficeApi(this.#client);
+  }
+
   landing(): Promise<Result<BillingARLanding>> {
     return staffBilling.billingGetARLanding(this.#client);
+  }
+
+  worklist(opts: { chip?: "all" | "action_needed" | "over_60" | "credit_hold"; q?: string } = {}): Promise<Result<BillingARWorklistResponse>> {
+    return staffBilling.billingGetARWorklist(this.#client, opts);
   }
 
   aging(): Promise<Result<BillingAgingPage>> {
@@ -87,8 +107,11 @@ export class ArApi {
     return staffBranches.branchesList(this.#client);
   }
 
-  /** The register in one view; chip PAID with no filter reads every invoice, paid ones too. */
-  register(opts: { chip?: "OVERDUE" | "DISPUTED" | "PAID"; customerId?: string } = {}): Promise<Result<BillingRegisterPage>> {
+  /** The register in one view; chip PAID with no filter reads every invoice, paid ones too.
+   *  The C8 chip set (all / past_due / current / on_hold) sits alongside the legacy StatusX
+   *  names; an old URL using OVERDUE or DISPUTED still resolves the same way it always did.
+   */
+  register(opts: { chip?: "OVERDUE" | "DISPUTED" | "PAID" | "all" | "past_due" | "current" | "on_hold"; customerId?: string } = {}): Promise<Result<BillingRegisterPage>> {
     return staffBilling.billingListRegister(this.#client, {
       limit: 200,
       ...(opts.chip === undefined ? {} : { chip: opts.chip }),
@@ -173,5 +196,41 @@ export class ArApi {
 
   releaseHold(holdId: string, reason: string): Promise<Result<{ ok: boolean }>> {
     return staffBilling.billingReleaseHold(this.#client, holdId, { reason });
+  }
+
+  // The customer account workspace (Change 8 S2 + S2M): one round trip the panel
+  // renders in one paint. The 5-bucket aging the workspace opens with is the AR
+  // console's own read; the workspace handler does not re-bucket.
+  workspace(customerId: string): Promise<Result<BillingCustomerWorkspace>> {
+    return staffBilling.billingGetCustomerWorkspace(this.#client, customerId);
+  }
+
+  // Add a free-text collection note on customer_ar_notes (0405). Outbound copy
+  // never lives here; this is a fact the next collections person picks up.
+  addNote(customerId: string, body: BillingAddCustomerNoteInput): Promise<Result<BillingAddCustomerNoteResult>> {
+    return staffBilling.billingAddCustomerNote(this.#client, customerId, body);
+  }
+
+  // Place a manual credit hold on an account by hand (Change 8 S4). Manager-gated:
+  // the gate refuses every non-manager role with the server's own 403, the refusal
+  // rides through the same Result channel every other call rides through.
+  createHold(input: BillingCreateHoldRequest): Promise<Result<BillingCreditHold>> {
+    return staffBilling.billingCreateHold(this.#client, input);
+  }
+
+  // Generate a deterministic dealer paylink (Change 8 S3). Staff-gated: the row
+  // lands on ar_invoice_deliveries (kind STATEMENT, tone PAYLINK_NOTICE) under a
+  // deterministic idempotency_key derived from (customer, invoice, amount, channel),
+  // so a repeated call lands on the same delivery row and the URL is the same URL.
+  sendPaylink(input: BillingSendPaylinkRequest): Promise<Result<BillingSendPaylinkResult>> {
+    return staffBilling.billingSendPaylink(this.#client, input);
+  }
+
+  // Read the C8 statement preview: the ar_statements artefact, the customer's
+  // open lines, and the 5-bucket aging. Reconciled is the server's assertion that
+  // the buckets add up to openCents and the late buckets add up to overdueCents;
+  // a drift makes the panel refuse to render.
+  statementPreview(customerId: string, statementId: string): Promise<Result<BillingStatementPreview>> {
+    return staffBilling.billingGetStatementPreview(this.#client, customerId, statementId);
   }
 }

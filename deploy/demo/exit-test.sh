@@ -29,7 +29,7 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's nine staff flows, the five contractor
+#   /api/v1/demo/flows answers the closed table's thirteen staff flows, the five contractor
 #     flows and both classes; the three Pro apps serve under /pro-procurement/,
 #     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
 #     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
@@ -281,6 +281,12 @@ page_gated() {
 		|| fail "$2 answered $code without the phrase, want 401"
 }
 page_has / fd-app-root "the front door at /"
+cfg="$(curl -s -u "demo:$PHRASE" "$BASE/config.json")"
+case "$cfg" in
+	*'"mode":"demo"'*) pass "the front door's config.json carries mode demo" ;;
+	*) fail "the front door's config.json is missing or not mode demo (answer: $cfg)" ;;
+esac
+page_gated /config.json "the front door's config.json"
 page_has /till/ ct-app-root "the counter till at /till/"
 page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
@@ -288,6 +294,7 @@ page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /dispatch/ dispatch-board-app "the dispatch board at /dispatch/"
+page_has /messages/ house-messages-app "House Messages at /messages/"
 page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
 page_has /pro-procurement/ pro-procurement-app "Pro Procurement at /pro-procurement/"
 page_has /pro-pay/ pro-pay-app "Pro Pay at /pro-pay/"
@@ -301,6 +308,7 @@ page_gated /home/ "Manager Home at /home/"
 page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /dispatch/ "the dispatch board at /dispatch/"
+page_gated /messages/ "House Messages at /messages/"
 page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
 page_gated /pro-procurement/ "Pro Procurement at /pro-procurement/"
 page_gated /pro-pay/ "Pro Pay at /pro-pay/"
@@ -370,11 +378,11 @@ done
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*)
-		pass "/api/v1/demo/flows answers the closed table's nine flows"
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*'"flow":"outside-sales"'*)
+		pass "/api/v1/demo/flows answers the closed table's thirteen staff flows"
 		;;
 	*)
-		fail "/api/v1/demo/flows did not answer the nine flows: $flows"
+		fail "/api/v1/demo/flows did not answer the thirteen staff flows: $flows"
 		;;
 esac
 
@@ -638,6 +646,44 @@ esac
 case "$nomode_log" in
 	*listening*) fail "the image reached serve without the sign in mode" ;;
 	*) pass "the image exited before serve" ;;
+esac
+[ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
+	&& pass "the refused boot wrote nothing to the database" \
+	|| fail "the refused boot left user tables behind"
+
+echo "== the web runtime config comes from the environment (console copies)"
+webcfg="$(docker run --rm \
+	-e HH_WEB_MODE=console -e HH_WEB_ORG=hh-demo \
+	-e HH_WEB_CONSOLE_ENDPOINT=https://console.example.test/v1 \
+	-e HH_WEB_CONSOLE_PROJECT_ID=fake-project \
+	-e "HH_WEB_DEALER_NAME=Gable Landscape Supply" -e HH_WEB_DEALER_MARK=gable \
+	-e HH_WEB_PERSONAS=true \
+	--entrypoint sh "$IMAGE" -c '. /usr/local/bin/write-web-config.sh; write_web_config /tmp/config.json && cat /tmp/config.json' 2>&1)" || webcfg="refused: $webcfg"
+case "$webcfg" in
+	*'"mode":"console"'*'"org":"hh-demo"'*'"consoleProjectId":"fake-project"'*'"personas":true'*'"name":"Gable Landscape Supply"'*)
+		pass "the image's writer makes a console config.json from HH_WEB_*" ;;
+	*) fail "the image's writer did not make the console config.json (answer: $webcfg)" ;;
+esac
+webcfg_log="$(docker run --rm --network "$NET" \
+	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nomode)" \
+	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
+	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
+	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
+	-e CORE_SIGNIN_MODE=demo \
+	-e HH_WEB_MODE=console -e HH_WEB_ORG=hh-demo \
+	-e "HH_WEB_CONSOLE_ENDPOINT=a phrase pasted where the endpoint belongs" \
+	-e HH_WEB_CONSOLE_PROJECT_ID=fake-project -e HH_WEB_DEALER_NAME=Gable \
+	"$IMAGE" 2>&1)" && webcfg_ok=0 || webcfg_ok=1
+[ "$webcfg_ok" = "1" ] && pass "a bad web config makes the image exit non-zero" \
+	|| fail "a bad web config exited 0"
+case "$webcfg_log" in
+	*HH_WEB_CONSOLE_ENDPOINT*) pass "the refusal names HH_WEB_CONSOLE_ENDPOINT" ;;
+	*) fail "the refusal does not name HH_WEB_CONSOLE_ENDPOINT" ;;
+esac
+case "$webcfg_log" in
+	*"a phrase pasted"*) fail "the refusal repeats the value" ;;
+	*) pass "the refusal repeats no value" ;;
 esac
 [ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
 	&& pass "the refused boot wrote nothing to the database" \

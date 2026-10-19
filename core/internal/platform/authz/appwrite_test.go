@@ -118,12 +118,14 @@ func TestAppwriteOrgMemberBothDirections(t *testing.T) {
 // everything that is not a well-formed tenant team.
 func TestAppwriteTenantOrgs(t *testing.T) {
 	src, _ := newAppwrite(t, func(s *appwriteStub) {
-		s.page = appwriteMembershipPage{Total: 5, Memberships: []appwriteMembership{
+		s.page = appwriteMembershipPage{Total: 6, Memberships: []appwriteMembership{
 			{TeamID: "org-yardone", UserID: "platform-user-1"},
+			{TeamID: "ten-yardone", UserID: "platform-user-1"},
+			{TeamID: "ten-yardone", UserID: "platform-user-1"},
+			{TeamID: "ten-otheryard", UserID: "platform-user-1"},
+			{TeamID: "ten-", UserID: "platform-user-1"},
+			{TeamID: "ten-Bad", UserID: "platform-user-1"},
 			{TeamID: "tenant:yardone:acme", UserID: "platform-user-1"},
-			{TeamID: "tenant:yardone:beta", UserID: "platform-user-1"},
-			{TeamID: "tenant:otheryard:gamma", UserID: "platform-user-1"},
-			{TeamID: "tenant:bad", UserID: "platform-user-1"},
 		}}
 	})
 	orgs, err := src.TenantOrgs(context.Background(), "platform-user-1")

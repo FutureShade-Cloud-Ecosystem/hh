@@ -12,8 +12,8 @@
 // for the role label and theme, assignments in updated(): the design
 // system's position gate refuses every "." and "@" binding and every bound
 // value outside the data- and aria- attributes in a dependent package. Its
-// two buttons ride data-action names and the host's click listener below
-// acts on them.
+// buttons ride data-action names and the host's click listener below acts on
+// them.
 //
 // THE FIELD MIRROR. No control carries a bound value (the gate refuses it),
 // so every input, select and textarea writes what the yard types into the
@@ -23,26 +23,32 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
+// hos-app-header and hh-sheet: the shared design-system chrome elements.
 import "@hardscapehouse/design-system/src/header.js";
-import { ApiClient, type Result } from "@hardscapehouse/api-client";
+import "@hardscapehouse/design-system/src/sheet.js";
+import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
 import "@hardscapehouse/shell-chrome";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { YardApi, type YardPick, type YardRecordLine } from "./yard-api.js";
+import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import { YardOffline, bannerMode, openYardOfflineOpfs, type QueueAnswer } from "./yard-offline.js";
 import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
 import {
   RESOLVE_WALL_NAMES,
+  CHANGE_ACK_WALL,
+  ackDoneWords,
   actionDone,
   lineIsShort,
   pickSummary,
+  pickQueuedWords,
   qtyText,
+  rereadHeldPicks,
   recordBlockedReason,
   shortOf,
   shortPickWords,
@@ -54,7 +60,17 @@ import {
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
-import { renderConflicts, renderEntry, renderPick, renderQueue, stalenessWords, type EntryView } from "./views.js";
+import {
+  renderChanges,
+  renderConflicts,
+  renderEntry,
+  renderPick,
+  renderQueue,
+  stalenessWords,
+  type EntryView,
+  type PickModel,
+  type QueueModel,
+} from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -68,15 +84,8 @@ interface Draft {
 export class YardPickApp extends HHElement {
   static styles = [baseStyles, yardStyles];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -84,10 +93,21 @@ export class YardPickApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The yard's calls, over the staff client.
@@ -97,7 +117,8 @@ export class YardPickApp extends HHElement {
   // means the host cannot carry a store: the app then behaves online as
   // today, over the direct api above, and the strip keeps quiet.
   #yardOffline: YardOffline | null = null;
-  #offlineBooted = false;
+  #offlineOpen: Promise<void> | null = null;
+  #worldGen = 0;
   #readOnlyTab = false;
   #syncState = "offline";
   #waiting = 0;
@@ -118,8 +139,20 @@ export class YardPickApp extends HHElement {
   #moreBehind = false;
   #nextCursor = "";
 
-  // The open pick.
-  #view: { kind: "queue" } | { kind: "pick"; id: string } | { kind: "conflicts" } = { kind: "queue" };
+  // The changes waiting on the yard: the list behind the landing's door, the
+  // door's count, and the open one. The count is the last read's answer as a
+  // word ("2", "50+" when a page came back full), null when nothing is known.
+  #view: { kind: "queue" } | { kind: "pick"; id: string } | { kind: "changes" } | { kind: "conflicts" } = { kind: "queue" };
+  #changes: YardChange[] = [];
+  #changesPhase: "loading" | "ready" | "error" = "loading";
+  #changesWaiting: string | null = null;
+  #moreChangesBehind = false;
+  #nextChangesCursor = "";
+  // The open change's sheet: the row's facts, the optional note, and the
+  // refusal's own line. A failed write keeps the sheet and says so in place.
+  #sheetChange: YardChange | null = null;
+  #changeNote = "";
+  #changeError = "";
   #pick: YardPick | null = null;
   #drafts = new Map<number, Draft>();
   #editing: number | null = null;
@@ -139,14 +172,12 @@ export class YardPickApp extends HHElement {
   #stageWhere = "";
   #resolveText = "";
 
+  // Cached blob URLs for product thumbnails on pick lines, keyed by product id.
+  readonly #imageUrls = new Map<string, string>();
+  readonly #imageInFlight = new Set<string>();
+
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -183,14 +214,42 @@ export class YardPickApp extends HHElement {
       if (flow !== "") void this.#chooseFlow(flow);
       return;
     }
+    if (action === "open-changes") {
+      this.#openChanges();
+      return;
+    }
+    if (action === "more-changes") {
+      void this.#loadChanges(false);
+      return;
+    }
+    if (action === "open-change") {
+      this.#openChange(control?.getAttribute("data-change-id") ?? "");
+      return;
+    }
+    if (action === "close-change-sheet") {
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "ack-change") {
+      void this.#ackChange();
+      return;
+    }
     if (action === "back") {
       this.#view = { kind: "queue" };
       this.#pick = null;
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
       this.#error = "";
       this.#notice = "";
       // Back re-reads the whole board: a pick that moved while it was open
-      // must not ride beside its own stale row.
+      // must not ride beside its own stale row. The waiting changes' count
+      // re-reads with it: a change answered elsewhere must not linger.
       void this.#loadQueue(true);
+      void this.#loadChangesCount();
       return;
     }
     if (action === "claim") {
@@ -282,6 +341,19 @@ export class YardPickApp extends HHElement {
       void this.#saveSkids();
       return;
     }
+    if (action === "pick-bay") {
+      const bay = control?.getAttribute("data-bay") ?? "";
+      if (bay !== "") {
+        this.#stageWhere = bay;
+        this.requestUpdate();
+      }
+      return;
+    }
+    if (action === "close-stage") {
+      this.#stageWhere = "";
+      this.requestUpdate();
+      return;
+    }
     if (action === "stage") {
       void this.#stage();
       return;
@@ -339,14 +411,16 @@ export class YardPickApp extends HHElement {
         this.#resolveText = value;
         return;
       }
+      if (field === "change-note") {
+        this.#changeNote = value;
+        return;
+      }
       if (field === "stage-where") {
         this.#stageWhere = value;
         return;
       }
       return;
     }
-    // The reasons are radio rows, not selects: they ride data-action clicks,
-    // not change events, so nothing else needs mirroring here.
   };
 
   connectedCallback(): void {
@@ -361,6 +435,10 @@ export class YardPickApp extends HHElement {
     // Some hosts deliver the platform's word late or not at all; a short
     // watcher repeats it, and the layer dispatches only on a change.
     this.#connectivityWatch = setInterval(this.#onConnectivity, 1_000);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("yard-pick", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -382,6 +460,25 @@ export class YardPickApp extends HHElement {
     } else {
       void this.loadFlows();
     }
+  }
+
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      this.#me = outcome.entry.userId;
+      void this.#loadWorld();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
   }
 
   disconnectedCallback(): void {
@@ -451,7 +548,54 @@ export class YardPickApp extends HHElement {
       else if (name === "skid-note") value = this.#skidNote;
       else if (name === "stage-where") value = this.#stageWhere;
       else if (name === "resolution") value = this.#resolveText;
+      else if (name === "change-note") value = this.#changeNote;
       if (value !== null && field.value !== value) field.value = value;
+    }
+    // The change sheet takes the yard's attention when it opens: at phone
+    // width it draws above a list longer than the screen, so a lower row's
+    // tap or Enter must land on it, in view and in focus, not leave both on
+    // the row behind. Focus already inside the sheet (the note, the buttons,
+    // the heading this pass put there) is left alone.
+    const sheet = this.renderRoot.querySelector<HTMLElement>("[data-change-sheet]");
+    if (sheet !== null) {
+      const active = this.renderRoot instanceof ShadowRoot ? this.renderRoot.activeElement : document.activeElement;
+      if (!(active instanceof Node && sheet.contains(active))) {
+        sheet.scrollIntoView({ block: "start" });
+        const head = sheet.querySelector<HTMLElement>(".sheet-head");
+        if (head !== null) head.focus();
+      }
+    }
+    // Hydrate per-line product thumbnails over the authenticated staff client.
+    void this.#hydrateProductImages();
+  }
+
+  /** Fetches each product image once over the staff client and writes a blob URL onto the line's img element. */
+  async #hydrateProductImages(): Promise<void> {
+    const imgs = Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("[data-line-img]"));
+    for (const img of imgs) {
+      const productId = img.getAttribute("data-product-id") ?? "";
+      if (productId === "") continue;
+      const cached = this.#imageUrls.get(productId);
+      if (cached !== undefined) {
+        if (img.src !== cached) img.src = cached;
+        continue;
+      }
+      if (this.#imageInFlight.has(productId)) continue;
+      this.#imageInFlight.add(productId);
+      const res = await this.#yard.productImage(productId);
+      this.#imageInFlight.delete(productId);
+      if (!res.ok) continue;
+      const bytes = res.value;
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      const blob = new Blob([copy], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      this.#imageUrls.set(productId, url);
+      for (const match of Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("[data-line-img]"))) {
+        if ((match.getAttribute("data-product-id") ?? "") === productId) {
+          match.src = url;
+        }
+      }
     }
   }
 
@@ -471,33 +615,50 @@ export class YardPickApp extends HHElement {
   // backend when the host can carry one, the first pull through the runner,
   // and the chrome fed from then on. A host that cannot carry a store leaves
   // the layer null and the app behaves online as today.
-  async #bootOffline(): Promise<void> {
-    if (this.#offlineBooted || this.#me === "") return;
-    this.#offlineBooted = true;
-    const opened = await openYardOfflineOpfs({
-      dbName: "hh-yard-pick",
-      transport: apiClientTransport(this.#staffClient),
-      direct: this.#yard,
-      actorId: this.#me,
-      onChange: () => void this.#refreshOfflineChrome(),
-    });
-    // A second tab reads an empty cache: it keeps the online board and only
-    // says it is read only.
-    this.#readOnlyTab = opened.readOnly;
-    const layer = opened.layer;
-    if (layer === null) {
-      this.requestUpdate();
-      return;
+  async #bootOffline(gen: number): Promise<void> {
+    if (this.#me === "") return;
+    if (this.#offlineOpen === null) {
+      this.#offlineOpen = (async () => {
+        const opened = await openYardOfflineOpfs({
+          dbName: "hh-yard-pick",
+          transport: apiClientTransport(this.#staffClient),
+          direct: this.#yard,
+          actorId: this.#me,
+          onChange: () => void this.#refreshOfflineChrome(),
+        });
+        // A second tab reads an empty cache: it keeps the online board and only
+        // says it is read only.
+        this.#readOnlyTab = opened.readOnly;
+        const layer = opened.layer;
+        if (layer === null) {
+          this.requestUpdate();
+          return;
+        }
+        this.#yardOffline = layer;
+        layer.runner.onState((state) => {
+          // The state is on the glass in this update, not behind the health read.
+          this.#syncState = state;
+          this.requestUpdate();
+          void this.#refreshOfflineChrome();
+          // A cycle came to rest with its pull landed: the open pick reads the
+          // server's row (a record the device queued shows the server's lines,
+          // not its own). The read runs even while a save or a shortage is still
+          // finishing: a cycle that rests in between would otherwise leave the
+          // device's queued lines on the glass after the server's row arrived.
+          if (state === "idle" || state === "conflict") {
+            if (this.#view.kind === "pick") void this.#refreshPick().then(() => this.requestUpdate());
+            else if (this.#view.kind === "queue" && this.#branchId !== "") void this.#loadQueue(false);
+          }
+        });
+      })();
     }
-    this.#yardOffline = layer;
-    layer.runner.onState((state) => {
-      // The state is on the glass in this update, not behind the health read.
-      this.#syncState = state;
-      this.requestUpdate();
-      void this.#refreshOfflineChrome();
-    });
+    await this.#offlineOpen;
+    const layer = this.#yardOffline;
+    if (layer === null || gen !== this.#worldGen || this.#sessions.current === null) return;
     await layer.setOnline(navigator.onLine);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     await layer.cycle();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     await this.#refreshOfflineChrome();
   }
 
@@ -511,10 +672,13 @@ export class YardPickApp extends HHElement {
   // The branch the yard works: the branches this login may reach, the first
   // one the board opens on. A login that reaches none is told so, in words.
   async #loadWorld(): Promise<void> {
+    const gen = ++this.#worldGen;
     this.#phase = "loading";
     this.requestUpdate();
-    await this.#bootOffline();
+    await this.#bootOffline(gen);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     const branches = await this.#yard.branches();
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
     if (!branches.ok) {
       this.#phase = "error";
       this.#error = yardError(branches.error, branches.status, "The yard did not load. Check your signal and try again.");
@@ -530,6 +694,87 @@ export class YardPickApp extends HHElement {
     this.#branchId = branches.value[0]?.id ?? "";
     this.#branchName = branches.value[0]?.name ?? "";
     await this.#loadQueue(true);
+    if (gen !== this.#worldGen || this.#sessions.current === null) return;
+    void this.#loadChangesCount();
+  }
+
+  /** The landing door's count: one light read, the word the board shows ("2", "50+"). */
+  async #loadChangesCount(): Promise<void> {
+    const answer = await this.#yard.changeQueue("PENDING_YARD");
+    this.#changesWaiting = answer.ok
+      ? answer.value.nextCursor !== ""
+        ? `${answer.value.changes.length}+`
+        : String(answer.value.changes.length)
+      : null;
+    this.requestUpdate();
+  }
+
+  /** The changes view's list: one page at a time, oldest first, the server's order. */
+  async #loadChanges(reset: boolean): Promise<void> {
+    if (reset) this.#changesPhase = "loading";
+    this.requestUpdate();
+    const cursor = reset ? "" : this.#nextChangesCursor;
+    const answer = await this.#yard.changeQueue("PENDING_YARD", cursor);
+    if (answer.ok) {
+      this.#changes = reset ? answer.value.changes : [...this.#changes, ...answer.value.changes];
+      this.#nextChangesCursor = answer.value.nextCursor;
+      this.#moreChangesBehind = answer.value.nextCursor !== "";
+      this.#changesPhase = "ready";
+      this.#changesWaiting = this.#moreChangesBehind ? `${this.#changes.length}+` : String(this.#changes.length);
+      this.#error = "";
+    } else {
+      this.#changesPhase = this.#changes.length > 0 ? "ready" : "error";
+      this.#error = yardError(answer.error, answer.status, "The changes did not load. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  #openChanges(): void {
+    this.#view = { kind: "changes" };
+    // The door opens on a clean list: no sheet, note or refusal left over
+    // from whoever held the phone before this read.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
+    this.#error = "";
+    this.#notice = "";
+    void this.#loadChanges(true);
+  }
+
+  #openChange(changeId: string): void {
+    const change = this.#changes.find((c) => c.id === changeId);
+    if (change === undefined) return;
+    this.#sheetChange = change;
+    this.#changeNote = "";
+    this.#changeError = "";
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+  }
+
+  /** The yard's word on a change: acknowledge, with the optional note. A
+   *  refusal keeps the sheet and shows the server's own sentence in place;
+   *  a landed acknowledgement moves the row out of the yard's stage and
+   *  names the next stage from the server's answer. */
+  async #ackChange(): Promise<void> {
+    const change = this.#sheetChange;
+    if (change === null || this.#busy) return;
+    this.#busy = true;
+    this.#changeError = "";
+    this.requestUpdate();
+    const answer = await this.#yard.acknowledgeChange(change.id, this.#changeNote);
+    this.#busy = false;
+    if (answer.ok) {
+      this.#notice = ackDoneWords(answer.value);
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      await this.#loadChanges(true);
+    } else {
+      this.#changeError = yardError(answer.error, answer.status, "The acknowledgement did not go through. Check your signal and try again.", {
+        wallSentence: CHANGE_ACK_WALL,
+      });
+    }
+    this.requestUpdate();
   }
 
   async #loadQueue(reset: boolean): Promise<void> {
@@ -549,6 +794,12 @@ export class YardPickApp extends HHElement {
         this.#phase = "ready";
         this.#error = "";
         this.#queueStaleness = answer.staleness;
+        this.requestUpdate();
+        // The device's held word is not the last word: re-read each held card from the server, so a
+        // hold cleared since the pull releases the card (see rereadHeldPicks).
+        const base = this.#picks;
+        const fresh = await rereadHeldPicks(base, (id) => this.#yard.pick(id));
+        if (this.#picks === base && fresh.some((p, i) => p !== base[i])) this.#picks = fresh;
       } else {
         this.#phase = this.#picks.length > 0 ? "ready" : "error";
         this.#error = yardError(answer.error, answer.status, "The board did not load. Check your signal and try again.");
@@ -629,45 +880,77 @@ export class YardPickApp extends HHElement {
 
   async #claim(taskId: string): Promise<void> {
     if (taskId === "" || this.#busy) return;
+    await this.#openPick(taskId);
+  }
+
+  async #openPick(taskId: string): Promise<void> {
+    if (taskId === "" || this.#busy) return;
     this.#busy = true;
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().claim(taskId);
-    this.#busy = false;
-    if (answer.ok) {
-      await this.#openPick(taskId);
-      this.#notice = actionDone("claim");
-    } else {
-      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.", {
+    const first = await this.#door().pick(taskId);
+    if (!first.ok) {
+      this.#busy = false;
+      this.#error = yardError(first.error, first.status, "That pick did not open. Check your signal and try again.", {
         notFound: "That pick is no longer on the board.",
       });
+      this.requestUpdate();
+      return;
     }
-    this.requestUpdate();
-  }
-
-  async #openPick(taskId: string): Promise<void> {
-    if (taskId === "") return;
-    this.#error = "";
-    this.#notice = "";
-    this.requestUpdate();
-    const answer = await this.#door().pick(taskId);
-    if (answer.ok) {
-      this.#pick = answer.value;
-      this.#view = { kind: "pick", id: taskId };
-      this.#drafts = new Map();
-      this.#qtyMirror = new Map();
-      this.#reasonMirror = new Map();
-      this.#noteMirror = new Map();
-      this.#editing = null;
-      this.#sheetFor = null;
-      this.#resolveFor = "";
-      this.#skids = null;
-      this.#skidReason = "";
-      this.#skidNote = "";
-    } else {
-      this.#error = yardError(answer.error, answer.status, "That pick did not open. Check your signal and try again.");
+    let current = first.value;
+    let openNotice = "";
+    const held = current.ticket?.held_from_picking === true;
+    if (!held) {
+      if (current.task.status === "QUEUED" || current.task.status === "PUSHED") {
+        const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
+        if (!claimed.ok) {
+          this.#busy = false;
+          this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
+            notFound: "That pick is no longer on the board.",
+          });
+          this.requestUpdate();
+          return;
+        }
+        const started = await this.#door().start(taskId);
+        if (!started.ok) {
+          this.#busy = false;
+          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+          this.requestUpdate();
+          return;
+        }
+        const reread = await this.#door().pick(taskId);
+        if (reread.ok) current = reread.value;
+        openNotice = actionDone("claim");
+      } else if (current.task.status === "ACCEPTED") {
+        const started = await this.#door().start(taskId);
+        if (!started.ok) {
+          this.#busy = false;
+          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+          this.requestUpdate();
+          return;
+        }
+        const reread = await this.#door().pick(taskId);
+        if (reread.ok) current = reread.value;
+        openNotice = actionDone("start");
+      }
     }
+    this.#busy = false;
+    this.#pick = current;
+    this.#view = { kind: "pick", id: taskId };
+    this.#notice = openNotice;
+    this.#drafts = new Map();
+    this.#qtyMirror = new Map();
+    this.#reasonMirror = new Map();
+    this.#noteMirror = new Map();
+    this.#editing = null;
+    this.#sheetFor = null;
+    this.#resolveFor = "";
+    this.#skids = null;
+    this.#skidReason = "";
+    this.#skidNote = "";
+    this.#stageWhere = "";
+    if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
     this.requestUpdate();
   }
 
@@ -728,19 +1011,29 @@ export class YardPickApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().recordLines(this.#view.id, lines);
+    const taskId = this.#view.id;
+    const answer = await this.#door().recordLines(taskId, lines);
+    // Connected: send now, so the picker reads the server's answer (its
+    // refusal in its own words, the backorder figure) as they always have. No
+    // signal: the record waits in the outbox and the notice says so.
+    const layer = this.#yardOffline;
+    let refused = "";
+    if (answer.ok && layer !== null && layer.runner.state !== "offline") refused = await layer.sendRecordNow(taskId);
     this.#busy = false;
-    if (answer.ok) {
+    if (answer.ok && refused === "") {
       await this.#refreshPick();
       const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
-      if (firstShort !== undefined) {
+      if (layer !== null && (await layer.pendingRecord(taskId))) {
+        // Not sent: no signal, or the server could not be reached. Nobody has been told yet.
+        this.#notice = pickQueuedWords(answer.value);
+      } else if (firstShort !== undefined) {
         const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
         this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
       } else {
-        this.#notice = pickSummary(answer.value) || "The pick is recorded.";
+        this.#notice = pickSummary(this.#pick?.picked ?? answer.value) || "The pick is recorded.";
       }
     } else {
-      this.#error = yardError(answer.error, answer.status, "The pick did not save. Check your signal and try again.");
+      this.#error = yardError(answer.ok ? refused : answer.error, answer.ok ? 400 : answer.status, "The pick did not save. Check your signal and try again.");
       await this.#refreshPick();
     }
     this.requestUpdate();
@@ -858,7 +1151,7 @@ export class YardPickApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().recordSkids(this.#view.id, this.#skids as number, this.#skidReason, this.#skidNote.trim());
+    const answer = await this.#door().recordSkids(this.#view.id, this.#skids ?? 0, this.#skidReason, this.#skidNote.trim());
     this.#busy = false;
     if (answer.ok) {
       this.#skids = answer.value.skid_count;
@@ -914,6 +1207,7 @@ export class YardPickApp extends HHElement {
   }
 
   #onSignOut(): void {
+    this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";
     this.#picks = [];
@@ -923,7 +1217,23 @@ export class YardPickApp extends HHElement {
     this.#notice = "";
     this.#view = { kind: "queue" };
     this.#pick = null;
+    this.#changes = [];
+    this.#changesPhase = "loading";
+    this.#changesWaiting = null;
+    this.#moreChangesBehind = false;
+    this.#nextChangesCursor = "";
+    // The shared phone changes hands here: the open sheet, its typed note and
+    // its refusal line belong to the person who left, never to the next one.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 
@@ -935,18 +1245,42 @@ export class YardPickApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary theme-button" data-action="theme">${label}</button>`;
   }
 
+  // When signed in, the header slot carries the theme toggle, the "Changes
+  // waiting on the yard" door with its badge, the Review door, and Refresh.
+  private renderHeaderControls(): TemplateResult {
+    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
+    const waiting = this.#changesWaiting;
+    const conflicts = this.#openCards.length;
+    return html`
+      <div slot="theme" class="header-extra">
+        <button type="button" class="btn btn-secondary theme-button" data-action="theme" data-tap>${label}</button>
+        <button type="button" class="btn btn-secondary header-door" data-action="open-changes" data-changes-door data-tap>
+          <span>Changes waiting on the yard</span>
+          ${waiting !== null ? html`<span class="pill branch-pill" data-changes-count>${waiting}</span>` : nothing}
+        </button>
+        <button type="button" class="btn btn-secondary theme-button" data-action="open-conflicts" data-tap>
+          ${conflicts > 0 ? `Review ${conflicts}` : "Review"}
+        </button>
+        <button type="button" class="btn btn-secondary theme-button" data-action="reload" data-tap>Refresh</button>
+      </div>
+    `;
+  }
+
   private renderWork(): TemplateResult {
     if (this.#view.kind === "conflicts") {
       return renderConflicts({ cards: this.#openCards.length });
     }
     if (this.#view.kind === "pick" && this.#pick !== null) {
-      const drafts = [...this.#drafts.entries()].map(([order_line_no, d]) => ({
-        order_line_no,
-        qty_picked: d.qty,
-        short_reason: d.reason,
-        short_note: d.note,
-      }));
-      return renderPick({
+      const drafts: Array<{ order_line_no: number; qty_picked: string; short_reason: string; short_note: string }> = [];
+      for (const [lineNo, draft] of this.#drafts) {
+        drafts.push({
+          order_line_no: lineNo,
+          qty_picked: draft.qty,
+          short_reason: draft.reason,
+          short_note: draft.note,
+        });
+      }
+      const detail: PickModel = {
         pick: this.#pick,
         drafts,
         editing: this.#editing,
@@ -959,9 +1293,23 @@ export class YardPickApp extends HHElement {
         notice: this.#notice,
         skids: this.#skids,
         skidReason: this.#skidReason,
+      };
+      return renderPick(detail);
+    }
+    if (this.#view.kind === "changes") {
+      return renderChanges({
+        phase: this.#changesPhase,
+        changes: this.#changes,
+        moreBehind: this.#moreChangesBehind,
+        busy: this.#busy,
+        error: this.#error,
+        notice: this.#notice,
+        sheet: this.#sheetChange,
+        sheetNote: this.#changeNote,
+        sheetError: this.#changeError,
       });
     }
-    return renderQueue({
+    const model: QueueModel = {
       phase: this.#phase,
       branchName: this.#branchName,
       picks: this.#picks,
@@ -969,9 +1317,11 @@ export class YardPickApp extends HHElement {
       error: this.#error,
       notice: this.#notice,
       moreBehind: this.#moreBehind,
+      changesWaiting: this.#changesWaiting,
       staleness: this.#yardOffline !== null ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null }) : "",
       conflicts: this.#openCards.length,
-    });
+    };
+    return renderQueue(model);
   }
 
   // The stall strip: what the outbox's health says is stuck, in the store's
@@ -988,10 +1338,12 @@ export class YardPickApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderHeaderControls()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
-      <main>${this.renderWork()}</main>
+      <main>
+        ${this.renderWork()}
+      </main>
     `;
   }
 

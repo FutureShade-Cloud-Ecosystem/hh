@@ -20,10 +20,21 @@ import (
 type Store struct {
 	pool  *pgxpool.Pool
 	vault *Vault
+	// currency is the dealer's own currency, nil for a store built without one (the scaffold and the
+	// test fakes): Configure then keeps the Ontario default and a charge is not cross-checked.
+	currency DealerCurrencySource
 }
 
 // NewStore wires the pool + the AES-GCM vault.
 func NewStore(pool *pgxpool.Pool, vault *Vault) *Store { return &Store{pool: pool, vault: vault} }
+
+// WithDealerCurrency wires the dealer's currency source. Configure then writes the dealer's currency
+// for a blank one and refuses a different one, and a Service built over the store refuses to charge
+// a card in a currency other than the dealer's.
+func (s *Store) WithDealerCurrency(src DealerCurrencySource) *Store {
+	s.currency = src
+	return s
+}
 
 // injectedCredKeys are non-secret values activeConfig threads INTO the in-memory creds map for the
 // live client (host/currency) plus the call-scoped idempotency key. They are NOT credentials and
@@ -72,8 +83,9 @@ func (s *Store) Configure(ctx context.Context, processor, merchantID, currency, 
 	if processor == "" {
 		processor = "run_payments"
 	}
-	if currency == "" {
-		currency = "CAD"
+	currency, err := s.configureCurrency(ctx, currency)
+	if err != nil {
+		return err
 	}
 	plain, err := json.Marshal(creds)
 	if err != nil {
@@ -277,6 +289,9 @@ type Service struct {
 	// attempts is the card charge attempt store Capture, Compensate and BindTx work over; nil on a
 	// Service built without one (those entry points then refuse).
 	attempts *Store
+	// currency is the dealer's currency source (the store's, at construction); nil means a charge is
+	// not cross-checked against the dealer.
+	currency DealerCurrencySource
 
 	rotMu        sync.Mutex
 	rotPend      *rotatedCreds
@@ -302,6 +317,9 @@ const rotationFlushWindow = 30 * time.Second
 // NewService wires the config store + the active Processor (RunPaymentsStub by default).
 func NewService(store *Store, proc Processor) *Service {
 	s := &Service{cfg: store, proc: proc, attempts: store}
+	if store != nil { // some compositions build the service over no store
+		s.currency = store.currency
+	}
 	s.startFlusher = s.startRotationFlusherGoroutine
 	return s
 }
@@ -327,7 +345,7 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
-	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.resealOnPool)
+	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.resealOnPool, s.dealerCurrencyOnPool)
 }
 
 // ChargeTx is Charge on the caller's open transaction. The pos Sale
@@ -357,7 +375,8 @@ func (s *Service) ChargeTx(ctx context.Context, tx pgx.Tx, in ChargeInput) (Char
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
-	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.carryRotationOutOfTheTransaction)
+	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.carryRotationOutOfTheTransaction,
+		func(c context.Context) (string, error) { return s.currency.DealerCurrencyTx(c, tx) })
 }
 
 // holdRotation records the freshest rotated credential set in the ledger. Synchronous, pool-free and
@@ -467,9 +486,12 @@ func (s *Service) startRotationFlusherGoroutine() {
 // exactly as the write-back always was: best-effort, the processor's
 // answer is the receipt). A nil/zero token or amount fails before any
 // dispatch.
-func (s *Service) charge(ctx context.Context, cfg activeCfg, creds map[string]string, in ChargeInput, reseal func(context.Context, string, map[string]string) error) (ChargeReceipt, error) {
+func (s *Service) charge(ctx context.Context, cfg activeCfg, creds map[string]string, in ChargeInput, reseal func(context.Context, string, map[string]string) error, dealerCurrency func(context.Context) (string, error)) (ChargeReceipt, error) {
 	if in.PaymentToken == "" || in.AmountCents <= 0 {
 		return ChargeReceipt{}, errBadCharge
+	}
+	if err := s.guardCurrency(ctx, cfg, dealerCurrency); err != nil {
+		return ChargeReceipt{Processor: cfg.Processor, Status: "failed"}, err
 	}
 	prevKey := creds["api_key"]
 	creds["__idem"] = in.IdempotencyKey // call-scoped; not persisted

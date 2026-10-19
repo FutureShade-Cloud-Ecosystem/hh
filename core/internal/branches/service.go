@@ -15,6 +15,10 @@ type branchStore interface {
 	// table by the same reader, a third method here costs one fake method, and a second interface
 	// would cost a second thing to forget to wire.
 	Exists(ctx context.Context, id string) (bool, error)
+	// Names resolves the display names of the branch ids a consumer already holds (the stock
+	// lookup's out-at line today, change 5 slice S4). Same table, same reader, same reasoning as
+	// Exists: a fourth method costs one fake method, a second interface costs a second wire.
+	Names(ctx context.Context, ids []string) (map[string]string, error)
 }
 
 // Service is the branch read seam. It holds no cross-module state; it just resolves the
@@ -50,6 +54,13 @@ func (s *Service) DefaultBranchID(ctx context.Context) (string, error) {
 // would be deciding it for callers it has never met.
 func (s *Service) Exists(ctx context.Context, id string) (bool, error) {
 	return s.store.Exists(ctx, id)
+}
+
+// BranchNames is the owning module's answer for the consumers that hold branch ids and need the
+// names a screen shows. See Repository.Names for the reply's shape; what an unnamed id reads as
+// stays the caller's decision.
+func (s *Service) BranchNames(ctx context.Context, ids []string) (map[string]string, error) {
+	return s.store.Names(ctx, ids)
 }
 
 // ListFor is List, fenced to the caller and defaulted for the caller.

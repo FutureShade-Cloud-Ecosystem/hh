@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { contrast } from './_lib/sheet.mjs';
-import { HARNESS_STATES, HARNESS_TITLE, KITS, WIDTHS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';
+import { HARNESS_STATES, HARNESS_TITLE, KITS, SHEET_TAG, WIDTHS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..');
@@ -82,11 +82,19 @@ test('the committed static harness is a fresh build of the page and its sheets, 
       `harness/sheets/${tag}.css is stale: run npm run build:harness and commit the result`,
     );
     // A cell without its link would paint an unstyled kit in the committed
-    // page: each kit's cells must link the sheet the build ships.
+    // page: each kit's cells must link the sheet the build ships. The
+    // sheet element is one entry per page variant (it does not iterate per
+    // state the way the kits do), so it carries one link per page, and
+    // the count is what the kit grid's anchor-style cells say (12 links
+    // across the page widths), or 1 link for the sheet, whichever the
+    // element's iteration calls for.
     const links = [...committed.matchAll(new RegExp(`<link rel="stylesheet" href="./sheets/${tag}\\.css">`, 'g'))].length;
+    const expected = tag === SHEET_TAG
+      ? 1
+      : HARNESS_STATES.length * WIDTHS.length;
     assert.ok(
-      links >= HARNESS_STATES.length * WIDTHS.length,
-      `${tag}: only ${links} cells link the kit sheet; expected one per cell of the kit`,
+      links >= expected,
+      `${tag}: only ${links} cells link the kit sheet; expected ${expected} or more`,
     );
   }
   for (const [file] of VARIANTS) {

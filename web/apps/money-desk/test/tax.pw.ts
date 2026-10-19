@@ -510,7 +510,8 @@ test("an empty world says so on each tab, and a list that is not the shape the c
   const empty = (key: string) => ({ status: 200, contentType: "application/json", body: JSON.stringify({ [key]: null }) });
   await page.route("**/api/v1/tax/rates", (route) => route.fulfill(empty("rates")));
   await page.route("**/api/v1/tax/profiles", (route) => route.fulfill(empty("profiles")));
-  await page.route("**/api/v1/tax/review-queue", (route) => route.fulfill(empty("pending_profiles")));
+  // The core's empty queue is its own slice, never null, so it is routed as the array it sends.
+  await page.route("**/api/v1/tax/review-queue", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ pending_profiles: [] }) }));
   await page.route("**/api/v1/tax/evidence", (route) => (route.request().method() === "GET" ? route.fulfill(empty("evidence")) : route.continue()));
   await page.goto("/");
   await page.getByRole("button", { name: "Tax", exact: true }).click();

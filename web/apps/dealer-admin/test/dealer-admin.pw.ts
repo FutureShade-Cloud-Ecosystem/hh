@@ -325,9 +325,8 @@ test("a frontline caller is refused the role grid, in the core's own words", asy
   await expect(page.locator("[data-test=staff-error]")).toContainText("managers and above");
   await page.locator('.surface-link[data-surface="role-config"]').click();
 
-  // The kit's service refusal, whole: who cannot, and who can.
-  await expect(page.locator("[data-test=config-error]")).toContainText("changing dealer screen settings is limited to administrators");
-  await expect(page.locator("[data-test=config-error]")).toContainText("ask a tech admin");
+  // The kit's service refusal, whole: who can.
+  await expect(page.locator("[data-test=config-error]")).toContainText("only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings");
 });
 
 test("a refused curation write keeps the editor and says the server's words", async ({ page }) => {
@@ -339,7 +338,7 @@ test("a refused curation write keeps the editor and says the server's words", as
   await page.locator('[data-action="config-add-row"]').click();
   await page.locator('[data-action="config-save"]').click();
 
-  await expect(page.locator("[data-test=config-save-error]")).toContainText("limited to administrators");
+  await expect(page.locator("[data-test=config-save-error]")).toContainText("only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings");
   await expect(page.locator("[data-test=config-editor]")).toBeVisible();
   await page.request.post("/_stub/reset");
 });
@@ -461,6 +460,100 @@ test("the platform gate's refusal arrives in the core's own sentence, whole", as
   await page.locator('[data-action="settings-tour-demo-off"]').click();
   await expect(page.locator("[data-test=tour-save-error]")).toContainText("the walkthrough is the platform administrator's to set up");
   await expect(page.locator("[data-test=tour-save-error]")).toContainText("cannot change its copy or its demo switch");
+  await page.request.post("/_stub/reset");
+});
+
+async function openWarranty(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="warranty"]').click();
+}
+
+test("the warranty surface: the threshold reads and saves in the board's words", async ({ page }) => {
+  await openWarranty(page);
+
+  // The threshold answers at the 0396 seed, the field carrying the core's
+  // own dollars word.
+  await expect(page.locator(".page-head h1")).toHaveText("Warranty");
+  await expect(page.locator(".page-sub")).toContainText("When a defect becomes a warranty claim");
+  await expect(page.locator('[data-field="warranty-threshold"]')).toHaveValue("$50.00");
+
+  // A half typed amount is a fault named before the write, and the save
+  // stays dark while it stands.
+  await page.locator('[data-field="warranty-threshold"]').fill("$25.0.0");
+  await expect(page.locator("[data-test=warranty-threshold-fault]")).toContainText("like $50.00");
+  await expect(page.locator('[data-action="warranty-save-threshold"]')).toBeDisabled();
+
+  await page.locator('[data-field="warranty-threshold"]').fill("$25");
+  await page.locator('[data-action="warranty-save-threshold"]').click();
+  await expect(page.locator("[data-test=warranty-threshold-notice]")).toContainText("Saved");
+  await expect(page.locator('[data-field="warranty-threshold"]')).toHaveValue("$25.00");
+
+  // The answer is the server's: the surface re-reads what the core holds.
+  await page.locator('.surface-link[data-surface="staff"]').click();
+  await page.locator('.surface-link[data-surface="warranty"]').click();
+  await expect(page.locator('[data-field="warranty-threshold"]')).toHaveValue("$25.00");
+  await page.request.post("/_stub/reset");
+});
+
+test("the vendor agreements render the boards' states, and a kind switch lands in one click", async ({ page }) => {
+  await openWarranty(page);
+
+  const rows = page.locator("[data-test=warranty-vendor-row]");
+  await expect(rows).toHaveCount(4);
+  const copper = rows.filter({ hasText: "Copperline Pavers" });
+  const heron = rows.filter({ hasText: "Heronfield Stone" });
+  const prairie = rows.filter({ hasText: "Prairie Bend Soils" });
+
+  // The stub's world matches the boards: Copperline claim by claim with no
+  // period, Heronfield a quarterly fixed allowance at 1%, Prairie Bend a
+  // monthly periodic credit note.
+  await expect(copper.locator('[data-kind="claim_by_claim"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(copper.locator('select[data-action="warranty-period"]')).toHaveCount(0);
+  await expect(heron.locator('[data-kind="fixed_allowance"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(heron.locator('select[data-action="warranty-period"]')).toHaveValue("quarterly");
+  await expect(heron.locator('[data-field="warranty-allowance"]')).toHaveValue("1%");
+  await expect(prairie.locator('[data-kind="periodic_credit_note"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(prairie.locator('select[data-action="warranty-period"]')).toHaveValue("monthly");
+
+  // One click on Fixed allowance lands Copperline on a sane, server-legal
+  // row: the standard quarterly and the board's 1% default beside it.
+  await copper.locator('[data-kind="fixed_allowance"]').click();
+  await expect(copper.locator('[data-kind="fixed_allowance"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(copper.locator('select[data-action="warranty-period"]')).toHaveValue("quarterly");
+  await expect(copper.locator('[data-field="warranty-allowance"]')).toHaveValue("1%");
+
+  // The percent writes on change: 2% sticks, and the field reads it back.
+  await copper.locator('[data-field="warranty-allowance"]').fill("2%");
+  await copper.locator('[data-field="warranty-allowance"]').blur();
+  await expect(copper.locator('[data-field="warranty-allowance"]')).toHaveValue("2%");
+
+  // Off-vocabulary words are named on the row, and the stored 2% stands.
+  await copper.locator('[data-field="warranty-allowance"]').fill("1 of purchases");
+  await copper.locator('[data-field="warranty-allowance"]').blur();
+  await expect(copper.locator("[data-test=warranty-row-error]")).toContainText("like 1% of purchases");
+  await expect(copper.locator('[data-field="warranty-allowance"]')).toHaveValue("2%");
+
+  // Back to claim by claim: the period and the allowance are gone, the
+  // server's read-back says the row carries nothing else.
+  await copper.locator('[data-kind="claim_by_claim"]').click();
+  await expect(copper.locator('select[data-action="warranty-period"]')).toHaveCount(0);
+  await expect(copper.locator('[data-field="warranty-allowance"]')).toHaveCount(0);
+  await page.request.post("/_stub/reset");
+});
+
+test("a frontline caller reads the warranty surface but is refused every write", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-flow]").nth(1).click();
+  await page.locator('.surface-link[data-surface="warranty"]').click();
+
+  // The reads are staff's: the rows stand. The writes are the dealer's
+  // administrators' own, and the refusal says so on the row it belongs to.
+  const copper = page.locator("[data-test=warranty-vendor-row]").filter({ hasText: "Copperline Pavers" });
+  await expect(copper).toBeVisible();
+  await copper.locator('[data-kind="fixed_allowance"]').click();
+  await expect(copper.locator("[data-test=warranty-row-error]")).toContainText("the dealer's administrators' own");
   await page.request.post("/_stub/reset");
 });
 

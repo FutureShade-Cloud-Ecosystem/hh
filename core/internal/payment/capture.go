@@ -219,7 +219,7 @@ func (s *Service) dispatchCapture(ctx context.Context, a Attempt, in CaptureInpu
 	rcpt, chargeErr := s.charge(dctx, cfg, s.freshestCreds(cfg.Processor, creds), ChargeInput{
 		AmountCents: in.AmountCents, PaymentToken: in.AccountToken, Reference: in.LegKey,
 		IdempotencyKey: a.ID, CardType: in.CardType,
-	}, s.carryRotationOutOfTheTransaction)
+	}, s.carryRotationOutOfTheTransaction, s.dealerCurrencyOnPool)
 
 	var decline *DeclineError
 	switch {

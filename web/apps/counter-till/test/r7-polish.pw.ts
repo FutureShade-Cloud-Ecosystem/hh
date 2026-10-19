@@ -205,13 +205,14 @@ test("light theme: panes and cards have an edge that reads, and every input shar
   expect(read.strip).toBe("rgb(255, 255, 255)");
 });
 
-test("brand theme keeps its inset fields: the input fill is the page's deep tone", async ({ page }) => {
+// The charcoal brand half (row 1763) insets its fields one step below the page: #121517.
+test("brand theme keeps its inset fields: the input fill is the charcoal field tone", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
   await pickLayout(page, "panels");
   await pickTheme(page, "Brand");
   const fill = await page.getByTestId("pos-scan-input").evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(fill).toBe("rgb(15, 41, 68)");
+  expect(fill).toBe("rgb(18, 21, 23)");
   await pickTheme(page, "Light");
 });
 

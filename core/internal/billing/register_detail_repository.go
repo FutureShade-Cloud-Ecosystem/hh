@@ -169,6 +169,10 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 	if r.pool == nil {
 		return AccountPosition{}, errNoDB
 	}
+	day, err := r.clockAt(ctx, asOf)
+	if err != nil {
+		return AccountPosition{}, err
+	}
 	var a AccountPosition
 	if err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(i.balance_cents),0),
@@ -177,7 +181,7 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 		   FROM customers c
 		   LEFT JOIN invoices i
 		          ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  WHERE c.id = $1::uuid`, customerID, houseClock(asOf)).
+		  WHERE c.id = $1::uuid`, customerID, day).
 		Scan(&a.OpenBalanceCents, &a.OverdueCents, &a.CreditLimitCents); err != nil {
 		return AccountPosition{}, fmt.Errorf("billing: account position: %w", err)
 	}
@@ -405,4 +409,144 @@ func (r *Repository) LastContactFor(ctx context.Context, customerID string) (*ti
 		return nil, fmt.Errorf("billing: last contact: %w", err)
 	}
 	return at, nil
+}
+
+// WorkspaceHeader reads the customer account workspace top-bar card (Change 8 S2 + S2M), joining
+// customers, ar_ap_contacts, credit_holds, ar_invoice_disputes, invoices and payments.
+func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (CustomerWorkspaceHeader, error) {
+	if r.pool == nil {
+		return CustomerWorkspaceHeader{}, errNoDB
+	}
+	if !looksLikeUUIDish(customerID) {
+		return CustomerWorkspaceHeader{}, nil
+	}
+	day, err := r.clockAt(ctx, time.Now())
+	if err != nil {
+		return CustomerWorkspaceHeader{}, err
+	}
+	var h CustomerWorkspaceHeader
+	var onHold, hasOpenDispute bool
+	var apName, apEmail, apPhone string
+	var lastPaymentAt *time.Time
+	var lastPaymentCents int64
+	err = r.pool.QueryRow(ctx,
+		`SELECT c.id::text, c.name, c.account_no::text, c.payment_terms_days, c.credit_limit_cents,
+		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
+		                   WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
+		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
+		                   WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+		                     AND i.due_date < $2::date), 0),
+		        EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = c.id AND ch.status = 'ACTIVE'),
+		        EXISTS (SELECT 1 FROM ar_invoice_disputes d WHERE d.customer_id = c.id AND d.status = 'OPEN'),
+		        COALESCE(a.contact_name, ''), COALESCE(a.email, ''), COALESCE(a.phone, ''),
+		        (SELECT max(p.received_at) FROM payments p
+		            WHERE p.customer_id = c.id AND p.status NOT IN ('VOID')),
+		        (SELECT COALESCE(SUM(p.amount_cents), 0) FROM payments p
+		            WHERE p.customer_id = c.id
+		              AND p.received_at = (SELECT max(p2.received_at) FROM payments p2
+		                                    WHERE p2.customer_id = c.id AND p2.status NOT IN ('VOID')))
+		   FROM customers c
+		   LEFT JOIN ar_ap_contacts a ON a.customer_id = c.id
+		  WHERE c.id = $1::uuid`, customerID, day).
+		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents,
+			&h.OpenCents, &h.OverdueCents, &onHold, &hasOpenDispute,
+			&apName, &apEmail, &apPhone, &lastPaymentAt, &lastPaymentCents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CustomerWorkspaceHeader{}, nil
+		}
+		return CustomerWorkspaceHeader{}, fmt.Errorf("billing: workspace header: %w", err)
+	}
+	h.Status = accountStatusFor(onHold, hasOpenDispute, h.OpenCents)
+	h.PrimaryAPContactName = strings.TrimSpace(apName)
+	h.PrimaryAPContactEmail = strings.TrimSpace(apEmail)
+	h.PrimaryAPContactPhone = strings.TrimSpace(apPhone)
+	h.LastPaymentAt = lastPaymentAt
+	h.LastPaymentCents = lastPaymentCents
+	return h, nil
+}
+
+// WorkspacePayments lists every payment the account has received, newest first, with the running
+// unapplied figure from payment_allocations.
+func (r *Repository) WorkspacePayments(ctx context.Context, customerID string) ([]CustomerWorkspacePayment, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if !looksLikeUUIDish(customerID) {
+		return nil, nil
+	}
+	out := []CustomerWorkspacePayment{}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text, p.payment_no::text, p.received_at, p.amount_cents, p.method,
+		        COALESCE(p.branch_id::text, ''),
+		        COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.payment_id = p.id), 0)
+		   FROM payments p
+		  WHERE p.customer_id = $1::uuid
+		    AND p.status NOT IN ('VOID','NSF','BOUNCED')
+		  ORDER BY p.received_at DESC
+		  LIMIT 200`, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("billing: workspace payments: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p CustomerWorkspacePayment
+		var allocated int64
+		if err := rows.Scan(&p.ID, &p.PaymentNo, &p.ReceivedAt, &p.AmountCents, &p.Method,
+			&p.BranchID, &allocated); err != nil {
+			return nil, fmt.Errorf("billing: scan workspace payment: %w", err)
+		}
+		p.UnappliedCents = p.AmountCents - allocated
+		if p.UnappliedCents < 0 {
+			p.UnappliedCents = 0
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// WorkspaceNotes returns the account's notes from customer_ar_notes, pinned first, newest first.
+func (r *Repository) WorkspaceNotes(ctx context.Context, customerID string, limit int) ([]CustomerWorkspaceNote, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if !looksLikeUUIDish(customerID) {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	out := []CustomerWorkspaceNote{}
+	rows, err := r.pool.Query(ctx,
+		`SELECT n.id::text, n.kind, n.body, COALESCE(n.author_id::text, ''), n.pinned, n.created_at,
+		        COALESCE(u.display_name, u.email, '')
+		   FROM customer_ar_notes n
+		   LEFT JOIN users u ON u.id = n.author_id
+		  WHERE n.customer_id = $1::uuid
+		  ORDER BY n.pinned DESC, n.created_at DESC
+		  LIMIT $2`, customerID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("billing: workspace notes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n CustomerWorkspaceNote
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Body, &n.AuthorID, &n.Pinned, &n.CreatedAt, &n.AuthorName); err != nil {
+			return nil, fmt.Errorf("billing: scan workspace note: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// resolveWorkspaceNoteAuthor looks up the display name for a note author from users.
+func (r *Repository) resolveWorkspaceNoteAuthor(ctx context.Context, authorID string) string {
+	if r.pool == nil || !looksLikeUUIDish(authorID) {
+		return ""
+	}
+	var name string
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COALESCE(u.display_name, u.email, '') FROM users u WHERE u.id = $1::uuid`,
+		authorID).Scan(&name)
+	return name
 }

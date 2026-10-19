@@ -40,9 +40,8 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-pick-card]")).toHaveCount(5);
   const screens: string[] = [await everyWordOnScreen(page)];
 
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   screens.push(await everyWordOnScreen(page));
 
@@ -65,7 +64,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   screens.push(await everyWordOnScreen(page));
 
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await page.getByRole("button", { name: "Report a shortage" }).click();
   await expect(page.locator("[data-shortage-sheet]")).toBeVisible();
@@ -81,6 +80,23 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-notice]")).toContainText("Shortage cleared");
   screens.push(await everyWordOnScreen(page));
 
+  // The changes waiting on the yard: the list, the sheet, and an
+  // acknowledgement, every one of them a read the poisoned stub laces with
+  // the delta figures the projection must drop.
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await page.locator("[data-changes-door]").click();
+  await expect(page.locator("[data-change-row]")).toHaveCount(2);
+  screens.push(await everyWordOnScreen(page));
+
+  await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
+  await expect(page.locator("[data-change-sheet]")).toBeVisible();
+  screens.push(await everyWordOnScreen(page));
+
+  await page.getByLabel("A note for the counter, optional").fill("Two more pallets fit the truck");
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Acknowledged");
+  screens.push(await everyWordOnScreen(page));
+
   for (const [index, text] of screens.entries()) {
     for (const figure of FIGURES) expect(text, `screen ${index + 1}`).not.toContain(figure);
     // Field names, not words in a sentence: the held order's own words say
@@ -93,9 +109,8 @@ test("with money laid on every read, no screen shows a figure or a money word", 
 test("nothing the app sends to the core carries a money field", async ({ page, request }) => {
   await useScenario(request, "poisoned");
   await page.goto("/");
-  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await page.locator("[data-line]").first().locator(".line-row").click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();

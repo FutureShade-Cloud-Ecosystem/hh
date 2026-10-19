@@ -5,9 +5,9 @@
 // the status, the envelope, and the sentence itself, which must appear in the core's source, and in the core's
 // order. A refusal the stub invented fails here.
 //
-// Places where the core and the contract disagree are pinned here so they cannot move in silence: the core
-// answers its four lists under a name (rates, profiles, pending_profiles, evidence) where the contract says a
-// page of items, and an empty list is null where the contract says an array.
+// The core's list quirks are pinned here so they cannot move in silence: its four lists answer under its own
+// keys (rates, profiles, pending_profiles, evidence), which the contract declares, and an empty rates, profiles
+// or evidence list is null (a Go nil slice) where the review queue is never null.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -256,7 +256,7 @@ test("creating a rate checks in the core's order and its words, and a good row f
   const blank = await ctl("POST", "/api/v1/tax/rates", { reason_code: "MANUAL_TAX_REVIEW", rate_bps: 775, effective_from: "2001-01-01" });
   assert.equal(blank.json.jurisdiction, "ON");
   assert.ok(coreSource.includes('jurisdictionON = "ON"'));
-  assert.deepEqual(LEGAL_REASONS.length, 11, "the lawful reason universe is the core's eleven");
+  assert.deepEqual(LEGAL_REASONS.length, 12, "the lawful reason universe is the core's twelve");
   for (const code of LEGAL_REASONS) assert.ok(coreSource.includes(`"${code}"`), `${code} is not in the core`);
 });
 

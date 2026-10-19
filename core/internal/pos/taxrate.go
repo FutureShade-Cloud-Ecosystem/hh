@@ -8,10 +8,13 @@ package pos
 
 import (
 	"context"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 )
 
-// taxRateJurisdiction is the jurisdiction word the read answers: the
-// standard-rated Ontario facts the binding engine serves.
+// taxRateJurisdiction is the jurisdiction word the read answers when the
+// assessor names none: the standard-rated Ontario facts, the dealer every
+// assessor written before the quote carried its jurisdiction served.
 const taxRateJurisdiction = "ON"
 
 // roundModeInvoiceTotal is the round rule an unwired service answers: the
@@ -36,6 +39,9 @@ type TaxRate struct {
 	ReasonCode   string `json:"reason_code"`
 	RateBps      int    `json:"rate_bps"`
 	RoundMode    string `json:"round_mode"`
+	// TaxLabel is the name of the dealer's tax ("HST", "Sales tax"), decided in the core from the
+	// jurisdiction so a screen renders it and never guesses it.
+	TaxLabel string `json:"tax_label"`
 }
 
 // WithTaxRuleSource injects the round-rule read (nil default: INVOICE_TOTAL).
@@ -80,9 +86,11 @@ func (s *Service) TaxRate(ctx context.Context) (TaxRate, error) {
 	if err != nil {
 		return TaxRate{}, err
 	}
+	jur := firstNonEmpty(quote.Jurisdiction, taxRateJurisdiction)
 	return TaxRate{
-		Jurisdiction: taxRateJurisdiction,
-		ReasonCode:   TaxStdON13,
+		Jurisdiction: jur,
+		TaxLabel:     taxwords.For(jur),
+		ReasonCode:   firstNonEmpty(quote.ReasonCode, TaxStdON13),
 		RateBps:      quote.RateBps,
 		RoundMode:    mode,
 	}, nil

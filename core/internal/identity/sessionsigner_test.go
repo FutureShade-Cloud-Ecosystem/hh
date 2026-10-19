@@ -520,3 +520,79 @@ func TestKeyFilesOverTheCapAreRefused(t *testing.T) {
 		t.Errorf("a file at the cap was refused: %v", err)
 	}
 }
+
+const signerTenantID = "33333333-3333-4333-8333-333333333333"
+
+func TestMintTenantAtNeedsTheTenantAudienceAndATenantAccount(t *testing.T) {
+	k := freshPriv(t)
+	m := newTestMinter(t, k)
+	at := time.Unix(1_700_000_000, 0)
+	if _, err := m.MintTenantAt("sub", signerTenantID, time.Hour, at); err == nil {
+		t.Fatal("tenant mint without a tenant audience accepted")
+	}
+	for _, bad := range []string{"", signerAud} {
+		if err := m.WithTenantAudience(bad); err == nil {
+			t.Errorf("tenant audience %q accepted", bad)
+		}
+	}
+	if err := m.WithTenantAudience(signerTenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.MintTenantAt("", signerTenantID, time.Hour, at); err == nil {
+		t.Error("empty subject accepted")
+	}
+	if _, err := m.MintTenantAt("sub", "", time.Hour, at); err == nil {
+		t.Error("empty tenant account accepted")
+	}
+	if _, err := m.MintTenantAt("sub", signerTenantID, MaxDriverSessionTTL+time.Second, at); err == nil {
+		t.Error("window over the backstop accepted")
+	}
+	// The staff mint is unchanged by the tenant audience.
+	staff, err := m.MintAt("sub", time.Hour, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimsOf(t, staff)["aud"] != signerAud || claimsOf(t, staff)["tenant"] != nil {
+		t.Errorf("staff token claims = %v", claimsOf(t, staff))
+	}
+}
+
+func claimsOf(t *testing.T, tok string) map[string]any {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c map[string]any
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestVerifierClassifiesAMintedTenantTokenWithItsTenantClaim(t *testing.T) {
+	k := freshPriv(t)
+	set, err := NewSessionKeySet(&k.PublicKey, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newTestMinter(t, k)
+	if err := m.WithTenantAudience(signerTenant); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := m.MintTenantAt("console-user-2", signerTenantID, time.Hour, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := claimsOf(t, tok)
+	if len(c) != 6 || c["aud"] != signerTenant || c["tenant"] != signerTenantID {
+		t.Fatalf("claims = %v", c)
+	}
+	got, err := verifierOver(t, set, nil).Verify(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if got.Class != ClassTenant || got.Subject != "console-user-2" || got.TenantID != signerTenantID {
+		t.Fatalf("token = %+v", got)
+	}
+}

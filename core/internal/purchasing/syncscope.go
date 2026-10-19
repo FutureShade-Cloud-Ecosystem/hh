@@ -97,7 +97,7 @@ type syncPORow struct {
 	deleted bool
 }
 
-// scanSyncPO reads the sixteen targets: scanPO's thirteen, the line
+// scanSyncPO reads the nineteen targets: scanPO's sixteen, the line
 // count, then the two sync legs.
 func scanSyncPO(row pgx.Row) (syncPORow, error) {
 	var p PO
@@ -105,7 +105,8 @@ func scanSyncPO(row pgx.Row) (syncPORow, error) {
 	var deleted bool
 	if err := row.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
 		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate,
-		&p.DeliveryMethod, &p.LineCount, &seq, &deleted); err != nil {
+		&p.DeliveryMethod, &p.WarrantyCreditAppliedCents, &p.WarrantyClaimID, &p.NetTotalCents,
+		&p.LineCount, &seq, &deleted); err != nil {
 		return syncPORow{}, err
 	}
 	return syncPORow{po: p, seq: seq, deleted: deleted}, nil

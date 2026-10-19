@@ -6,6 +6,7 @@
 // the settings kit's), and nothing in the app imports this file. When the real
 // routes land, the app and this suite keep working against them unchanged,
 // because both speak only the contract's shapes:
+//   GET  /api/v1/tenant/config                   -> TenantPublicConfig
 //   GET  /api/v1/demo/flows                      -> DemoFlowList
 //   POST /api/v1/demo/session                    -> DemoSessionResponse
 //   GET  /api/v1/branches                        -> Branch[]
@@ -332,6 +333,7 @@ const customerById = new Map([
 ]);
 
 const HST_RATE_BPS = 1300;
+const TAX_LABEL = "HST"; // the Ontario dealer's word, as the core sends it
 
 // ---------------------------------------------------------------------------
 // The stub's own switches, held in memory.
@@ -924,6 +926,7 @@ function termsOf(quote) {
     subtotal_cents: quote.subtotal_cents,
     tax_cents: quote.tax_cents,
     total_cents: quote.total_cents,
+    tax_label: TAX_LABEL,
     lines: quote.lines.map((line) => ({
       line_no: line.line_no,
       disc_pct: line.disc_pct,
@@ -1571,6 +1574,19 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The public tenant config route: no credential, dealer fields only.
+  if (request.method === "GET" && path === "/api/v1/tenant/config") {
+    respondJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
+    });
+    return;
+  }
+
   // The demo way in: public in the contract.
   if (request.method === "GET" && path === "/api/v1/demo/flows") {
     respondJson(response, 200, { flows: FLOWS });
@@ -2078,6 +2094,7 @@ const server = createServer(async (request, response) => {
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
+      tax_label: TAX_LABEL,
       as_of: "2026-01-01T00:00:00Z",
       acceptable: false,
       preview: true,

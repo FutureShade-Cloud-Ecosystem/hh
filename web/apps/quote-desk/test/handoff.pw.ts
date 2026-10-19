@@ -130,7 +130,11 @@ test("Switch role drops the key with the session", async ({ page }) => {
   await seedHandoff(page, handoffRecord());
   await page.goto("/");
   await expect(page.getByTestId("header-word")).toHaveText("Sales", { timeout: 15_000 });
+  await page.evaluate(() => {
+    (window as { marker?: string }).marker = "alive";
+  });
   await page.getByRole("button", { name: "Switch role", exact: true }).click();
+  await page.waitForFunction(() => (window as { marker?: string }).marker === undefined, undefined, { timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
 });

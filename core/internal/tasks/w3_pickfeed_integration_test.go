@@ -127,6 +127,7 @@ func ticketFromFeed(t dispatch.PickFeedTicket) PickTicket {
 		OrderID: t.OrderID, OrderNo: t.OrderNo, BranchID: t.BranchID, CustomerName: t.CustomerName,
 		Fulfillment: t.Fulfillment, Priority: t.Priority, Reference: t.Reference,
 		RequestedAt: t.RequestedAt, Lines: lines, Source: "DISPATCH",
+		RunNo: t.RunNo, RunDepartsAt: t.RunDepartsAt, LoadPosition: t.LoadPosition,
 	}
 }
 
@@ -539,4 +540,47 @@ func containsOrder(tickets []PickTicket, orderID string) bool {
 		}
 	}
 	return false
+}
+
+func TestPickFeed_AssignedRunEnrichesRunNoDepartsAtAndLIFOLoadPosition(t *testing.T) {
+	f := newFeedFixture(t)
+	date := todayUTC()
+	stop := f.schedule(t, date)
+
+	departs := time.Now().UTC().Truncate(time.Second).Add(8*time.Hour + 15*time.Minute)
+	run, err := f.feedSvc.CreateRun(f.ctx, dispatch.CreateRunInput{
+		BranchID:      f.branch,
+		ScheduledDate: date,
+		RunDepartsAt:  &departs,
+	})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = f.pool.Exec(c, `UPDATE delivery_stops SET run_id = NULL WHERE run_id = $1`, run.ID)
+		_, _ = f.pool.Exec(c, `DELETE FROM delivery_runs WHERE id = $1`, run.ID)
+	})
+	if _, err := f.feedSvc.AssignStop(f.ctx, stop.ID, dispatch.AssignInput{RunID: run.ID, StopNo: 1}); err != nil {
+		t.Fatalf("assign stop: %v", err)
+	}
+
+	task, err := f.tasks.CreateFromOrder(context.Background(), CreateInput{
+		OrderID: f.orderID, Source: SourceManual,
+	})
+	if err != nil {
+		t.Fatalf("create pick task: %v", err)
+	}
+
+	detail, err := f.tasks.PickDetail(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("PickDetail: %v", err)
+	}
+	if detail.RunNo != run.RunNo || detail.RunDepartsAt == nil || !detail.RunDepartsAt.Equal(departs) || detail.LoadPosition != 1 {
+		t.Fatalf("PickDetail truck fields = (run_no=%q, departs=%v, load_pos=%d), want (%q, %v, 1)",
+			detail.RunNo, detail.RunDepartsAt, detail.LoadPosition, run.RunNo, departs)
+	}
+	if detail.Ticket == nil || detail.Ticket.RunNo != run.RunNo || detail.Ticket.RunDepartsAt == nil || !detail.Ticket.RunDepartsAt.Equal(departs) || detail.Ticket.LoadPosition != 1 {
+		t.Fatalf("PickDetail.Ticket truck fields = %+v, want (%q, %v, 1)", detail.Ticket, run.RunNo, departs)
+	}
 }

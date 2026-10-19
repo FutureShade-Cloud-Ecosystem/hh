@@ -143,15 +143,19 @@ func (f *adminStore) CreateDM(_ context.Context, aUserID, bUserID string) (Chann
 	return c, true, nil
 }
 
-func (f *adminStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
-	f.addedMembers = append(f.addedMembers, channelID+"|"+userID)
-	f.setMember(channelID, userID)
-	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
-		return ChannelMember{ChannelID: channelID, UserID: userID, Role: f.memberRoles[channelID+"|"+userID], Source: src}, nil
+func (f *adminStore) AddChannelMember(_ context.Context, in AddMemberInput) (ChannelMember, error) {
+	f.addedMembers = append(f.addedMembers, in.ChannelID+"|"+in.UserID)
+	f.setMember(in.ChannelID, in.UserID)
+	role := in.Role
+	if role == "" {
+		role = RoleMember
 	}
-	f.memberSources[channelID+"|"+userID] = SourceExplicit
-	f.memberRoles[channelID+"|"+userID] = "MEMBER"
-	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
+	if src, ok := f.memberSources[in.ChannelID+"|"+in.UserID]; ok {
+		return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: f.memberRoles[in.ChannelID+"|"+in.UserID], Source: src, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
+	}
+	f.memberSources[in.ChannelID+"|"+in.UserID] = SourceExplicit
+	f.memberRoles[in.ChannelID+"|"+in.UserID] = role
+	return ChannelMember{ChannelID: in.ChannelID, UserID: in.UserID, Role: role, Source: SourceExplicit, AddedReason: in.AddedReason, AddedBy: in.AddedBy}, nil
 }
 
 func (f *adminStore) RemoveChannelMember(_ context.Context, channelID, userID string) error {
@@ -176,6 +180,184 @@ func (f *adminStore) RemoveChannelMember(_ context.Context, channelID, userID st
 	delete(f.memberRoles, channelID+"|"+userID)
 	delete(f.memberSources, channelID+"|"+userID)
 	return nil
+}
+
+// SetChannelVisibility satisfies the store seam for the new settings-panel
+// route. The visibility-mutate path is the change 7 ruling 7 hand on the
+// room's settings panel; the fake records the new value and returns the
+// channel it would answer.
+func (f *adminStore) SetChannelVisibility(_ context.Context, channelID, visibility string) (Channel, error) {
+	if visibility != VisibilityPublic && visibility != VisibilityPrivate {
+		return Channel{}, ErrBadVisibility
+	}
+	c, ok := f.rooms[channelID]
+	if !ok {
+		return Channel{}, errNotFound
+	}
+	c.Visibility = visibility
+	f.rooms[channelID] = c
+	return c, nil
+}
+
+// ArchiveChannel satisfies the store seam for the channel-delete route. The
+// second-archive refusal the repository answers carries through here, so
+// the route test that exercises a re-delete sees ErrChannelArchived in the
+// same shape the live route hands back.
+func (f *adminStore) ArchiveChannel(_ context.Context, channelID string) error {
+	c, ok := f.rooms[channelID]
+	if !ok {
+		return errNotFound
+	}
+	if c.IsArchived {
+		return ErrChannelArchived
+	}
+	c.IsArchived = true
+	f.rooms[channelID] = c
+	return nil
+}
+
+// memberSource / memberRole / channelFacts / userHoldsAnyRole / userReachesBranch
+// satisfy the membership walls' private seams for the new methods.
+
+func (f *adminStore) memberRole(_ context.Context, channelID, userID string) (string, error) {
+	return f.memberRoles[channelID+"|"+userID], nil
+}
+
+func (f *adminStore) memberSource(_ context.Context, channelID, userID string) (string, error) {
+	return f.memberSources[channelID+"|"+userID], nil
+}
+
+func (f *adminStore) channelFacts(_ context.Context, channelID string) (channelFactsRow, error) {
+	return f.facts[channelID], nil
+}
+
+func (f *adminStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
+	return true, nil
+}
+
+func (f *adminStore) userReachesBranch(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
+
+// ListDirectory satisfies the new store seam for the directory route
+// (rule 7's "Channel directory + self join and leave"). The fake walks
+// the rooms map and skips private/archived/system kinds the live SQL's
+// WHERE clause also excludes.
+func (f *adminStore) ListDirectory(_ context.Context, userID string, isGlobal bool, branches map[string]bool) (map[string]DirectoryEntry, error) {
+	if isGlobal {
+		branches = map[string]bool{}
+	}
+	out := make(map[string]DirectoryEntry)
+	for id, ch := range f.rooms {
+		if ch.IsArchived {
+			continue
+		}
+		if ch.Kind != KindTeam && ch.Kind != KindTopic && ch.Kind != KindBranch {
+			continue
+		}
+		if ch.Visibility != VisibilityPublic {
+			continue
+		}
+		if ch.BranchID != "" && !isGlobal && !branches[ch.BranchID] {
+			continue
+		}
+		source := f.memberSources[id+"|"+userID]
+		var memberCount int
+		for uid := range f.members[id] {
+			if f.memberRoles[id+"|"+uid] == "OWNER" || f.memberRoles[id+"|"+uid] == "MEMBER" || source != "" {
+				memberCount++
+			}
+		}
+		out[id] = DirectoryEntry{
+			ChannelID:        id,
+			Kind:             ch.Kind,
+			BranchID:         ch.BranchID,
+			Name:             ch.Name,
+			Topic:            ch.Topic,
+			Slug:             ch.Slug,
+			Joined:           source != "",
+			MembershipSource: source,
+			MemberCount:      memberCount,
+		}
+	}
+	return out, nil
+}
+
+// ListChannelMembers satisfies the membership-rule read route. The fake
+// walks members and answers each row's audit fields.
+func (f *adminStore) ListChannelMembers(_ context.Context, channelID string) ([]ChannelMemberEntry, error) {
+	var out []ChannelMemberEntry
+	for uid, isMember := range f.members[channelID] {
+		if !isMember {
+			continue
+		}
+		role := f.memberRoles[channelID+"|"+uid]
+		source := f.memberSources[channelID+"|"+uid]
+		out = append(out, ChannelMemberEntry{
+			UserID:      uid,
+			DisplayName: "",
+			Role:        role,
+			Source:      source,
+			AddedReason: "",
+			AddedBy:     "",
+		})
+	}
+	return out, nil
+}
+
+// GetChannelRule reads the room's rule fields from the fake's facts map.
+func (f *adminStore) GetChannelRule(_ context.Context, channelID string) (MembershipRule, error) {
+	c, ok := f.rooms[channelID]
+	if !ok {
+		return MembershipRule{}, errNotFound
+	}
+	return MembershipRule{
+		AutoScope:  "",
+		AutoRole:   "",
+		Visibility: c.Visibility,
+	}, nil
+}
+
+// SetChannelRule records the new rule on the fake's room; the live SQL
+// writes the row in a transaction.
+func (f *adminStore) SetChannelRule(_ context.Context, channelID string, rule MembershipRule) error {
+	c, ok := f.rooms[channelID]
+	if !ok {
+		return errNotFound
+	}
+	c.Visibility = rule.Visibility
+	f.rooms[channelID] = c
+	return nil
+}
+
+// ListChannelRules satisfies the collection read for GET /api/v1/messaging/membership-rules.
+// The fake mirrors the live predicate's branch reach and visibility filter.
+func (f *adminStore) ListChannelRules(_ context.Context, _ string, isGlobal bool, _ map[string]bool) ([]MembershipRuleEntry, error) {
+	if isGlobal {
+		// noop
+	}
+	var out []MembershipRuleEntry
+	for id, ch := range f.rooms {
+		if ch.IsArchived {
+			continue
+		}
+		if ch.Kind != KindTeam && ch.Kind != KindTopic && ch.Kind != KindBranch {
+			continue
+		}
+		if ch.Visibility != VisibilityPublic {
+			continue
+		}
+		out = append(out, MembershipRuleEntry{
+			ChannelID:  id,
+			Name:       ch.Name,
+			Kind:       ch.Kind,
+			BranchID:   ch.BranchID,
+			AutoScope:  "",
+			AutoRole:   "",
+			Visibility: ch.Visibility,
+		})
+	}
+	return out, nil
 }
 
 // newAdminRoutes wires the real Handler over the double behind the testkit
@@ -222,10 +404,13 @@ func adminDo(t *testing.T, mux *http.ServeMux, bearer, method, target string, bo
 
 // The happy legs: a TEAM channel is created (201 the first time, 200 on the
 // idempotent replay), a DM between two staff is found-or-created once, a
-// member is added and an explicit member is removed.
+// member is added and an explicit member is removed. Founding is the admins'
+// pen now (change 7, ruling A), so the founding and its replay drive the
+// general manager through newFoundingRoutes; the member pens run as the
+// founder's own (the room's OWNER row).
 func TestRoute_CreateChannel_And_Idempotent_Replay(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	body := []byte(`{"kind":"TEAM","name":"Paving crew","topic":"The paving crew's room"}`)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels", body)
 	if rec.Code != http.StatusCreated {
@@ -259,7 +444,7 @@ func TestRoute_CreateDM_FoundOrCreatedOnce(t *testing.T) {
 
 func TestRoute_AddAndRemoveMember(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels", []byte(`{"kind":"TEAM","name":"Paving crew"}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create channel: %d %s", rec.Code, rec.Body.String())
@@ -277,10 +462,12 @@ func TestRoute_AddAndRemoveMember(t *testing.T) {
 
 // The refusal legs, each pinned to its own status.
 
-// A kind outside TEAM/TOPIC (the creatable kinds) is a client fault.
+// A kind outside TEAM/TOPIC (the creatable kinds) is a client fault. The
+// leg drives an admin: founding is the admins' pen, and validation is the
+// admin's own next wall.
 func TestRoute_CreateChannel_Refuses_Structural_Kinds(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	for _, kind := range []string{"BRANCH", "DM", "APPROVAL"} {
 		rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 			[]byte(`{"kind":"`+kind+`","name":"X"}`))
@@ -291,10 +478,17 @@ func TestRoute_CreateChannel_Refuses_Structural_Kinds(t *testing.T) {
 }
 
 // A branch the caller does not hold is the branch wall the module's reads
-// already carry: 403, never a channel created above the wall.
+// already carry: 403, never a channel created above the wall. The leg drives
+// the branch scoped admin projection (the matrix seats the general manager
+// alone today, GLOBAL with it; the wall stays for any branch scoped admin a
+// later matrix seats), so the branch wall is what answers, not the gate.
 func TestRoute_CreateChannel_Refuses_Behind_The_Branch_Wall(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	prev := publishDefaultRolesForTest(t)
+	t.Cleanup(func() { PublishRoleConfig(prev) })
+	mux, bearer := newAdminRoutesAs(t, fs, rtDana, identity.StaffAuthority{
+		RoleID: "general_manager", Tier: identity.TierLeadership, Scope: identity.ScopeBranch,
+	})
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 		[]byte(`{"kind":"TEAM","name":"Kingston crew","branch_id":"`+rtKingston+`"}`))
 	if rec.Code != http.StatusForbidden {

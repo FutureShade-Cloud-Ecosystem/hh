@@ -45,13 +45,21 @@ test("L-wall: a surface at None for the role is refused by the server", async ({
 });
 
 test("L-cost: cost is hidden for the role as the decided matrix says (PR 275)", async ({ page }) => {
-  // The stock read the role holds at read level answers with no cost key at
-  // all, byte absent rather than a zero that reads as free.
-  const onHand = await staff(page, "GET", "/api/v1/inventory/on-hand?branch_id=" + POINT_LOMA);
-  expect(onHand.status).toBe(200);
-  const seen = JSON.stringify(onHand.body).toLowerCase();
-  expect(seen).not.toMatch(/avg_cost_cents|unit_cost_cents|suggested_value_cents/);
+  // The stock reads the role holds at read level answer with no cost key at
+  // all, byte absent rather than a zero that reads as free. The browse read
+  // is branch shaped; the on-hand read is product scoped (DIB-443 names
+  // product_id), so the leg takes one product id off the browse answer and
+  // reads that product's on-hand rows.
   const browse = await staff(page, "GET", "/api/v1/inventory/browse?branch_id=" + POINT_LOMA);
   expect(browse.status).toBe(200);
   expect(JSON.stringify(browse.body).toLowerCase()).not.toMatch(/avg_cost_cents|unit_cost_cents|suggested_value_cents/);
+  const rows = (browse.body.rows ?? []) as Array<{ product_id?: string }>;
+  const productId = rows.map((row) => row.product_id).find((id) => typeof id === "string" && id !== "");
+  expect(productId, "the branch's browse answers at least one product").toBeTruthy();
+  const onHand = await staff(page, "GET", `/api/v1/inventory/on-hand?product_id=${productId}`);
+  expect(onHand.status).toBe(200);
+  const onHandRows = (onHand.body.on_hand ?? []) as unknown[];
+  expect(onHandRows.length, "on-hand answers at least one row for the browsed product").toBeGreaterThan(0);
+  const seen = JSON.stringify(onHand.body).toLowerCase();
+  expect(seen).not.toMatch(/avg_cost_cents|unit_cost_cents|suggested_value_cents/);
 });

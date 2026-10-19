@@ -38,6 +38,7 @@ import {
   OrderHold,
   canDoChangeAction,
   changeActionLabel,
+  offeredChangeActions,
   changeActionPath,
   changeStageSummary,
   changeStatusChip,
@@ -495,7 +496,7 @@ export class HosOrderChange extends LitElement {
             ? html`<span class="chip amber" data-finance-required>FINANCE REQUIRED</span>`
             : nothing}
           <span class="spacer"></span>
-          ${(co.next_actions ?? []).map(
+          ${offeredChangeActions(co).map(
             (a) => html`
               <button
                 class="${a === ACTION_APPLY ? 'primary' : a === ACTION_REJECT ? 'danger' : ''}"
@@ -510,7 +511,7 @@ export class HosOrderChange extends LitElement {
         </div>
         <div class="stage" data-change-stage>${changeStageSummary(co)}</div>
         ${co.reason ? html`<div class="label">"${co.reason}"</div>` : nothing}
-        ${(co.next_actions ?? []).length > 0
+        ${offeredChangeActions(co).length > 0
           ? html`
               <div class="form">
                 <label class="field">

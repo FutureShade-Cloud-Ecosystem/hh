@@ -3,7 +3,6 @@
 // acceptance count), the chip lines, the empty state, and which chips a host
 // may turn into links. DOM-free, so the Node runner drives it.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import {
   chipDetail,
@@ -84,29 +83,25 @@ test("docDay is day grained and empty when unreadable", () => {
 
 test("docDay is the local day wherever the desk runs, pinned at both ends of the zone range", () => {
   // The chip's day is the LOCAL day of the document, so a desk at UTC+14 and one at UTC-12 can
-  // read a different day off the same instant, both right. Each zone is spawned as its own
-  // process with TZ set (the program is fed on stdin, so no file is written), because the
-  // runner's own zone is whatever launched it; the expected day is derived from the instant's
-  // epoch at each offset, never typed as a date. The .ts source is named in a static import
-  // because the loader's hooks rewrite only relative specifiers, and Node's own type stripping
-  // loads the .ts source directly.
-  const loader = new URL("../../../packages/api-client/src/_ts-js-loader.mjs", import.meta.url).href;
-  const moduleUrl = new URL("../src/_related-docs.ts", import.meta.url).href;
-  const script = 'import { docDay } from "' + moduleUrl + '";\nprocess.stdout.write(docDay(' + JSON.stringify(DAY_ISO) + '));';
-  // The probe is a NODE question (the browser and the desk both run on it), so when this file
-  // runs under another runner whose execPath is not node (bun test), node is taken from the PATH.
-  const node = process.execPath.includes("node") ? process.execPath : "node";
-  for (const [zone, offsetMinutes] of [
-    ["Pacific/Kiritimati", 14 * 60],
-    ["Etc/GMT+12", -12 * 60],
-  ]) {
-    const run = spawnSync(node, ["--import", loader, "--input-type=module"], {
-      input: script,
-      encoding: "utf8",
-      env: { ...process.env, TZ: zone },
-    });
-    assert.equal(run.status, 0, `${zone}: ${run.stderr}`);
-    assert.equal(run.stdout.trim(), dayAtOffset(offsetMinutes), zone);
+  // read a different day off the same instant, both right. The zone this asserts against is
+  // pinned here, in process: the runner's own zone is whatever launched it, and Node re-reads
+  // TZ when process.env.TZ is assigned, so each end of the range is set, asserted and restored
+  // (the expected day is derived from the instant's epoch at each offset, never typed as a
+  // date). No child process is spawned: a child loading the .ts source needs Node's own type
+  // stripping, which a workstation on an older Node lacks, and that failed the test in every
+  // zone, the pinned ones included.
+  const before = process.env.TZ;
+  try {
+    for (const [zone, offsetMinutes] of [
+      ["Pacific/Kiritimati", 14 * 60],
+      ["Etc/GMT+12", -12 * 60],
+    ]) {
+      process.env.TZ = zone;
+      assert.equal(docDay(DAY_ISO), dayAtOffset(offsetMinutes), zone);
+    }
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
   }
 });
 

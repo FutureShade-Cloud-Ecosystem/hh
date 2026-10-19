@@ -572,6 +572,7 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath', 'pathToFileURL'],
     './address.js': ['hhAddress'],
+    './framed.js': ['CHROME_ACTION_MESSAGE', 'CHROME_CONTROLS_MESSAGE', 'ChromeAction', 'FRAMED_BY_WORK_SHELL', 'FRAMED_PARAM', 'FramedListenWindow', 'FramedWindow', 'MAX_SIGN_OUT_NONCE_LENGTH', 'SIGNED_OUT_MESSAGE', 'SIGN_OUT_REQUEST_MESSAGE', 'acceptChromeControls', 'announceChromeControls', 'announceSignOut', 'announceSignedOut', 'chromeActionFrom', 'framedAddress', 'framedByShell', 'framedFlagFromSearch', 'listenForHostSignOut', 'readFramedByShell', 'signOutRequestFrom', 'signedOutFrom'],
     './feedback.js': ['FeedbackImage', 'FeedbackSendRequest', 'FeedbackSendResult', 'FeedbackSender', 'HHFeedback'],
     './header.js': ['HosAppHeader'],
     './base.js': ['HHElement', 'HHRenderError', 'defineElement'],
@@ -584,6 +585,7 @@ export const IMPORT_ALLOW_LIST = {
     './primitives.js': ['ButtonSpec', 'baseStyles', 'button', 'chip', 'row', 'spinner', 'select', 'dateInput', 'fieldGroup', 'textInput', 'segmented'],
     './state-icons.js': ['STATE_ICONS', 'StateIconName', 'icon'],
     './state.js': ['DesignedState', 'KIT_STATES', 'STATE_META', 'KitState', 'kitShell', 'stateIndicator', 'stateStyles'],
+    './sheet.js': ['HHSheet', 'HHSheetCloseDetail', 'HHSheetCloseEvent', 'HHSheetCloseReason', 'hhSheetEvents', 'hhSheetTag'],
     '../base.js': ['HHElement', 'defineElement'],
     '../primitives.js': ['baseStyles', 'chip', 'row'],
     '../state-icons.js': ['icon'],
@@ -612,7 +614,8 @@ export const IMPORT_ALLOW_LIST = {
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
     '../src/assets/product-tiles/index.js': ['PRODUCT_TILE_KEYS', 'productTileKey', 'productTileUrl'],
-    '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
+    '../src/harness-page.js': ['HARNESS_STATES', 'HARNESS_TITLE', 'KITS', 'SHEET_TAG', 'WIDTHS', 'buildHarnessPage', 'harnessSheets'],
+    '../src/framed.js': ['CHROME_ACTION_MESSAGE', 'CHROME_CONTROLS_MESSAGE', 'FRAMED_BY_WORK_SHELL', 'FRAMED_PARAM', 'MAX_SIGN_OUT_NONCE_LENGTH', 'SIGNED_OUT_MESSAGE', 'SIGN_OUT_REQUEST_MESSAGE', 'acceptChromeControls', 'announceChromeControls', 'announceSignOut', 'announceSignedOut', 'chromeActionFrom', 'framedAddress', 'framedFlagFromSearch', 'listenForHostSignOut', 'readFramedByShell', 'signOutRequestFrom', 'signedOutFrom'],
     '../src/header.js': ['HosAppHeader'],
     '../src/kits/dashboard.js': ['DashboardKit'],
     '../src/kits/guided-flow.js': ['GuidedFlowKit'],
@@ -622,6 +625,7 @@ export const IMPORT_ALLOW_LIST = {
     '../src/primitives.js': ['baseStyles', 'select', 'dateInput', 'fieldGroup', 'button', 'textInput', 'segmented'],
     '../src/state-icons.js': ['STATE_ICONS', 'icon'],
     '../src/state.js': ['KIT_STATES', 'STATE_META', 'kitShell', 'stateIndicator'],
+    '../src/sheet.js': ['HHSheet', 'HHSheetCloseEvent', 'hhSheetEvents', 'hhSheetTag'],
   },
   harness: {
     // readdirSync and statSync joined the build when the type pass made it

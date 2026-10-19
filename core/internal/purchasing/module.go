@@ -39,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -130,6 +131,12 @@ type RuleResolver interface {
 	ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error)
 }
 
+// WarrantyCreditReader provides access to vendor warranty credits.
+type WarrantyCreditReader interface {
+	OpenCreditForVendor(ctx context.Context, vendorID, branchID string) (*OpenWarrantyCredit, error)
+	ClaimInfo(ctx context.Context, claimID string) (*OpenWarrantyCredit, error)
+}
+
 // GLJournal + GLLine mirror gl.ExternalJournal by value so purchasing does not import gl's internals.
 type GLJournal struct {
 	Source         string
@@ -150,7 +157,7 @@ type GLLine struct {
 
 // - repository -
 
-// Repository is purchasing's pgx access layer (nil pool tolerated → errNoDB everywhere).
+// Repository is purchasing's pgx access layer (nil pool tolerated -> errNoDB everywhere).
 type Repository struct {
 	pool *pgxpool.Pool
 }
@@ -174,7 +181,7 @@ type Service struct {
 	// callerFrom resolves the trusted, server-stamped acting staff member every branch-scoped read/mutation
 	// gates against. Mirrors landedcost.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)
-	// incomingSeam is the DIB-460 read seam (incoming.go). nil → *Repository, which is what every real
+	// incomingSeam is the DIB-460 read seam (incoming.go). nil -> *Repository, which is what every real
 	// deployment takes; a unit test injects a fake that RECORDS the BranchReach it was handed, so the
 	// branch fence is proved where it is decided instead of inside a database.
 	incomingSeam incomingStore
@@ -183,7 +190,7 @@ type Service struct {
 	onOrderSeam onOrderStore
 
 	// - item 5 · the standardized outbound purchase order -
-	// Three more persistence seams in the established shape (nil → *Repository), each because the
+	// Three more persistence seams in the established shape (nil -> *Repository), each because the
 	// decision they carry is one a unit test must be able to state without a database: WHO SEES
 	// COST (policySeam), WHO AN ORDER IS AIMED AT and the write-before-transport ordering
 	// (sendSeam), and whose catalogue vocabulary a document speaks (catalogueSeam).
@@ -200,10 +207,25 @@ type Service struct {
 	branches  BranchDirectory
 	poSender  POSender
 
+	warrantyCredit WarrantyCreditReader
+
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
 	now func() time.Time
+
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. A bill entered with
+	// no bill date is dated the dealer's own day.
+	zone houseday.Source
 }
+
+// WithWarrantyCreditReader binds the vendor warranty credit seam.
+func (s *Service) WithWarrantyCreditReader(r WarrantyCreditReader) *Service {
+	s.warrantyCredit = r
+	return s
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
 func NewService(repo *Repository) *Service {
@@ -370,6 +392,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// in the ERP the receiving worklist renders it to a yard that plans around it (core's worklist
 	// does not render the column yet; the DIB-573 read half is a recorded residual).
 	r.Handle("PUT /api/v1/purchasing/pos/{id}/delivery-method", g.RequireManager(h.staff(h.setDeliveryMethod)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/apply-warranty-credit", g.RequireManager(h.staff(h.applyWarrantyCredit)))
 
 	r.Handle("GET /api/v1/purchasing/receiving", g.RequireStaff(h.staff(h.worklist)))
 	r.Handle("GET /api/v1/purchasing/receipts/{id}", g.RequireStaff(h.staff(h.getReceipt)))

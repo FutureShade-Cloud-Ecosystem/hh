@@ -243,7 +243,7 @@ const runSelectColumns = `
 SELECT r.id::text, r.run_no, r.branch_id::text, to_char(r.scheduled_date,'YYYY-MM-DD'),
        COALESCE(r.truck_id::text,''), COALESCE(r.driver_id::text,''),
        COALESCE(t.code::text,''), COALESCE(d.name,''),
-       r.status, r.notes, r.dispatched_at, r.completed_at,
+       r.status, r.notes, r.dispatched_at, r.completed_at, r.departs_at,
        (SELECT count(*) FROM delivery_stops s WHERE s.run_id = r.id)::int,
        r.created_at, r.commit_state, COALESCE(to_char(r.reopened_at,'YYYY-MM-DD"T"HH24:MI:SSOF:00'),''),
        r.reopen_reason`
@@ -262,7 +262,7 @@ func scanRun(row pgx.Row) (Run, error) {
 	var r Run
 	err := row.Scan(&r.ID, &r.RunNo, &r.BranchID, &r.ScheduledDate, &r.TruckID, &r.DriverID,
 		&r.TruckCode, &r.DriverName, &r.Status, &r.Notes, &r.DispatchedAt, &r.CompletedAt,
-		&r.StopCount, &r.CreatedAt, &r.CommitState, &r.ReopenedAt, &r.ReopenReason)
+		&r.RunDepartsAt, &r.StopCount, &r.CreatedAt, &r.CommitState, &r.ReopenedAt, &r.ReopenReason)
 	return r, err
 }
 
@@ -279,11 +279,11 @@ func (r *Repository) InsertRun(ctx context.Context, in Run, createdBy string) (R
 	// same statement, so a run the desk opens is visible to a device's
 	// pull the moment it lands.
 	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
-INSERT INTO delivery_runs (run_no, branch_id, scheduled_date, truck_id, driver_id, notes, created_by, org_id, seq)
-SELECT next_run_no($1), $1, $2::date, NULLIF($3,'')::uuid, NULLIF($4,'')::uuid, $5, NULLIF($6,'')::uuid,
+INSERT INTO delivery_runs (run_no, branch_id, scheduled_date, truck_id, driver_id, notes, departs_at, created_by, org_id, seq)
+SELECT next_run_no($1), $1, $2::date, NULLIF($3,'')::uuid, NULLIF($4,'')::uuid, $5, $6, NULLIF($7,'')::uuid,
        (SELECT org_id FROM locations WHERE id = $1::uuid), (SELECT next_value FROM seq)
 RETURNING id::text`,
-		in.BranchID, in.ScheduledDate, in.TruckID, in.DriverID, in.Notes, createdBy).Scan(&id)
+		in.BranchID, in.ScheduledDate, in.TruckID, in.DriverID, in.Notes, in.RunDepartsAt, createdBy).Scan(&id)
 	if err != nil {
 		return Run{}, err
 	}
@@ -433,7 +433,7 @@ SELECT s.id::text, s.branch_id::text, s.order_id::text, COALESCE(o.order_no::tex
        COALESCE(c.name,''), COALESCE(s.run_id::text,''), COALESCE(r.run_no,''),
        s.stop_no, to_char(s.scheduled_date,'YYYY-MM-DD'), s.status, s.time_window,
        s.contact_name, s.contact_phone, s.address_line, s.city, s.postal_code,
-       s.latitude, s.longitude, s.instructions,
+       s.latitude, s.longitude, s.instructions, s.gate_code,
        s.pod_signature_ref, s.pod_received_by, s.pod_at, s.failure_reason,
        s.loaded_at, s.en_route_at, s.delivered_at, s.handoff_at,
        (SELECT count(*) FROM delivery_pod_photos p WHERE p.stop_id = s.id)::int,
@@ -461,7 +461,7 @@ func scanStop(row pgx.Row) (Stop, error) {
 	err := row.Scan(&s.ID, &s.BranchID, &s.OrderID, &s.OrderNo, &s.CustomerName, &s.RunID, &s.RunNo,
 		&s.StopNo, &s.ScheduledDate, &s.Status, &s.TimeWindow, &s.ContactName, &s.ContactPhone,
 		&s.AddressLine, &s.City, &s.PostalCode, &s.Latitude, &s.Longitude, &s.Instructions,
-		&s.PODSignedRef, &s.PODReceivedBy, &s.PODAt, &s.FailureReason,
+		&s.GateCode, &s.PODSignedRef, &s.PODReceivedBy, &s.PODAt, &s.FailureReason,
 		&s.LoadedAt, &s.EnRouteAt, &s.DeliveredAt, &s.HandoffAt, &s.PhotoCount, &s.CreatedAt,
 		&s.WeightKg, &s.VolumeM3, &s.PalletPositions, &s.ValueCents, &s.FreightCents,
 		&s.FreightIsOverride, &s.LoadSeq, &s.LoadCount,
@@ -483,10 +483,10 @@ func (r *Repository) InsertStop(ctx context.Context, in Stop, createdBy string, 
 	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 INSERT INTO delivery_stops (branch_id, order_id, scheduled_date, time_window, contact_name,
                             contact_phone, address_line, city, postal_code, latitude, longitude,
-                            instructions, created_by,
+                            instructions, gate_code, created_by,
                             weight_kg, volume_m3, pallet_positions, value_cents,
                             requested_date, commit_state, committed_at, committed_by, org_id, seq)
-SELECT $1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13,'')::uuid,
+SELECT $1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $21, NULLIF($13,'')::uuid,
         $14, $15, $16, $17, NULLIF($18,'')::date, $19,
         -- A COMMITTED row carries its stamp or the 0184 CHECK refuses it. The stamp is the clock and
         -- the caller the SERVICE resolved, never anything the request supplied. The service refuses
@@ -498,7 +498,7 @@ RETURNING id::text`,
 		in.BranchID, in.OrderID, in.ScheduledDate, in.TimeWindow, in.ContactName, in.ContactPhone,
 		in.AddressLine, in.City, in.PostalCode, in.Latitude, in.Longitude, in.Instructions, createdBy,
 		in.WeightKg, in.VolumeM3, in.PalletPositions, in.ValueCents,
-		in.RequestedDate, in.CommitState, now).Scan(&id)
+		in.RequestedDate, in.CommitState, now, in.GateCode).Scan(&id)
 	if err != nil {
 		return Stop{}, err
 	}

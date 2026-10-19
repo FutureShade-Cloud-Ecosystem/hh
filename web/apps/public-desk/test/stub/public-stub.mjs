@@ -4,6 +4,7 @@
 // the core's, and nothing in the app imports this file. When the real routes
 // land, the page and this suite keep working against them unchanged, because
 // both speak only the contract's shapes:
+//   GET  /api/v1/tenant/config                -> TenantPublicConfig
 //   GET  /api/public/v1/quotes/{token}        -> QuotePublicView (410 gone, 404 unknown)
 //   POST /api/public/v1/quotes/{token}/accept -> QuoteAcceptanceResult (409 already accepted)
 //   GET  /api/v1/products/{id}/image          -> image bytes (the catalogue thumbnail read)
@@ -73,6 +74,7 @@ const QUOTES = {
     subtotal_cents: 9665,
     tax_cents: 1257,
     total_cents: 10922,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: true,
     include_images: true,
@@ -96,6 +98,7 @@ const QUOTES = {
     subtotal_cents: 4114,
     tax_cents: 535,
     total_cents: 4649,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: false,
   },
@@ -118,6 +121,7 @@ const QUOTES = {
     subtotal_cents: 16200,
     tax_cents: 2106,
     total_cents: 18306,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: false,
   },
@@ -140,6 +144,7 @@ const QUOTES = {
     subtotal_cents: 3800,
     tax_cents: 494,
     total_cents: 4294,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: true,
   },
@@ -175,6 +180,7 @@ const QUOTES = {
     subtotal_cents: 28057,
     tax_cents: 3647,
     total_cents: 31704,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: true,
     include_images: true,
@@ -218,6 +224,7 @@ const QUOTES = {
     subtotal_cents: 8457,
     tax_cents: 1099,
     total_cents: 9556,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: true,
     include_images: true,
@@ -243,6 +250,7 @@ const QUOTES = {
     subtotal_cents: 52000,
     tax_cents: 6760,
     total_cents: 58760,
+    tax_label: "HST",
     as_of: nowIso(),
     acceptable: true,
     customer_notes: "Gate code at the side fence, ask for the site lead.",
@@ -337,6 +345,104 @@ for (const quote of Object.values(QUOTES)) {
   if (quote.quantity_notice === undefined) quote.quantity_notice = DEFAULT_QUANTITY_NOTICE;
 }
 // Tokens cloned after this point (none today) must carry it too: the clone copies the field.
+
+// Change 9 WALK-C9 fixtures: the new shapes the page renders.
+// q-rep-90: a quote whose dealer set a rep; the page shows the rep card.
+// q-card-91: a quote whose dealer accepts card with a 2.9% surcharge; the page shows the card radio.
+// q-optional-92: a quote with one required line and one OPTIONAL add-on line; the page shows the
+//   include checkbox and recomputes the totals when it is excluded.
+// q-lost-93: a withdrawn quote (status LOST, acceptable false); the page shows the closed card.
+QUOTES["q-rep-90"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-rep-90"].quote_no = "Q-90";
+QUOTES["q-rep-90"].rep_name = "Marisol Reyes";
+QUOTES["q-rep-90"].rep_email = "marisol@example.test";
+QUOTES["q-rep-90"].rep_phone = "+1-555-0140";
+
+QUOTES["q-card-91"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-card-91"].quote_no = "Q-91";
+QUOTES["q-card-91"].card_surcharge_pct = 2.9;
+
+QUOTES["q-optional-92"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-optional-92"].quote_no = "Q-92";
+QUOTES["q-optional-92"].subtotal_cents = 60000;
+QUOTES["q-optional-92"].tax_cents = 7800;
+QUOTES["q-optional-92"].total_cents = 67800;
+QUOTES["q-optional-92"].lines = [
+  {
+    line_no: 1,
+    description: "Retaining Wall Stone, Standard",
+    qty_entered: "10.0000",
+    uom_entered: "PC",
+    unit_price_cents: 5200,
+    line_total_cents: 52000,
+  },
+  {
+    line_no: 2,
+    description: "Premium edge restraint",
+    qty_entered: "10.0000",
+    uom_entered: "PC",
+    unit_price_cents: 800,
+    line_total_cents: 8000,
+    optional: true,
+  },
+];
+
+QUOTES["q-optional-accept-92"] = structuredClone(QUOTES["q-optional-92"]);
+QUOTES["q-plain-accept-28"] = structuredClone(QUOTES["q-terms-28"]);
+
+QUOTES["q-lost-93"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-lost-93"].quote_no = "Q-93";
+QUOTES["q-lost-93"].status = "LOST";
+QUOTES["q-lost-93"].acceptable = false;
+
+// q-all-94: the kitchen-sink fixture: rep, optional add-on, card surcharge, all on one quote so
+//   the design walk can render one quote in every state the new page covers.
+QUOTES["q-all-94"] = structuredClone(QUOTES["q-terms-28"]);
+QUOTES["q-all-94"].quote_no = "Q-94";
+QUOTES["q-all-94"].rep_name = "Marisol Reyes";
+QUOTES["q-all-94"].rep_email = "marisol@example.test";
+QUOTES["q-all-94"].rep_phone = "+1-555-0140";
+QUOTES["q-all-94"].card_surcharge_pct = 2.9;
+QUOTES["q-all-94"].subtotal_cents = 60000;
+QUOTES["q-all-94"].tax_cents = 7800;
+QUOTES["q-all-94"].total_cents = 67800;
+QUOTES["q-all-94"].lines = [
+  {
+    line_no: 1,
+    description: "Retaining Wall Stone, Standard",
+    qty_entered: "10.0000",
+    uom_entered: "PC",
+    unit_price_cents: 5200,
+    line_total_cents: 52000,
+  },
+  {
+    line_no: 2,
+    description: "Premium edge restraint",
+    qty_entered: "10.0000",
+    uom_entered: "PC",
+    unit_price_cents: 800,
+    line_total_cents: 8000,
+    optional: true,
+  },
+];
+
+// A CHARCOAL walk fixture: same shape as q-terms-28 but flagged, so the stub answer carries every
+// change-9 field at once (the design walk links this one in the URL).
+QUOTES["q-charcoal-95"] = structuredClone(QUOTES["q-all-94"]);
+QUOTES["q-charcoal-95"].quote_no = "Q-95";
+// Apply the notice defaults to the new fixtures too (the loop above did not see them).
+for (const token of [
+  "q-rep-90",
+  "q-card-91",
+  "q-optional-92",
+  "q-optional-accept-92",
+  "q-plain-accept-28",
+  "q-lost-93",
+  "q-all-94",
+  "q-charcoal-95",
+]) {
+  if (QUOTES[token].quantity_notice === undefined) QUOTES[token].quantity_notice = DEFAULT_QUANTITY_NOTICE;
+}
 
 // The link the server revoked: the route answers 410, not 404, because the
 // link EXISTED and died. The page says so, and says what to do next.
@@ -478,6 +584,18 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && path === "/api/v1/tenant/config") {
+    respondJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
+    });
+    return;
+  }
+
   const viewMatch = path.match(/^\/api\/public\/v1\/quotes\/([^/]+)$/);
   if (request.method === "GET" && viewMatch !== null) {
     const token = decodeURIComponent(viewMatch[1]);
@@ -582,6 +700,7 @@ const server = createServer(async (request, response) => {
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
+      tax_label: quote.tax_label,
       quantities_confirmed: true,
     };
     const rows = ACCEPTANCES.get(token) ?? [];

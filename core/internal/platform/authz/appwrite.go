@@ -17,7 +17,7 @@ import (
 // platform per request, coarse membership only, never authority and never
 // the credential). Platform org teams are named org-<slug> (OrgTeamID; the
 // Console refuses a colon in a Team id and caps it at 36 characters) and
-// tenant teams are still read in the older tenant:<org>:<slug> form, so both methods read the user's
+// tenant teams are ten-<slug> (TenantTeamID), so both methods read the user's
 // team membership list and key on the team id: no core table is touched,
 // which is what keeps the zero-statement property whole. Exactly one
 // attempt per call: no retries anywhere in this file, so an unreachable
@@ -86,6 +86,28 @@ const (
 	maxTeamIDLen  = 36
 )
 
+// tenantTeamPrefix is the contractor Team family: one Team per org named
+// ten-<slug>, built the way the org Team is. A colon is refused by the
+// Console and a tenant account id cannot fit beside an org slug in 36
+// characters, so the Team says "a contractor of this org" and the portal
+// row says which contractor account. The prefix is four characters, like
+// the org one, so a 32 character slug still fits.
+const tenantTeamPrefix = "ten-"
+
+// TenantTeamID is the one place the tenant Team id form is spelled. It
+// returns ten-<slug>, and false when the slug fails the pinned shape or the
+// result would exceed the Console's cap. Nothing is truncated.
+func TenantTeamID(slug string) (string, bool) {
+	if !orgSlugPattern.MatchString(slug) {
+		return "", false
+	}
+	id := tenantTeamPrefix + slug
+	if len(id) > maxTeamIDLen {
+		return "", false
+	}
+	return id, true
+}
+
 // OrgTeamID is the one place the org Team id form is spelled. It returns
 // org-<slug>, and false when the slug fails the pinned shape or the result
 // would exceed the Console's 36 character cap. Nothing is truncated: two
@@ -126,7 +148,7 @@ func (s *AppwriteMembershipSource) OrgMember(ctx context.Context, platformUserID
 	return false, nil
 }
 
-// TenantOrgs lists the distinct org slugs of the tenant:<org>:<slug> teams
+// TenantOrgs lists the distinct org slugs of the ten-<slug> teams
 // the user belongs to. One org is the normal answer; the middleware fails
 // closed on zero or on more than one.
 func (s *AppwriteMembershipSource) TenantOrgs(ctx context.Context, platformUserID string) ([]string, error) {
@@ -149,24 +171,15 @@ func (s *AppwriteMembershipSource) TenantOrgs(ctx context.Context, platformUserI
 	return orgs, nil
 }
 
-// tenantTeamOrg extracts the org segment of a tenant:<org>:<slug> team id.
-// The slug shape admits no colon, so exactly three colon-separated parts is
-// the well-formed team; anything else is not a tenant team and is skipped
-// rather than trusted.
+// tenantTeamOrg extracts the org slug of a ten-<slug> team id. The slug
+// must pass the pinned shape, so anything else is not a tenant team and is
+// skipped rather than trusted.
 func tenantTeamOrg(teamID string) (string, bool) {
-	const prefix = "tenant:"
-	if len(teamID) <= len(prefix) || teamID[:len(prefix)] != prefix {
+	slug, ok := strings.CutPrefix(teamID, tenantTeamPrefix)
+	if !ok || !orgSlugPattern.MatchString(slug) {
 		return "", false
 	}
-	rest := teamID[len(prefix):]
-	// Split into exactly org and slug: one separating colon, no more.
-	if i := strings.IndexByte(rest, ':'); i >= 0 {
-		org, remainder := rest[:i], rest[i+1:]
-		if remainder != "" && !strings.Contains(remainder, ":") && orgSlugPattern.MatchString(org) {
-			return org, true
-		}
-	}
-	return "", false
+	return slug, true
 }
 
 // userMemberships performs the one request both methods share: the user's

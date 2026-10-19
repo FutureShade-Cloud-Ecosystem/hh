@@ -98,6 +98,24 @@ type warrantyStore interface {
 	SLAAlerts(ctx context.Context, branchID string, includeAcknowledged bool) ([]SLAAlert, error)
 	AcknowledgeSLAAlert(ctx context.Context, alertID, userID string) error
 	MarkSLANotified(ctx context.Context, alertID, status, ref, errText string) error
+
+	// - walk change 6: policy (the claim threshold, 0396) -
+	// WarrantyPolicy reads the EFFECTIVE policy for a branch: the branch row when present, else the org
+	// default row (branch_id NULL, seeded by 0396), the resolution the pos_policy read carries.
+	WarrantyPolicy(ctx context.Context, branchID string) (WarrantyPolicy, error)
+	// UpsertWarrantyPolicy writes the org row (branch_id "") in place or the branch row as an upsert,
+	// stamping updated_by; the read-back is the saved row.
+	UpsertWarrantyPolicy(ctx context.Context, in PolicyInput, updatedBy string) (WarrantyPolicy, error)
+
+	// - walk change 6: vendor credit agreements (0404) -
+	// VendorAgreements reads every active vendor with its effective agreement (the stored row when
+	// present, the default kind when not), in vendor name order, the page's second card in one read.
+	VendorAgreements(ctx context.Context) ([]VendorAgreement, error)
+	// VendorAgreement reads ONE vendor's effective agreement, the write's pre-image.
+	VendorAgreement(ctx context.Context, vendorID string) (VendorAgreement, error)
+	// UpsertVendorAgreement writes one vendor's agreement row, stamping updated_by; the read-back is
+	// the saved row, an unknown vendor is a client error.
+	UpsertVendorAgreement(ctx context.Context, vendorID string, in AgreementInput, updatedBy string) (VendorAgreement, error)
 }
 
 // ReportClaim is the minimal per-claim projection the FR-7 reporting math consumes (kept DB-free so the math is

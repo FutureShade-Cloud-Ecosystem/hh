@@ -6,7 +6,7 @@ import { assessRelief, type ReliefOutcome } from '@hardscapehouse/pos-kit/src/po
 import './pos-signature.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
-import { taxReasonWord } from './tax-api.js';
+import { ratePercent, taxReasonWord } from './tax-api.js';
 import { plainDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js';
 
 // HH note: display formatting of a server-computed figure, through the ported
@@ -278,14 +278,14 @@ export class HosPosRelief extends LitElement {
                   <span class="pct">${o.outcome}</span>
                   <span class="reason"> · ${taxReasonWord(o.reason_code)}</span>
                   <div class="num">
-                    Full HST ${plainDollars(o.full_hst_cents)} · On-credit
+                    Full ${o.tax_label} ${plainDollars(o.full_hst_cents)} · On-credit
                     ${plainDollars(o.on_credit_cents)} · Collect
                     ${plainDollars(o.net_collected_cents)}
                   </div>
                   ${o.requires_evidence && !o.evidence_satisfied
                     ? html`<div class="gate">
                         0% cannot finalize until delivery evidence is attached: binding tax falls
-                        back to 13%.
+                        back to ${ratePercent(o.rate_bps)}.
                       </div>`
                     : nothing}
                 </div>

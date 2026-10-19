@@ -65,10 +65,9 @@ test("the card claims a pick, records its lines in full, changes the skid count 
 test("the screen walks the same story", async ({ page }, testInfo) => {
   await arriveFromFrontDoor(page);
   await expect(page.locator("[data-pick-card]").first()).toBeVisible();
-  const firstOpen = page.locator("[data-pick-card]").filter({ has: page.getByRole("button", { name: "Claim" }) }).first();
-  await firstOpen.getByRole("button", { name: "Claim" }).click();
+  const firstOpen = page.locator("[data-pick-card]").filter({ has: page.locator("[data-task-status]", { hasText: "Queued" }) }).first();
+  await firstOpen.click();
   await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
-  await page.getByRole("button", { name: "Start picking" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   for (const line of await page.locator("[data-line]").all()) {
     await line.locator(".line-row").click();
@@ -78,9 +77,9 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled in full");
   await page.getByRole("button", { name: "One skid more" }).click();
-  await page.getByLabel("The reason for the skid count").selectOption("COUNT_CORRECTION");
+  await page.locator('[data-reason-group="skid"] [data-reason="COUNT_CORRECTION"]').click();
   await page.getByRole("button", { name: "Save skid count" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("skids");
+  await expect(page.locator("[data-notice]")).toContainText(/now holds \d+ skids?\./);
   await page.getByLabel("The stage location").fill("Bay 3");
   await page.getByRole("button", { name: "Stage", exact: true }).click();
   await expect(page.locator("[data-notice]")).toContainText("Staged at Bay 3");

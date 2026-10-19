@@ -17,16 +17,19 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import { IncomingDesk, SalesIncomingDesk } from "./incoming/incoming-desk.js";
 import { areaStyles } from "./area-styles.js";
 import { InventoryApi } from "./inventory/inventory-api.js";
 import { InventoryDesk } from "./inventory/inventory-desk.js";
@@ -42,6 +45,9 @@ import { ReceivingApi } from "./receiving/receiving-api.js";
 import { ReceivingDesk } from "./receiving/receiving-desk.js";
 import { VendorsApi } from "./vendors/vendors-api.js";
 import { VendorsDesk } from "./vendors/vendors-desk.js";
+import { LookupDesk } from "./lookup/lookup-desk.js";
+import { lookupStyles } from "./lookup/lookup-styles.js";
+import { stockLookupSeat } from "./lookup/lookup-logic.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -60,20 +66,13 @@ function fieldValue(el: HTMLInputElement | HTMLSelectElement | null): string {
 }
 
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, poStyles, areaStyles, purchStyles, css`
+  static styles = [baseStyles, entryStyles, poStyles, areaStyles, purchStyles, lookupStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // two demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -81,29 +80,47 @@ export class BuyingAndStockApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // two demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
+    baseUrl: this.#custody.coreBaseUrl,
     // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
     fetch: noSignalFetch(undefined, browserSignal()),
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The areas, each a desk of its own (src/po, src/landed, ...): its state, its loads, its
   // presses. The fields a desk reads are looked up in this element's own shadow root. The
   // purchase orders are first and load at sign in; the others load when first shown.
+  // A sales seat's set is the read only one (ruling R1): Stock lookup first, Incoming beside it;
+  // every other seat keeps the buyers' seven, unchanged.
   #areas: readonly AreaEntry[] = this.#newAreas();
   #area = "orders";
-  readonly #shown = new Set<string>(["orders"]);
+  #shown = new Set<string>(["orders"]);
 
-  #newAreas(): AreaEntry[] {
-    const host = {
+  #deskHost() {
+    return {
       repaint: () => this.requestUpdate(),
       field: (name: string, key?: string) => fieldValue(this.#fieldElement(name, key)),
       role: () => this.#roleCode,
     };
+  }
+
+  #newAreas(): AreaEntry[] {
+    const host = this.#deskHost();
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
+      { id: "incoming", label: "Incoming", desk: new IncomingDesk(new PoApi(this.#staffClient), host) },
       { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
       { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
       { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
@@ -111,6 +128,28 @@ export class BuyingAndStockApp extends HHElement {
       { id: "inventory", label: "Inventory", desk: new InventoryDesk(new InventoryApi(this.#staffClient), host) },
       { id: "counts", label: "Cycle counts", desk: new CountsDesk(new CountsApi(this.#staffClient), host) },
     ];
+  }
+
+  #salesAreas(): AreaEntry[] {
+    const host = this.#deskHost();
+    return [
+      { id: "lookup", label: "Stock lookup", desk: new LookupDesk(new InventoryApi(this.#staffClient), host, this.#custody.coreBaseUrl) },
+      { id: "incoming", label: "Incoming", desk: new SalesIncomingDesk(new PoApi(this.#staffClient), host) },
+    ];
+  }
+
+  #areasFor(roleCode: string): AreaEntry[] {
+    return stockLookupSeat(roleCode) ? this.#salesAreas() : this.#newAreas();
+  }
+
+  /** One way in for every sign-in: the seat decides the areas, the first one lands and loads. */
+  #enterAs(roleCode: string): void {
+    this.#roleCode = roleCode;
+    this.#areas = this.#areasFor(roleCode);
+    const landing = this.#areas[0]!.id;
+    this.#area = landing;
+    this.#shown = new Set([landing]);
+    void this.#areas[0]!.desk.load();
   }
 
   get #desk(): AreaDesk {
@@ -155,12 +194,6 @@ export class BuyingAndStockApp extends HHElement {
 
   // The entry view state, compatible with renderEntry's EntryView.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -209,10 +242,18 @@ export class BuyingAndStockApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.addEventListener("input", this.#onHostInput);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("buying-and-stock", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -226,9 +267,8 @@ export class BuyingAndStockApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.user.name;
-        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
-        void this.#areas[0]!.desk.load();
+        this.#enterAs(handoff.session.roleCode);
       }
       this.requestUpdate();
     } else {
@@ -236,7 +276,27 @@ export class BuyingAndStockApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      this.#enterAs(outcome.entry.roleCode);
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
@@ -281,8 +341,7 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.user.name;
-        this.#roleCode = result.value.roleCode;
-        void this.#areas[0]!.desk.load();
+        this.#enterAs(result.value.roleCode);
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
@@ -295,11 +354,18 @@ export class BuyingAndStockApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#roleCode = "";
     this.#areas = this.#newAreas();
     this.#area = "orders";
     this.#shown.clear();
     this.#shown.add("orders");
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 
@@ -319,7 +385,7 @@ export class BuyingAndStockApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         ${this.renderAreas()}
         ${this.#desk.render()}
@@ -332,10 +398,10 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Buying and Stock</h1>
-        <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>
+        <p class="dim">Purchase orders and the reorder worklist for the buying seats; the stock lookup, read only, for Sales. Demo data only.</p>
         ${renderEntry(this.#entryView)}
       </main>
     `;

@@ -52,11 +52,11 @@ test("Sales signs in through the front door's picker and lands on the Counter Ti
 
 test("the switcher is built from the profile by the signed in role", async ({ page, shellUrl }) => {
   await signInAs(page, shellUrl, "Sales");
-  expect(await switcherApps(page)).toEqual(["counter-till", "quote-desk", "buying-and-stock", "money-desk"]);
+  expect(await switcherApps(page)).toEqual(["counter-till", "quote-desk", "buying-and-stock", "money-desk", "house-messages"]);
   await switchRole(page);
   await page.frameLocator('[data-testid="door-frame"]').getByRole("button", { name: "Logistics Manager", exact: true }).click();
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-phase", "desk");
-  expect(await switcherApps(page)).toEqual(["dispatch-board", "manager-home"]);
+  expect(await switcherApps(page)).toEqual(["dispatch-board", "manager-home", "house-messages"]);
 });
 
 test("a sales manager lands on Manager Home, not the Counter Till", async ({ page, shellUrl }) => {
@@ -73,7 +73,8 @@ test("an app the role does not hold is not offered in its switcher", async ({ pa
   expect(apps).not.toContain("manager-home");
   expect(apps).not.toContain("dealer-admin");
   expect(apps).not.toContain("dispatch-board");
-  expect(apps).not.toContain("house-messages");
+  // every internal role holds House Messages, Sales included
+  expect(apps).toContain("house-messages");
 });
 
 test("switching apps hosts the chosen app and hands it the session again", async ({ page, shellUrl }) => {
@@ -133,11 +134,10 @@ test("an app that asks for the origin root (its own Switch role) returns the hos
   await expect(page.locator("hh-shell-header")).toHaveCount(0);
 });
 
-test("a role with no Work app gets an empty desk with Switch role, not a blank frame", async ({ page, shellUrl }) => {
+test("a role holding only House Messages lands on it, with Switch role in the header", async ({ page, shellUrl }) => {
   await signInAs(page, shellUrl, "Driver");
-  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "");
-  await expect(page.getByTestId("no-apps")).toContainText("HH Work");
-  await expect(page.locator('[data-testid="app-frame"]')).toHaveCount(0);
+  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "house-messages");
+  await expect(page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture")).toHaveText("fixture:/messages/:driver");
   await switchRole(page);
 });
 

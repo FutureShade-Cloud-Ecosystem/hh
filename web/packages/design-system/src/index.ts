@@ -21,6 +21,28 @@ export { css } from 'lit';
 export { HHElement, defineElement, HHRenderError } from './base.js';
 export { hhAddress } from './address.js';
 export {
+  CHROME_ACTION_MESSAGE,
+  CHROME_CONTROLS_MESSAGE,
+  FRAMED_BY_WORK_SHELL,
+  FRAMED_PARAM,
+  MAX_SIGN_OUT_NONCE_LENGTH,
+  SIGNED_OUT_MESSAGE,
+  SIGN_OUT_REQUEST_MESSAGE,
+  acceptChromeControls,
+  announceChromeControls,
+  announceSignOut,
+  announceSignedOut,
+  chromeActionFrom,
+  framedAddress,
+  framedByShell,
+  framedFlagFromSearch,
+  listenForHostSignOut,
+  readFramedByShell,
+  signOutRequestFrom,
+  signedOutFrom,
+} from './framed.js';
+export type { ChromeAction, FramedListenWindow, FramedWindow } from './framed.js';
+export {
   KIT_STATES,
   STATE_META,
   stateIndicator,
@@ -38,6 +60,8 @@ export type {
   FeedbackSendResult,
   FeedbackSender,
 } from './feedback.js';
+export { HHSheet, hhSheetTag, hhSheetEvents, HHSheetCloseEvent } from './sheet.js';
+export type { HHSheetCloseReason, HHSheetCloseDetail } from './sheet.js';
 
 export { ScanConfirmKit } from './kits/scan-and-confirm.js';
 export { ListDetailKit } from './kits/list-detail.js';

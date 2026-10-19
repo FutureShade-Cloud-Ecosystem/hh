@@ -48,7 +48,7 @@ func TestIntegration_TeamNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing.
 
 	// A Kingston only staffer is refused, in the shared body's words, and
 	// is not seated.
-	if _, err := svc.AddMember(ctx, gm, trentonTeam.ID, uCaseyDoyle); !errors.Is(err, ErrTargetNotInBranch) {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: trentonTeam.ID, UserID: uCaseyDoyle}); !errors.Is(err, ErrTargetNotInBranch) {
 		t.Fatalf("a Kingston target in a Trenton TEAM must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, trentonTeam.ID, uCaseyDoyle); ok {
@@ -57,14 +57,14 @@ func TestIntegration_TeamNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing.
 
 	// A Trenton staffer is still seatable by the owner.
 	uat := uatInsideSalesID(ctx, t, pool)
-	if _, err := svc.AddMember(ctx, gm, trentonTeam.ID, uat); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: trentonTeam.ID, UserID: uat}); err != nil {
 		t.Fatalf("a Trenton target in a Trenton TEAM: %v", err)
 	}
 
 	// A TEAM that really spans branches is founded without naming one, and
 	// seats anyone the owner may reach (unchanged).
 	spanning := found("ruling-89-spanning-team", "")
-	if _, err := svc.AddMember(ctx, gm, spanning.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, gm, AddMemberInput{ChannelID: spanning.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("a TEAM without a branch must seat a Kingston staffer: %v", err)
 	}
 }
@@ -80,10 +80,12 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
 
+	// The room is setup for the seat wall, founded through the repository
+	// seam (the route's founding is the admins' pen now), sam stays OWNER.
 	sam := samCaller()
-	topic, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	topic, created, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTopic, Name: "ruling-89-trenton-topic", Slug: "ruling-89-trenton-topic", BranchID: branchTrenton,
-	})
+	}, uSamRivera)
 	if err != nil || !created {
 		t.Fatalf("found the topic: created=%v err=%v", created, err)
 	}
@@ -91,7 +93,7 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, topic.ID)
 	})
 
-	if _, err := svc.AddMember(ctx, sam, topic.ID, uCaseyDoyle); !errors.Is(err, ErrTargetNotInBranch) {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: topic.ID, UserID: uCaseyDoyle}); !errors.Is(err, ErrTargetNotInBranch) {
 		t.Fatalf("a Kingston target in a Trenton TOPIC must refuse, got %v", err)
 	}
 	if ok, _ := repo.IsMember(ctx, topic.ID, uCaseyDoyle); ok {
@@ -99,16 +101,16 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 	}
 
 	// A TOPIC founded without a branch still seats anyone the owner may reach.
-	open, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	open, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTopic, Name: "ruling-89-open-topic", Slug: "ruling-89-open-topic",
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found the open topic: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, open.ID)
 	})
-	if _, err := svc.AddMember(ctx, sam, open.ID, uCaseyDoyle); err != nil {
+	if _, err := svc.AddMember(ctx, sam, AddMemberInput{ChannelID: open.ID, UserID: uCaseyDoyle}); err != nil {
 		t.Fatalf("a TOPIC without a branch must seat a Kingston staffer: %v", err)
 	}
 }

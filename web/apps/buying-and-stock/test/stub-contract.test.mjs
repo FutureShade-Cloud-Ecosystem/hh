@@ -155,6 +155,14 @@ test("the shortfall worklist: the contract's key, and each row in the contract's
   assert.equal(gap.projected_base, -40);
   assert.equal(gap.on_order_base, 0);
   assert.ok(res.json.items.every((r) => r.short_base > 0), "a listed row is always short");
+  // The order numbers the core adds to the row (change 5 slice S3): at most three, oldest first,
+  // with the count of the rest; a row nothing waits on carries neither key.
+  const turf = res.json.items.find((r) => r.sku === "DBS-RYMAR-TURF");
+  assert.deepEqual(turf.short_order_nos, ["SO-3305", "SO-3311", "SO-3312"]);
+  assert.equal(turf.short_order_more, 2);
+  const stone = res.json.items.find((r) => r.sku === "DBS-AGG-34CLEAR");
+  assert.equal(stone.short_order_nos, undefined);
+  assert.equal(stone.short_order_more, undefined);
 });
 
 test("the shortfall read is fenced to the caller's reach, in the core's words", async () => {
@@ -368,4 +376,85 @@ test("the branch name and a vendor's codes answer in the contract's shapes", asy
   assert.equal(skus.status, 200);
   for (const k of skus.json.items) holds("PurchasingVendorSKU", k);
   assert.ok(skus.json.items.some((k) => k.vendor_sku === "ALC-BRU-DIM-60"));
+});
+
+// The Sales stock lookup's reads (change 5 slice S4): the trade products' browse rows carry the
+// out-at names, the demo flows carry the sales seat, and the seat's token reads the stock and is
+// refused the buying wall in the shared body.
+const SALES_SUB = "de110000-0000-4000-9000-0000000000a2";
+
+function tokenFor(sub) {
+  const part = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  return `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub })}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
+}
+
+async function callAs(method, path, body, sub) {
+  const headers = { Authorization: `Bearer ${tokenFor(sub)}`, "X-Org": "hh-demo" };
+  let payload;
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+  const res = await fetch(`${base}${path}`, { method, headers, body: payload });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    /* not json */
+  }
+  return { status: res.status, json };
+}
+
+test("the trade browse rows carry the branches they are out at, and the contract's shape", async () => {
+  await reset();
+  const res = await call("GET", "/api/v1/inventory/browse?text=GLS-&limit=200");
+  assert.equal(res.status, 200);
+  assert.ok(res.json.rows.length >= 4, "the trade products are all in the page");
+  for (const row of res.json.rows) holds("InventoryBrowseRow", row);
+  const out = res.json.rows.filter((r) => r.available_base <= 0 || r.out_at_branches !== undefined);
+  assert.ok(out.length >= 2, "the seeded world has products a branch is out of");
+  for (const row of out) {
+    assert.deepEqual(row.out_at_branches, ["Julian yard"], `${row.sku} is out somewhere other than Julian yard`);
+  }
+  for (const row of res.json.rows.filter((r) => r.available_base > 0 && r.out_at_branches === undefined)) {
+    assert.equal(row.out_at_branches, undefined, "a row available everywhere carries no out-at names");
+  }
+});
+
+test("the sales seat reads the stock and is refused the buying wall in the shared body", async () => {
+  await reset();
+  const flows = (await call("GET", "/api/v1/demo/flows")).json.flows;
+  assert.ok(flows.some((f) => f.flow === "inside-sales" && f.role_code === "inside_sales"), "the demo flows do not carry the sales seat");
+  // The reads the lookup makes: browse, the branch balances, the product and what is coming in.
+  const browse = await callAs("GET", "/api/v1/inventory/browse?text=paver&limit=60", undefined, SALES_SUB);
+  assert.equal(browse.status, 200);
+  const paver = browse.json.rows.find((r) => r.sku === "GLS-PAV-60");
+  assert.ok(paver !== undefined, "the paver is not in the browse answer");
+  const balances = await callAs("GET", `/api/v1/inventory/branch-stock?product_id=${paver.product_id}`, undefined, SALES_SUB);
+  assert.equal(balances.status, 200);
+  assert.ok(balances.json.branches.length >= 1);
+  for (const row of balances.json.branches) holds("InventoryBranchStock", row);
+  const product = await callAs("GET", `/api/v1/products/${paver.product_id}`, undefined, SALES_SUB);
+  assert.equal(product.status, 200);
+  holds("Product", product.json);
+  assert.equal(product.json.list_price_cents, 11_900);
+  assert.equal(product.json.list_price_uom, "pc");
+  const image = await fetch(`${base}/api/v1/products/${paver.product_id}/image`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.equal((await callAs("GET", "/api/v1/products/not-a-product", undefined, SALES_SUB)).status, 404);
+  const coming = await callAs("GET", `/api/v1/purchasing/incoming?product_id=${paver.product_id}`, undefined, SALES_SUB);
+  assert.equal(coming.status, 200);
+  assert.equal(coming.json.items.length, 1);
+  holds("PurchasingIncomingLine", coming.json.items[0]);
+  assert.equal(coming.json.items[0].po_no, "PO-PLM-0151");
+  assert.equal(coming.json.items[0].qty_outstanding_base, 240);
+  // The wall: the po_writers list is the core's, and a sales caller is outside it, in the shared body.
+  const draft = await callAs("POST", "/api/v1/purchasing/pos", { vendor_id: "", branch_id: BRANCH, lines: [] }, SALES_SUB);
+  assert.equal(draft.status, 403);
+  assert.deepEqual(draft.json, { error: "Forbidden" });
+  const receive = await callAs("POST", "/api/v1/purchasing/pos/x/receive", { lines: [] }, SALES_SUB);
+  assert.equal(receive.status, 403);
+  assert.deepEqual(receive.json, { error: "Forbidden" });
 });

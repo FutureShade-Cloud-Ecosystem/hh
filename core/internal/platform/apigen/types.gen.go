@@ -71,18 +71,19 @@ type SyncPushResponse struct {
 }
 
 type Attachment struct {
-	Id             string     `json:"id"`
-	OrgId          string     `json:"org_id"`
-	TenantId       *string    `json:"tenant_id,omitempty"`
-	Kind           string     `json:"kind"`
-	AppwriteFileId string     `json:"appwrite_file_id"`
-	Bucket         string     `json:"bucket"`
-	Mime           *string    `json:"mime,omitempty"`
-	SizeBytes      *int64     `json:"size_bytes,omitempty"`
-	Checksum       *string    `json:"checksum,omitempty"`
-	CreatedBy      *string    `json:"created_by,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	Id             string            `json:"id"`
+	OrgId          string            `json:"org_id"`
+	TenantId       *string           `json:"tenant_id,omitempty"`
+	Kind           string            `json:"kind"`
+	AppwriteFileId string            `json:"appwrite_file_id"`
+	Bucket         string            `json:"bucket"`
+	Mime           *string           `json:"mime,omitempty"`
+	SizeBytes      *int64            `json:"size_bytes,omitempty"`
+	Checksum       *string           `json:"checksum,omitempty"`
+	CreatedBy      *string           `json:"created_by,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	DeletedAt      *time.Time        `json:"deleted_at,omitempty"`
+	Links          *[]AttachmentLink `json:"links,omitempty"`
 }
 
 type AttachmentCreate struct {
@@ -348,6 +349,8 @@ type BillingRegisterRow struct {
 	StoredStatus  string                  `json:"stored_status"`
 	Status        string                  `json:"status"`
 	DaysOverdue   int32                   `json:"days_overdue"`
+	BucketLabel   *string                 `json:"bucket_label,omitempty"`
+	BucketKey     *string                 `json:"bucket_key,omitempty"`
 	AccountStatus string                  `json:"account_status"`
 	Disputed      bool                    `json:"disputed"`
 	PromisedDate  *time.Time              `json:"promised_date,omitempty"`
@@ -446,6 +449,82 @@ type BillingPromiseView struct {
 	SettledAt     *time.Time `json:"settled_at,omitempty"`
 }
 
+type BillingPromiseEnriched struct {
+	Id            string     `json:"id"`
+	CustomerId    string     `json:"customer_id"`
+	CustomerName  string     `json:"customer_name"`
+	InvoiceId     string     `json:"invoice_id"`
+	InvoiceNo     string     `json:"invoice_no"`
+	PromisedCents int64      `json:"promised_cents"`
+	PromisedDate  time.Time  `json:"promised_date"`
+	Status        string     `json:"status"`
+	PromisedBy    *string    `json:"promised_by,omitempty"`
+	Note          *string    `json:"note,omitempty"`
+	TakenBy       *string    `json:"taken_by,omitempty"`
+	TakenAt       time.Time  `json:"taken_at"`
+	SettledAt     *time.Time `json:"settled_at,omitempty"`
+}
+
+type BillingPromisePage struct {
+	Rows       []BillingPromiseEnriched `json:"rows"`
+	NextCursor *string                  `json:"next_cursor"`
+}
+
+type BillingAccountPaymentPolicy struct {
+	CustomerId       string    `json:"customer_id"`
+	AchFirst         bool      `json:"ach_first"`
+	SurchargeRateBps int       `json:"surcharge_rate_bps"`
+	MinAchCents      int64     `json:"min_ach_cents"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type BillingAccountPaymentPolicyInput struct {
+	AchFirst         bool  `json:"ach_first"`
+	SurchargeRateBps int   `json:"surcharge_rate_bps"`
+	MinAchCents      int64 `json:"min_ach_cents"`
+}
+
+type BillingReminderRule struct {
+	Id                   string     `json:"id"`
+	Code                 string     `json:"code"`
+	Label                string     `json:"label"`
+	Channel              string     `json:"channel"`
+	DaysPastDue          int        `json:"days_past_due"`
+	MaxPerWindow         int        `json:"max_per_window"`
+	PaylinkUrlTemplate   string     `json:"paylink_url_template"`
+	LastSentAt           *time.Time `json:"last_sent_at"`
+	AmountBroughtInCents int64      `json:"amount_brought_in_cents"`
+	EnrolledCount        int        `json:"enrolled_count"`
+	ExclusionCount       int        `json:"exclusion_count"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type BillingReminderRulePage struct {
+	Rules []BillingReminderRule `json:"rules"`
+}
+
+type BillingReminderEnrolInput struct {
+	CustomerId string  `json:"customer_id"`
+	RuleId     string  `json:"rule_id"`
+	Note       *string `json:"note,omitempty"`
+}
+
+type BillingReminderExemptInput struct {
+	CustomerId string `json:"customer_id"`
+	RuleId     string `json:"rule_id"`
+	Note       string `json:"note"`
+}
+
+type BillingReminderEnrolResult struct {
+	CustomerId     string     `json:"customer_id"`
+	RuleId         string     `json:"rule_id"`
+	Exempt         bool       `json:"exempt"`
+	Note           *string    `json:"note,omitempty"`
+	EnrolledCount  int        `json:"enrolled_count"`
+	ExclusionCount int        `json:"exclusion_count"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+}
+
 type BillingDisputeView struct {
 	Id          string     `json:"id"`
 	Status      string     `json:"status"`
@@ -482,6 +561,51 @@ type BillingInvoiceDetail struct {
 	ReminderTones []string               `json:"reminder_tones"`
 	LastContactAt *time.Time             `json:"last_contact_at,omitempty"`
 	AsOf          time.Time              `json:"as_of"`
+}
+
+type BillingARWorklistRow struct {
+	CustomerId           string  `json:"customer_id"`
+	CustomerName         string  `json:"customer_name"`
+	AccountNo            string  `json:"account_no"`
+	BranchId             string  `json:"branch_id"`
+	OpenArCents          int64   `json:"open_ar_cents"`
+	PastDueCents         int64   `json:"past_due_cents"`
+	Over60Cents          int64   `json:"over_60_cents"`
+	AvailableCreditCents int64   `json:"available_credit_cents"`
+	UnappliedCreditCents int64   `json:"unapplied_credit_cents"`
+	OldestBucket         string  `json:"oldest_bucket"`
+	OldestBucketKey      string  `json:"oldest_bucket_key"`
+	BrokenPromises       int32   `json:"broken_promises"`
+	DuePromises          int32   `json:"due_promises"`
+	OpenPromises         int32   `json:"open_promises"`
+	PromisedCents        int64   `json:"promised_cents"`
+	NextPromiseDate      *string `json:"next_promise_date,omitempty"`
+	OnHold               bool    `json:"on_hold"`
+	CreditHoldCandidate  bool    `json:"credit_hold_candidate"`
+	ActionNeeded         bool    `json:"action_needed"`
+	Urgency              string  `json:"urgency"`
+	RecommendedAction    string  `json:"recommended_action"`
+}
+
+type BillingARWorklistSummary struct {
+	TotalPastDueCents     int64 `json:"total_past_due_cents"`
+	Over60Cents           int64 `json:"over_60_cents"`
+	BrokenPromises        int32 `json:"broken_promises"`
+	UnappliedCreditsCents int64 `json:"unapplied_credits_cents"`
+}
+
+type BillingARWorklistCounts struct {
+	AllOpen      int32 `json:"all_open"`
+	ActionNeeded int32 `json:"action_needed"`
+	Over60       int32 `json:"over_60"`
+	CreditHold   int32 `json:"credit_hold"`
+}
+
+type BillingARWorklistResponse struct {
+	Rows    []BillingARWorklistRow   `json:"rows"`
+	Summary BillingARWorklistSummary `json:"summary"`
+	Counts  BillingARWorklistCounts  `json:"counts"`
+	AsOf    string                   `json:"as_of"`
 }
 
 type BillingReceiptInput struct {
@@ -931,6 +1055,167 @@ type PaymentCardAttemptSummary struct {
 type PaymentCardAttemptResolve struct {
 	Resolution string `json:"resolution"`
 	Note       string `json:"note"`
+}
+
+type BillingCustomerWorkspaceHeader struct {
+	CustomerId            string                        `json:"customer_id"`
+	Name                  string                        `json:"name"`
+	AccountNo             string                        `json:"account_no"`
+	Status                string                        `json:"status"`
+	TermsDays             int                           `json:"terms_days"`
+	CreditLimitCents      int64                         `json:"credit_limit_cents"`
+	OpenCents             int64                         `json:"open_cents"`
+	AvailableCreditCents  int64                         `json:"available_credit_cents"`
+	OverdueCents          int64                         `json:"overdue_cents"`
+	UtilizationBps        int                           `json:"utilization_bps"`
+	PrimaryApContactName  *string                       `json:"primary_ap_contact_name,omitempty"`
+	PrimaryApContactEmail *string                       `json:"primary_ap_contact_email,omitempty"`
+	PrimaryApContactPhone *string                       `json:"primary_ap_contact_phone,omitempty"`
+	LastPaymentAt         *time.Time                    `json:"last_payment_at,omitempty"`
+	LastPaymentCents      *int64                        `json:"last_payment_cents,omitempty"`
+	Aging                 BillingCustomerWorkspaceAging `json:"aging"`
+}
+
+type BillingCustomerWorkspaceAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
+}
+
+type BillingCustomerWorkspaceInvoice struct {
+	Id                string `json:"id"`
+	InvoiceNo         string `json:"invoice_no"`
+	DocType           string `json:"doc_type"`
+	Status            string `json:"status"`
+	IssueDate         string `json:"issue_date"`
+	DueDate           string `json:"due_date"`
+	TotalCents        int64  `json:"total_cents"`
+	BalanceCents      int64  `json:"balance_cents"`
+	DaysOverdue       int    `json:"days_overdue"`
+	DaysOverdueBucket string `json:"days_overdue_bucket"`
+	IsDisputed        bool   `json:"is_disputed"`
+	HasOpenPromise    bool   `json:"has_open_promise"`
+}
+
+type BillingCustomerWorkspacePayment struct {
+	Id             string    `json:"id"`
+	PaymentNo      string    `json:"payment_no"`
+	ReceivedAt     time.Time `json:"received_at"`
+	AmountCents    int64     `json:"amount_cents"`
+	Method         string    `json:"method"`
+	UnappliedCents int64     `json:"unapplied_cents"`
+	BranchId       *string   `json:"branch_id,omitempty"`
+}
+
+type BillingCustomerWorkspaceCreditNote struct {
+	Id             string  `json:"id"`
+	MemoNo         string  `json:"memo_no"`
+	IssuedAt       string  `json:"issued_at"`
+	AmountCents    int64   `json:"amount_cents"`
+	UnappliedCents int64   `json:"unapplied_cents"`
+	Reason         *string `json:"reason,omitempty"`
+}
+
+type BillingCustomerWorkspaceStatement struct {
+	Id                  string    `json:"id"`
+	RunId               string    `json:"run_id"`
+	Mode                string    `json:"mode"`
+	AsOfDate            string    `json:"as_of_date"`
+	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	DeliveryStatus      string    `json:"delivery_status"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+type BillingCustomerWorkspaceNote struct {
+	Id         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	Body       string    `json:"body"`
+	AuthorId   *string   `json:"author_id,omitempty"`
+	AuthorName *string   `json:"author_name,omitempty"`
+	Pinned     bool      `json:"pinned"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type BillingCustomerWorkspaceActivity struct {
+	Kind              string    `json:"kind"`
+	Reference         *string   `json:"reference,omitempty"`
+	AmountCents       int64     `json:"amount_cents"`
+	BalanceAfterCents int64     `json:"balance_after_cents"`
+	BranchId          *string   `json:"branch_id,omitempty"`
+	Memo              *string   `json:"memo,omitempty"`
+	OccurredAt        time.Time `json:"occurred_at"`
+}
+
+type BillingCustomerWorkspace struct {
+	Header           BillingCustomerWorkspaceHeader       `json:"header"`
+	InvoicesOpen     []BillingCustomerWorkspaceInvoice    `json:"invoices_open"`
+	InvoicesClosed   []BillingCustomerWorkspaceInvoice    `json:"invoices_closed"`
+	InvoicesDisputed []BillingCustomerWorkspaceInvoice    `json:"invoices_disputed"`
+	Payments         []BillingCustomerWorkspacePayment    `json:"payments"`
+	CreditNotes      []BillingCustomerWorkspaceCreditNote `json:"credit_notes"`
+	Statements       []BillingCustomerWorkspaceStatement  `json:"statements"`
+	Notes            []BillingCustomerWorkspaceNote       `json:"notes"`
+	Activity         []BillingCustomerWorkspaceActivity   `json:"activity"`
+	AsOf             time.Time                            `json:"as_of"`
+}
+
+type BillingAddCustomerNoteInput struct {
+	Body   string  `json:"body"`
+	Kind   *string `json:"kind,omitempty"`
+	Pinned *bool   `json:"pinned,omitempty"`
+}
+
+type BillingAddCustomerNoteResult struct {
+	Note BillingCustomerWorkspaceNote `json:"note"`
+}
+
+type BillingCreateHoldRequest struct {
+	CustomerId string `json:"customer_id"`
+	Reason     string `json:"reason"`
+}
+
+type BillingSendPaylinkRequest struct {
+	CustomerId  string  `json:"customer_id"`
+	InvoiceId   *string `json:"invoice_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
+	Channel     *string `json:"channel,omitempty"`
+	Recipient   *string `json:"recipient,omitempty"`
+}
+
+type BillingSendPaylinkResult struct {
+	PaylinkUrl string    `json:"paylink_url"`
+	Status     string    `json:"status"`
+	SentAt     time.Time `json:"sent_at"`
+}
+
+type BillingStatementPreview struct {
+	Statement  BillingStatement              `json:"statement"`
+	OpenLines  []BillingStatementPreviewLine `json:"open_lines"`
+	Aging      BillingStatementPreviewAging  `json:"aging"`
+	Reconciled bool                          `json:"reconciled"`
+}
+
+type BillingStatementPreviewLine struct {
+	InvoiceId    string `json:"invoice_id"`
+	InvoiceNo    string `json:"invoice_no"`
+	DueDate      string `json:"due_date"`
+	BalanceCents int64  `json:"balance_cents"`
+	DaysOverdue  int32  `json:"days_overdue"`
+	BucketLabel  string `json:"bucket_label"`
+}
+
+type BillingStatementPreviewAging struct {
+	CurrentCents    int64 `json:"current_cents"`
+	Days30Cents     int64 `json:"days_30_cents"`
+	Days60Cents     int64 `json:"days_60_cents"`
+	Days90Cents     int64 `json:"days_90_cents"`
+	Days90PlusCents int64 `json:"days_90_plus_cents"`
+	OpenCents       int64 `json:"open_cents"`
+	OverdueCents    int64 `json:"overdue_cents"`
 }
 
 type AssistArgSpec struct {
@@ -1833,13 +2118,15 @@ type SettingsWorkspaceSaveInput struct {
 }
 
 type SettingsSurfaceConfig struct {
-	SurfaceId    string                `json:"surface_id"`
-	Profile      string                `json:"profile"`
-	ItemsProfile *string               `json:"items_profile,omitempty"`
-	RoleItems    []SettingsItem        `json:"role_items"`
-	UserItems    []SettingsItem        `json:"user_items"`
-	Workspace    SettingsWorkspaceView `json:"workspace"`
-	Policy       *map[string]any       `json:"policy,omitempty"`
+	SurfaceId          string                `json:"surface_id"`
+	Profile            string                `json:"profile"`
+	ItemsProfile       *string               `json:"items_profile,omitempty"`
+	RoleItems          []SettingsItem        `json:"role_items"`
+	UserItems          []SettingsItem        `json:"user_items"`
+	Workspace          SettingsWorkspaceView `json:"workspace"`
+	Policy             *map[string]any       `json:"policy,omitempty"`
+	BusinessZone       *string               `json:"business_zone,omitempty"`
+	LegacyImportSource *string               `json:"legacy_import_source,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
@@ -1934,6 +2221,7 @@ type DispatchStop struct {
 	TimeWindow        *string    `json:"time_window,omitempty"`
 	ContactName       *string    `json:"contact_name,omitempty"`
 	ContactPhone      *string    `json:"contact_phone,omitempty"`
+	GateCode          *string    `json:"gate_code,omitempty"`
 	AddressLine       *string    `json:"address_line,omitempty"`
 	City              *string    `json:"city,omitempty"`
 	PostalCode        *string    `json:"postal_code,omitempty"`
@@ -2027,6 +2315,7 @@ type DispatchRun struct {
 	DriverName    *string             `json:"driver_name,omitempty"`
 	Status        string              `json:"status"`
 	Notes         *string             `json:"notes,omitempty"`
+	RunDepartsAt  *time.Time          `json:"run_departs_at,omitempty"`
 	DispatchedAt  *time.Time          `json:"dispatched_at,omitempty"`
 	CompletedAt   *time.Time          `json:"completed_at,omitempty"`
 	StopCount     int32               `json:"stop_count"`
@@ -2090,6 +2379,7 @@ type DispatchScheduleInput struct {
 	TimeWindow      string   `json:"time_window"`
 	ContactName     string   `json:"contact_name"`
 	ContactPhone    string   `json:"contact_phone"`
+	GateCode        *string  `json:"gate_code,omitempty"`
 	AddressLine     string   `json:"address_line"`
 	City            string   `json:"city"`
 	PostalCode      string   `json:"postal_code"`
@@ -2120,11 +2410,12 @@ type DispatchPODInput struct {
 }
 
 type DispatchCreateRunInput struct {
-	BranchId      string `json:"branch_id"`
-	ScheduledDate string `json:"scheduled_date"`
-	TruckId       string `json:"truck_id"`
-	DriverId      string `json:"driver_id"`
-	Notes         string `json:"notes"`
+	BranchId      string     `json:"branch_id"`
+	ScheduledDate string     `json:"scheduled_date"`
+	TruckId       string     `json:"truck_id"`
+	DriverId      string     `json:"driver_id"`
+	Notes         string     `json:"notes"`
+	RunDepartsAt  *time.Time `json:"run_departs_at,omitempty"`
 }
 
 type DispatchCrewInput struct {
@@ -2792,11 +3083,7 @@ type BankRecAccount struct {
 	UnmatchedLines int32  `json:"unmatched_lines"`
 }
 
-type BankRecAccountPage struct {
-	Items      []BankRecAccount `json:"items"`
-	NextCursor *string          `json:"next_cursor,omitempty"`
-	Limit      *int32           `json:"limit,omitempty"`
-}
+type BankRecAccountList []BankRecAccount
 
 type BankRecStatementLine struct {
 	Id            string    `json:"id"`
@@ -2852,11 +3139,7 @@ type BankRecMatchSummary struct {
 	Matches   []BankRecMatch `json:"matches"`
 }
 
-type BankRecMatchPage struct {
-	Items      []BankRecMatch `json:"items"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
-	Limit      *int32         `json:"limit,omitempty"`
-}
+type BankRecMatchList []BankRecMatch
 
 type BankRecMatchInput struct {
 	Mode            string  `json:"mode"`
@@ -2878,7 +3161,13 @@ type BankRecUnmatchResult struct {
 }
 
 type BankRecRuleSpec struct {
-	Kind *string `json:"kind,omitempty"`
+	Kind            *string `json:"kind,omitempty"`
+	Target          *string `json:"target,omitempty"`
+	ToleranceCents  *int64  `json:"tolerance_cents,omitempty"`
+	DescriptorIlike *string `json:"descriptor_ilike,omitempty"`
+	DateWindowDays  *int32  `json:"date_window_days,omitempty"`
+	AllowFeeSplit   *bool   `json:"allow_fee_split,omitempty"`
+	FeeAccountCode  *string `json:"fee_account_code,omitempty"`
 	// The document permits additional properties beyond the fields above.
 }
 
@@ -2900,11 +3189,7 @@ type BankRecRuleInput struct {
 	Priority int32           `json:"priority"`
 }
 
-type BankRecMatchRulePage struct {
-	Items      []BankRecMatchRule `json:"items"`
-	NextCursor *string            `json:"next_cursor,omitempty"`
-	Limit      *int32             `json:"limit,omitempty"`
-}
+type BankRecMatchRuleList []BankRecMatchRule
 
 type BankRecReconciliation struct {
 	Id                    string     `json:"id"`
@@ -2925,11 +3210,7 @@ type BankRecReconInput struct {
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
 }
 
-type BankRecReconciliationPage struct {
-	Items      []BankRecReconciliation `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
-}
+type BankRecReconciliationList []BankRecReconciliation
 
 type IdentityPing struct {
 	Module string `json:"module"`
@@ -2971,8 +3252,13 @@ type IdentityLoginResponse struct {
 }
 
 type IdentityExchangeRequest struct {
-	Jwt string `json:"jwt"`
-	Org string `json:"org"`
+	Jwt   string  `json:"jwt"`
+	Org   string  `json:"org"`
+	Class *string `json:"class,omitempty"`
+}
+
+type IdentityPersonaRequest struct {
+	Persona string `json:"persona"`
 }
 
 type IdentityExchangeResponse struct {
@@ -3109,7 +3395,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW", "FED_S87_GOODS_ON_RES", "FED_S87_SERVICE_RESERVE", "FED_BAND_MANAGEMENT", "FNT_PRODUCT", "TREATY_OR_SELF_GOV_REVIEW", "RELIEF_DECLINED_EVIDENCE".
 type TaxReasonCode string
 
 type TaxRate struct {
@@ -3122,10 +3408,8 @@ type TaxRate struct {
 	Notes         *string       `json:"notes,omitempty"`
 }
 
-type TaxRatePage struct {
-	Items      []TaxRate `json:"items"`
-	NextCursor *string   `json:"next_cursor,omitempty"`
-	Limit      *int32    `json:"limit,omitempty"`
+type TaxRateList struct {
+	Rates *[]TaxRate `json:"rates"`
 }
 
 // TaxProfileStatus is the document's enum: "ACTIVE", "PENDING", "RETIRED".
@@ -3143,10 +3427,12 @@ type TaxStatusCardProfile struct {
 	Notes               *string          `json:"notes,omitempty"`
 }
 
-type TaxStatusCardProfilePage struct {
-	Items      []TaxStatusCardProfile `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type TaxStatusCardProfileList struct {
+	Profiles *[]TaxStatusCardProfile `json:"profiles"`
+}
+
+type TaxPendingProfileList struct {
+	PendingProfiles []TaxStatusCardProfile `json:"pending_profiles"`
 }
 
 type TaxConfig struct {
@@ -3172,10 +3458,8 @@ type TaxEvidence struct {
 	AttestationStatus *string    `json:"attestation_status,omitempty"`
 }
 
-type TaxEvidencePage struct {
-	Items      []TaxEvidence `json:"items"`
-	NextCursor *string       `json:"next_cursor,omitempty"`
-	Limit      *int32        `json:"limit,omitempty"`
+type TaxEvidenceList struct {
+	Evidence *[]TaxEvidence `json:"evidence"`
 }
 
 type TaxEvidenceCapture struct {
@@ -3305,25 +3589,26 @@ type InventoryBranchStock struct {
 }
 
 type InventoryBrowseRow struct {
-	ProductId      string  `json:"product_id"`
-	Sku            string  `json:"sku"`
-	Name           string  `json:"name"`
-	Manufacturer   string  `json:"manufacturer"`
-	Collection     string  `json:"collection"`
-	ColorFamily    string  `json:"color_family"`
-	Texture        string  `json:"texture"`
-	ProductSize    string  `json:"product_size"`
-	SoldBy         string  `json:"sold_by"`
-	Color          string  `json:"color"`
-	Finish         string  `json:"finish"`
-	Application    string  `json:"application"`
-	IsFeatured     bool    `json:"is_featured"`
-	IsSpecialOrder bool    `json:"is_special_order"`
-	OnHandBase     float64 `json:"on_hand_base"`
-	ReservedBase   float64 `json:"reserved_base"`
-	AvailableBase  float64 `json:"available_base"`
-	InTransitBase  float64 `json:"in_transit_base"`
-	AvgCostCents   *int64  `json:"avg_cost_cents,omitempty"`
+	ProductId      string    `json:"product_id"`
+	Sku            string    `json:"sku"`
+	Name           string    `json:"name"`
+	Manufacturer   string    `json:"manufacturer"`
+	Collection     string    `json:"collection"`
+	ColorFamily    string    `json:"color_family"`
+	Texture        string    `json:"texture"`
+	ProductSize    string    `json:"product_size"`
+	SoldBy         string    `json:"sold_by"`
+	Color          string    `json:"color"`
+	Finish         string    `json:"finish"`
+	Application    string    `json:"application"`
+	IsFeatured     bool      `json:"is_featured"`
+	IsSpecialOrder bool      `json:"is_special_order"`
+	OnHandBase     float64   `json:"on_hand_base"`
+	ReservedBase   float64   `json:"reserved_base"`
+	AvailableBase  float64   `json:"available_base"`
+	InTransitBase  float64   `json:"in_transit_base"`
+	AvgCostCents   *int64    `json:"avg_cost_cents,omitempty"`
+	OutAtBranches  *[]string `json:"out_at_branches,omitempty"`
 }
 
 type InventoryFacetValue struct {
@@ -3456,30 +3741,32 @@ type InventoryInTransitLine struct {
 }
 
 type InventoryShortfallRow struct {
-	ProductId           string  `json:"product_id"`
-	Sku                 string  `json:"sku"`
-	ProductName         string  `json:"product_name"`
-	BranchId            string  `json:"branch_id"`
-	BranchCode          string  `json:"branch_code"`
-	Uom                 string  `json:"uom"`
-	OnHandBase          float64 `json:"on_hand_base"`
-	ReservedBase        float64 `json:"reserved_base"`
-	AvailableBase       float64 `json:"available_base"`
-	InTransitBase       float64 `json:"in_transit_base"`
-	OnOrderBase         float64 `json:"on_order_base"`
-	ProjectedBase       float64 `json:"projected_base"`
-	ReorderPointBase    float64 `json:"reorder_point_base"`
-	ReorderQtyBase      float64 `json:"reorder_qty_base"`
-	OrderMultipleBase   float64 `json:"order_multiple_base"`
-	SuggestedQtyBase    float64 `json:"suggested_qty_base"`
-	ShortBase           float64 `json:"short_base"`
-	PreferredVendorId   string  `json:"preferred_vendor_id"`
-	PreferredVendorName string  `json:"preferred_vendor_name"`
-	LeadTimeDays        int32   `json:"lead_time_days"`
-	AvgCostCents        *int64  `json:"avg_cost_cents,omitempty"`
-	SuggestedValueCents *int64  `json:"suggested_value_cents,omitempty"`
-	DraftPoId           *string `json:"draft_po_id,omitempty"`
-	DraftPoNo           *string `json:"draft_po_no,omitempty"`
+	ProductId           string    `json:"product_id"`
+	Sku                 string    `json:"sku"`
+	ProductName         string    `json:"product_name"`
+	BranchId            string    `json:"branch_id"`
+	BranchCode          string    `json:"branch_code"`
+	Uom                 string    `json:"uom"`
+	OnHandBase          float64   `json:"on_hand_base"`
+	ReservedBase        float64   `json:"reserved_base"`
+	AvailableBase       float64   `json:"available_base"`
+	InTransitBase       float64   `json:"in_transit_base"`
+	OnOrderBase         float64   `json:"on_order_base"`
+	ProjectedBase       float64   `json:"projected_base"`
+	ReorderPointBase    float64   `json:"reorder_point_base"`
+	ReorderQtyBase      float64   `json:"reorder_qty_base"`
+	OrderMultipleBase   float64   `json:"order_multiple_base"`
+	SuggestedQtyBase    float64   `json:"suggested_qty_base"`
+	ShortBase           float64   `json:"short_base"`
+	PreferredVendorId   string    `json:"preferred_vendor_id"`
+	PreferredVendorName string    `json:"preferred_vendor_name"`
+	LeadTimeDays        int32     `json:"lead_time_days"`
+	AvgCostCents        *int64    `json:"avg_cost_cents,omitempty"`
+	SuggestedValueCents *int64    `json:"suggested_value_cents,omitempty"`
+	DraftPoId           *string   `json:"draft_po_id,omitempty"`
+	DraftPoNo           *string   `json:"draft_po_no,omitempty"`
+	ShortOrderNos       *[]string `json:"short_order_nos,omitempty"`
+	ShortOrderMore      *int32    `json:"short_order_more,omitempty"`
 }
 
 type InventoryReorderPoint struct {
@@ -3558,59 +3845,44 @@ type InventoryNudgeResult struct {
 	Note    string `json:"note"`
 }
 
-type InventoryOnHandPage struct {
-	Items      []InventoryOnHand `json:"items"`
-	NextCursor *string           `json:"next_cursor,omitempty"`
-	Limit      *int32            `json:"limit,omitempty"`
+type InventoryOnHandList struct {
+	OnHand []InventoryOnHand `json:"on_hand"`
 }
 
-type InventoryMovePage struct {
-	Items      []InventoryStockMove `json:"items"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryMoveList struct {
+	Moves []InventoryStockMove `json:"moves"`
 }
 
-type InventoryPendingFulfilmentPage struct {
-	Items      []InventoryPendingFulfilment `json:"items"`
-	NextCursor *string                      `json:"next_cursor,omitempty"`
-	Limit      *int32                       `json:"limit,omitempty"`
+type InventoryPendingFulfilmentList struct {
+	Pending []InventoryPendingFulfilment `json:"pending"`
 }
 
-type InventoryTransitDaysPairPage struct {
-	Items      []InventoryTransitDaysPair `json:"items"`
-	NextCursor *string                    `json:"next_cursor,omitempty"`
-	Limit      *int32                     `json:"limit,omitempty"`
+type InventoryTransitDaysPairList struct {
+	Pairs []InventoryTransitDaysPair `json:"pairs"`
 }
 
-type InventoryBranchStockPage struct {
-	Items      []InventoryBranchStock `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryBranchStockList struct {
+	Branches *[]InventoryBranchStock `json:"branches"`
 }
 
-type InventoryBrowsePage struct {
-	Items      []InventoryBrowseRow `json:"items"`
-	Facets     []InventoryFacet     `json:"facets"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryBrowseResult struct {
+	Rows   []InventoryBrowseRow `json:"rows"`
+	Facets *[]InventoryFacet    `json:"facets"`
+	Total  int32                `json:"total"`
+	Limit  int32                `json:"limit"`
+	Offset int32                `json:"offset"`
 }
 
-type InventoryReservationPage struct {
-	Items      []InventoryReservation `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryReservationList struct {
+	Reservations *[]InventoryReservation `json:"reservations"`
 }
 
-type InventoryTransferPage struct {
-	Items      []InventoryTransfer `json:"items"`
-	NextCursor *string             `json:"next_cursor,omitempty"`
-	Limit      *int32              `json:"limit,omitempty"`
+type InventoryTransferList struct {
+	Transfers *[]InventoryTransfer `json:"transfers"`
 }
 
-type InventoryInTransitLinePage struct {
-	Items      []InventoryInTransitLine `json:"items"`
-	NextCursor *string                  `json:"next_cursor,omitempty"`
-	Limit      *int32                   `json:"limit,omitempty"`
+type InventoryInTransitLineList struct {
+	Lines []InventoryInTransitLine `json:"lines"`
 }
 
 type InventoryShortfallPage struct {
@@ -3620,10 +3892,8 @@ type InventoryShortfallPage struct {
 	Limit           *int32                  `json:"limit,omitempty"`
 }
 
-type InventoryReorderPointPage struct {
-	Items      []InventoryReorderPoint `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
+type InventoryReorderPointList struct {
+	ReorderPoints *[]InventoryReorderPoint `json:"reorder_points"`
 }
 
 type InvCountSheet struct {
@@ -3842,6 +4112,62 @@ type LoadBatchView struct {
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
+type MessagingSearchMessage struct {
+	MessageId   string    `json:"message_id"`
+	ChannelId   string    `json:"channel_id"`
+	ChannelSlug string    `json:"channel_slug"`
+	ChannelName string    `json:"channel_name"`
+	AuthorId    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Kind        string    `json:"kind"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type MessagingSearchPerson struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	RoleCode    string `json:"role_code"`
+	RoleLabel   string `json:"role_label"`
+	BranchLabel string `json:"branch_label"`
+}
+
+type MessagingSearchChannel struct {
+	Id       string `json:"id"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Topic    string `json:"topic"`
+	IsMember bool   `json:"is_member"`
+}
+
+type MessagingSearchResults struct {
+	Messages []MessagingSearchMessage `json:"messages"`
+	People   []MessagingSearchPerson  `json:"people"`
+	Channels []MessagingSearchChannel `json:"channels"`
+}
+
+type MessagingSavedSave struct {
+	MessageId string `json:"message_id"`
+}
+
+type MessagingSavedItem struct {
+	MessageId   string    `json:"message_id"`
+	ChannelId   string    `json:"channel_id"`
+	ChannelSlug string    `json:"channel_slug"`
+	ChannelName string    `json:"channel_name"`
+	AuthorId    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Kind        string    `json:"kind"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+	SavedAt     time.Time `json:"saved_at"`
+}
+
+type MessagingSavedList struct {
+	Items []MessagingSavedItem `json:"items"`
+}
+
 type MessagingChannel struct {
 	Id          string     `json:"id"`
 	Kind        string     `json:"kind"`
@@ -3850,6 +4176,7 @@ type MessagingChannel struct {
 	Name        string     `json:"name"`
 	Topic       string     `json:"topic"`
 	Tier        string     `json:"tier"`
+	Visibility  string     `json:"visibility"`
 	IsArchived  bool       `json:"is_archived"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UnreadCount int32      `json:"unread_count"`
@@ -3862,43 +4189,170 @@ type MessagingChannelList struct {
 }
 
 type MessagingChannelCreate struct {
-	Kind     string  `json:"kind"`
-	Name     string  `json:"name"`
-	Topic    *string `json:"topic,omitempty"`
-	Slug     *string `json:"slug,omitempty"`
-	BranchId *string `json:"branch_id,omitempty"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+	Topic      *string `json:"topic,omitempty"`
+	Slug       *string `json:"slug,omitempty"`
+	BranchId   *string `json:"branch_id,omitempty"`
+	Visibility *string `json:"visibility,omitempty"`
 }
 
 type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
 }
 
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
+}
+
 type MessagingChannelMember struct {
-	ChannelId string    `json:"channel_id"`
-	UserId    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	Source    string    `json:"source"`
-	JoinedAt  time.Time `json:"joined_at"`
+	ChannelId   string    `json:"channel_id"`
+	UserId      string    `json:"user_id"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	JoinedAt    time.Time `json:"joined_at"`
+	AddedReason *string   `json:"added_reason,omitempty"`
+	AddedBy     *string   `json:"added_by,omitempty"`
+}
+
+type MessagingChannelMemberAdd struct {
+	UserId      string  `json:"user_id"`
+	Role        string  `json:"role"`
+	AddedReason *string `json:"added_reason,omitempty"`
+	AddedBy     *string `json:"added_by,omitempty"`
+}
+
+type MessagingChannelVisibilityPatch struct {
+	Visibility string `json:"visibility"`
+}
+
+type MessagingMembershipRule struct {
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
+type MessagingMembershipRuleEntry struct {
+	ChannelId  string  `json:"channel_id"`
+	Name       string  `json:"name"`
+	Kind       string  `json:"kind"`
+	BranchId   *string `json:"branch_id,omitempty"`
+	AutoScope  string  `json:"auto_scope"`
+	AutoRole   string  `json:"auto_role"`
+	Visibility string  `json:"visibility"`
+}
+
+type MessagingMembershipRulesList struct {
+	Rules []MessagingMembershipRuleEntry `json:"rules"`
+}
+
+type MessagingDirectoryEntry struct {
+	ChannelId        string  `json:"channel_id"`
+	Kind             string  `json:"kind"`
+	BranchId         *string `json:"branch_id,omitempty"`
+	Name             string  `json:"name"`
+	Topic            *string `json:"topic,omitempty"`
+	Slug             *string `json:"slug,omitempty"`
+	Joined           bool    `json:"joined"`
+	MembershipSource string  `json:"membership_source"`
+	MemberCount      int32   `json:"member_count"`
+}
+
+type MessagingDirectoryList struct {
+	Channels map[string]MessagingDirectoryEntry `json:"channels"`
+}
+
+type MessagingChannelMemberEntry struct {
+	UserId      string    `json:"user_id"`
+	DisplayName *string   `json:"display_name,omitempty"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	AddedReason *string   `json:"added_reason,omitempty"`
+	AddedBy     *string   `json:"added_by,omitempty"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+type MessagingChannelMembersList struct {
+	Members []MessagingChannelMemberEntry `json:"members"`
+}
+
+type MessagingChannelDelete struct {
+	ChannelDeleted *bool `json:"channel_deleted,omitempty"`
+	IsAdmin        *bool `json:"is_admin,omitempty"`
+}
+
+type MessagingPerson struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	RoleLabel   string `json:"role_label"`
+	BranchLabel string `json:"branch_label"`
+	IsMe        bool   `json:"is_me"`
+}
+
+type MessagingPersonPage struct {
+	Items      []MessagingPerson `json:"items"`
+	NextCursor *string           `json:"next_cursor,omitempty"`
+	Limit      *int32            `json:"limit,omitempty"`
 }
 
 type MessagingMessage struct {
-	Id           string     `json:"id"`
-	ChannelId    string     `json:"channel_id"`
-	AuthorId     *string    `json:"author_id,omitempty"`
-	AuthorName   *string    `json:"author_name,omitempty"`
-	Kind         string     `json:"kind"`
-	Body         string     `json:"body"`
-	Ref          any        `json:"ref,omitempty"`
-	ThreadRootId *string    `json:"thread_root_id,omitempty"`
-	ReplyCount   int32      `json:"reply_count"`
-	RequiresAck  *bool      `json:"requires_ack,omitempty"`
-	Priority     *string    `json:"priority,omitempty"`
-	StateKey     *string    `json:"state_key,omitempty"`
-	SupersededBy *string    `json:"superseded_by,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-	EditedAt     *time.Time `json:"edited_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Id           string                    `json:"id"`
+	ChannelId    string                    `json:"channel_id"`
+	AuthorId     *string                   `json:"author_id,omitempty"`
+	AuthorName   *string                   `json:"author_name,omitempty"`
+	Kind         string                    `json:"kind"`
+	Body         string                    `json:"body"`
+	Ref          any                       `json:"ref,omitempty"`
+	ThreadRootId *string                   `json:"thread_root_id,omitempty"`
+	ReplyCount   int32                     `json:"reply_count"`
+	RequiresAck  *bool                     `json:"requires_ack,omitempty"`
+	Priority     *string                   `json:"priority,omitempty"`
+	StateKey     *string                   `json:"state_key,omitempty"`
+	SupersededBy *string                   `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time                `json:"superseded_at,omitempty"`
+	EditedAt     *time.Time                `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time                `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	Attachments  *[]MessageAttachment      `json:"attachments,omitempty"`
+	Reactions    *[]MessagingReactionCount `json:"reactions,omitempty"`
+}
+
+type MessageAttachment struct {
+	Id             string    `json:"id"`
+	MessageId      *string   `json:"message_id,omitempty"`
+	ChannelId      *string   `json:"channel_id,omitempty"`
+	AttachmentId   *string   `json:"attachment_id,omitempty"`
+	Filename       string    `json:"filename"`
+	ContentType    string    `json:"content_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	StorageKey     *string   `json:"storage_key,omitempty"`
+	Kind           string    `json:"kind"`
+	UploadedBy     *string   `json:"uploaded_by,omitempty"`
+	SenderName     *string   `json:"sender_name,omitempty"`
+	AppwriteFileId *string   `json:"appwrite_file_id,omitempty"`
+	Bucket         *string   `json:"bucket,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type MessagingChannelAttachmentsResponse struct {
+	Photos      []MessageAttachment `json:"photos"`
+	Files       []MessageAttachment `json:"files"`
+	MemberCount int32               `json:"member_count"`
+}
+
+type MessagingChannelAttachmentCreate struct {
+	AttachmentId string  `json:"attachment_id"`
+	MessageId    *string `json:"message_id,omitempty"`
+	Filename     string  `json:"filename"`
+	ContentType  *string `json:"content_type,omitempty"`
+	SizeBytes    *int64  `json:"size_bytes,omitempty"`
+	Kind         *string `json:"kind,omitempty"`
+	StorageKey   *string `json:"storage_key,omitempty"`
 }
 
 type MessagingEventRef struct {
@@ -3939,6 +4393,10 @@ type MessagingMessagePost struct {
 	ThreadRootId *string `json:"thread_root_id,omitempty"`
 }
 
+type MessagingMessageEdit struct {
+	Body string `json:"body"`
+}
+
 type MessagingAckRequest struct {
 	Method *string `json:"method,omitempty"`
 }
@@ -3948,6 +4406,30 @@ type MessagingAck struct {
 	UserId    string    `json:"user_id"`
 	Method    string    `json:"method"`
 	AckedAt   time.Time `json:"acked_at"`
+}
+
+type MessagingReactionPut struct {
+	Emoji string `json:"emoji"`
+}
+
+type MessagingReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int32  `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+type MessagingReactionSummary struct {
+	Reactions []MessagingReactionCount `json:"reactions"`
+}
+
+type MessagingSeenByReader struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+}
+
+type MessagingSeenBy struct {
+	Count   int32                   `json:"count"`
+	Readers []MessagingSeenByReader `json:"readers"`
 }
 
 type MessagingAckProgress struct {
@@ -4034,6 +4516,48 @@ type MessagingPaymentRulePrefs struct {
 
 type MessagingPaymentRulePut struct {
 	Enabled bool `json:"enabled"`
+}
+
+type MessagingPersonEventPref struct {
+	UserId        string     `json:"user_id"`
+	EventCategory string     `json:"event_category"`
+	InApp         bool       `json:"in_app"`
+	Push          bool       `json:"push"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type MessagingPersonEventPrefPut struct {
+	Category string `json:"category"`
+	InApp    *bool  `json:"in_app,omitempty"`
+	Push     *bool  `json:"push,omitempty"`
+}
+
+type MessagingQuietHours struct {
+	UserId        string     `json:"user_id"`
+	Enabled       bool       `json:"enabled"`
+	StartLocal    string     `json:"start_local"`
+	EndLocal      string     `json:"end_local"`
+	Timezone      string     `json:"timezone"`
+	BypassUserIds []string   `json:"bypass_user_ids"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type MessagingQuietHoursPut struct {
+	Enabled       *bool     `json:"enabled,omitempty"`
+	StartLocal    *string   `json:"start_local,omitempty"`
+	EndLocal      *string   `json:"end_local,omitempty"`
+	Timezone      *string   `json:"timezone,omitempty"`
+	BypassUserIds *[]string `json:"bypass_user_ids,omitempty"`
+}
+
+type MessagingNotificationSettings struct {
+	EventPrefs []MessagingPersonEventPref `json:"event_prefs"`
+	QuietHours MessagingQuietHours        `json:"quiet_hours"`
+}
+
+type MessagingNotificationSettingsPatch struct {
+	EventPrefs *[]MessagingPersonEventPrefPut `json:"event_prefs,omitempty"`
+	QuietHours *MessagingQuietHoursPut        `json:"quiet_hours,omitempty"`
 }
 
 type MessagingRepAssignment struct {
@@ -4363,6 +4887,29 @@ type OrderChange struct {
 	NextActions           []string          `json:"next_actions"`
 }
 
+type OrderChangeQueueItem struct {
+	Id                    string   `json:"id"`
+	ChangeNo              string   `json:"change_no"`
+	OrderId               string   `json:"order_id"`
+	OrderNo               string   `json:"order_no"`
+	BranchId              string   `json:"branch_id"`
+	Status                string   `json:"status"`
+	Reason                string   `json:"reason"`
+	DeltaCents            int64    `json:"delta_cents"`
+	FinanceThresholdCents int64    `json:"finance_threshold_cents"`
+	FinanceRequired       bool     `json:"finance_required"`
+	RequestedByRole       string   `json:"requested_by_role"`
+	RequestedAt           string   `json:"requested_at"`
+	YardAckNote           *string  `json:"yard_ack_note,omitempty"`
+	NextActions           []string `json:"next_actions"`
+}
+
+type OrderChangeQueuePage struct {
+	Items      []OrderChangeQueueItem `json:"items"`
+	NextCursor *string                `json:"next_cursor,omitempty"`
+	Limit      *int32                 `json:"limit,omitempty"`
+}
+
 type OrderChangesResponse struct {
 	Changes []OrderChange `json:"changes"`
 }
@@ -4586,6 +5133,9 @@ type TaskPickTicket struct {
 	Priority        *string        `json:"priority,omitempty"`
 	Reference       *string        `json:"reference,omitempty"`
 	RequestedAt     *time.Time     `json:"requested_at,omitempty"`
+	RunNo           *string        `json:"run_no,omitempty"`
+	RunDepartsAt    *time.Time     `json:"run_departs_at,omitempty"`
+	LoadPosition    *int32         `json:"load_position,omitempty"`
 	Lines           []TaskPickLine `json:"lines"`
 	Source          string         `json:"source"`
 	HeldFromPicking *bool          `json:"held_from_picking,omitempty"`
@@ -4627,10 +5177,13 @@ type TaskPickedLine struct {
 }
 
 type TaskPickQueueEntry struct {
-	Task      Task              `json:"task"`
-	Ticket    *TaskPickTicket   `json:"ticket,omitempty"`
-	Shortages *[]TaskShortage   `json:"shortages,omitempty"`
-	Picked    *[]TaskPickedLine `json:"picked,omitempty"`
+	Task         Task              `json:"task"`
+	Ticket       *TaskPickTicket   `json:"ticket,omitempty"`
+	RunNo        *string           `json:"run_no,omitempty"`
+	RunDepartsAt *time.Time        `json:"run_departs_at,omitempty"`
+	LoadPosition *int32            `json:"load_position,omitempty"`
+	Shortages    *[]TaskShortage   `json:"shortages,omitempty"`
+	Picked       *[]TaskPickedLine `json:"picked,omitempty"`
 }
 
 type TaskPickQueuePage struct {
@@ -5034,6 +5587,7 @@ type PosReliefOutcome struct {
 	Automated         bool   `json:"automated"`
 	RequiresEvidence  bool   `json:"requires_evidence"`
 	EvidenceSatisfied bool   `json:"evidence_satisfied"`
+	TaxLabel          string `json:"tax_label"`
 }
 
 type PosSignatureCapture struct {
@@ -5192,6 +5746,7 @@ type PosTaxRate struct {
 	Jurisdiction string `json:"jurisdiction"`
 	ReasonCode   string `json:"reason_code"`
 	RateBps      int32  `json:"rate_bps"`
+	TaxLabel     string `json:"tax_label"`
 	RoundMode    string `json:"round_mode"`
 }
 
@@ -6675,23 +7230,27 @@ type PurchasingVendorMaster struct {
 }
 
 type PurchasingPO struct {
-	Id               string             `json:"id"`
-	PoNo             string             `json:"po_no"`
-	VendorId         string             `json:"vendor_id"`
-	VendorName       string             `json:"vendor_name"`
-	BranchId         string             `json:"branch_id"`
-	Status           PurchasingPOStatus `json:"status"`
-	ExpectedAt       *string            `json:"expected_at,omitempty"`
-	OrderedAt        *time.Time         `json:"ordered_at,omitempty"`
-	Notes            string             `json:"notes"`
-	LineCount        int32              `json:"line_count"`
-	Currency         PurchasingCurrency `json:"currency"`
-	FxRate           float64            `json:"fx_rate"`
-	DeliveryMethod   *string            `json:"delivery_method,omitempty"`
-	SubtotalCents    *int64             `json:"subtotal_cents,omitempty"`
-	SubtotalCadCents *int64             `json:"subtotal_cad_cents,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
+	Id                         string             `json:"id"`
+	PoNo                       string             `json:"po_no"`
+	VendorId                   string             `json:"vendor_id"`
+	VendorName                 string             `json:"vendor_name"`
+	BranchId                   string             `json:"branch_id"`
+	Status                     PurchasingPOStatus `json:"status"`
+	ExpectedAt                 *string            `json:"expected_at,omitempty"`
+	OrderedAt                  *time.Time         `json:"ordered_at,omitempty"`
+	Notes                      string             `json:"notes"`
+	LineCount                  int32              `json:"line_count"`
+	Currency                   PurchasingCurrency `json:"currency"`
+	FxRate                     float64            `json:"fx_rate"`
+	DeliveryMethod             *string            `json:"delivery_method,omitempty"`
+	SubtotalCents              *int64             `json:"subtotal_cents,omitempty"`
+	SubtotalCadCents           *int64             `json:"subtotal_cad_cents,omitempty"`
+	WarrantyCreditAppliedCents *int64             `json:"warranty_credit_applied_cents,omitempty"`
+	WarrantyClaimId            *string            `json:"warranty_claim_id,omitempty"`
+	WarrantyClaimNo            *string            `json:"warranty_claim_no,omitempty"`
+	NetTotalCents              *int64             `json:"net_total_cents,omitempty"`
+	CreatedAt                  time.Time          `json:"created_at"`
+	UpdatedAt                  time.Time          `json:"updated_at"`
 }
 
 type PurchasingPOLine struct {
@@ -6712,8 +7271,24 @@ type PurchasingPOLine struct {
 
 type PurchasingPODetail struct {
 	PurchasingPO
-	Lines    []PurchasingPOLine  `json:"lines"`
-	Receipts []PurchasingReceipt `json:"receipts"`
+	Lines              []PurchasingPOLine            `json:"lines"`
+	Receipts           []PurchasingReceipt           `json:"receipts"`
+	OpenWarrantyCredit *PurchasingOpenWarrantyCredit `json:"open_warranty_credit,omitempty"`
+}
+
+type PurchasingApplyWarrantyCreditRequest struct {
+	ClaimId     *string `json:"claim_id,omitempty"`
+	AmountCents *int64  `json:"amount_cents,omitempty"`
+}
+
+type PurchasingOpenWarrantyCredit struct {
+	ClaimId     string  `json:"claim_id"`
+	ClaimNo     string  `json:"claim_no"`
+	AmountCents int64   `json:"amount_cents"`
+	Description string  `json:"description"`
+	Summary     *string `json:"summary,omitempty"`
+	VendorId    *string `json:"vendor_id,omitempty"`
+	VendorName  *string `json:"vendor_name,omitempty"`
 }
 
 type PurchasingReceipt struct {
@@ -7437,6 +8012,7 @@ type QuoteTerms struct {
 	DepositCents     int64            `json:"deposit_cents"`
 	SubtotalCents    int64            `json:"subtotal_cents"`
 	TaxCents         int64            `json:"tax_cents"`
+	TaxLabel         string           `json:"tax_label"`
 	TotalCents       int64            `json:"total_cents"`
 	Lines            []QuoteTermsLine `json:"lines"`
 }
@@ -7517,6 +8093,7 @@ type QuotePublicView struct {
 	Lines            []QuotePublicLine `json:"lines"`
 	SubtotalCents    int64             `json:"subtotal_cents"`
 	TaxCents         int64             `json:"tax_cents"`
+	TaxLabel         string            `json:"tax_label"`
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
@@ -7558,6 +8135,7 @@ type QuoteAcceptanceResult struct {
 	AcceptedAt          time.Time `json:"accepted_at"`
 	SubtotalCents       int64     `json:"subtotal_cents"`
 	TaxCents            int64     `json:"tax_cents"`
+	TaxLabel            string    `json:"tax_label"`
 	TotalCents          int64     `json:"total_cents"`
 	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }
@@ -8693,6 +9271,37 @@ type WarrantyVendorProfilePage struct {
 	Items      []WarrantyVendorProfile `json:"items"`
 	NextCursor *string                 `json:"next_cursor,omitempty"`
 	Limit      *int32                  `json:"limit,omitempty"`
+}
+
+type WarrantyPolicy struct {
+	BranchId            *string    `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64      `json:"claim_threshold_cents"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyPolicyInput struct {
+	BranchId            *string `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
 }
 
 type WarrantyAddress struct {

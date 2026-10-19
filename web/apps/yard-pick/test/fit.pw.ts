@@ -53,8 +53,8 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
     await noSideways(page, `${theme}: the held order`);
 
     // A pick opened and started.
-    await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
-    await page.getByRole("button", { name: "Start picking" }).click();
+    await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
     await expect(page.locator("[data-task-status]")).toHaveText("Picking");
     await noSideways(page, `${theme}: the pick started`);
 
@@ -96,7 +96,7 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
     await page.locator("[data-shortage-sheet]").getByRole("button", { name: /^(Cancel|Never mind)$/ }).click();
     // The pick that already holds the shortages: SO-1041.
     await page.getByRole("button", { name: "Back to the queue" }).click();
-    await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+    await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
     await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
     await noSideways(page, `${theme}: the pick that carries shortages`);
     await page.locator("[data-shortage]", { hasText: "22 SQFT" }).scrollIntoViewIfNeeded();
@@ -106,7 +106,7 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
 
     // Staged.
     await page.getByRole("button", { name: "Back to the queue" }).click();
-    await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
+    await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
     await page.getByLabel("The stage location").fill("Bay 3");
     await page.getByRole("button", { name: "Stage", exact: true }).click();
     await expect(page.locator("[data-notice]")).toContainText("Staged at Bay 3");

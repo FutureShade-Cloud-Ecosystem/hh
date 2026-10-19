@@ -24,10 +24,16 @@ var (
 	ErrChargePending = errors.New("payments: charge pending, retry")
 )
 
-// DefaultChargeCurrency is the settlement currency a Service charges in until the dealer's
-// configuration sets one (DEALER_CURRENCY, read at boot). The demo tenant is US dollars; no
-// dealer's currency is hard coded in the charge path.
-const DefaultChargeCurrency = "USD"
+// chargeCurrency is the settlement currency of a dealer with no currency source wired: the Ontario
+// dealer (sec. 4.2; CAD settlement on Run is unconfirmed, tracked as an open question - the stub is
+// currency-agnostic). A wired source (WithCurrency) answers the dealer's own currency instead.
+const chargeCurrency = "CAD"
+
+// CurrencySource is the dealer's own currency, read through a seam the composition root adapts from
+// the settings module's dealer configuration. Uncached: a change is live at the next charge.
+type CurrencySource interface {
+	DealerCurrency(ctx context.Context) (string, error)
+}
 
 // paymentStore is the persistence the Service needs. Real impl: Repository (pgx); tests
 // use a fake. Every operation is tenant-scoped by customerID.
@@ -99,36 +105,36 @@ type Service struct {
 	// a payment path with no double-charge guard is not a degraded mode, it is the bug DIB-415 exists
 	// to close, and it must not be reachable by forgetting to implement an interface.
 	intents intentStore
-	// currency is the ISO 4217 code every charge is made in (WithCurrency; DefaultChargeCurrency
-	// until the dealer's configuration says otherwise). Amounts are never converted.
-	currency string
+	// currency is nil for a service built without a dealer currency (the scaffold and the test
+	// fakes); a charge is then CAD, the Ontario dealer.
+	currency CurrencySource
 }
 
-// WithCurrency sets the charge currency from the dealer's configuration. A blank or malformed code
-// (not three ASCII letters) leaves the current one in place, so a bad setting cannot send the
-// processor an unusable currency; config validation refuses it at boot before it gets here.
-func (s *Service) WithCurrency(code string) *Service {
-	if c := strings.ToUpper(strings.TrimSpace(code)); ValidCurrencyCode(c) {
-		s.currency = c
-	}
+// WithCurrency wires the dealer's currency source. The charge currency is read once per charge,
+// after the invoices validate and before the intent is claimed, so a failed read refuses with no
+// intent held and no money moved.
+func (s *Service) WithCurrency(src CurrencySource) *Service {
+	s.currency = src
 	return s
 }
 
-// ValidCurrencyCode reports whether code is three upper case ASCII letters.
-func ValidCurrencyCode(code string) bool {
-	if len(code) != 3 {
-		return false
+// chargeCurrencyFor answers the currency a charge is made in: the dealer's, or CAD with no source.
+func (s *Service) chargeCurrencyFor(ctx context.Context) (string, error) {
+	if s.currency == nil {
+		return chargeCurrency, nil
 	}
-	for _, r := range code {
-		if r < 'A' || r > 'Z' {
-			return false
-		}
+	c, err := s.currency.DealerCurrency(ctx)
+	if err != nil {
+		return "", fmt.Errorf("payments: the dealer's currency could not be read, nothing was charged: %w", err)
 	}
-	return true
+	if c == "" {
+		return "", errors.New("payments: the dealer's currency is blank, nothing was charged")
+	}
+	return c, nil
 }
 
 func NewService(store paymentStore, gateway PaymentGateway) *Service {
-	s := &Service{store: store, gateway: gateway, currency: DefaultChargeCurrency}
+	s := &Service{store: store, gateway: gateway}
 	s.intents, _ = store.(intentStore)
 	return s
 }
@@ -348,6 +354,13 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 		sum += a.AmountCents
 	}
 
+	// The dealer's currency, read before the intent is claimed: a failed read holds no intent and moves
+	// no money. A replay never reaches here (it answered above, from the stored intent).
+	currency, err := s.chargeCurrencyFor(ctx)
+	if err != nil {
+		return Payment{}, err
+	}
+
 	// - DIB-415: claim the durable intent BEFORE the irreversible act -
 	// This row is committed before a single byte reaches the processor. Everything after it is
 	// recoverable; nothing before it has spent anyone's money.
@@ -369,7 +382,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	res, err := s.gateway.Charge(ctx, ChargeRequest{
 		CustomerID:     customerID,
 		AmountCents:    sum,
-		Currency:       s.currency,
+		Currency:       currency,
 		MethodToken:    methodToken,
 		Nonce:          nonce,
 		IdempotencyKey: idemKey,

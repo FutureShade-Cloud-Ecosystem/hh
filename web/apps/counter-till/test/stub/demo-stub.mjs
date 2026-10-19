@@ -5,6 +5,7 @@
 // the engine's, the returns rules are RT-B's), and nothing in the app imports
 // this file. When the real routes land, the app and this suite keep working
 // against them unchanged, because both speak only the contract's shapes:
+//   GET  /api/v1/tenant/config              -> TenantPublicConfig
 //   GET  /api/v1/demo/flows                 -> DemoFlowList
 //   POST /api/v1/demo/session               -> DemoSessionResponse
 //   GET  /api/v1/branches                   -> Branch[]
@@ -95,6 +96,10 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
   { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
+  { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
+  { flow: "hr", role_code: "hr", label: "HR" },
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
+  { flow: "outside-sales", role_code: "outside_sales", label: "Outside Sales" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -142,6 +147,42 @@ const USERS = {
     display_name: "Yard persona (demo)",
     role_code: "yard_team",
     role_name: "Yard Team",
+    tier: 3,
+    scope: "BRANCH",
+  },
+  "general-manager": {
+    user_id: "demo-account-general-manager",
+    email: "general-manager@demo.invalid",
+    display_name: "General manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  hr: {
+    user_id: "demo-account-hr",
+    email: "hr@demo.invalid",
+    display_name: "HR (demo)",
+    role_code: "hr",
+    role_name: "HR",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  "branch-manager": {
+    user_id: "demo-account-branch-manager",
+    email: "branch-manager@demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "outside-sales": {
+    user_id: "demo-account-outside-sales",
+    email: "outside-sales@demo.invalid",
+    display_name: "Outside sales (demo)",
+    role_code: "outside_sales",
+    role_name: "Outside Sales",
     tier: 3,
     scope: "BRANCH",
   },
@@ -342,6 +383,28 @@ const CUSTOMERS = [
     credit_limit_cents: 200000,
     open_balance_cents: 0,
     percent_off: 12,
+    on_hold: true,
+  },
+  {
+    id: "c-palmera",
+    account_no: "C03",
+    name: "Palmera Landscapes",
+    customer_type: "CONTRACTOR",
+    payment_terms_days: 30,
+    credit_limit_cents: 1500000,
+    open_balance_cents: 246000,
+    percent_off: 15,
+    on_hold: false,
+  },
+  {
+    id: "c-bluffside",
+    account_no: "C08",
+    name: "Bluffside Builders",
+    customer_type: "BUILDER",
+    payment_terms_days: 30,
+    credit_limit_cents: 2800000,
+    open_balance_cents: 2482000,
+    percent_off: 10,
     on_hold: true,
   },
   // Round 15: DEMO-C07's shape, a retail account with no credit line: the gate refuses it on
@@ -561,11 +624,14 @@ function statusIsPostPick(status) {
   return status === "PICKING" || status === "READY" || status === "PARTIALLY_FULFILLED";
 }
 
-// changeNextActions (core change.go), for the caller this stub minted.
-function changeNextActions(status, manager) {
-  if (status === "PENDING_YARD") return ["yard_ack", "reject", "cancel"];
-  if (status === "PENDING_FINANCE") return manager ? ["finance_approve", "reject", "cancel"] : ["reject", "cancel"];
-  if (status === "APPROVED") return manager ? ["apply", "reject", "cancel"] : ["cancel"];
+// changeNextActions (core change.go changeActions), for the caller this stub minted. Reject is any staff while
+// the yard decides and a manager's alone after; cancel is the requester or a manager; sign_apply, finance_approve
+// and apply are a manager's.
+function changeNextActions(status, manager, requester = false) {
+  const cancel = manager || requester ? ["cancel"] : [];
+  if (status === "PENDING_YARD") return ["yard_ack", "reject", ...cancel];
+  if (status === "PENDING_FINANCE") return [...(manager ? ["sign_apply", "finance_approve", "reject"] : []), ...cancel];
+  if (status === "APPROVED") return [...(manager ? ["sign_apply", "apply", "reject"] : []), ...cancel];
   return [];
 }
 
@@ -1951,6 +2017,19 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The public tenant config route: no credential, dealer fields only.
+  if (request.method === "GET" && path === "/api/v1/tenant/config") {
+    respondJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
+    });
+    return;
+  }
+
   // The demo routes stay public, exactly as the contract marks them, and echo
   // the org they were sent for the suite's own assertion.
   if (request.method === "GET" && path === "/api/v1/demo/flows") {
@@ -2328,10 +2407,12 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no such customer account" });
       return;
     }
-    const pastDue = customer.account_no === "C02" ? 41500 : 0;
+    const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";
+    const pastDue = customer.account_no === "C02" ? 41500 : (isBluffside ? 1482000 : 0);
+    const bucket = isBluffside ? "61 to 90" : (pastDue > 0 ? "30" : undefined);
     respondJson(response, 200, {
       past_due_cents: pastDue,
-      oldest_bucket: pastDue > 0 ? "30" : undefined,
+      oldest_bucket: bucket,
       on_hold: customer.on_hold,
     });
     return;
@@ -3286,7 +3367,7 @@ const server = createServer(async (request, response) => {
     const walls = changeWalls(caller);
     const rows = [...CHANGES.values()]
       .filter((co) => co.order_id === found.row.order_id)
-      .map((co) => ({ ...co, next_actions: changeNextActions(co.status, walls.manager) }))
+      .map((co) => ({ ...co, next_actions: changeNextActions(co.status, walls.manager, co.requested_by === caller.userId) }))
       .reverse();
     respondJson(response, 200, { changes: rows });
     return;
@@ -3386,7 +3467,7 @@ const server = createServer(async (request, response) => {
         lines,
       };
       CHANGES.set(id, co);
-      respondJson(response, 201, { ...co, next_actions: changeNextActions(co.status, changeWalls(caller).manager) });
+      respondJson(response, 201, { ...co, next_actions: changeNextActions(co.status, changeWalls(caller).manager, true) });
     });
     return;
   }
@@ -3416,9 +3497,16 @@ const server = createServer(async (request, response) => {
     }
     if (action === "reject" || action === "cancel") {
       if (isTerminalChange(co.status)) return terminal();
+      // The core's service decides, not only the route guard: cancel is the requester or a manager, and
+      // a reject after the yard is a manager's alone.
+      const own = co.requested_by === caller.userId;
+      if ((action === "cancel" && !manager && !own) || (action === "reject" && !manager && co.status !== "PENDING_YARD")) {
+        respondJson(response, 403, { error: "forbidden" });
+        return;
+      }
       co.status = action === "reject" ? "REJECTED" : "CANCELLED";
       co.decision_note = "";
-      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager, co.requested_by === caller.userId) });
       return;
     }
     if (action === "apply") {
@@ -3465,7 +3553,7 @@ const server = createServer(async (request, response) => {
       if (owed !== undefined) owed.order_total_cents = sale.total_cents;
       co.status = "APPLIED";
       co.applied_at = new Date().toISOString();
-      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager, co.requested_by === caller.userId) });
       return;
     }
     respondJson(response, 404, { error: "not found" });
@@ -3479,7 +3567,7 @@ const server = createServer(async (request, response) => {
     }
     respondJson(response, 200, {
       ...co,
-      next_actions: changeNextActions(co.status, changeWalls(caller).manager),
+      next_actions: changeNextActions(co.status, changeWalls(caller).manager, co.requested_by === caller.userId),
     });
     return;
   }
@@ -3834,6 +3922,7 @@ const server = createServer(async (request, response) => {
         automated: true,
         requires_evidence: false,
         evidence_satisfied: false,
+        tax_label: "HST",
       });
     });
     return;

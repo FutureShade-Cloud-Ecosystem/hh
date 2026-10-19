@@ -84,7 +84,7 @@ describe("the landing every internal role gets in the Work shell", () => {
     inside_sales: "counter-till",
     outside_sales: "quote-desk",
     yard_team: "buying-and-stock",
-    driver: null,
+    driver: "house-messages",
     super_admin: "dealer-admin",
     dealer_admin: "dealer-admin",
     fb_operator: null,
