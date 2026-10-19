@@ -220,7 +220,15 @@ function frameCell(
     banner === ''
     ? ''
     : renderMarkup(ShellBanner, banner === 'read-only' ? { mode: banner } : { mode: banner, waiting: 3 });
-  const rail = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: railCollapsed, heading: 'Pinned' });
+  const rail = renderMarkup(ShellRail, {
+    pins: DEMO_PINS,
+    active: DEMO_CURRENT,
+    collapsed: railCollapsed,
+    heading: 'Pinned',
+    // A collapsed frame keeps its icons in view (the pinned icons mode): the
+    // unpinned reveal on hover is the pin menu cell's own story below.
+    pin: railCollapsed ? 'icons' : 'off',
+  });
   return (
     `<figure class="cell"><figcaption>${title}</figcaption>` +
     `<div class="shell-frame" style="width:min(${width}px, 100%)">` +
@@ -279,6 +287,7 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   const railCollapsedPhone = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: true });
   const railExpanded = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: false, heading: 'Pinned' });
   const railEmpty = renderMarkup(ShellRail, { pins: [], active: '', collapsed: false });
+  const railPinWide = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, pin: 'wide' });
   const bannerOffline = renderMarkup(ShellBanner, { mode: 'offline', waiting: 3 });
   const bannerOfflineEmpty = renderMarkup(ShellBanner, { mode: 'offline', waiting: 0 });
   const bannerOfflineOne = renderMarkup(ShellBanner, { mode: 'offline', waiting: 1 });
@@ -295,6 +304,11 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   // the same declarations the element's hover and focus rules carry, held to a fixed row.
   const FORCE_TOOLTIP = `.rail[data-collapsed='true'] .row[data-key='${DEMO_CURRENT}'] .label { opacity: 1; }`;
   const FORCE_FOCUS = ".mi[data-key='yard-pick/receiving'] { outline: 2px solid var(--hh-focus-ring); outline-offset: -2px; }"
+  // The unpinned collapsed rail hides its rows until hover or focus (GAPS-r2
+  // row G1); the cells that show the strip force them, and the pin menu cell
+  // forces the menu the hover would reveal.
+  const FORCE_ROWS = ".rail[data-pin='off'][data-collapsed='true'] .row { display: flex; }";
+  const FORCE_PIN_MENU = ".rail .pin-menu { display: flex; }";
 
   return `<!doctype html>
 <html lang="en"${themeAttr}>
@@ -343,6 +357,7 @@ ${frameCell('the frame, desktop 1280, idle', 1280, '', {})}
 <section class="width-frame" data-section="band"><h2>The band, state by state</h2>
 <div class="grid">
 ${cell('hh-shell-header', 'band at rest, pinned (the active pin marked)', bandAt())}
+${cell('hh-shell-header', 'the board band (GAPS-r2 row G1): the lockup left, the selector centred, DEMO and Synced chips', bandAt({ variant: 'band', demo: true }))}
 ${cell('hh-shell-header', 'band at rest, unpinned', bandAt({ pinned: false }))}
 ${cell('hh-shell-header', 'band, pin disabled: no current surface', bandAt({ currentKey: '', pinned: false }))}
 ${cell('hh-shell-header', 'band, bell at zero', bandAt({ notifications: 0 }))}
@@ -361,8 +376,10 @@ ${cell('hh-shell-header', 'the selector panel, phone 390, House Messages as a fr
 ${syncSection()}
 <section class="width-frame" data-section="rail"><h2>The pinned rail: collapsed, expanded, and the empty first impression</h2>
 <div class="grid">
-${cell('hh-shell-rail', 'collapsed, phone 390, the pins only, icons and tooltips', railCollapsedPhone, { width: 390 })}
-${cell('hh-shell-rail', 'collapsed, a tooltip revealed (the hover and focus state, forced for this page), the active bar', railCollapsedPhone, { force: FORCE_TOOLTIP })}
+${cell('hh-shell-rail', 'collapsed, phone 390, the pins only, icons and tooltips (the hover reveal forced for this page)', railCollapsedPhone, { width: 390, force: FORCE_ROWS })}
+${cell('hh-shell-rail', 'collapsed, a tooltip revealed (the hover and focus state, forced for this page), the active bar', railCollapsedPhone, { force: FORCE_ROWS + FORCE_TOOLTIP })}
+${cell('hh-shell-rail', 'the pin menu the hover reveals: Pin as icons and Pin wide (forced for this page)', railCollapsedPhone, { force: FORCE_PIN_MENU })}
+${cell('hh-shell-rail', 'pinned wide: the wider rail body stays, Pin wide pressed', railPinWide)}
 ${cell('hh-shell-rail', 'expanded, the words on, the active pin marked', railExpanded)}
 ${cell('hh-shell-rail', 'empty, expanded: the first impression', railEmpty)}
 </div>

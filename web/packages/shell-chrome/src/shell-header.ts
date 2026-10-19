@@ -38,6 +38,14 @@ import {
   type SwitcherGroup,
 } from './shell-state.js';
 
+/** The band's two variants: the compact band the fixture pages host serves,
+ * and the board's white band (GAPS-r2 row G1): the GABLE lockup at the left,
+ * the "App > Surface" selector centred, DEMO and Synced chips in the chip
+ * run, the bell with its count, the pin, the account chip. */
+export const SHELL_HEADER_VARIANTS = ['compact', 'band'] as const;
+
+export type ShellHeaderVariant = (typeof SHELL_HEADER_VARIANTS)[number];
+
 /** The badge mark, the measured H geometry the design system's own header
  * carries (its source of truth is the design system's src/header.ts, rows 953
  * and 968): the badge yellow square ground, the mark in the accent ink. */
@@ -62,6 +70,26 @@ const styles = css`
     padding: var(--hh-s-8) var(--hh-s-16);
     background: var(--hh-card);
     border-bottom: 1px solid var(--hh-line);
+  }
+  /* The board's white band (GAPS-r2 row G1): the lockup at the left, the
+   * selector centred by the grid's middle column, the chip run at the right. */
+  .band[data-variant='band'] {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
+  .band[data-variant='band'] .brand {
+    justify-self: start;
+  }
+  .band[data-variant='band'] .selector {
+    justify-self: center;
+  }
+  .band[data-variant='band'] .cluster {
+    justify-self: end;
+    margin-left: 0;
+  }
+  .band[data-variant='band'] + .panel {
+    left: 50%;
+    transform: translateX(-50%);
   }
   .brand {
     display: flex;
@@ -400,6 +428,7 @@ export class ShellHeader extends HHElement {
     stalls: { type: Number, attribute: 'stalls' },
     notifications: { type: Number, attribute: 'notifications' },
     selectorOpen: { type: Boolean, attribute: 'selector-open' },
+    variant: { attribute: 'variant' },
   };
 
   /** The org's name, beside the mark. Empty renders no word. */
@@ -428,6 +457,10 @@ export class ShellHeader extends HHElement {
   declare notifications: number;
   /** The selector panel. The control toggles it; a shell may set it too. */
   declare selectorOpen: boolean;
+  /** The band's variant: compact (the default, the fixture pages host) or
+   * band (the board's white band: lockup left, selector centred, DEMO and
+   * Synced chips in the run). */
+  declare variant: string;
 
   constructor() {
     super();
@@ -445,6 +478,7 @@ export class ShellHeader extends HHElement {
     this.stalls = 0;
     this.notifications = 0;
     this.selectorOpen = false;
+    this.variant = 'compact';
   }
 
   override connectedCallback(): void {
@@ -468,6 +502,14 @@ export class ShellHeader extends HHElement {
       throw new Error(
         `hh-shell-header was given the unknown sync state ${JSON.stringify(this.syncState)}; ` +
           `expected one of: ${SHELL_SYNC_STATES.join(', ')}`,
+      );
+    }
+    if (changed.has('variant') && !(SHELL_HEADER_VARIANTS as readonly string[]).includes(this.variant)) {
+      // Same rule as the sync chip: an unknown variant is a defect at the
+      // call site, refused loudly, never a quietly wrong band.
+      throw new Error(
+        `hh-shell-header was given the unknown variant ${JSON.stringify(this.variant)}; ` +
+          `expected one of: ${SHELL_HEADER_VARIANTS.join(', ')}`,
       );
     }
     if (changed.has('selectorOpen')) {
@@ -602,14 +644,15 @@ export class ShellHeader extends HHElement {
     });
     const initials = initialsOf(this.user);
     const bellName = this.notifications > 0 ? `Notifications, ${this.notifications} unread` : 'Notifications';
+    const isBand = this.variant === 'band';
     return html`
-      <header class="band" role="banner">
+      <header class="band" data-variant=${isBand ? 'band' : 'compact'} role="banner">
         <div class="brand">
           <span class="mark" aria-hidden="true">
             <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
           </span>
           ${this.org !== '' ? html`<span class="org">${this.org}</span>` : nothing}
-          ${this.demo ? html`<span class="demo" role="note">Demo</span>` : nothing}
+          ${this.demo && !isBand ? html`<span class="demo" role="note">Demo</span>` : nothing}
         </div>
         <button
           class="selector"
@@ -629,6 +672,7 @@ export class ShellHeader extends HHElement {
           </span>
         </button>
         <div class="cluster">
+          ${this.demo && isBand ? html`<span class="demo" role="note">DEMO</span>` : nothing}
           <span class="chip" data-state=${this.syncState} data-kind=${chip.kind} data-alarm=${chip.alarm ? 'true' : 'false'}>
             <span class="dot" aria-hidden="true"></span>
             <span class="word">${chip.label}</span>

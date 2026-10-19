@@ -245,6 +245,30 @@ export function railCollapsedToStored(collapsed: boolean): string {
   return collapsed ? '1' : '0';
 }
 
+// ── the rail's pin mode (GAPS-r2 row G1) ─────────────────────────────────────────────────────────
+
+export const RAIL_PIN_KEY = 'hh-shell.rail-pin';
+
+/**
+ * The rail's pin mode, the board's two pin choices and their off twin: the
+ * icons column pinned open, the wider rail body pinned open, or nothing
+ * pinned (the rail waits as the toggle and reveals on hover or focus).
+ */
+export type RailPinMode = 'icons' | 'wide' | 'off';
+
+/**
+ * Silence means off, and garbage and future values degrade to off, never an
+ * error: the rail stays a toggle until a person pins a posture of their own.
+ */
+export function railPinFromStored(stored: string | null): RailPinMode {
+  return stored === 'icons' || stored === 'wide' ? stored : 'off';
+}
+
+/** The stored literal for a pin mode: the mode word itself. */
+export function railPinToStored(pin: RailPinMode): string {
+  return pin;
+}
+
 // ── the app switcher model, by role, over an injected manifest slice ─────────────────────────────
 
 /**

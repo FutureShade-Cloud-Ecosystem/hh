@@ -235,6 +235,26 @@
     background: var(--hh-card);
     border-bottom: 1px solid var(--hh-line);
   }
+  /* The board's white band (GAPS-r2 row G1): the lockup at the left, the
+   * selector centred by the grid's middle column, the chip run at the right. */
+  .band[data-variant='band'] {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
+  .band[data-variant='band'] .brand {
+    justify-self: start;
+  }
+  .band[data-variant='band'] .selector {
+    justify-self: center;
+  }
+  .band[data-variant='band'] .cluster {
+    justify-self: end;
+    margin-left: 0;
+  }
+  .band[data-variant='band'] + .panel {
+    left: 50%;
+    transform: translateX(-50%);
+  }
   .brand {
     display: flex;
     align-items: center;

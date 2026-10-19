@@ -304,6 +304,67 @@
     width: 22px;
     height: 22px;
   }
+  /* The pin menu (GAPS-r2 row G1): the board's two pin choices, "Pin as
+   * icons" and "Pin wide". Hidden at rest; the rail's own hover or focus
+   * reveals it, instantly, because an animated bar is an extra bar (the G3
+   * check). Beside the strip like a row's tooltip, never a new column. */
+  .pin-menu {
+    display: none;
+    position: absolute;
+    left: calc(100% + 10px);
+    top: var(--hh-s-12);
+    z-index: var(--hh-z-dropdown);
+    flex-direction: column;
+    gap: 2px;
+    width: max-content;
+    padding: var(--hh-s-4);
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-line);
+    border-radius: 8px;
+    box-shadow: var(--hh-elev-2);
+  }
+  .rail:hover .pin-menu,
+  .rail:focus-within .pin-menu {
+    display: flex;
+  }
+  .pin-item {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 10px;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.15;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pin-item:hover {
+    background: var(--hh-row-alt);
+    color: var(--hh-text);
+  }
+  .pin-item:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .pin-item[aria-pressed='true'] {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+  }
+  /* Unpinned and collapsed, the rail waits as the toggle button alone: the
+   * icons column reveals on hover or focus, and stays only once a person
+   * pins it (pin icons or pin wide). */
+  .rail[data-pin='off'][data-collapsed='true'] .row {
+    display: none;
+  }
+  .rail[data-pin='off'][data-collapsed='true']:hover .row,
+  .rail[data-pin='off'][data-collapsed='true']:focus-within .row {
+    display: flex;
+  }
   .row {
     position: relative;
     display: flex;
