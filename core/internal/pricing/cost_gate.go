@@ -1,5 +1,11 @@
 package pricing
 
+import (
+	"net/http"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+)
+
 // cost_gate.go is the X3 half of the floor preview: the figures that name a cost (the margin each
 // product would carry, and the margin it carries today) are held out by role, through the ONE
 // predicate that decides cost visibility everywhere, the dealer's role configuration's cost and
@@ -24,3 +30,22 @@ func (h *Handler) WithCostRoles(roles CostRoles) *Handler {
 // CostRolesWired answers whether the cost rule is wired, the leg the composition root's boot
 // fail-fast reads.
 func (h *Handler) CostRolesWired() bool { return h.costRoles != nil }
+
+// costAllowed answers whether the request's caller may receive the margin legs of a floor preview.
+// Fail closed on every leg but a resolved yes: an unwired rule, an unstamped caller, a role the bridge
+// cannot name or an unreadable configuration receives no margin.
+func (h *Handler) costAllowed(r *http.Request) bool {
+	if h.costRoles == nil {
+		return false
+	}
+	c, ok := identity.StaffContextFromContext(r.Context())
+	if !ok {
+		return false
+	}
+	role, ok := identity.CanonicalForERPCode(c.RoleCode)
+	if !ok || role == "" {
+		return false
+	}
+	allowed, err := h.costRoles.SeesCostAndMargin(role)
+	return err == nil && allowed
+}

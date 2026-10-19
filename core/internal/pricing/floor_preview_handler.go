@@ -28,21 +28,23 @@ type floorPreviewBody struct {
 }
 
 type floorPreviewItemJSON struct {
-	ProductID          string `json:"product_id"`
-	SKU                string `json:"sku"`
-	Name               string `json:"name"`
-	CategoryID         string `json:"category_id,omitempty"`
-	CustomerType       string `json:"customer_type,omitempty"`
-	BranchID           string `json:"branch_id,omitempty"`
-	BranchCode         string `json:"branch_code,omitempty"`
-	BranchName         string `json:"branch_name,omitempty"`
-	FinalCents         int64  `json:"final_cents"`
-	MarginBps          int64  `json:"margin_bps"`
-	FloorBps           int64  `json:"floor_bps"`
+	ProductID    string `json:"product_id"`
+	SKU          string `json:"sku"`
+	Name         string `json:"name"`
+	CategoryID   string `json:"category_id,omitempty"`
+	CustomerType string `json:"customer_type,omitempty"`
+	BranchID     string `json:"branch_id,omitempty"`
+	BranchCode   string `json:"branch_code,omitempty"`
+	BranchName   string `json:"branch_name,omitempty"`
+	FinalCents   int64  `json:"final_cents"`
+	// The margin legs name a cost beside the unit price, so they are pointers: absent for a caller off
+	// the cost and margin list, never a zero (cost_gate.go).
+	MarginBps          *int64 `json:"margin_bps,omitempty"`
+	FloorBps           *int64 `json:"floor_bps,omitempty"`
 	PriceUOM           string `json:"price_uom"`
 	Source             string `json:"source"`
 	PreviousFinalCents int64  `json:"previous_final_cents"`
-	PreviousMarginBps  int64  `json:"previous_margin_bps"`
+	PreviousMarginBps  *int64 `json:"previous_margin_bps,omitempty"`
 	AlreadyUnderFloor  bool   `json:"already_under_floor"`
 }
 
@@ -107,15 +109,21 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 		h.writeErr(w, r, err)
 		return
 	}
+	figuresOK := h.costAllowed(r)
 	items := make([]floorPreviewItemJSON, 0, len(out.Items))
 	for _, it := range out.Items {
-		items = append(items, floorPreviewItemJSON{
+		item := floorPreviewItemJSON{
 			ProductID: it.ProductID, SKU: it.SKU, Name: it.Name, CategoryID: it.CategoryID, CustomerType: it.CustomerType,
 			BranchID: it.BranchID, BranchCode: it.BranchCode, BranchName: it.BranchName,
-			FinalCents: it.FinalCents, MarginBps: it.MarginBps, FloorBps: it.FloorBps, PriceUOM: it.PriceUOM,
-			Source: it.Source, PreviousFinalCents: it.PreviousFinalCents, PreviousMarginBps: it.PreviousMarginBps,
+			FinalCents: it.FinalCents, PriceUOM: it.PriceUOM,
+			Source: it.Source, PreviousFinalCents: it.PreviousFinalCents,
 			AlreadyUnderFloor: it.AlreadyUnderFloor,
-		})
+		}
+		if figuresOK {
+			margin, floor, previous := it.MarginBps, it.FloorBps, it.PreviousMarginBps
+			item.MarginBps, item.FloorBps, item.PreviousMarginBps = &margin, &floor, &previous
+		}
+		items = append(items, item)
 	}
 	noCostBranches := make([]floorNoCostBranchJSON, 0, len(out.NoCostBranches))
 	for _, b := range out.NoCostBranches {

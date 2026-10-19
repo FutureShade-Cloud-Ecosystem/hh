@@ -488,8 +488,8 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                         <td>${floorItemWords(item)}</td>
                         <td class="num">${moneyWords(item.previous_final_cents)}</td>
                         <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${pctWords(item.margin_bps)}</td>
-                        <td class="num">${pctWords(item.floor_bps)}</td>
+                        <td class="num">${item.margin_bps === null ? "Not shown" : pctWords(item.margin_bps)}</td>
+                        <td class="num">${item.floor_bps === null ? "Not shown" : pctWords(item.floor_bps)}</td>
                         <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,

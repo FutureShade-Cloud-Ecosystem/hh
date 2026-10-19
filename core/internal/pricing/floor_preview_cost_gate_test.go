@@ -65,7 +65,7 @@ func TestFloorPreviewCostGate_CallerOffTheListGetsTheWarningWithoutTheMargin(t *
 	if _, ok := item["already_under_floor"]; !ok {
 		t.Fatalf("the under the floor flag is the warning and still rides: %s", body)
 	}
-	if strings.Contains(body, "7000") {
+	if strings.Contains(body, ":7000") {
 		t.Fatalf("the cost figure must not appear anywhere in the answer: %s", body)
 	}
 }

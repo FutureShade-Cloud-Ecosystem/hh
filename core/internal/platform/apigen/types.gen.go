@@ -6586,12 +6586,12 @@ type PricingFloorPreviewItem struct {
 	BranchCode         *string `json:"branch_code,omitempty"`
 	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
-	MarginBps          int64   `json:"margin_bps"`
-	FloorBps           int64   `json:"floor_bps"`
+	MarginBps          *int64  `json:"margin_bps,omitempty"`
+	FloorBps           *int64  `json:"floor_bps,omitempty"`
 	PriceUom           string  `json:"price_uom"`
 	Source             string  `json:"source"`
 	PreviousFinalCents int64   `json:"previous_final_cents"`
-	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	PreviousMarginBps  *int64  `json:"previous_margin_bps,omitempty"`
 	AlreadyUnderFloor  bool    `json:"already_under_floor"`
 }
 

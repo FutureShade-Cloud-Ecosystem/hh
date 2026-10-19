@@ -379,10 +379,10 @@ export interface FloorItemLike {
   readonly sku: string;
   readonly name: string;
   readonly final_cents: number;
-  readonly margin_bps: number;
-  readonly floor_bps: number;
+  readonly margin_bps: number | null;
+  readonly floor_bps: number | null;
   readonly previous_final_cents: number;
-  readonly previous_margin_bps: number;
+  readonly previous_margin_bps: number | null;
   readonly already_under_floor: boolean;
 }
 

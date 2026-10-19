@@ -87,7 +87,14 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithCategoryResolver(productSvc).
 		WithUOMConverter(productSvc).
 		WithMarginGate(pricing.NewIdentityMarginGate())
-	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// HH-419: the floor preview's margin legs ride only to the cost and margin list, the same rule the
+	// stock reads answer through; the boot fail-fast keeps an unwired boot from handing every pricing
+	// editor each product's margin, and so its cost.
+	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	if !pricingHandler.CostRolesWired() {
+		panic("pricing: cost roles not wired - the floor preview would answer the margin legs to every editor")
+	}
+	pricingHandler.RegisterRoutes(r, g)
 	// SWARM-W5-C: the price-file import's three composition-root answers,
 	// and the below-floor override authority over the rail plus the bridged
 	// caller (the two-source order is the adapter's own, carried).

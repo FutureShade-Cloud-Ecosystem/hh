@@ -85,12 +85,13 @@ export interface FloorItem {
   readonly branch_code: string;
   readonly branch_name: string;
   readonly final_cents: number;
-  readonly margin_bps: number;
-  readonly floor_bps: number;
+  /** The margin legs ride only to a caller on the cost list: null is absent, never zero. */
+  readonly margin_bps: number | null;
+  readonly floor_bps: number | null;
   readonly price_uom: string;
   readonly source: string;
   readonly previous_final_cents: number;
-  readonly previous_margin_bps: number;
+  readonly previous_margin_bps: number | null;
   readonly already_under_floor: boolean;
 }
 
@@ -105,12 +106,12 @@ export function toFloorItem(raw: unknown): FloorItem {
     branch_code: text(r.branch_code),
     branch_name: text(r.branch_name),
     final_cents: num(r.final_cents),
-    margin_bps: num(r.margin_bps),
-    floor_bps: num(r.floor_bps),
+    margin_bps: maybeNum(r.margin_bps),
+    floor_bps: maybeNum(r.floor_bps),
     price_uom: text(r.price_uom),
     source: text(r.source),
     previous_final_cents: num(r.previous_final_cents),
-    previous_margin_bps: num(r.previous_margin_bps),
+    previous_margin_bps: maybeNum(r.previous_margin_bps),
     already_under_floor: bool(r.already_under_floor),
   };
 }
