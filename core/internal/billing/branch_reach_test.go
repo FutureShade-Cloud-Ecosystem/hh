@@ -1,12 +1,14 @@
 package billing
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 func TestReachOfCaller(t *testing.T) {
@@ -37,6 +39,74 @@ func TestNarrowRefusesABranchOutsideTheReach(t *testing.T) {
 	if got, err := r.narrow(""); err != nil || got.Global || len(got.IDs) != 1 {
 		t.Fatalf("no branch keeps the reach, got %+v %v", got, err)
 	}
+}
+
+// reachCaptureMoney records the ApplyReceivedCommand the register hands the money seam, so a test
+// can answer for the branch reach ApplyReceivedPayment resolved, the one fact HH-694 is about.
+type reachCaptureMoney struct {
+	got *ApplyReceivedCommand
+}
+
+func (m *reachCaptureMoney) RecordReceipt(_ context.Context, _ ReceiptWrite) (ReceiptResult, error) {
+	return ReceiptResult{}, nil
+}
+
+func (m *reachCaptureMoney) PayableCentsFor(_ context.Context, _ string) (int64, string, error) {
+	return 0, "", nil
+}
+
+func (m *reachCaptureMoney) ApplyReceived(_ context.Context, in ApplyReceivedCommand) (payments.ApplyAnswer, error) {
+	m.got = &in
+	return payments.ApplyAnswer{}, nil
+}
+
+// applyReachPayment runs one captured ApplyReceivedPayment and answers the branch slice it passed.
+func applyReachBranchIDs(t *testing.T, ctx context.Context) []string {
+	t.Helper()
+	money := &reachCaptureMoney{}
+	s := NewRegisterService(nil).WithMoney(money)
+	_, err := s.ApplyReceivedPayment(ctx, ApplyPaymentInput{
+		CustomerID:     "cus",
+		Method:         "CASH",
+		AmountCents:    100,
+		InvoiceIDs:     []string{"inv"},
+		IdempotencyKey: "idem",
+	})
+	if err != nil {
+		t.Fatalf("apply received payment: %v", err)
+	}
+	if money.got == nil {
+		t.Fatal("the money seam was never called")
+	}
+	return money.got.BranchIDs
+}
+
+func TestApplyReceivedPaymentReachMatchesTheRegisterReach(t *testing.T) {
+	t.Run("unstamped context reaches every branch", func(t *testing.T) {
+		if got := applyReachBranchIDs(t, context.Background()); got != nil {
+			t.Fatalf("an unstamped internal caller reaches every branch (nil slice), got %v", got)
+		}
+	})
+	t.Run("scoped caller reaches granted branches only, sorted", func(t *testing.T) {
+		ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+			UserID:   "u",
+			Scope:    identity.ScopeBranch,
+			Branches: map[string]bool{"b2": true, "b1": true, "b3": false},
+		})
+		if got := applyReachBranchIDs(t, ctx); strings.Join(got, ",") != "b1,b2" {
+			t.Fatalf("a scoped caller reaches its granted branches, sorted, never a revoked one, got %v", got)
+		}
+	})
+	t.Run("scoped caller with no grant reaches nothing", func(t *testing.T) {
+		ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+			UserID: "u",
+			Scope:  identity.ScopeBranch,
+		})
+		got := applyReachBranchIDs(t, ctx)
+		if got == nil || len(got) != 0 {
+			t.Fatalf("a scoped caller with no grant reaches nothing (non nil empty slice), got %v", got)
+		}
+	})
 }
 
 func TestBranchRefusalSpeaksInWords(t *testing.T) {
