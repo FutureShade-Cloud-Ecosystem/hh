@@ -12,9 +12,11 @@ package pos
 // refuses the settle 409 in words naming the duplicate ref.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -267,6 +269,10 @@ func TestIntegration_TwoTxResolution_DispatchWritesFlagAManagerResolvedRow(t *te
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	ctx := context.Background()
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 	k := "refund:zz-resolved-" + key()
 	plant := func(k string, resolvedBy string) {
 		t.Helper()
@@ -284,6 +290,10 @@ VALUES ($1, (SELECT id FROM orders LIMIT 1), $2::uuid, (SELECT id FROM customers
 	if err := repo.HoldCardRefundAttemptInFlight(ctx, k, "unknown"); !errors.Is(err, errCardRefundAlreadyResolved) {
 		t.Fatalf("Hold on a manager resolved row signals it, got %v", err)
 	}
+	if out := logged.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, k) || !strings.Contains(out, managerUserID) {
+		t.Fatalf("the contradiction is logged loudly with the key and the resolver, got %q", out)
+	}
+	logged.Reset()
 	quiet := "refund:zz-unresolved-" + key()
 	plant(quiet, "")
 	if err := repo.FailCardRefundAttempt(ctx, quiet, "declined"); err != nil {
@@ -291,5 +301,8 @@ VALUES ($1, (SELECT id FROM orders LIMIT 1), $2::uuid, (SELECT id FROM customers
 	}
 	if err := repo.HoldCardRefundAttemptInFlight(ctx, "refund:zz-none-"+key(), "unknown"); err != nil {
 		t.Fatalf("no row stays quiet, got %v", err)
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("a row nobody resolved logs nothing loud, got %q", logged.String())
 	}
 }

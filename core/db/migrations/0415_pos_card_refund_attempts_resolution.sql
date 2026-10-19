@@ -27,3 +27,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS pos_card_refund_attempts_refund_ref_key
 -- judged the processor outcome and why.
 ALTER TABLE pos_card_refund_attempts
   ADD COLUMN IF NOT EXISTS resolution_log JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- True when the dispatch found the row already settled by a manager and so never
+-- sent its processor call (PR #501 round 3): the manager's typed ref then stands
+-- for a refund no call made, and the same key retry must not book it.
+ALTER TABLE pos_card_refund_attempts
+  ADD COLUMN IF NOT EXISTS call_not_sent BOOLEAN NOT NULL DEFAULT false;

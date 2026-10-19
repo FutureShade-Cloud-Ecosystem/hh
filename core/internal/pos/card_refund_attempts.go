@@ -65,6 +65,9 @@ type CardRefundAttempt struct {
 	BookedAt       *string `json:"booked_at,omitempty"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
+	// CallNotSent is internal: the dispatch never sent this row's processor call because a manager
+	// settled it first, so a typed ref on it is not a processor ref (PR #501 round 3).
+	CallNotSent bool `json:"-"`
 }
 
 // ResolveCardRefundAttemptInput is the manager's judgment of one open
@@ -183,7 +186,7 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 		} else {
 			// A row that already recorded the processor's reversal ref moved
 			// money: it must be booked or settled REFUNDED, never closed FAILED.
-			if row.Status == "UNBOOKED" && row.RefundRef != "" {
+			if row.Status == "UNBOOKED" && row.RefundRef != "" && !row.CallNotSent {
 				return clientErr(http.StatusConflict, "pos: card refund attempt already has processor reversal ref %s; settle it as REFUNDED or book the return", row.RefundRef)
 			}
 			if err := s.store.ApplyCardRefundResolutionTx(ctx, tx, attemptID, "FAILED", "", actor, note); err != nil {

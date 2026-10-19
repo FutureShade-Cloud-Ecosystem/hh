@@ -244,8 +244,11 @@ type posStore interface {
 	FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error
 	HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error
 	// StampCardRefundCallStart stamps the start of one child's processor call on its own row just
-	// before the call; false means a manager already settled the row and the call must not go out.
-	StampCardRefundCallStart(ctx context.Context, refundKey string) (bool, error)
+	// before the call, on that row (keys[0]) and every child still waiting; false means a manager
+	// already settled the row and the call must not go out.
+	// MarkCardRefundCallNotSent records on the row that its call was never sent.
+	MarkCardRefundCallNotSent(ctx context.Context, refundKey string) error
+	StampCardRefundCallStart(ctx context.Context, keys []string) (bool, error)
 	// ListOpenCardRefundAttempts, CardRefundAttemptForUpdateTx and
 	// ApplyCardRefundResolutionTx are the manager resolution of an open
 	// attempt (HH-767): the branch-fenced list of IN_FLIGHT and UNBOOKED

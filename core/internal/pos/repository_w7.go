@@ -562,10 +562,17 @@ func (r *Repository) SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, or
 func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (string, int64, error) {
 	var status, refundRef, gatewayRef, orderID string
 	var amount int64
+	var callNotSent bool
 	err := tx.QueryRow(ctx,
-		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
-		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID)
+		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id, call_not_sent FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
+		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID, &callNotSent)
 	if err == nil {
+		if status == "UNBOOKED" && refundRef != "" && callNotSent {
+			// The ref is a manager's word for a refund whose processor call was never made
+			// (PR #501 round 3): it is never booked from here; it goes back to a manager.
+			return "", 0, clientErr(http.StatusConflict,
+				"pos: the processor ref on this card refund was typed by a manager for a call that was never sent; a manager must check the processor and resolve it again before it can be booked")
+		}
 		if status == "UNBOOKED" && refundRef != "" {
 			if amount != f.AmountCents || gatewayRef != f.GatewayRef || orderID != f.OrderID {
 				return "", 0, clientErr(http.StatusConflict,
@@ -588,7 +595,7 @@ ON CONFLICT (refund_key) DO UPDATE
        last_error = '', attempted_at = now(), updated_at = now(),
        initiated_by = CASE WHEN pos_card_refund_attempts.status = 'FAILED' OR pos_card_refund_attempts.initiated_by = ''
                            THEN EXCLUDED.initiated_by ELSE pos_card_refund_attempts.initiated_by END,
-       processor_at = NULL,
+       processor_at = NULL, call_not_sent = false,
        resolution_log = CASE WHEN pos_card_refund_attempts.resolved_by <> ''
                              THEN pos_card_refund_attempts.resolution_log || jsonb_build_array(jsonb_build_object(
                                   'event', 'RESTAGED', 'at', now(), 'prior_resolved_by', pos_card_refund_attempts.resolved_by))
@@ -617,22 +624,54 @@ func (r *Repository) HoldCardRefundAttemptInFlight(ctx context.Context, refundKe
 	return r.flagResolvedByManager(ctx, tag.RowsAffected(), refundKey, "unknown outcome", reason)
 }
 
-// StampCardRefundCallStart writes the start of one child's processor call on its own row,
-// immediately before the call (PR #501 round 2 P2-1): the manager's live request fence measures
-// from this stamp, not from staging, so a child that starts late is fenced for its own window.
-// False means the row is no longer IN_FLIGHT (a manager settled it before the call began), and
-// the caller must not call the processor.
-func (r *Repository) StampCardRefundCallStart(ctx context.Context, refundKey string) (bool, error) {
+// StampCardRefundCallStart refreshes attempted_at, immediately before one child's processor call,
+// on the child about to be called AND every child still waiting its turn in the same dispatch
+// (PR #501 round 2 P2-1, round 3 fix 1): the manager's live request fence measures from this
+// stamp, so a waiting child is never older than one call plus the margin. keys[0] is the child
+// about to be called. False means that row is no longer IN_FLIGHT (a manager settled it before
+// the call began), and the caller must not call the processor.
+func (r *Repository) StampCardRefundCallStart(ctx context.Context, keys []string) (bool, error) {
 	if r.pool == nil {
 		return false, errNoPool
 	}
-	tag, err := r.pool.Exec(ctx,
+	if len(keys) == 0 {
+		return false, nil
+	}
+	rows, err := r.pool.Query(ctx,
 		`UPDATE pos_card_refund_attempts SET attempted_at = now(), updated_at = now()
- WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey)
+ WHERE refund_key = ANY($1::text[]) AND status = 'IN_FLIGHT' RETURNING refund_key`, keys)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	defer rows.Close()
+	started := false
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return false, err
+		}
+		if k == keys[0] {
+			started = true
+		}
+	}
+	return started, rows.Err()
+}
+
+// MarkCardRefundCallNotSent writes, on the row itself, that the dispatch found it already settled
+// by a manager and so never sent its processor call (PR #501 round 3 fix 2): last_error says so,
+// the resolution_log gets a CALL_NOT_SENT event, and call_not_sent makes the same key retry refuse
+// to book the manager's typed ref.
+func (r *Repository) MarkCardRefundCallNotSent(ctx context.Context, refundKey string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx, `
+UPDATE pos_card_refund_attempts
+   SET call_not_sent = true, updated_at = now(),
+       last_error = 'the processor call was never sent: a manager settled this attempt before the call began',
+       resolution_log = resolution_log || jsonb_build_array(jsonb_build_object('event', 'CALL_NOT_SENT', 'at', now()))
+ WHERE refund_key = $1 AND resolved_by <> '' AND status IN ('UNBOOKED', 'FAILED')`, refundKey)
+	return err
 }
 
 // flagResolvedByManager is the defence in depth of the dispatch-side closes: a write that matched
@@ -737,7 +776,7 @@ const cardRefundAttemptColumns = `a.id::text, a.refund_key, a.order_id::text, CO
        a.branch_id::text, COALESCE(a.customer_id::text, ''), COALESCE(c.name, ''),
        a.gateway_ref, a.refund_ref, a.amount_cents, a.status, a.last_error,
        a.initiated_by, a.resolved_by, a.resolved_at, a.resolution_note,
-       a.attempted_at, a.processor_at, a.booked_at, a.created_at, a.updated_at`
+       a.attempted_at, a.processor_at, a.booked_at, a.created_at, a.updated_at, a.call_not_sent`
 
 // scanCardRefundAttempt reads one row of cardRefundAttemptColumns into the
 // manager-facing shape (times as RFC3339 strings, the nullable ones nil).
@@ -748,7 +787,7 @@ func scanCardRefundAttempt(row pgx.Row) (CardRefundAttempt, error) {
 	if err := row.Scan(&a.ID, &a.RefundKey, &a.OrderID, &a.OrderNo, &a.BranchID, &a.CustomerID, &a.CustomerName,
 		&a.GatewayRef, &a.RefundRef, &a.AmountCents, &a.Status, &a.LastError,
 		&a.InitiatedBy, &a.ResolvedBy, &resolvedAt, &a.ResolutionNote,
-		&attemptedAt, &processorAt, &bookedAt, &createdAt, &updatedAt); err != nil {
+		&attemptedAt, &processorAt, &bookedAt, &createdAt, &updatedAt, &a.CallNotSent); err != nil {
 		return CardRefundAttempt{}, err
 	}
 	tfmt := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -793,28 +832,9 @@ func (r *Repository) ListOpenCardRefundAttempts(ctx context.Context, statusFilte
 	defer rows.Close()
 	var out []CardRefundAttempt
 	for rows.Next() {
-		var a CardRefundAttempt
-		var resolvedAt, processorAt, bookedAt *time.Time
-		var attemptedAt, createdAt, updatedAt time.Time
-		if err := rows.Scan(&a.ID, &a.RefundKey, &a.OrderID, &a.OrderNo, &a.BranchID, &a.CustomerID, &a.CustomerName,
-			&a.GatewayRef, &a.RefundRef, &a.AmountCents, &a.Status, &a.LastError,
-			&a.InitiatedBy, &a.ResolvedBy, &resolvedAt, &a.ResolutionNote,
-			&attemptedAt, &processorAt, &bookedAt, &createdAt, &updatedAt); err != nil {
+		a, err := scanCardRefundAttempt(rows)
+		if err != nil {
 			return nil, err
-		}
-		a.AttemptedAt, a.CreatedAt, a.UpdatedAt = attemptedAt.UTC().Format(time.RFC3339),
-			createdAt.UTC().Format(time.RFC3339), updatedAt.UTC().Format(time.RFC3339)
-		if resolvedAt != nil {
-			s := resolvedAt.UTC().Format(time.RFC3339)
-			a.ResolvedAt = &s
-		}
-		if processorAt != nil {
-			s := processorAt.UTC().Format(time.RFC3339)
-			a.ProcessorAt = &s
-		}
-		if bookedAt != nil {
-			s := bookedAt.UTC().Format(time.RFC3339)
-			a.BookedAt = &s
 		}
 		out = append(out, a)
 	}
@@ -850,7 +870,7 @@ func (r *Repository) ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx,
 UPDATE pos_card_refund_attempts
    SET status = $2, refund_ref = COALESCE(NULLIF($3::text, ''), refund_ref),
        resolved_by = $4, resolved_at = now(), resolution_note = $5,
-       processor_at = COALESCE(processor_at, now()), updated_at = now(),
+       processor_at = COALESCE(processor_at, now()), updated_at = now(), call_not_sent = false,
        resolution_log = resolution_log || jsonb_build_array(jsonb_build_object(
             'event', CASE WHEN $2::text = 'FAILED' THEN 'NOT_REFUNDED' ELSE 'REFUNDED' END,
             'at', now(), 'by', $4::text, 'refund_ref', COALESCE(NULLIF($3::text, ''), refund_ref), 'note', $5::text))

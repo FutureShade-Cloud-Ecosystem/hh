@@ -653,15 +653,19 @@ func (f *fakeStore) freshAttemptID() string {
 	return fmt.Sprintf("22222222-0000-4000-9000-%012d", f.seq)
 }
 
-func (f *fakeStore) StampCardRefundCallStart(_ context.Context, refundKey string) (bool, error) {
-	a, ok := f.cardAttempts[refundKey]
-	if !ok || a.status != "IN_FLIGHT" {
-		return false, nil
+func (f *fakeStore) StampCardRefundCallStart(_ context.Context, keys []string) (bool, error) {
+	started := false
+	for i, k := range keys {
+		if a, ok := f.cardAttempts[k]; ok && a.status == "IN_FLIGHT" {
+			a.attemptedAt = liveStamp()
+			f.cardAttempts[k] = a
+			started = started || i == 0
+		}
 	}
-	a.attemptedAt = liveStamp()
-	f.cardAttempts[refundKey] = a
-	return true, nil
+	return started, nil
 }
+
+func (f *fakeStore) MarkCardRefundCallNotSent(context.Context, string) error { return nil }
 
 func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, reason string) error {
 	// The real row keeps its status IN_FLIGHT, records the reason and stamps

@@ -439,7 +439,13 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 		// child that starts after its staging window is fenced for its own window. A row a
 		// manager already settled is never sent to the processor.
 		var refundRef string
-		started, serr := s.store.StampCardRefundCallStart(context.WithoutCancel(ctx), refundKey)
+		stampKeys := []string{refundKey}
+		for _, later := range plans[i+1:] {
+			if later.in.RefundMethod == RefundCard && !later.in.railOptional && later.stagedRailTotal > 0 && later.stagedRefundRef == "" {
+				stampKeys = append(stampKeys, "refund:"+later.in.IdempotencyKey)
+			}
+		}
+		started, serr := s.store.StampCardRefundCallStart(context.WithoutCancel(ctx), stampKeys)
 		var err error
 		switch {
 		case serr != nil:
@@ -461,6 +467,9 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 				// the row is theirs; only the later children close below.
 				slog.Default().Error("pos: a card refund attempt was settled by a manager before its processor call began; the call was not sent",
 					"refund_key", refundKey)
+				if merr := s.store.MarkCardRefundCallNotSent(context.WithoutCancel(ctx), refundKey); merr != nil {
+					slog.Default().Error("pos: the never sent card refund call could not be written on its row", "refund_key", refundKey, "err", merr)
+				}
 			} else if isCardRefundNoMoneyMoved(err) {
 				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), refundKey, reason); ferr != nil {
 					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
@@ -478,7 +487,9 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 					slog.Default().Warn("pos: the undispatched card refund attempt could not be closed", "err", ferr)
 				}
 			}
-			s.settleCardRefunds(ctx, plans, err)
+			// The children that DID refund keep their own record: the failed child's reason
+			// describes that child, not them.
+			s.settleCardRefundsWithReason(ctx, plans, "a later card refund of this return did not go through; this refund was made at the processor and is not booked yet")
 			return clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
 		p.stagedRefundRef = refundRef
@@ -1413,6 +1424,20 @@ func trimReason(reason string) string {
 // return's own answer must not change because the record could not be written, so a failure is
 // logged, never returned.
 func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, txErr error) {
+	reason := ""
+	if txErr != nil {
+		reason = trimReason(txErr.Error())
+	}
+	s.settleCardRefundsOutcome(ctx, plans, txErr != nil, reason)
+}
+
+// settleCardRefundsWithReason files the plans' dispatched refunds UNBOOKED with a reason of the
+// caller's choosing (the dispatch's failure path, where the batch error describes one child only).
+func (s *Service) settleCardRefundsWithReason(ctx context.Context, plans []*returnPlan, reason string) {
+	s.settleCardRefundsOutcome(ctx, plans, true, reason)
+}
+
+func (s *Service) settleCardRefundsOutcome(ctx context.Context, plans []*returnPlan, failed bool, reason string) {
 	var facts []cardRefundFact
 	for _, p := range plans {
 		facts = append(facts, p.cardRefunds...)
@@ -1422,8 +1447,8 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 		return
 	}
 	var err error
-	if txErr != nil {
-		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, trimReason(txErr.Error()))
+	if failed {
+		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, reason)
 	} else {
 		keys := make([]string, len(facts))
 		for i, f := range facts {
