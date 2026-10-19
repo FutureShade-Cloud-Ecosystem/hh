@@ -428,10 +428,14 @@ test("apply route: a replayed key is judged against its own body", async () => {
   const other = (await call("GET", "/api/v1/ar/register")).json.items.find((r) => r.account_no === "OB-200");
   const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 1000, reference: "c", invoice_ids: [mine[0].id], idempotency_key: "r-1", preview: false };
   assert.equal((await call("POST", APPLY, body)).status, 200);
-  refused(await call("POST", APPLY, { ...body, amount_cents: 2000 }), 422, "that idempotency key already recorded a different payment; use a new key");
-  refused(await call("POST", APPLY, { ...body, reference: "d" }), 422, "that idempotency key already recorded a different payment; use a new key");
-  refused(await call("POST", APPLY, { ...body, method: "CASH" }), 422, "that idempotency key already recorded a different payment; use a new key");
-  refused(await call("POST", APPLY, { ...body, customer_id: other.customer_id, invoice_ids: [other.id] }), 422, "that idempotency key already recorded a payment for another account; use a new key");
+  refused(await call("POST", APPLY, { ...body, amount_cents: 2000 }), 409, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, reference: "d" }), 409, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, method: "CASH" }), 409, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, customer_id: other.customer_id, invoice_ids: [other.id] }), 409, "that idempotency key already recorded a payment for another account; use a new key");
+  // The replay judgement runs before the body validation (FP 186 and 187): a body validateApply
+  // would refuse on a fresh key hears the spent key's 409 instead.
+  refused(await call("POST", APPLY, { ...body, amount_cents: 0 }), 409, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, invoice_ids: [] }), 409, "that idempotency key already recorded a different payment; use a new key");
   const still = await call("GET", `/api/v1/ar/register/invoices/${mine[0].id}`);
   assert.equal(still.json.totals.balance_cents, mine[0].balance_cents - 1000);
 });
@@ -493,11 +497,11 @@ test("apply route: refusals are the core's words and leave nothing applied", asy
   assert.ok(closed.json.error.startsWith(`invoice ${mine[0].invoice_no} (paid) is not open`));
 });
 
-test("a body that is not JSON is the core's 422 on every route that reads one", async () => {
+test("a body that is not JSON is the core's 400 on every route that reads one", async () => {
   await reset();
   for (const path of ["/api/v1/ar/payments/apply", "/api/v1/ar/register/statements"]) {
     const res = await fetch(`${base}${path}`, { method: "POST", headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo", "Content-Type": "application/json" }, body: "{not json" });
-    assert.equal(res.status, 422, path);
+    assert.equal(res.status, 400, path);
     const json = await res.json();
     assert.ok(JSON.stringify(json).includes("the request body must be JSON"), path);
   }
