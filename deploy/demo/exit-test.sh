@@ -552,6 +552,33 @@ esac
 	|| fail "the boot left no single build marker row behind"
 
 # --------------------------------------------------------------------------
+# The denylist scan (5.1): zero first-dealer or planted words in the
+# seeded database and the built bundles, and the scan bites on a planted
+# word in a bundle directory of its own.
+# --------------------------------------------------------------------------
+echo "== the denylist scan over the seeded database and built bundles (5.1)"
+denylist_out="$(./deploy/demo/denylist-scan.sh --container "$HAPPY" --pg-container "$PG_NAME" --db "${DBPFX}_happy" 2>&1)" \
+	&& pass "the denylist scan is clean ($denylist_out)" \
+	|| fail "the denylist scan found a word: $denylist_out"
+printf '%s\n' "$denylist_out" | grep -Eq '^denylist_sha256=[0-9a-f]{64}$' \
+	&& pass "the scan printed the denylist's hash" \
+	|| fail "the scan printed no denylist hash: $denylist_out"
+printf '%s\n' "$denylist_out" | grep -q '^bundle_matches=0$' \
+	&& pass "the built bundles carry no denylist word" \
+	|| fail "the built bundle count is not zero: $denylist_out"
+printf '%s\n' "$denylist_out" | grep -q '^db_matches=0$' \
+	&& pass "the seeded database carries no denylist word" \
+	|| fail "the database match count is not zero: $denylist_out"
+denylist_tmp="$(mktemp -d)"
+printf 'Such as This month, Trenton\n' > "$denylist_tmp/planted.js"
+if ./deploy/demo/denylist-scan.sh --bundle-dir "$denylist_tmp" >/dev/null 2>&1; then
+	fail "the denylist scan did not bite on a planted word"
+else
+	pass "the denylist scan bites on a planted word"
+fi
+rm -rf "$denylist_tmp"
+
+# --------------------------------------------------------------------------
 # The hash's placement: nowhere in the writable layer, the scan bites on a
 # planted value, and no served process carries the variable. The scan
 # searches the hash's own value as a fixed string (a regex of the bcrypt

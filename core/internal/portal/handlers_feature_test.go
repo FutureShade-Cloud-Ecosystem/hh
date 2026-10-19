@@ -306,6 +306,8 @@ func TestWriteErr_DomainSentinels(t *testing.T) {
 		{"procurement not implemented", procurement.ErrNotImplemented, http.StatusNotImplemented},
 		{"payment declined", payments.ErrDeclined, http.StatusPaymentRequired},
 		{"payment pending", payments.ErrChargePending, http.StatusConflict},
+		{"payment in flight", payments.ErrPaymentInFlight, http.StatusConflict},
+		{"payment in flight, wrapped", fmt.Errorf("settle refused: %w", payments.ErrPaymentInFlight), http.StatusConflict},
 		{"client bad request", httpx.BadRequestf("bad filter"), http.StatusBadRequest},
 		{"unknown -> 500", errors.New("boom"), http.StatusInternalServerError},
 	}
