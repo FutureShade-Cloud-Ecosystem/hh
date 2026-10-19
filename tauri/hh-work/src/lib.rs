@@ -732,10 +732,43 @@ mod tests {
         // as in Field's config.
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().unwrap();
-        assert!(
-            csp.contains("connect-src 'self' ipc: http://ipc.localhost;"),
-            "{csp}"
-        );
-        assert!(!csp.contains("https:"), "no remote origin in the CSP");
+        let directives: Vec<Vec<&str>> = csp
+            .split(';')
+            .map(|part| part.trim().split_whitespace().collect())
+            .collect();
+        let connect_src = directives
+            .iter()
+            .find(|tokens| tokens.first() == Some(&"connect-src"))
+            .unwrap_or_else(|| panic!("connect-src missing from the CSP: {csp}"));
+        for source in [
+            "'self'",
+            "ipc:",
+            "http://ipc.localhost",
+            "https://*.futurebuild.ai",
+        ] {
+            assert!(
+                connect_src.contains(&source),
+                "connect-src must carry {source}: {csp}"
+            );
+        }
+        let unchanged: &[(&str, &[&str])] = &[
+            ("default-src", &["default-src", "'self'"]),
+            ("script-src", &["script-src", "'self'"]),
+            ("style-src", &["style-src", "'self'", "'unsafe-inline'"]),
+            ("img-src", &["img-src", "'self'", "data:"]),
+            ("font-src", &["font-src", "'self'"]),
+            ("base-uri", &["base-uri", "'self'"]),
+            ("form-action", &["form-action", "'self'"]),
+            ("frame-src", &["frame-src", "'self'"]),
+            ("frame-ancestors", &["frame-ancestors", "'self'"]),
+            ("object-src", &["object-src", "'none'"]),
+        ];
+        for (name, tokens) in unchanged {
+            let actual = directives
+                .iter()
+                .find(|candidate| candidate.first() == Some(name))
+                .unwrap_or_else(|| panic!("{name} missing from the CSP: {csp}"));
+            assert_eq!(*actual, *tokens, "{name} must be unchanged: {csp}");
+        }
     }
 }
