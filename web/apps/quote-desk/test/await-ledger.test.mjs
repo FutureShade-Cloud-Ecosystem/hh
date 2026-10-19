@@ -45,7 +45,8 @@ function testTitles() {
 
 const mutants = JSON.parse(readFileSync(join(testDir, "mutants.json"), "utf8"));
 
-test("every asynchronous call in the app's src has a ledger entry with the right count", () => {
+// This one scans the whole app source and runs about 6 s on a CI runner, past bun's 5000 ms default, so it has its own limit.
+test("every asynchronous call in the app's src has a ledger entry with the right count", { timeout: 30_000 }, () => {
   const { rows } = readLedger();
   const found = census();
   const wild = rows.filter((row) => row.symbol === "*");
