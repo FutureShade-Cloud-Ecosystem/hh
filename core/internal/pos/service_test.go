@@ -1323,6 +1323,13 @@ func (r *fakeRecorder) Record(_ context.Context, a audit.SensitiveAccess) error 
 	return nil
 }
 
+// RecordTx is the transactional seam the manager's card refund resolution
+// writes its audit row through (PR #501 round 1 P2-2); the fake keeps the
+// row beside the pool-written ones.
+func (r *fakeRecorder) RecordTx(ctx context.Context, _ audit.Execer, a audit.SensitiveAccess) error {
+	return r.Record(ctx, a)
+}
+
 func (r *fakeRecorder) has(action string) bool {
 	for _, x := range r.rows {
 		if x.Action == action {

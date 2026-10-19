@@ -105,7 +105,7 @@ func (s *Service) ListOpenCardRefundAttempts(ctx context.Context, statusFilter s
 // second processor call; NOT_REFUNDED closes the row FAILED, releasing the
 // capture ceiling. The initiator is refused (separation of duties), another
 // branch's attempt is a plain 404, and every resolution writes its
-// sensitive-access audit row.
+// sensitive-access audit row inside the settle's own transaction.
 func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string, in ResolveCardRefundAttemptInput) (CardRefundAttempt, error) {
 	caller, ok := identity.StaffContextFromContext(ctx)
 	if !ok || !caller.IsManager() {
@@ -195,29 +195,35 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 		now := time.Now().UTC().Format(time.RFC3339)
 		row.ResolvedAt = &now
 		out = row
-		return nil
+		// The sensitive-access row rides this transaction (PR #501 round 1
+		// P2-2): the outcome, the resulting status, the amount and the
+		// approver, so a CASL-style question about who closed money is
+		// answered from the action alone. A failed write aborts the settle;
+		// money is never closed without its row.
+		if s.audit == nil {
+			return nil
+		}
+		ride, ok := s.audit.(txRidingAudit)
+		if !ok {
+			return clientErr(http.StatusInternalServerError, "pos: the wired audit recorder cannot write the resolution row on the settle's transaction")
+		}
+		return ride.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     audit.ActCardRefundAttemptResolved,
+			EntityType: "pos.card_refund_attempt",
+			EntityID:   out.ID,
+			ActorID:    actor,
+			BranchID:   out.BranchID,
+			Purpose:    "POS_CARD_REFUND_RESOLUTION",
+			Reason:     note,
+			Extra: map[string]any{
+				"outcome":      outcome,
+				"status":       out.Status,
+				"amount_cents": out.AmountCents,
+				"approver_id":  actor,
+			},
+		})
 	}); err != nil {
 		return CardRefundAttempt{}, err
 	}
-
-	// The sensitive-access row, best effort after the commit (the s.record
-	// discipline): the outcome, the resulting status, the amount and the
-	// approver, so a CASL-style question about who closed money is answered
-	// from the action alone.
-	s.record(ctx, audit.SensitiveAccess{
-		Action:     audit.ActCardRefundAttemptResolved,
-		EntityType: "pos.card_refund_attempt",
-		EntityID:   out.ID,
-		ActorID:    actor,
-		BranchID:   out.BranchID,
-		Purpose:    "POS_CARD_REFUND_RESOLUTION",
-		Reason:     note,
-		Extra: map[string]any{
-			"outcome":      outcome,
-			"status":       out.Status,
-			"amount_cents": out.AmountCents,
-			"approver_id":  actor,
-		},
-	})
 	return out, nil
 }

@@ -587,6 +587,11 @@ ON CONFLICT (refund_key) DO UPDATE
        last_error = '', attempted_at = now(), updated_at = now(),
        initiated_by = CASE WHEN pos_card_refund_attempts.status = 'FAILED' OR pos_card_refund_attempts.initiated_by = ''
                            THEN EXCLUDED.initiated_by ELSE pos_card_refund_attempts.initiated_by END,
+       processor_at = NULL,
+       resolution_log = CASE WHEN pos_card_refund_attempts.resolved_by <> ''
+                             THEN pos_card_refund_attempts.resolution_log || jsonb_build_array(jsonb_build_object(
+                                  'event', 'RESTAGED', 'at', now(), 'prior_resolved_by', pos_card_refund_attempts.resolved_by))
+                             ELSE pos_card_refund_attempts.resolution_log END,
        resolved_by = '', resolved_at = NULL, resolution_note = ''`,
 		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.AmountCents, f.InitiatedBy); err != nil {
 		return "", 0, err
@@ -793,13 +798,17 @@ func (r *Repository) CardRefundAttemptForUpdateTx(ctx context.Context, tx pgx.Tx
 // ApplyCardRefundResolutionTx writes the manager's judgment on the locked
 // row (HH-767): the status the outcome rules (UNBOOKED for REFUNDED with the
 // processor's refund_ref, FAILED for NOT_REFUNDED), who resolved it, when,
-// and the note. An empty refundRef keeps whatever ref the row already holds.
+// and the note, and appends the judgment to the row's resolution_log. An
+// empty refundRef keeps whatever ref the row already holds.
 func (r *Repository) ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error {
 	tag, err := tx.Exec(ctx, `
 UPDATE pos_card_refund_attempts
    SET status = $2, refund_ref = COALESCE(NULLIF($3::text, ''), refund_ref),
        resolved_by = $4, resolved_at = now(), resolution_note = $5,
-       processor_at = COALESCE(processor_at, now()), updated_at = now()
+       processor_at = COALESCE(processor_at, now()), updated_at = now(),
+       resolution_log = resolution_log || jsonb_build_array(jsonb_build_object(
+            'event', CASE WHEN $2::text = 'FAILED' THEN 'NOT_REFUNDED' ELSE 'REFUNDED' END,
+            'at', now(), 'by', $4::text, 'refund_ref', COALESCE(NULLIF($3::text, ''), refund_ref), 'note', $5::text))
  WHERE id = $1::uuid AND status IN ('IN_FLIGHT', 'UNBOOKED')`,
 		attemptID, status, refundRef, resolvedBy, note)
 	if err != nil {

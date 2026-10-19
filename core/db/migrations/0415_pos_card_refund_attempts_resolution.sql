@@ -20,3 +20,10 @@ ALTER TABLE pos_card_refund_attempts
 CREATE UNIQUE INDEX IF NOT EXISTS pos_card_refund_attempts_refund_ref_key
   ON pos_card_refund_attempts (refund_ref)
   WHERE refund_ref <> '';
+
+-- The attempt's own resolution history (PR #501 round 1 P2-2): every settle
+-- and every same-key restage after a settle appends one event, so the restage
+-- blanking resolved_by, resolved_at and resolution_note never erases who
+-- judged the processor outcome and why.
+ALTER TABLE pos_card_refund_attempts
+  ADD COLUMN IF NOT EXISTS resolution_log JSONB NOT NULL DEFAULT '[]'::jsonb;

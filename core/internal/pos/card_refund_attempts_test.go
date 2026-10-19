@@ -166,6 +166,21 @@ func TestCardRefundAttempts_ResolveSeparationOfDuties(t *testing.T) {
 	}
 }
 
+// The audit row rides the settle's own transaction (PR #501 round 1 P2-2): a
+// recorder whose transactional write fails aborts the settle with an error,
+// never a best effort row dropped after the commit.
+func TestCardRefundAttempts_ResolveAuditFailureAbortsSettle(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithAudit(failingTxAudit{})
+	const id = "11111111-1111-4111-8111-1111111111b9"
+	plantAttempt(h.store, id, "refund:k9", "order-1", "branch-trt", "IN_FLIGHT", "", "u-clerk", 4520)
+	_, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_mgr_9"})
+	if err == nil {
+		t.Fatal("a failed audit write must abort the settle, got success")
+	}
+}
+
 // REFUNDED on an IN_FLIGHT attempt: the row moves to UNBOOKED with the
 // manager's processor ref stamped, and the same-key retry of the return
 // books in tx 2 without a second processor call.
