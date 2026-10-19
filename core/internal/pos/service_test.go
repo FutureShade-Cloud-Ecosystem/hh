@@ -558,7 +558,13 @@ func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRef
 	f.unbookedRefunds = append(f.unbookedRefunds, facts...)
 	for _, fact := range facts {
 		if a, ok := f.cardAttempts[fact.RefundKey]; ok {
-			a.status, a.fact = "UNBOOKED", fact
+			// A row that already carries the processor's reversal ref keeps that ref and its
+			// amount whatever the new fact says (HH-690 round 2, P1-1).
+			if a.fact.RefundRef != "" {
+				a.status = "UNBOOKED"
+			} else {
+				a.status, a.fact = "UNBOOKED", fact
+			}
 			f.cardAttempts[fact.RefundKey] = a
 			continue
 		}
@@ -580,21 +586,35 @@ func (f *fakeStore) MarkCardRefundsBooked(_ context.Context, keys []string) erro
 }
 
 // StageCardRefundAttemptTx mirrors the real staging statement's semantics
-// (repository_w7.go): an UNBOOKED attempt with its ref answers the ref, an
-// IN_FLIGHT one refuses the 409, anything else restages the key IN_FLIGHT.
-func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact cardRefundFact) (string, error) {
+// (repository_w7.go): an UNBOOKED attempt with its ref answers the ref and the
+// processor's own amount, but only when the restaged fact is the SAME refund
+// (amount, capture, sale; HH-690 round 2, P1-1), an IN_FLIGHT one refuses the
+// 409, anything else restages the key IN_FLIGHT.
+func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact cardRefundFact) (string, int64, error) {
 	if a, ok := f.cardAttempts[fact.RefundKey]; ok {
 		if a.status == "UNBOOKED" && a.fact.RefundRef != "" {
-			return a.fact.RefundRef, nil
+			if a.fact.AmountCents != fact.AmountCents || a.fact.GatewayRef != fact.GatewayRef || a.fact.OrderID != fact.OrderID {
+				return "", 0, clientErr(http.StatusConflict,
+					"pos: that idempotency key already refunded a different card amount or sale; use a new key or book the original return")
+			}
+			return a.fact.RefundRef, a.fact.AmountCents, nil
 		}
 		if a.status == "IN_FLIGHT" {
-			return "", clientErr(http.StatusConflict,
+			return "", 0, clientErr(http.StatusConflict,
 				"pos: this card refund is already in flight at the processor; wait for it to finish")
 		}
 	}
 	fact.RefundRef = ""
 	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT"}
-	return "", nil
+	return "", 0, nil
+}
+
+func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, reason string) error {
+	// The real row keeps its status IN_FLIGHT and records the reason; the fake's
+	// status IS the record, so an IN_FLIGHT row is simply left as it stands.
+	_ = refundKey
+	_ = reason
+	return nil
 }
 
 func (f *fakeStore) RecordCardRefundDispatched(_ context.Context, fact cardRefundFact) error {

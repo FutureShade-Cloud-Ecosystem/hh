@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -516,7 +517,10 @@ func (s *Service) charge(ctx context.Context, cfg activeCfg, creds map[string]st
 func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfig(ctx)
 	if err != nil {
-		return RefundReceipt{}, err
+		// Nothing reached the processor: a caller classifying the outcome
+		// (the two-transaction card refund, HH-690) may close its attempt
+		// FAILED on this error alone.
+		return RefundReceipt{}, fmt.Errorf("%w: %w", ErrProcessorNotDispatched, err)
 	}
 	return s.refund(ctx, cfg, creds, in, s.resealOnPool)
 }
@@ -533,7 +537,8 @@ func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundReceipt, er
 func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (RefundReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
 	if err != nil {
-		return RefundReceipt{}, err
+		// Nothing reached the processor (the Refund discipline above).
+		return RefundReceipt{}, fmt.Errorf("%w: %w", ErrProcessorNotDispatched, err)
 	}
 	return s.refund(ctx, cfg, creds, in, func(ctx context.Context, processor string, creds map[string]string) error {
 		if rs, ok := s.cfg.(credsReencryptor); ok {
@@ -576,7 +581,7 @@ func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[
 // best-effort, the processor's answer is the receipt).
 func (s *Service) refund(ctx context.Context, cfg activeCfg, creds map[string]string, in RefundInput, reseal func(context.Context, string, map[string]string) error) (RefundReceipt, error) {
 	if in.ProcessorRef == "" || in.AmountCents <= 0 {
-		return RefundReceipt{}, errBadRefund
+		return RefundReceipt{}, fmt.Errorf("%w: %w", ErrProcessorNotDispatched, errBadRefund)
 	}
 	prevKey := creds["api_key"]
 	creds["__idem"] = in.IdempotencyKey // call-scoped; not persisted

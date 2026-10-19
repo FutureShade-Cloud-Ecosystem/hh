@@ -8,12 +8,14 @@ package pos
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 )
@@ -1031,7 +1033,7 @@ func TestReturn_Card_TwoTransactions_Tx2FailureLeavesUnbookedAndRetryBooksOnce(t
 func TestReturn_Card_TwoTransactions_ProcessorRefusalClosesTheAttemptFailed(t *testing.T) {
 	h := newHarness()
 	seedCardReturnable(h)
-	h.refunder.err = errors.New("the processor refused the reversal")
+	h.refunder.err = &payment.DeclineError{RespCode: "05", RespText: "Do not honour"}
 	_, err := h.svc.Return(context.Background(), cardInput())
 	var ce clientError
 	if !errors.As(err, &ce) || ce.status != http.StatusBadGateway {
@@ -1043,5 +1045,102 @@ func TestReturn_Card_TwoTransactions_ProcessorRefusalClosesTheAttemptFailed(t *t
 	}
 	if len(h.store.returnRows) != 0 || h.tender.refundCalled {
 		t.Fatal("the refused refund booked nothing")
+	}
+}
+
+// -- HH-690 round 2: the reuse guard and the unknown outcome ------------------
+
+// P1-2: a processor outcome that cannot be told (a 504, a transport timeout)
+// is never closed FAILED: the attempt stays IN_FLIGHT with its reason, the
+// amount stays reserved against the capture ceiling, the same-key retry
+// refuses 409, and no second processor call is made.
+func TestReturn_Card_TwoTransactions_UnknownProcessorOutcomeLeavesAttemptOpenAndRetryRefuses(t *testing.T) {
+	h := newHarness()
+	seedCardReturnable(h)
+	h.refunder.err = fmt.Errorf("run_payments: refund: %w: status 504", payment.ErrProcessorOutcomeUnknown)
+	_, err := h.svc.Return(context.Background(), cardInput())
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusBadGateway {
+		t.Fatalf("the unknown outcome answers the 502, got %v", err)
+	}
+	a, ok := h.store.cardAttempts["refund:ret-key-1"]
+	if !ok || a.status != "IN_FLIGHT" {
+		t.Fatalf("the unknown outcome keeps the attempt IN_FLIGHT (open and reserved): %+v", a)
+	}
+	// The retry under the same key refuses: the IN_FLIGHT staging branch.
+	h.refunder.err = nil
+	_, err = h.svc.Return(context.Background(), cardInput())
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the same-key retry of an in-flight attempt refuses 409, got %v", err)
+	}
+	if n := len(h.refunder.keyCalls); n != 1 {
+		t.Fatalf("no second processor call may be made under one refund key, got %d calls", n)
+	}
+	if len(h.store.returnRows) != 0 {
+		t.Fatal("nothing booked")
+	}
+	// A different-key refund on the same sale sees the IN_FLIGHT amount
+	// reserved against the capture ceiling (the capture holds exactly it).
+	oc := h.store.retCtx["order-1"]
+	oc.CapturedCents = 4520
+	h.store.retCtx["order-1"] = oc
+	in2 := cardInput()
+	in2.IdempotencyKey = "ret-key-2"
+	h.refunder.err = nil
+	_, err = h.svc.Return(context.Background(), in2)
+	if !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity {
+		t.Fatalf("the in-flight amount stays reserved against the capture, got %v", err)
+	}
+	if n := len(h.refunder.keyCalls); n != 1 {
+		t.Fatalf("the reserved ceiling refuses before any processor call, got %d calls", n)
+	}
+}
+
+// P1-1: a retry under the same key with a CHANGED body must not reuse the
+// earlier refund's ref for a different amount: the staging refuses 409, the
+// UNBOOKED record keeps the processor's own amount, and the retry with the
+// ORIGINAL body still books cleanly against the reused ref.
+func TestReturn_Card_TwoTransactions_SameKeyRetryWithChangedBodyRefuses409AndKeepsUnbookedAmount(t *testing.T) {
+	h := newHarness()
+	seedCardReturnable(h)
+	h.tender.refundErr = errors.New("the drawer jammed")
+	if _, err := h.svc.Return(context.Background(), cardInput()); err == nil {
+		t.Fatal("the first press fails tx 2")
+	}
+	a := h.store.cardAttempts["refund:ret-key-1"]
+	if a.status != "UNBOOKED" || a.fact.RefundRef != "rp_rev_1" || a.fact.AmountCents != 4520 {
+		t.Fatalf("the first press leaves the processor's refund on record: %+v", a)
+	}
+
+	// The changed body: 1 unit (1130) under the same key.
+	h.tender.refundErr = nil
+	changed := cardInput()
+	changed.Lines[0].QtyBase = 1
+	_, err := h.svc.Return(context.Background(), changed)
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the changed-body retry refuses 409, got %v", err)
+	}
+	if n := len(h.refunder.keyCalls); n != 1 {
+		t.Fatalf("the changed-body retry makes no processor call, got %d", n)
+	}
+	if len(h.store.returnRows) != 0 {
+		t.Fatal("the changed-body retry books nothing")
+	}
+	a = h.store.cardAttempts["refund:ret-key-1"]
+	if a.status != "UNBOOKED" || a.fact.AmountCents != 4520 || a.fact.RefundRef != "rp_rev_1" {
+		t.Fatalf("the UNBOOKED record keeps the processor's own amount and ref: %+v", a)
+	}
+
+	// The original body still books against the reused ref.
+	out, err := h.svc.Return(context.Background(), cardInput())
+	if err != nil {
+		t.Fatalf("the original-body retry must book: %v", err)
+	}
+	if n := len(h.refunder.keyCalls); n != 1 || out.TotalCents != 4520 {
+		t.Fatalf("the original body reuses the ref without a second call: calls %d total %d", len(h.refunder.keyCalls), out.TotalCents)
+	}
+	if a := h.store.cardAttempts["refund:ret-key-1"]; a.status != "BOOKED" || a.fact.AmountCents != 4520 {
+		t.Fatalf("the booked retry closes the record at the processor's amount: %+v", a)
 	}
 }

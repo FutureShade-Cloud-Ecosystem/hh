@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -44,7 +45,10 @@ func (r *keyedRail) RefundCard(_ context.Context, _ pgx.Tx, _ string, amountCent
 		return ref, nil
 	}
 	if r.failKey != "" && containsStr(idempotencyKey, r.failKey) {
-		return "", fmt.Errorf("the processor refused the reversal")
+		// A decline: the processor's own refusal, KNOWN to have moved no money,
+		// so the attempt closes FAILED and a retry may dispatch again
+		// (HH-690 round 2, P1-2).
+		return "", &payment.DeclineError{RespCode: "05", RespText: "Do not honour"}
 	}
 	ref := fmt.Sprintf("rf_%d", len(r.byKey)+1)
 	r.byKey[idempotencyKey] = ref
@@ -374,5 +378,182 @@ SELECT status, refund_ref, processor_at, booked_at FROM pos_card_refund_attempts
 	}
 	if refundRef != "rp_two_tx_probe" {
 		t.Fatalf("the booked reversal ref is the processor's own answer, got %q", refundRef)
+	}
+}
+
+// outcomeRail is a classified-outcome card rail for the HH-690 round 2 legs:
+// while err is set every call answers it, otherwise the call refunds and mints
+// a distinct ref per refund key.
+type outcomeRail struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (r *outcomeRail) RefundCard(_ context.Context, _ pgx.Tx, _ string, _ int64, _, _ string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	if r.err != nil {
+		return "", r.err
+	}
+	return fmt.Sprintf("rp_outcome_%d", r.calls), nil
+}
+
+func saleGatewayRef(t *testing.T, pool *pgxpool.Pool, orderID string) string {
+	t.Helper()
+	var ref string
+	if err := pool.QueryRow(context.Background(), `
+SELECT p.gateway_ref FROM payments p WHERE p.id = (SELECT payment_id FROM pos_sale WHERE order_id = $1::uuid)`,
+		orderID).Scan(&ref); err != nil {
+		t.Fatalf("the sale's gateway ref: %v", err)
+	}
+	return ref
+}
+
+// P1-1 on real Postgres: a same-key retry with a changed body refuses 409 and
+// leaves the UNBOOKED record (the processor's own amount and ref) untouched;
+// the retry with the ORIGINAL body reuses the ref, books the processor's
+// amount and closes the record BOOKED.
+func TestIntegration_Rails_TwoTransactionCardRefund_SameKeyChangedBodyRefusesAndKeepsProcessorAmount(t *testing.T) {
+	rail := &outcomeRail{}
+	s := newTrentonStackOnPoolWithRail(t, intPool(t), rail)
+	cust := s.plantCustomer("Rails P1-1 changed body", 30, 5000000)
+	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 4, TenderCard)
+	returnKey := key()
+	refundKey := "refund:" + returnKey
+	// The whole line's own figure (the card sale was paid in full, so the rail
+	// total of a whole-line return IS the sale's captured total).
+	var wholeLine int64
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT amount_cents FROM payments WHERE id = (SELECT payment_id FROM pos_sale WHERE order_id = $1::uuid)`,
+		sale.OrderID).Scan(&wholeLine); err != nil {
+		t.Fatalf("the sale's capture: %v", err)
+	}
+	// An earlier attempt under this key whose tx 2 rolled back: the processor
+	// refunded the whole line and the books hold nothing.
+	if _, err := s.pool.Exec(context.Background(), `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
+VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, 'rp_p1_1_kept', $6, 'UNBOOKED', 'the earlier tx 2 rolled back')`,
+		refundKey, sale.OrderID, trentonBranchID, cust, saleGatewayRef(t, s.pool, sale.OrderID), wholeLine); err != nil {
+		t.Fatalf("plant the earlier attempt: %v", err)
+	}
+
+	// The changed body: half the line under the same key.
+	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 2))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the changed-body retry must refuse 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rail.calls != 0 {
+		t.Fatal("the changed-body retry must not reach the processor")
+	}
+	var status, refundRef string
+	var amount int64
+	if err := s.pool.QueryRow(context.Background(), `
+SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refund_key = $1`, refundKey).
+		Scan(&status, &refundRef, &amount); err != nil {
+		t.Fatalf("the attempt row: %v", err)
+	}
+	if status != "UNBOOKED" || refundRef != "rp_p1_1_kept" || amount != wholeLine {
+		t.Fatalf("the UNBOOKED record keeps the processor's own ref and amount: %s %q %d", status, refundRef, amount)
+	}
+	if n := s.countAll(`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, sale.OrderID); n != 0 {
+		t.Fatal("the changed-body retry booked nothing")
+	}
+
+	// The original body (the whole line) reuses the ref and books it.
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 4))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the original-body retry must book, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rail.calls != 0 {
+		t.Fatalf("the reused ref means no processor call, got %d", rail.calls)
+	}
+	if err := s.pool.QueryRow(context.Background(), `
+SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refund_key = $1`, refundKey).
+		Scan(&status, &refundRef, &amount); err != nil || status != "BOOKED" || refundRef != "rp_p1_1_kept" || amount != wholeLine {
+		t.Fatalf("the booked retry closes the record at the processor's amount: %s %q %d (%v)", status, refundRef, amount, err)
+	}
+	var booked int64
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(total_cents), 0) FROM pos_returns WHERE order_id = $1::uuid`, sale.OrderID).Scan(&booked); err != nil || booked != wholeLine {
+		t.Fatalf("the books hold the processor's amount, got %d (%v)", booked, err)
+	}
+	if n := s.countAll(`SELECT count(*) FROM payments pr JOIN pos_returns r ON r.refund_payment_id = pr.id
+ WHERE r.order_id = $1::uuid AND pr.gateway_ref = 'rp_p1_1_kept'`, sale.OrderID); n != 1 {
+		t.Fatal("the refund payment rides the reused reversal ref")
+	}
+}
+
+// P1-2 on real Postgres: an outcome that cannot be told holds the attempt
+// IN_FLIGHT with its reason (the amount stays reserved against the capture,
+// so a different-key refund is refused), the same-key retry refuses 409 with
+// no second processor call, and a DECLINE still closes FAILED and retries.
+func TestIntegration_Rails_TwoTransactionCardRefund_UnknownOutcomeHoldsInFlightAndRetryRefuses(t *testing.T) {
+	rail := &outcomeRail{err: fmt.Errorf("run_payments: refund: %w: status 504", payment.ErrProcessorOutcomeUnknown)}
+	s := newTrentonStackOnPoolWithRail(t, intPool(t), rail)
+	cust := s.plantCustomer("Rails P1-2 unknown outcome", 30, 5000000)
+	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 4, TenderCard)
+	// The capture already holds exactly the whole line (the card sale was paid
+	// in full), so the held IN_FLIGHT amount is the whole ceiling.
+	returnKey := key()
+	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 4))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("the unknown outcome answers 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var status, lastError string
+	if err := s.pool.QueryRow(context.Background(), `
+SELECT status, last_error FROM pos_card_refund_attempts WHERE refund_key = $1`, "refund:"+returnKey).
+		Scan(&status, &lastError); err != nil {
+		t.Fatalf("the attempt row: %v", err)
+	}
+	if status != "IN_FLIGHT" || lastError == "" {
+		t.Fatalf("the unknown outcome holds the attempt IN_FLIGHT with its reason: %s %q", status, lastError)
+	}
+
+	// The same-key retry refuses; no second processor call.
+	rail.err = nil
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 4))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the same-key retry of a held attempt refuses 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rail.calls != 1 {
+		t.Fatalf("one processor call under the refund key, got %d", rail.calls)
+	}
+
+	// A different-key refund on the same sale sees the held amount reserved
+	// against the capture and refuses before any processor call.
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(key(), sale, 0, RefundCard, 2))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the held amount stays reserved against the capture, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rail.calls != 1 {
+		t.Fatalf("the reserved ceiling refuses before any processor call, got %d calls", rail.calls)
+	}
+
+	// A DECLINE is known to have moved no money: the attempt closes FAILED and
+	// the retry dispatches again and books.
+	sale2 := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 2, TenderCard)
+	declineKey := key()
+	rail.err = &payment.DeclineError{RespCode: "05", RespText: "Do not honour"}
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(declineKey, sale2, 0, RefundCard, 2))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("the decline answers 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := s.pool.QueryRow(context.Background(), `
+SELECT status FROM pos_card_refund_attempts WHERE refund_key = $1`, "refund:"+declineKey).Scan(&status); err != nil || status != "FAILED" {
+		t.Fatalf("the decline closes the attempt FAILED: %q (%v)", status, err)
+	}
+	rail.err = nil
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(declineKey, sale2, 0, RefundCard, 2))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the decline's retry must book, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rail.calls != 3 {
+		t.Fatalf("the declined key alone is retried at the processor (calls 1 held + decline + retry), got %d", rail.calls)
+	}
+	if err := s.pool.QueryRow(context.Background(), `
+SELECT status FROM pos_card_refund_attempts WHERE refund_key = $1`, "refund:"+declineKey).Scan(&status); err != nil || status != "BOOKED" {
+		t.Fatalf("the booked retry closes the record: %q (%v)", status, err)
 	}
 }
