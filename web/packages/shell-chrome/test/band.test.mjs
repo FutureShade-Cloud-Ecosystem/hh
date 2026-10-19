@@ -107,6 +107,10 @@ test('the pin menu paints outside the rail and the pointer crossing never drops 
   assert.equal(rail['overflow-y'], undefined, 'no vertical clip either');
   const rows = declsFor(railRules, '.rows');
   assert.equal(rows['overflow-y'], 'auto', 'the scroll lives on the rows wrapper, so a long pin list still scrolls');
+  const atRestMenu = declsFor(railRules, '.pin-menu');
+  assert.equal(atRestMenu['position'], 'fixed', 'a fixed popover, anchored from the rail rect, never clipped by an ancestor');
+  assert.ok((atRestMenu['left'] ?? '').includes('--pin-left'), 'the rail sets the left from its own rect');
+  assert.ok((atRestMenu['top'] ?? '').includes('--pin-top'), 'the rail sets the top from its own rect');
   const bridge = declsFor(railRules, '.pin-menu::before');
   assert.equal(bridge['content'], "''", 'the bridge fills the gap between the rail and the menu');
   assert.equal(bridge['right'], '100%', 'the bridge starts at the menu\u2019s left edge and reaches back to the rail');

@@ -328,9 +328,12 @@
    * the unbridged gap used to close the menu under the pointer). */
   .pin-menu {
     display: none;
-    position: absolute;
-    left: calc(100% + 10px);
-    top: var(--hh-s-12);
+    /* A fixed popover anchored from the rail's own rect (the rail sets
+     * --pin-left and --pin-top on hover and focus), so no ancestor's clip or
+     * scroll can hide it. */
+    position: fixed;
+    left: var(--pin-left, 66px);
+    top: var(--pin-top, 12px);
     z-index: var(--hh-z-dropdown);
     flex-direction: column;
     gap: 2px;

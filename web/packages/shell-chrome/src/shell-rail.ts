@@ -151,9 +151,12 @@ const styles = css`
    * the unbridged gap used to close the menu under the pointer). */
   .pin-menu {
     display: none;
-    position: absolute;
-    left: calc(100% + 10px);
-    top: var(--hh-s-12);
+    /* A fixed popover anchored from the rail's own rect (the rail sets
+     * --pin-left and --pin-top on hover and focus), so no ancestor's clip or
+     * scroll can hide it. */
+    position: fixed;
+    left: var(--pin-left, 66px);
+    top: var(--pin-top, 12px);
     z-index: var(--hh-z-dropdown);
     flex-direction: column;
     gap: 2px;
@@ -373,12 +376,16 @@ export class ShellRail extends HHElement {
     this.addEventListener('click', this.#onClick);
     this.addEventListener('keydown', this.#onKeyDown);
     this.addEventListener('focusin', this.#onFocusin);
+    this.addEventListener('pointerenter', this.#anchorPinMenu);
+    this.addEventListener('focusin', this.#anchorPinMenu);
   }
 
   override disconnectedCallback(): void {
     this.removeEventListener('click', this.#onClick);
     this.removeEventListener('keydown', this.#onKeyDown);
     this.removeEventListener('focusin', this.#onFocusin);
+    this.removeEventListener('pointerenter', this.#anchorPinMenu);
+    this.removeEventListener('focusin', this.#anchorPinMenu);
     super.disconnectedCallback();
   }
 
@@ -410,6 +417,17 @@ export class ShellRail extends HHElement {
       this.pin = railPinFromStored(storedPin);
     }
   }
+
+  /** Anchor the fixed pin popover from the rail's rect: just right of the
+   * rail, level with its head. Runs on hover and focus, before the menu shows. */
+  readonly #anchorPinMenu = (): void => {
+    const rail = this.renderRoot.querySelector?.('.rail');
+    const menu = this.renderRoot.querySelector?.<HTMLElement>('.pin-menu');
+    if (!(rail instanceof HTMLElement) || menu === null || menu === undefined) return;
+    const rect = rail.getBoundingClientRect();
+    menu.style.setProperty('--pin-left', `${Math.round(rect.right + 10)}px`);
+    menu.style.setProperty('--pin-top', `${Math.round(rect.top + 12)}px`);
+  };
 
   #emit(type: string, detail?: unknown): void {
     this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));

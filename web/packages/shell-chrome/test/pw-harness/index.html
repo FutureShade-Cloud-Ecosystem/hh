@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rail pin harness</title>
+    <style>html, body { margin: 0; height: 100%; }</style>
+  </head>
+  <body>
+    <div style="height: 100vh; display: flex">
+      <hh-shell-rail id="rail"></hh-shell-rail>
+    </div>
+    <script type="module">
+      import "/src/shell-rail.ts";
+      const rail = document.getElementById("rail");
+      rail.storage = {
+        read: (key) => window.localStorage.getItem(key),
+        write: (key, value) => window.localStorage.setItem(key, value),
+      };
+      rail.pins = [
+        { key: "a", label: "Counter Till", glyph: "C" },
+        { key: "b", label: "Quote Desk", glyph: "Q" },
+      ];
+    </script>
+  </body>
+</html>

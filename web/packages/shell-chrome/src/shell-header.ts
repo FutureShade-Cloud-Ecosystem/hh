@@ -115,11 +115,27 @@ const styles = css`
     z-index: var(--hh-z-dropdown);
     min-width: 220px;
     max-width: min(320px, calc(100% - var(--hh-s-32)));
+    display: grid;
+    gap: 2px;
     background: var(--hh-card);
     border: 1px solid var(--hh-line);
     border-radius: 12px;
     box-shadow: var(--hh-elev-2);
     padding: 6px;
+  }
+  .account-menu p {
+    margin: 0;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    font-size: 13px;
+    color: var(--hh-text-dim);
+  }
+  .account-menu strong {
+    color: var(--hh-text);
+  }
+  .account-menu button {
+    width: 100%;
+    min-height: 44px;
+    justify-content: flex-start;
   }
   .brand {
     display: flex;
