@@ -373,33 +373,59 @@ func (s *Service) Swap(ctx context.Context, in SwapInput) (SwapResult, error) {
 	var approvedHere, replayedHere bool
 	var swapID string
 	actor := identity.StaffUserIDFromContext(ctx)
-	txErr := s.store.RunInTx(ctx, func(tx pgx.Tx) error {
-		// Both halves move stock: take the balance rows of every product either touches, sorted,
-		// before the first move, so two crossed swaps queue instead of deadlocking.
-		if s.stockLocks != nil {
-			if lerr := s.stockLocks.LockStockTx(ctx, tx, branchID, fig.products); lerr != nil {
-				return lerr
+	// The two-transaction card refund (HH-690), the swap's own shape: a card leftover stages in
+	// its own short transaction and the processor runs outside any DB transaction BEFORE the
+	// swap's booking transaction opens, so no stock row, invoice row or payments counter is held
+	// across the processor call. A staging or dispatch failure falls into the same handling a
+	// booking failure has: the captured shortfall ring is compensated when one exists.
+	var txErr error
+	if fig.method == RefundCard && fig.leftover > 0 {
+		txErr = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			var replayed, staged bool
+			var serr error
+			_, replayed, staged, serr = s.stageCardReturnAcrossInTx(ctx, tx, notePlan)
+			if serr != nil {
+				return serr
 			}
-		}
-		var nerr error
-		note, replayedHere, approvedHere, nerr = s.returnAcrossInTx(ctx, tx, notePlan)
-		if nerr != nil {
-			return nerr
-		}
-		if replayedHere {
-			return errSwapTwinWon
-		}
-		if serr := s.saleInTx(ctx, tx, salePlan, &out, &tenderResults); serr != nil {
-			return serr
-		}
-		var ierr error
-		swapID, ierr = s.store.InsertSwap(ctx, tx, swapRow{
-			IdempotencyKey: in.IdempotencyKey, NoteID: note.NoteID, OrderID: out.OrderID, CustomerID: in.CustomerID,
-			BranchID: branchID, CreditCents: fig.credit.TotalCents, AppliedCents: fig.applied, NewTotalCents: fig.total,
-			LeftoverCents: fig.leftover, ShortfallCents: fig.shortfall, LeftoverMethod: fig.method, CreatedBy: actor,
+			if replayed {
+				return errSwapTwinWon
+			}
+			_ = staged
+			return nil
 		})
-		return ierr
-	})
+		if txErr == nil {
+			txErr = s.dispatchStagedCardRefunds(ctx, notePlan.children)
+		}
+	}
+	if txErr == nil {
+		txErr = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			// Both halves move stock: take the balance rows of every product either touches, sorted,
+			// before the first move, so two crossed swaps queue instead of deadlocking.
+			if s.stockLocks != nil {
+				if lerr := s.stockLocks.LockStockTx(ctx, tx, branchID, fig.products); lerr != nil {
+					return lerr
+				}
+			}
+			var nerr error
+			note, replayedHere, approvedHere, nerr = s.returnAcrossInTx(ctx, tx, notePlan)
+			if nerr != nil {
+				return nerr
+			}
+			if replayedHere {
+				return errSwapTwinWon
+			}
+			if serr := s.saleInTx(ctx, tx, salePlan, &out, &tenderResults); serr != nil {
+				return serr
+			}
+			var ierr error
+			swapID, ierr = s.store.InsertSwap(ctx, tx, swapRow{
+				IdempotencyKey: in.IdempotencyKey, NoteID: note.NoteID, OrderID: out.OrderID, CustomerID: in.CustomerID,
+				BranchID: branchID, CreditCents: fig.credit.TotalCents, AppliedCents: fig.applied, NewTotalCents: fig.total,
+				LeftoverCents: fig.leftover, ShortfallCents: fig.shortfall, LeftoverMethod: fig.method, CreatedBy: actor,
+			})
+			return ierr
+		})
+	}
 	if txErr != nil {
 		s.settleCardRefunds(ctx, notePlan.children, txErr)
 		var refusal ErrRefundApprovalRequired
