@@ -393,8 +393,8 @@ func TestAcceptance_GatewaySelector_FlagFlipSelectsLiveWithoutCredentials(t *tes
 	if live.lastReq.AmountCents != 40000 {
 		t.Fatalf("the live rail was handed %d, want the server-derived 40000", live.lastReq.AmountCents)
 	}
-	if live.lastReq.IdempotencyKey == "" || live.lastReq.Currency != DefaultChargeCurrency {
-		t.Fatalf("live charge request = %+v, want a server-bound key and %s", live.lastReq, DefaultChargeCurrency)
+	if live.lastReq.IdempotencyKey == "" || live.lastReq.Currency != chargeCurrency {
+		t.Fatalf("live charge request = %+v, want a server-bound key and %s", live.lastReq, chargeCurrency)
 	}
 
 	// Finally: flipping one service must not retro-flip the other. Two rails coexist, each holding
