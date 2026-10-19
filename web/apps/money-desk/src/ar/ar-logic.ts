@@ -172,8 +172,9 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
 }
 
 /** The route's ceiling on a payment's invoice list (core/internal/payments/received_apply.go, MaxApplyInvoices):
- * a pick over it is the one body the app can build that the route refuses ahead of its replay judgement,
- * so the desk refuses it in the route's own words and no such body is ever sent, not even a preview's. */
+ * the browser refuses a pick over it locally, in the route's own words, before any body is sent (not
+ * even a preview's), while the server answers the replay judgement ahead of validateApply, so a pick
+ * over the ceiling never reaches either door. */
 export const MAX_APPLY_INVOICES = 100;
 
 /** The ceiling's words for a pick over it: the route's own sentence first, then the pick's count. */

@@ -88,8 +88,8 @@ test("a worded 4xx is a refusal in the route's own words, and says the payment w
 });
 
 test("the pick ceiling words are the route's own sentence, said by the browser before any body is sent", () => {
-  // The core's validateApply refuses a pick over its ceiling ahead of its replay judgement; the desk
-  // refuses the same pick in the same words, so the route's sentence leads and the count follows.
+  // The browser refuses a pick over the ceiling locally before sending, in the route's own words,
+  // while the server answers the replay judgement ahead of validateApply.
   assert.equal(MAX_APPLY_INVOICES, 100);
   const words = pickCeilingWords(101);
   assert.ok(words.startsWith("A received payment may name at most 100 invoices; record it as more than one payment."), words);

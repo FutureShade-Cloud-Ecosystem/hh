@@ -128,6 +128,23 @@ type applyInvoiceRow struct {
 // ApplyReceived records ONE received payment against a list of the account's open invoices and
 // allocates it oldest first, atomically and idempotently.
 func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyAnswer, error) {
+	// The key is judged BEFORE the body (FP 186 and 187: no word matching in a money gate): a key
+	// that already recorded a payment answers the replay verdict whatever body the retry carries,
+	// because the validation words ("a payment amount must be greater than zero" and its kin) tell
+	// the desk the payment was not recorded when the first press under that key already booked it.
+	// A preview never reaches the replay (a preview writes nothing, so there is nothing to replay,
+	// and its key must stay unspent for the real apply that follows), and a nil pool (a unit call)
+	// has no receipts to read.
+	if strings.TrimSpace(in.IdempotencyKey) == "" {
+		return ApplyAnswer{}, httpx.BadRequestf("recording a payment needs an idempotency key")
+	}
+	if !in.Preview && r.pool != nil {
+		if p, ok, err := r.receiptByKey(ctx, in.IdempotencyKey); err != nil {
+			return ApplyAnswer{}, err
+		} else if ok {
+			return r.replayAnswer(ctx, p, in)
+		}
+	}
 	in, err := validateApply(in)
 	if err != nil {
 		return ApplyAnswer{}, err
@@ -140,14 +157,6 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// unchanged: the payments counter first, then the invoice rows.
 	if in.Preview {
 		return r.previewApply(ctx, in)
-	}
-	// The replay fast path, before any lock (a preview never reaches it: a preview writes nothing,
-	// so there is nothing to replay, and its key must stay unspent for the real apply that
-	// follows).
-	if p, ok, err := r.receiptByKey(ctx, in.IdempotencyKey); err != nil {
-		return ApplyAnswer{}, err
-	} else if ok {
-		return r.replayAnswer(ctx, p, in)
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -335,13 +344,21 @@ func validateApply(in ApplyRequest) (ApplyRequest, error) {
 // normalisedInvoiceIDs answers a list of invoice ids in the one spelling the walk locks in: each
 // trimmed, parsed and re-spelled canonical, then the list sorted. Two lists that differ only in
 // order, or in the uuid spellings Parse accepts (case, braces, the undashed form), are one list.
+// A list naming an invoice twice (in any spellings) is refused: the replay body comparison runs
+// before validateApply now, so this is the rule that keeps a duplicated id from matching a stored
+// payment whose list names it once.
 func normalisedInvoiceIDs(ids []string) ([]string, error) {
 	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
 	for _, id := range ids {
 		u, err := uuid.Parse(strings.TrimSpace(id))
 		if err != nil {
 			return nil, err
 		}
+		if seen[u.String()] {
+			return nil, fmt.Errorf("the same invoice is named twice: %s", u.String())
+		}
+		seen[u.String()] = true
 		out = append(out, u.String())
 	}
 	sort.Strings(out)

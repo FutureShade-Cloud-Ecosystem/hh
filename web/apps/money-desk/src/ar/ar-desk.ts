@@ -749,8 +749,8 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
-    // The pick ceiling holds for a preview too: the route would refuse this body ahead of its replay
-    // judgement, so the split area says the route's words and no such body is sent.
+    // The pick ceiling holds for a preview too: the browser refuses this body locally in the route's
+    // words before it is sent, while the server answers the replay judgement ahead of validateApply.
     if (account.picked.length > MAX_APPLY_INVOICES) {
       this.#account = { ...account, preview: null, previewError: pickCeilingWords(account.picked.length) };
       this.#host.repaint();
@@ -779,8 +779,9 @@ export class ArDesk {
     const reference = this.#host.field("receive-reference").trim();
     if (cents === null || cents === 0) return this.#stopApply("Enter the amount received, such as $100.00.");
     if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Pick all open takes every open invoice.");
-    // The route's own ceiling, said here so the body is never sent: a pick over it is refused ahead of
-    // the route's replay judgement, which would end a held key for a body the desk could refuse itself.
+    // The route's own ceiling, said here so the body is never sent: the browser refuses a pick over it
+    // locally, while the server answers the replay judgement ahead of validateApply, so a held key is
+    // never ended by a body the desk could refuse itself.
     // The guard is a stop before the wire, so the button and any held key are untouched by it.
     if (account.picked.length > MAX_APPLY_INVOICES) return this.#stopApply(pickCeilingWords(account.picked.length));
     if (reference === "") return this.#stopApply("Enter a reference, such as a cheque number.");

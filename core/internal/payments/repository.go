@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -447,9 +448,17 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 		}
 		rows = append(rows, row)
 	}
-	if p.CustomerID != in.CustomerID {
+	// The account and the tender are normalised HERE, ahead of the body comparison, because the
+	// replay judgement now runs before validateApply: the retry's account id may arrive in any
+	// spelling Parse accepts (or not parse at all, a body the fresh key validation would refuse),
+	// and the tender may arrive in lower case. A body that does not name this payment's account,
+	// in whatever spelling, answers the account refusal, never a validation word.
+	cu, err := uuid.Parse(strings.TrimSpace(in.CustomerID))
+	if err != nil || p.CustomerID != cu.String() {
 		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a payment for another account; use a new key")
 	}
+	in.CustomerID = cu.String()
+	in.Method = strings.ToUpper(strings.TrimSpace(in.Method))
 	if !sameReplayBody(p, storedRef, storedNamed, in) {
 		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a different payment; use a new key")
 	}
