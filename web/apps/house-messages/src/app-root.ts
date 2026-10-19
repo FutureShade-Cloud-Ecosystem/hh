@@ -28,6 +28,14 @@ import { messagesStyles } from "./styles.js";
 
 const DEMO_ORG = "hh-demo";
 
+// The stream URL: the same base the ticket mint rides (the custody's coreBaseUrl, the empty string
+// in demo mode) plus the stream path the feed hands over. A trailing slash on the configured base
+// is dropped so a split-origin console never opens the stream on a double slash, and a page with no
+// configured core keeps the path relative.
+export function streamUrlOnCore(coreBaseUrl: string | null | undefined, path: string): string {
+  return `${(coreBaseUrl ?? "").replace(/\/+$/, "")}${path}`;
+}
+
 // Every flow the box mints holds House Messages (the decided matrix gives the cell to all thirteen
 // roles), so the entry offers every card the flows route answers.
 export class HouseMessagesApp extends HHElement {
@@ -77,7 +85,7 @@ export class HouseMessagesApp extends HHElement {
         repaint: () => this.requestUpdate(),
         find: (selector) => this.renderRoot.querySelector(selector),
         now: () => Date.now(),
-        openStream: (url) => new EventSource(url),
+        openStream: (url) => new EventSource(streamUrlOnCore(this.#custody.coreBaseUrl, url)),
         timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (handle) => window.clearTimeout(handle as number) },
       },
       session.user.userId,
