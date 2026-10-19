@@ -957,10 +957,7 @@ mod tests {
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/api/v1/auth/sign-out");
         assert_eq!(seen[0].header("content-type"), Some("application/json"));
-        assert_eq!(
-            seen[0].header("authorization"),
-            Some("Bearer tok-secret-1")
-        );
+        assert_eq!(seen[0].header("authorization"), Some("Bearer tok-secret-1"));
         assert!(seen[0].header("cookie").is_none());
         assert!(seen[0].header("x-appwrite-project").is_none());
         let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();

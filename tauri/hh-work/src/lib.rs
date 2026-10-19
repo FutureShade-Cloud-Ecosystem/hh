@@ -761,7 +761,10 @@ mod tests {
             "the revocation command is allowed by name"
         );
         let build = crate_file("build.rs");
-        for list in ["#[cfg(feature = \"shell-proof\")]", "#[cfg(not(feature = \"shell-proof\"))]"] {
+        for list in [
+            "#[cfg(feature = \"shell-proof\")]",
+            "#[cfg(not(feature = \"shell-proof\"))]",
+        ] {
             let at = build.find(list).expect("build.rs gates its command lists");
             let chunk = &build[at..];
             assert!(

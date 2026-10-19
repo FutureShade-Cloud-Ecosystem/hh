@@ -2,9 +2,9 @@ mod auth;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+use hh_shell_core::console::{AuthCode, CoreToken};
 #[cfg(feature = "probe")]
 use hh_shell_core::keychain::{self, Slot};
-use hh_shell_core::console::{AuthCode, CoreToken};
 use hh_shell_core::profiles;
 use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
