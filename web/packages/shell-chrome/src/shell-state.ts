@@ -345,9 +345,15 @@ export function currentBreadcrumb(input: {
 }
 
 /** Initials for the avatar chip, from a role label: the first letters of the
- * first two words, uppercased. Committed text carries role labels only. */
+ * first two words, uppercased. A band account string reads "name, role": only
+ * the part before the comma counts, and a parenthetical ("(demo)") is not a
+ * word. Committed text carries role labels only. */
 export function initialsOf(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
+  const words = (name.split(',')[0] ?? '')
+    .replace(/\([^)]*\)/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => /^[\p{L}\p{N}]/u.test(w));
   if (words.length === 0) return '';
   return words
     .slice(0, 2)
