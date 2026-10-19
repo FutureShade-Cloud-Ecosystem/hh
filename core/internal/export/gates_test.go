@@ -96,6 +96,16 @@ func TestStatementExport_CarriesTheFinanceGateAndTheCallersBranchReach(t *testin
 		{"global manager served consolidated", gateGlobalMgr, "?report=income-statement", http.StatusOK, true},
 		{"global manager served trial balance", gateGlobalMgr, "?report=trial-balance", http.StatusOK, true},
 		{"admin served", gateAdmin, "?report=balance-sheet&branch_id=b-9", http.StatusOK, true},
+		// PRR-438: the aging report is a statement report with a branch dimension, its reach fence is
+		// pinned here rather than left to the income statement cases to stand in for.
+		{"ar-aging out of reach branch refused", gateBranchMgr, "?report=ar-aging&branch_id=b-2", http.StatusForbidden, false},
+		{"ar-aging scoped caller naming no branch refused", gateBranchMgr, "?report=ar-aging", http.StatusForbidden, false},
+		{"ar-aging branch manager served in reach", gateBranchMgr, "?report=ar-aging&branch_id=b-1", http.StatusOK, true},
+		{"ar-aging global manager served any branch", gateGlobalMgr, "?report=ar-aging&branch_id=b-2", http.StatusOK, true},
+		// PRR-438: gl-detail is NOT a statement report (the transactions route owns it, pinned in
+		// statement_test.go), so the statement door refuses the name whatever the caller's reach,
+		// and the branch fence for gl-detail is the transactions route's own cases below.
+		{"gl-detail is refused on the statement door", gateGlobalMgr, "?report=gl-detail&branch_id=b-2", http.StatusBadRequest, false},
 	})
 }
 
@@ -112,6 +122,10 @@ func TestTransactionsExport_CarriesTheFinanceGateAndTheCallersBranchReach(t *tes
 		{"branch manager served in reach", gateBranchMgr, "?year=2026&branch_id=b-1", http.StatusOK, true},
 		{"global manager served any branch", gateGlobalMgr, "?year=2026&branch_id=b-2", http.StatusOK, true},
 		{"global manager served consolidated", gateGlobalMgr, "?year=2026", http.StatusOK, true},
+		// PRR-438: this route IS the gl-detail export (TransactionsFilename names the gl-detail
+		// download), so its reach fence is what gl-detail's branch reach means.
+		{"gl-detail out of reach branch refused", gateBranchMgr, "?year=2026&account_code=1200&branch_id=b-2", http.StatusForbidden, false},
+		{"gl-detail branch manager served in reach", gateBranchMgr, "?year=2026&account_code=1200&branch_id=b-1", http.StatusOK, true},
 	})
 }
 
