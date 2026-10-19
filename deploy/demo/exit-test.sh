@@ -560,7 +560,7 @@ echo "== the denylist scan over the seeded database and built bundles (5.1)"
 denylist_out="$(./deploy/demo/denylist-scan.sh --container "$HAPPY" --pg-container "$PG_NAME" --db "${DBPFX}_happy" 2>&1)" \
 	&& pass "the denylist scan is clean ($denylist_out)" \
 	|| fail "the denylist scan found a word: $denylist_out"
-printf '%s\n' "$denylist_out" | grep -q '^denylist_sha256=[0-9a-f]{64}$' \
+printf '%s\n' "$denylist_out" | grep -Eq '^denylist_sha256=[0-9a-f]{64}$' \
 	&& pass "the scan printed the denylist's hash" \
 	|| fail "the scan printed no denylist hash: $denylist_out"
 printf '%s\n' "$denylist_out" | grep -q '^bundle_matches=0$' \

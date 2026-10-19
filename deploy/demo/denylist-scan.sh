@@ -132,11 +132,16 @@ psql_scalar() {
 
 if [ -n "$DB_URL" ] || { [ -n "$PG_CONTAINER" ] && [ -n "$DB_NAME" ]; }; then
 	sql_regex="$(printf '%s' "$DB_REGEX" | sed "s/'/''/g")"
-	columns="$(psql_scalar "SELECT c.table_name || '.' || c.column_name FROM information_schema.columns c JOIN information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.table_name <> 'schema_migrations' AND c.data_type IN ('text','character varying','citext','json','jsonb') ORDER BY 1, 2")"
+	columns="$(psql_scalar "SELECT c.table_name || '.' || c.column_name FROM information_schema.columns c JOIN information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.table_name <> 'schema_migrations' AND c.data_type IN ('text','character varying','citext','json','jsonb','USER-DEFINED') ORDER BY c.table_name, c.column_name")"
+	col_count=0
 	for col in $columns; do
+		col_count=$((col_count + 1))
 		t="${col%%.*}"
 		c="${col#*.}"
-		n="$(psql_scalar "SELECT count(*) FROM public.\"$t\" WHERE \"$c\" ~* '$sql_regex'")"
+		n="$(psql_scalar "SELECT count(*) FROM public.\"$t\" WHERE \"$c\"::text ~* '$sql_regex'")" || {
+			echo "db scan query failed on $col" >&2
+			exit 1
+		}
 		case "$n" in
 		''|0) ;;
 		*)
@@ -145,6 +150,10 @@ if [ -n "$DB_URL" ] || { [ -n "$PG_CONTAINER" ] && [ -n "$DB_NAME" ]; }; then
 			;;
 		esac
 	done
+	if [ "$col_count" -lt 100 ]; then
+		echo "db scan listed only $col_count text columns (need at least 100)" >&2
+		exit 1
+	fi
 	# The marker suffix is gone from the tenant's own entities, and the
 	# rebate's name carries no em or en dash (matched by code point, so
 	# the scan script itself stays free of both).
