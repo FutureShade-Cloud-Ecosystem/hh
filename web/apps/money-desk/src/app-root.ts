@@ -12,13 +12,17 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its two buttons ride data-action names
 // and the host's click listener below acts on them.
-import { html, css, type TemplateResult } from "lit";
+import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -391,6 +395,9 @@ export class MoneyDeskApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // Framed by the Work shell: the desk renders no band of its own.
+  readonly #framed = framedByShell();
+
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -539,6 +546,21 @@ export class MoneyDeskApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    // The framed band (GAPS-r2 row G1): the board's white band above the
+    // app-local header when the desk stands alone; framed by the Work shell,
+    // the host's band is the one band. The bell stands quiet: wiring its
+    // unread count is a follow-up.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#userName, this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -673,8 +695,14 @@ export class MoneyDeskApp extends HHElement {
 
   render(): TemplateResult {
     const session = this.#sessions.current;
-    if (session !== null) return this.renderSignedIn();
+    if (session !== null) {
+      return html`
+        ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
+        ${this.renderSignedIn()}
+      `;
+    }
     return html`
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Money Desk</h1>
