@@ -610,7 +610,7 @@ func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.Sta
 }
 
 func (h *Handler) listReorderPoints(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	rows, err := h.svc.ListReorderPoints(r.Context(), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
+	rows, err := h.svc.ListReorderPoints(r.Context(), reachFromRequest(r), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

@@ -171,14 +171,17 @@ func scanReorderPoints(rows pgx.Rows) ([]ReorderPoint, error) {
 	return out, rows.Err()
 }
 
-// ListReorderPoints returns the managed lines at a branch (all branches when branchID == "").
-func (r *Repository) ListReorderPoints(ctx context.Context, branchID string, limit int) ([]ReorderPoint, error) {
+// ListReorderPoints returns the managed lines at a branch (all branches when branchID == ""), inside
+// the caller's reach: the reach renders as a uuid set, NULL for a global caller (every row) and an
+// empty array for a scoped caller with no grants (no row, though the service short-circuits first).
+func (r *Repository) ListReorderPoints(ctx context.Context, reach BranchReach, branchID string, limit int) ([]ReorderPoint, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx, reorderPointSelect+`
 		 WHERE ($1 = '' OR rp.branch_id = $1::uuid)
-		 ORDER BY p.sku LIMIT $2`, branchID, limit)
+		   AND ($3::uuid[] IS NULL OR rp.branch_id = ANY($3::uuid[]))
+		 ORDER BY p.sku LIMIT $2`, branchID, limit, reach.branchFilter())
 	if err != nil {
 		return nil, err
 	}
