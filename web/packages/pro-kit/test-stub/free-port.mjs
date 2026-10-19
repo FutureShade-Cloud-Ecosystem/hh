@@ -2,15 +2,16 @@
 // inside the kernel's ephemeral range (32768..60999 on stock Linux, which also holds the Pro block 56800..56899)
 // and so is a candidate source port for any outgoing connection: a connect() between the probe close and the
 // Playwright webServer bind can grab the same number and the bind fails with EADDRINUSE. The hand-out band
-// 28000..31999 sits below that range, so a probe there is a real bind on a number no outgoing socket will pick.
+// 29000..31999 sits below that range and above the console legs' fixed bases (28170..28189), so a probe there
+// is a real bind on a number no outgoing socket will pick and no console leg will want.
 // Each call walks the band from a hash-derived offset so two freePorts(N) calls in the same process do not
 // collide on the starting point, and every port handed out is recorded in a process-level Set so a later call
 // in the same process never revisits it (the kernel has released the port to the loopback pool by the time
-// Playwright binds it; only the Set knows it's taken). The band is large enough (4000 numbers) that a single
+// Playwright binds it; only the Set knows it's taken). The band is large enough (3000 numbers) that a single
 // test process exhausting it is rare, so port=0 is a fallback, never the first choice.
 import { createServer } from "node:net";
 
-const BAND_LOW = 28000;
+const BAND_LOW = 29000;
 const BAND_HIGH = 31999;
 const BAND_SIZE = BAND_HIGH - BAND_LOW + 1;
 const handedOut = new Set();
