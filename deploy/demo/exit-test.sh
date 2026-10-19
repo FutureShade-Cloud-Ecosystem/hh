@@ -418,6 +418,32 @@ code="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$code" = "200" ] && pass "a staff read with a valid demo bearer and no phrase answers 200" \
 	|| fail "GET /api/v1/quotes with a bearer and no phrase answered $code, want 200"
 
+# The Procurement Manager's card (HH-418): the buyer flow mints a branch scoped staff bearer, and
+# the Buying and Stock reads answer for it. The mint carries its own visitor id (the sales mint
+# above spent no visitor id, and the mint's per-visitor limit is five).
+buy="$(curl -s -u "demo:$PHRASE" -H "Cookie: demo_visitor=$(random_hex 16)" \
+	-H 'Content-Type: application/json' -d '{"flow":"procurement-manager"}' \
+	"$BASE/api/v1/demo/session")"
+BUYER="$(printf '%s' "$buy" | sed 's/.*"token":"\([^"]*\)".*/\1/')"
+case "$buy" in
+	*'"token"'*) pass "the procurement manager mint answers a token" ;;
+	*) fail "the procurement manager mint answered no token: $buy" ;;
+esac
+case "$buy" in
+	*'"role_code":"procurement_manager"'*) pass "the procurement manager mint answers the buyer role" ;;
+	*) fail "the procurement manager mint answered another role: $buy" ;;
+esac
+buy_code="$(curl -s -o /dev/null -w '%{http_code}' \
+	-H "Authorization: Bearer $BUYER" -H 'X-Org: hh-demo' \
+	"$BASE/api/v1/inventory/reorder-points")"
+[ "$buy_code" = "200" ] && pass "the procurement manager reads the reorder points" \
+	|| fail "GET /api/v1/inventory/reorder-points with the buyer bearer answered $buy_code, want 200"
+buy_code="$(curl -s -o /dev/null -w '%{http_code}' \
+	-H "Authorization: Bearer $BUYER" -H 'X-Org: hh-demo' \
+	"$BASE/api/v1/inventory/shortfall")"
+[ "$buy_code" = "200" ] && pass "the procurement manager reads the shortfall worklist" \
+	|| fail "GET /api/v1/inventory/shortfall with the buyer bearer answered $buy_code, want 200"
+
 # A contractor persona's card (L-card): the mint answers a tenant class bearer, tenant me answers the role, and the
 # role's wall is the server's (L-wall): accounts payable reads invoices and is refused the buying routes, the field
 # crew reads orders and is refused billing, the buyer reads the buying routes. Tenant routes carry no X-Org and no
