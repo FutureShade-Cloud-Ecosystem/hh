@@ -373,6 +373,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		// A transient gateway RETRY verdict: nothing was persisted and the caller may safely
 		// retry the same request. 409 (distinct from the 402 hard decline above).
 		httpx.Error(w, http.StatusConflict, "payment is pending, please retry")
+	case errors.Is(err, payments.ErrPaymentInFlight):
+		// A charge for this request may already have moved money: unknown, not a failure. The same
+		// request resolves it (settles against the stamped processor ref) and is never charged twice.
+		// Fixed words: the wrapped cause stays in the log, not on the wire.
+		h.log.Warn("portal: payment in flight", "method", r.Method, "path", r.URL.Path, "err", err)
+		httpx.Error(w, http.StatusConflict, "payment is in flight, please check again")
 	case errors.As(err, &bre):
 		httpx.Error(w, http.StatusBadRequest, bre.Error())
 	default:

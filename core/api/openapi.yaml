@@ -26120,7 +26120,7 @@ paths:
       tags:
         - tenant-payments
       summary: Pay one or more invoices with one charge split across allocations
-      description: One charge for the summed balance of the selected invoices, split atomically. The summed amount, the processor customer and the idempotency key are derived server-side from the session; the client idempotency_key is advisory and is re-bound server-side. Funding is a stored method id or a one-time nonce. A hard decline is a 402; a transient pending verdict is a 409 and the caller may safely retry the same request. Legally retained holdback is excluded from what an invoice can pay.
+      description: "One charge for the summed balance of the selected invoices, split atomically. The summed amount, the processor customer and the idempotency key are derived server-side from the session; the client idempotency_key is advisory and is re-bound server-side. Funding is a stored method id or a one-time nonce. A hard decline is a 402; a transient pending verdict is a 409 and the caller may safely retry the same request. A charge that may already have moved money (the answer was lost, or the settle was refused after the processor approved) is also a 409, and the same request resolves it: it settles against the processor reference already held and is never charged twice. Legally retained holdback is excluded from what an invoice can pay."
       x-role: capability:pay_invoices
       security:
         - TenantBearer: []
