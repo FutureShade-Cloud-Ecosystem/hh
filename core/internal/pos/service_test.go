@@ -639,11 +639,11 @@ func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact c
 		// The restage keeps the row's own id and re-attributes the initiator
 		// (a FAILED row or one with no initiator), clearing the resolution.
 		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: prior.id,
-			attemptedAt: time.Now().UTC().Format(time.RFC3339)}
+			attemptedAt: liveStamp()}
 		return "", 0, nil
 	}
 	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: f.freshAttemptID(),
-		attemptedAt: time.Now().UTC().Format(time.RFC3339)}
+		attemptedAt: liveStamp()}
 	return "", 0, nil
 }
 
@@ -660,7 +660,7 @@ func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, 
 	_ = reason
 	if a, ok := f.cardAttempts[refundKey]; ok && a.status == "IN_FLIGHT" {
 		if a.processorAt == nil {
-			now := time.Now().UTC().Format(time.RFC3339)
+			now := liveStamp()
 			a.processorAt = &now
 		}
 		f.cardAttempts[refundKey] = a

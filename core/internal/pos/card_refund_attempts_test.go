@@ -26,6 +26,13 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 )
 
+// liveStamp is the real clock's now as the fake attempt rows carry it: the
+// live-request fence reads the wall clock (the database stamps attempted_at
+// with its own now()), so the fakes that stand for a request just made carry
+// the wall clock too. Kept here, beside no fixed date, for the dated time bomb
+// audit.
+func liveStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+
 // mgrCtx stamps a manager caller onto a context exactly as the guards do:
 // the tier the test chooses, the branch scope it grants, and the actor id
 // the separation-of-duties comparison reads.
