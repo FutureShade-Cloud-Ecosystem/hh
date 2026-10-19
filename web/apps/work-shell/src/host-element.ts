@@ -199,6 +199,11 @@ export class WorkShellHost extends HHElement {
    * means the page's own origin (a browser copy): the calls stay relative.
    */
   #coreBaseUrl: string | undefined = undefined;
+  /** Resolved when #boot has resolved #coreBaseUrl: the back-online flush waits on it, so it never runs before the base is known. */
+  #coreReady: Promise<void> = Promise.resolve();
+  #coreReadyResolve: () => void = () => {};
+  /** The shell's invoke, when the page runs in a native webview (null in a browser copy). The revocation goes through it, never the page's fetch. */
+  #shellInvoke: ((command: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
   /** How the last Switch role ended, for the page's test hook: the frame answered, ran out of time, was not there, or left on its own. */
   #leave: FrameSignOutOutcome | "ended-by-app" | "" = "";
 
@@ -206,6 +211,9 @@ export class WorkShellHost extends HHElement {
     super();
     this.#pinStorage = pinStorageFrom(safeLocalStorage());
     this.#pins = new PinBook({ storage: this.#pinStorage });
+    this.#coreReady = new Promise((resolve) => {
+      this.#coreReadyResolve = resolve;
+    });
   }
 
   connectedCallback(): void {
@@ -246,8 +254,12 @@ export class WorkShellHost extends HHElement {
   async #boot(): Promise<void> {
     // Where the core is, read once before anything needs it: the revocation
     // post and its offline flush both go there. A read that cannot be made
-    // resolves nothing, and the calls stay relative (a browser copy).
-    this.#coreBaseUrl = await resolveCoreBaseUrl();
+    // resolves nothing, and the calls stay relative (a browser copy). The
+    // page window is passed (win: window) so the page global a native shell
+    // sets before the bundle runs is read; without it the base would always
+    // resolve undefined in the webview.
+    this.#coreBaseUrl = await resolveCoreBaseUrl({ win: window });
+    this.#coreReadyResolve();
     try {
       const [profile, launch] = await Promise.all([fetchJson(PROFILE_FILE), fetchJson(LAUNCH_FILE)]);
       const read = parseProfile(profile, launch);
@@ -263,6 +275,7 @@ export class WorkShellHost extends HHElement {
     // and the front door's picker stands.
     const invoke = (window as unknown as TauriWindow).__TAURI_INTERNALS__?.invoke;
     if (typeof invoke === "function") {
+      this.#shellInvoke = invoke;
       this.#consoleSession = createConsoleSession({ invoke, org: DEMO_ORG_SLUG });
       const resumed = await this.#consoleSession.resume();
       if (resumed !== null) {
@@ -369,7 +382,7 @@ export class WorkShellHost extends HHElement {
     const token = this.#state.phase === "desk" ? (this.#consoleSession?.currentToken() ?? this.#state.session.token) : null;
     this.#state = switchRole(this.#state);
     this.#notice = "";
-    void endSession({ consoleSession: this.#consoleSession, token, coreBaseUrl: this.#coreBaseUrl });
+    void endSession({ consoleSession: this.#consoleSession, token, coreBaseUrl: this.#coreBaseUrl, invoke: this.#shellInvoke ?? undefined });
     this.#startDoorPoll();
     this.#leaving = false;
     this.requestUpdate();
@@ -451,7 +464,11 @@ export class WorkShellHost extends HHElement {
     this.#online = navigator.onLine;
     this.requestUpdate();
     // Back online: retry any session revocation the offline moment held (HH-678).
-    if (this.#online) void flushPendingRevocations({ coreBaseUrl: this.#coreBaseUrl });
+    // The flush waits for #boot to have resolved the base (and the shell's
+    // invoke), so it never runs against an unresolved base.
+    if (this.#online) {
+      void this.#coreReady.then(() => flushPendingRevocations({ coreBaseUrl: this.#coreBaseUrl, invoke: this.#shellInvoke ?? undefined }));
+    }
   };
 
   #applyTheme(): void {

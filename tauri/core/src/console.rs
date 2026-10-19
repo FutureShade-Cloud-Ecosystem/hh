@@ -24,7 +24,7 @@
 use std::{sync::Arc, time::Duration};
 
 use reqwest::{
-    header::{ACCEPT, CONTENT_TYPE, COOKIE, SET_COOKIE},
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE},
     redirect::Policy,
     Method, RequestBuilder,
 };
@@ -162,6 +162,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_EMAIL: usize = 320;
 const MAX_PASSWORD: usize = 256;
 const EXCHANGE_PATH: &str = "/api/v1/auth/exchange";
+const SIGN_OUT_PATH: &str = "/api/v1/auth/sign-out";
 
 /// The core's org slug shape (`orgSlugPattern` in the core's authz middleware).
 pub fn org_ok(org: &str) -> bool {
@@ -269,6 +270,7 @@ pub struct ConsoleClient {
     http: reqwest::Client,
     endpoint: String,
     project_id: String,
+    core_base: String,
     exchange_url: String,
 }
 
@@ -281,6 +283,7 @@ impl ConsoleClient {
             http: build_http(DEFAULT_TIMEOUT)?,
             endpoint: config.console_endpoint.trim_end_matches('/').to_string(),
             project_id: config.project_id.clone(),
+            core_base: config.core_url.trim_end_matches('/').to_string(),
             exchange_url: format!("{}{}", config.core_url.trim_end_matches('/'), EXCHANGE_PATH),
         })
     }
@@ -412,6 +415,30 @@ impl ConsoleClient {
             Ok(())
         } else {
             Err(console_refusal(status))
+        }
+    }
+
+    /// Revoke one core session token at the core's sign out route (HH-678).
+    /// The token travels in the body the core's handler requires (one JSON
+    /// object with the field `token` only) and as the bearer header, and is
+    /// zeroized when this call ends. The token is consumed by the call: it is
+    /// passed by value and never held past one attempt.
+    pub async fn core_sign_out(&self, token: CoreToken) -> Result<(), AuthCode> {
+        let body = Zeroizing::new(serde_json::json!({ "token": token.expose() }).to_string());
+        let request = self
+            .http
+            .post(format!("{}{}", self.core_base, SIGN_OUT_PATH))
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, format!("Bearer {}", token.expose()))
+            .body(body.to_string());
+        drop(token);
+        let response = Self::send(request).await?;
+        let status = response.status().as_u16();
+        if (200..=299).contains(&status) {
+            Ok(())
+        } else {
+            Err(core_refusal(status))
         }
     }
 
@@ -912,6 +939,65 @@ mod tests {
         assert!(
             !matches!(got, Err(AuthCode::Offline)),
             "the handshake failed: {got:?}"
+        );
+    }
+
+    // ---- the core's session revocation ----------------------------------
+
+    fn core_token(v: &str) -> CoreToken {
+        CoreToken::new(v.to_string()).unwrap()
+    }
+
+    #[test]
+    fn core_sign_out_posts_the_token_to_the_sign_out_route_as_the_body_and_the_bearer() {
+        let server = MockServer::start(vec![Reply::json(200, r#"{"ok":true}"#)]);
+        run(client(&server).core_sign_out(core_token("tok-secret-1"))).unwrap();
+        let seen = server.finish();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/api/v1/auth/sign-out");
+        assert_eq!(seen[0].header("content-type"), Some("application/json"));
+        assert_eq!(
+            seen[0].header("authorization"),
+            Some("Bearer tok-secret-1")
+        );
+        assert!(seen[0].header("cookie").is_none());
+        assert!(seen[0].header("x-appwrite-project").is_none());
+        let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
+        assert_eq!(body, serde_json::json!({"token": "tok-secret-1"}));
+    }
+
+    #[test]
+    fn core_sign_out_maps_the_cores_refusals_to_contract_codes() {
+        for (status, want) in [
+            (400, AuthCode::BadRequest),
+            (401, AuthCode::Unauthorized),
+            (403, AuthCode::Forbidden),
+            (429, AuthCode::RateLimited),
+            (500, AuthCode::Unavailable),
+            (503, AuthCode::Unavailable),
+            (404, AuthCode::Unavailable),
+        ] {
+            let server = MockServer::start(vec![Reply::json(status, r#"{"error":"x"}"#)]);
+            assert_eq!(
+                run(client(&server).core_sign_out(core_token("tok-1"))).unwrap_err(),
+                want,
+                "status {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreachable_core_is_offline_for_the_sign_out_too() {
+        let cfg = AuthConfig::for_test(
+            &format!("http://127.0.0.1:{}/v1", closed_port()),
+            PROJECT,
+            &format!("http://127.0.0.1:{}", closed_port()),
+        );
+        let c = ConsoleClient::new(&cfg).unwrap();
+        assert_eq!(
+            run(c.core_sign_out(core_token("tok-1"))).unwrap_err(),
+            AuthCode::Offline
         );
     }
 

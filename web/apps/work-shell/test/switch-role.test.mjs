@@ -125,16 +125,64 @@ test("the offline flush retries against the coreBaseUrl it is given", async () =
   assert.deepEqual(pendingRevocationsForTest(), []);
 });
 
+// PR #495 round 1 part B: in a native Tauri profile the revocation never
+// posts from the page (the CSP holds no network origin). The shell's command
+// holds the core URL and posts it; an IPC refusal that is an outage word is
+// held pending like a 5xx, a final verdict code is not.
+const IPC_TOKEN = "aaa.bbb.ccc";
+
+function recordingInvoke(calls, answer) {
+  return async (command, args) => {
+    calls.push({ command, args });
+    if (answer instanceof Error) throw answer;
+    if (answer !== undefined) throw answer;
+    return null;
+  };
+}
+
+test("in a native profile the revocation goes through the shell command, never the page's fetch", async () => {
+  clearPendingRevocationsForTest();
+  const ipcCalls = [];
+  const fetchCalls = [];
+  const fetch = async (url, init) => {
+    fetchCalls.push({ url, init });
+    return { status: 200 };
+  };
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: IPC_TOKEN, fetch, invoke: recordingInvoke(ipcCalls) });
+  assert.equal(ipcCalls.length, 1, "one revocation command");
+  assert.deepEqual(ipcCalls[0], { command: "cmd_sign_out_revoke", args: { jwt: IPC_TOKEN } });
+  assert.equal(fetchCalls.length, 0, "the page never posts to the network in a native profile");
+  assert.deepEqual(pendingRevocationsForTest(), [], "a resolved command leaves nothing pending");
+});
+
+test("an IPC outage is held pending and flushed through the command; a final code is not held", async () => {
+  clearPendingRevocationsForTest();
+  const outage = [];
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: IPC_TOKEN, invoke: recordingInvoke(outage, { code: "unavailable" }) });
+  assert.deepEqual(pendingRevocationsForTest(), [IPC_TOKEN], "an outage word is held like a 5xx");
+
+  const flushed = [];
+  await flushPendingRevocations({ invoke: recordingInvoke(flushed) });
+  assert.deepEqual(flushed, [{ command: "cmd_sign_out_revoke", args: { jwt: IPC_TOKEN } }], "the held token flushed through the command");
+  assert.deepEqual(pendingRevocationsForTest(), []);
+
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: IPC_TOKEN, invoke: recordingInvoke([], { code: "unauthorized" }) });
+  assert.deepEqual(pendingRevocationsForTest(), [], "a final verdict code is never retried");
+});
+
 const hostSrc = readFileSync(fileURLToPath(new URL("../src/host-element.ts", import.meta.url)), "utf8");
 
 test("the host resolves the core base once at boot and forwards it to every revocation path", () => {
-  assert.ok(/resolveCoreBaseUrl\(/.test(hostSrc), "the host resolves the core base URL through the one function");
+  assert.ok(
+    /resolveCoreBaseUrl\(\{ win: window \}\)/.test(hostSrc),
+    "the host resolves the core base URL through the one function, passing the page window (the global is read)",
+  );
   assert.ok(
     /endSession\(\{[^}]*coreBaseUrl: this\.#coreBaseUrl/.test(hostSrc),
     "Switch role's endSession carries the resolved core base URL",
   );
   assert.ok(
-    /flushPendingRevocations\(\{ coreBaseUrl: this\.#coreBaseUrl \}\)/.test(hostSrc),
-    "the back-online flush carries the resolved core base URL",
+    /#coreReady\.then\(\(\) => flushPendingRevocations\(\{ coreBaseUrl: this\.#coreBaseUrl, invoke: this\.#shellInvoke \?\? undefined \}\)\)/.test(hostSrc),
+    "the back-online flush waits for boot and carries the resolved core base URL and the shell's invoke",
   );
 });
