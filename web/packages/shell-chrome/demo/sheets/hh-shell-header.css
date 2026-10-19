@@ -236,13 +236,21 @@
     border-bottom: 1px solid var(--hh-line);
   }
   /* The board's white band (GAPS-r2 row G1): the lockup at the left, the
-   * selector centred by the grid's middle column, the chip run at the right. */
+   * selector centred by the grid's middle column, the chip run at the right.
+   * The lockup is the dealer's word alone (rows 1520, 1826, 1856: one white
+   * labeled band, never the HH mark beside the dealer name). */
   .band[data-variant='band'] {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
   }
   .band[data-variant='band'] .brand {
     justify-self: start;
+  }
+  .band[data-variant='band'] .lockup {
+    color: var(--hh-text);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
   }
   .band[data-variant='band'] .selector {
     justify-self: center;
@@ -254,6 +262,28 @@
   .band[data-variant='band'] + .panel {
     left: 50%;
     transform: translateX(-50%);
+  }
+  /* The board's DEMO marker is one outlined chip, never a second filled strip. */
+  .band[data-variant='band'] .demo {
+    background: transparent;
+    color: var(--hh-accent-text);
+    border: 1px solid currentColor;
+  }
+  /* The account chip's menu: the actions the app-local header used to carry
+   * (Theme, Feedback, Switch role, Sign out) ride the slot, so the band is
+   * the one band. */
+  .account-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: var(--hh-s-16);
+    z-index: var(--hh-z-dropdown);
+    min-width: 220px;
+    max-width: min(320px, calc(100% - var(--hh-s-32)));
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: 12px;
+    box-shadow: var(--hh-elev-2);
+    padding: 6px;
   }
   .brand {
     display: flex;

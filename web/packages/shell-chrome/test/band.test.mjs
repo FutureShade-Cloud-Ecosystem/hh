@@ -39,11 +39,11 @@ const railRules = parseRules(ShellRail.styles.map((sheet) => sheet.cssText).join
 test('the shell band is on the left lockup, the selector is centred, the rail pin menu has Pin as icons and Pin wide', () => {
   const band = visible(renderKit(ShellHeader, { ...BAND, variant: 'band' }));
   const bandAt = band.indexOf('class="band"');
-  const markAt = band.indexOf('class="mark"');
   const orgAt = band.indexOf('Gable Landscape Supply');
   const selectorAt = band.indexOf('class="selector"');
-  assert.ok(markAt > bandAt && markAt < selectorAt, 'the GABLE lockup leads the band, left of the selector');
-  assert.ok(orgAt > markAt && orgAt < selectorAt, 'the org word rides the lockup');
+  assert.equal(band.includes('class="mark"'), false, 'the band never carries the HH mark: the lockup is the dealer word alone');
+  assert.ok(band.includes('class="lockup"'), 'the dealer word renders as the lockup');
+  assert.ok(orgAt > bandAt && orgAt < selectorAt, 'the GABLE lockup leads the band, left of the selector');
   assert.ok(band.includes('Counter Till > New sale'), 'the selector names the app and the surface');
   const bandRule = declsFor(headerRules, ".band[data-variant='band']");
   assert.ok(
@@ -60,11 +60,16 @@ test('the shell band is on the left lockup, the selector is centred, the rail pi
   assert.ok(rail.includes('Pin wide'), 'the pin menu offers Pin wide, the board\u2019s words');
 });
 
-// ── both variants stand: the compact header the fixture pages host serves is untouched ───────────
+test('the band DEMO marker is one outlined chip, the board\u2019s style', () => {
+  const demoRule = declsFor(headerRules, ".band[data-variant='band'] .demo");
+  assert.equal(demoRule['background'], 'transparent', 'outlined, never a second filled strip');
+  assert.ok((demoRule['border'] ?? '').startsWith('1px solid'), 'the outline is the marker');
+});
 
-test('the compact variant keeps the Demo badge in the brand and the selector at the left', () => {
+test('the compact variant keeps the HH mark, the Demo badge in the brand, and the selector at the left', () => {
   const compact = visible(renderKit(ShellHeader, { ...BAND, variant: 'compact' }));
   assert.ok(compact.includes('data-variant="compact"'), 'the compact posture is in the markup');
+  assert.ok(compact.includes('class="mark"'), 'the compact band keeps the mark it always had');
   assert.ok(compact.includes('>Demo<'), 'the compact badge words are unchanged');
   assert.ok(!compact.includes('>DEMO<'), 'no DEMO chip in the compact run');
   const brandAt = compact.indexOf('class="brand"');
@@ -94,6 +99,19 @@ test('the pin menu hides at rest and reveals on hover and on focus, with no tran
   const focus = declsFor(railRules, '.rail:focus-within .pin-menu');
   assert.equal(hover['display'], 'flex', 'hover reveals the pin menu');
   assert.equal(focus['display'], 'flex', 'focus reveals it too');
+});
+
+test('the pin menu paints outside the rail and the pointer crossing never drops the hover', () => {
+  const rail = declsFor(railRules, '.rail');
+  assert.equal(rail['overflow'], 'visible', 'the rail never clips the menu (the P1-1 clipping defect)');
+  assert.equal(rail['overflow-y'], undefined, 'no vertical clip either');
+  const rows = declsFor(railRules, '.rows');
+  assert.equal(rows['overflow-y'], 'auto', 'the scroll lives on the rows wrapper, so a long pin list still scrolls');
+  const bridge = declsFor(railRules, '.pin-menu::before');
+  assert.equal(bridge['content'], "''", 'the bridge fills the gap between the rail and the menu');
+  assert.equal(bridge['right'], '100%', 'the bridge starts at the menu\u2019s left edge and reaches back to the rail');
+  const menuHover = declsFor(railRules, '.pin-menu:hover');
+  assert.equal(menuHover['display'], 'flex', 'the menu\u2019s own hover keeps it open across the bridge');
 });
 
 test('the unpinned collapsed rail hides its icons until hover or focus; pinned icons stay', () => {
@@ -163,4 +181,41 @@ test('the account chip reads the persona name with the role label, and degrades 
   assert.equal(framedBandAccount('', 'Yard Team'), 'Yard Team');
   assert.equal(framedBandAccount('Dana', ''), 'Dana');
   assert.equal(framedBandAccount('Yard Team', 'Yard Team'), 'Yard Team', 'one word, never doubled');
+});
+
+// ── round 1 on PR 503: the account chip's menu and the theme the band applies ─
+
+test('the band account chip opens the menu the app hands it, and says so with haspopup and expanded', () => {
+  const closed = renderKit(ShellHeader, { ...BAND, variant: 'band' });
+  const chip = /<button[^>]*data-action="account"[^>]*>/.exec(closed)?.[0] ?? '';
+  assert.ok(chip.includes('aria-haspopup="menu"'), 'the chip names its menu');
+  assert.ok(chip.includes('aria-expanded="false"'), 'closed at rest');
+  assert.ok(!closed.includes('class="account-menu"'), 'no popover at rest');
+  const open = renderKit(ShellHeader, { ...BAND, variant: 'band', accountOpen: true });
+  assert.ok(open.includes('class="account-menu"'), 'the popover renders when open');
+  const openChip = /<button[^>]*data-action="account"[^>]*>/.exec(open)?.[0] ?? '';
+  assert.ok(openChip.includes('aria-expanded="true"'), 'open says open');
+  const compact = renderKit(ShellHeader, { ...BAND, accountOpen: true });
+  assert.ok(!compact.includes('class="account-menu"'), 'the compact variant keeps the shell-driven menu');
+});
+
+test('the band applies the theme to the document root, the contract the app-local header carried', () => {
+  const calls = [];
+  const root = {
+    setAttribute: (name, value) => calls.push(['set', name, value]),
+    removeAttribute: (name) => calls.push(['rm', name]),
+  };
+  const original = globalThis.document;
+  globalThis.document = { documentElement: root };
+  try {
+    const el = new ShellHeader();
+    el.theme = 'light';
+    el.willUpdate(new Map([['theme', undefined]]));
+    assert.deepEqual(calls, [['set', 'data-theme', 'light']], 'light sets the attribute');
+    el.theme = 'dark';
+    el.willUpdate(new Map([['theme', undefined]]));
+    assert.deepEqual(calls[1], ['rm', 'data-theme'], 'dark removes it');
+  } finally {
+    globalThis.document = original;
+  }
 });

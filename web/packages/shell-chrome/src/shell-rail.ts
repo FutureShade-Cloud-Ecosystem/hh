@@ -59,8 +59,23 @@ const styles = css`
     padding: var(--hh-s-12) 10px;
     background: var(--hh-card);
     border-right: 1px solid var(--hh-line);
+    /* The rail itself never clips: the pin menu and the row tooltips paint
+     * beside it (P1-1 of the PR 503 review). The scroll moves to the rows
+     * wrapper, so a long pin list still scrolls. */
+    overflow: visible;
+  }
+  .rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  .rail[data-collapsed='true'] .rows {
+    align-items: center;
   }
   /* Collapsed: the narrow strip the brief arrives as, icons only. */
   .rail[data-collapsed='true'] {
@@ -130,7 +145,10 @@ const styles = css`
   /* The pin menu (GAPS-r2 row G1): the board's two pin choices, "Pin as
    * icons" and "Pin wide". Hidden at rest; the rail's own hover or focus
    * reveals it, instantly, because an animated bar is an extra bar (the G3
-   * check). Beside the strip like a row's tooltip, never a new column. */
+   * check). It hangs beside the rail with a small visual gap, and the
+   * ::before bridge carries the pointer across the gap, so a mouse moving
+   * from the rail to the menu never drops the hover (P1-1 of the review:
+   * the unbridged gap used to close the menu under the pointer). */
   .pin-menu {
     display: none;
     position: absolute;
@@ -146,8 +164,17 @@ const styles = css`
     border-radius: 8px;
     box-shadow: var(--hh-elev-2);
   }
+  .pin-menu::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: 12px;
+  }
   .rail:hover .pin-menu,
-  .rail:focus-within .pin-menu {
+  .rail:focus-within .pin-menu,
+  .pin-menu:hover {
     display: flex;
   }
   .pin-item {
@@ -567,7 +594,9 @@ export class ShellRail extends HHElement {
             Pin wide
           </button>
         </div>
-        ${this.pins.length === 0 ? this.#renderEmpty() : this.pins.map((pinRow, i) => this.#renderRow(pinRow, i))}
+        <div class="rows">
+          ${this.pins.length === 0 ? this.#renderEmpty() : this.pins.map((pinRow, i) => this.#renderRow(pinRow, i))}
+        </div>
       </nav>
     `;
   }

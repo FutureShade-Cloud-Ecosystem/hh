@@ -72,13 +72,21 @@ const styles = css`
     border-bottom: 1px solid var(--hh-line);
   }
   /* The board's white band (GAPS-r2 row G1): the lockup at the left, the
-   * selector centred by the grid's middle column, the chip run at the right. */
+   * selector centred by the grid's middle column, the chip run at the right.
+   * The lockup is the dealer's word alone (rows 1520, 1826, 1856: one white
+   * labeled band, never the HH mark beside the dealer name). */
   .band[data-variant='band'] {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
   }
   .band[data-variant='band'] .brand {
     justify-self: start;
+  }
+  .band[data-variant='band'] .lockup {
+    color: var(--hh-text);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
   }
   .band[data-variant='band'] .selector {
     justify-self: center;
@@ -90,6 +98,28 @@ const styles = css`
   .band[data-variant='band'] + .panel {
     left: 50%;
     transform: translateX(-50%);
+  }
+  /* The board's DEMO marker is one outlined chip, never a second filled strip. */
+  .band[data-variant='band'] .demo {
+    background: transparent;
+    color: var(--hh-accent-text);
+    border: 1px solid currentColor;
+  }
+  /* The account chip's menu: the actions the app-local header used to carry
+   * (Theme, Feedback, Switch role, Sign out) ride the slot, so the band is
+   * the one band. */
+  .account-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: var(--hh-s-16);
+    z-index: var(--hh-z-dropdown);
+    min-width: 220px;
+    max-width: min(320px, calc(100% - var(--hh-s-32)));
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: 12px;
+    box-shadow: var(--hh-elev-2);
+    padding: 6px;
   }
   .brand {
     display: flex;
@@ -429,6 +459,9 @@ export class ShellHeader extends HHElement {
     notifications: { type: Number, attribute: 'notifications' },
     selectorOpen: { type: Boolean, attribute: 'selector-open' },
     variant: { attribute: 'variant' },
+    accountOpen: { type: Boolean, attribute: 'account-open' },
+    accountMenu: { attribute: false },
+    theme: { attribute: 'theme' },
   };
 
   /** The org's name, beside the mark. Empty renders no word. */
@@ -461,6 +494,18 @@ export class ShellHeader extends HHElement {
    * band (the board's white band: lockup left, selector centred, DEMO and
    * Synced chips in the run). */
   declare variant: string;
+  /** The account chip's menu, open or closed. The chip toggles it in the band
+   * variant; a shell may set it too. */
+  declare accountOpen: boolean;
+  /** The account menu's content: the app hands its own template (the Theme,
+   * Feedback, Switch role and Sign out actions the app-local header used to
+   * carry). It renders inside the band's shadow, and the actions' clicks
+   * bubble back to the app's own delegation, so no listener moves. */
+  declare accountMenu: unknown;
+  /** The theme the band applies to the document root, the sheet's own
+   * contract: light sets data-theme, dark removes it. The app drives it from
+   * its own theme control in the account menu. */
+  declare theme: string;
 
   constructor() {
     super();
@@ -479,6 +524,9 @@ export class ShellHeader extends HHElement {
     this.notifications = 0;
     this.selectorOpen = false;
     this.variant = 'compact';
+    this.accountOpen = false;
+    this.accountMenu = null;
+    this.theme = '';
   }
 
   override connectedCallback(): void {
@@ -512,8 +560,18 @@ export class ShellHeader extends HHElement {
           `expected one of: ${SHELL_HEADER_VARIANTS.join(', ')}`,
       );
     }
-    if (changed.has('selectorOpen')) {
-      if (this.selectorOpen) this.#startOutsideWatch();
+    if (changed.has('theme') && typeof document !== 'undefined') {
+      // The theme is a document concern (the sheet's own attribute contract),
+      // applied here because the app-local header that used to apply it is
+      // gone in the band's world: one band carries it.
+      const root: Document['documentElement'] | undefined = document.documentElement;
+      if (root !== undefined && root !== null) {
+        if (this.theme === 'light') root.setAttribute('data-theme', 'light');
+        else if (this.theme === 'dark') root.removeAttribute('data-theme');
+      }
+    }
+    if (changed.has('selectorOpen') || changed.has('accountOpen')) {
+      if (this.selectorOpen || this.accountOpen) this.#startOutsideWatch();
       else this.#stopOutsideWatch();
     }
   }
@@ -550,13 +608,35 @@ export class ShellHeader extends HHElement {
       return;
     }
     if (action === 'account') {
+      // The band variant's chip opens its own menu (the slot's actions); the
+      // event still rides for a shell that carries a menu of its own.
+      if (this.variant === 'band') {
+        this.accountOpen = !this.accountOpen;
+        if (this.accountOpen) this.#focusAccountMenu();
+      }
       this.#emit('hh-shell-account');
     }
   };
 
+  #focusAccountMenu(): void {
+    void this.updateComplete.then(() => {
+      const first = this.renderRoot.querySelector('.account-menu button');
+      (first instanceof HTMLElement ? first : null)?.focus();
+    });
+  }
+
   /** The menu keyboard, the original launcher's, one keyboard for the house. */
   readonly #onKeyDown = (event: Event): void => {
     const key = (event as KeyboardEvent).key;
+    if (this.accountOpen && key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.accountOpen = false;
+      void this.updateComplete.then(() =>
+        this.renderRoot.querySelector<HTMLButtonElement>('button.account')?.focus(),
+      );
+      return;
+    }
     const path = event.composedPath();
     const onControl = path.some(
       (node) => node instanceof Element && node.hasAttribute?.('data-action') && node.getAttribute('data-action') === 'selector',
@@ -622,6 +702,7 @@ export class ShellHeader extends HHElement {
   readonly #onDocPointerDown = (event: Event): void => {
     if (event.composedPath().includes(this)) return;
     this.selectorOpen = false;
+    this.accountOpen = false;
   };
 
   #startOutsideWatch(): void {
@@ -648,10 +729,14 @@ export class ShellHeader extends HHElement {
     return html`
       <header class="band" data-variant=${isBand ? 'band' : 'compact'} role="banner">
         <div class="brand">
-          <span class="mark" aria-hidden="true">
-            <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
-          </span>
-          ${this.org !== '' ? html`<span class="org">${this.org}</span>` : nothing}
+          ${isBand
+            ? nothing
+            : html`<span class="mark" aria-hidden="true">
+                <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
+              </span>`}
+          ${this.org !== ''
+            ? html`<span class=${isBand ? 'lockup' : 'org'}>${this.org}</span>`
+            : nothing}
           ${this.demo && !isBand ? html`<span class="demo" role="note">Demo</span>` : nothing}
         </div>
         <button
@@ -699,13 +784,23 @@ export class ShellHeader extends HHElement {
               <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
             </svg>
           </button>
-          <button class="account" type="button" data-action="account" aria-label=${this.user === '' ? 'Account' : `${this.user} account`}>
+          <button
+            class="account"
+            type="button"
+            data-action="account"
+            aria-haspopup=${isBand ? 'menu' : nothing}
+            aria-expanded=${isBand ? (this.accountOpen ? 'true' : 'false') : nothing}
+            aria-label=${this.user === '' ? 'Account' : `${this.user} account`}
+          >
             <span class="avatar" aria-hidden="true" data-initials=${initials}>${initials}</span>
             <span class="account-word">${this.user === '' ? 'Account' : this.user}</span>
           </button>
         </div>
       </header>
       ${this.selectorOpen ? this.#renderPanel() : nothing}
+      ${this.accountOpen && isBand
+        ? html`<div class="account-menu" role="group" aria-label="Account actions">${this.accountMenu ?? nothing}</div>`
+        : nothing}
     `;
   }
 

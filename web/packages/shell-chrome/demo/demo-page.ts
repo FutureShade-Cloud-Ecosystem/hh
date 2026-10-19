@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { CSSResult, type CSSResultGroup, type TemplateResult } from 'lit';
+import { CSSResult, html, type CSSResultGroup, type TemplateResult } from 'lit';
 import { ShellHeader } from '../src/shell-header.js';
 import { ShellRail } from '../src/shell-rail.js';
 import { ShellBanner } from '../src/shell-banner.js';
@@ -358,6 +358,7 @@ ${frameCell('the frame, desktop 1280, idle', 1280, '', {})}
 <div class="grid">
 ${cell('hh-shell-header', 'band at rest, pinned (the active pin marked)', bandAt())}
 ${cell('hh-shell-header', 'the board band (GAPS-r2 row G1): the lockup left, the selector centred, DEMO and Synced chips', bandAt({ variant: 'band', demo: true }))}
+${cell('hh-shell-header', 'the board band, the account menu open: the actions the app-local header used to carry', bandAt({ variant: 'band', demo: true, accountOpen: true, accountMenu: html`<button type="button" data-action="theme">Theme</button><button type="button" data-action="sign-out">Sign out</button>` }))}
 ${cell('hh-shell-header', 'band at rest, unpinned', bandAt({ pinned: false }))}
 ${cell('hh-shell-header', 'band, pin disabled: no current surface', bandAt({ currentKey: '', pinned: false }))}
 ${cell('hh-shell-header', 'band, bell at zero', bandAt({ notifications: 0 }))}
