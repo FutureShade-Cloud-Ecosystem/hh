@@ -87,9 +87,14 @@ func (s *Service) Search(ctx context.Context, c Caller, orgID, query string, lim
 	if err != nil {
 		return SearchResults{}, err
 	}
-	if messages == nil {
-		messages = []SearchMessage{}
+	admitted := map[string]bool{}
+	keptMessages := make([]SearchMessage, 0, len(messages))
+	for _, m := range messages {
+		if s.admits(ctx, admitted, c.UserID, m.ChannelID) {
+			keptMessages = append(keptMessages, m)
+		}
 	}
+	messages = keptMessages
 	if people == nil {
 		people = []SearchPerson{}
 	}

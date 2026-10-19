@@ -82,6 +82,9 @@ func (h *SSEHub) PublishMessage(channelID string, m Message) {
 		if err != nil || !ok {
 			continue
 		}
+		if h.fence != nil && !h.fence(ctx, uid, channelID) {
+			continue
+		}
 		h.deliver(uid, sseEvent{Name: "message", Data: m})
 		// Also nudge the unread badge to refresh for members other than the author.
 		if m.AuthorID != uid {

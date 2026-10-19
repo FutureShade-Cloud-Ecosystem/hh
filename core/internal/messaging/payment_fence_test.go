@@ -245,3 +245,23 @@ func TestPaymentFence_LiveStreamFollowsTheFence(t *testing.T) {
 		t.Fatalf("a seat without the trail must not hear the money room live, got %d events", len(pat.ch))
 	}
 }
+
+// The channel list is a read too: a money room the person no longer holds the trail for is not offered.
+func TestPaymentFence_ChannelListDropsMoneyRoomsWithoutTheTrail(t *testing.T) {
+	svc, f, _ := moneyRoomFixture(t)
+	f.setMember(chGen, uOtherPat)
+	f.channels[uOtherPat] = []Channel{{ID: chPayGlobal}, {ID: chPayBranch}, {ID: chGen}}
+	f.channels[uClerkAvi] = []Channel{{ID: chPayGlobal}, {ID: chPayBranch}}
+
+	got, err := svc.ListMyChannels(context.Background(), Caller{UserID: uOtherPat})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != chGen {
+		t.Fatalf("a seat without the trail lists only the ordinary room, got %+v", got)
+	}
+	mine, _ := svc.ListMyChannels(context.Background(), Caller{UserID: uClerkAvi})
+	if len(mine) != 2 {
+		t.Fatalf("the trail holder lists both money rooms, got %+v", mine)
+	}
+}

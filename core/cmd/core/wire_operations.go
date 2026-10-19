@@ -241,6 +241,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
 	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
+	// HH-424: the targeted payment notices and the money rooms follow the payment trail reader and the
+	// branch reach. The reader is the money spine's late one, bound to the role gate once it exists
+	// (bindPaymentTrail), and unbound it answers no, so the rooms and notices stay closed until then.
+	messagingSvc.WithPaymentAccess(spine.paymentTrail)
+	messagingHub.WithRoomFence(messagingSvc.RoomAdmits)
 
 	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
 	attachmentsRepo := attachments.NewRepository(pool)
@@ -457,7 +462,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// answers only that user's own world (its channels and their
 	// messages, its own acks and prefs), so a row outside the caller's
 	// membership is the same as absent whatever org it belongs to.
-	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link)); err != nil {
+	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link)); err != nil {
@@ -523,7 +528,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("vendors", purchasing.NewVendorsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link)); err != nil {
+	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("parked_tickets", pos.NewParkedTicketsStore(pool)); err != nil {
