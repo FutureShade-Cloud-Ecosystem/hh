@@ -20,12 +20,16 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its controls ride data-action
 // names and the host's click listener below acts on them.
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -169,6 +173,10 @@ export class ManagerHomeApp extends HHElement {
     field: (name) => this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`)?.value ?? "",
     index: (name) => this.renderRoot.querySelector<HTMLSelectElement>(`select[data-field="${name}"]`)?.selectedIndex ?? -1,
   });
+
+  // Framed by the Work shell: the host's band is the one band; standalone, this
+  // app renders its own white band above the app-local header (GAPS-r2 row G1).
+  readonly #framed = framedByShell();
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -533,6 +541,21 @@ export class ManagerHomeApp extends HHElement {
       if (url !== undefined && img.getAttribute("src") !== url) img.setAttribute("src", url);
       const alt = this.#warranty.photoAlt(id);
       if (img.getAttribute("alt") !== alt) img.setAttribute("alt", alt);
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band above the
+    // app-local header when Manager Home stands alone; framed by the Work shell,
+    // the host's band is the one band. The bell stands quiet: wiring its
+    // unread count is a follow-up.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#view));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
     }
   }
 
@@ -1926,8 +1949,10 @@ export class ManagerHomeApp extends HHElement {
 
   render(): TemplateResult {
     const session = this.#sessions.current;
-    if (session !== null) return this.renderSignedIn();
+    const band = this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`;
+    if (session !== null) return html`${band}${this.renderSignedIn()}`;
     return html`
+      ${band}
       <hos-app-header demo product-name="Home" product-sub="Manager Home · HH Work shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         ${renderEntry(this.#entryView)}
