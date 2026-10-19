@@ -58,8 +58,18 @@ func NewHandler(verifier *identity.Verifier, revocations *identity.SessionRevoca
 					return
 				}
 				// Idempotent by design: the token is already revoked or
-				// already expired, which is what a sign out asks for.
+				// already expired, which is what a sign out asks for. A
+				// revoked token still owes its database row when the
+				// earlier write failed (P2-2): the retry answers 503
+				// until the row lands, never a 200 that would let the
+				// shell drop an unpersisted revocation.
 				if ve.Reason() == "token revoked" || ve.Reason() == "token expired" {
+					if ve.Reason() == "token revoked" && revocations != nil && verified.JTI != "" {
+						if rerr := revocations.EnsurePersisted(r.Context(), verified.JTI, verified.ExpiresAt); rerr != nil {
+							authz.RefuseUnavailable(w)
+							return
+						}
+					}
 					w.Header().Set("Cache-Control", "no-store")
 					httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 					return

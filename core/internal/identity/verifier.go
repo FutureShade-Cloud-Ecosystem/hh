@@ -281,7 +281,10 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 			return Token{}, credentialErr("machine key set token does not carry the machine audience")
 		}
 		if err := v.checkRevocation(ctx, tok); err != nil {
-			return Token{}, err
+			// The signature and claims are already verified, so the token
+			// is returned with the refusal: the sign out route needs the
+			// jti and exp of a revoked token to retry its row write (P2-2).
+			return tok, err
 		}
 		return tok, nil
 	}
@@ -307,7 +310,9 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 		return Token{}, credentialErr("audience not accepted")
 	}
 	if err := v.checkRevocation(ctx, tok); err != nil {
-		return Token{}, err
+		// The signature and claims are already verified, so the token is
+		// returned with the refusal (the sign out route's retry, P2-2).
+		return tok, err
 	}
 	return tok, nil
 }
