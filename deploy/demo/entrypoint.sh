@@ -98,6 +98,49 @@ export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
 # CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
 # the core itself refuses any value it does not accept.
 
+# --------------------------------------------------------------------------
+# The console copy's session signing key (row 2354): FB Deploy's file
+# storage mounts files as 0755 root:root and its API refuses chmod, while
+# the core refuses a session signing key readable by group or other. On a
+# console copy, a key whose mode is outside 0400 and 0600 is copied once
+# into a private path and the variable is pointed at the copy before any
+# core process starts; a key already 0400 or 0600 is used as-is. The key's
+# bytes are never printed and never copied anywhere else, and a missing or
+# unreadable key refuses the boot.
+# --------------------------------------------------------------------------
+# BEGIN ensure_signing_key
+ensure_signing_key() {
+	[ "${CORE_SIGNIN_MODE:-}" = console ] || return 0
+	key_file="${CORE_SESSION_SIGNING_KEY_FILE:-}"
+	if [ -z "$key_file" ]; then
+		fail "CORE_SESSION_SIGNING_KEY_FILE is not set: a console copy needs the session signing key's path, and the entrypoint refuses to start without it"
+	fi
+	if [ ! -f "$key_file" ] || [ ! -r "$key_file" ]; then
+		fail "CORE_SESSION_SIGNING_KEY_FILE is not a readable file: the entrypoint refuses to start without the session signing key"
+	fi
+	key_mode="$(stat -c '%a' "$key_file")" || \
+		fail "CORE_SESSION_SIGNING_KEY_FILE's mode could not be read: the entrypoint refuses to start without knowing it"
+	# The owner-only modes (0400, 0600) carry no group, other or set
+	# bits; any other mode is a mounted key the core would refuse at boot.
+	if [ "$((0$key_mode & 0177))" -eq 0 ]; then
+		return 0
+	fi
+	secrets_dir="${hh_secrets_dir:-/run/hh-secrets}"
+	mkdir -p "$secrets_dir" || \
+		fail "the private secrets directory $secrets_dir could not be created: the mounted signing key cannot be made private"
+	chmod 0700 "$secrets_dir" 2>/dev/null || true
+	rm -f "$secrets_dir/session.pem"
+	( umask 077 && cp "$key_file" "$secrets_dir/session.pem" ) || \
+		fail "the mounted signing key could not be copied into $secrets_dir: the entrypoint refuses to start on the too-open mount"
+	chmod 0400 "$secrets_dir/session.pem"
+	CORE_SESSION_SIGNING_KEY_FILE="$secrets_dir/session.pem"
+	export CORE_SESSION_SIGNING_KEY_FILE
+	log "the mounted signing key was readable by group or other, so the core reads a private copy at $CORE_SESSION_SIGNING_KEY_FILE (the mounted file is untouched)"
+}
+# END ensure_signing_key
+
+ensure_signing_key
+
 # The web runtime config (/srv/app/config.json): the image bakes the demo
 # mode, and a console copy serves its own from HH_WEB_* names, validated here
 # before anything writes. Unset or demo leaves the baked file untouched.

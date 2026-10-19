@@ -57,7 +57,11 @@
 #     rotating forged values buy the mint's limit no bucket;
 #   the phrase's hash sits on no file in the container's writable layer,
 #     the scan bites on a planted value, and no served process's
-#     environment carries the hash variable.
+#     environment carries the hash variable;
+#   a session signing key mounted group or other readable (FB Deploy
+#     mounts files 0755 root:root and refuses chmod) is copied by the
+#     entrypoint into a private 0400 path on a console copy, a 0400 key
+#     is used as-is, and a missing key refuses the boot.
 #
 # The one clause the image cannot prove alone is recorded in
 # docs/BLOCKERS.md: two distinct client addresses behind the proxy hold
@@ -974,6 +978,86 @@ case "$codes" in
 esac
 [ "$forged" = "0" ] && pass "rotating forged forwarded values bought no bucket" \
 	|| fail "$forged mint(s) bought by forged forwarded values"
+
+# --------------------------------------------------------------------------
+# The mounted signing key's mode (row 2354): FB Deploy mounts secret
+# files as 0755 root:root and its API refuses chmod, while the core
+# refuses a key readable by group or other. The entrypoint's own routine
+# is extracted between its markers and run here, so what is tested is
+# the code the image runs. The key material below is throwaway, made
+# here, and never a real key; nothing prints it.
+# --------------------------------------------------------------------------
+echo "== a mounted 0755 signing key is copied into a private 0400 path"
+ensure_src="$(sed -n '/^# BEGIN ensure_signing_key$/,/^# END ensure_signing_key$/p' deploy/demo/entrypoint.sh)"
+keytmp="$(mktemp -d)"
+key_body="throwaway mode probe, not a key"
+printf '%s\n' "$key_body" > "$keytmp/mounted.pem"
+chmod 0755 "$keytmp/mounted.pem"
+printf '%s\n' "$key_body" > "$keytmp/tight.pem"
+chmod 0400 "$keytmp/tight.pem"
+mkdir -p "$keytmp/private" "$keytmp/private2"
+keyrun() {
+	# mode, path, secrets dir override; prints the resolved path
+	CORE_SIGNIN_MODE="$1" CORE_SESSION_SIGNING_KEY_FILE="$2" hh_secrets_dir="$3" \
+		sh -c 'fail() { echo "entrypoint: $*" >&2; exit 1; }
+log() { echo "entrypoint: $*"; }
+'"$ensure_src"'
+ensure_signing_key
+echo "resolved=$CORE_SESSION_SIGNING_KEY_FILE"'
+}
+key_out="$(keyrun console "$keytmp/mounted.pem" "$keytmp/private" 2>&1)" && key_ok=0 || key_ok=1
+if [ "$key_ok" = "0" ] && [ -f "$keytmp/private/session.pem" ]; then
+	pass "a mounted 0755 signing key boots on a console copy (the entrypoint copies it private)"
+else
+	fail "a mounted 0755 signing key was refused by the entrypoint: $key_out"
+fi
+case "$key_out" in
+	*"resolved=$keytmp/private/session.pem"*)
+		pass "CORE_SESSION_SIGNING_KEY_FILE points at the private copy" ;;
+	*) fail "CORE_SESSION_SIGNING_KEY_FILE was not rewritten to the private copy: $key_out" ;;
+esac
+[ "$(stat -c '%a' "$keytmp/private/session.pem" 2>/dev/null)" = "400" ] \
+	&& pass "the private copy is mode 0400" \
+	|| fail "the private copy is not mode 0400 ($(stat -c '%a' "$keytmp/private/session.pem" 2>/dev/null))"
+[ "$(stat -c '%a' "$keytmp/private")" = "700" ] \
+	&& pass "the private directory is mode 0700" \
+	|| fail "the private directory is not mode 0700"
+[ "$(stat -c '%a' "$keytmp/mounted.pem")" = "755" ] \
+	&& pass "the mounted file itself is untouched (still 0755)" \
+	|| fail "the mounted file's mode was changed"
+cmp -s "$keytmp/mounted.pem" "$keytmp/private/session.pem" \
+	&& pass "the private copy holds the mounted file's bytes" \
+	|| fail "the private copy differs from the mounted file"
+case "$key_out" in
+	*"$key_body"*) fail "the run printed the key material" ;;
+	*) pass "the run printed no key material" ;;
+esac
+
+key_out="$(keyrun console "$keytmp/tight.pem" "$keytmp/private2" 2>&1)" && key_ok=0 || key_ok=1
+if [ "$key_ok" = "0" ] && [ "$key_out" = "resolved=$keytmp/tight.pem" ] && [ ! -e "$keytmp/private2/session.pem" ]; then
+	pass "a key already 0400 is used as-is (no copy, no path rewrite)"
+else
+	fail "a 0400 key was not used as-is: $key_out"
+fi
+
+key_out="$(keyrun console "$keytmp/absent.pem" "$keytmp/private2" 2>&1)" && key_ok=0 || key_ok=1
+if [ "$key_ok" = "1" ]; then
+	case "$key_out" in
+		*CORE_SESSION_SIGNING_KEY_FILE*) pass "a missing key refuses the boot, naming the variable" ;;
+		*) fail "a missing key refused the boot without naming the variable: $key_out" ;;
+	esac
+else
+	fail "a missing key did not refuse the boot"
+fi
+
+key_out="$(keyrun demo "$keytmp/mounted.pem" "$keytmp/private2" 2>&1)" && key_ok=0 || key_ok=1
+if [ "$key_ok" = "0" ] && [ "$key_out" = "resolved=$keytmp/mounted.pem" ] \
+	&& [ ! -e "$keytmp/private2/session.pem" ]; then
+	pass "a demo copy leaves the mounted key alone (the copy is console only)"
+else
+	fail "a demo copy touched the signing key: $key_out"
+fi
+rm -rf "$keytmp"
 
 # Cleanup is the EXIT trap above: the containers, the databases of a
 # Postgres that was found, and the Postgres and network this run started.
