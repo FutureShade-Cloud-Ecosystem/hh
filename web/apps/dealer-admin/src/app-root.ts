@@ -22,7 +22,10 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import type { DemoFlow } from "@hardscapehouse/api-client";
@@ -31,6 +34,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
 import { errorWords, staffRefusalWords } from "./dealer-logic.js";
 import { ConfigApi, type CellConfig } from "./config-api.js";
@@ -354,6 +358,10 @@ export class DealerAdminApp extends HHElement {
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // Framed by the Work shell: the host's band is the one band; standalone,
+  // this app renders the board's white band above its app-local header.
+  readonly #framed = framedByShell();
 
   // The theme: light by default, brand (the dark half) one tap away. Held in
   // memory only: nothing here persists.
@@ -993,6 +1001,21 @@ export class DealerAdminApp extends HHElement {
       } else if (el.value !== value) {
         el.value = value;
       }
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band above the
+    // app-local header when the app stands alone; framed by the Work shell,
+    // the host's band is the one band. The bell stands quiet: wiring its
+    // unread count is a follow-up.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#surface));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
     }
   }
 
@@ -2141,6 +2164,7 @@ export class DealerAdminApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header signed-in demo product-name="Admin" product-sub="Dealer Admin · HH Work shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         <div class="app-body">
@@ -2200,6 +2224,7 @@ export class DealerAdminApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header demo product-name="Admin" product-sub="Dealer Admin · HH Work shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         ${this.renderEntry()}
