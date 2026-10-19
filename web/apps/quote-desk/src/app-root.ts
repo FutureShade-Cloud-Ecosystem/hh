@@ -13,14 +13,18 @@
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
-import { html, css, nothing, type TemplateResult } from "lit";
+import { html, css, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // The shared chrome (item 5, decision log row 938): the element registers
 // itself; the app feeds it through the wiring pass below, the same
 // no-template-binding discipline the builder's client rides.
 import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
@@ -168,6 +172,8 @@ export class QuoteDeskApp extends HHElement {
   #route: DeskRoute = LIST_ROUTE;
   /** Whether this build is the demo build: the seam rule's own constant (the front door handoff rides it), and the shared header's demo badge rides it too. */
   readonly #demoBuild = import.meta.env.MODE === "demo";
+  /** Framed by the Work shell: the host renders the one board band, so the app renders none of its own. */
+  readonly #framed = framedByShell();
 
   constructor() {
     super();
@@ -262,7 +268,8 @@ export class QuoteDeskApp extends HHElement {
     }
   }
 
-  protected override updated(): void {
+  protected override updated(changedProperties: PropertyValues): void {
+    super.updated(changedProperties);
     // The wiring pass: the builder receives the validated client the same
     // way every shared component receives its facts.
     const builder = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-quote-builder");
@@ -291,6 +298,21 @@ export class QuoteDeskApp extends HHElement {
       header.signedIn = this.#roleLabel !== null;
       header.demo = this.#demoBuild;
       header.theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band above the
+    // app-local header when the desk stands alone; framed by the Work shell,
+    // the host's band is the one band. The bell stands quiet: wiring its
+    // unread count is a follow-up.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route.kind));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
     }
     // The feedback widget's sender rides the property the same way, never a
     // template binding: the widget's own seam.
@@ -712,6 +734,9 @@ export class QuoteDeskApp extends HHElement {
   render(): TemplateResult {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
+      ${this.#framed
+        ? nothing
+        : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header data-testid="qd-bar">
         <div class="theme-slot" slot="theme">${this.#feedbackControl()}</div>
         <div class="theme-slot" slot="theme">${this.#themeControl()}</div>
