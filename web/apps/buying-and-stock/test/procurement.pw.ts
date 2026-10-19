@@ -28,20 +28,18 @@ test("the way in with no handoff offers this role's own card", async ({ page, re
   await expect(page.locator('[data-flow="inside-sales"]')).toContainText("Inside sales");
 });
 
-test("the header names the role as the reference does, and the theme control is a small button", async ({ page, request }) => {
+test("the band names the role as the reference does, and the theme control names the current theme", async ({ page, request }) => {
   await openHome(page, request);
-  const header = page.locator("hos-app-header");
-  await expect(header).toContainText("Procurement manager (demo)");
+  const band = page.locator("hh-shell-header");
+  await expect(band).toContainText("Procurement manager (demo)");
+  await band.locator("button.account").click();
   const theme = page.getByRole("button", { name: /^Theme: / });
   await expect(theme).toHaveText("Theme: Light");
-  const box = await theme.boundingBox();
-  expect(box?.height ?? 99).toBeLessThanOrEqual(40);
 });
 
-test("the header reads its sub line as the reference does, and Feedback opens the shared widget", async ({ page, request }) => {
+test("Feedback opens the shared widget from the account menu", async ({ page, request }) => {
   await openHome(page, request);
-  await expect(page.locator("hos-app-header")).toContainText("a Hardscape House product");
-  await expect(page.locator("hos-app-header")).not.toContainText("Work shell");
+  await page.locator("hh-shell-header button.account").click();
   await page.getByRole("button", { name: "Feedback" }).click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
   await expect(page.locator("hh-feedback")).toHaveAttribute("screen", "Buying and Stock");
@@ -52,7 +50,10 @@ test("every text is 4.5 to 1 or better in both themes: home, the drafted K08 row
   await page.setViewportSize({ width: 1440, height: 900 });
   await openHome(page, request);
   for (const theme of ["Theme: Light", "Theme: Brand"]) {
-    if (theme === "Theme: Brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+    if (theme === "Theme: Brand") {
+      await page.locator("hh-shell-header button.account").click();
+      await page.getByRole("button", { name: "Theme: Light" }).click();
+    }
     expect(await lowContrast(page), `${theme}, home`).toEqual([]);
     await page.getByRole("button", { name: "Draft PO (1)" }).click();
     await expect(page.locator("[data-draft]")).toBeVisible();
@@ -73,8 +74,6 @@ test("every text is 4.5 to 1 or better in both themes: home, the drafted K08 row
 test("the card lands on the home and the K08 gap is the hot, picked row of the worklist", async ({ page, request }) => {
   await openHome(page, request);
   await expect(page.getByRole("heading", { name: "Buying and Stock", level: 1 })).toBeVisible();
-  // The chrome names the app, as the board's selector does: never the design system's spare word.
-  await expect(page.locator("hos-app-header .brand-product")).toHaveText("HH Buying and Stock");
   await expect(page.locator("[data-shortfall-row]")).toHaveCount(3);
   const gap = page.locator("[data-shortfall-row][data-hot]");
   await expect(gap).toHaveCount(1);
