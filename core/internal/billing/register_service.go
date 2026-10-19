@@ -481,12 +481,10 @@ func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaym
 	if in.IdempotencyKey == "" {
 		return payments.ApplyAnswer{}, httpx.BadRequestf("recording a payment needs an idempotency key")
 	}
-	if in.AmountCents <= 0 {
-		return payments.ApplyAnswer{}, httpx.BadRequestf("a payment amount must be greater than zero")
-	}
-	if len(in.InvoiceIDs) == 0 {
-		return payments.ApplyAnswer{}, httpx.BadRequestf("a payment must be applied to at least one invoice")
-	}
+	// The amount and the invoice list are judged by the money seam itself (validateApply), not
+	// here: the seam answers the replay judgement first (FP 186 and 187), so a spent key retried
+	// with a zero amount or an empty list hears the replay verdict, never a validation word that
+	// would tell the desk the payment was not recorded.
 	caller, _ := s.callerFrom(ctx)
 	res, err := s.money.ApplyReceived(ctx, ApplyReceivedCommand{
 		CustomerID:     in.CustomerID,

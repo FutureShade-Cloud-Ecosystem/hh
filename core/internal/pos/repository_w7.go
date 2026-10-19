@@ -536,19 +536,109 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 }
 
 // SumUnbookedCardRefundsTx is the money the processor already refunded for the order inside a
-// transaction that then rolled back (pos_card_refund_attempts in UNBOOKED): it left the card all the
-// same, so it counts against the capture. exceptRefundKey leaves out the refund whose own key is being
-// retried (booking it is what the retry does).
+// transaction that then rolled back (pos_card_refund_attempts in UNBOOKED), plus every refund still
+// IN_FLIGHT at the processor: while a card refund sits between the two transactions of the HH-690
+// flow its amount is already reserved against the order's card capture ceiling, so a concurrent
+// different-key refund on the same sale cannot over-refund the card. exceptRefundKey leaves out the
+// refund whose own key is being retried (booking it is what the retry does).
 func (r *Repository) SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error) {
 	var sum int64
 	err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents), 0) FROM pos_card_refund_attempts
- WHERE order_id = $1 AND status = 'UNBOOKED' AND refund_key <> $2`, orderID, exceptRefundKey).Scan(&sum)
+ WHERE order_id = $1 AND status IN ('IN_FLIGHT', 'UNBOOKED') AND refund_key <> $2`, orderID, exceptRefundKey).Scan(&sum)
 	return sum, err
+}
+
+// StageCardRefundAttemptTx is short tx 1 of the two-transaction card refund (HH-690): inside the
+// staging transaction, under the per-sale lock, it records the attempt as IN_FLIGHT before the
+// processor is called outside any DB transaction. An earlier attempt under the SAME refund key that
+// the processor already refunded (UNBOOKED with its refund_ref) answers that ref AND the amount the
+// processor refunded, but only when the restaged fact is the SAME refund (amount, capture and sale):
+// a same-key retry with a changed body must never book a different amount against the earlier
+// reversal (HH-690 round 2, P1-1), so any difference refuses 409 in words and leaves the row
+// UNBOOKED untouched. An attempt still IN_FLIGHT refuses as a 409 in words; anything else (FAILED,
+// a BOOKED row whose return is gone, an UNBOOKED row with no ref) restages the key.
+func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (string, int64, error) {
+	var status, refundRef, gatewayRef, orderID string
+	var amount int64
+	err := tx.QueryRow(ctx,
+		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
+		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID)
+	if err == nil {
+		if status == "UNBOOKED" && refundRef != "" {
+			if amount != f.AmountCents || gatewayRef != f.GatewayRef || orderID != f.OrderID {
+				return "", 0, clientErr(http.StatusConflict,
+					"pos: that idempotency key already refunded a different card amount or sale; use a new key or book the original return")
+			}
+			return refundRef, amount, nil
+		}
+		if status == "IN_FLIGHT" {
+			return "", 0, clientErr(http.StatusConflict,
+				"pos: this card refund is already in flight at the processor; wait for it to finish")
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, attempted_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, '', $6, 'IN_FLIGHT', '', now(), now())
+ON CONFLICT (refund_key) DO UPDATE
+   SET status = 'IN_FLIGHT', refund_ref = '', amount_cents = EXCLUDED.amount_cents,
+       last_error = '', attempted_at = now(), updated_at = now()`,
+		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.AmountCents); err != nil {
+		return "", 0, err
+	}
+	return "", 0, nil
+}
+
+// HoldCardRefundAttemptInFlight records the processor's unknown-outcome error on an IN_FLIGHT
+// attempt while keeping its status IN_FLIGHT, so the amount stays reserved against the capture
+// ceiling and a retry refuses rather than calling the processor a second time (HH-690 round 2,
+// P1-2: only a decline or a not-dispatched failure is known to have moved no money).
+func (r *Repository) HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE pos_card_refund_attempts SET last_error = $2, processor_at = now(), updated_at = now()
+ WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
+	return err
+}
+
+// RecordCardRefundDispatched persists, on the pool and immediately after the processor answered
+// outside any DB transaction, the reversal's own processor ref and the UNBOOKED state: the reference
+// is durably recorded before short tx 2 opens, so a crash between the two transactions leaves a row
+// reconciliation can act on instead of a refund only the processor knows.
+func (r *Repository) RecordCardRefundDispatched(ctx context.Context, f cardRefundFact) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx, `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, processor_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', '', now(), now())
+ON CONFLICT (refund_key) DO UPDATE
+   SET status = 'UNBOOKED', refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents,
+       processor_at = now(), updated_at = now()`,
+		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents)
+	return err
+}
+
+// FailCardRefundAttempt closes a staged attempt the processor refused (no money moved): IN_FLIGHT to
+// FAILED with the refusal in words, so the open-attempts reconciliation does not keep listing it.
+func (r *Repository) FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE pos_card_refund_attempts SET status = 'FAILED', last_error = $2, processor_at = now(), updated_at = now()
+ WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
+	return err
 }
 
 // RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every
 // processor refund that transaction made and then rolled back (D4). One row per refund key; a retry
-// that fails again refreshes the row.
+// that fails again refreshes the row. A row that already carries the processor's own reversal ref
+// keeps that ref and its amount whatever the new fact says (HH-690 round 2, P1-1): the record of
+// what the processor actually refunded is never overwritten.
 func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error {
 	if r.pool == nil {
 		return errNoPool
@@ -557,7 +647,9 @@ func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []card
 INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8)
 ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDED.last_error,
-       refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents, updated_at = now()`
+       refund_ref = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.refund_ref ELSE EXCLUDED.refund_ref END,
+       amount_cents = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.amount_cents ELSE EXCLUDED.amount_cents END,
+       updated_at = now()`
 	for _, f := range facts {
 		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason); err != nil {
 			return err
@@ -566,13 +658,15 @@ ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDE
 	return nil
 }
 
-// MarkCardRefundsBooked closes the records of refunds a committed transaction has now booked.
+// MarkCardRefundsBooked closes the records of refunds a committed transaction has now booked: tx 2
+// of the HH-690 flow books the return while the attempt stands UNBOOKED (or, on a path that never
+// dispatched, IN_FLIGHT), so both open states close to BOOKED with their booking time.
 func (r *Repository) MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error {
 	if r.pool == nil {
 		return errNoPool
 	}
-	_, err := r.pool.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', updated_at = now()
- WHERE refund_key = ANY($1::text[]) AND status = 'UNBOOKED'`, refundKeys)
+	_, err := r.pool.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', booked_at = now(), updated_at = now()
+ WHERE refund_key = ANY($1::text[]) AND status IN ('IN_FLIGHT', 'UNBOOKED')`, refundKeys)
 	return err
 }
 

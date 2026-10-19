@@ -54,7 +54,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { DISPATCH_STUB_PORT: stubPort, DISPATCH_APP_PORT: appPort },
+      env: { DISPATCH_STUB_PORT: stubPort, DISPATCH_APP_PORT: appPort, DISPATCH_NO_WATCH: "1" },
     },
   ],
 });

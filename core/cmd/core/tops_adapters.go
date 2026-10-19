@@ -479,19 +479,28 @@ func (a posRestockAdapter) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in
 
 // posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
 // reversal rail (the cardChargerAdapter mirror): pos passes the ORIGINAL capture's gateway_ref and gets
-// the reversal's own processor ref back; creds stay inside RUN-PAY. The pos Return transaction passes
-// STRAIGHT THROUGH: the config read and the rotation write-back ride the caller's transaction, the only
-// shape inside a transaction that holds a connection and the per-sale lock, where a pool read would
-// deadlock a full pool of Return waiters needing the holder's lock.
+// the reversal's own processor ref back; creds stay inside RUN-PAY. A non-nil tx (a caller inside a
+// transaction that holds a connection and the per-sale lock) passes STRAIGHT THROUGH: the config read
+// and the rotation write-back ride the caller's transaction, the only shape inside a transaction, where
+// a pool read would deadlock a full pool of Return waiters needing the holder's lock. A nil tx is the
+// two-transaction card refund's dispatch (HH-690): no DB transaction is open and no lock is held, so
+// the pool-backed Refund takes a connection of its own.
 type posCardRefunderAdapter struct{ svc *payment.Service }
 
 func (a posCardRefunderAdapter) RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
-	rcpt, err := a.svc.RefundTx(ctx, tx, payment.RefundInput{
+	in := payment.RefundInput{
 		AmountCents:    amountCents,
 		ProcessorRef:   gatewayRef,
 		Reference:      reference,
 		IdempotencyKey: idempotencyKey,
-	})
+	}
+	var rcpt payment.RefundReceipt
+	var err error
+	if tx != nil {
+		rcpt, err = a.svc.RefundTx(ctx, tx, in)
+	} else {
+		rcpt, err = a.svc.Refund(ctx, in)
+	}
 	if err != nil {
 		return "", err
 	}

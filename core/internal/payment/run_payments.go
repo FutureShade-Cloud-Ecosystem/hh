@@ -293,7 +293,7 @@ func (c *RunPaymentsClient) reverse(ctx context.Context, creds map[string]string
 	}
 	// Env-gated OFF for live: no configured host → no call. CI supplies a base_url via httptest.
 	if base == "" {
-		return RefundResult{}, ErrNotImplemented
+		return RefundResult{}, fmt.Errorf("%w: %w", ErrProcessorNotDispatched, ErrNotImplemented)
 	}
 
 	body, _ := json.Marshal(runRefundRequest{TransID: processorRef, MID: merchantID, Amount: amountCents, Action: action})
