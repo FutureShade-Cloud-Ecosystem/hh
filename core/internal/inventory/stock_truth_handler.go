@@ -618,6 +618,25 @@ func (h *Handler) listReorderPoints(w http.ResponseWriter, r *http.Request, _ gu
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reorder_points": rows})
 }
 
+// msgBranchOutOfReach is the one sentence both reorder WRITE doors answer when the branch the caller
+// named is outside their reach. One constant, one voice: the put and the bootstrap must never drift
+// apart on the words a buyer sees for the same refusal.
+const msgBranchOutOfReach = "inventory: out of reach: branch"
+
+// fenceWriteBranch is the read's named-branch fence applied to a write: the branch itself when it is
+// in the caller's reach, the 403 in words when it is not. The fence stays in the handler (the
+// service keeps its bare branch_id) for the same reason the read's does: reach is a property of the
+// CALLER, and only the door knows the caller. An empty branch_id passes through untouched so each
+// route's own empty-branch 400 keeps firing first.
+func fenceWriteBranch(w http.ResponseWriter, r *http.Request, branchID string) (string, bool) {
+	b, err := fenceNamedBranch(reachFromRequest(r), branchID)
+	if err != nil {
+		httpx.Error(w, http.StatusForbidden, msgBranchOutOfReach)
+		return "", false
+	}
+	return b, true
+}
+
 func (h *Handler) putReorderPoint(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	var in ReorderPoint
 	// A PUT with no is_active in the body means "keep this line managed", defaulting a bool to Go's
@@ -626,6 +645,11 @@ func (h *Handler) putReorderPoint(w http.ResponseWriter, r *http.Request, _ guar
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	branchID, ok := fenceWriteBranch(w, r, in.BranchID)
+	if !ok {
+		return
+	}
+	in.BranchID = branchID
 	out, err := h.svc.SetReorderPoint(r.Context(), in, identity.StaffUserIDFromContext(r.Context()))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -641,7 +665,11 @@ func (h *Handler) bootstrapReorderPoints(w http.ResponseWriter, r *http.Request,
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	n, err := h.svc.BootstrapReorderPoints(r.Context(), req.BranchID, identity.StaffUserIDFromContext(r.Context()))
+	branchID, ok := fenceWriteBranch(w, r, req.BranchID)
+	if !ok {
+		return
+	}
+	n, err := h.svc.BootstrapReorderPoints(r.Context(), branchID, identity.StaffUserIDFromContext(r.Context()))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
