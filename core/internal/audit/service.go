@@ -287,43 +287,91 @@ func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handle
 
 // -- pure helpers ------------------------------------------------------------
 
-// publicTokenPrefixes names the served route families whose path segment right after the prefix is
-// the credential itself (the share or will-call token; ADR-0022 pins the customer-quote one's
-// hash-only-at-rest rule). The coarse middleware row must never persist that segment, so
-// elidePublicToken replaces it with the route template's own placeholder spelling. The table is
-// exhaustive over the tree's mutating /api/public surface by construction: a new public token route
-// joins the table or its credential persists, and the serve-shaped regression over the audit wrap
-// (core/cmd/core/cq_auditwrap_test.go) fails on the leak.
-var publicTokenPrefixes = []string{
-	"/api/public/v1/customer-quotes/", // the customer-quote public accept pair (ADR-0022)
-	"/api/public/v1/quotes/",          // the dealer share-link accept pair (the carried R4 surface)
-	"/api/public/v1/will-call/",       // the dispatch will-call confirm pair (DIB-79)
+// publicTokenExemptPaths names the static /api/public/ endpoints that carry no credential segment
+// in the path (the warranty intake form and its number-keyed reads carry form fields and claim
+// numbers, not bearer tokens), so their raw shape is the trail's value and they pass through
+// verbatim. Exact match only: any segment appended after an exempt path is treated as a token leg
+// and elided.
+var publicTokenExemptPaths = map[string]bool{
+	"/api/public/v1/warranty/intake": true,
+}
+
+// publicTokenFamilyPrefixes names the multi-segment public route families whose token leg sits
+// deeper than /api/public/<version>/<family>/ (the AR tracking pair nests under ar/track, the
+// AR delivery reads under ar/invoice-opened, and the warranty reads nest under warranty). They
+// are checked before the generic version+family extraction so the family spelling survives.
+var publicTokenFamilyPrefixes = []string{
+	"/api/public/v1/ar/track/",
+	"/api/public/v1/ar/invoice-opened/",
+	"/api/public/v1/warranty/intake/",
+	"/api/public/v1/warranty/claims/",
 }
 
 // publicActionSuffixes names the action legs a public token route carries after the token segment.
 // Anything else between the family prefix and the end of the path is elided together with the token:
 // an unknown suffix collapses into the placeholder rather than persisting any part of a credential,
 // so a token carrying an encoded slash cannot smuggle a fragment past the elision.
-var publicActionSuffixes = []string{"/accept", "/confirm"}
+var publicActionSuffixes = []string{"/accept", "/confirm", "/open", "/click"}
 
-// elidePublicToken returns path with the credential segment of a known public token route family
-// replaced by the fixed "{token}" placeholder, keeping the family and the action leg visible for
-// operators. Paths outside the families return unchanged (an ordinary /api path carries ids, not
-// credentials, and its raw shape is the trail's value).
+// elidePublicToken is deny-by-default over /api/public/ (HH-693): every path under /api/public/
+// that is not an explicitly exempt static endpoint has the segment(s) after its family prefix
+// replaced by the fixed "{token}" placeholder (plus a known action leg), keeping the family and
+// the action visible for operators. A new or unlisted public token route therefore elides by
+// construction instead of failing open into audit_log. Paths outside /api/public/ return unchanged
+// (an ordinary /api path carries ids, not credentials, and its raw shape is the trail's value).
 func elidePublicToken(path string) string {
-	for _, prefix := range publicTokenPrefixes {
-		if !strings.HasPrefix(path, prefix) {
-			continue
-		}
-		rest := path[len(prefix):]
-		for _, suffix := range publicActionSuffixes {
-			if strings.HasSuffix(rest, suffix) {
-				return prefix + "{token}" + suffix
-			}
-		}
-		return prefix + "{token}"
+	if !strings.HasPrefix(path, "/api/public/") {
+		return path
 	}
-	return path
+	if publicTokenExemptPaths[path] {
+		return path
+	}
+	for _, prefix := range publicTokenFamilyPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return prefix + "{token}" + publicTokenActionLeg(path[len(prefix):])
+		}
+	}
+	// Generic shape: /api/public/<version>/<family>/<token...>. Anything that does not have at
+	// least a version segment and a family segment (a bare token, a version with no family) has
+	// no family spelling worth keeping, so it collapses to the bare placeholder.
+	const root = "/api/public/"
+	rest := path[len(root):]
+	vEnd := strings.Index(rest, "/")
+	if vEnd <= 0 || !isAPIVersion(rest[:vEnd]) {
+		return root + "{token}"
+	}
+	rest = rest[vEnd+1:]
+	fEnd := strings.Index(rest, "/")
+	if fEnd <= 0 {
+		return root + "{token}"
+	}
+	prefix := root + path[len(root):len(root)+vEnd+1+fEnd+1]
+	return prefix + "{token}" + publicTokenActionLeg(rest[fEnd+1:])
+}
+
+// isAPIVersion reports whether the first path segment after /api/public/ is a version marker
+// (v1, v2, and so on) rather than a bare credential sitting where a version belongs.
+func isAPIVersion(seg string) bool {
+	if len(seg) < 2 || seg[0] != 'v' {
+		return false
+	}
+	for _, c := range seg[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// publicTokenActionLeg returns the trailing action leg of the remainder after a family prefix when
+// it ends with a known action suffix, else the empty string; an unknown leg elides wholesale.
+func publicTokenActionLeg(rest string) string {
+	for _, suffix := range publicActionSuffixes {
+		if strings.HasSuffix(rest, suffix) {
+			return suffix
+		}
+	}
+	return ""
 }
 
 func httpAction(method string) string {

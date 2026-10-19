@@ -182,18 +182,22 @@ ruling; they are ticketed in the Plane Records module as HH-5 items
 (#157, #158, #159). D12 is not reopened. The gap-held annotations on the
 tenant_brand contract operations stand until HH-5 lands the table.
 
-## The public token elision table fails open for future routes (open)
+## The public token elision table fails open for future routes (closed)
 
-The coarse audit middleware's token elision (the S-1 fix) is an
-ALLOWLIST: publicTokenPrefixes names the three public token route
-families that exist today (customer-quotes, the dealer quote pair, the
-will-call pair), and a new public token route joins the table or its
-credential persists in the coarse audit row. Whoever adds the fourth
-public token route finds this table before Security does, or the route
-ships with the leak the S-1 fix closed. The serve-shaped regression
-covers today's routes only. A deny-by-default shape over /api/public/
-with an explicit exempt list is the safe-side redesign, deliberately
-not taken mid-Session (the integration review ruling r1, note N1).
+Closed by HH-693: the coarse audit middleware's elidePublicToken
+(core/internal/audit/service.go) is now deny-by-default over /api/public/.
+Every /api/public/ path that is not in the publicTokenExemptPaths exact-match
+table (the static /api/public/v1/warranty/intake form endpoint) has the
+segment(s) after its family prefix replaced by the "{token}" placeholder, so
+an unlisted or future public token route (or a mis-POST to a deep AR tracking
+leg) elides by construction instead of persisting its credential in the coarse
+audit row. Multi-segment families (ar/track, ar/invoice-opened,
+warranty/intake, warranty/claims) keep their spelling, known action legs
+(/accept, /confirm, /open, /click) stay visible, and shapes without a
+version/family structure collapse to /api/public/{token}. The unit table
+(core/internal/audit/audit_test.go) and the serve-shaped regression
+(core/cmd/core/cq_auditwrap_test.go, whose future-family probe drives an
+unmounted route through the production wrap) pin the closed shape.
 
 ## The bistrack module's push half and its rollback sentence are retired (open)
 

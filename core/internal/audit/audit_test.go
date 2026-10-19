@@ -205,16 +205,28 @@ func TestU5_OrNewUUID(t *testing.T) {
 // (ADR-0022: 32 bytes, base64url, unpadded), the shape the public token routes carry in the path.
 const fxPublicToken = "FxPublicTokenFixture43CharAlphabet_01"
 
-// TestElidePublicToken pins the coarse trail's credential elision (the S-1 fix): every public
-// token route family's credential segment is replaced by the "{token}" placeholder, keeping the
-// family and the action leg visible, while non-public paths pass through verbatim.
+// TestElidePublicToken pins the coarse trail's credential elision (the S-1 fix and the HH-693
+// deny-by-default round): every public token route family's credential segment is replaced by the
+// "{token}" placeholder, keeping the family and the action leg visible, unlisted or future public
+// families elide by default rather than failing open, the static exempt paths pass through
+// verbatim, and non-public paths pass through verbatim.
 func TestElidePublicToken(t *testing.T) {
 	cases := map[string]string{
-		// The three families the tree serves, action leg and bare form.
+		// The families the tree serves, action leg and bare form.
 		"/api/public/v1/customer-quotes/" + fxPublicToken:             "/api/public/v1/customer-quotes/{token}",
 		"/api/public/v1/customer-quotes/" + fxPublicToken + "/accept": "/api/public/v1/customer-quotes/{token}/accept",
 		"/api/public/v1/quotes/" + fxPublicToken + "/accept":          "/api/public/v1/quotes/{token}/accept",
 		"/api/public/v1/will-call/" + fxPublicToken + "/confirm":      "/api/public/v1/will-call/{token}/confirm",
+		// The multi-segment AR tracking families (open and click legs, and the delivery-id leg).
+		"/api/public/v1/ar/track/" + fxPublicToken + "/open":  "/api/public/v1/ar/track/{token}/open",
+		"/api/public/v1/ar/track/" + fxPublicToken + "/click": "/api/public/v1/ar/track/{token}/click",
+		"/api/public/v1/ar/invoice-opened/" + fxPublicToken:   "/api/public/v1/ar/invoice-opened/{token}",
+		// Deny-by-default: an unlisted or future public token family elides rather than failing
+		// open; the raw credential never persists just because the route is not in a table.
+		"/api/public/v1/other-resource/" + fxPublicToken:              "/api/public/v1/other-resource/{token}",
+		"/api/public/v1/other-resource/" + fxPublicToken + "/accept":  "/api/public/v1/other-resource/{token}/accept",
+		"/api/public/v2/future-family/" + fxPublicToken:               "/api/public/v2/future-family/{token}",
+		"/api/public/v1/unlisted-family/" + fxPublicToken + "/accept": "/api/public/v1/unlisted-family/{token}/accept",
 		// A credential carrying an encoded slash elides wholesale: no fragment survives.
 		"/api/public/v1/customer-quotes/abc/def/accept": "/api/public/v1/customer-quotes/{token}/accept",
 		// An unknown action leg collapses into the placeholder rather than persisting a fragment.
@@ -222,10 +234,16 @@ func TestElidePublicToken(t *testing.T) {
 		// Degenerate shapes stay safe (empty token segment, trailing slash).
 		"/api/public/v1/customer-quotes/": "/api/public/v1/customer-quotes/{token}",
 		"/api/public/v1/will-call/x/":     "/api/public/v1/will-call/{token}",
+		// Shapes without a version/family structure still never leak the credential.
+		"/api/public/" + fxPublicToken:    "/api/public/{token}",
+		"/api/public/v1/" + fxPublicToken: "/api/public/{token}",
+		// The static exempt public path passes through verbatim, but any segment appended after
+		// it is a token leg and elides.
+		"/api/public/v1/warranty/intake":                  "/api/public/v1/warranty/intake",
+		"/api/public/v1/warranty/intake/" + fxPublicToken: "/api/public/v1/warranty/intake/{token}",
 		// Non-public paths are the trail's value and pass through verbatim.
 		"/api/v1/pos/sales": "/api/v1/pos/sales",
 		"/api/v1/customer-quotes/" + sampleUUID + "/send": "/api/v1/customer-quotes/" + sampleUUID + "/send",
-		"/api/public/v1/other-resource/" + sampleUUID:     "/api/public/v1/other-resource/" + sampleUUID,
 	}
 	for in, want := range cases {
 		if got := elidePublicToken(in); got != want {

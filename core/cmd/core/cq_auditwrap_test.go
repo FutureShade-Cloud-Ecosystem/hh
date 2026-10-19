@@ -190,6 +190,22 @@ func TestPublicTokenPairThroughAuditWrapElidesRawToken(t *testing.T) {
 	if got, _ := rows[0].changes["path"].(string); got != "/api/public/v1/customer-quotes/{token}" {
 		t.Errorf("mis-post coarse path = %q, want the elided spelling", got)
 	}
+
+	// 4. The HH-693 deny-by-default probe: a POST to an unmounted future
+	// public token family. The mux 404s the path, the coarse row still
+	// lands, and the elision is deny-by-default over /api/public/: the
+	// unlisted family's leg records the placeholder spelling, never the
+	// raw credential, so a new route cannot ship the S-1 leak by default.
+	futureID := "fx-cqwrap-future"
+	if code := post(futureID,
+		"/api/public/v1/unlisted-family/"+tokens.liveView+"/accept"); code != http.StatusNotFound {
+		t.Fatalf("future family: status %d, want 404", code)
+	}
+	rows = rowsFor(futureID, 1)
+	assertNoLeak(futureID, rows, tokens.liveView)
+	if got, _ := rows[0].changes["path"].(string); got != "/api/public/v1/unlisted-family/{token}/accept" {
+		t.Errorf("future family coarse path = %q, want the elided spelling", got)
+	}
 }
 
 // fetchCQWrapRows reads one request id's audit rows: action, changes as a
