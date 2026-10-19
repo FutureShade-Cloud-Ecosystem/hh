@@ -14,44 +14,27 @@ package pos
 // case, where a manager resolves NOT_REFUNDED, the attempt closes FAILED,
 // the capture ceiling is released and a fresh return succeeds.
 //
+// The legs ride the package's shared integration harness (intPool, reading
+// DATABASE_URL), the same database the other pos integration tests use, so
+// CI runs them instead of skipping (PR #501 round 1 P2-1): with DATABASE_URL
+// set and unreachable the harness FAILS, it never skips.
+//
 // Run (after applying 0415_pos_card_refund_attempts_resolution.sql):
 //
 //	cd core
-//	TEST_DB_URL='postgres://postgres:postgres@127.0.0.1:56790/hh_c2_690?sslmode=disable' \
+//	DATABASE_URL='postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable' \
 //	  go test -tags integration ./internal/pos/ -run TestIntegration_TwoTxResolution -p 1 -v
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// resolutionPool is this lane's own gate: the HH-767 legs run against the
-// shared integration database named by TEST_DB_URL, and skip when it is not
-// set (the sibling lanes' DATABASE_URL rig is a different container).
-func resolutionPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	url := os.Getenv("TEST_DB_URL")
-	if url == "" {
-		t.Skip("the resolution legs need TEST_DB_URL at the shared integration database")
-	}
-	pool, err := pgxpool.New(context.Background(), url)
-	if err != nil {
-		t.Fatalf("integration DB unavailable: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Fatalf("integration DB not reachable: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 // attemptRow reads one attempt row's resolution facts by refund key.
 func attemptRow(t *testing.T, pool *pgxpool.Pool, refundKey string) (id, status, refundRef, initiatedBy, resolvedBy string) {
@@ -71,13 +54,14 @@ SELECT id::text, status, refund_ref, initiated_by, resolved_by FROM pos_card_ref
 // processor call and closes the attempt BOOKED, with the resolution's audit
 // row on the trail.
 func TestIntegration_TwoTxResolution_RefundedThenRetryBooksOnce(t *testing.T) {
-	pool := resolutionPool(t)
+	pool := intPool(t)
 	rail := &outcomeRail{err: fmt.Errorf("run_payments: refund: %w: status 504", payment.ErrProcessorOutcomeUnknown)}
 	s := newTrentonStackOnPoolWithRail(t, pool, rail)
 	cust := s.plantCustomer("HH-767 resolved refunded", 30, 5000000)
 	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 4, TenderCard)
 	returnKey := key()
 	refundKey := "refund:" + returnKey
+	mgrRef := "rp_hh767_mgr_" + key()
 
 	// The unknown outcome: 502 to the counter, the attempt held IN_FLIGHT.
 	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 4))
@@ -124,28 +108,28 @@ func TestIntegration_TwoTxResolution_RefundedThenRetryBooksOnce(t *testing.T) {
 
 	// The initiating user is refused (and so is any cross-branch manager, as a 404).
 	rec = s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(trentonClerkSub), "",
-		map[string]any{"outcome": "REFUNDED", "refund_ref": "rp_hh767_mgr", "note": "checked the console"})
+		map[string]any{"outcome": "REFUNDED", "refund_ref": mgrRef, "note": "checked the console"})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("the initiating user is refused, got %d: %s", rec.Code, rec.Body.String())
 	}
 	rec = s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(kingstonMgrSub), "",
-		map[string]any{"outcome": "REFUNDED", "refund_ref": "rp_hh767_mgr", "note": "checked the console"})
+		map[string]any{"outcome": "REFUNDED", "refund_ref": mgrRef, "note": "checked the console"})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("a cross-branch resolve is a 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// The different manager at the sale's branch resolves REFUNDED.
 	rec = s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(trentonMgrSub), "",
-		map[string]any{"outcome": "REFUNDED", "refund_ref": "rp_hh767_mgr", "note": "confirmed on the processor console"})
+		map[string]any{"outcome": "REFUNDED", "refund_ref": mgrRef, "note": "confirmed on the processor console"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the manager resolves the attempt, got %d: %s", rec.Code, rec.Body.String())
 	}
 	out := s.decodeBody(rec)
-	if out["status"] != "UNBOOKED" || out["refund_ref"] != "rp_hh767_mgr" || out["resolved_by"] != managerUserID {
+	if out["status"] != "UNBOOKED" || out["refund_ref"] != mgrRef || out["resolved_by"] != managerUserID {
 		t.Fatalf("the resolved row carries its facts: %v", out)
 	}
 	_, status, refundRef, initiatedBy, resolvedBy = attemptRow(t, pool, refundKey)
-	if status != "UNBOOKED" || refundRef != "rp_hh767_mgr" || initiatedBy != clerkUserID || resolvedBy != managerUserID {
+	if status != "UNBOOKED" || refundRef != mgrRef || initiatedBy != clerkUserID || resolvedBy != managerUserID {
 		t.Fatalf("the row stands UNBOOKED with the manager's ref and resolver: %s %q %q %q", status, refundRef, initiatedBy, resolvedBy)
 	}
 	rows := s.auditRows(audit.ActCardRefundAttemptResolved, id)
@@ -164,11 +148,11 @@ func TestIntegration_TwoTxResolution_RefundedThenRetryBooksOnce(t *testing.T) {
 		t.Fatalf("the retry reuses the resolved ref, one processor call in total, got %d", rail.calls)
 	}
 	_, status, refundRef, _, _ = attemptRow(t, pool, refundKey)
-	if status != "BOOKED" || refundRef != "rp_hh767_mgr" {
+	if status != "BOOKED" || refundRef != mgrRef {
 		t.Fatalf("the booked retry closes the attempt at the resolved ref: %s %q", status, refundRef)
 	}
 	if n := s.countAll(`SELECT count(*) FROM payments pr JOIN pos_returns r ON r.refund_payment_id = pr.id
- WHERE r.order_id = $1::uuid AND pr.gateway_ref = 'rp_hh767_mgr'`, sale.OrderID); n != 1 {
+ WHERE r.order_id = $1::uuid AND pr.gateway_ref = $2`, sale.OrderID, mgrRef); n != 1 {
 		t.Fatal("the refund payment rides the resolved reversal ref")
 	}
 }
@@ -177,7 +161,7 @@ func TestIntegration_TwoTxResolution_RefundedThenRetryBooksOnce(t *testing.T) {
 // the row closes FAILED, the capture ceiling is released and a fresh return
 // on a new key succeeds.
 func TestIntegration_TwoTxResolution_NotRefundedReleasesCeiling(t *testing.T) {
-	pool := resolutionPool(t)
+	pool := intPool(t)
 	rail := &outcomeRail{err: fmt.Errorf("run_payments: refund: %w: status 504", payment.ErrProcessorOutcomeUnknown)}
 	s := newTrentonStackOnPoolWithRail(t, pool, rail)
 	cust := s.plantCustomer("HH-767 not refunded", 30, 5000000)
