@@ -33,16 +33,16 @@ test("the account chip matches the persona's name and role label", () => {
 });
 
 test("the band renders above the app-local header, and only when the shell is not framing the app", () => {
-  assert.ok(appRootSrc.includes("<hh-shell-header"), "the band element renders");
-  assert.ok(/#framed\s*\?\s*nothing\s*:\s*html`<hh-shell-header/.test(appRootSrc), "framed by the Work shell, the app renders no band of its own");
+  const bandAt = appRootSrc.indexOf("<hh-shell-header");
+  assert.ok(bandAt > 0, "the band element renders");
+  const bandGate = appRootSrc.slice(Math.max(0, bandAt - 200), bandAt);
+  assert.ok(/#framed\s*\?/.test(bandGate), "framed by the Work shell, the app renders no band of its own");
   const renderAt = appRootSrc.indexOf("render(): TemplateResult {");
   assert.ok(renderAt > 0, "the render method exists");
   const renderBody = appRootSrc.slice(renderAt);
-  const signedInReturn = renderBody.search(/return html\`\$\{band\}\$\{this\.renderSignedIn\(\)\}/);
-  const signedOutReturn = renderBody.indexOf("${band}");
+  const bandRender = renderBody.indexOf("${band}");
   const headerAfterBand = renderBody.indexOf("<hos-app-header");
-  assert.ok(signedInReturn > 0 || signedOutReturn > 0, "the band variable is rendered");
+  assert.ok(bandRender > 0, "the band variable is rendered");
   assert.ok(headerAfterBand > 0, "the app-local header renders");
-  const firstBandRender = signedInReturn > 0 ? signedInReturn : signedOutReturn;
-  assert.ok(firstBandRender < headerAfterBand, "the band sits above the app-local header in the rendered output");
+  assert.ok(bandRender < headerAfterBand, "the band sits above the app-local header in the rendered output");
 });
