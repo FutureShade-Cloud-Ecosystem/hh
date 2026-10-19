@@ -51,6 +51,8 @@ import {
   CUSTOMER_TYPES,
   customerTypeWord,
   marginEmptyWords,
+  costCellWords,
+  marginCellWords,
   moneyWords,
   overrideEmptyWords,
   overrideValueWords,
@@ -488,8 +490,8 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                         <td>${floorItemWords(item)}</td>
                         <td class="num">${moneyWords(item.previous_final_cents)}</td>
                         <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${item.margin_bps === null ? "Not shown" : pctWords(item.margin_bps)}</td>
-                        <td class="num">${item.floor_bps === null ? "Not shown" : pctWords(item.floor_bps)}</td>
+                        <td class="num">${marginCellWords(item.margin_bps)}</td>
+                        <td class="num">${marginCellWords(item.floor_bps)}</td>
                         <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,
@@ -1651,7 +1653,7 @@ function renderLedger(model: PricingModel): TemplateResult {
                         <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
                         <td><span class="chip">${row.source_type}</span></td>
-                        <td class="num">${moneyWords(row.basis_cents)}</td>
+                        <td class="num">${costCellWords(row.basis_cents)}</td>
                         <td class="mono dim">${row.rate_note}</td>
                         <td class="num">${moneyWords(row.accrual_cents)}</td>
                       </tr>

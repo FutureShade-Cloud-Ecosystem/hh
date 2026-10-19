@@ -273,6 +273,19 @@ export function moneyWords(cents: number | null | undefined): string {
   return formatDollars(Math.round(cents));
 }
 
+/** The words a withheld figure shows: the margin and cost legs ride only to the cost list (HH-419). */
+export const WITHHELD_FIGURE_WORDS = "Not shown";
+
+/** A margin or floor cell: the percent, or the withheld words when the figure is absent, never 0.00%. */
+export function marginCellWords(bps: number | null | undefined): string {
+  return bps === null || bps === undefined ? WITHHELD_FIGURE_WORDS : pctWords(bps);
+}
+
+/** A cost bearing money cell: the dollars, or the withheld words when the figure is absent. */
+export function costCellWords(cents: number | null | undefined): string {
+  return cents === null || cents === undefined ? WITHHELD_FIGURE_WORDS : moneyWords(cents);
+}
+
 /** Integer basis points to a two decimal percent, the sign included. */
 export function pctWords(bps: number | null | undefined): string {
   if (bps === null || bps === undefined || !Number.isFinite(bps)) return "";

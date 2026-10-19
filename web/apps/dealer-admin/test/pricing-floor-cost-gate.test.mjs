@@ -24,3 +24,27 @@ test("an item with the margin legs keeps them, a zero margin included", () => {
   assert.equal(p.items[0].floor_bps, 2500);
   assert.equal(p.items[0].previous_margin_bps, 3100);
 });
+
+// The words of a withheld cell are pinned here, so a view cannot slip back to a zero (S3 P3-3).
+import { marginCellWords, costCellWords, WITHHELD_FIGURE_WORDS } from "../src/pricing-logic.ts";
+import { toFloorPreview as readFloor } from "../src/pricing-api.ts";
+
+test("a withheld margin or cost cell reads Not shown, never a zero", () => {
+  assert.equal(WITHHELD_FIGURE_WORDS, "Not shown");
+  assert.equal(marginCellWords(null), "Not shown");
+  assert.equal(marginCellWords(undefined), "Not shown");
+  assert.equal(costCellWords(null), "Not shown");
+  assert.equal(marginCellWords(0), "0.00%", "a real zero margin is a figure and still shows");
+  assert.equal(costCellWords(0), "$0.00");
+  assert.equal(marginCellWords(2500), "25.00%");
+});
+
+test("the views feed their cells through those words", async () => {
+  const { readFileSync } = await import("node:fs");
+  const view = readFileSync(new URL("../src/views-pricing.ts", import.meta.url), "utf8");
+  assert.match(view, /marginCellWords\(item\.margin_bps\)/);
+  assert.match(view, /marginCellWords\(item\.floor_bps\)/);
+  assert.match(view, /costCellWords\(row\.basis_cents\)/);
+  assert.equal(/pctWords\(item\.(margin|floor)_bps\)/.test(view), false, "no raw percent of a possibly absent leg");
+  assert.equal(typeof readFloor, "function");
+});

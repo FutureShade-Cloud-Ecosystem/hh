@@ -401,10 +401,41 @@ func (h *Handler) vendorLedger(w http.ResponseWriter, r *http.Request, _ guards.
 		h.writeErr(w, r, err)
 		return
 	}
-	if out.Rows == nil {
-		out.Rows = []RebateAccrual{}
+	httpx.WriteJSON(w, http.StatusOK, newLedgerView(out, h.costAllowed(r)))
+}
+
+// ledgerAccrualView is a ledger row on the wire. basis_cents is a pointer here so it can be absent: on
+// a cost basis row it IS the extended cost, which only a caller on the cost and margin list receives
+// (HH-419). The embedded row's own basis_cents is shadowed by this shallower field.
+type ledgerAccrualView struct {
+	RebateAccrual
+	BasisCents *int64 `json:"basis_cents,omitempty"`
+}
+
+type ledgerView struct {
+	VendorID     string              `json:"vendor_id"`
+	VendorName   string              `json:"vendor_name"`
+	From         *time.Time          `json:"from,omitempty"`
+	To           *time.Time          `json:"to,omitempty"`
+	TotalCents   int64               `json:"total_cents"`
+	AccrualCount int                 `json:"accrual_count"`
+	Rows         []ledgerAccrualView `json:"rows"`
+}
+
+func newLedgerView(l VendorRebateLedger, costOK bool) ledgerView {
+	v := ledgerView{
+		VendorID: l.VendorID, VendorName: l.VendorName, From: l.From, To: l.To,
+		TotalCents: l.TotalCents, AccrualCount: l.AccrualCount, Rows: make([]ledgerAccrualView, 0, len(l.Rows)),
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	for _, a := range l.Rows {
+		row := ledgerAccrualView{RebateAccrual: a}
+		if costOK || a.Basis != RebatePctOfCost {
+			basis := a.BasisCents
+			row.BasisCents = &basis
+		}
+		v.Rows = append(v.Rows, row)
+	}
+	return v
 }
 
 type accruePayload struct {

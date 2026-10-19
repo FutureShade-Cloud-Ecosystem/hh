@@ -345,7 +345,8 @@ export interface AccrualRow {
   readonly source_type: string;
   readonly source_id: string;
   readonly qty_base: number;
-  readonly basis_cents: number;
+  /** Absent for a cost basis row unless the caller is on the cost list: null, never zero. */
+  readonly basis_cents: number | null;
   readonly accrual_cents: number;
   readonly rate_note: string;
   readonly accrued_at: string;
@@ -363,7 +364,7 @@ function toAccrualRow(raw: unknown): AccrualRow {
     source_type: text(r.source_type),
     source_id: text(r.source_id),
     qty_base: num(r.qty_base),
-    basis_cents: num(r.basis_cents),
+    basis_cents: maybeNum(r.basis_cents),
     accrual_cents: num(r.accrual_cents),
     rate_note: text(r.rate_note),
     accrued_at: text(r.accrued_at),

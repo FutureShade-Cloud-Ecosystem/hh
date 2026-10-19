@@ -7008,7 +7008,7 @@ type PricingRebateAccrual struct {
 	SourceType   string    `json:"source_type"`
 	SourceId     *string   `json:"source_id,omitempty"`
 	QtyBase      float64   `json:"qty_base"`
-	BasisCents   int64     `json:"basis_cents"`
+	BasisCents   *int64    `json:"basis_cents,omitempty"`
 	AccrualCents int64     `json:"accrual_cents"`
 	RateNote     string    `json:"rate_note"`
 	AccruedAt    time.Time `json:"accrued_at"`

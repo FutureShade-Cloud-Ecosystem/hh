@@ -929,6 +929,7 @@ paths:
       operationId: pricingListBatchLines
       tags: [staff-pricing]
       summary: List the derived change lines of one batch
+      description: Cost figures (before_cost_cents, after_cost_cents) ride only to a caller on the cost_visibility list and are absent for any other reader; the retail figures ride to every reader.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -1151,6 +1152,7 @@ paths:
       operationId: pricingListChangeLog
       tags: [staff-pricing]
       summary: Read the append-only price change log, newest first
+      description: Rows of the cost_cents field ride only to a caller on the cost_visibility list; a reader off the list receives the retail_cents rows alone.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -1683,6 +1685,7 @@ paths:
       operationId: pricingVendorRebateLedger
       tags: [staff-pricing]
       summary: Read one vendor's rebate accrual ledger with totals
+      description: On a cost basis row (a percent of cost program) basis_cents is the extended cost and rides only to a caller on the cost_visibility list; it is absent for any other reader. The vendor's accrual always rides.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -3089,7 +3092,7 @@ components:
     PricingRebateAccrual:
       type: object
       description: One rebate_accruals row
-      required: [id, program_id, vendor_id, product_id, source_type, qty_base, basis_cents, accrual_cents, rate_note, accrued_at]
+      required: [id, program_id, vendor_id, product_id, source_type, qty_base, accrual_cents, rate_note, accrued_at]
       properties:
         id: { type: string, format: uuid }
         program_id: { type: string, format: uuid }
@@ -3107,7 +3110,7 @@ components:
           enum: [POS_SALE, ORDER, ADJUSTMENT]
         source_id: { type: string }
         qty_base: { type: number }
-        basis_cents: { type: integer, format: int64 }
+        basis_cents: { type: integer, format: int64, description: "The extended basis the accrual was struck on. On the ledger read it is absent for a cost basis row unless the caller is on the cost_visibility list (never zero): there it is the extended cost." }
         accrual_cents: { type: integer, format: int64 }
         rate_note: { type: string }
         accrued_at: { type: string, format: date-time }

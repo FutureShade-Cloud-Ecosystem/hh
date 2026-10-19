@@ -6060,7 +6060,7 @@ export type PricingRebateAccrual = {
   source_type: "POS_SALE" | "ORDER" | "ADJUSTMENT";
   source_id?: string;
   qty_base: number;
-  basis_cents: number;
+  basis_cents?: number;
   accrual_cents: number;
   rate_note: string;
   accrued_at: string;
