@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // keyedRail is a card rail that behaves like a processor honoring idempotency keys: the same key
@@ -264,9 +265,15 @@ SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE cust
 
 	// The retry of the same note books everything and refunds the first order only once.
 	rail.failKey = ""
+	callsBefore := rail.calls
 	rec = s.postNote(trentonClerkSub, "", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the retried note must commit, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// HH-690: the already-refunded child is never sent to the processor a
+	// second time; only the refused child (no money moved) is retried.
+	if rail.calls != callsBefore+1 {
+		t.Fatalf("the retry must call the processor for the refused child alone, %d calls before and %d after", callsBefore, rail.calls)
 	}
 	note := s.decodeBody(rec)
 	if len(rail.byKey) != 2 {
@@ -285,5 +292,87 @@ SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE cust
 	if err := s.pool.QueryRow(context.Background(), `
 SELECT status FROM pos_card_refund_attempts WHERE order_id = $1::uuid`, sale1.OrderID).Scan(&status); err != nil || status != "BOOKED" {
 		t.Fatalf("the booked retry closes the record: %q (%v)", status, err)
+	}
+}
+
+// inFlightProbe is a card rail that proves the two-transaction shape from
+// inside the processor call (HH-690): at call time NO DB transaction rides
+// the call, and the staged attempt is already committed IN_FLIGHT where
+// ANOTHER pool connection can see it, which is only possible because short
+// tx 1 committed and released every DB lock before the processor was called.
+type inFlightProbe struct {
+	pool      *pgxpool.Pool
+	refundKey string
+
+	txNotNil     bool
+	probed       bool
+	status       string
+	attemptedSet bool
+	booksShowIt  int
+}
+
+func (p *inFlightProbe) RefundCard(_ context.Context, tx pgx.Tx, _ string, _ int64, _, _ string) (string, error) {
+	if tx != nil {
+		p.txNotNil = true
+	}
+	var attempted bool
+	if err := p.pool.QueryRow(context.Background(),
+		`SELECT status, attempted_at IS NOT NULL,
+		        (SELECT count(*) FROM pos_returns WHERE idempotency_key = regexp_replace($1, '^refund:', ''))
+		 FROM pos_card_refund_attempts WHERE refund_key = $1`, p.refundKey).
+		Scan(&p.status, &attempted, &p.booksShowIt); err != nil {
+		return "", err
+	}
+	p.probed, p.attemptedSet = true, attempted
+	return "rp_two_tx_probe", nil
+}
+
+// HH-690 on real Postgres: while the processor holds the refund call, the
+// attempt stands IN_FLIGHT with its attempted time, visible from a connection
+// the return never held; the books show nothing yet; after the return
+// commits, the row is BOOKED with the reversal's ref, its processor time and
+// its booking time.
+func TestIntegration_Rails_TwoTransactionCardRefund_StagesInFlightOutsideTheBooks(t *testing.T) {
+	pool := intPool(t)
+	probe := &inFlightProbe{pool: pool}
+	s := newTrentonStackOnPoolWithRail(t, pool, probe)
+	cust := s.plantCustomer("Rails two tx card", 30, 5000000)
+	sale := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 4, TenderCard)
+	returnKey := key()
+	probe.refundKey = "refund:" + returnKey
+
+	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(returnKey, sale, 0, RefundCard, 2))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the two-transaction card return must commit, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !probe.probed {
+		t.Fatal("the rail was never called")
+	}
+	if probe.txNotNil {
+		t.Fatal("the processor call must carry NO open DB transaction")
+	}
+	if probe.status != "IN_FLIGHT" {
+		t.Fatalf("at processor-call time the attempt must stand IN_FLIGHT on record, got %q", probe.status)
+	}
+	if !probe.attemptedSet {
+		t.Fatal("the staged attempt carries its attempted time")
+	}
+	if probe.booksShowIt != 0 {
+		t.Fatal("the books must show nothing while the refund is in flight")
+	}
+
+	var status, refundRef string
+	var processorAt, bookedAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+SELECT status, refund_ref, processor_at, booked_at FROM pos_card_refund_attempts WHERE refund_key = $1`,
+		probe.refundKey).Scan(&status, &refundRef, &processorAt, &bookedAt); err != nil {
+		t.Fatalf("the attempt row: %v", err)
+	}
+	if status != "BOOKED" || refundRef == "" || processorAt == nil || bookedAt == nil {
+		t.Fatalf("the committed return closes the attempt BOOKED with its refs and times: %s %q %v %v",
+			status, refundRef, processorAt, bookedAt)
+	}
+	if refundRef != "rp_two_tx_probe" {
+		t.Fatalf("the booked reversal ref is the processor's own answer, got %q", refundRef)
 	}
 }

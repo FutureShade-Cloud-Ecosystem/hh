@@ -52,16 +52,25 @@ import (
 // payment.Service: the same call into Service.RefundTx and the same receipt
 // handling, the reversal's own processor ref returned and the decrypted
 // creds never crossing into pos. The production rail shape, which the rig's
-// counting fake is not.
+// counting fake is not. A nil tx (the two-transaction card refund's
+// dispatch, HH-690) rides the pool-backed Refund exactly as the production
+// adapter does.
 type cardRailAdapter struct{ svc *payment.Service }
 
 func (a cardRailAdapter) RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
-	rcpt, err := a.svc.RefundTx(ctx, tx, payment.RefundInput{
+	in := payment.RefundInput{
 		AmountCents:    amountCents,
 		ProcessorRef:   gatewayRef,
 		Reference:      reference,
 		IdempotencyKey: idempotencyKey,
-	})
+	}
+	var rcpt payment.RefundReceipt
+	var err error
+	if tx != nil {
+		rcpt, err = a.svc.RefundTx(ctx, tx, in)
+	} else {
+		rcpt, err = a.svc.Refund(ctx, in)
+	}
 	if err != nil {
 		return "", err
 	}

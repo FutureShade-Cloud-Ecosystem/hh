@@ -225,12 +225,20 @@ type posStore interface {
 	// waiting on that invoice, the Opus review's P2-4), and a return that takes no invoice row must
 	// not hold the one counter every payments writer serialises on (the delta reviews' P2).
 	LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error
-	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked (D5).
+	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked
+	// and the ones still in flight at the processor (D5, HH-690).
 	SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error)
 	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a
 	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
 	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
 	MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error
+	// StageCardRefundAttemptTx, RecordCardRefundDispatched and FailCardRefundAttempt are the
+	// two-transaction card refund's attempt ledger (HH-690): short tx 1 stages the attempt
+	// IN_FLIGHT under the per-sale lock, the dispatch records the processor's answer UNBOOKED on
+	// the pool before tx 2 opens, and a refusal closes the attempt FAILED.
+	StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (existingRefundRef string, err error)
+	RecordCardRefundDispatched(ctx context.Context, f cardRefundFact) error
+	FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)
