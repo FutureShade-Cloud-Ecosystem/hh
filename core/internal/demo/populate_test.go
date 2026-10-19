@@ -447,13 +447,21 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	// 16 since this merge: the Counter Till accounts, the yard manager, the
-	// planted demo teammates, and the roadmap personas (Payables and
-	// Receivables and the Procurement Manager and the Financial Controller),
-	// each one invented name.
-	// Plus the 14 sign in personas' role label names.
-	if len(saw) != len(allowedNames) || len(saw) != 34 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 34 invented ones (saw: %v)", len(saw), saw)
+	// The rows and the allowlist agree one for one, by construction: every
+	// name the rows render is allowed (checked above), every invented name
+	// is on some row, and the distinct counts match, so the total is read
+	// off the fixture instead of a hand-numbered count that drifts the day
+	// two role accounts share one label (the general manager's login and
+	// the homework row the scrub renamed to the same label).
+	neverRendered := make([]string, 0, len(allowedNames))
+	for name := range allowedNames {
+		if saw[name] == 0 {
+			neverRendered = append(neverRendered, name)
+		}
+	}
+	sort.Strings(neverRendered)
+	if len(neverRendered) > 0 || len(saw) != len(allowedNames) {
+		t.Errorf("the users rows render %d distinct display names, want exactly the %d invented ones (never rendered: %v, saw: %v)", len(saw), len(allowedNames), neverRendered, saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
