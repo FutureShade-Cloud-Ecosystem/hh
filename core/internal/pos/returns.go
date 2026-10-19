@@ -361,6 +361,7 @@ func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *retu
 		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
 			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID,
 			CustomerID: oc.CustomerID, GatewayRef: oc.GatewayRef, AmountCents: railTotal,
+			InitiatedBy: plan.actor,
 		})
 		if err != nil {
 			return Return{}, false, false, err
@@ -423,6 +424,7 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 		fact := cardRefundFact{
 			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.oc.BranchID,
 			CustomerID: p.oc.CustomerID, GatewayRef: p.oc.GatewayRef, AmountCents: p.stagedRailTotal,
+			InitiatedBy: p.actor,
 		}
 		// An earlier attempt under the same key already refunded at the processor: reuse its ref
 		// and ITS amount (the staging compared the bodies, so the two agree here).
@@ -1173,6 +1175,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
 				RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 				GatewayRef: oc.GatewayRef, RefundRef: plan.stagedRefundRef, AmountCents: railTotal,
+				InitiatedBy: plan.actor,
 			})
 		}
 		refundRef := plan.stagedRefundRef

@@ -246,3 +246,7 @@ additions:
     reason: "Change 8 S3 paylink sender on the receivables reminder path: a deterministic dealer URL keyed on (customer_id, invoice_id, amount_cents, channel) recorded on ar_invoice_deliveries (kind PAYLINK_NOTICE) and stamped on ar_notice_log; the ERP had no paylink route; no ERP source route."
   - route: "GET /api/v1/billing/ar/customers/{customer_id}/statements/{statement_id}/preview"
     reason: "Change 8 S3 statement preview read: the artefact from ar_statements plus its open lines and a 5-bucket aging breakdown that reconciles to the penny (sum of buckets equals openCents, sum of late buckets equals overdueCents); the ERP had no statement preview, only the printable PDF; no ERP source route."
+  - route: "GET /api/v1/pos/card-refund-attempts"
+    reason: "HH-767 (HH-690b Leg A): the manager's reconciliation list of open card refund attempts (IN_FLIGHT or UNBOOKED) the two-transaction card refund left behind, branch fenced to the caller's reach; the ERP had no card refund attempt ledger and no list; no ERP source route."
+  - route: "POST /api/v1/pos/card-refund-attempts/{id}/resolve"
+    reason: "HH-767 (HH-690b Leg A): a manager at the sale's branch resolves one open card refund attempt as REFUNDED (with the processor's refund_ref, so the same-key retry books without a second processor call) or NOT_REFUNDED (closing it FAILED and releasing the capture ceiling), separation of duties refusing the initiator; the ERP had no resolution route; no ERP source route."

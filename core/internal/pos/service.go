@@ -243,6 +243,15 @@ type posStore interface {
 	RecordCardRefundDispatched(ctx context.Context, f cardRefundFact) error
 	FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error
 	HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error
+	// ListOpenCardRefundAttempts, CardRefundAttemptForUpdateTx and
+	// ApplyCardRefundResolutionTx are the manager resolution of an open
+	// attempt (HH-767): the branch-fenced list of IN_FLIGHT and UNBOOKED
+	// rows, the locked read inside the resolution transaction, and the
+	// judgment's own write (REFUNDED stands the row UNBOOKED with the
+	// processor's refund_ref, NOT_REFUNDED closes it FAILED).
+	ListOpenCardRefundAttempts(ctx context.Context, statusFilter string, branches []string) ([]CardRefundAttempt, error)
+	CardRefundAttemptForUpdateTx(ctx context.Context, tx pgx.Tx, attemptID string) (CardRefundAttempt, bool, error)
+	ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)

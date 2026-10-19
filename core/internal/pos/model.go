@@ -1112,6 +1112,8 @@ type returnOrderCtx struct {
 
 // cardRefundFact is one processor refund made inside a return transaction: what the processor
 // holds, kept so a rolled back transaction leaves a record of it (D4) and a committed one closes it.
+// InitiatedBy is the staff user who started the refund (the plan's actor), so the manager
+// resolution of an open attempt can enforce separation of duties across restarts (HH-767).
 type cardRefundFact struct {
 	RefundKey   string
 	OrderID     string
@@ -1120,6 +1122,7 @@ type cardRefundFact struct {
 	GatewayRef  string
 	RefundRef   string
 	AmountCents int64
+	InitiatedBy string
 }
 
 // returnableLine is the FOR UPDATE-locked read of one original order line plus its prior-return sums.
