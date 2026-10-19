@@ -732,10 +732,29 @@ mod tests {
         // as in Field's config.
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().unwrap();
-        assert!(
-            csp.contains("connect-src 'self' ipc: http://ipc.localhost;"),
+        let directive = |name: &str| -> Vec<&str> {
+            csp.split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with(name))
+                .unwrap_or_else(|| panic!("missing {name} directive, {csp}"))
+                .split_whitespace()
+                .skip(1)
+                .collect()
+        };
+        assert_eq!(
+            directive("connect-src"),
+            vec!["'self'", "ipc:", "http://ipc.localhost", "https://*.futurebuild.ai"],
             "{csp}"
         );
-        assert!(!csp.contains("https:"), "no remote origin in the CSP");
+        assert_eq!(directive("default-src"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("script-src"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("style-src"), vec!["'self'", "'unsafe-inline'"], "{csp}");
+        assert_eq!(directive("img-src"), vec!["'self'", "data:"], "{csp}");
+        assert_eq!(directive("font-src"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("base-uri"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("form-action"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("frame-src"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("frame-ancestors"), vec!["'self'"], "{csp}");
+        assert_eq!(directive("object-src"), vec!["'none'"], "{csp}");
     }
 }
