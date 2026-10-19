@@ -7,7 +7,6 @@ package messaging
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -51,33 +50,48 @@ func bindPaymentTrailFor(t *testing.T, pool *pgxpool.Pool, svc *Service, userIDs
 		_, _ = pool.Exec(bg, `UPDATE users SET platform_user_id = NULL WHERE platform_user_id LIKE 'p-it-%'`)
 		_, _ = pool.Exec(bg, `DELETE FROM org WHERE id = $1::uuid`, org)
 	})
-	svc.WithPaymentAccess(trail)
+	svc.WithPaymentAccess(trail).WithPaymentRecipients(sqlRecipients{pool: pool})
 }
 
-func TestIntegration_PaymentFence_RecipientReadsIdentityOrgsAndReach(t *testing.T) {
-	pool := intPool(t)
-	repo := NewRepository(pool)
-	bindPaymentTrailFor(t, pool, NewService(repo), uAlexMorgan, uSamRivera)
-	ctx := context.Background()
+// sqlRecipients is the test side of the composition root's identity read: the same facts (platform
+// identity, grant orgs, branch reach) read straight off the rows the helper above plants. The shipped
+// read is identity.StaffAuthorityResolver.ReachOfUser, proven on real rows in the identity package.
+type sqlRecipients struct{ pool *pgxpool.Pool }
 
-	gm, err := repo.PaymentRecipient(ctx, uAlexMorgan)
+func (s sqlRecipients) PaymentRecipient(ctx context.Context, userID string) (PaymentRecipient, error) {
+	var rec PaymentRecipient
+	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(platform_user_id, '') FROM users WHERE id = $1::uuid`, userID).Scan(&rec.PlatformUserID); err != nil || rec.PlatformUserID == "" {
+		return PaymentRecipient{}, nil
+	}
+	var scope string
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(ro.scope), '') FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id WHERE ur.user_id = $1::uuid`, userID).Scan(&scope); err != nil {
+		return PaymentRecipient{}, err
+	}
+	rec.Global = scope == "GLOBAL"
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT org_id::text FROM staff_role_grant WHERE platform_user_id = $1 AND deleted_at IS NULL`, rec.PlatformUserID)
 	if err != nil {
-		t.Fatalf("recipient: %v", err)
+		return PaymentRecipient{}, err
 	}
-	if gm.PlatformUserID != "p-it-"+uAlexMorgan || !gm.Global || len(gm.OrgIDs) != 1 {
-		t.Fatalf("the general manager is global with one org, got %+v", gm)
+	for rows.Next() {
+		var o string
+		_ = rows.Scan(&o)
+		rec.OrgIDs = append(rec.OrgIDs, o)
 	}
-	sam, err := repo.PaymentRecipient(ctx, uSamRivera)
-	if err != nil {
-		t.Fatalf("recipient: %v", err)
+	rows.Close()
+	if !rec.Global {
+		br, err := s.pool.Query(ctx, `SELECT branch_id::text FROM user_branch_grants WHERE user_id = $1::uuid ORDER BY 1`, userID)
+		if err != nil {
+			return PaymentRecipient{}, err
+		}
+		for br.Next() {
+			var b string
+			_ = br.Scan(&b)
+			rec.BranchIDs = append(rec.BranchIDs, b)
+		}
+		br.Close()
 	}
-	if sam.Global || !reflect.DeepEqual(sam.BranchIDs, []string{branchTrenton}) {
-		t.Fatalf("the sales manager reaches Trenton only, got %+v", sam)
-	}
-	none, err := repo.PaymentRecipient(ctx, "d7000000-0000-4000-9000-0000000000ff")
-	if err != nil || none.PlatformUserID != "" {
-		t.Fatalf("an unknown staffer is the zero value, got %+v %v", none, err)
-	}
+	return rec, nil
 }
 
 // A staffer who switched a rule on but holds no platform identity (so no trail the gate can confirm)

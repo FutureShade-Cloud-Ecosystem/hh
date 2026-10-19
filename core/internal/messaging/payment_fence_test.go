@@ -182,7 +182,7 @@ func moneyRoomFixture(t *testing.T) (*Service, *fakeStore, *fakeTrail) {
 		f.setMember(ch, uOtherPat) // a stale seat: seated, but no trail
 	}
 	f.setRecipient(uOtherPat, PaymentRecipient{PlatformUserID: "p-" + uOtherPat, OrgIDs: []string{"org-1"}, Global: true})
-	return svcWith(f).WithPaymentAccess(trail), f, trail
+	return svcWith(f).WithPaymentAccess(trail).WithPaymentRecipients(f), f, trail
 }
 
 // MUTATION TARGET: drop the trail check from the member wall and this dies.

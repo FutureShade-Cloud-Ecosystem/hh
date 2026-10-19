@@ -138,6 +138,8 @@ type Service struct {
 	zone houseday.Source
 	// payAccess says who holds the payment trail; nil withholds every payment notice (payment_access.go).
 	payAccess PaymentAccess
+	// payRecipients says who a staffer is to the gate and which branches they reach; nil closes the fence.
+	payRecipients PaymentRecipients
 }
 
 // WithAttachmentChecker attaches the attachment checker seam.

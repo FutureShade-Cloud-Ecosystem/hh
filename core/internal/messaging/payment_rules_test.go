@@ -47,7 +47,7 @@ func ruleFixture(t *testing.T) (*Consumer, *fakeStore) {
 		f.setRecipient(u, PaymentRecipient{PlatformUserID: "p-" + u, OrgIDs: []string{"org-1"}, Global: true})
 		trail.holds["p-"+u] = true
 	}
-	c.svc.WithPaymentAccess(trail)
+	c.svc.WithPaymentAccess(trail).WithPaymentRecipients(f)
 	return c, f
 }
 

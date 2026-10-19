@@ -32,16 +32,19 @@ type PaymentRecipient struct {
 	BranchIDs      []string
 }
 
-// paymentRecipientStore is the persistence seam for PaymentRecipient, discovered by type assertion off
-// the base store like every other seam in this module.
-type paymentRecipientStore interface {
-	// PaymentRecipient reads one staffer's platform identity, grant orgs and branch reach. A staffer
-	// with no platform identity returns the zero value: the gate cannot answer for them.
+// PaymentRecipients reads one staffer's platform identity, grant orgs and branch reach. It is declared
+// here, by its consumer: the identity tables are not this module's, so the composition root answers it
+// over the identity module (cmd/core). A staffer the gate cannot answer for is the zero value.
+type PaymentRecipients interface {
 	PaymentRecipient(ctx context.Context, userID string) (PaymentRecipient, error)
 }
 
 // WithPaymentAccess binds the payment trail reader. Unbound keeps every payment notice withheld.
 func (s *Service) WithPaymentAccess(a PaymentAccess) *Service { s.payAccess = a; return s }
+
+// WithPaymentRecipients binds the identity read the fence asks about each staffer. Unbound closes the
+// fence: nobody can be identified, so no payment notice goes out and no money room opens.
+func (s *Service) WithPaymentRecipients(r PaymentRecipients) *Service { s.payRecipients = r; return s }
 
 // recipientHoldsTrail asks the bound reader whether the staffer holds the payment trail in any org they
 // are granted in. Unbound, no identity, no org and an unreadable answer are all no: the fence fails
@@ -82,9 +85,8 @@ func (rec PaymentRecipient) reachesAny(branches []string) bool {
 	return false
 }
 
-func (s *Service) paymentRecipients() (paymentRecipientStore, bool) {
-	ps, ok := s.repo.(paymentRecipientStore)
-	return ps, ok
+func (s *Service) paymentRecipients() (PaymentRecipients, bool) {
+	return s.payRecipients, s.payRecipients != nil
 }
 
 // MayHearPayment says whether a staffer may be told about a payment: they hold the payment trail and

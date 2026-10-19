@@ -245,6 +245,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// branch reach. The reader is the money spine's late one, bound to the role gate once it exists
 	// (bindPaymentTrail), and unbound it answers no, so the rooms and notices stay closed until then.
 	messagingSvc.WithPaymentAccess(spine.paymentTrail)
+	if pool != nil {
+		reach, reachErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if reachErr != nil {
+			panic("messaging: payment fence identity resolver refused to boot: " + reachErr.Error())
+		}
+		messagingSvc.WithPaymentRecipients(paymentRecipientReader{reach: reach})
+	}
 	messagingHub.WithRoomFence(messagingSvc.RoomAdmits)
 
 	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
@@ -2037,4 +2044,19 @@ func (a attachmentsSeamAdapter) ResolveAttachmentMetas(ctx context.Context, orgI
 		}
 	}
 	return res, nil
+}
+
+// paymentRecipientReader answers messaging.PaymentRecipients over the identity module's own reach read
+// (StaffAuthorityResolver.ReachOfUser), so messaging touches none of the identity tables and the branch
+// reach is the guard's walk, not a second definition.
+type paymentRecipientReader struct {
+	reach *erpidentity.StaffAuthorityResolver
+}
+
+func (p paymentRecipientReader) PaymentRecipient(ctx context.Context, userID string) (messaging.PaymentRecipient, error) {
+	r, err := p.reach.ReachOfUser(ctx, userID)
+	if err != nil {
+		return messaging.PaymentRecipient{}, err
+	}
+	return messaging.PaymentRecipient{PlatformUserID: r.PlatformUserID, OrgIDs: r.OrgIDs, Global: r.Global, BranchIDs: r.BranchIDs}, nil
 }
