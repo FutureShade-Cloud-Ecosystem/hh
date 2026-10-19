@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/google/uuid"
 )
 
 // The same key with a different body is refused in words, one leg per field: the amount, the
@@ -65,12 +65,12 @@ func TestApplyReceived_TheSameKeyWithADifferentBodyIsRefusedInWords(t *testing.T
 			if err == nil {
 				t.Fatalf("the same key with a different %s must be refused, got the answer %+v", tc.name, ans)
 			}
-			var bad httpx.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("the refusal is in words, got %T %v", err, err)
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
 			}
-			if !strings.Contains(bad.Msg, "that idempotency key already recorded a different payment") {
-				t.Fatalf("the refusal says what happened: %q", bad.Msg)
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a different payment") {
+				t.Fatalf("the refusal says what happened: %q", rc.Msg)
 			}
 		})
 	}
@@ -118,6 +118,123 @@ func TestApplyReceived_TheSameBodyAnswersTheFirstResult(t *testing.T) {
 	payments, allocations, subledger, outbox := w.moneyRowCounts(t, w.customerID)
 	if payments != 1 || allocations != 1 || subledger != 1 || outbox != 1 {
 		t.Fatalf("a same body retry posts nothing: payments %d allocations %d subledger %d outbox %d",
+			payments, allocations, subledger, outbox)
+	}
+}
+
+// The replay judgement runs BEFORE the body is validated. A key that already recorded a payment
+// answers the replay whatever body the retry carries: the desk that retries under the held key with
+// a malformed body (too many invoices, an empty list, a duplicate or non uuid id, a non positive
+// amount, an unknown tender) must hear the replay's own verdict, never a fresh key's validation
+// words dressed as the answer, because the validation words tell the desk the payment was not
+// recorded when the first press under that key already booked it (FP 186 and 187: no word matching
+// in a money gate; the route answers the replay before validateApply).
+func TestApplyReceived_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	a := w.invoice(t, w.customerID, "RJ", 90, 60, 40000)
+	first, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 40000,
+	})
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if first.PaymentID == "" {
+		t.Fatal("the first apply answers a payment")
+	}
+
+	over := make([]string, MaxApplyInvoices+1)
+	for i := range over {
+		over[i] = uuid.New().String()
+	}
+	spentKey := []struct {
+		name string
+		body ApplyRequest
+	}{
+		{"more invoices than the ceiling", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: over, AmountCents: 40000}},
+		{"an empty invoice list", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: nil, AmountCents: 40000}},
+		{"the same invoice twice", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: []string{a, a}, AmountCents: 40000}},
+		{"a non uuid invoice id", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: []string{"not-a-uuid"}, AmountCents: 40000}},
+		{"a zero amount", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 0}},
+		{"a negative amount", ApplyRequest{
+			CustomerID: w.customerID, Method: "CASH", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: -500}},
+		{"an unknown tender", ApplyRequest{
+			CustomerID: w.customerID, Method: "BOGUS", Reference: "CHQ 771",
+			IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 40000}},
+	}
+	for _, tc := range spentKey {
+		t.Run(tc.name, func(t *testing.T) {
+			ans, err := w.repo.ApplyReceived(ctx, tc.body)
+			if err == nil {
+				t.Fatalf("a spent key with %s must be refused, got the answer %+v", tc.name, ans)
+			}
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
+			}
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a different payment") {
+				t.Fatalf("the spent key answers the replay verdict, got %q", rc.Msg)
+			}
+			for _, fresh := range []string{
+				"may name at most", "must be greater than zero", "at least one invoice",
+				"the same invoice is named twice", "must be uuids", "tender must be one of",
+			} {
+				if strings.Contains(rc.Msg, fresh) {
+					t.Fatalf("a spent key never answers a fresh key's validation words: %q", rc.Msg)
+				}
+			}
+		})
+	}
+
+	// The account leg of the same rule: a spent key held by another account, or a body that does
+	// not even name a uuid, answers the account refusal, never a validation word.
+	for _, tc := range []struct {
+		name       string
+		customerID string
+	}{
+		{"another account", w.otherID},
+		{"a non uuid account", "not-a-uuid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+				CustomerID: tc.customerID, Method: "CASH", Reference: "CHQ 771",
+				IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 40000,
+			})
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
+			}
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a payment for another account") {
+				t.Fatalf("the account refusal says what happened: %q", rc.Msg)
+			}
+		})
+	}
+
+	// The control: the same body in other accepted spellings (an upper case account id, a lower
+	// case tender) is still THIS payment and answers the first result.
+	again, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: strings.ToUpper(w.customerID), Method: "cash", Reference: "CHQ 771",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 40000,
+	})
+	if err != nil || !again.Replayed || again.PaymentID != first.PaymentID {
+		t.Fatalf("the same body in another spelling replays the first payment: %v %+v", err, again)
+	}
+
+	payments, allocations, subledger, outbox := w.moneyRowCounts(t, w.customerID)
+	if payments != 1 || allocations != 1 || subledger != 1 || outbox != 1 {
+		t.Fatalf("only the first body's payment exists: payments %d allocations %d subledger %d outbox %d",
 			payments, allocations, subledger, outbox)
 	}
 }
