@@ -14,6 +14,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -227,3 +228,8 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 	}
 	return out, nil
 }
+
+// errCardRefundAlreadyResolved is the typed signal of the dispatch-side writes
+// (FailCardRefundAttempt, HoldCardRefundAttemptInFlight) meeting a row a manager
+// already resolved: the processor's answer contradicts the manager's word.
+var errCardRefundAlreadyResolved = errors.New("pos: the card refund attempt was already resolved by a manager")

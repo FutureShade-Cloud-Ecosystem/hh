@@ -13,6 +13,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -174,5 +175,121 @@ VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, 4520, 'IN_FLIGHT', now() - interva
 		map[string]any{"outcome": "REFUNDED", "refund_ref": ownRef, "note": "its own ref"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the second attempt settles with its own ref, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// lateChildRail answers its first call at once (after running onFirst, which
+// stands for that call having taken long) and holds its second call open until
+// released, then declines it: the shape of a return whose second card child
+// starts its call late.
+type lateChildRail struct {
+	mu      sync.Mutex
+	calls   int
+	onFirst func()
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *lateChildRail) RefundCard(_ context.Context, _ pgx.Tx, _ string, _ int64, _, _ string) (string, error) {
+	r.mu.Lock()
+	r.calls++
+	n := r.calls
+	r.mu.Unlock()
+	if n == 1 {
+		if r.onFirst != nil {
+			r.onFirst()
+		}
+		return "rp_late_first_" + key(), nil
+	}
+	close(r.entered)
+	<-r.release
+	return "", &payment.DeclineError{RespCode: "05", RespText: "Do not honour"}
+}
+
+// PR #501 round 2 P2-1 end to end: a return with two card children. The first
+// call takes long (the second row's staging stamp is backdated while it runs),
+// then the second call is held open. The fence measures from the start of each
+// child's own call, so the second row refuses both outcomes inside its own
+// window, and the decline that follows closes it FAILED: the books never show a
+// card refund the processor declined.
+func TestIntegration_TwoTxResolution_LateChildCallIsFencedFromItsOwnStart(t *testing.T) {
+	pool := intPool(t)
+	cust := ""
+	rail := &lateChildRail{entered: make(chan struct{}), release: make(chan struct{})}
+	s := newTrentonStackOnPoolWithRail(t, pool, rail)
+	cust = s.plantCustomer("HH-501 late child", 30, 5000000)
+	rail.onFirst = func() {
+		if _, err := pool.Exec(context.Background(), `
+UPDATE pos_card_refund_attempts SET attempted_at = now() - interval '2 minutes'
+ WHERE customer_id = $1::uuid AND status = 'IN_FLIGHT'`, cust); err != nil {
+			t.Errorf("backdate the later child's staging stamp: %v", err)
+		}
+	}
+	sale1 := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 3, TenderCard)
+	sale2 := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", cust, "", 2, TenderCard)
+	body := s.noteBody(key(), cust, RefundCard, []trentonSaleView{sale1, sale2}, []float64{3, 2})
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- s.postNote(trentonClerkSub, "", body) }()
+	<-rail.entered
+
+	var id, refundKey string
+	if err := pool.QueryRow(context.Background(), `
+SELECT id::text, refund_key FROM pos_card_refund_attempts
+ WHERE customer_id = $1::uuid AND status = 'IN_FLIGHT'`, cust).Scan(&id, &refundKey); err != nil {
+		t.Fatalf("the second child's row is the one still IN_FLIGHT: %v", err)
+	}
+	for _, outcome := range []string{"REFUNDED", "NOT_REFUNDED"} {
+		reqBody := map[string]any{"outcome": outcome, "note": "checked while it ran"}
+		if outcome == "REFUNDED" {
+			reqBody["refund_ref"] = "rp_typed_late_" + key()
+		}
+		rec := s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(trentonMgrSub), "", reqBody)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "may still be running at the processor") {
+			t.Fatalf("%s inside the late child's own window refuses 409, got %d: %s", outcome, rec.Code, rec.Body.String())
+		}
+	}
+
+	close(rail.release)
+	if rec := <-done; rec.Code != http.StatusBadGateway {
+		t.Fatalf("the declined second child answers 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	_, status, refundRef, _, _ := attemptRow(t, pool, refundKey)
+	if status != "FAILED" || refundRef != "" {
+		t.Fatalf("the declined child closes FAILED with no ref: %s %q", status, refundRef)
+	}
+}
+
+// Defence in depth: the dispatch-side closes meet a row a manager already
+// resolved and say so (a typed signal, plus a loud log) instead of matching
+// nothing silently; a row nobody resolved, or no row, stays quiet.
+func TestIntegration_TwoTxResolution_DispatchWritesFlagAManagerResolvedRow(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	ctx := context.Background()
+	k := "refund:zz-resolved-" + key()
+	plant := func(k string, resolvedBy string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, amount_cents, status, initiated_by, resolved_by, resolved_at)
+VALUES ($1, (SELECT id FROM orders LIMIT 1), $2::uuid, (SELECT id FROM customers LIMIT 1), 'rp_x', 100, 'FAILED', $3, $4, CASE WHEN $4 = '' THEN NULL ELSE now() END)`,
+			k, trentonBranchID, clerkUserID, resolvedBy); err != nil {
+			t.Fatalf("plant: %v", err)
+		}
+	}
+	plant(k, managerUserID)
+	if err := repo.FailCardRefundAttempt(ctx, k, "declined"); !errors.Is(err, errCardRefundAlreadyResolved) {
+		t.Fatalf("Fail on a manager resolved row signals it, got %v", err)
+	}
+	if err := repo.HoldCardRefundAttemptInFlight(ctx, k, "unknown"); !errors.Is(err, errCardRefundAlreadyResolved) {
+		t.Fatalf("Hold on a manager resolved row signals it, got %v", err)
+	}
+	quiet := "refund:zz-unresolved-" + key()
+	plant(quiet, "")
+	if err := repo.FailCardRefundAttempt(ctx, quiet, "declined"); err != nil {
+		t.Fatalf("a row nobody resolved stays quiet, got %v", err)
+	}
+	if err := repo.HoldCardRefundAttemptInFlight(ctx, "refund:zz-none-"+key(), "unknown"); err != nil {
+		t.Fatalf("no row stays quiet, got %v", err)
 	}
 }

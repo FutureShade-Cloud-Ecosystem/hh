@@ -653,6 +653,16 @@ func (f *fakeStore) freshAttemptID() string {
 	return fmt.Sprintf("22222222-0000-4000-9000-%012d", f.seq)
 }
 
+func (f *fakeStore) StampCardRefundCallStart(_ context.Context, refundKey string) (bool, error) {
+	a, ok := f.cardAttempts[refundKey]
+	if !ok || a.status != "IN_FLIGHT" {
+		return false, nil
+	}
+	a.attemptedAt = liveStamp()
+	f.cardAttempts[refundKey] = a
+	return true, nil
+}
+
 func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, reason string) error {
 	// The real row keeps its status IN_FLIGHT, records the reason and stamps
 	// processor_at (the unknown outcome is a recorded fact); the fake mirrors

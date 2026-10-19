@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -607,10 +608,51 @@ func (r *Repository) HoldCardRefundAttemptInFlight(ctx context.Context, refundKe
 	if r.pool == nil {
 		return errNoPool
 	}
-	_, err := r.pool.Exec(ctx,
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE pos_card_refund_attempts SET last_error = $2, processor_at = now(), updated_at = now()
  WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.flagResolvedByManager(ctx, tag.RowsAffected(), refundKey, "unknown outcome", reason)
+}
+
+// StampCardRefundCallStart writes the start of one child's processor call on its own row,
+// immediately before the call (PR #501 round 2 P2-1): the manager's live request fence measures
+// from this stamp, not from staging, so a child that starts late is fenced for its own window.
+// False means the row is no longer IN_FLIGHT (a manager settled it before the call began), and
+// the caller must not call the processor.
+func (r *Repository) StampCardRefundCallStart(ctx context.Context, refundKey string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoPool
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE pos_card_refund_attempts SET attempted_at = now(), updated_at = now()
+ WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// flagResolvedByManager is the defence in depth of the dispatch-side closes: a write that matched
+// no IN_FLIGHT row is silent when nobody resolved the row, but when a manager already did, the
+// processor's answer contradicts the manager's word. It logs that loudly for reconciliation and
+// returns the typed errCardRefundAlreadyResolved.
+func (r *Repository) flagResolvedByManager(ctx context.Context, matched int64, refundKey, answer, reason string) error {
+	if matched > 0 {
+		return nil
+	}
+	var status, resolvedBy, refundRef string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT status, resolved_by, refund_ref FROM pos_card_refund_attempts WHERE refund_key = $1`, refundKey).
+		Scan(&status, &resolvedBy, &refundRef); err != nil || resolvedBy == "" {
+		return nil
+	}
+	slog.Default().Error("pos: the processor answered a card refund attempt a manager already resolved; reconcile it against the processor console",
+		"refund_key", refundKey, "processor_answer", answer, "reason", reason,
+		"status", status, "resolved_by", resolvedBy, "manager_refund_ref", refundRef)
+	return errCardRefundAlreadyResolved
 }
 
 // RecordCardRefundDispatched persists, on the pool and immediately after the processor answered
@@ -639,10 +681,13 @@ func (r *Repository) FailCardRefundAttempt(ctx context.Context, refundKey, reaso
 	if r.pool == nil {
 		return errNoPool
 	}
-	_, err := r.pool.Exec(ctx,
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE pos_card_refund_attempts SET status = 'FAILED', last_error = $2, processor_at = now(), updated_at = now()
  WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.flagResolvedByManager(ctx, tag.RowsAffected(), refundKey, "refused", reason)
 }
 
 // RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every

@@ -434,7 +434,21 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 			p.cardRefunds = append(p.cardRefunds, fact)
 			continue
 		}
-		refundRef, err := s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
+		// The live request fence measures from the start of THIS child's call (PR #501 round 2
+		// P2-1): the start is stamped on its own row immediately before the call, so a later
+		// child that starts after its staging window is fenced for its own window. A row a
+		// manager already settled is never sent to the processor.
+		var refundRef string
+		started, serr := s.store.StampCardRefundCallStart(context.WithoutCancel(ctx), refundKey)
+		var err error
+		switch {
+		case serr != nil:
+			err = fmt.Errorf("could not stamp the card refund call start: %w", serr)
+		case !started:
+			err = errCardRefundAlreadyResolved
+		default:
+			refundRef, err = s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
+		}
 		if err != nil {
 			reason := trimReason(err.Error())
 			// The failed child: only a decline or a not-dispatched failure is KNOWN to have
@@ -442,7 +456,12 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 			// transport timeout, an unclassified error) holds the attempt IN_FLIGHT with its
 			// reason: the amount stays reserved against the capture ceiling and the same-key
 			// retry refuses instead of refunding again (HH-690 round 2, P1-2).
-			if isCardRefundNoMoneyMoved(err) {
+			if errors.Is(err, errCardRefundAlreadyResolved) {
+				// The manager settled this row before its call began: nothing was sent and
+				// the row is theirs; only the later children close below.
+				slog.Default().Error("pos: a card refund attempt was settled by a manager before its processor call began; the call was not sent",
+					"refund_key", refundKey)
+			} else if isCardRefundNoMoneyMoved(err) {
 				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), refundKey, reason); ferr != nil {
 					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
 				}
