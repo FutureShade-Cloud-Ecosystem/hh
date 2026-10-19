@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -263,18 +264,24 @@ func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handle
 			r = r.WithContext(withRequestID(r.Context(), reqID))
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			if mutating[r.Method] && strings.HasPrefix(r.URL.Path, "/api/") &&
-				r.URL.Path != "/api/v1/auth/login" && !selfRecordedMutations[r.URL.Path] {
+			// The wrap sits outside the mux, so r.URL.Path is the raw request path: a doubled
+			// slash ("/api//public/...") reaches us before the mux cleans it. Every decision
+			// below reads the cleaned path, and the row's entity_type / entity_id are derived
+			// from the elided path so no column persists a credential fragment (HH-693 P2-B).
+			cleanPath := path.Clean(r.URL.Path)
+			if mutating[r.Method] && strings.HasPrefix(cleanPath, "/api/") &&
+				cleanPath != "/api/v1/auth/login" && !selfRecordedMutations[cleanPath] {
 				uid, role := authn.Actor(r)
+				elidedPath := elidePublicToken(cleanPath)
 				e := Entry{
 					Action:     httpAction(r.Method),
-					EntityType: deriveEntityType(r.URL.Path),
-					EntityID:   trailingUUID(r.URL.Path),
+					EntityType: deriveEntityType(elidedPath),
+					EntityID:   trailingUUID(elidedPath),
 					ActorID:    uid,
 					RequestID:  reqID,
 					Changes: map[string]any{
 						"method":     r.Method,
-						"path":       elidePublicToken(r.URL.Path),
+						"path":       elidedPath,
 						"status":     rec.status,
 						"actor_role": role,
 					},
@@ -297,14 +304,26 @@ var publicTokenExemptPaths = map[string]bool{
 }
 
 // publicTokenFamilyPrefixes names the multi-segment public route families whose token leg sits
-// deeper than /api/public/<version>/<family>/ (the AR tracking pair nests under ar/track, the
-// AR delivery reads under ar/invoice-opened, and the warranty reads nest under warranty). They
-// are checked before the generic version+family extraction so the family spelling survives.
+// deeper than /api/public/<version>/<family>/ (the AR tracking pair nests under ar/track, the AR
+// delivery reads under ar/invoice-opened, and the warranty intake reads nest under
+// warranty/intake). They are checked before the single-segment table so the deeper spelling
+// survives.
 var publicTokenFamilyPrefixes = []string{
 	"/api/public/v1/ar/track/",
 	"/api/public/v1/ar/invoice-opened/",
 	"/api/public/v1/warranty/intake/",
-	"/api/public/v1/warranty/claims/",
+}
+
+// publicTokenSingleFamilies names the served single-segment public route families whose token leg
+// sits right after /api/public/<version>/. The segment after the version is kept verbatim ONLY
+// for these families: any other segment there is treated as the credential itself and collapses
+// into the version-level placeholder, so a future pay or sign link of the shape
+// /api/public/vN/<token>/<action> cannot persist its credential as a fake family name (HH-693
+// P2-A).
+var publicTokenSingleFamilies = map[string]bool{
+	"customer-quotes": true, // the customer-quote public accept pair (ADR-0022)
+	"quotes":          true, // the dealer share-link accept pair (the carried R4 surface)
+	"will-call":       true, // the dispatch will-call confirm pair (DIB-79)
 }
 
 // publicActionSuffixes names the action legs a public token route carries after the token segment.
@@ -317,36 +336,55 @@ var publicActionSuffixes = []string{"/accept", "/confirm", "/open", "/click"}
 // that is not an explicitly exempt static endpoint has the segment(s) after its family prefix
 // replaced by the fixed "{token}" placeholder (plus a known action leg), keeping the family and
 // the action visible for operators. A new or unlisted public token route therefore elides by
-// construction instead of failing open into audit_log. Paths outside /api/public/ return unchanged
-// (an ordinary /api path carries ids, not credentials, and its raw shape is the trail's value).
-func elidePublicToken(path string) string {
-	if !strings.HasPrefix(path, "/api/public/") {
-		return path
+// construction instead of failing open into audit_log. The raw request path is cleaned first (the
+// wrap sits outside the mux, so a doubled slash would otherwise bypass the prefix check), and the
+// family spelling is kept only for the families named in the tables above: an unlisted family, or
+// a credential sitting in the family position itself, collapses to the version-level placeholder.
+// Paths outside /api/public/ return unchanged (an ordinary /api path carries ids, not credentials,
+// and its raw shape is the trail's value).
+func elidePublicToken(rawPath string) string {
+	if rawPath == "" {
+		return ""
 	}
-	if publicTokenExemptPaths[path] {
-		return path
+	clean := path.Clean(rawPath)
+	if !strings.HasPrefix(clean, "/api/public/") {
+		return clean
+	}
+	p := clean
+	if publicTokenExemptPaths[p] {
+		return p
 	}
 	for _, prefix := range publicTokenFamilyPrefixes {
-		if strings.HasPrefix(path, prefix) {
-			return prefix + "{token}" + publicTokenActionLeg(path[len(prefix):])
+		if strings.HasPrefix(p, prefix) {
+			return prefix + "{token}" + publicTokenActionLeg(p[len(prefix):])
 		}
 	}
-	// Generic shape: /api/public/<version>/<family>/<token...>. Anything that does not have at
-	// least a version segment and a family segment (a bare token, a version with no family) has
-	// no family spelling worth keeping, so it collapses to the bare placeholder.
+	// Generic shape: /api/public/<version>/<family>/<token...>. The family spelling survives only
+	// for the served single-segment families; anything else after the version (an unlisted family
+	// or a bare credential) collapses to the version-level placeholder. Shapes without a version
+	// and family collapse to the bare placeholder.
 	const root = "/api/public/"
-	rest := path[len(root):]
+	rest := p[len(root):]
 	vEnd := strings.Index(rest, "/")
 	if vEnd <= 0 || !isAPIVersion(rest[:vEnd]) {
 		return root + "{token}"
 	}
+	versionRoot := root + rest[:vEnd+1]
 	rest = rest[vEnd+1:]
 	fEnd := strings.Index(rest, "/")
-	if fEnd <= 0 {
-		return root + "{token}"
+	if fEnd < 0 {
+		// The cleaned path ends at the family root (or at a bare segment). A served family
+		// root keeps its spelling (its token leg is empty, the degenerate mis-POST shape);
+		// anything else there is a credential and collapses.
+		if publicTokenSingleFamilies[rest] {
+			return versionRoot + rest + "/{token}"
+		}
+		return versionRoot + "{token}"
 	}
-	prefix := root + path[len(root):len(root)+vEnd+1+fEnd+1]
-	return prefix + "{token}" + publicTokenActionLeg(rest[fEnd+1:])
+	if !publicTokenSingleFamilies[rest[:fEnd]] {
+		return versionRoot + "{token}" + publicTokenActionLeg(rest)
+	}
+	return versionRoot + rest[:fEnd+1] + "{token}" + publicTokenActionLeg(rest[fEnd+1:])
 }
 
 // isAPIVersion reports whether the first path segment after /api/public/ is a version marker
@@ -396,7 +434,7 @@ func deriveEntityType(path string) string {
 	segs := strings.Split(strings.Trim(p, "/"), "/")
 	var parts []string
 	for _, s := range segs {
-		if s == "" || looksLikeUUID(s) {
+		if s == "" || s == "{token}" || looksLikeUUID(s) {
 			continue
 		}
 		parts = append(parts, singular(s))

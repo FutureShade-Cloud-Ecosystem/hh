@@ -194,8 +194,9 @@ func TestPublicTokenPairThroughAuditWrapElidesRawToken(t *testing.T) {
 	// 4. The HH-693 deny-by-default probe: a POST to an unmounted future
 	// public token family. The mux 404s the path, the coarse row still
 	// lands, and the elision is deny-by-default over /api/public/: the
-	// unlisted family's leg records the placeholder spelling, never the
-	// raw credential, so a new route cannot ship the S-1 leak by default.
+	// unlisted family collapses to the version-level placeholder, never
+	// the raw credential, so a new route cannot ship the S-1 leak by
+	// default.
 	futureID := "fx-cqwrap-future"
 	if code := post(futureID,
 		"/api/public/v1/unlisted-family/"+tokens.liveView+"/accept"); code != http.StatusNotFound {
@@ -203,17 +204,48 @@ func TestPublicTokenPairThroughAuditWrapElidesRawToken(t *testing.T) {
 	}
 	rows = rowsFor(futureID, 1)
 	assertNoLeak(futureID, rows, tokens.liveView)
-	if got, _ := rows[0].changes["path"].(string); got != "/api/public/v1/unlisted-family/{token}/accept" {
+	if got, _ := rows[0].changes["path"].(string); got != "/api/public/v1/{token}/accept" {
 		t.Errorf("future family coarse path = %q, want the elided spelling", got)
+	}
+
+	// 5. The P2-B doubled-slash probe: the audit wrap sits outside the
+	// mux, so "/api//public/..." reaches the middleware before the mux
+	// cleans it. The row must still record the elided spelling, and no
+	// column (changes, entity_type, entity_id) may carry the credential.
+	doubledID := "fx-cqwrap-doubled"
+	if code := post(doubledID,
+		"/api//public/v1/customer-quotes/"+tokens.liveAccept+"/accept"); code != http.StatusTemporaryRedirect {
+		t.Fatalf("doubled slash: status %d, want 307", code)
+	}
+	rows = rowsFor(doubledID, 1)
+	assertNoLeak(doubledID, rows, tokens.liveAccept)
+	if got, _ := rows[0].changes["path"].(string); got != "/api/public/v1/customer-quotes/{token}/accept" {
+		t.Errorf("doubled slash coarse path = %q, want the elided spelling", got)
+	}
+
+	// 6. The P2-B bare-token probe: a mis-POST whose credential sits
+	// directly after /api/public/. The path elides and the derived
+	// entity_type carries no fragment of the credential.
+	bareID := "fx-cqwrap-bare"
+	if code := post(bareID, "/api/public/"+tokens.liveView); code != http.StatusNotFound {
+		t.Fatalf("bare token: status %d, want 404", code)
+	}
+	rows = rowsFor(bareID, 1)
+	assertNoLeak(bareID, rows, tokens.liveView)
+	if got, _ := rows[0].changes["path"].(string); got != "/api/public/{token}" {
+		t.Errorf("bare token coarse path = %q, want the elided spelling", got)
 	}
 }
 
-// fetchCQWrapRows reads one request id's audit rows: action, changes as a
-// decoded map, and changes as raw text for the leak scan.
+// fetchCQWrapRows reads one request id's audit rows: action, entity_type,
+// entity_id, and changes as a decoded map plus the same three columns as raw
+// text for the leak scan, so assertNoLeak inspects the whole persisted row,
+// not just changes.
 func fetchCQWrapRows(t *testing.T, graph *appGraph, reqID string) []cqWrapRow {
 	t.Helper()
 	rs, err := graph.pool.Query(context.Background(),
-		`SELECT action, changes::text FROM audit_log WHERE request_id = $1`, reqID)
+		`SELECT action, entity_type, COALESCE(entity_id::text, ''), changes::text
+		 FROM audit_log WHERE request_id = $1`, reqID)
 	if err != nil {
 		t.Fatalf("audit rows query: %v", err)
 	}
@@ -221,10 +253,12 @@ func fetchCQWrapRows(t *testing.T, graph *appGraph, reqID string) []cqWrapRow {
 	out := []cqWrapRow{}
 	for rs.Next() {
 		var r cqWrapRow
-		if err := rs.Scan(&r.action, &r.raw); err != nil {
+		var entityType, entityID string
+		if err := rs.Scan(&r.action, &entityType, &entityID, &r.raw); err != nil {
 			t.Fatalf("audit rows scan: %v", err)
 		}
 		_ = json.Unmarshal([]byte(r.raw), &r.changes)
+		r.raw = r.raw + " " + entityType + " " + entityID
 		out = append(out, r)
 	}
 	if err := rs.Err(); err != nil {

@@ -222,11 +222,20 @@ func TestElidePublicToken(t *testing.T) {
 		"/api/public/v1/ar/track/" + fxPublicToken + "/click": "/api/public/v1/ar/track/{token}/click",
 		"/api/public/v1/ar/invoice-opened/" + fxPublicToken:   "/api/public/v1/ar/invoice-opened/{token}",
 		// Deny-by-default: an unlisted or future public token family elides rather than failing
-		// open; the raw credential never persists just because the route is not in a table.
-		"/api/public/v1/other-resource/" + fxPublicToken:              "/api/public/v1/other-resource/{token}",
-		"/api/public/v1/other-resource/" + fxPublicToken + "/accept":  "/api/public/v1/other-resource/{token}/accept",
-		"/api/public/v2/future-family/" + fxPublicToken:               "/api/public/v2/future-family/{token}",
-		"/api/public/v1/unlisted-family/" + fxPublicToken + "/accept": "/api/public/v1/unlisted-family/{token}/accept",
+		// open; the raw credential never persists just because the route is not in a table. Only
+		// the served single-segment families keep their spelling, so an unlisted family collapses
+		// to the version-level placeholder.
+		"/api/public/v1/other-resource/" + fxPublicToken:              "/api/public/v1/{token}",
+		"/api/public/v1/other-resource/" + fxPublicToken + "/accept":  "/api/public/v1/{token}/accept",
+		"/api/public/v2/future-family/" + fxPublicToken:               "/api/public/v2/{token}",
+		"/api/public/v1/unlisted-family/" + fxPublicToken + "/accept": "/api/public/v1/{token}/accept",
+		// A credential sitting in the family position itself elides too (P2-A): the segment
+		// after the version is kept verbatim only for the served families.
+		"/api/public/v1/" + fxPublicToken + "/accept":       "/api/public/v1/{token}/accept",
+		"/api/public/v1/" + fxPublicToken + "/pay":          "/api/public/v1/{token}",
+		"/api/public/v2/" + fxPublicToken + "/sign/confirm": "/api/public/v2/{token}/confirm",
+		// A doubled slash cannot bypass the prefix check (P2-B): the path is cleaned first.
+		"/api//public/v1/customer-quotes/" + fxPublicToken + "/accept": "/api/public/v1/customer-quotes/{token}/accept",
 		// A credential carrying an encoded slash elides wholesale: no fragment survives.
 		"/api/public/v1/customer-quotes/abc/def/accept": "/api/public/v1/customer-quotes/{token}/accept",
 		// An unknown action leg collapses into the placeholder rather than persisting a fragment.
@@ -235,8 +244,9 @@ func TestElidePublicToken(t *testing.T) {
 		"/api/public/v1/customer-quotes/": "/api/public/v1/customer-quotes/{token}",
 		"/api/public/v1/will-call/x/":     "/api/public/v1/will-call/{token}",
 		// Shapes without a version/family structure still never leak the credential.
-		"/api/public/" + fxPublicToken:    "/api/public/{token}",
-		"/api/public/v1/" + fxPublicToken: "/api/public/{token}",
+		"/api/public/" + fxPublicToken: "/api/public/{token}",
+		// A bare credential after the version has no family spelling worth keeping (P2-A).
+		"/api/public/v1/" + fxPublicToken: "/api/public/v1/{token}",
 		// The static exempt public path passes through verbatim, but any segment appended after
 		// it is a token leg and elides.
 		"/api/public/v1/warranty/intake":                  "/api/public/v1/warranty/intake",
@@ -280,6 +290,38 @@ func TestU22_PublicTokenPathElidedInCoarseRow(t *testing.T) {
 		t.Errorf("mis-post changes.path = %v, want the elided spelling", e2.Changes["path"])
 	}
 	noCleartext(t, e2, fxPublicToken)
+}
+
+// TestU23_RawPathShapesNeverPersistCredentials pins the P2-B round: the audit wrap sits outside
+// the mux, so it sees the raw request path before any cleaning. A doubled slash must not bypass
+// the elision, and the row's entity_type / entity_id columns are derived from the elided path,
+// never the raw one, so a bare public token or a UUID delivery id cannot land there either.
+func TestU23_RawPathShapesNeverPersistCredentials(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"doubled slash", "/api//public/v1/customer-quotes/" + fxPublicToken + "/accept"},
+		{"bare public token", "/api/public/" + fxPublicToken},
+		{"uuid delivery id leg", "/api/public/v1/ar/invoice-opened/" + sampleUUID},
+	}
+	for _, tc := range cases {
+		f := newFakeStore()
+		runThrough(newTestService(f), stubAuth{}, http.MethodPost, tc.path, 200, nil, nil)
+		waitForInserts(t, f, 1)
+		e := f.snapshot()[0]
+		if strings.Contains(e.Changes["path"].(string), fxPublicToken) ||
+			strings.Contains(e.Changes["path"].(string), sampleUUID) {
+			t.Errorf("%s: changes.path = %v, want the elided spelling", tc.name, e.Changes["path"])
+		}
+		if strings.Contains(e.EntityType, fxPublicToken) || strings.Contains(e.EntityType, sampleUUID) ||
+			strings.Contains(e.EntityType, "{token}") {
+			t.Errorf("%s: entity_type = %q, want it free of the credential and placeholder", tc.name, e.EntityType)
+		}
+		if strings.Contains(e.EntityID, fxPublicToken) || strings.Contains(e.EntityID, sampleUUID) {
+			t.Errorf("%s: entity_id = %q, want it free of the credential", tc.name, e.EntityID)
+		}
+	}
 }
 
 // -- U6-U14, U21: middleware (httptest, stub authenticator, fake store) -------
