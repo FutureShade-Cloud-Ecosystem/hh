@@ -870,7 +870,8 @@ func (r *Repository) ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx,
 UPDATE pos_card_refund_attempts
    SET status = $2, refund_ref = COALESCE(NULLIF($3::text, ''), refund_ref),
        resolved_by = $4, resolved_at = now(), resolution_note = $5,
-       processor_at = COALESCE(processor_at, now()), updated_at = now(), call_not_sent = false,
+       processor_at = COALESCE(processor_at, now()), updated_at = now(),
+       call_not_sent = (call_not_sent AND $2::text <> 'FAILED'),
        resolution_log = resolution_log || jsonb_build_array(jsonb_build_object(
             'event', CASE WHEN $2::text = 'FAILED' THEN 'NOT_REFUNDED' ELSE 'REFUNDED' END,
             'at', now(), 'by', $4::text, 'refund_ref', COALESCE(NULLIF($3::text, ''), refund_ref), 'note', $5::text))

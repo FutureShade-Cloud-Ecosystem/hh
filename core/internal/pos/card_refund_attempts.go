@@ -158,6 +158,14 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 			}
 		}
 		if outcome == CardRefundOutcomeRefunded {
+			// The never sent flag is sticky against REFUNDED (PR #501 round 4 P2-1): the dispatch
+			// knows no call was made under this row, so no manager's word can make its ref a
+			// processor reversal. Only NOT_REFUNDED (so the cashier's retry sends the call) or a
+			// restage clears it.
+			if row.CallNotSent {
+				return clientErr(http.StatusConflict,
+					"pos: this refund was never sent to the processor; settle it as not refunded so the cashier's retry sends it")
+			}
 			ref := strings.TrimSpace(in.RefundRef)
 			if row.RefundRef != "" && ref != "" && ref != row.RefundRef {
 				return clientErr(http.StatusConflict, "pos: card refund attempt already carries processor ref %s", row.RefundRef)

@@ -187,6 +187,26 @@ SELECT refund_key FROM pos_card_refund_attempts WHERE customer_id = $1::uuid AND
 		t.Fatalf("nothing was booked on the typed ref and no call was made: %d payments, %d calls", n, rail.callCount())
 	}
 
+	// The flag is sticky against REFUNDED: a repeat, a second manager or a double submit (with the
+	// same ref or none) is refused 409 in plain words, and the retry still refuses to book.
+	for _, ref := range []string{typed, ""} {
+		for _, who := range []string{trentonMgrSub, trentonMgrSub} {
+			rec = s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(who), "",
+				map[string]any{"outcome": "REFUNDED", "refund_ref": ref, "note": "again"})
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "never sent to the processor") {
+				t.Fatalf("REFUNDED on a never sent row (ref %q) refuses 409 in plain words, got %d: %s", ref, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	var stillFlagged bool
+	if err := pool.QueryRow(context.Background(), `SELECT call_not_sent FROM pos_card_refund_attempts WHERE refund_key = $1`, secondKey).Scan(&stillFlagged); err != nil || !stillFlagged {
+		t.Fatalf("the flag survives the refused settles: %v %v", stillFlagged, err)
+	}
+	rec = s.postNote(trentonClerkSub, "", body)
+	if rec.Code != http.StatusConflict || rail.callCount() != 1 {
+		t.Fatalf("the retry after the refused settles still refuses and makes no call, got %d after %d calls: %s", rec.Code, rail.callCount(), rec.Body.String())
+	}
+
 	// The manager looks again: the processor holds nothing, so NOT_REFUNDED is allowed on this row
 	// and the retry sends it.
 	rec = s.do(http.MethodPost, "/api/v1/pos/card-refund-attempts/"+id+"/resolve", s.bearer(trentonMgrSub), "",
@@ -197,5 +217,12 @@ SELECT refund_key FROM pos_card_refund_attempts WHERE customer_id = $1::uuid AND
 	rec = s.postNote(trentonClerkSub, "", body)
 	if rec.Code != http.StatusCreated || rail.callCount() != 2 {
 		t.Fatalf("the retry sends the second child and books, got %d after %d calls: %s", rec.Code, rail.callCount(), rec.Body.String())
+	}
+	if n := s.countAll(`SELECT count(*) FROM payments WHERE gateway_ref = $1`, typed); n != 0 {
+		t.Fatalf("the typed ref is never booked, got %d payments on it", n)
+	}
+	var bookedRef, bookedStatus string
+	if err := pool.QueryRow(context.Background(), `SELECT status, refund_ref FROM pos_card_refund_attempts WHERE refund_key = $1`, secondKey).Scan(&bookedStatus, &bookedRef); err != nil || bookedStatus != "BOOKED" || bookedRef == typed || bookedRef == "" {
+		t.Fatalf("the healed row books the processor's real ref: %s %q %v", bookedStatus, bookedRef, err)
 	}
 }
