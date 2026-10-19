@@ -26,6 +26,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header and hh-sheet: the shared design-system chrome elements.
 import "@hardscapehouse/design-system/src/header.js";
 import "@hardscapehouse/design-system/src/sheet.js";
+import { framedByShell } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
@@ -34,6 +35,9 @@ import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } fro
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
 import "@hardscapehouse/shell-chrome";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
@@ -60,6 +64,7 @@ import {
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import {
   renderChanges,
   renderConflicts,
@@ -188,6 +193,9 @@ export class YardPickApp extends HHElement {
 
   // The caller's own id, so the board can say "Claimed by you".
   #me = "";
+
+  // Framed by the Work shell: the host's band is the one band.
+  readonly #framed = framedByShell();
 
   // The entry cards and every control ride data-action names; one host
   // listener reads them, as the till's does.
@@ -564,6 +572,21 @@ export class YardPickApp extends HHElement {
         const head = sheet.querySelector<HTMLElement>(".sheet-head");
         if (head !== null) head.focus();
       }
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band above the
+    // app-local header when the yard stands alone; framed by the Work shell,
+    // the host's band is the one band. The bell stands quiet: wiring its
+    // unread count is a follow-up.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#view.kind));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
     }
     // Hydrate per-line product thumbnails over the authenticated staff client.
     void this.#hydrateProductImages();
@@ -1338,6 +1361,7 @@ export class YardPickApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderHeaderControls()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
@@ -1351,6 +1375,7 @@ export class YardPickApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <hos-app-header demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       <main>
         ${renderEntry(this.#entryView)}
