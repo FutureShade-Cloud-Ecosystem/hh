@@ -405,11 +405,18 @@ func (s *Service) ListMentions(ctx context.Context, c Caller, cursor string, lim
 	if err != nil {
 		return MessagePage{}, err
 	}
+	// A mention in a money room the caller's trail no longer admits is not listed (HH-424). The cursor
+	// stays the unfiltered page's, so paging does not skip rows.
+	admitted := map[string]bool{}
+	kept := make([]Message, 0, len(page.Messages))
+	for _, m := range page.Messages {
+		if s.admits(ctx, admitted, c.UserID, m.ChannelID) {
+			kept = append(kept, m)
+		}
+	}
+	page.Messages = kept
 	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
 		return MessagePage{}, err
-	}
-	if page.Messages == nil {
-		page.Messages = []Message{}
 	}
 	return page, nil
 }

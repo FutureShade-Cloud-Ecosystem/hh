@@ -1925,8 +1925,8 @@ func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABr
 	return err
 }
 
-// cardAttemptEscalations is the card attempt sweep's alerter over messaging's escalations
-// channel, the unionSLANotifier precedent (the card charge design section 4): it is what
+// cardAttemptEscalations is the card attempt sweep's alerter over messaging's finance
+// channel (a money room fenced by the payment trail: the body names an amount and a sale key), the unionSLANotifier precedent (the card charge design section 4): it is what
 // payment.AlertFunc is bound to, once at process start, and its signature is the seam's. The
 // event key arrives already shaped card-attempt:<id>:<status>, so one state of one attempt
 // posts once; the body is the sweep's money facts, never a token or a customer name.
@@ -1938,7 +1938,7 @@ type slugPoster interface {
 }
 
 func (a cardAttemptEscalations) post(ctx context.Context, key, body string) error {
-	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", key, body,
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "finance", key, body,
 		messaging.EventRef{Topic: "payment.card_attempt", Entity: key, Summary: body}, false)
 	return err
 }
