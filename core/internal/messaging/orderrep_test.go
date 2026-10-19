@@ -5,6 +5,7 @@ package messaging
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,47 @@ func TestNotifyOrderRep_NoRepFallsBackToTheCounterAndSaysSo(t *testing.T) {
 	last := f.events[len(f.events)-1]
 	if last.ChannelID != "ch-sales-trt" || last.Body != in.FallbackPrefix+in.Body {
 		t.Fatalf("the message must say it is a fallback: %q", last.Body)
+	}
+}
+
+// A fallback channel is read by roles the figure predicate may not admit, so when the caller hands
+// over a figureless twin the fallback channel gets that twin, never the figured body.
+func TestNotifyOrderRep_TheFallbackChannelGetsTheFigurelessBody(t *testing.T) {
+	svc, f := routingFixture(t)
+	f.slugs["sales-trenton"] = "ch-sales-trt"
+	in := orderRepNotice("")
+	in.Body = "Order O-100 ($4,250.00) short"
+	in.BodyNoFigures = "Order O-100 short"
+	in.FallbackSlugs = []string{"sales-trenton"}
+	in.FallbackPrefix = "No sales rep is on this order, so this came to the counter. "
+	res, err := svc.NotifyOrderRep(context.Background(), in)
+	if err != nil {
+		t.Fatalf("the fallback must work, got %v", err)
+	}
+	if res.Kind != RouteCounter || res.ChannelID != "ch-sales-trt" {
+		t.Fatalf("with no rep the notice lands in the fallback channel: %+v", res)
+	}
+	last := f.events[len(f.events)-1]
+	if last.Body != in.FallbackPrefix+in.BodyNoFigures {
+		t.Fatalf("the fallback channel reads the figureless twin: %q", last.Body)
+	}
+	if strings.Contains(last.Body, "$4,250.00") {
+		t.Fatalf("no figure may reach the fallback channel: %q", last.Body)
+	}
+}
+
+// With no figureless twin the fallback body is the notice as written, prefixed with the fallback words.
+func TestNotifyOrderRep_TheFallbackWithoutATwinUsesTheBodyAsWritten(t *testing.T) {
+	svc, f := routingFixture(t)
+	f.slugs["sales-trenton"] = "ch-sales-trt"
+	in := orderRepNotice("")
+	in.FallbackSlugs = []string{"sales-trenton"}
+	in.FallbackPrefix = "No sales rep is on this order, so this came to the counter. "
+	if _, err := svc.NotifyOrderRep(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.events[len(f.events)-1]; last.Body != in.FallbackPrefix+in.Body {
+		t.Fatalf("a notice with no figureless twin goes as written: %q", last.Body)
 	}
 }
 

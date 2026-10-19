@@ -130,7 +130,11 @@ func (s *Service) bodyForRep(ctx context.Context, in OrderRepNotice, rep string)
 // orderNoticeFallback delivers a rep-less order notice to the first reachable fallback channel.
 func (s *Service) orderNoticeFallback(ctx context.Context, in OrderRepNotice) (OrderRepResult, error) {
 	none := OrderRepResult{Kind: RouteNone, Level: LevelNone}
-	body := in.FallbackPrefix + in.Body
+	rawBody := in.Body
+	if in.BodyNoFigures != "" {
+		rawBody = in.BodyNoFigures
+	}
+	body := in.FallbackPrefix + rawBody
 	ref := in.Ref
 	ref.Summary = body
 	if in.OrderID != "" && ref.Entity == "" {
