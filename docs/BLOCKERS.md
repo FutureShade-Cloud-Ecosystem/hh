@@ -182,18 +182,30 @@ ruling; they are ticketed in the Plane Records module as HH-5 items
 (#157, #158, #159). D12 is not reopened. The gap-held annotations on the
 tenant_brand contract operations stand until HH-5 lands the table.
 
-## The public token elision table fails open for future routes (open)
+## The public token elision table fails open for future routes (closed)
 
-The coarse audit middleware's token elision (the S-1 fix) is an
-ALLOWLIST: publicTokenPrefixes names the three public token route
-families that exist today (customer-quotes, the dealer quote pair, the
-will-call pair), and a new public token route joins the table or its
-credential persists in the coarse audit row. Whoever adds the fourth
-public token route finds this table before Security does, or the route
-ships with the leak the S-1 fix closed. The serve-shaped regression
-covers today's routes only. A deny-by-default shape over /api/public/
-with an explicit exempt list is the safe-side redesign, deliberately
-not taken mid-Session (the integration review ruling r1, note N1).
+Closed by HH-693 (round 2 after reviewer S): the coarse audit middleware's
+elidePublicToken (core/internal/audit/service.go) is deny-by-default over the
+cleaned /api/public/ path. The raw request path is cleaned with path.Clean
+first (the wrap sits outside the mux, so a doubled slash would otherwise
+bypass the prefix check), and every /api/public/ path that is not in the
+publicTokenExemptPaths exact-match table (the static
+/api/public/v1/warranty/intake form endpoint) has the segment(s) after its
+family prefix replaced by the "{token}" placeholder. The family spelling
+survives only for the served families: the multi-segment prefixes
+(ar/track, ar/invoice-opened, warranty/intake) and the single-segment
+families (customer-quotes, quotes, will-call); any other segment after the
+version, including a credential sitting in the family position itself,
+collapses to /api/public/vN/{token} (plus a known action leg: /accept,
+/confirm, /open, /click), and shapes without a version/family structure
+collapse to /api/public/{token}. The row's entity_type and entity_id are
+derived from the elided path, so no column of the coarse row can persist a
+credential or its delivery id. The unit table
+(core/internal/audit/audit_test.go) and the serve-shaped regression
+(core/cmd/core/cq_auditwrap_test.go, whose probes drive an unmounted future
+family, a doubled-slash 307, and a bare /api/public/<token> mis POST through
+the production wrap, with the leak scan covering entity_type and entity_id)
+pin the closed shape.
 
 ## The bistrack module's push half and its rollback sentence are retired (open)
 

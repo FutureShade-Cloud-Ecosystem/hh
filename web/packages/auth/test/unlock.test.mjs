@@ -727,6 +727,105 @@ test("the platform adapter demands user verification on create and on get", asyn
   assert.equal(getOptions.publicKey.allowCredentials.length, 1, "the assertion targets exactly the registered credential");
 });
 
+// The passkey prompt names the dealer (decision log row 1975): the rp name
+// shown in the platform ceremony follows the tenant config's dealer_name,
+// with a neutral fallback when it cannot be read, and never the house name.
+// The rp id is untouched in every case: changing it would orphan existing
+// passkeys.
+function stubPlatform() {
+  const calls = [];
+  const stubCredentials = {
+    create: async (options) => {
+      calls.push(["create", options]);
+      return { rawId: new Uint8Array([1, 2, 3, 4]).buffer };
+    },
+    get: async (options) => {
+      calls.push(["get", options]);
+      return { rawId: new Uint8Array([1, 2, 3, 4]).buffer };
+    },
+  };
+  const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { credentials: stubCredentials }, configurable: true });
+  return {
+    calls,
+    restore() {
+      Object.defineProperty(globalThis, "navigator", realNavigator);
+    },
+  };
+}
+
+test("an explicit rpName is used as the passkey prompt's rp name, and the rp id is untouched", async () => {
+  const platform = stubPlatform();
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test", rpName: "Gable Landscape Supply" });
+    await provider.create();
+  } finally {
+    platform.restore();
+  }
+  assert.equal(platform.calls.length, 1, "one create ceremony ran against the platform");
+  assert.equal(platform.calls[0][1].publicKey.rp.name, "Gable Landscape Supply");
+  assert.equal(platform.calls[0][1].publicKey.rp.id, "edge.example.test");
+});
+
+test("without an rpName the passkey prompt names the dealer from the tenant config, once, and caches it", async () => {
+  const platform = stubPlatform();
+  const fetchCalls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    fetchCalls.push(String(input));
+    return { ok: true, json: async () => ({ dealer_name: "Gable Landscape Supply" }) };
+  };
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test" });
+    await provider.create();
+    await provider.create(); // the second ceremony reuses the resolved name
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+  assert.equal(fetchCalls.length, 1, "the tenant config is read once per provider, not per ceremony");
+  assert.equal(platform.calls[0][1].publicKey.rp.name, "Gable Landscape Supply");
+  assert.equal(platform.calls[1][1].publicKey.rp.name, "Gable Landscape Supply");
+  assert.equal(platform.calls[0][1].publicKey.rp.id, "edge.example.test");
+  assert.equal(platform.calls[1][1].publicKey.rp.id, "edge.example.test");
+});
+
+test("without an rpName a tenant config that cannot be read falls back to the neutral name, never the house name", async () => {
+  const platform = stubPlatform();
+  const fetchCalls = [];
+  const realFetch = globalThis.fetch;
+  const failures = [
+    async () => { throw new Error("network down"); }, // a network error
+    async () => ({ ok: false, status: 503, json: async () => ({}) }), // a non-200 answer
+    async () => ({ ok: true, json: async () => ({ dealer_name: "" }) }), // an empty dealer_name
+    async () => ({ ok: true, json: async () => ({}) }), // no dealer_name at all
+  ];
+  globalThis.fetch = async (input) => {
+    fetchCalls.push(String(input));
+    return failures[fetchCalls.length - 1]();
+  };
+  try {
+    const { webAuthnCredentialProvider, DEFAULT_RP_NAME } = await import("../src/lock.ts");
+    for (const _ of failures) {
+      const provider = webAuthnCredentialProvider({ rpId: "edge.example.test" });
+      await provider.create();
+    }
+    const names = platform.calls.map(([, options]) => options.publicKey.rp.name);
+    for (const name of names) {
+      assert.equal(name, DEFAULT_RP_NAME, "the neutral fallback names the prompt when the config cannot be read");
+      assert.notEqual(name, "Hardscape House", "the house name never appears in the passkey prompt");
+    }
+    for (const [, options] of platform.calls) {
+      assert.equal(options.publicKey.rp.id, "edge.example.test", "the rp id is untouched by the fallback");
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});
+
 // The re-checks after each await refuse a DIFFERENT user only: the bound
 // user's own token moving underneath (a refresh mid prompt, a token that
 // expires mid prompt) is not a change of person. Each test below parks the

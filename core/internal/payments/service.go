@@ -247,9 +247,11 @@ func (s *Service) ListPayments(ctx context.Context, customerID string) ([]Paymen
 // What a replay now gets, by intent status:
 //
 //	SETTLED  → the ORIGINAL payment, returned as-is. One charge, one settlement set.
-//	CHARGING → ErrPaymentInFlight (409). NOT a second charge. We cannot distinguish "the processor
-//	           never saw it" from "the processor took the money and the ack was lost", and resolving
-//	           that ambiguity by charging again spends the customer's money to save us a phone call.
+//	CHARGING → with a stamped processor ref (approved, settle outstanding): the settle is retried
+//	           against that ref, never a second charge (resume). Without a ref: ErrPaymentInFlight
+//	           (409). NOT a second charge. We cannot distinguish "the processor never saw it" from "the
+//	           processor took the money and the ack was lost", and resolving that ambiguity by charging
+//	           again spends the customer's money to save us a phone call.
 //	FAILED   → re-claimable; a decline left no money anywhere, so a genuine retry is allowed.
 func (s *Service) Pay(ctx context.Context, customerID string, req PayRequest) (Payment, error) {
 	return s.pay(ctx, customerID, req, settleStamps{})
@@ -316,7 +318,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	if prior, ok, err := s.intents.GetIntentByKey(ctx, idemKey); err != nil {
 		return Payment{}, err
 	} else if ok && prior.Status != IntentFailed && prior.Status != IntentAbandoned {
-		return s.replay(ctx, customerID, prior)
+		return s.replay(ctx, customerID, req, stamps, prior)
 	}
 
 	// Resolve the funding source. A stored method is loaded tenant-scoped (cross-tenant ->
@@ -373,7 +375,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 		return Payment{}, err
 	}
 	if !claimed {
-		return s.replay(ctx, customerID, intent)
+		return s.replay(ctx, customerID, req, stamps, intent)
 	}
 
 	// ONE charge for the summed balance, under the server-bound idempotency key.
@@ -424,19 +426,83 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	// Atomic settle: payment row + N allocations + N customer_transactions + balance recompute + the
 	// intent's SETTLED stamp, all in ONE transaction (invoices re-validated FOR NO KEY UPDATE). The sync
 	// stamps ride the same settle when the door carries them.
+	return s.settle(ctx, customerID, method, res.GatewayRef, allocs, intent.ID, stamps)
+}
+
+// settle writes the approved charge. It runs only AFTER the processor approved, so a refusal here
+// is never a client error: the money has moved and the intent stays CHARGING with the ref stamped.
+// A balance that moved under the settle (a 400 from lockAndTotal) or a row that vanished (a 404)
+// is therefore answered as ErrPaymentInFlight, the unknown class the clients already treat as
+// "may have gone through", and the same request resumes it (see replay).
+func (s *Service) settle(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation, intentID string, stamps settleStamps) (Payment, error) {
+	var p Payment
+	var err error
 	if stamps.RowID != "" || stamps.ClientKey != "" {
 		settler, ok := s.store.(stampedSettler)
 		if !ok {
 			return Payment{}, errors.New("payments: this service was built over a store with no stamped settle, refusing to charge a replay it cannot dedup")
 		}
-		return settler.PayWithStamps(ctx, customerID, method, res.GatewayRef, allocs, intent.ID, stamps)
+		p, err = settler.PayWithStamps(ctx, customerID, method, gatewayRef, allocs, intentID, stamps)
+	} else {
+		p, err = s.intents.PayWithIntent(ctx, customerID, method, gatewayRef, allocs, intentID)
 	}
-	return s.intents.PayWithIntent(ctx, customerID, method, res.GatewayRef, allocs, intent.ID)
+	return p, afterApprovedCharge(err)
+}
+
+// afterApprovedCharge reclassifies a settle refusal that is a client-error class (400, 404) as
+// ErrPaymentInFlight. The cause is kept in the text for the log and not wrapped, so no layer above
+// can read it back as a bad request.
+func afterApprovedCharge(err error) error {
+	if err == nil {
+		return nil
+	}
+	var bre httpx.BadRequestError
+	if errors.As(err, &bre) || errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("%w: settle refused after an approved charge: %s", ErrPaymentInFlight, err.Error())
+	}
+	return err
+}
+
+// resume settles a CHARGING intent whose processor ref is stamped, which is the state a refused
+// settle (or a crash between the stamp and the settle) leaves. It never calls the gateway: the money
+// is already taken, so the only open question is whether the invoices can now take it. They can only
+// if every one is still payable and the total is exactly what was charged; otherwise the intent
+// stays CHARGING for a human to reconcile against the stamped ref, and the answer stays in flight.
+// The settle's guarded UPDATE (status = CHARGING) makes two racing resumes write one payment.
+func (s *Service) resume(ctx context.Context, customerID string, req PayRequest, stamps settleStamps, intent Intent) (Payment, error) {
+	if existing, ok, err := s.findByGatewayRef(ctx, customerID, intent.GatewayRef); err != nil {
+		return Payment{}, err
+	} else if ok {
+		return existing, nil
+	}
+	method := "CARD"
+	if req.PaymentMethodID != "" {
+		m, err := s.store.GetMethod(ctx, customerID, req.PaymentMethodID)
+		if err != nil {
+			return Payment{}, afterApprovedCharge(err)
+		}
+		method = paymentMethodFor(m.MethodType)
+	}
+	allocs, err := s.store.PayableInvoices(ctx, customerID, req.InvoiceIDs)
+	if err != nil {
+		return Payment{}, afterApprovedCharge(err)
+	}
+	var sum int64
+	for _, a := range allocs {
+		if a.AmountCents <= 0 || !isPayableStatus(a.Status) {
+			return Payment{}, ErrPaymentInFlight
+		}
+		sum += a.AmountCents
+	}
+	if sum != intent.AmountCents {
+		return Payment{}, ErrPaymentInFlight
+	}
+	return s.settle(ctx, customerID, method, intent.GatewayRef, allocs, intent.ID, stamps)
 }
 
 // replay answers a request whose intent is held by an earlier attempt. It is the entire behavioural
 // surface of DIB-415, so each branch says what it costs to get wrong.
-func (s *Service) replay(ctx context.Context, customerID string, intent Intent) (Payment, error) {
+func (s *Service) replay(ctx context.Context, customerID string, req PayRequest, stamps settleStamps, intent Intent) (Payment, error) {
 	switch intent.Status {
 	case IntentSettled:
 		// The happy replay: exactly the payment the first attempt produced.
@@ -452,7 +518,14 @@ func (s *Service) replay(ctx context.Context, customerID string, intent Intent) 
 			return Payment{}, ErrPaymentInFlight
 		}
 		return p, nil
-	case IntentPending, IntentCharging:
+	case IntentCharging:
+		// A stamped ref means the processor approved and only the settle is outstanding: settle it
+		// against that ref, never a second charge. No ref means the processor's answer was lost.
+		if intent.GatewayRef != "" {
+			return s.resume(ctx, customerID, req, stamps, intent)
+		}
+		return Payment{}, ErrPaymentInFlight
+	case IntentPending:
 		// The crash window. Refuse, see ErrPaymentInFlight's doc comment for why this is not a retry.
 		return Payment{}, ErrPaymentInFlight
 	default:
