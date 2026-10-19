@@ -14,7 +14,6 @@ package messaging
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -99,6 +98,9 @@ var (
 	// channel's name is its founders') is a conflict with what the room IS,
 	// not a permission failure.
 	ErrNotGroupRoom = errors.New("messaging: only a group room renames through this route")
+	// ErrBadAutoScope: an unknown auto_scope on the rule write is a client fault the boundary
+	// answers with 400, so it never falls through to writeErr's 500 default.
+	ErrBadAutoScope = errors.New("messaging: auto_scope must be empty, BRANCH or GLOBAL")
 )
 
 // GroupCreateInput is one new group room: the optional name (an empty name
@@ -702,7 +704,7 @@ func (s *Service) UpdateMembershipRule(ctx context.Context, c Caller, channelID 
 	r.Visibility = visibility
 	autoScope := strings.ToUpper(strings.TrimSpace(r.AutoScope))
 	if autoScope != "" && autoScope != AutoScopeBranch && autoScope != AutoScopeGlobal {
-		return MembershipRule{}, fmt.Errorf("messaging: auto_scope must be empty, BRANCH or GLOBAL")
+		return MembershipRule{}, ErrBadAutoScope
 	}
 	r.AutoScope = autoScope
 	if err := s.repo.SetChannelRule(ctx, channelID, r); err != nil {
