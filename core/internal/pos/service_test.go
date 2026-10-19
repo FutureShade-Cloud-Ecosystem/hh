@@ -146,6 +146,12 @@ type fakeCardAttempt struct {
 	id             string
 	resolvedBy     string
 	resolutionNote string
+	// attemptedAt and processorAt carry the live-request fence's facts
+	// (PR #501 round 1 P1-1): an empty attemptedAt falls back to the
+	// harness clock's far past, a nil processorAt means no unknown
+	// outcome was recorded.
+	attemptedAt string
+	processorAt *string
 }
 
 func newFakeStore(tr *[]string) *fakeStore {
@@ -626,10 +632,12 @@ func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact c
 	if prior, ok := f.cardAttempts[fact.RefundKey]; ok && prior.id != "" {
 		// The restage keeps the row's own id and re-attributes the initiator
 		// (a FAILED row or one with no initiator), clearing the resolution.
-		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: prior.id}
+		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: prior.id,
+			attemptedAt: time.Now().UTC().Format(time.RFC3339)}
 		return "", 0, nil
 	}
-	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: f.freshAttemptID()}
+	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: f.freshAttemptID(),
+		attemptedAt: time.Now().UTC().Format(time.RFC3339)}
 	return "", 0, nil
 }
 
@@ -640,10 +648,17 @@ func (f *fakeStore) freshAttemptID() string {
 }
 
 func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, reason string) error {
-	// The real row keeps its status IN_FLIGHT and records the reason; the fake's
-	// status IS the record, so an IN_FLIGHT row is simply left as it stands.
-	_ = refundKey
+	// The real row keeps its status IN_FLIGHT, records the reason and stamps
+	// processor_at (the unknown outcome is a recorded fact); the fake mirrors
+	// the stamp, which the live-request fence reads.
 	_ = reason
+	if a, ok := f.cardAttempts[refundKey]; ok && a.status == "IN_FLIGHT" {
+		if a.processorAt == nil {
+			now := time.Now().UTC().Format(time.RFC3339)
+			a.processorAt = &now
+		}
+		f.cardAttempts[refundKey] = a
+	}
 	return nil
 }
 
@@ -670,12 +685,17 @@ func (f *fakeStore) FailCardRefundAttempt(_ context.Context, refundKey, _ string
 
 // fakeCardAttemptView is the manager-facing row of the fake ledger.
 func (f *fakeStore) fakeCardAttemptView(a fakeCardAttempt, refundKey string) CardRefundAttempt {
+	attemptedAt := a.attemptedAt
+	if attemptedAt == "" {
+		attemptedAt = "2026-06-29T12:00:00Z"
+	}
 	return CardRefundAttempt{
 		ID: a.id, RefundKey: refundKey, OrderID: a.fact.OrderID, OrderNo: "#SO-1",
 		BranchID: a.fact.BranchID, CustomerID: a.fact.CustomerID, CustomerName: "Seeded Customer",
 		GatewayRef: a.fact.GatewayRef, RefundRef: a.fact.RefundRef, AmountCents: a.fact.AmountCents,
 		Status: a.status, InitiatedBy: a.fact.InitiatedBy, ResolvedBy: a.resolvedBy,
-		ResolutionNote: a.resolutionNote, AttemptedAt: "2026-06-29T12:00:00Z", CreatedAt: "2026-06-29T12:00:00Z",
+		ProcessorAt:    a.processorAt,
+		ResolutionNote: a.resolutionNote, AttemptedAt: attemptedAt, CreatedAt: "2026-06-29T12:00:00Z",
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -29,6 +30,13 @@ const (
 	CardRefundOutcomeRefunded    = "REFUNDED"
 	CardRefundOutcomeNotRefunded = "NOT_REFUNDED"
 )
+
+// cardRefundLiveRequestMargin is the crash margin added to the payment
+// module's own processor client timeout (payment.ProcessorClientTimeout, the
+// one place that bound lives): past attempted_at plus the two, nothing the
+// client started can still be running, so an IN_FLIGHT row with no recorded
+// outcome is the crash case and settles.
+const cardRefundLiveRequestMargin = 30 * time.Second
 
 // CardRefundAttempt is one row of the attempt ledger as the manager's list
 // and resolve answer it: the ledger's own facts joined with the order's
@@ -131,6 +139,19 @@ func (s *Service) ResolveCardRefundAttempt(ctx context.Context, attemptID string
 		case "IN_FLIGHT", "UNBOOKED":
 		default:
 			return clientErr(http.StatusConflict, "pos: card refund attempt is already %s", row.Status)
+		}
+		// The live-request fence (PR #501 round 1 P1-1): an IN_FLIGHT row with
+		// no recorded outcome may still be at the processor. It settles only
+		// once the unknown outcome is recorded (processor_at stamped by the
+		// hold) or the window of the processor client's own timeout plus the
+		// crash margin is past; an UNBOOKED row (the reversal already answered
+		// or a rolled-back booking) is always settleable.
+		if row.Status == "IN_FLIGHT" && row.ProcessorAt == nil {
+			if attemptedAt, perr := time.Parse(time.RFC3339, row.AttemptedAt); perr == nil &&
+				time.Now().UTC().Before(attemptedAt.Add(payment.ProcessorClientTimeout+cardRefundLiveRequestMargin)) {
+				return clientErr(http.StatusConflict,
+					"pos: this card refund may still be running at the processor; resolve it after the live request ends")
+			}
 		}
 		if outcome == CardRefundOutcomeRefunded {
 			ref := strings.TrimSpace(in.RefundRef)

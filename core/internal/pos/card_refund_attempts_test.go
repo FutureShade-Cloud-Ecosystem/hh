@@ -17,7 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -257,6 +259,67 @@ func TestCardRefundAttempts_NotRefundedClosesFailedAndReleasesCeiling(t *testing
 	}
 	if n := len(h.refunder.keyCalls); n != 2 {
 		t.Fatalf("the held key never reached the processor and the fresh key did, got %d calls", n)
+	}
+}
+
+// The live-request fence (PR #501 round 1 P1-1): an IN_FLIGHT row whose
+// unknown outcome is not recorded and whose attempted_at sits inside the
+// processor client's own timeout plus the crash margin refuses BOTH
+// outcomes in words naming the live request; the row settles once the
+// unknown outcome is recorded, and the crash case (the window long past)
+// settles without one.
+func TestCardRefundAttempts_LiveRequestFenceHoldsTheSettle(t *testing.T) {
+	h := newHarness()
+	const id = "11111111-1111-4111-8111-1111111111d1"
+	now := time.Now().UTC()
+	plantAttempt(h.store, id, "refund:kf", "order-1", "branch-trt", "IN_FLIGHT", "", "u-clerk", 4520)
+	a := h.store.cardAttempts["refund:kf"]
+	a.attemptedAt = now.Format(time.RFC3339)
+	h.store.cardAttempts["refund:kf"] = a
+
+	// Inside the live-request window: REFUNDED refuses with the live words.
+	err := func() error {
+		_, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id,
+			ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_fence"})
+		return err
+	}()
+	if ce := asClientErr(t, err); ce.status != http.StatusConflict || !strings.Contains(ce.Error(), "may still be running at the processor") {
+		t.Fatalf("REFUNDED inside the live-request window refuses 409 in the live words, got %d %v", ce.status, err)
+	}
+	// NOT_REFUNDED refuses with the same words.
+	_, err = h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeNotRefunded, Note: "checked"})
+	if ce := asClientErr(t, err); ce.status != http.StatusConflict || !strings.Contains(ce.Error(), "may still be running at the processor") {
+		t.Fatalf("NOT_REFUNDED inside the live-request window refuses 409 in the live words, got %d %v", ce.status, err)
+	}
+
+	// The unknown outcome recorded (processor_at stamped): the row settles.
+	a = h.store.cardAttempts["refund:kf"]
+	stamped := now.Format(time.RFC3339)
+	a.processorAt = &stamped
+	h.store.cardAttempts["refund:kf"] = a
+	out, err := h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeRefunded, RefundRef: "rp_fence", Note: "recorded unknown, then confirmed"})
+	if err != nil {
+		t.Fatalf("a recorded unknown outcome settles the row: %v", err)
+	}
+	if out.Status != "UNBOOKED" || out.RefundRef != "rp_fence" {
+		t.Fatalf("the settled row carries its facts: %+v", out)
+	}
+
+	// The crash case: no recorded outcome, the window long past, settles.
+	const id2 = "11111111-1111-4111-8111-1111111111d2"
+	plantAttempt(h.store, id2, "refund:kf2", "order-1", "branch-trt", "IN_FLIGHT", "", "u-clerk", 4520)
+	a2 := h.store.cardAttempts["refund:kf2"]
+	a2.attemptedAt = now.Add(-2 * (payment.ProcessorClientTimeout + cardRefundLiveRequestMargin)).Format(time.RFC3339)
+	h.store.cardAttempts["refund:kf2"] = a2
+	out, err = h.svc.ResolveCardRefundAttempt(mgrCtx("u-mgr", identity.TierManager, "branch-trt"), id2,
+		ResolveCardRefundAttemptInput{Outcome: CardRefundOutcomeNotRefunded, Note: "the crash left it, the processor shows nothing"})
+	if err != nil {
+		t.Fatalf("the crash case settles once the live-request window is past: %v", err)
+	}
+	if out.Status != "FAILED" {
+		t.Fatalf("the crash case closes FAILED, got %+v", out)
 	}
 }
 
