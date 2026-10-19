@@ -47,8 +47,9 @@ type fakeStore struct {
 	acks    map[string]Ack       // "messageID|userID" -> ack (upsert)
 	unacked map[string][]Message // userID -> un-acked forced-ack messages the poll returns
 	// Slice S7 (0401) doubles: per-person notification settings (event-category prefs + quiet hours).
-	personPrefs map[string]map[string]PersonEventPref // userID -> category -> stored pref
-	quietHours  map[string]QuietHours                 // userID -> stored quiet-hours row
+	personPrefs     map[string]map[string]PersonEventPref // userID -> category -> stored pref
+	personPrefReads int                                   // GetPersonEventPrefsForUser calls (the settings PUT loads the map once)
+	quietHours      map[string]QuietHours                 // userID -> stored quiet-hours row
 	// Approvals rail (0075) doubles:
 	approvalChannels   map[string]string // userID -> channelID (EnsureApprovalChannel idempotent)
 	approvalCards      map[string]bool   // "channelID|cardEventKey" -> inserted (card dedup)
@@ -283,6 +284,7 @@ func (f *fakeStore) UnackedRequiresAck(_ context.Context, userID string) ([]Mess
 // Slice S7 (0401) store doubles: per-person notification settings. The fake stores the rows
 // exactly as the SQL would, so the service's merge-over-current logic is proven without a DB.
 func (f *fakeStore) GetPersonEventPrefsForUser(_ context.Context, userID string) (map[string]PersonEventPref, error) {
+	f.personPrefReads++
 	return f.personPrefs[userID], nil
 }
 func (f *fakeStore) UpsertPersonEventPref(_ context.Context, p PersonEventPref) (PersonEventPref, error) {
