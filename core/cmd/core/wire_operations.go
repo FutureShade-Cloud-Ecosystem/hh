@@ -1930,7 +1930,12 @@ func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABr
 // payment.AlertFunc is bound to, once at process start, and its signature is the seam's. The
 // event key arrives already shaped card-attempt:<id>:<status>, so one state of one attempt
 // posts once; the body is the sweep's money facts, never a token or a customer name.
-type cardAttemptEscalations struct{ svc *messaging.Service }
+type cardAttemptEscalations struct{ svc slugPoster }
+
+// slugPoster is the one messaging post the card attempt alert needs; *messaging.Service satisfies it.
+type slugPoster interface {
+	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
+}
 
 func (a cardAttemptEscalations) post(ctx context.Context, key, body string) error {
 	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", key, body,

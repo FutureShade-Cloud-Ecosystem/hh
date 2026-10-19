@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 // - HH-424: THE TARGETED PAYMENT NOTICE FOLLOWS THE PAYMENT TRAIL AND THE BRANCH REACH -
@@ -263,5 +264,76 @@ func TestPaymentFence_ChannelListDropsMoneyRoomsWithoutTheTrail(t *testing.T) {
 	mine, _ := svc.ListMyChannels(context.Background(), Caller{UserID: uClerkAvi})
 	if len(mine) != 2 {
 		t.Fatalf("the trail holder lists both money rooms, got %+v", mine)
+	}
+}
+
+// - ROUND 1: THE OTHER MESSAGE READ DOORS -
+//
+// The mentions list and the saved messages answered by seat alone. A staffer still seated in a money
+// room whom the trail reader refuses must read nothing back, and a message saved before the change must
+// not read back once the reader refuses.
+
+func moneyMessage(f *fakeStore, id string) Message {
+	m := Message{ID: id, ChannelID: chPayGlobal, AuthorID: uAlice, Kind: "EVENT", Body: "Payment $1,240.00", CreatedAt: time.Now()}
+	f.inserted = append(f.inserted, m)
+	return m
+}
+
+// MUTATION TARGET: return the page unfiltered and this dies.
+func TestPaymentFence_MentionsDropMoneyRoomMessagesWithoutTheTrail(t *testing.T) {
+	svc, f, _ := moneyRoomFixture(t)
+	f.setMember(chGen, uOtherPat)
+	money := moneyMessage(f, "m-money")
+	plain := Message{ID: "m-plain", ChannelID: chGen, Body: "lunch", CreatedAt: time.Now()}
+	f.mentionPage = MessagePage{Messages: []Message{money, plain}, NextCursor: "next"}
+
+	got, err := svc.ListMentions(context.Background(), Caller{UserID: uOtherPat}, "", 0)
+	if err != nil {
+		t.Fatalf("mentions: %v", err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].ID != "m-plain" {
+		t.Fatalf("a seat without the trail keeps only the ordinary mention, got %+v", got.Messages)
+	}
+	if got.NextCursor != "next" {
+		t.Fatalf("the cursor comes from the unfiltered page, got %q", got.NextCursor)
+	}
+	mine, _ := svc.ListMentions(context.Background(), Caller{UserID: uClerkAvi}, "", 0)
+	if len(mine.Messages) != 2 {
+		t.Fatalf("the trail holder keeps both, got %+v", mine.Messages)
+	}
+}
+
+func TestPaymentFence_SaveRefusesAMoneyRoomMessageWithoutTheTrail(t *testing.T) {
+	svc, f, _ := moneyRoomFixture(t)
+	moneyMessage(f, "m-money")
+
+	if _, err := svc.SaveMessage(context.Background(), Caller{UserID: uOtherPat}, "m-money"); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("a seat without the trail may not save a money room message, got %v", err)
+	}
+	if n := len(f.savedRows[uOtherPat]); n != 0 {
+		t.Fatalf("nothing may be left saved by the refused call, got %d rows", n)
+	}
+	if _, err := svc.SaveMessage(context.Background(), Caller{UserID: uClerkAvi}, "m-money"); err != nil {
+		t.Fatalf("the trail holder saves it: %v", err)
+	}
+}
+
+// A message saved while the staffer held the trail must not read back once the reader refuses.
+func TestPaymentFence_SavedListDropsMoneyRoomMessagesOnceTheReaderRefuses(t *testing.T) {
+	svc, f, trail := moneyRoomFixture(t)
+	moneyMessage(f, "m-money")
+	if _, err := svc.SaveMessage(context.Background(), Caller{UserID: uClerkAvi}, "m-money"); err != nil {
+		t.Fatalf("save while the trail is held: %v", err)
+	}
+	if got, _ := svc.ListSavedMessages(context.Background(), Caller{UserID: uClerkAvi}, 0); len(got) != 1 {
+		t.Fatalf("read back while held, got %+v", got)
+	}
+	trail.holds["p-"+uClerkAvi] = false // the role changed
+	got, err := svc.ListSavedMessages(context.Background(), Caller{UserID: uClerkAvi}, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a saved money room message must not read back once the reader refuses, got %+v", got)
 	}
 }
