@@ -104,19 +104,21 @@ export function refusalWords(action: string, error: string, status: number | und
 }
 
 /**
- * What a recorded payment's failure means for the person. A lost answer or a 5xx leaves the outcome unknown: the
- * server may have written the payment before the answer was lost, so the words say so and send the person to check
- * the account before taking anything again (the desk holds the payment's key and sends it again, so pressing
- * again sends the same payment and cannot post the money twice). A worded 422 is the route refusing with nothing
- * written, in the route's own words, except its replay refusals ("that idempotency key already recorded ..."):
- * "a different payment" means the earlier attempt landed and THIS form's payment was not recorded (both things
- * said, the form kept for a fresh press), and the other wording means the key's payment is another account's. A
- * 401 or a 403 is the gate's answer, not the route's: when the account already holds a key from an earlier press it leaves
- * the outcome unknown and the key kept. The same holds for every other 4xx while a key is held (a 404, a 408, a
- * 429): the payment route's own refusals all answer 422 in its words, so any other status is not its answer for
- * the held key and never ends it.
+ * What a recorded payment's failure means for the person, read from the HTTP status alone, never by
+ * matching words in the error string (FP 187). A lost answer or a 5xx leaves the outcome unknown: the
+ * server may have written the payment before the answer was lost, so the words say so and send the
+ * person to check the account before taking anything again (the desk holds the payment's key and
+ * sends it again, so pressing again sends the same payment and cannot post the money twice). A 409 is
+ * the route's replay conflict: the earlier press landed as a different payment and THIS form's
+ * payment was not recorded (both things said, the form kept for a fresh press), and it is the same
+ * answer whatever wording the conflict carries (a different payment, or another account's). A worded
+ * 422 is the route's pre-write refusal of a JSON body it read and checked, with nothing written. A
+ * 401 or a 403 is the gate's answer, not the route's: when the account already holds a key from an
+ * earlier press it leaves the outcome unknown and the key kept. The same holds for every other 4xx
+ * while a key is held (a 400 for a body mangled in flight, a 404, a 408, a 429): none of them is the
+ * route's answer for the held key, so none of them ends it.
  */
-export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded" | "recorded-other"; words: string };
+export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded-other"; words: string };
 
 export function paymentOutcome(error: string, status: number | undefined, heldKey = false): PaymentOutcome {
   if (status === undefined || status >= 500) {
@@ -140,28 +142,22 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
       words: `The earlier press may or may not have been recorded. ${refusalWords("payment", error, status)} ${press}: this desk sends the same key again, and the server will say if the earlier press was already recorded.`,
     };
   }
-  if (error.includes("already recorded a different payment")) {
-    // The route's own answer for the held key: the earlier press landed as a different payment, and this
-    // form's payment was not recorded. Both things are true and both are said.
+  if (status === 409) {
+    // The route's replay conflict for this key: the earlier press landed as a different payment and
+    // this form's payment was not recorded. Both things are true and both are said, whatever wording
+    // the conflict itself carries.
     return {
       kind: "recorded-other",
       words:
         "This payment was not recorded. The earlier press was recorded as a different payment. Check the account, then press Record payment to record this one.",
     };
   }
-  if (error.includes("already recorded")) {
-    return {
-      kind: "recorded",
-      words:
-        "The payment was already recorded by the earlier press. The server refused these changed details under the same key, which is how it says the first press landed; the account now shows the server's balances.",
-    };
-  }
   if (heldKey && status !== 422) {
-    // The payment route's own refusals of a payment all answer 422 in its words (the AR register maps
-    // its bad request errors there); a 404 is its no existence leak answer, which its replay walk can
-    // also give for a payment that landed, and every other 4xx (408, 413, 429, a proxy's answer) is
-    // not the route's answer for this key at all. None of them says what happened to the earlier
-    // press, so the key is kept and the outcome stays unknown.
+    // The payment route's own refusal of a body it read answers 422 in its words; a 404 is its no
+    // existence leak answer, which its replay walk can also give for a payment that landed, and every
+    // other 4xx (400, 408, 413, 429, a proxy's answer) is not the route's answer for this key at all.
+    // None of them says what happened to the earlier press, so the key is kept and the outcome stays
+    // unknown.
     return {
       kind: "unknown",
       words:

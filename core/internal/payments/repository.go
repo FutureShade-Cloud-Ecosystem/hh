@@ -455,12 +455,12 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	// in whatever spelling, answers the account refusal, never a validation word.
 	cu, err := uuid.Parse(strings.TrimSpace(in.CustomerID))
 	if err != nil || p.CustomerID != cu.String() {
-		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a payment for another account; use a new key")
+		return ApplyAnswer{}, ReplayConflictError{Msg: "that idempotency key already recorded a payment for another account; use a new key"}
 	}
 	in.CustomerID = cu.String()
 	in.Method = strings.ToUpper(strings.TrimSpace(in.Method))
 	if !sameReplayBody(p, storedRef, storedNamed, in) {
-		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a different payment; use a new key")
+		return ApplyAnswer{}, ReplayConflictError{Msg: "that idempotency key already recorded a different payment; use a new key"}
 	}
 	// The zero amount walk answers the rows in the allocation's own oldest first order with their
 	// live balances; each line is then patched with what THIS payment put on it.

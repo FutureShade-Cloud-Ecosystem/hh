@@ -334,8 +334,8 @@ func TestApplyRoute_TheSameKeyWithADifferentBodyIsRefusedInWords(t *testing.T) {
 		"customer_id": w.customerID, "method": "CASH", "amount_cents": 9000,
 		"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag,
 	}))
-	if code != http.StatusUnprocessableEntity {
-		t.Fatalf("a different body under a spent key is refused, got %d body %v", code, body)
+	if code != http.StatusConflict {
+		t.Fatalf("a different body under a spent key answers the conflict, got %d body %v", code, body)
 	}
 	words, _ := body["error"].(string)
 	if !strings.Contains(words, "that idempotency key already recorded a different payment") {
@@ -452,13 +452,27 @@ func TestApplyRoute_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, body := decodeApply(t, w.post(t, applyGlobalCaller(), tc.body))
-			if code != http.StatusUnprocessableEntity {
-				t.Fatalf("a spent key with %s answers the replay refusal, got %d body %v", tc.name, code, body)
+			if code != http.StatusConflict {
+				t.Fatalf("a spent key with %s answers the conflict, got %d body %v", tc.name, code, body)
 			}
 			words, _ := body["error"].(string)
 			if !strings.Contains(words, "that idempotency key already recorded a different payment") {
 				t.Fatalf("the spent key answers the replay verdict, got %q", words)
 			}
 		})
+	}
+
+	// A body mangled in flight cannot carry a key at all, so it is the route's own 400 for a body
+	// it could not read, never a 422 the desk would read as the route refusing a body it checked
+	// against the replay table.
+	mangled := httptest.NewRequest(http.MethodPost, "/api/v1/ar/payments/apply", strings.NewReader("{not json"))
+	mangled = mangled.WithContext(identity.ContextWithStaff(mangled.Context(), applyGlobalCaller()))
+	mrec := httptest.NewRecorder()
+	w.h.applyReceived(mrec, mangled, guards.StaffCaller{})
+	if mrec.Code != http.StatusBadRequest {
+		t.Fatalf("an unreadable body answers 400, got %d body %q", mrec.Code, mrec.Body.String())
+	}
+	if !strings.Contains(mrec.Body.String(), "the request body must be JSON") {
+		t.Fatalf("the unreadable body refusal says what happened: %q", mrec.Body.String())
 	}
 }

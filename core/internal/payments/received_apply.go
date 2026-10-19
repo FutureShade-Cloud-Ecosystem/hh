@@ -68,6 +68,16 @@ type NoSuchInvoiceError struct{ InvoiceID string }
 
 func (e NoSuchInvoiceError) Error() string { return "payments: no such invoice: " + e.InvoiceID }
 
+// ReplayConflictError is the replay judgement's refusal when a spent idempotency key is presented
+// with a different payment body or for another account. The route maps it to 409 Conflict so a
+// client distinguishes a spent key from a 422 pre-write validation refusal by HTTP status alone,
+// never by matching words in the error string.
+type ReplayConflictError struct {
+	Msg string
+}
+
+func (e ReplayConflictError) Error() string { return e.Msg }
+
 // ApplyRequest is one received payment the server is asked to allocate.
 type ApplyRequest struct {
 	CustomerID     string

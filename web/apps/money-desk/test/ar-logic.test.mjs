@@ -96,15 +96,19 @@ test("the pick ceiling words are the route's own sentence, said by the browser b
   assert.ok(words.endsWith("101 invoices are picked."), words);
 });
 
-test("the replay refusal for a different payment says both things: the earlier press recorded, this one not", () => {
-  const different = paymentOutcome("that idempotency key already recorded a different payment; use a new key", 422, true);
+test("the replay conflict is read by its 409 alone, never by matching the error's words", () => {
+  const different = paymentOutcome("that idempotency key already recorded a different payment; use a new key", 409, true);
   assert.equal(different.kind, "recorded-other");
   assert.ok(different.words.startsWith("This payment was not recorded."), different.words);
   assert.ok(different.words.includes("The earlier press was recorded as a different payment."), different.words);
   assert.ok(different.words.includes("press Record payment to record this one"), different.words);
-  // The other replay wording (another account, reachable only by tampered storage) keeps its reading.
-  const otherAccount = paymentOutcome("that idempotency key already recorded a payment for another account; use a new key", 422);
-  assert.equal(otherAccount.kind, "recorded");
+  // The status alone decides: any error text under a 409 is the spent key's conflict.
+  const blank = paymentOutcome("server said no", 409, true);
+  assert.equal(blank.kind, "recorded-other");
+  // The old wordings under a 422 are the route's pre-write refusal of a body it read: no substring
+  // of the error decides the outcome any more.
+  assert.equal(paymentOutcome("that idempotency key already recorded a different payment; use a new key", 422, true).kind, "refused");
+  assert.equal(paymentOutcome("that idempotency key already recorded a payment for another account; use a new key", 422, true).kind, "refused");
 });
 
 test("a promise needs an amount, a date, and who promised it", () => {
@@ -180,16 +184,21 @@ test("lifting and overriding a hold are the controller's and the general manager
 });
 
 test("a 4xx that is not the payment route's own refusal keeps a held key: the outcome stays unknown", () => {
-  // The route's own refusals all answer 422 in its words (the AR register maps its bad request errors
-  // there); a 404 is its no existence leak answer, which its replay walk can also give for a payment
-  // that landed, and every other 4xx (408, 413, 429, a proxy's 400) is not the route's answer at all.
-  for (const status of [400, 404, 405, 408, 409, 413, 429]) {
+  // The route's own refusals of a body it read all answer 422 in its words (the AR register maps its
+  // bad request errors there), and its replay conflicts answer 409 (handled above); a 404 is its no
+  // existence leak answer, which its replay walk can also give for a payment that landed, and every
+  // other 4xx (400, 408, 413, 429, a proxy's answer) is not the route's answer at all. A body
+  // mangled in flight answers 400 before any key is read, so it says nothing about the held key.
+  for (const status of [400, 404, 405, 408, 413, 429]) {
     const held = paymentOutcome("not found", status, true);
     assert.equal(held.kind, "unknown", String(status));
     assert.ok(held.words.startsWith("The earlier press may or may not have been recorded."), held.words);
     assert.ok(held.words.includes("sends the same key"), held.words);
     assert.ok(!held.words.includes("was not recorded"), held.words);
   }
+  const mangled = paymentOutcome("the request body must be JSON", 400, true);
+  assert.equal(mangled.kind, "unknown");
+  assert.ok(mangled.words.startsWith("The earlier press may or may not have been recorded."), mangled.words);
   // The route's own worded refusal still ends the key while one is held, and with no key held the
   // same statuses keep their long standing reading.
   assert.equal(paymentOutcome("the selected invoices can take at most 96000 cents right now; refresh and retry", 422, true).kind, "refused");

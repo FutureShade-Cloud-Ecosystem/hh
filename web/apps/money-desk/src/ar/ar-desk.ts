@@ -805,19 +805,8 @@ export class ArDesk {
     this.#busy = false;
     if (!result.ok) {
       const outcome = paymentOutcome(result.error, result.status, heldKey !== undefined);
-      if (outcome.kind === "recorded") {
-        // The route's replay refusal is how it says the earlier press landed: the outcome is known,
-        // the payment is ended, and the account is reloaded so the person reads the server's balances.
-        this.#payPins.delete(account.customerId);
-        this.#endApplyForm();
-        this.#notice = outcome.words;
-        this.#reveal = "[data-notice]";
-        await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
-        this.#host.repaint();
-        return;
-      }
       if (outcome.kind === "recorded-other") {
-        // The route's refusal is its own answer for the held key: the earlier press landed as a different
+        // The route's 409 is its own answer for the held key: the earlier press landed as a different
         // payment and THIS form's payment was not recorded. The key ends; the form stays filled so this
         // cheque can be pressed again as a new payment, and the account reloads so the check the words
         // ask for reads the server's balances.

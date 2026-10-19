@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/google/uuid"
 )
 
@@ -66,12 +65,12 @@ func TestApplyReceived_TheSameKeyWithADifferentBodyIsRefusedInWords(t *testing.T
 			if err == nil {
 				t.Fatalf("the same key with a different %s must be refused, got the answer %+v", tc.name, ans)
 			}
-			var bad httpx.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("the refusal is in words, got %T %v", err, err)
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
 			}
-			if !strings.Contains(bad.Msg, "that idempotency key already recorded a different payment") {
-				t.Fatalf("the refusal says what happened: %q", bad.Msg)
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a different payment") {
+				t.Fatalf("the refusal says what happened: %q", rc.Msg)
 			}
 		})
 	}
@@ -181,19 +180,19 @@ func TestApplyReceived_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) 
 			if err == nil {
 				t.Fatalf("a spent key with %s must be refused, got the answer %+v", tc.name, ans)
 			}
-			var bad httpx.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("the refusal is in words, got %T %v", err, err)
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
 			}
-			if !strings.Contains(bad.Msg, "that idempotency key already recorded a different payment") {
-				t.Fatalf("the spent key answers the replay verdict, got %q", bad.Msg)
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a different payment") {
+				t.Fatalf("the spent key answers the replay verdict, got %q", rc.Msg)
 			}
 			for _, fresh := range []string{
 				"may name at most", "must be greater than zero", "at least one invoice",
 				"the same invoice is named twice", "must be uuids", "tender must be one of",
 			} {
-				if strings.Contains(bad.Msg, fresh) {
-					t.Fatalf("a spent key never answers a fresh key's validation words: %q", bad.Msg)
+				if strings.Contains(rc.Msg, fresh) {
+					t.Fatalf("a spent key never answers a fresh key's validation words: %q", rc.Msg)
 				}
 			}
 		})
@@ -213,12 +212,12 @@ func TestApplyReceived_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) 
 				CustomerID: tc.customerID, Method: "CASH", Reference: "CHQ 771",
 				IdempotencyKey: w.tag, InvoiceIDs: []string{a}, AmountCents: 40000,
 			})
-			var bad httpx.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("the refusal is in words, got %T %v", err, err)
+			var rc ReplayConflictError
+			if !errors.As(err, &rc) {
+				t.Fatalf("the refusal is the replay conflict, got %T %v", err, err)
 			}
-			if !strings.Contains(bad.Msg, "that idempotency key already recorded a payment for another account") {
-				t.Fatalf("the account refusal says what happened: %q", bad.Msg)
+			if !strings.Contains(rc.Msg, "that idempotency key already recorded a payment for another account") {
+				t.Fatalf("the account refusal says what happened: %q", rc.Msg)
 			}
 		})
 	}
