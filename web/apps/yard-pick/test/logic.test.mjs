@@ -455,3 +455,9 @@ test("a cached held card is released after the re-read: the server's ticket wins
   assert.equal(next[3], cached[3], "offline the card still says held and the server's claim door decides");
   assert.equal(next.length, cached.length);
 });
+
+test("the core's holder refusal reads as one plain line on both doors (UX-76)", () => {
+  assert.equal(yardError("Someone else is on this pick.", 409, "fallback"), "Someone else is on this pick.");
+  assert.equal(yardError("tasks: someone else is on this pick", 409, "fallback"), "Someone else is on this pick.");
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: someone else is on this pick"), "Someone else is on this pick.");
+});
