@@ -14,7 +14,7 @@ import {
   fakeExchangeAnswer,
   fakeExchangeRefusal,
 } from "@hardscapehouse/auth/testing";
-import { ConsoleSession, MULTI_BRANCH_ROLES, coreBaseFor } from "../src/console.js";
+import { ConsoleSession, coreBaseFor } from "../src/console.js";
 import { SIGN_IN_WORDS, PERSONA_REFUSAL_WORDS } from "../src/signin.js";
 import { LIVE_ROLES } from "../src/roles.js";
 
@@ -499,7 +499,7 @@ test("the public copy lists no admin persona card and refuses to enter one; the 
   assert.ok(partner.session.personaRoles.some((role) => role.flow === "financial-controller"));
 });
 
-test("role and branch picker state on ConsoleSession: heldRoles, chooseRole, setBranches, and chooseBranch", async () => {
+test("role picker state on ConsoleSession: heldRoles and chooseRole, with the granted branches held as information only", async () => {
   const account = new FakeAccountSurface();
   const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
   account.script(ownAnswer("general_manager,sales_manager", "General Manager")(1, w.clock.now() + 900_000));
@@ -509,61 +509,18 @@ test("role and branch picker state on ConsoleSession: heldRoles, chooseRole, set
     ["general_manager", "sales_manager"],
   );
   assert.equal(w.session.chosenRole?.id, "general_manager");
-  assert.equal(w.session.isMultiBranchRole, true);
-
-  w.session.setBranches([
-    { id: "b-west", code: "WST", name: "West Yard" },
-    { id: "b-east", code: "EST", name: "East Yard" },
-  ]);
-  assert.equal(w.session.allBranchesChosen, true);
-  assert.equal(w.session.activeBranchOptionId, "__all__");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
-
-  // A multi branch role toggles each branch on its own, never below one; All branches toggles every branch.
-  w.session.chooseBranch("b-west");
-  assert.equal(w.session.allBranchesChosen, false);
-  assert.deepEqual(w.session.chosenBranchIds, ["b-east"]);
-  assert.equal(w.session.activeBranchOptionId, "b-west");
-  w.session.chooseBranch("b-east");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-east"], "the last chosen branch cannot be toggled off");
-  w.session.chooseBranch("b-west");
-  assert.equal(w.session.allBranchesChosen, true);
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
-  w.session.chooseBranch("__all__");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "All branches pressed with every branch chosen keeps the first");
-  w.session.chooseBranch("__all__");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
-
-  // Focus moves with the arrows without changing the choice.
-  w.session.focusBranchOption("b-east");
-  assert.equal(w.session.activeBranchOptionId, "b-east");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
-
-  // The Sales manager is a multi branch role too (MULTI_BRANCH_ROLES): All branches by default.
   w.session.chooseRole("sales_manager");
   assert.equal(w.session.chosenRole?.id, "sales_manager");
-  assert.equal(w.session.isMultiBranchRole, true);
-  assert.equal(w.session.allBranchesChosen, true);
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
-  assert.deepEqual([...MULTI_BRANCH_ROLES], ["general_manager", "sales_manager"]);
-});
 
-test("a single branch role keeps exactly one branch chosen", async () => {
-  const account = new FakeAccountSurface();
-  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
-  account.script(ownAnswer("inside_sales,general_manager", "Sales")(1, w.clock.now() + 900_000));
-  await w.session.submit(EMAIL, FAKE_PASSWORD);
-  assert.equal(w.session.chosenRole?.id, "inside_sales");
-  assert.equal(w.session.isMultiBranchRole, false);
   w.session.setBranches([
     { id: "b-west", code: "WST", name: "West Yard" },
     { id: "b-east", code: "EST", name: "East Yard" },
   ]);
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west"]);
-  w.session.chooseBranch("b-east");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-east"]);
-  w.session.chooseBranch("__all__");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-east"], "All branches is not offered to a single branch role");
+  assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"]);
+  // No choice machinery is left on the session: the branches are shown, not picked.
+  for (const gone of ["chooseBranch", "focusBranchOption", "chosenBranchIds", "chosenBranches", "isMultiBranchRole", "allBranchesChosen"]) {
+    assert.equal(gone in w.session, false, `${gone} is gone`);
+  }
   w.session.chooseRole("general_manager");
-  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
+  assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"], "a role switch leaves the list as it was");
 });

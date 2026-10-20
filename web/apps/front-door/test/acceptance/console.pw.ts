@@ -56,6 +56,20 @@ async function signInAsPartner(page: Page): Promise<void> {
   await page.getByTestId("signin-submit").click();
 }
 
+/** The picker's branch list is information: a label and the core's names, and no control inside it or anywhere near it. */
+async function expectBranchesAsInformation(page: Page, label: string, names: string[]): Promise<void> {
+  const list = page.getByTestId("branch-list");
+  await expect(list).toBeVisible();
+  await expect(list).toContainText(new RegExp(label, "i"));
+  for (const name of names) await expect(list).toContainText(name);
+  await expect(list.getByRole("radio")).toHaveCount(0);
+  await expect(list.getByRole("button")).toHaveCount(0);
+  await expect(list.getByRole("checkbox")).toHaveCount(0);
+  await expect(list.locator("[aria-pressed], [aria-checked], [tabindex], button, input")).toHaveCount(0);
+  await expect(page.getByRole("radiogroup", { name: /your branch/i })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: /your branch/i })).toHaveCount(0);
+}
+
 const status = (page: Page) => page.getByTestId("signin-status");
 
 test.describe("configuration", () => {
@@ -277,7 +291,7 @@ test.describe("the sign in screen", () => {
 });
 
 test.describe("after sign in", () => {
-  test("role and branch picker: greets by first name and period in houseZone, lists only held roles and granted branches from the core, and opens the chosen role's app with the chosen branch", async ({ page, baseURL }) => {
+  test("role and branch picker: greets by first name and period in houseZone, lists only held roles and granted branches from the core, shows the granted branches as information, and opens the chosen role's app", async ({ page, baseURL }) => {
     // 02:30 UTC is 22:30 (evening) in America/Toronto and 19:30 (evening) in America/Los_Angeles,
     // even though UTC is 02:30 (morning).
     await page.clock.install({ time: new Date(1_000_002_600_000) });
@@ -321,12 +335,7 @@ test.describe("after sign in", () => {
     await expect(roleRadios.first()).toContainText("Sales");
     await expect(roleRadios.first()).toContainText("Opens Counter Till");
 
-    const branchGroup = page.getByRole("radiogroup", { name: /your branch/i });
-    await expect(branchGroup).toBeVisible();
-    const branchRadios = branchGroup.getByRole("radio");
-    await expect(branchRadios).toHaveCount(1);
-    await expect(branchRadios.first()).toHaveAttribute("aria-checked", "true");
-    await expect(branchRadios.first()).toContainText("North Yard");
+    await expectBranchesAsInformation(page, "Your branch", ["North Yard"]);
 
     await expect(page.getByTestId("continue-own")).toContainText("Open Counter Till");
     await page.getByTestId("continue-own").click();
@@ -334,7 +343,7 @@ test.describe("after sign in", () => {
     await expect(page.getByTestId("header-word")).toContainText("North Yard");
   });
 
-  test("role and branch picker: General Manager may choose more than one branch, keyboard arrow keys move within the groups with one tab stop each, branch chips are toggle buttons, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
+  test("role and branch picker: a General Manager with two branches, keyboard arrow keys move within the role group with one tab stop, the branches are information only, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
     await page.clock.install({ time: new Date(1_000_040_400_000) }); // 09:00 EDT morning in America/Toronto
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({
@@ -374,48 +383,8 @@ test.describe("after sign in", () => {
     await page.keyboard.press("ArrowUp");
     await expect(roleRadios.nth(0)).toHaveAttribute("aria-checked", "true");
 
-    // A multi branch role gets toggle buttons in a group, not a radio group: the tree announces each branch's own state.
-    await expect(page.getByRole("radiogroup", { name: /your branch/i })).toHaveCount(0);
-    const branchGroup = page.getByRole("group", { name: /your branches/i });
-    const toggles = branchGroup.getByRole("button");
-    await expect(toggles).toHaveCount(3); // All branches, West Yard, East Yard
-    await expect(branchGroup.getByRole("radio")).toHaveCount(0);
-    const allToggle = branchGroup.getByRole("button", { name: "All branches" });
-    const west = branchGroup.getByRole("button", { name: "West Yard" });
-    const east = branchGroup.getByRole("button", { name: "East Yard" });
-    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    await expect(allToggle).toHaveAttribute("tabindex", "0");
-    await expect(west).toHaveAttribute("tabindex", "-1");
-
-    // Arrows move focus only; the choice and every pressed state stay as they were.
-    await allToggle.focus();
-    await page.keyboard.press("ArrowDown");
-    await expect(west).toBeFocused();
-    await expect(west).toHaveAttribute("tabindex", "0");
-    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // Space toggles the focused branch off, Enter toggles it back on.
-    await page.keyboard.press("Space");
-    await expect(west).toHaveAttribute("aria-pressed", "false");
-    await expect(allToggle).toHaveAttribute("aria-pressed", "false");
-    await expect(east).toHaveAttribute("aria-pressed", "true");
-    await page.keyboard.press("ArrowDown");
-    await expect(east).toBeFocused();
-    await page.keyboard.press("ArrowUp");
-    await page.keyboard.press("Enter");
-    await expect(west).toHaveAttribute("aria-pressed", "true");
-    await expect(allToggle).toHaveAttribute("aria-pressed", "true");
-    // All branches toggles every branch: pressed again it keeps the first branch only, pressed once more it takes all.
-    await allToggle.click();
-    await expect(west).toHaveAttribute("aria-pressed", "true");
-    await expect(east).toHaveAttribute("aria-pressed", "false");
-    await allToggle.click();
-    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // A click on one branch toggles that branch alone.
-    await east.click();
-    await expect(east).toHaveAttribute("aria-pressed", "false");
-    await expect(west).toHaveAttribute("aria-pressed", "true");
-    await east.click();
-    await expect(east).toHaveAttribute("aria-pressed", "true");
+    // The granted branches are information: named from the core, with no control of any kind.
+    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
 
     // Demo walk section below the card is collapsed by default.
     const walkDetails = page.getByTestId("persona-walk");
@@ -437,7 +406,6 @@ test.describe("after sign in", () => {
     for (const locator of [
       page.getByRole("button", { name: "Not you? Sign out" }),
       roleRadios.nth(0),
-      allToggle,
       page.getByTestId("continue-own"),
     ]) {
       const box = await locator.boundingBox();
@@ -445,7 +413,7 @@ test.describe("after sign in", () => {
     }
   });
 
-  test("role and branch picker: the Sales manager is a multi branch role, a single branch role keeps a radio group, and the foot reads Powered by HardscapeOS", async ({ page, baseURL }) => {
+  test("role and branch picker: the branch list is information for a single branch person and a multi branch person, and the foot reads Powered by HardscapeOS", async ({ page, baseURL }) => {
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({
         status: 200,
@@ -461,16 +429,11 @@ test.describe("after sign in", () => {
     await signInAsPartner(page);
     await expect(page.getByTestId("role-entry")).toBeVisible();
     await expect(page.getByTestId("entry-footer")).toContainText("Powered by HardscapeOS");
-    const group = page.getByRole("group", { name: /your branches/i });
-    await expect(group.getByRole("button", { name: "All branches" })).toHaveAttribute("aria-pressed", "true");
-    await expect(group.getByRole("button", { name: "West Yard" })).toHaveAttribute("aria-pressed", "true");
-    // The other held role is a single branch role: a radio group, exactly one branch chosen.
+    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
+    // Switching to the other held role changes nothing about the branch list: still information, still both names.
     await page.getByTestId("role-radiogroup").getByRole("radio").filter({ hasText: "Opens Counter Till" }).click();
-    await expect(page.getByRole("group", { name: /your branches/i })).toHaveCount(0);
-    const radios = page.getByRole("radiogroup", { name: /your branch/i }).getByRole("radio");
-    await expect(radios).toHaveCount(2);
-    await expect(radios.nth(0)).toHaveAttribute("aria-checked", "true");
-    await expect(radios.nth(1)).toHaveAttribute("aria-checked", "false");
+    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
+    await expect(page.getByRole("radiogroup", { name: /your role/i }).getByRole("radio")).toHaveCount(2);
   });
 
   test("the role entry names the person's own role, continuing lands them, and the header carries them", async ({ page, baseURL }) => {

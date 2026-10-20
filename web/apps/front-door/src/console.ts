@@ -43,9 +43,6 @@ export interface GrantedBranch {
   readonly name: string;
 }
 
-/** The roles that may work more than one branch in a session. */
-export const MULTI_BRANCH_ROLES: readonly string[] = ["general_manager", "sales_manager"];
-
 export type ConsolePhase = "starting" | "signed-out" | "signing-in" | "signed-in";
 
 export type MethodsState =
@@ -112,8 +109,6 @@ export class ConsoleSession {
   #refusals = new Map<string, string>();
   #chosenRoleId: string | null = null;
   #branches: readonly GrantedBranch[] = [];
-  #chosenBranchIds: readonly string[] = [];
-  #activeBranchOption: string | null = null;
 
   constructor(deps: ConsoleDeps) {
     this.#deps = deps;
@@ -217,124 +212,18 @@ export class ConsoleSession {
     const found = roles.find((role) => role.id === roleId);
     if (found === undefined) return;
     this.#chosenRoleId = found.id;
-    if (MULTI_BRANCH_ROLES.includes(found.id) && this.#branches.length > 1) {
-      this.#chosenBranchIds = [];
-      this.#activeBranchOption = null;
-    }
-    this.#syncChosenBranches();
     this.#changed();
   }
 
-  /** The person's granted branches from the core. */
+  /** The person's granted branches from the core: information the picker and the home show, never a choice. */
   get branches(): readonly GrantedBranch[] {
     return this.#branches;
-  }
-
-  /** The ids of the currently chosen branch or branches. */
-  get chosenBranchIds(): readonly string[] {
-    return this.#chosenBranchIds;
-  }
-
-  /** The currently chosen branch objects, in the core's order. */
-  get chosenBranches(): readonly GrantedBranch[] {
-    return this.#branches.filter((branch) => this.#chosenBranchIds.includes(branch.id));
-  }
-
-  /** Whether the chosen role may choose more than one branch (General Manager and Sales manager). */
-  get isMultiBranchRole(): boolean {
-    const role = this.chosenRole;
-    return role !== null && MULTI_BRANCH_ROLES.includes(role.id);
-  }
-
-  /** True when every granted branch is currently chosen. */
-  get allBranchesChosen(): boolean {
-    return this.#branches.length > 0 && this.#chosenBranchIds.length === this.#branches.length;
-  }
-
-  /** The option id in the branch radio group that carries the single roving tab stop (tabindex="0"). */
-  get activeBranchOptionId(): string {
-    const validIds =
-      this.isMultiBranchRole && this.#branches.length > 1
-        ? ["__all__", ...this.#branches.map((b) => b.id)]
-        : this.#branches.map((b) => b.id);
-    if (this.#activeBranchOption !== null && validIds.includes(this.#activeBranchOption)) {
-      return this.#activeBranchOption;
-    }
-    if (this.isMultiBranchRole && this.#branches.length > 1 && this.allBranchesChosen) {
-      return "__all__";
-    }
-    return this.#chosenBranchIds[0] ?? validIds[0] ?? "";
   }
 
   /** Record the person's granted branches from the core. */
   setBranches(branches: readonly GrantedBranch[]): void {
     this.#branches = [...branches];
-    this.#syncChosenBranches();
     this.#changed();
-  }
-
-  /**
-   * Move the branch group's single tab stop to an option without changing the choice: the arrow keys of a
-   * multi select group only move focus ("__all__" or a branch id).
-   */
-  focusBranchOption(optionId: string): void {
-    if (optionId !== "__all__" && !this.#branches.some((b) => b.id === optionId)) return;
-    this.#activeBranchOption = optionId;
-    this.#changed();
-  }
-
-  /**
-   * Choose or toggle a branch option ("__all__" or a branch id). A multi branch role toggles each branch on
-   * its own, never leaving fewer than one chosen; "__all__" chooses every branch, and pressed again with every
-   * branch chosen it narrows to the first branch. A single branch role chooses exactly the one.
-   */
-  chooseBranch(optionId: string): void {
-    if (this.#branches.length === 0) return;
-    if (optionId === "__all__") {
-      if (!this.isMultiBranchRole) return;
-      this.#chosenBranchIds = this.allBranchesChosen
-        ? this.#branches.slice(0, 1).map((b) => b.id)
-        : this.#branches.map((b) => b.id);
-      this.#activeBranchOption = "__all__";
-      this.#changed();
-      return;
-    }
-    if (!this.#branches.some((b) => b.id === optionId)) return;
-    this.#activeBranchOption = optionId;
-    if (this.isMultiBranchRole) {
-      if (this.#chosenBranchIds.includes(optionId)) {
-        if (this.#chosenBranchIds.length > 1) {
-          this.#chosenBranchIds = this.#chosenBranchIds.filter((id) => id !== optionId);
-        }
-      } else {
-        const next = new Set([...this.#chosenBranchIds, optionId]);
-        this.#chosenBranchIds = this.#branches.filter((b) => next.has(b.id)).map((b) => b.id);
-      }
-      this.#changed();
-      return;
-    }
-    this.#chosenBranchIds = [optionId];
-    this.#changed();
-  }
-
-  #syncChosenBranches(): void {
-    if (this.#branches.length === 0) {
-      this.#chosenBranchIds = [];
-      this.#activeBranchOption = null;
-      return;
-    }
-    const valid = this.#chosenBranchIds.filter((id) => this.#branches.some((b) => b.id === id));
-    if (this.isMultiBranchRole) {
-      this.#chosenBranchIds = valid.length > 0 ? valid : this.#branches.map((b) => b.id);
-      if (this.#activeBranchOption === null) {
-        this.#activeBranchOption = this.#branches.length > 1 ? "__all__" : (this.#branches[0]?.id ?? null);
-      }
-      return;
-    }
-    const firstValid = valid[0];
-    const single = firstValid !== undefined ? firstValid : this.#branches[0]!.id;
-    this.#chosenBranchIds = [single];
-    this.#activeBranchOption = single;
   }
 
   // ── transitions ─────────────────────────────────────────────────────────
@@ -554,8 +443,6 @@ export class ConsoleSession {
     this.#personaBusy = null;
     this.#chosenRoleId = null;
     this.#branches = [];
-    this.#chosenBranchIds = [];
-    this.#activeBranchOption = null;
   }
 
   async #loadMethods(): Promise<void> {

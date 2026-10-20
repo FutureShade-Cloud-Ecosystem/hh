@@ -223,8 +223,6 @@ export function roleEntryScreen(
   const who = session.who;
   const chosenRole = session.chosenRole;
   const initial = firstNameOf(who?.name ?? "").slice(0, 1).toUpperCase() || "?";
-  const multiBranch = session.isMultiBranchRole && session.branches.length > 1;
-  const activeBranchOption = session.activeBranchOptionId;
   const primary = chosenRole === null ? null : primaryTileFor(chosenRole);
   return html`
     <div class="picker-stage">
@@ -271,80 +269,14 @@ export function roleEntryScreen(
                   })}
                 </div>
               </div>
-              <div class="picker-group">
-                <span class="picker-group-label" id="branch-group-label">${multiBranch ? "YOUR BRANCHES" : "YOUR BRANCH"}</span>
-                ${multiBranch
-                  ? html`
-                      <div
-                        class="picker-branch-list multi"
-                        role="group"
-                        aria-labelledby="branch-group-label"
-                        data-testid="branch-group"
-                      >
-                        <button
-                          type="button"
-                          class="picker-option branch-option ${session.allBranchesChosen ? "checked" : ""}"
-                          aria-pressed=${session.allBranchesChosen ? "true" : "false"}
-                          data-tabstop=${activeBranchOption === "__all__" ? "true" : "false"}
-                          data-action="select-branch"
-                          data-branch-id="__all__"
-                        >
-                          <span class="picker-radio-dot" aria-hidden="true"
-                            >${session.allBranchesChosen ? radioCheckMark() : nothing}</span
-                          >
-                          <span class="picker-option-words">
-                            <span class="picker-option-title">All branches</span>
-                          </span>
-                        </button>
-                        ${session.branches.map((branch) => {
-                          const checked = session.chosenBranchIds.includes(branch.id);
-                          return html`
-                            <button
-                              type="button"
-                              class="picker-option branch-option ${checked ? "checked" : ""}"
-                              aria-pressed=${checked ? "true" : "false"}
-                              data-tabstop=${activeBranchOption === branch.id ? "true" : "false"}
-                              data-action="select-branch"
-                              data-branch-id=${branch.id}
-                            >
-                              <span class="picker-radio-dot" aria-hidden="true">${checked ? radioCheckMark() : nothing}</span>
-                              <span class="picker-option-words">
-                                <span class="picker-option-title">${branch.name}</span>
-                              </span>
-                            </button>
-                          `;
-                        })}
-                      </div>
-                    `
-                  : html`
-                      <div
-                        class="picker-branch-list"
-                        role="radiogroup"
-                        aria-labelledby="branch-group-label"
-                        data-testid="branch-radiogroup"
-                      >
-                        ${session.branches.map((branch) => {
-                          const checked = session.chosenBranchIds.includes(branch.id);
-                          return html`
-                            <button
-                              type="button"
-                              class="picker-option branch-option ${checked ? "checked" : ""}"
-                              role="radio"
-                              aria-checked=${checked ? "true" : "false"}
-                              data-tabstop=${activeBranchOption === branch.id ? "true" : "false"}
-                              data-action="select-branch"
-                              data-branch-id=${branch.id}
-                            >
-                              <span class="picker-radio-dot" aria-hidden="true">${checked ? radioCheckMark() : nothing}</span>
-                              <span class="picker-option-words">
-                                <span class="picker-option-title">${branch.name}</span>
-                              </span>
-                            </button>
-                          `;
-                        })}
-                      </div>
-                    `}
-              </div>
+              ${session.branches.length === 0
+                ? nothing
+                : html`
+                    <p class="picker-branches" data-testid="branch-list">
+                      <span class="picker-group-label">${session.branches.length > 1 ? "Your branches" : "Your branch"}</span>
+                      <span class="picker-branches-names">${session.branches.map((branch) => branch.name).join(", ")}</span>
+                    </p>
+                  `}
               <button
                 type="button"
                 class="btn btn-primary btn-wide picker-submit"

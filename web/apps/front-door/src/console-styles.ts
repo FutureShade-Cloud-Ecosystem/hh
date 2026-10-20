@@ -379,16 +379,15 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-8);
   }
-  .picker-branch-list {
+  .picker-branches {
     display: grid;
-    gap: var(--hh-s-8);
+    gap: var(--hh-s-4);
+    margin: 0;
   }
-  .picker-branch-list.multi {
-    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  }
-  .picker-branch-list.multi .picker-option {
-    padding: var(--hh-s-12);
-    gap: var(--hh-s-8);
+  .picker-branches-names {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--hh-text);
   }
   .picker-option {
     appearance: none;

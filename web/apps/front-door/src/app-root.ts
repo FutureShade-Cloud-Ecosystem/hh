@@ -51,7 +51,6 @@ import {
 // door's bundle carries the registry and the drawing rules, not the till.
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import { setBranches } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import {
   COMING_ROLES,
   comingHeading,
@@ -910,20 +909,14 @@ export class FrontDoorApp extends HHElement {
       return;
     }
     const path = event.composedPath();
-    // A radio group moves the choice with the arrows; the multi branch toggle group only moves focus.
-    const toggleGroup = path.find(
-      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("data-testid") === "branch-group",
-    );
     const currentRadio = path.find(
-      (node): node is HTMLElement =>
-        node instanceof HTMLElement &&
-        (node.getAttribute("role") === "radio" || (toggleGroup !== undefined && node.hasAttribute("aria-pressed"))),
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radio",
     );
-    const group =
-      toggleGroup ??
-      path.find((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup");
+    const group = path.find(
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup",
+    );
     if (currentRadio === undefined || group === undefined || this.#console === null) return;
-    const radios = Array.from(group.querySelectorAll<HTMLElement>(toggleGroup !== undefined ? "[aria-pressed]" : '[role="radio"]'));
+    const radios = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
     const index = radios.indexOf(currentRadio);
     if (index < 0 || radios.length === 0) return;
     event.preventDefault();
@@ -931,25 +924,15 @@ export class FrontDoorApp extends HHElement {
     const nextIndex = (index + step + radios.length) % radios.length;
     const nextRadio = radios[nextIndex];
     if (nextRadio === undefined) return;
-    const action = nextRadio.getAttribute("data-action");
     const groupTestId = group.getAttribute("data-testid");
-    if (action === "select-role") {
+    if (nextRadio.getAttribute("data-action") === "select-role") {
       const roleId = nextRadio.getAttribute("data-role");
       if (typeof roleId === "string" && roleId !== "") this.#console.chooseRole(roleId);
-    } else if (action === "select-branch") {
-      const branchId = nextRadio.getAttribute("data-branch-id");
-      if (typeof branchId === "string" && branchId !== "") {
-        if (toggleGroup !== undefined) this.#console.focusBranchOption(branchId);
-        else this.#console.chooseBranch(branchId);
-      }
     }
     void this.updateComplete.then(() => {
       if (groupTestId === null) return;
       const nextGroup = this.renderRoot.querySelector<HTMLElement>(`[data-testid="${groupTestId}"]`);
-      const updatedRadios =
-        nextGroup === null
-          ? []
-          : Array.from(nextGroup.querySelectorAll<HTMLElement>(toggleGroup !== undefined ? "[aria-pressed]" : '[role="radio"]'));
+      const updatedRadios = nextGroup === null ? [] : Array.from(nextGroup.querySelectorAll<HTMLElement>('[role="radio"]'));
       updatedRadios[nextIndex]?.focus();
     });
   };
@@ -1025,15 +1008,7 @@ export class FrontDoorApp extends HHElement {
       const roleId = control.getAttribute("data-role");
       if (typeof roleId === "string" && roleId !== "") session.chooseRole(roleId);
     }
-    if (action === "select-branch") {
-      const branchId = control.getAttribute("data-branch-id");
-      if (typeof branchId === "string" && branchId !== "") session.chooseBranch(branchId);
-    }
     if (action === "continue-own") {
-      const chosenBranches = session.chosenBranches;
-      if (chosenBranches.length > 0) {
-        setBranches(chosenBranches.map((branch) => ({ id: branch.id, name: branch.name, code: branch.code })));
-      }
       session.continueOwn();
       this.#screen = { kind: "home" };
       void this.#loadApprovals();
@@ -1279,7 +1254,7 @@ export class FrontDoorApp extends HHElement {
     const who = session.who;
     const landing = this.#landingRole();
     const openable = landing === undefined ? [] : landing.tiles.filter((tile) => tile.href !== null);
-    const branchLabel = session.chosenBranches.map((branch) => branch.name).join(", ");
+    const branchLabel = session.branches.map((branch) => branch.name).join(", ");
     const roleText =
       who === null
         ? ""
