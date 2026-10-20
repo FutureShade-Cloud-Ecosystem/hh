@@ -375,6 +375,7 @@ var ownedObjects = map[string]string{
 	"assist_model_aliases":            "assist",            // 0416_assist_aliases_and_conversations
 	"assist_model_prices":             "assist",            // 0417_assist_metering
 	"assist_pro_caps":                 "assist",            // 0417_assist_metering
+	"assist_query_log":                "assist",            // 0419_assist_orders_views_and_query_log
 	"assist_role_limits":              "assist",            // 0155_assist_limits
 	"assist_settings":                 "assist",            // 0153_assist_commands_config
 	"assist_spend":                    "assist",            // 0417_assist_metering

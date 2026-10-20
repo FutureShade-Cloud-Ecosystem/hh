@@ -115,4 +115,45 @@ BEGIN
 END
 $s5$;
 
+-- The query log (plan 3.5): one append only row per data.query, plus one summary row per exchange that ran
+-- one. What was asked and what came back in outline: the spec with its values, the view, the row count,
+-- the cited record ids, the refusal code, the tokens of the exchange. Never a result row and never a
+-- database error text. The 0154 pattern: row triggers refuse UPDATE and DELETE, a statement trigger
+-- refuses TRUNCATE. jsonb is fine here: this table is not a served table.
+CREATE TABLE IF NOT EXISTS assist_query_log (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    exchange_id  text NOT NULL DEFAULT '',
+    asker_id     uuid NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    audience     text NOT NULL CHECK (audience IN ('staff', 'pro')),
+    tool         text NOT NULL,
+    view         text NOT NULL DEFAULT '',
+    spec         jsonb NOT NULL DEFAULT '{}'::jsonb,
+    row_count    integer NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+    cited_ids    jsonb NOT NULL DEFAULT '[]'::jsonb,
+    refusal_code text NOT NULL DEFAULT '',
+    tokens_in    integer NOT NULL DEFAULT 0 CHECK (tokens_in >= 0),
+    tokens_out   integer NOT NULL DEFAULT 0 CHECK (tokens_out >= 0),
+    at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS assist_query_log_asker_at_idx ON assist_query_log (asker_id, at DESC);
+CREATE INDEX IF NOT EXISTS assist_query_log_exchange_idx ON assist_query_log (exchange_id);
+
+CREATE OR REPLACE FUNCTION assist_query_log_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'assist_query_log is append-only: % is refused', TG_OP
+        USING ERRCODE = 'restrict_violation';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS assist_query_log_no_update ON assist_query_log;
+CREATE TRIGGER assist_query_log_no_update
+    BEFORE UPDATE OR DELETE ON assist_query_log
+    FOR EACH ROW EXECUTE FUNCTION assist_query_log_append_only();
+
+DROP TRIGGER IF EXISTS assist_query_log_no_truncate ON assist_query_log;
+CREATE TRIGGER assist_query_log_no_truncate
+    BEFORE TRUNCATE ON assist_query_log
+    FOR EACH STATEMENT EXECUTE FUNCTION assist_query_log_append_only();
+
 RESET ROLE;
