@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -394,6 +395,8 @@ func TestWorkspaceAddNote_PassesAuthorAndBody(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/billing/ar/customers/c1b00000-0000-4000-a000-000000000099/notes", body)
 	r.Header.Set("Content-Type", "application/json")
 	r.SetPathValue("customer_id", "c1b00000-0000-4000-a000-000000000099")
+	// The author is the linked staff row (a uuid), not the platform id (UX-93 round 2).
+	r = r.WithContext(identity.ContextWithStaffUserID(r.Context(), "5a5a0000-0000-4000-9000-000000000042"))
 	rr := httptest.NewRecorder()
 	h.addNote(rr, r, staffCaller())
 
@@ -403,7 +406,7 @@ func TestWorkspaceAddNote_PassesAuthorAndBody(t *testing.T) {
 	if store.addedForID != "c1b00000-0000-4000-a000-000000000099" {
 		t.Errorf("addedForID=%q", store.addedForID)
 	}
-	if store.addedByAuthorID != "de110000-0000-4000-9000-000000000007" {
+	if store.addedByAuthorID != "5a5a0000-0000-4000-9000-000000000042" {
 		t.Errorf("addedByAuthorID=%q", store.addedByAuthorID)
 	}
 	if len(store.addedNotes) != 1 {

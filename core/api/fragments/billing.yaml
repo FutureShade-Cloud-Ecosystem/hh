@@ -3640,7 +3640,6 @@ components:
       required:
         - kind
         - amount_cents
-        - balance_after_cents
         - occurred_at
       properties:
         kind:
@@ -3648,7 +3647,10 @@ components:
           enum: [INVOICE, PAYMENT, CREDIT_MEMO, ADJUSTMENT, NSF, WRITE_OFF]
         reference: { type: string }
         amount_cents: { type: integer, format: int64 }
-        balance_after_cents: { type: integer, format: int64 }
+        balance_after_cents:
+          type: integer
+          format: int64
+          description: Absent when the caller does not hold the payment trail (ruling 87).
         branch_id: { type: string, format: uuid }
         memo: { type: string }
         occurred_at: { type: string, format: date-time }

@@ -32382,7 +32382,6 @@ components:
       required:
         - kind
         - amount_cents
-        - balance_after_cents
         - occurred_at
       properties:
         kind:
@@ -32402,6 +32401,7 @@ components:
         balance_after_cents:
           type: integer
           format: int64
+          description: Absent when the caller does not hold the payment trail (ruling 87).
         branch_id:
           type: string
           format: uuid

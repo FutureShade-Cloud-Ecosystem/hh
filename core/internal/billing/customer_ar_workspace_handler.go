@@ -307,7 +307,9 @@ func (h *WorkspaceHandler) addNote(w http.ResponseWriter, r *http.Request, calle
 		h.writeErr(w, r, err)
 		return
 	}
-	authorID := strings.TrimSpace(caller.PlatformUserID)
+	// The author is the linked staff row (users.id, a uuid), never the platform id: FB Console ids are
+	// not uuids, and the reach check above has already refused a caller with no linked row.
+	authorID := strings.TrimSpace(identity.StaffUserIDFromContext(r.Context()))
 	note, err := h.store.AddNote(r.Context(), customerID, authorID, in)
 	if err != nil {
 		h.writeErr(w, r, err)

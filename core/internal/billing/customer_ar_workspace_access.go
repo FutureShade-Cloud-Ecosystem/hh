@@ -46,7 +46,9 @@ func (c CustomerModuleReach) CustomerReachable(ctx context.Context, customerID s
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.Is(err, customer.ErrNotFound):
+	case errors.Is(err, customer.ErrNotFound), errors.Is(err, customer.ErrUnauthenticated):
+		// A caller with no linked staff row has no branch reach to hold the account to: not found,
+		// never a 500 and never an unfenced read.
 		return false, nil
 	default:
 		return false, err
