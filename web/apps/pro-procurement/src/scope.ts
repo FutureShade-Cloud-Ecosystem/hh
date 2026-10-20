@@ -98,7 +98,9 @@ export function scopeView(dataRaw: unknown, page: Page): TemplateResult {
           <button type="button" class="btn btn-secondary" data-action="rename-plan" data-testid="rename-plan">Rename</button>
           <button type="button" class="btn btn-secondary" data-action="delete-plan" data-testid="delete-plan">Delete plan</button>
         </div>`
-      : html`<div class="actions"><button type="button" class="btn btn-secondary" data-action="recall" data-testid="recall">Recall to planning</button></div>`}
+      : data.status === "QUOTING"
+        ? html`<div class="actions"><button type="button" class="btn btn-secondary" data-action="recall" data-testid="recall">Recall to planning</button></div>`
+        : nothing}
     ${data.lines.length === 0 ? html`<p class="emptyline" data-testid="scope-empty">${NO_LINES_WORDS}</p>` : nothing}
     <ul class="cards" data-testid="scope-lines">${data.lines.map((line) => lineRow(line, editable))}</ul>
     ${editable

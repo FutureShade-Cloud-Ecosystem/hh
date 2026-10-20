@@ -64,6 +64,7 @@ function words(template) {
 
 const PLANNING_ID = "9a0000-0000-4000-8000-000000000001";
 const QUOTING_ID = "9a0000-0000-4000-8000-000000000002";
+const ORDERED_ID = "9a0000-0000-4000-8000-000000000003";
 const EMPTY_PLAN_ID = "9a0000-0000-4000-8000-000000000004";
 
 test("a role without submit_rfq is refused before any call; a holder reads the project and its lines", async () => {
@@ -142,6 +143,19 @@ test("a quoting project is read only: recall is offered, submit and the edit mov
   assert.ok(text.includes("Recall to planning"), text);
   assert.equal(/\bdata-action="submit-rfq"\b/.test(text), false, "a quoting project must not offer Submit RFQ");
   assert.equal(/\bdata-action="add-material"\b/.test(text), false, "a quoting project must not offer Add material");
+});
+
+test("recall to planning is offered on QUOTING only, never on ORDERED, FULFILLED, or CANCELLED", async () => {
+  const page = await makePage("buyer", { surface: "scope", projectId: ORDERED_ID });
+  const answer = await scopeLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  assert.equal(answer.data.status, "ORDERED");
+  for (const status of ["ORDERED", "FULFILLED", "CANCELLED"]) {
+    const text = words(scopeView({ ...answer.data, status }, page));
+    assert.equal(/\bdata-action="recall"\b/.test(text), false, `${status} must not offer Recall to planning`);
+    assert.equal(text.includes("Recall to planning"), false, `${status} must not show Recall to planning`);
+  }
 });
 
 test("the surface commands answer only their own actions", async () => {
