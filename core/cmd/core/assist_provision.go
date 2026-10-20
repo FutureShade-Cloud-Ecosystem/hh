@@ -5,6 +5,8 @@ package main
 //
 //	core assist-logins      sets each assist login's password from its own value
 //	core assist-claims-key  writes the claims signing key to ai.claims_key
+//	core assist-revoke-extension-functions  closes the extensions' functions to PUBLIC;
+//	                        run as the extensions' owner where the app is not a superuser
 //
 // Neither prints a value, a URL or a key: only role names, the database target
 // (host and name) and the key id, which is in every signed claim anyway. The
@@ -61,6 +63,23 @@ func assistClaimsKeyRole(getenv func(string) string, out io.Writer) error {
 	return nil
 }
 
+func assistRevokeExtensionFunctionsRole(getenv func(string) string, out io.Writer) error {
+	conn, err := assistOneshotConn("assist-revoke-extension-functions", getenv, out)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	var db string
+	if err := conn.QueryRow(context.Background(), `SELECT current_database()`).Scan(&db); err != nil {
+		return fmt.Errorf("assist-revoke-extension-functions: cannot read the database name")
+	}
+	if err := readtx.ProvisionRevokeExtensionFunctions(context.Background(), conn, readtx.RolesFor(db)); err != nil {
+		return fmt.Errorf("assist-revoke-extension-functions: %w", err)
+	}
+	fmt.Fprintln(out, "assist-revoke-extension-functions: extension functions closed to PUBLIC")
+	return nil
+}
+
 // assistOneshotConn resolves the target by the one-shot rule, prints it (host and
 // database only) and connects. A connection failure reports no driver text: the
 // driver's message can carry the URL.
@@ -82,6 +101,12 @@ func assistRoleDispatch(role string) (handled bool) {
 	switch role {
 	case "assist-logins":
 		if err := assistLoginsRole(os.Getenv, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "core:", err)
+			os.Exit(1)
+		}
+		return true
+	case "assist-revoke-extension-functions":
+		if err := assistRevokeExtensionFunctionsRole(os.Getenv, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "core:", err)
 			os.Exit(1)
 		}

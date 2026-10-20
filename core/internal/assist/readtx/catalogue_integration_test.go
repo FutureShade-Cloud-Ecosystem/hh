@@ -31,7 +31,17 @@ func (r Roles) all() []string {
 	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin}
 }
 
-func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]string, error) {
+// catalogueViolations reads the catalogue. extensionsOpen describes a box where the
+// migrating role is not a superuser and the extensions' own owner has not yet run
+// the revoke oneshot (core assist-revoke-extension-functions): there, and only
+// there, the functions of extensions owned by another role keep EXECUTE for PUBLIC
+// (the migration's REVOKE on them is only a warning for a role that does not own
+// them), and the test asserts exactly that set, none outside it.
+func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, extensionsOpen bool) ([]string, error) {
+	var migrating string
+	if err := conn.QueryRow(ctx, `SELECT current_user::text`).Scan(&migrating); err != nil {
+		return nil, err
+	}
 	var out []string
 	add := func(format string, a ...any) { out = append(out, fmt.Sprintf(format, a...)) }
 	collect := func(sql string, args ...any) ([][]any, error) {
@@ -123,9 +133,11 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]st
 			add("role %s is a member of [%s], want [%s]", name, strings.Join(got, ","), strings.Join(wantMember[name], ","))
 		}
 	}
+	// The migrating role is exempt: a non superuser role that creates these roles holds
+	// ADMIN (and SET) on them, which is how it can switch to the owners.
 	for _, reader := range []string{roles.Reader, roles.ProReader} {
 		rows, err := collect(`SELECT r.rolname FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
-			JOIN pg_roles r ON r.oid = m.member WHERE g.rolname = $1 ORDER BY 1`, reader)
+			JOIN pg_roles r ON r.oid = m.member WHERE g.rolname = $1 AND r.rolname <> $2 ORDER BY 1`, reader, migrating)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +213,8 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]st
 
 	// 4. Function privileges: ai.claims() for the readers, hmac for the claims owner.
 	rows, err = collect(`
-		SELECT r.rolname, n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), p.proowner = r.oid
+		SELECT r.rolname, n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), p.proowner = r.oid,
+		       EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
 		FROM pg_roles r, pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 		WHERE r.rolname = ANY($1) AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_%'
 		  AND has_function_privilege(r.oid, p.oid, 'EXECUTE')`, roles.all())
@@ -210,11 +223,39 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]st
 	}
 	for _, row := range rows {
 		role, schema, fn, args, owner := row[0].(string), row[1].(string), row[2].(string), row[3].(string), row[4].(bool)
-		ok := owner ||
+		ext := row[5].(bool)
+		ok := owner || (extensionsOpen && ext) ||
 			((role == roles.Reader || role == roles.ProReader) && schema == "ai" && fn == "claims" && args == "") ||
 			(role == roles.ClaimsOwner && fn == "hmac" && args == "text, text, text")
 		if !ok {
 			add("role %s can EXECUTE %s.%s(%s) outside the plan's list", role, schema, fn, args)
+		}
+	}
+
+	// 4b. PUBLIC and functions outside the system schemas, ai and ai_pro: none, except in
+	// the open state the extension functions the migrating role does not own, exactly.
+	rows, err = collect(`
+		SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), pg_get_userbyid(p.proowner)::text,
+		       EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'),
+		       has_function_privilege('public', p.oid, 'EXECUTE')
+		FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'ai', 'ai_pro') AND n.nspname NOT LIKE 'pg\_%'`)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		schema, fn, args, owner := row[0].(string), row[1].(string), row[2].(string), row[3].(string)
+		ext, public := row[4].(bool), row[5].(bool)
+		sig := fmt.Sprintf("%s.%s(%s)", schema, fn, args)
+		switch {
+		case public && !ext:
+			add("PUBLIC can EXECUTE %s, which is not an extension function", sig)
+		case public && ext && !extensionsOpen:
+			add("PUBLIC can EXECUTE the extension function %s", sig)
+		case public && ext && owner == migrating:
+			add("PUBLIC can EXECUTE the extension function %s although the migrating role owns it", sig)
+		case !public && ext && extensionsOpen && owner != migrating:
+			add("the extension function %s (owned by %s) is closed to PUBLIC, so this is not the open state", sig, owner)
 		}
 	}
 
@@ -247,7 +288,7 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]st
 // The migrated and seeded gate database passes.
 func TestCatalogueOfTheMigratedDatabase(t *testing.T) {
 	conn := connect(t, gateURL(t))
-	got, err := catalogueViolations(ctxT(t), conn, RolesFor(currentDatabase(t, conn)))
+	got, err := catalogueViolations(ctxT(t), conn, RolesFor(currentDatabase(t, conn)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +303,7 @@ func TestCatalogueOfTheMigratedDatabase(t *testing.T) {
 func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 	conn, db := freshMigratedDB(t, "readtx_cat")
 	roles := RolesFor(db)
-	if got, err := catalogueViolations(ctxT(t), conn, roles); err != nil || len(got) != 0 {
+	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
 		t.Fatalf("a freshly migrated database must be clean: %v %v", got, err)
 	}
 	if _, err := conn.Exec(ctxT(t), `CREATE FUNCTION public.outside_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'`); err != nil {
@@ -292,7 +333,7 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {
 			t.Fatalf("%s: plant: %v", p.name, err)
 		}
-		got, err := catalogueViolations(ctxT(t), conn, roles)
+		got, err := catalogueViolations(ctxT(t), conn, roles, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -308,7 +349,7 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 		if _, err := conn.Exec(ctxT(t), p.revert); err != nil {
 			t.Fatalf("%s: revert: %v", p.name, err)
 		}
-		if got, err := catalogueViolations(ctxT(t), conn, roles); err != nil || len(got) != 0 {
+		if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
 			t.Fatalf("%s: not clean after the revert: %v %v", p.name, got, err)
 		}
 	}
@@ -330,7 +371,7 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 	if err := tx.Commit(ctxT(t)); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := catalogueViolations(ctxT(t), conn, roles); err != nil || len(got) != 0 {
+	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
 		t.Errorf("objects created under the owner role must pass: %v %v", got, err)
 	}
 }

@@ -132,8 +132,14 @@ BEGIN
   EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I GRANT EXECUTE ON FUNCTIONS TO %I', app, v_fn_users);
   -- Functions the two owners create in ai and ai_pro start closed too (a schema level
   -- default cannot subtract the global PUBLIC default, so this is the global form).
-  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', v_view);
-  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', v_claims);
+  -- Written under SET LOCAL ROLE without FOR ROLE: FOR ROLE needs inherited membership in the
+  -- owner, which a non superuser migrating role does not hold (it has SET only).
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+  RESET ROLE;
+  EXECUTE format('SET LOCAL ROLE %I', v_claims);
+  ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+  RESET ROLE;
 
   -- The claims owner alone runs pgcrypto's hmac (the one function outside ai it needs).
   SELECT n.nspname INTO crypto_schema FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
@@ -241,13 +247,15 @@ BEGIN
     END
     $body$
   $def$, crypto_schema, v_login, v_pro_login);
-  RESET ROLE;
 
   -- Who may call the verifier: the two readers (Postgres checks EXECUTE against the
-  -- invoker even inside a view), and nobody else.
+  -- invoker even inside a view), and nobody else. Done as the function's owner, which
+  -- is the only role that may grant or revoke on it where the migrating role is not a
+  -- superuser.
   REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai FROM PUBLIC;
-  REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai_pro FROM PUBLIC;
   EXECUTE format('GRANT EXECUTE ON FUNCTION ai.claims() TO %I, %I', v_reader, v_pro);
+  RESET ROLE;
+  EXECUTE 'REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai_pro FROM PUBLIC';
 
   -- TEMP is granted to PUBLIC on every database by default; keep it for the app role only.
   EXECUTE format('REVOKE TEMP ON DATABASE %I FROM PUBLIC', db);

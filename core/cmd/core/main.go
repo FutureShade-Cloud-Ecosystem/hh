@@ -95,7 +95,7 @@ func main() {
 		if assistRoleDispatch(role) {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, demoseed, assist-logins or assist-claims-key)\n", role)
+		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, demoseed, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
 		os.Exit(2)
 	}
 }
