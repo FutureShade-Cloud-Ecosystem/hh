@@ -2,7 +2,7 @@
 // branch's open picks in their two halves (unclaimed and claimed), and
 // claiming a pick.
 import { test, expect } from "@playwright/test";
-import { resetStub, useScenario, yardHandoff } from "./helpers.js";
+import { managerHandoff, resetStub, useScenario, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -57,6 +57,8 @@ test("claiming a pick makes it mine and opens it", async ({ page }) => {
   const card = page.locator("[data-pick-card]", { hasText: "SO-1039" });
   await card.click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
+  await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+  await page.getByRole("button", { name: "Take this pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await page.getByRole("button", { name: "Back to the queue" }).click();
@@ -64,6 +66,49 @@ test("claiming a pick makes it mine and opens it", async ({ page }) => {
   await expect(nowMine).toContainText("Claimed by you");
   await expect(nowMine.locator("[data-task-status]")).toHaveText("Picking");
 });
+
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 1024, height: 768 },
+]) {
+  test(`opening SO-1042 is read-only at ${size.width}x${size.height}; tapping a line or Take this pick claims it, and others see Claimed by role label`, async ({ page, browser }) => {
+    await page.setViewportSize(size);
+    await page.goto("/");
+    await page.locator("[data-pick-card]", { hasText: "SO-1042" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1042");
+    await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+    await expect(page.getByRole("button", { name: "Take this pick" })).toBeVisible();
+    await page.getByRole("button", { name: "Back to the queue" }).click();
+    await expect(page.locator("[data-pick-card]", { hasText: "SO-1042" }).locator("[data-task-status]")).toHaveText("Queued");
+
+    // Explicit "Take this pick" claims SO-1042.
+    await page.locator("[data-pick-card]", { hasText: "SO-1042" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1042");
+    await page.getByRole("button", { name: "Take this pick" }).click();
+    await expect(page.locator("[data-task-status]")).toHaveText("Picking");
+    await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
+
+    // First pull of a line on an unclaimed pick (SO-1039) also claims it.
+    await page.getByRole("button", { name: "Back to the queue" }).click();
+    await page.locator("[data-pick-card]", { hasText: "SO-1039" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
+    await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+    await page.locator("[data-line]").first().locator(".line-row").click();
+    await expect(page.locator("[data-task-status]")).toHaveText("Picking");
+
+    // Another role sees "Claimed by Yard Team" on the queue and detail.
+    const otherContext = await browser.newContext({ viewport: size });
+    const otherPage = await otherContext.newPage();
+    await otherPage.addInitScript(managerHandoff);
+    await otherPage.goto("/");
+    const otherCard = otherPage.locator("[data-pick-card]", { hasText: "SO-1042" });
+    await expect(otherCard).toContainText("Claimed by Yard Team");
+    await otherCard.click();
+    await expect(otherPage.locator("[data-pick-order]")).toHaveText("SO-1042");
+    await expect(otherPage.locator("[data-claimed-by]")).toHaveText("Claimed by Yard Team");
+    await otherContext.close();
+  });
+}
 
 test("an open shortage leads its card with a Short pill and the first item", async ({ page }) => {
   await page.goto("/");

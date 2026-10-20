@@ -87,9 +87,11 @@ function payloadOf(op: unknown): Record<string, unknown> {
 /** Claims SO-1039 offline, starts it and records the pick with a short line: all three wait in the outbox. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
-  // Tapping the card claims and starts the pick in one step: both wait in the outbox.
+  // Opening the card is read-only; taking the pick claims and starts it in the outbox.
   await page.locator("[data-pick-card]", { hasText: "SO-1039" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
+  await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+  await page.getByRole("button", { name: "Take this pick" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   for (const what of ["Retaining wall block", "HPB bedding sand"]) {

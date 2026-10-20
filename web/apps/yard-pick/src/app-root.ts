@@ -45,6 +45,7 @@ import {
   CHANGE_ACK_WALL,
   ackDoneWords,
   actionDone,
+  isUnclaimed,
   lineIsShort,
   pickSummary,
   pickQueuedWords,
@@ -255,8 +256,14 @@ export class YardPickApp extends HHElement {
       // Back re-reads the whole board: a pick that moved while it was open
       // must not ride beside its own stale row. The waiting changes' count
       // re-reads with it: a change answered elsewhere must not linger.
-      void this.#loadQueue(true);
-      void this.#loadChangesCount();
+      void (this.#takePromise ?? Promise.resolve()).then(() => {
+        void this.#loadQueue(true);
+        void this.#loadChangesCount();
+      });
+      return;
+    }
+    if (action === "take-pick") {
+      void this.#ensureClaimed();
       return;
     }
     if (action === "claim") {
@@ -869,6 +876,9 @@ export class YardPickApp extends HHElement {
 
   #openEditor(lineNo: number): void {
     if (lineNo <= 0 || this.#ticketLine(lineNo) === null) return;
+    if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
+      void this.#ensureClaimed();
+    }
     this.#editing = lineNo;
     const draft = this.#draftFor(lineNo);
     if (!this.#qtyMirror.has(lineNo)) {
@@ -900,6 +910,45 @@ export class YardPickApp extends HHElement {
     this.#setQty(lineNo, String(next));
   }
 
+  #takePromise: Promise<void> | null = null;
+
+  async #ensureClaimed(): Promise<void> {
+    if (this.#takePromise !== null) return this.#takePromise;
+    if (this.#view.kind !== "pick" || this.#pick === null) return;
+    const taskId = this.#view.id;
+    const held = this.#pick.ticket?.held_from_picking === true;
+    if (held || !isUnclaimed(this.#pick.task.status)) return;
+    const run = (async () => {
+      const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
+      if (!claimed.ok) {
+        this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
+          notFound: "That pick is no longer on the board.",
+        });
+        this.requestUpdate();
+        return;
+      }
+      const started = await this.#door().start(taskId);
+      if (!started.ok) {
+        this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+        this.requestUpdate();
+        return;
+      }
+      const reread = await this.#door().pick(taskId);
+      if (reread.ok && this.#view.kind === "pick" && this.#view.id === taskId) {
+        this.#pick = reread.value;
+        this.#notice = actionDone("claim");
+      }
+      if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
+      this.requestUpdate();
+    })();
+    this.#takePromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.#takePromise === run) this.#takePromise = null;
+    }
+  }
+
   async #claim(taskId: string): Promise<void> {
     if (taskId === "" || this.#busy) return;
     await this.#openPick(taskId);
@@ -923,39 +972,18 @@ export class YardPickApp extends HHElement {
     let current = first.value;
     let openNotice = "";
     const held = current.ticket?.held_from_picking === true;
-    if (!held) {
-      if (current.task.status === "QUEUED" || current.task.status === "PUSHED") {
-        const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
-        if (!claimed.ok) {
-          this.#busy = false;
-          this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
-            notFound: "That pick is no longer on the board.",
-          });
-          this.requestUpdate();
-          return;
-        }
-        const started = await this.#door().start(taskId);
-        if (!started.ok) {
-          this.#busy = false;
-          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
-          this.requestUpdate();
-          return;
-        }
-        const reread = await this.#door().pick(taskId);
-        if (reread.ok) current = reread.value;
-        openNotice = actionDone("claim");
-      } else if (current.task.status === "ACCEPTED") {
-        const started = await this.#door().start(taskId);
-        if (!started.ok) {
-          this.#busy = false;
-          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
-          this.requestUpdate();
-          return;
-        }
-        const reread = await this.#door().pick(taskId);
-        if (reread.ok) current = reread.value;
-        openNotice = actionDone("start");
+    const mineOrUnclaimed = current.task.claimed_by === "" || current.task.claimed_by === this.#me;
+    if (!held && current.task.status === "ACCEPTED" && mineOrUnclaimed) {
+      const started = await this.#door().start(taskId);
+      if (!started.ok) {
+        this.#busy = false;
+        this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+        this.requestUpdate();
+        return;
       }
+      const reread = await this.#door().pick(taskId);
+      if (reread.ok) current = reread.value;
+      openNotice = actionDone("start");
     }
     this.#busy = false;
     this.#pick = current;
@@ -1016,6 +1044,7 @@ export class YardPickApp extends HHElement {
   }
 
   async #savePick(): Promise<void> {
+    if (this.#takePromise !== null) await this.#takePromise;
     if (this.#view.kind !== "pick" || this.#busy) return;
     const lines = this.#draftedLines();
     if (lines.length === 0) {
@@ -1306,6 +1335,7 @@ export class YardPickApp extends HHElement {
       }
       const detail: PickModel = {
         pick: this.#pick,
+        me: this.#me,
         drafts,
         editing: this.#editing,
         sheetFor: this.#sheetFor,

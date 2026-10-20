@@ -25,6 +25,7 @@ import {
   ageLabel,
   canAcknowledge,
   changeStatusWord,
+  claimedByWords,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -93,6 +94,10 @@ test("the unclaimed half of the board is the queue's own split", () => {
   assert.equal(isUnclaimed("ACCEPTED"), false);
   assert.equal(statusTone("STAGED"), "ready");
   assert.equal(statusTone("CANCELLED"), "stopped");
+  assert.equal(claimedByWords("", "d0200000-0000-4000-9000-000000000002"), "");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000002", "d0200000-0000-4000-9000-000000000002"), "Claimed by you");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000002", "d0200000-0000-4000-9000-000000000009"), "Claimed by Yard Team");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000009", "d0200000-0000-4000-9000-000000000002"), "Claimed by Yard Manager");
 });
 
 // ---- the board's order and its words ----

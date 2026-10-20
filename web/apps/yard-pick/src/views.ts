@@ -25,6 +25,8 @@ import {
   ageLabel,
   canAcknowledge,
   changeStatusWord,
+  claimedByWords,
+  isUnclaimed,
   lineIsShort,
   mtoLabel,
   orderHandle,
@@ -126,6 +128,7 @@ export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number 
 function pickCard(entry: YardPick, me: string): TemplateResult {
   const t = entry.task;
   const mine = t.claimed_by !== "" && t.claimed_by === me;
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, me);
   const held = entry.ticket?.held_from_picking === true;
   const ticket = entry.ticket;
   const lineCount = ticket?.lines.length ?? 0;
@@ -162,7 +165,7 @@ function pickCard(entry: YardPick, me: string): TemplateResult {
       ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
       : nothing}
     ${summary !== "" ? html`<p class="shortage-open" data-queue-shortage>${summary}</p>` : nothing}
-    ${mine ? html`<p class="mine-tag">Claimed by you</p>` : nothing}
+    ${claimedWords !== "" ? html`<p class="mine-tag" data-claimed-by>${claimedWords}</p>` : nothing}
   `;
   return html`
     <section class="card pick-card ${stripeTone} ${mine ? "mine" : ""}" data-pick-card data-task-id=${t.id}>
@@ -236,6 +239,7 @@ export function renderConflicts(model: { cards: number }): TemplateResult {
 
 export interface PickModel {
   readonly pick: YardPick;
+  readonly me: string;
   /** The drafted quantities and reasons, one per ticket line, mirrored from the fields. */
   readonly drafts: ReadonlyArray<{
     order_line_no: number;
@@ -554,7 +558,9 @@ export function renderPick(model: PickModel): TemplateResult {
   const t: YardTask = pick.task;
   const ticket = pick.ticket;
   const held = ticket?.held_from_picking === true;
-  const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED");
+  const unclaimed = !held && isUnclaimed(t.status);
+  const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED" || unclaimed);
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, model.me);
   const runWords = runLineWords(t, ticket);
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
@@ -575,8 +581,14 @@ export function renderPick(model: PickModel): TemplateResult {
         ${priorityWord(ticket?.priority || t.priority) !== "" ? html`<span class="pill pill-watch">${priorityWord(ticket?.priority || t.priority)}</span>` : nothing}
         ${ticket !== null && mtoLabel(ticket.mto_class, ticket.fulfillment) !== "" ? html`<span>${mtoLabel(ticket.mto_class, ticket.fulfillment)}</span>` : nothing}
       </div>
+      ${claimedWords !== "" ? html`<p class="mine-tag" data-claimed-by>${claimedWords}</p>` : nothing}
       ${held
         ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
+        : nothing}
+      ${unclaimed
+        ? html`<div class="actions">
+            <button type="button" class="btn btn-primary big" data-action="take-pick" ?disabled=${model.busy} data-tap>Take this pick</button>
+          </div>`
         : nothing}
     </section>
     <div class="detail-grid">
