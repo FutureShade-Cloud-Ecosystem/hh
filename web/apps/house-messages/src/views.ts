@@ -178,6 +178,7 @@ export interface ConvoModel {
   readonly reactions: ReadonlyMap<string, readonly ReactionItem[]>;
   readonly activeReactPickerMsgId: string | null;
   readonly editingMessageId: string | null;
+  readonly confirmingDeleteId: string | null;
   readonly seenCounts: ReadonlyMap<string, number>;
 
   // C6 Files
@@ -248,7 +249,7 @@ function notifyModeWord(mode?: NotifyMode | null): string {
 // ---- the strip ---------------------------------------------------------------------------------
 
 function liveDot(state: LiveState | null): string {
-  if (state === "live") return "dot dot-live";
+  if (state === "live" || state === "polling") return "dot dot-live";
   if (state === "offline") return "dot dot-stop";
   return "dot dot-watch";
 }
@@ -256,13 +257,13 @@ function liveDot(state: LiveState | null): string {
 function renderStrip(m: Model): TemplateResult {
   const state = m.live;
   const words = state === null ? "Connecting" : liveWords(state);
-  const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" || state === "polling" ? "strip strip-warn" : "strip";
+  const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" ? "strip strip-warn" : "strip";
   const retry = state === "reconnecting" || state === "offline";
   return html`
-    <div class="${tone}" role="status" data-live>
-      <span class="live"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
+    <div class="${tone}" data-live>
+      <h1 class="strip-title" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</h1>
       <span class="spacer"></span>
-      <span class="dim small" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</span>
+      <span class="live dim small" role="status"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
       ${retry ? html`<button type="button" class="btn btn-secondary small-btn" data-action="retry-live">Retry now</button>` : nothing}
       ${m.stale === "" ? nothing : html`<span class="small words-bad" data-stale>${m.stale}</span>`}
     </div>
@@ -339,7 +340,7 @@ function renderRail(m: Model): TemplateResult {
       ${groups.map(
         (g) => html`
           <div class="ch-group">
-            <h4 class="group-title">${g.label}</h4>
+            ${g.label === "" ? nothing : html`<h4 class="group-title">${g.label}</h4>`}
             <ul class="ch-list">
               ${g.channels.map((c) => renderChannelItem(c, m.activeId, false))}
             </ul>
@@ -388,6 +389,12 @@ function renderMessageBody(msg: Message, c: ConvoModel): TemplateResult {
   `;
 }
 
+function deletePreview(body: string): string {
+  const clean = body.replace(/\s+/g, " ").trim();
+  if (clean.length <= 60) return clean;
+  return `${clean.slice(0, 57).trimEnd()}...`;
+}
+
 function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean): TemplateResult {
   const mine = msg.author_id !== undefined && msg.author_id !== "" && msg.author_id === m.meId;
   const isEvent = msg.kind === "EVENT";
@@ -403,7 +410,9 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
   const replies = open ?? [];
   const initials = isEvent ? "" : initialsOf(msg.author_name || (mine ? "You" : "Colleague"));
 
-  const canEdit = canEditMessage(msg, m.meId, m.now);
+  const isDeleted = Boolean(msg.deleted_at);
+  const canEdit = !isDeleted && canEditMessage(msg, m.meId, m.now);
+  const isConfirmingDelete = !isDeleted && c.confirmingDeleteId === msg.id;
   const msgReactions = c.reactions.get(msg.id) ?? [];
   const isReactOpen = c.activeReactPickerMsgId === msg.id;
   const seenCount = c.seenCounts.get(msg.id) ?? 0;
@@ -417,9 +426,20 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         <span class="who">${who}</span>
         ${kind !== "" && !mine && who !== kind ? html`<span class="kind">${kind}</span>` : nothing}
         <span class="when">${timeWords(msg.created_at, m.now)}</span>
-        ${msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
+        ${!isDeleted && msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
       </div>
       ${renderMessageBody(msg, c)}
+      ${isConfirmingDelete
+        ? html`
+          <div class="delete-confirm" role="group" aria-label="Confirm delete" data-delete-confirm=${msg.id}>
+            <span class="small">Delete \u201c${deletePreview(msg.body)}\u201d? This cannot be undone.</span>
+            <div class="delete-confirm-actions">
+              <button type="button" class="btn btn-danger small-btn" data-action="confirm-delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete message</button>
+              <button type="button" class="btn btn-secondary small-btn" data-action="cancel-delete-msg" data-id=${msg.id}>Cancel</button>
+            </div>
+          </div>
+        `
+        : nothing}
       ${why === "" ? nothing : html`<p class="why" data-why>${why}</p>`}
       ${eventDetails?.actionPill
         ? html`
@@ -430,7 +450,7 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
           </div>
         `
         : nothing}
-      ${msg.kind === "TEXT"
+      ${msg.kind === "TEXT" && !isDeleted
         ? html`
           <div class="reactions-row">
             ${msgReactions.map(
@@ -477,23 +497,29 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         `
         : nothing}
       ${renderAck(c.acks.get(msg.id), msg)}
-      <div class="msg-foot">
-        ${canEdit
-          ? html`
-            <button type="button" class="link small" data-action="edit-msg" data-id=${msg.id}>Edit</button>
-            <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
-          `
-          : nothing}
-        ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
-        <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
-        ${isReply
-          ? nothing
-          : html`
-              <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
-              <button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>${msg.reply_count > 0 ? "Open thread" : "Reply"}</button>
-              ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
-            `}
-      </div>
+      ${isDeleted
+        ? nothing
+        : html`
+          <div class="msg-foot">
+            ${canEdit
+              ? html`
+                <button type="button" class="link small" data-action="edit-msg" data-id=${msg.id}>Edit</button>
+                <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
+              `
+              : nothing}
+            ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
+            <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
+            ${isReply
+              ? nothing
+              : html`
+                  <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
+                  ${(msg.reply_count ?? 0) > 0
+                    ? html`<button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>Open thread</button>`
+                    : nothing}
+                  ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
+                `}
+          </div>
+        `}
       ${open === undefined
         ? nothing
         : html`<ul class="thread" data-thread>${replies.map((r) => renderMessage(r, c, m, true))}</ul>`}
@@ -782,7 +808,7 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
   const subtitle = isGroup ? c.groupSubtitle : ch.topic ? ch.topic : channelLine(ch);
 
   return html`
-    <section class="convo" data-conversation>
+    <section class="convo" data-conversation tabindex="-1">
       <div class="convo-head">
         <button type="button" class="btn btn-secondary small-btn back" data-action="back">Back</button>
         <div class="titles">
@@ -930,7 +956,7 @@ function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
         </div>
         <div class="modal-body">
           <label><strong>Channel name</strong></label>
-          <input type="text" data-field="channel-name" placeholder="e.g. yard-julian-receiving" data-value=${modal.name} />
+          <input type="text" data-field="channel-name" placeholder="e.g. yard-receiving" data-value=${modal.name} />
           <label><strong>Purpose (topic)</strong></label>
           <input type="text" data-field="channel-purpose" placeholder="What arrives at the dock..." data-value=${modal.topic} />
           <label><strong>Visibility</strong></label>
@@ -939,7 +965,7 @@ function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
             <button type="button" class="seg" data-action="set-channel-visibility" data-vis="PRIVATE" aria-pressed="false">Private</button>
           </div>
           <label><strong>Members by rule</strong></label>
-          <p class="dim small">All staff at Point Loma will join automatically.</p>
+          <p class="dim small">All staff at this branch will join automatically.</p>
         </div>
         <div class="modal-foot">
           <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>
@@ -1174,7 +1200,7 @@ function renderSettingsView(m: Model): TemplateResult {
                 ${(s?.membershipRules ?? []).map(
                   (r) => html`
                     <tr>
-                      <td><strong>#${r.channel_name}</strong></td>
+                      <td><strong>${channelTitle({ name: r.channel_name })}</strong></td>
                       <td>${r.joins_automatically}</td>
                       <td>${r.leaves_automatically}</td>
                       <td><span class="tag tag-plain">${r.visibility}</span></td>
@@ -1291,7 +1317,7 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
             ${m.channels.map(
               (c) => html`
                 <div class="ch" style="justify-content: space-between;">
-                  <span>#${channelTitle(c)}</span>
+                  <span>${channelTitle(c)}</span>
                   <span class="tag tag-plain">${c.tier === "ESCALATION" ? "All (escalation)" : "All"}</span>
                 </div>
               `,
@@ -1367,7 +1393,7 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
               ${directory.map(
                 (dc) => html`
                   <tr>
-                    <td><strong>#${dc.name}</strong></td>
+                    <td><strong>${channelTitle({ name: dc.name })}</strong></td>
                     <td>${dc.member_count} member${dc.member_count === 1 ? "" : "s"}</td>
                     <td>
                       ${dc.membership_source === "DERIVED"

@@ -18,6 +18,7 @@
 // leg holds the rows against reasonWord.
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { YardChange, YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
@@ -25,11 +26,15 @@ import {
   ageLabel,
   canAcknowledge,
   changeStatusWord,
+  claimedByWords,
+  heldByOther,
+  isUnclaimed,
   lineIsShort,
   mtoLabel,
   orderHandle,
   pickSummary,
   isLocalLine,
+  RECORD_SENT_WORDS,
   RECORD_WAITING_WORDS,
   priorityWord,
   qtyLabel,
@@ -115,9 +120,24 @@ export interface QueueModel {
 }
 
 /** The staleness words for a scope: reads answer from the device, so the
- * board says when the world last came down. Relative words only. */
-export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
-  if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
+ * board says when the world last came down. Offline, it names the clock time
+ * of the pull ("Offline. Showing what you pulled at <time>"). */
+export function stalenessWords(
+  staleness: { neverPulled: boolean; ageMs: number | null; lastPullAt?: string | null },
+  offline = false,
+): string {
+  if (staleness.neverPulled || staleness.ageMs === null) {
+    return offline ? "Offline. Never pulled" : "Never pulled";
+  }
+  if (offline) {
+    const parsed = staleness.lastPullAt ? Date.parse(staleness.lastPullAt) : Number.NaN;
+    const pulledAt = Number.isFinite(parsed) ? new Date(parsed) : new Date(Date.now() - staleness.ageMs);
+    // The glossary's time form ("8:15 AM") in the dealer's house zone, never the device's clock or a fixed HH:MM.
+    const clock = new Intl.DateTimeFormat("en-US", { timeZone: houseZone(), hour: "numeric", minute: "2-digit" })
+      .format(pulledAt)
+      .replace(/[\u202f\u00a0]/g, " ");
+    return `Offline. Showing what you pulled at ${clock}`;
+  }
   const minutes = Math.floor(staleness.ageMs / 60_000);
   if (minutes < 1) return "Pulled just now";
   return `Pulled ${minutes} min ago`;
@@ -126,6 +146,7 @@ export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number 
 function pickCard(entry: YardPick, me: string): TemplateResult {
   const t = entry.task;
   const mine = t.claimed_by !== "" && t.claimed_by === me;
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, me);
   const held = entry.ticket?.held_from_picking === true;
   const ticket = entry.ticket;
   const lineCount = ticket?.lines.length ?? 0;
@@ -133,9 +154,10 @@ function pickCard(entry: YardPick, me: string): TemplateResult {
   const mto = ticket !== null ? mtoLabel(ticket.mto_class, ticket.fulfillment) : "";
   const priority = priorityWord(ticket?.priority || t.priority);
   const runWords = runLineWords(t, ticket);
+  const theirs = heldByOther(t.claimed_by, me, t.status);
   const stripeTone = held
     ? "held"
-    : t.status === "IN_PROGRESS" || t.status === "ACCEPTED"
+    : (t.status === "IN_PROGRESS" || t.status === "ACCEPTED") && !theirs
       ? "picking"
       : t.status === "STAGED" || t.status === "DONE"
         ? "staged"
@@ -162,7 +184,7 @@ function pickCard(entry: YardPick, me: string): TemplateResult {
       ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
       : nothing}
     ${summary !== "" ? html`<p class="shortage-open" data-queue-shortage>${summary}</p>` : nothing}
-    ${mine ? html`<p class="mine-tag">Claimed by you</p>` : nothing}
+    ${claimedWords !== "" ? html`<p class="mine-tag ${theirs ? "theirs" : ""}" data-claimed-by>${claimedWords}</p>` : nothing}
   `;
   return html`
     <section class="card pick-card ${stripeTone} ${mine ? "mine" : ""}" data-pick-card data-task-id=${t.id}>
@@ -236,6 +258,7 @@ export function renderConflicts(model: { cards: number }): TemplateResult {
 
 export interface PickModel {
   readonly pick: YardPick;
+  readonly me: string;
   /** The drafted quantities and reasons, one per ticket line, mirrored from the fields. */
   readonly drafts: ReadonlyArray<{
     order_line_no: number;
@@ -260,6 +283,10 @@ export interface PickModel {
   readonly skids: number | null;
   /** The skid reason chosen, mirrored, so the radio row shows its chosen state. */
   readonly skidReason: string;
+  /** True after the current skid count was saved, closing the reason sheet until the count is stepped again. */
+  readonly skidSaved?: boolean;
+  /** True after a queued pick record went out to the server on reconnect. */
+  readonly recordSent?: boolean;
 }
 
 function draftFor(model: PickModel, lineNo: number): { order_line_no: number; qty_picked: string; short_reason: string; short_note: string } | null {
@@ -282,35 +309,50 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
   const reason = draft !== null ? draft.short_reason : (recorded?.short_reason ?? "");
   const note = draft !== null ? draft.short_note : (recorded?.short_note ?? "");
   const backordered = line.qty_backordered;
-  const held = model.pick.ticket?.held_from_picking === true;
+  const taken = heldByOther(model.pick.task.claimed_by, model.me, model.pick.task.status);
+  const held = model.pick.ticket?.held_from_picking === true || taken;
   const productId = line.product_id !== "" ? line.product_id : line.sku;
   return html`
     <li class="line ${short ? "short" : full ? "full" : ""}" data-line data-line-no=${line.line_no} data-product-id=${productId}>
-      <button
-        type="button"
-        class="line-row"
-        data-action="edit-line"
-        data-line-no=${line.line_no}
-        aria-label=${`Line ${line.line_no}, ${line.description}`}
-        ?disabled=${held}
-        data-tap
-      >
-        <span class="line-thumb" aria-hidden="true">
-          <span class="line-thumb-fallback"></span>
-          <img class="line-img" alt="" data-line-img data-product-id=${productId} />
-          <span class="line-check ${full ? "full" : short ? "short" : ""}">${full ? "\u2713" : short ? "!" : ""}</span>
-        </span>
-        <span class="line-main">
-          <span class="line-desc">${line.description}</span>
-          <span class="line-sub">${line.sku !== "" ? `${line.sku} · ` : ""}${line.location !== "" ? line.location : "no bin on file"}</span>
-          ${reason !== "" ? html`<span class="line-sub line-reason">${reasonWord(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
-          ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
-        </span>
-        <span class="line-qty" data-line-qty>
-          ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
-          <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
-        </span>
-      </button>
+      <div class="line-bar">
+        <button
+          type="button"
+          class="line-row"
+          data-action="pull-line"
+          data-line-no=${line.line_no}
+          aria-label=${full ? `Undo line ${line.line_no}, ${line.description}` : `Line ${line.line_no}, ${line.description}`}
+          ?disabled=${held}
+          data-tap
+        >
+          <span class="line-thumb" aria-hidden="true">
+            <span class="line-thumb-fallback"></span>
+            <img class="line-img" alt="" data-line-img data-product-id=${productId} />
+            <span class="line-check ${full ? "full" : short ? "short" : ""}">${full ? "\u2713" : short ? "!" : ""}</span>
+          </span>
+          <span class="line-main">
+            <span class="line-desc">${line.description}</span>
+            <span class="line-sub">${line.sku !== "" ? `${line.sku} · ` : ""}${line.location !== "" ? line.location : "no bin on file"}</span>
+            <span class="line-qty" data-line-qty>
+              ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
+              <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
+              ${full && !held ? html`<span class="line-undo" data-undo-word>Undo</span>` : nothing}
+            </span>
+            ${reason !== "" ? html`<span class="line-sub line-reason">${reasonWord(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
+            ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
+          </span>
+        </button>
+        ${taken
+          ? nothing
+          : html`<button
+          type="button"
+          class="btn btn-secondary line-short"
+          data-action="edit-line"
+          data-line-no=${line.line_no}
+          aria-label=${`Short on line ${line.line_no}, ${line.description}`}
+          ?disabled=${held}
+          data-tap
+        >Short</button>`}
+      </div>
       ${editing && !held ? renderQtyEditor(model, line, draft, recorded) : nothing}
     </li>
   `;
@@ -390,7 +432,11 @@ function pullList(model: PickModel): TemplateResult {
     <section class="card" data-pull-list>
       <h3>Pull list · ${pick.ticket.lines.length} ${pick.ticket.lines.length === 1 ? "line" : "lines"}</h3>
       ${summary !== "" ? html`<p class="dim" data-pick-summary>${summary}</p>` : nothing}
-      ${pick.picked.some(isLocalLine) ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>` : nothing}
+      ${pick.picked.some(isLocalLine)
+        ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>`
+        : model.recordSent
+          ? html`<p class="dim" data-pick-sent role="status">${RECORD_SENT_WORDS}</p>`
+          : nothing}
       <ul class="lines">${pick.ticket.lines.map((l) => lineRow(model, l, recorded.get(l.line_no)))}</ul>
     </section>
   `;
@@ -479,8 +525,18 @@ function shortageSheet(model: PickModel): TemplateResult | typeof nothing {
   `;
 }
 
-function skidsCard(model: PickModel): TemplateResult {
+function skidsCard(model: PickModel, readOnly = false): TemplateResult {
   const counted = model.skids !== null;
+  if (readOnly) {
+    return html`
+      <section class="card" data-skids>
+        <h3>Skids</h3>
+        <div class="skid-row">
+          <span class="skid-count ${counted ? "" : "unknown"}" data-skid-count>${counted ? String(model.skids) : "Not counted"}</span>
+        </div>
+      </section>
+    `;
+  }
   return html`
     <section class="card" data-skids>
       <h3>Skids</h3>
@@ -489,7 +545,7 @@ function skidsCard(model: PickModel): TemplateResult {
         <span class="skid-count ${counted ? "" : "unknown"}" data-skid-count>${counted ? String(model.skids) : "Not counted"}</span>
         <button type="button" class="stepper" data-action="skid-step" data-step="1" ?disabled=${model.busy} data-tap aria-label="One skid more">+</button>
       </div>
-      ${counted
+      ${counted && !model.skidSaved
         ? html`
             <hh-sheet heading="Why did the skid count change?" data-skid-sheet open>
               <span class="field-label">Reason (required when you change it)</span>
@@ -507,7 +563,11 @@ function skidsCard(model: PickModel): TemplateResult {
               </button>
             </hh-sheet>
           `
-        : html`<p class="hint">Step the count when you know it; the reason comes with the change.</p>`}
+        : counted && model.skidSaved
+          ? model.notice === ""
+            ? html`<p class="hint" data-skid-saved>Skid count saved · ${model.skids} ${model.skids === 1 ? "skid" : "skids"}</p>`
+            : nothing
+          : html`<p class="hint">Step the count when you know it; the reason comes with the change.</p>`}
     </section>
   `;
 }
@@ -554,7 +614,10 @@ export function renderPick(model: PickModel): TemplateResult {
   const t: YardTask = pick.task;
   const ticket = pick.ticket;
   const held = ticket?.held_from_picking === true;
-  const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED");
+  const unclaimed = !held && isUnclaimed(t.status);
+  const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED" || unclaimed);
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, model.me);
+  const taken = heldByOther(t.claimed_by, model.me, t.status);
   const runWords = runLineWords(t, ticket);
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
@@ -575,25 +638,32 @@ export function renderPick(model: PickModel): TemplateResult {
         ${priorityWord(ticket?.priority || t.priority) !== "" ? html`<span class="pill pill-watch">${priorityWord(ticket?.priority || t.priority)}</span>` : nothing}
         ${ticket !== null && mtoLabel(ticket.mto_class, ticket.fulfillment) !== "" ? html`<span>${mtoLabel(ticket.mto_class, ticket.fulfillment)}</span>` : nothing}
       </div>
+      ${claimedWords !== "" ? html`<p class="mine-tag ${taken ? "theirs" : ""}" data-claimed-by>${claimedWords}</p>` : nothing}
+      ${taken ? html`<p class="taken-line" role="status" data-pick-taken>Someone else is on this pick.</p>` : nothing}
       ${held
         ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
+        : nothing}
+      ${unclaimed
+        ? html`<div class="actions">
+            <button type="button" class="btn btn-primary big" data-action="take-pick" ?disabled=${model.busy} data-tap>Take this pick</button>
+          </div>`
         : nothing}
     </section>
     <div class="detail-grid">
       <div>
         ${pullList(model)}
-        ${recordable ? skidsCard(model) : nothing}
-        ${recordable
+        ${recordable ? skidsCard(model, taken) : nothing}
+        ${recordable && !taken
           ? html`<div class="actions" data-record-door>
               <button type="button" class="btn btn-primary big" data-action="save-pick" ?disabled=${model.busy} data-tap>Save pick</button>
               <button type="button" class="btn btn-secondary big btn-door" data-action="open-sheet" data-tap>Report a shortage</button>
             </div>`
           : nothing}
-        ${shortageSheet(model)}
+        ${taken ? nothing : shortageSheet(model)}
       </div>
       <div>
         ${shortageList(model)}
-        ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : !held && t.status === "IN_PROGRESS" ? stageCard() : nothing}
+        ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : !held && !taken && t.status === "IN_PROGRESS" ? stageCard() : nothing}
       </div>
     </div>
   `;

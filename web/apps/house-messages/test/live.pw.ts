@@ -42,7 +42,7 @@ test("a core that issues no stream is read every ten seconds, says so, and still
   await openAs(page, request, "sales");
   await stubPost(request, "tickets", { enabled: false });
   await page.reload();
-  await expect(live(page)).toContainText("Messages are read every 10 seconds");
+  await expect(live(page)).toContainText("Updates while this page is open");
   await channel(page, CH.branch).click();
   await says(request, "yard-manager", CH.branch, "Brought by the timer");
   await expect(page.locator("[data-conversation] li[data-msg]").last()).toContainText("Brought by the timer", { timeout: 20_000 });

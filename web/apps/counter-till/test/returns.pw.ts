@@ -10,11 +10,14 @@
 // holds nothing. The stub's world carries no tax, and the credit figure itself is the server's, so
 // these legs assert the drafted lines and counts, never a computed credit.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 async function signIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
 }
 
 async function openReturns(page: Page): Promise<void> {
@@ -395,7 +398,9 @@ test("a note over the approval amount is refused with the amount and approvers n
   await expect(done).toContainText("$360.00");
   await expect(done).toContainText("Approved by Sales manager (demo).");
   await expect(done).toContainText("Rung by Sales (demo).");
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   const state = await stubState(page);
   const posts = state.sightings.filter((sighting) => sighting.path === "/api/v1/pos/returns-across");
   expect(posts).toHaveLength(2);
@@ -408,9 +413,13 @@ test("a note over the approval amount is refused with the amount and approvers n
 
 test("signed in as the Sales manager the same note completes with no refusal, and Done names the manager as approver", async ({ page }) => {
   await setApprovalLimit(page, true);
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
+  await closeAccountMenu(page);
   await openReturns(page);
   await pickCustomer(page, "maple", "Maple Ridge Contracting");
   await lineOf(page, "CT-1002", WALL).getByLabel(/Return quantity/).fill("6");
@@ -441,11 +450,15 @@ test("a sign out under an in flight approval leaves the surface blank for the ne
   await page.getByRole("button", { name: "Record the credit note" }).click();
   await page.getByTestId("refund-refusal").getByRole("button", { name: "Manager approval" }).click();
   await page.getByRole("dialog", { name: "Manager approval" }).getByRole("button", { name: "Sales manager" }).click();
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   release?.();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   await expect(page.getByTestId("returns-done")).toHaveCount(0);
   await openReturns(page);
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
@@ -679,7 +692,9 @@ test("a swap over the approval amount asks for a manager's card on the swap rout
   await page.getByRole("dialog", { name: "Manager approval" }).getByRole("button", { name: "Sales manager" }).click();
   await expect(page.getByTestId("returns-done")).toContainText("Swap rung");
   await expect(page.getByTestId("returns-done")).toContainText("Approved by Sales manager (demo).");
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   const posts = (await stubState(page)).sightings.filter((sighting) => sighting.path === "/api/v1/pos/swaps");
   expect(posts).toHaveLength(2);
   expect(posts[0].approverHeader).toBe(false);

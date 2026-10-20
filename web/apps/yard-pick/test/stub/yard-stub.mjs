@@ -178,6 +178,7 @@ function readBody(req) {
 // shortage and a resolved one.
 
 const YARD_USER = "d0200000-0000-4000-9000-000000000002";
+const RIVAL_USER = "d0200000-0000-4000-9000-0000000000a2";
 const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const BRANCH = { id: POINT_LOMA, code: "PLM", name: "Gable Landscape Supply, Point Loma", address: { line1: "857 Bayly Rd", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true };
@@ -750,6 +751,20 @@ async function handle(req, res) {
     task.status = "CANCELLED";
     task.claimed_by = "dispatch";
     task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
+  // A second person takes an unclaimed pick while the first person's screen still shows it queued:
+  // the row moves to ACCEPTED under a user other than the yard persona, and its seq moves with it. The
+  // claims every other path stamps still go to the yard persona, so no existing spec sees a change.
+  if (req.method === "POST" && path === "/_stub/rival-claim") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.status = "ACCEPTED";
+    task.claimed_by = RIVAL_USER;
+    task.claimed_at = new Date().toISOString();
+    task.updated_at = task.claimed_at;
     syncTouch("pick_tasks", task.id);
     return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
   }

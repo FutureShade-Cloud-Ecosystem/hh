@@ -32,7 +32,10 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+        if (theme === "brand") {
+          await page.locator("hh-shell-header button.account").click();
+          await page.getByRole("button", { name: "Theme: Light" }).click();
+        }
       };
 
       await request.post("/_stub/reset");

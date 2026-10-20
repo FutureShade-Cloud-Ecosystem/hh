@@ -12,6 +12,7 @@
 // leaves it. A record that fails a read is dropped and the entry page with
 // the cards comes up, the till's ordinary way in.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 const HANDOFF_KEY = "hh-demo.front-door.session.v1";
 const MIRROR_KEY = "hh-auth.session.v2";
@@ -60,7 +61,9 @@ test("a boot from the front door's key lands signed in as the handed role, no se
   await seedHandoff(page, handoffRecord());
   await page.goto("/");
   // The terminal is up under the role's name; the entry cards never show.
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
   // The handoff key stays in the tab until Sign out (row 1040), so a reload or a second visit
@@ -72,10 +75,14 @@ test("a boot from the front door's key lands signed in as the handed role, no se
   expect(stored).toEqual([true, true]);
   // A reload boots over the kept key and lands signed in again, no picker.
   await page.reload();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   // Sign out ends it the ordinary way: the entry cards come back, and the key goes with the session.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   const afterSignOut = await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY);
   expect(afterSignOut).toBeNull();

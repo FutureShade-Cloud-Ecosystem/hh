@@ -165,15 +165,15 @@ type quoteSpec struct {
 var demoQuotes = []quoteSpec{
 	{Key: "Q1", Cust: "C02", Status: "DRAFT", Owner: personaQuoteSales, Branch: 1, AgeDays: 3,
 		Project: "Marina Road patio", PO: "", Contact: "Site contact",
-		Notes: "Draft for the patio, pavers and edging.",
+		Notes: "Pavers and edging for the patio.",
 		Lines: []quoteLineSpec{{Prod: "P02", Qty: 200}, {Prod: "P10", Qty: 30, DiscPct: 4}}},
 	{Key: "Q2", Cust: "C01", Status: "SENT", Owner: personaQuoteManager, Branch: 1, AgeDays: 5,
 		Project: "Front walk and drive apron", PO: "PO-DEMO-0042", Contact: "Site foreman",
-		Notes: "Sent for review, the paver price is the account price.",
+		Notes: "The paver price on this quote is your account price.",
 		Lines: []quoteLineSpec{{Prod: "P01", Qty: 240}, {Prod: "P07", Qty: 8}}, Link: true},
 	{Key: "Q3", Cust: "C02", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 8,
 		Project: "Harbour Street steps", PO: "PO-DEMO-0077", Contact: "Site contact",
-		Notes: "Accepted by the customer, ready to become an order.",
+		Notes: "Thank you for accepting. We will confirm your pickup time.",
 		Lines: []quoteLineSpec{
 			{Prod: "P02", Qty: 150, DiscPct: 12, Cleared: true},
 			{Prod: "P10", Qty: 24, DiscPct: 5},
@@ -181,14 +181,14 @@ var demoQuotes = []quoteSpec{
 		}, Link: true, Editor: personaQuoteManager},
 	{Key: "Q4", Cust: "C10", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 4,
 		Project: "Patio base material", PO: "PO-DEMO-0091", Contact: "Site contact",
-		Notes: "Accepted by the customer. The account pays before release: a COD sale at the till is held until it is paid, and a converted order is held from picking until its balance is paid.",
+		Notes: "Thank you for accepting. Your account pays before release, so the order is held until its balance is paid.",
 		Lines: []quoteLineSpec{
 			{Prod: "P08", Qty: 10},
 			{Prod: "P07", Qty: 4},
 		}, Link: true},
 	{Key: "Q5", Cust: "C04", Status: "DRAFT", Owner: personaQuoteSales, Branch: 0, AgeDays: 2,
 		Project: "Harbourview foundation", PO: "", Contact: "Site contact",
-		Notes: "Draft for the foundation, wall block.",
+		Notes: "Wall block for the foundation.",
 		Lines: []quoteLineSpec{{Prod: "P04", Qty: 50}}},
 }
 

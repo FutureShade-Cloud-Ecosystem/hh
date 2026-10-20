@@ -19,6 +19,7 @@
 
 import { html, nothing, type TemplateResult } from "lit";
 import { type BillingCustomerWorkspace } from "@hardscapehouse/api-client";
+import { bucketWord } from "./ar-logic.js";
 
 // WorkspaceTab is the five-tab set the workspace renders. The screen reads and writes
 // the active tab through one piece of desk state; the values are the words the C8 walk
@@ -146,15 +147,15 @@ export function renderWorkspaceHeader(
       <div class="ar-workspace-header__aging">
         <div class="ar-workspace-header__aging-bar" role="img" aria-label="Aging breakdown">
           <span class="bucket bucket-current" data-cents="${aging.current_cents}" data-label="Current"><span>${formatWorkspaceMoney(aging.current_cents)}</span></span>
-          <span class="bucket bucket-30" data-cents="${aging.days_30_cents}" data-label="1 to 30"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
-          <span class="bucket bucket-60" data-cents="${aging.days_60_cents}" data-label="31 to 60"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
-          <span class="bucket bucket-90" data-cents="${aging.days_90_cents}" data-label="61 to 90"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
-          <span class="bucket bucket-over90" data-cents="${aging.days_90_plus_cents}" data-label="91 and over"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
+          <span class="bucket bucket-30" data-cents="${aging.days_30_cents}" data-label="1 to 30 days"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
+          <span class="bucket bucket-60" data-cents="${aging.days_60_cents}" data-label="31 to 60 days"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
+          <span class="bucket bucket-90" data-cents="${aging.days_90_cents}" data-label="61 to 90 days"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
+          <span class="bucket bucket-over90" data-cents="${aging.days_90_plus_cents}" data-label="Over 90 days"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
         </div>
         <p class="ar-workspace-header__aging-legend">
           <span><b>${formatWorkspaceMoney(aging.open_cents)}</b> open</span>
           <span class="dim">·</span>
-          <span class="overdue">${formatWorkspaceMoney(aging.overdue_cents)} overdue</span>
+          <span class="overdue">${formatWorkspaceMoney(aging.overdue_cents)} past due</span>
           <span class="dim">·</span>
           <span>${overdueFraction}% past terms</span>
         </p>
@@ -266,7 +267,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${inv.days_overdue_bucket}${inv.days_overdue > 0 ? html` · ${inv.days_overdue}d late` : nothing}</span></td>
+      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}${inv.days_overdue > 0 ? html` · ${inv.days_overdue}d past due` : nothing}</span></td>
       <td>${inv.has_open_promise ? html`<span class="badge badge-promise">Promise</span>` : nothing}${inv.is_disputed ? html`<span class="badge badge-dispute">Dispute</span>` : nothing}</td>
     </tr>
   `);
@@ -292,7 +293,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${inv.days_overdue_bucket}</span></td>
+      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}</span></td>
       <td><span class="badge badge-dispute">Dispute</span></td>
     </tr>
   `);
@@ -504,7 +505,7 @@ export function renderWorkspaceSummaryCard(
         <dt>Credit limit</dt><dd>${formatWorkspaceMoney(h.credit_limit_cents)}</dd>
         <dt>Balance</dt><dd>${formatWorkspaceMoney(h.open_cents)}</dd>
         <dt>Available</dt><dd>${formatWorkspaceMoney(h.available_credit_cents)}</dd>
-        <dt>Overdue</dt><dd>${formatWorkspaceMoney(h.overdue_cents)}</dd>
+        <dt>Past due</dt><dd>${formatWorkspaceMoney(h.overdue_cents)}</dd>
         <dt>Last payment</dt><dd>${h.last_payment_at ? formatWorkspaceDate(h.last_payment_at) : "None"}</dd>
       </dl>
       ${pinned
@@ -554,7 +555,7 @@ export function renderWorkspaceMobileSummary(
           <span class="value">${formatWorkspaceMoney(h.available_credit_cents)}</span>
         </div>
         <div>
-          <span class="label">Overdue</span>
+          <span class="label">Past due</span>
           <span class="value overdue">${formatWorkspaceMoney(h.overdue_cents)}</span>
         </div>
         <button type="button" class="btn btn-primary" data-action="workspace-mobile-more">More actions</button>
