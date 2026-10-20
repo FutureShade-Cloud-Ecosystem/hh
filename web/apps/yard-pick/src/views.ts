@@ -146,7 +146,7 @@ export function stalenessWords(
 function pickCard(entry: YardPick, me: string): TemplateResult {
   const t = entry.task;
   const mine = t.claimed_by !== "" && t.claimed_by === me;
-  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, me);
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, me, t.claimed_by_role);
   const held = entry.ticket?.held_from_picking === true;
   const ticket = entry.ticket;
   const lineCount = ticket?.lines.length ?? 0;
@@ -616,7 +616,7 @@ export function renderPick(model: PickModel): TemplateResult {
   const held = ticket?.held_from_picking === true;
   const unclaimed = !held && isUnclaimed(t.status);
   const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED" || unclaimed);
-  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, model.me);
+  const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, model.me, t.claimed_by_role);
   const taken = heldByOther(t.claimed_by, model.me, t.status);
   const runWords = runLineWords(t, ticket);
   return html`

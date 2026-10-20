@@ -307,14 +307,21 @@ function looksLikeUUID(s: string): boolean {
 }
 
 /**
- * Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by a teammate" for anyone else.
- * The core's pick payload serves the claimer's id and no role label, and an id is never printed.
+ * Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by the <role label>" for anyone else when
+ * the core serves the claimer's role label (claimed_by_role), "Claimed by a teammate" when it serves none. The label is the
+ * identity module's role name, never a name or an email, and an id is never printed (a label that is only an id is dropped).
  */
-export function claimedByWords(claimedBy: string | null | undefined, me: string | null | undefined): string {
+export function claimedByWords(
+  claimedBy: string | null | undefined,
+  me: string | null | undefined,
+  roleLabel?: string | null,
+): string {
   const raw = (claimedBy ?? "").trim();
   if (raw === "") return "";
   const myId = (me ?? "").trim();
   if (myId !== "" && raw === myId) return "Claimed by you";
+  const label = (roleLabel ?? "").trim();
+  if (label !== "" && label !== raw && !looksLikeUUID(label) && !label.includes("@")) return `Claimed by the ${label}`;
   return "Claimed by a teammate";
 }
 

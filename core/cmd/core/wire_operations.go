@@ -689,6 +689,16 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// The sync record door's body is the yard service, the one the REST record door runs.
 	pickSync.WithPickRecorder(yardTasksSvc)
+	// The pick payload names a claimed pick's holder by role label, never by name (UX-75): identity's
+	// reader serves the REST detail and list and the pick_tasks rows alike. A nil pool wires none.
+	if pool != nil {
+		claimerRoles, rolesErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if rolesErr != nil {
+			panic("tasks: claimer role labels refused to boot: " + rolesErr.Error())
+		}
+		yardTasksSvc.WithClaimerRoles(claimerRoles)
+		pickSync.WithClaimerRoles(claimerRoles)
+	}
 	// A shortage created through sync tells the counter as the REST report does, through the yard
 	// service's notifier.
 	shortageSync.WithNoticer(yardTasksSvc)
