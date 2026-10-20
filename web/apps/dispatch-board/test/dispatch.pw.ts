@@ -92,6 +92,14 @@ test("a truck is dispatched only with a crew, behind a confirm naming the truck,
   await expect(sheet3).toContainText("The driver sees the run at once. Sending it marks its 1 ready load loaded. A sent run cannot be called back here.");
   await sheet3.getByRole("button", { name: "Cancel" }).click();
 
+  // When a stop on the run is held for payment, the confirm names it without blocking the send button.
+  await truck(page, "RUN-PLM-1").getByRole("button", { name: "Dispatch" }).click();
+  const sheet1 = truck(page, "RUN-PLM-1").locator("[data-sheet='dispatch-run']");
+  await expect(sheet1).toContainText("Send Truck 01 with Driver A (demo) and 2 stops?");
+  await expect(sheet1).toContainText("ORD-0014 is held for payment and cannot be released until it is paid.");
+  await expect(sheet1.getByRole("button", { name: "Send the run" })).toBeEnabled();
+  await sheet1.getByRole("button", { name: "Cancel" }).click();
+
   // Escape also cancels, sends nothing, and returns focus to the Dispatch button.
   await dispatchBtn.click();
   await expect(sheet).toBeVisible();

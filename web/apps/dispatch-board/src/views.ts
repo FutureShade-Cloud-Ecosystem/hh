@@ -439,11 +439,12 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
     const runs = [...(model.view?.loads.map((r) => r.run) ?? []), ...(model.day?.runs ?? [])];
     const run = runs.find((r) => r.id === sheet.id);
     const stops = model.view?.loads.find((r) => r.run.id === sheet.id)?.stops ?? model.day?.stops.filter((s) => s.run_id === sheet.id);
-    const words = dispatchConfirmWords(run, stops);
+    const words = dispatchConfirmWords(run, stops, model.holds);
     return html`
       <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
         <h4>${words.title}</h4>
         <p class="small">${words.body}</p>
+        ${words.holds.map((line) => html`<p class="small hold-words" data-sheet-hold>${line}</p>`)}
         ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
         <div class="actions">
           <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Send the run</button>

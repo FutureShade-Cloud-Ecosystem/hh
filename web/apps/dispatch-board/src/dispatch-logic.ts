@@ -1446,23 +1446,34 @@ export const PUT_ON_TRUCK_COMMIT_NOTE = "Putting a load on a truck commits the o
 
 /**
  * The confirm sheet before a run goes out: names the truck, the driver as the record names
- * them, and the stop count, and states what the core dispatch handler (Service.DispatchRun in
- * core/internal/dispatch/service.go:930-937) actually does: it sends the run to the driver at
- * once and marks its ready loads loaded.
+ * them, and the stop count, states what the core dispatch handler (Service.DispatchRun in
+ * core/internal/dispatch/service.go:930-937) actually does (sends the run to the driver at
+ * once and marks its ready loads loaded), and names any stop on the run that is held for
+ * payment using the same hold record the card's chip reads.
  */
 export function dispatchConfirmWords(
   run: { readonly run_no?: string; readonly truck_code?: string; readonly driver_name?: string; readonly stop_count?: number } | null | undefined,
   stops?: readonly { readonly id: string; readonly order_no?: string; readonly status: string }[],
-): { readonly title: string; readonly body: string } {
+  holds?: ReadonlyMap<string, Pick<DispatchStopPaymentHold, "held" | "reason" | "amount_due_cents">>,
+): { readonly title: string; readonly body: string; readonly holds: readonly string[] } {
   const truck = (run?.truck_code ?? "").trim() || (run?.run_no ?? "").trim() || "this truck";
   const driver = (run?.driver_name ?? "").trim() || "the driver";
   const n = run?.stop_count ?? (stops?.length ?? 0);
   const ready = stops !== undefined ? stops.filter((s) => s.status === "READY").length : n;
   const stopsWord = `${n} ${n === 1 ? "stop" : "stops"}`;
   const readyWord = `${ready} ready ${ready === 1 ? "load" : "loads"}`;
+  const heldLines: string[] = [];
+  for (const s of stops ?? []) {
+    const hold = holds?.get(s.id);
+    if (holdWords(hold) !== "") {
+      const orderNo = (s.order_no ?? "").trim() || "This order";
+      heldLines.push(`${orderNo} is held for payment and cannot be released until it is paid.`);
+    }
+  }
   return {
     title: `Send ${truck} with ${driver} and ${stopsWord}?`,
     body: `The driver sees the run at once. Sending it marks its ${readyWord} loaded. A sent run cannot be called back here.`,
+    holds: heldLines,
   };
 }
 

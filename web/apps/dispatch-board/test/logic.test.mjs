@@ -843,7 +843,7 @@ test("boardProblemLine reads each problem in its own words, never in a generic s
   assert.match(boardProblemLine({ kind: "due-to-commit", runNo: "RUN-PLM-3", daysToCommit: 2 }), /due to commit in 2 days/);
 });
 
-test("dispatchConfirmWords names the truck, driver, and stop count and states that ready loads are marked loaded", async () => {
+test("dispatchConfirmWords names the truck, driver, and stop count, states that ready loads are marked loaded, and names any stop held for payment", async () => {
   const { PUT_ON_TRUCK_COMMIT_NOTE, dispatchConfirmWords } = await import("../src/dispatch-logic.js");
   assert.equal(PUT_ON_TRUCK_COMMIT_NOTE, "Putting a load on a truck commits the order.");
   const one = dispatchConfirmWords(
@@ -852,6 +852,11 @@ test("dispatchConfirmWords names the truck, driver, and stop count and states th
   );
   assert.equal(one.title, "Send Truck 03 with Driver A (demo) and 1 stop?");
   assert.equal(one.body, "The driver sees the run at once. Sending it marks its 1 ready load loaded. A sent run cannot be called back here.");
+  assert.deepEqual(one.holds, []);
+  const holds = new Map([
+    ["s1", { held: false, reason: "" }],
+    ["s2", { held: true, reason: "Payment needed before release, call the office.", order_no: "ORD-0014" }],
+  ]);
   const many = dispatchConfirmWords(
     { run_no: "RUN-PLM-1", truck_code: "Truck 01", driver_name: "Driver A (demo)", stop_count: 3 },
     [
@@ -859,8 +864,10 @@ test("dispatchConfirmWords names the truck, driver, and stop count and states th
       { id: "s2", order_no: "ORD-0014", status: "READY" },
       { id: "s3", order_no: "ORD-0029", status: "READY" },
     ],
+    holds,
   );
   assert.equal(many.title, "Send Truck 01 with Driver A (demo) and 3 stops?");
   assert.equal(many.body, "The driver sees the run at once. Sending it marks its 2 ready loads loaded. A sent run cannot be called back here.");
+  assert.deepEqual(many.holds, ["ORD-0014 is held for payment and cannot be released until it is paid."]);
 });
 
