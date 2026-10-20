@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,9 +101,11 @@ func (w *decodedJSONWalk) walk(v any) {
 // violation of the driver money and bin scan rules:
 //  1. Any JSON key containing a forbidden word from driverForbiddenKeyWords
 //     (case folded). String values are not scanned for words.
-//  2. Any whole string value or whole number value equal to a planted value in
-//     driverForbiddenWholeValues (or any additional wholeValues passed by the
-//     caller), including numbers serialised as strings. Never a substring.
+//  2. Any string value carrying a planted value from driverForbiddenWholeValues
+//     (or any additional values passed by the caller) case insensitively as a
+//     token bounded by a non alphanumeric character or the string's edge, or
+//     matching numerically after trimming whitespace, and any number value
+//     equal to a planted value.
 //  3. Any JSON null value in the decoded walk.
 func scanDriverPayloadJSON(raw []byte, extraWholeValues ...string) []string {
 	w, err := walkDecodedJSON(raw)
@@ -121,9 +124,10 @@ func scanDriverPayloadJSON(raw []byte, extraWholeValues ...string) []string {
 	wholeList := append([]string{}, driverForbiddenWholeValues...)
 	wholeList = append(wholeList, extraWholeValues...)
 	for _, planted := range wholeList {
+		re := regexp.MustCompile(`(?i)(^|[^a-z0-9])` + regexp.QuoteMeta(planted) + `($|[^a-z0-9])`)
 		for _, s := range w.Strings {
-			if s == planted {
-				problems = append(problems, fmt.Sprintf("whole string value equals forbidden value %q", planted))
+			if re.MatchString(s) || numberEqualsPlanted(strings.TrimSpace(s), planted) {
+				problems = append(problems, fmt.Sprintf("string value %q matches forbidden value %q", s, planted))
 			}
 		}
 		for _, n := range w.Numbers {
@@ -240,6 +244,18 @@ func TestAssertDriverPayloadJSON_Teeth(t *testing.T) {
 			body: `{"id":"stop-1","lines":[{"sku":"LL-PAV-601","bin":"A-12"}]}`,
 		},
 		{
+			name: "planted_token_bin_value_Bay_A_12",
+			body: `{"id":"stop-1","lines":[{"sku":"LL-PAV-601","bin":"Bay A-12"}]}`,
+		},
+		{
+			name: "planted_padded_bin_value_space_A_12",
+			body: `{"id":"stop-1","lines":[{"sku":"LL-PAV-601","bin":" A-12"}]}`,
+		},
+		{
+			name: "planted_lowercase_bin_value_a_12",
+			body: `{"id":"stop-1","lines":[{"sku":"LL-PAV-601","bin":"a-12"}]}`,
+		},
+		{
 			name: "planted_whole_bin_value_YARD_3",
 			body: `{"id":"stop-1","lines":[{"sku":"LL-AGG-602","bin":"YARD-3"}]}`,
 		},
@@ -250,6 +266,10 @@ func TestAssertDriverPayloadJSON_Teeth(t *testing.T) {
 		{
 			name: "planted_whole_money_string_353125",
 			body: `{"id":"stop-1","load_figure":"353125"}`,
+		},
+		{
+			name: "planted_decimal_money_string_353125_00",
+			body: `{"id":"stop-1","load_figure":"353125.00"}`,
 		},
 		{
 			name: "planted_whole_money_number_9500",
