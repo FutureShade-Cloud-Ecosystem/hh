@@ -264,6 +264,8 @@ export interface PickModel {
   readonly skids: number | null;
   /** The skid reason chosen, mirrored, so the radio row shows its chosen state. */
   readonly skidReason: string;
+  /** True after the current skid count was saved, closing the reason sheet until the count is stepped again. */
+  readonly skidSaved?: boolean;
 }
 
 function draftFor(model: PickModel, lineNo: number): { order_line_no: number; qty_picked: string; short_reason: string; short_note: string } | null {
@@ -503,7 +505,7 @@ function skidsCard(model: PickModel): TemplateResult {
         <span class="skid-count ${counted ? "" : "unknown"}" data-skid-count>${counted ? String(model.skids) : "Not counted"}</span>
         <button type="button" class="stepper" data-action="skid-step" data-step="1" ?disabled=${model.busy} data-tap aria-label="One skid more">+</button>
       </div>
-      ${counted
+      ${counted && !model.skidSaved
         ? html`
             <hh-sheet heading="Why did the skid count change?" data-skid-sheet open>
               <span class="field-label">Reason (required when you change it)</span>
@@ -521,7 +523,9 @@ function skidsCard(model: PickModel): TemplateResult {
               </button>
             </hh-sheet>
           `
-        : html`<p class="hint">Step the count when you know it; the reason comes with the change.</p>`}
+        : counted && model.skidSaved
+          ? html`<p class="hint" data-skid-saved>Skid count saved · ${model.skids} ${model.skids === 1 ? "skid" : "skids"}</p>`
+          : html`<p class="hint">Step the count when you know it; the reason comes with the change.</p>`}
     </section>
   `;
 }

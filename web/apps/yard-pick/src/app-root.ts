@@ -161,6 +161,7 @@ export class YardPickApp extends HHElement {
   #sheetFor: number | null = null;
   #resolveFor = "";
   #skids: number | null = null;
+  #skidSaved = false;
 
   // The field mirrors: what the yard typed, keyed by field name (and line).
   #qtyMirror = new Map<number, string>();
@@ -1027,6 +1028,7 @@ export class YardPickApp extends HHElement {
     this.#sheetFor = null;
     this.#resolveFor = "";
     this.#skids = null;
+    this.#skidSaved = false;
     this.#skidReason = "";
     this.#skidNote = "";
     this.#stageWhere = "";
@@ -1217,6 +1219,7 @@ export class YardPickApp extends HHElement {
   #stepSkids(step: number): void {
     const base = this.#skids ?? 0;
     this.#skids = Math.max(0, base + step);
+    this.#skidSaved = false;
     this.requestUpdate();
   }
 
@@ -1236,6 +1239,7 @@ export class YardPickApp extends HHElement {
     this.#busy = false;
     if (answer.ok) {
       this.#skids = answer.value.skid_count;
+      this.#skidSaved = true;
       this.#notice = skidWords(answer.value);
     } else {
       this.#error = yardError(answer.error, answer.status, "The skid count did not save. Check your signal and try again.");
@@ -1377,6 +1381,7 @@ export class YardPickApp extends HHElement {
         notice: this.#notice,
         skids: this.#skids,
         skidReason: this.#skidReason,
+        skidSaved: this.#skidSaved,
       };
       return renderPick(detail);
     }

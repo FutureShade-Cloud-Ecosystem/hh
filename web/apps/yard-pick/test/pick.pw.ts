@@ -142,12 +142,51 @@ test("the skid stepper says Not counted until it is changed, then changes with a
   await expect(page.locator("[data-skid-count]")).toHaveText("2");
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 now holds 2 skids.");
+  await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
+  await expect(page.locator("[data-skid-saved]")).toContainText("Skid count saved");
   // A change names both numbers, and the deposit figures never show.
-  await page.getByRole("radio", { name: "Skids condensed" }).click();
   for (let i = 0; i < 3; i += 1) await page.getByRole("button", { name: "One skid more" }).click();
+  await page.getByRole("radio", { name: "Skids condensed" }).click();
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 changed from 2 to 5 skids.");
+  await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
+  await expect(page.locator("[data-skid-saved]")).toContainText("Skid count saved");
 });
+
+for (const vp of [
+  { width: 390, height: 844 },
+  { width: 1024, height: 768 },
+]) {
+  test(`the short reason list keeps the core enum and saving skid count closes the reason block with Skid count saved at ${vp.width}x${vp.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(vp);
+    await openInProgress(page);
+    await page
+      .locator("[data-line]", { hasText: "Class 2 base rock gravel" })
+      .getByRole("button", { name: "Short" })
+      .click();
+    await page.getByRole("button", { name: "Add one on" }).click();
+    const reasons = page.locator("[data-qty-edit]").getByRole("radio");
+    await expect(reasons).toHaveCount(5);
+    await expect(reasons.nth(0)).toContainText("Skids condensed");
+    await expect(reasons.nth(1)).toContainText("Damaged stock");
+    await expect(reasons.nth(2)).toContainText("Not enough on the yard");
+    await expect(reasons.nth(3)).toContainText("Count corrected");
+    await expect(reasons.nth(4)).toContainText("Something else");
+    await reasons.nth(2).click();
+    await page.getByRole("button", { name: "Done" }).click();
+
+    await page.getByRole("button", { name: "One skid more" }).click();
+    await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(1);
+    await page.getByRole("radio", { name: "Count corrected" }).click();
+    await page.getByRole("button", { name: "Save skid count" }).click();
+    await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
+    await expect(page.locator("[data-skid-saved]")).toContainText(
+      "Skid count saved",
+    );
+  });
+}
 
 test("the skids sit with the pull list, and the shortages come before the stage form", async ({ page }) => {
   await openInProgress(page);
