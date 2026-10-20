@@ -92,6 +92,37 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
  */
 export const DEFAULT_RP_NAME = "Workspace";
 
+/** The platform ceremony's own limit on rp.name: 64 bytes, never split mid character. */
+const RP_NAME_MAX_BYTES = 64;
+
+/** Control characters never reach the platform prompt, whatever the config said. */
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+
+/**
+ * Sanitize a name for the ceremony's rp.name: control characters out, then at
+ * most RP_NAME_MAX_BYTES of UTF-8 without splitting a character. An explicit
+ * rpName and the config's dealer_name go through the same clamp: the field is
+ * the platform's, and a config value longer than the platform accepts would
+ * refuse the whole enrolment.
+ */
+function clampRpName(name: string): string {
+  const stripped = name.replace(CONTROL_CHARS, "");
+  const bytes = new TextEncoder().encode(stripped);
+  if (bytes.byteLength <= RP_NAME_MAX_BYTES) return stripped;
+  let used = 0;
+  let out = "";
+  for (const character of stripped) {
+    const size = new TextEncoder().encode(character).byteLength;
+    if (used + size > RP_NAME_MAX_BYTES) break;
+    used += size;
+    out += character;
+  }
+  return out;
+}
+
+/** How long the tenant config read may take before enrolment stops waiting for it. */
+const TENANT_CONFIG_TIMEOUT_MS = 3_000;
+
 export interface WebAuthnProviderOptions {
   /** The relying party id; defaults to the serving origin when omitted. Changing it would orphan existing passkeys, so it is passed through untouched. */
   rpId?: string;
@@ -108,6 +139,8 @@ export interface WebAuthnProviderOptions {
   fetchImpl?: typeof fetch;
   /** The tenant config endpoint consulted for dealer_name; defaults to /api/v1/tenant/config. */
   tenantConfigUrl?: string;
+  /** How long the tenant config read may take, in milliseconds, before it is given up; defaults to 3000. */
+  tenantConfigTimeoutMs?: number;
   /** How long the platform prompt may take, in milliseconds. */
   timeoutMs?: number;
 }
@@ -122,8 +155,22 @@ async function resolveDealerName(options?: WebAuthnProviderOptions): Promise<str
   }
   const fetchImpl = options?.fetchImpl ?? (typeof globalThis.fetch === "function" ? globalThis.fetch : undefined);
   if (fetchImpl === undefined) return undefined;
+  // The read is bounded (PRR-518): a hanging endpoint must never block
+  // enrolment behind the user's tap. AbortSignal.timeout is used where the
+  // platform has it; a timer and controller stand in where it does not.
+  const timeoutMs = options?.tenantConfigTimeoutMs ?? TENANT_CONFIG_TIMEOUT_MS;
+  let signal: AbortSignal | undefined;
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (typeof AbortSignal?.timeout === "function") {
+    signal = AbortSignal.timeout(timeoutMs);
+  } else if (typeof AbortController === "function") {
+    controller = new AbortController();
+    timer = setTimeout(() => controller?.abort(), timeoutMs);
+    signal = controller.signal;
+  }
   try {
-    const response = await fetchImpl(options?.tenantConfigUrl ?? "/api/v1/tenant/config");
+    const response = await fetchImpl(options?.tenantConfigUrl ?? "/api/v1/tenant/config", { signal });
     if (!response.ok) return undefined;
     const body: unknown = await response.json();
     if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
@@ -131,6 +178,8 @@ async function resolveDealerName(options?: WebAuthnProviderOptions): Promise<str
     return typeof dealerName === "string" && dealerName.trim() !== "" ? dealerName : undefined;
   } catch {
     return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -146,6 +195,12 @@ export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): C
   const explicitRpName = options?.rpName?.trim() !== "" ? options?.rpName?.trim() : undefined;
   let resolvedRpName: string | undefined; // cached per provider after the first read
   const timeoutMs = options?.timeoutMs ?? 60_000;
+  // The tenant config read starts HERE, at construction (PRR-517): create()
+  // must only await what already ran, never start a network round trip inside
+  // the enrolment tap gesture. An explicit rpName (or a test seam) reads
+  // nothing; the eager promise never rejects, it resolves undefined on any
+  // failure.
+  const prewarmedRpName = explicitRpName === undefined && options?.resolveRpName === undefined ? resolveDealerName(options) : undefined;
   return {
     async isAvailable(): Promise<boolean> {
       try {
@@ -158,12 +213,15 @@ export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): C
     },
     async create(): Promise<string> {
       // Row 1975: the prompt names the dealer. An explicit non-empty rpName
-      // wins; otherwise the tenant config's dealer_name is read once and
-      // cached per provider; otherwise the neutral DEFAULT_RP_NAME. The rp id
-      // is never touched here: changing it would orphan existing passkeys.
-      const resolved = explicitRpName ?? resolvedRpName ?? (await resolveDealerName(options));
+      // wins; otherwise the eagerly started tenant config read is awaited
+      // here (never started fresh inside the tap); otherwise the neutral
+      // DEFAULT_RP_NAME. Whatever wins is clamped to what the platform's
+      // rp.name field accepts. The rp id is never touched here: changing it
+      // would orphan existing passkeys.
+      let resolved = explicitRpName ?? resolvedRpName;
+      if (resolved === undefined) resolved = await (prewarmedRpName ?? resolveDealerName(options));
       if (resolved !== undefined) resolvedRpName = resolved;
-      const rpName = resolved ?? DEFAULT_RP_NAME;
+      const rpName = clampRpName(resolved ?? DEFAULT_RP_NAME);
       const credential = await navigator.credentials.create({
         publicKey: {
           challenge: newChallengeBytes(),

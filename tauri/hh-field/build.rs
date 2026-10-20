@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "probe_report",
     "run_statement",
     "run_atomic",
+    "cmd_sign_out_revoke",
     "auth_sign_in",
     "auth_resume",
     "auth_exchange",
@@ -29,6 +30,7 @@ const COMMANDS: &[&str] = &[
 const COMMANDS: &[&str] = &[
     "run_statement",
     "run_atomic",
+    "cmd_sign_out_revoke",
     "auth_sign_in",
     "auth_resume",
     "auth_exchange",
