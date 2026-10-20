@@ -1696,7 +1696,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
           <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
         </label>
         <label class="field">
-          <span class="field-label">When it happened (empty is the server clock)</span>
+          <span class="field-label">When it happened (empty means now)</span>
           <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
         </label>
         <label class="field">
@@ -2098,7 +2098,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                   <tr>
                     <th scope="col">SKU</th>
                     <th scope="col">Retail</th>
-                    <th scope="col">Derived</th>
+                    <th scope="col">Set automatically</th>
                     <th scope="col">Flag</th>
                   </tr>
                 </thead>
@@ -2266,7 +2266,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="card-head"><h2 class="card-title">Preview a price file</h2></div>
       <p class="pr-hint">
         The preview diffs the file against the retail anchor and writes nothing. The apply must echo the preview's
-        digest; the server refuses a file that changed under you.
+        digest; a file that changed under you is refused.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
@@ -2313,7 +2313,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
               <th scope="col">Outcome</th>
               <th scope="col">Retail now</th>
               <th scope="col">Retail in the file</th>
-              <th scope="col">Derived</th>
+              <th scope="col">Set automatically</th>
             </tr>
           </thead>
           <tbody>
@@ -2478,8 +2478,8 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
     <section class="card">
       <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
       <p class="pr-hint">
-        One line through the resolver, before it is quoted: the server grades it against the category's target and floor
-        and names the breach, if there is one.
+        One line through the resolver, before it is quoted: it is graded against the category's target and floor,
+        and the breach is named, if there is one.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Customer id</span>

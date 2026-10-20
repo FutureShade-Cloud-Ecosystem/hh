@@ -58,7 +58,7 @@ function renderQuickAction(a: QuickAction): TemplateResult {
       <span class="quick-run quick-absent" data-quick=${a.action_id}>
         <span class="mark" aria-hidden="true">${drawIcon(iconForId(actionIconId(a)), 16)}</span>
         <span class="word">${wordOf(a.label)}</span>
-        <span class="not-here">not on this box yet</span>
+        <span class="not-here">Not available yet</span>
       </span>
     `;
   }

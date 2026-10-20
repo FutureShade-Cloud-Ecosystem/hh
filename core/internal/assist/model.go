@@ -127,6 +127,10 @@ type Field struct {
 type Item struct {
 	Title  string  `json:"title"`
 	Fields []Field `json:"fields"`
+	// Ref is the record this row is about (data.query rows), built by the server. Cite is the number the
+	// model may write as [N] to cite it; the service assigns it per exchange and checks every [N] it reads.
+	Ref  *Ref `json:"ref,omitempty"`
+	Cite int  `json:"cite,omitempty"`
 }
 
 // Result is what a command returns: a plain-English headline plus the records behind it.
@@ -149,6 +153,9 @@ type Result struct {
 	Note string `json:"note,omitempty"`
 	// Ref names the ONE record this answer is about, when there is exactly one. See Ref.
 	Ref *Ref `json:"ref,omitempty"`
+	// Notice and Scope ride up to the Answer (data.query).
+	Notice *Notice `json:"notice,omitempty"`
+	Scope  *Scope  `json:"scope,omitempty"`
 }
 
 // Ref is the record an answer is ABOUT, DIB-465's deep link, carried as data rather than as a URL.
