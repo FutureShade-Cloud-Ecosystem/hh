@@ -106,10 +106,16 @@ func (h *Handler) setSMSConsent(w http.ResponseWriter, r *http.Request, _ guards
 
 // create handles POST /api/v1/customers, a staff/manager create with server-side Canadian
 // postal/province validation on billing_address (M5). An invalid address is a 400.
-func (h *Handler) create(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in CreateInput
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	// The branch wall: an account is homed only at a branch the caller is granted. Homed anywhere else
+	// the creator could not read the account back (the account read answers it as not found).
+	if in.HomeBranchID != "" && !caller.CanAccessBranch(in.HomeBranchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return
 	}
 	acct, err := h.svc.CreateCustomer(r.Context(), in)
