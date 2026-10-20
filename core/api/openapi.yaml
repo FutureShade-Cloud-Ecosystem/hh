@@ -23388,13 +23388,45 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/mark-sent:
+    post:
+      operationId: quoteMarkSent
+      tags:
+        - staff-quote
+      x-addition: the quote desk's I sent it myself door (UX-48); the ERP marked a quote sent at link mint, no ERP source route
+      summary: Say you sent the quote's link yourself
+      description: The dealer's word that the link went out by a means the core cannot see (they copied it and sent it). A DRAFT quote moves to SENT and its follow-up cadence starts; the quote's history records sent_how DEALER_WORD, so the word is never mistaken for a delivery the core made. Pressed again it changes nothing. A 409 answers a quote that is empty, frozen, or expired.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The quote reads SENT
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/share-links:
     post:
       operationId: quoteMintShareLink
       tags:
         - staff-quote
       summary: Mint a public share link for a dealer quote
-      description: The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting moves a DRAFT quote to SENT and starts its follow-up cadence. A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead.
+      description: "The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting is not a send: a DRAFT quote stays DRAFT and no follow-up cadence starts (Copy link, Preview and Print all mint). The quote reads SENT only after a send the core verified (quoteShareBySMS) or the dealer's own word (quoteMarkSent). A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -23622,7 +23654,7 @@ paths:
       tags:
         - staff-quote
       summary: Text a quote's share link to the customer
-      description: Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words. The answer is 202 because the message is queued, not sent. No payment link is ever included; the payload type has no field for one.
+      description: "Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words and leaves the quote a DRAFT. The answer is 202 because the message is queued, not sent. A queued text is the send the core verifies: a DRAFT quote moves to SENT and its follow-up cadence starts only here (recorded in the quote's history as sent_how TEXT). No payment link is ever included; the payload type has no field for one."
       x-role: requireStaff
       x-access:
         surfaces:

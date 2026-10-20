@@ -1796,6 +1796,7 @@ export const ROUTES: readonly ManifestRoute[] = [
   { "method": "POST", "path": "/api/v1/quotes/{id}/lines/{lineNo}/compare", "operationId": "quoteCompareQuoteLine", "tag": "staff-quote" },
   { "method": "POST", "path": "/api/v1/quotes/{id}/lines/{lineNo}/floor-approval", "operationId": "quoteRequestFloorApproval", "tag": "staff-quote" },
   { "method": "GET", "path": "/api/v1/quotes/{id}/margin-glance", "operationId": "quoteMarginGlance", "tag": "staff-quote" },
+  { "method": "POST", "path": "/api/v1/quotes/{id}/mark-sent", "operationId": "quoteMarkSent", "tag": "staff-quote" },
   { "method": "POST", "path": "/api/v1/quotes/{id}/order-payment", "operationId": "quoteTakeOrderPayment", "tag": "staff-quote" },
   { "method": "POST", "path": "/api/v1/quotes/{id}/reject", "operationId": "quoteRejectOnBehalf", "tag": "staff-quote" },
   { "method": "GET", "path": "/api/v1/quotes/{id}/related-documents", "operationId": "quoteQuoteRelatedDocuments", "tag": "staff-quote" },
