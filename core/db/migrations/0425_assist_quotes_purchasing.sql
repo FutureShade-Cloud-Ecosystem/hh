@@ -136,6 +136,97 @@ BEGIN
       ) m;
   EXECUTE format('GRANT SELECT ON ai.quotes, ai.quote_lines TO %I', v_reader);
   RESET ROLE;
+  -- 3. The purchasing family: ai.purchase_orders and ai.purchase_order_lines.
+  --
+  -- Row security on purchasing_pos and purchasing_po_lines for the view owner alone, policies as above.
+  FOREACH t IN ARRAY ARRAY['purchasing_pos', 'purchasing_po_lines', 'vendors'] LOOP
+    SELECT tableowner INTO owner_name FROM pg_tables WHERE schemaname = 'public' AND tablename = t;
+    IF owner_name IS DISTINCT FROM current_user THEN
+      RAISE EXCEPTION 'table % is owned by %, not by the migrating role %: refusing to grant on it',
+        t, coalesce(owner_name, '(missing)'), current_user;
+    END IF;
+  END LOOP;
+
+  EXECUTE format('GRANT SELECT (id, po_no, vendor_id, branch_id, status, expected_at, ordered_at, notes, currency, delivery_method) ON public.purchasing_pos TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, po_id, line_no, product_id, description, qty_ordered_base, qty_received_base, qty_billed_base, uom, unit_cost_cents, billed_cents) ON public.purchasing_po_lines TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, name) ON public.vendors TO %I', v_view);
+
+  ALTER TABLE public.purchasing_pos ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.purchasing_po_lines ENABLE ROW LEVEL SECURITY;
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_purchasing_pos ON public.purchasing_pos TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
+    )$p$, v_view);
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_purchasing_po_lines ON public.purchasing_po_lines TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND EXISTS (
+        SELECT 1 FROM public.purchasing_pos po
+        WHERE po.id = purchasing_po_lines.po_id
+          AND ((SELECT ai.claims()).global OR po.branch_id = ANY ((SELECT ai.claims()).branch_ids))
+      )
+    )$p$, v_view);
+
+  -- The cost cells (the header subtotal, the line unit cost, line total and billed amount) are NULL unless the
+  -- order's branch is one of the claim's purchase cost branches: the branches where the dealer's per branch
+  -- purchasing policy lets this asker see what the dealer pays, decided in Go (ALL_STAFF allows, HIDDEN refuses,
+  -- and the default and every unknown allow a manager and up). A line total is the quantity ordered times the
+  -- unit cost, rounded half away from zero, as the purchasing module computes it, and the header subtotal is the
+  -- sum of the line totals.
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  CREATE VIEW ai.purchase_orders AS
+    SELECT po.id,
+           po.po_no::text AS po_no,
+           po.status,
+           po.branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           po.vendor_id,
+           COALESCE(v.name, '') AS vendor_name,
+           po.expected_at,
+           po.ordered_at,
+           po.currency::text AS currency,
+           po.delivery_method,
+           po.notes,
+           COALESCE(s.line_count, 0) AS line_count,
+           CASE WHEN po.branch_id = ANY ((SELECT ai.claims()).po_cost_branch_ids)
+                THEN COALESCE(s.subtotal, 0)
+           END AS subtotal_cents
+      FROM public.purchasing_pos po
+      LEFT JOIN public.vendors v ON v.id = po.vendor_id
+      LEFT JOIN public.locations l ON l.id = po.branch_id
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS line_count,
+               SUM(round(pl.qty_ordered_base * pl.unit_cost_cents))::bigint AS subtotal
+          FROM public.purchasing_po_lines pl
+         WHERE pl.po_id = po.id
+      ) s ON TRUE;
+  CREATE VIEW ai.purchase_order_lines AS
+    SELECT pl.id,
+           pl.po_id,
+           po.po_no::text AS po_no,
+           po.branch_id,
+           pl.line_no,
+           COALESCE(pr.sku::text, '') AS sku,
+           pl.description,
+           pl.qty_ordered_base,
+           pl.qty_received_base,
+           pl.qty_billed_base,
+           pl.qty_ordered_base - pl.qty_received_base AS qty_outstanding_base,
+           pl.uom::text AS uom,
+           CASE WHEN po.branch_id = ANY ((SELECT ai.claims()).po_cost_branch_ids) THEN pl.unit_cost_cents END AS unit_cost_cents,
+           CASE WHEN po.branch_id = ANY ((SELECT ai.claims()).po_cost_branch_ids)
+                THEN round(pl.qty_ordered_base * pl.unit_cost_cents)::bigint END AS line_total_cents,
+           CASE WHEN po.branch_id = ANY ((SELECT ai.claims()).po_cost_branch_ids) THEN pl.billed_cents END AS billed_cents
+      FROM public.purchasing_po_lines pl
+      JOIN public.purchasing_pos po ON po.id = pl.po_id
+      LEFT JOIN public.products pr ON pr.id = pl.product_id;
+  EXECUTE format('GRANT SELECT ON ai.purchase_orders, ai.purchase_order_lines TO %I', v_reader);
+  RESET ROLE;
 END
 $s6b$;
 

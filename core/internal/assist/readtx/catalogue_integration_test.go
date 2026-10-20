@@ -30,11 +30,13 @@ import (
 // assistReaderViews is the exact list of views the staff reader may SELECT. Each data slice adds its
 // views here, with the reason, so a view cannot be granted by accident.
 var assistReaderViews = map[string]bool{
-	"ai.orders":         true, // slice 5
-	"ai.order_lines":    true, // slice 5
-	"ai.stock_balances": true, // slice 6a
-	"ai.quotes":         true, // slice 6b
-	"ai.quote_lines":    true, // slice 6b
+	"ai.orders":               true, // slice 5
+	"ai.order_lines":          true, // slice 5
+	"ai.stock_balances":       true, // slice 6a
+	"ai.quotes":               true, // slice 6b
+	"ai.quote_lines":          true, // slice 6b
+	"ai.purchase_orders":      true, // slice 6b
+	"ai.purchase_order_lines": true, // slice 6b
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
@@ -49,6 +51,9 @@ var viewOwnerColumns = map[string][]string{
 	"public.products":             {"base_uom", "id", "name", "sku"},                                                                                                                                                                                                                               // slice 6a                                                                                                                                        // slice 5
 	"public.quotes":               {"branch_id", "contact_name", "created_at", "customer_id", "customer_notes", "delivery_address", "delivery_fee_cents", "deposit_pct", "fulfillment", "id", "quote_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents", "valid_until"}, // slice 6b
 	"public.quote_lines":          {"description", "disc_pct", "id", "line_no", "line_total_cents", "product_id", "qty_base", "qty_entered", "quote_id", "uom_entered", "unit_price_cents"},                                                                                                        // slice 6b
+	"public.purchasing_pos":       {"branch_id", "currency", "delivery_method", "expected_at", "id", "notes", "ordered_at", "po_no", "status", "vendor_id"},                                                                                                                                        // slice 6b
+	"public.purchasing_po_lines":  {"billed_cents", "description", "id", "line_no", "po_id", "product_id", "qty_billed_base", "qty_ordered_base", "qty_received_base", "unit_cost_cents", "uom"},                                                                                                   // slice 6b
+	"public.vendors":              {"id", "name"},                                                                                                                                                                                                                                                  // slice 6b
 }
 
 func (r Roles) all() []string {

@@ -197,7 +197,7 @@ func TestOrdersViewHasPlainColumnsOnly(t *testing.T) {
 
 func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *testing.T) {
 	admin := connect(t, gateURL(t))
-	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines"} {
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines"} {
 		var enabled, forced bool
 		var policies int
 		if err := admin.QueryRow(ctxT(t), `SELECT c.relrowsecurity, c.relforcerowsecurity,
@@ -218,7 +218,10 @@ func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *test
 		if err := admin.QueryRow(ctxT(t), `SELECT reltuples::int FROM pg_class WHERE oid = $1::regclass`, "public."+table).Scan(&direct); err != nil {
 			t.Fatal(err)
 		}
-		if n == 0 {
+		// The seed holds no purchase orders; for those two tables row_security_active above is the whole check
+		// that the app role is not filtered, and the purchasing parity tests read them with rows planted.
+		seedEmpty := table == "purchasing_pos" || table == "purchasing_po_lines"
+		if n == 0 && !seedEmpty {
 			t.Errorf("the app role reads no rows of %s", table)
 		}
 	}

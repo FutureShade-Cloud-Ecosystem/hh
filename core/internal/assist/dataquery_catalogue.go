@@ -125,7 +125,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -287,5 +287,63 @@ func rawQuoteLinesView() ViewDef {
 		Default:      []string{"quote_no", "line_no", "description", "qty_entered", "uom", "line_total_cents"},
 		DefaultOrder: []OrderBy{{Col: "quote_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
 		CiteKind:     RefQuote, CiteIDCol: "quote_id", CiteLabelCol: "quote_no", CiteLabelPrefix: "Quote ",
+	}
+}
+
+func purchaseOrdersView() ViewDef { return classify(rawPurchaseOrdersView()) }
+
+// The purchase order views carry no citation: purchasing orders have no routable reference kind in the app, and
+// a link to nothing is worse than none.
+func rawPurchaseOrdersView() ViewDef {
+	return ViewDef{
+		Name: "ai.purchase_orders", Schema: "ai", Table: "purchase_orders", Title: "Purchase orders", MinTier: 2, Large: true,
+		About: "One row per purchase order: number, status, branch, vendor, dates, currency, line count and, where you may see what the dealer pays, the subtotal in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Purchase order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_no", Label: "Purchase order", Type: typeText, Filter: true, Group: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "vendor_id", Label: "Vendor id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "vendor_name", Label: "Vendor", Type: typeText, Filter: true, Group: true},
+			{Name: "expected_at", Label: "Expected", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "ordered_at", Label: "Ordered", Type: typeTime, Filter: true, Agg: true},
+			{Name: "currency", Label: "Currency", Type: typeText, Filter: true, Group: true},
+			{Name: "delivery_method", Label: "Delivery method", Type: typeText, Filter: true, Group: true},
+			{Name: "notes", Label: "Notes", Type: typeText, Filter: true},
+			{Name: "line_count", Label: "Lines", Type: typeInt, Filter: true, Agg: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"po_no", "vendor_name", "branch_label", "status", "expected_at", "subtotal_cents"},
+		DefaultOrder: []OrderBy{{Col: "po_no", Dir: "asc"}},
+		Period:       "ordered_at",
+	}
+}
+
+func purchaseOrderLinesView() ViewDef { return classify(rawPurchaseOrderLinesView()) }
+
+func rawPurchaseOrderLinesView() ViewDef {
+	return ViewDef{
+		Name: "ai.purchase_order_lines", Schema: "ai", Table: "purchase_order_lines", Title: "Purchase order lines", MinTier: 2, Large: true,
+		About: "One row per purchase order line: the order, product, quantities ordered, received, billed and outstanding in the base unit and, where you may see what the dealer pays, the unit cost, line total and billed amount in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Line id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_id", Label: "Purchase order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_no", Label: "Purchase order", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "line_no", Label: "Line", Type: typeInt, Filter: true, Group: true},
+			{Name: "sku", Label: "SKU", Type: typeText, Filter: true, Group: true},
+			{Name: "description", Label: "Description", Type: typeText, Filter: true, Group: true},
+			{Name: "qty_ordered_base", Label: "Ordered", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_received_base", Label: "Received", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_billed_base", Label: "Billed quantity", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_outstanding_base", Label: "Outstanding", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "unit_cost_cents", Label: "Unit cost", Type: typeCents, Filter: true, Agg: true},
+			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "billed_cents", Label: "Billed amount", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"po_no", "line_no", "sku", "description", "qty_ordered_base", "qty_received_base", "uom"},
+		DefaultOrder: []OrderBy{{Col: "po_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
 	}
 }

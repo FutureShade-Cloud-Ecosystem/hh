@@ -88,7 +88,7 @@ func TestMigrationAsANonSuperuserOwnerAndTheExtensionRevokeOneshot(t *testing.T)
 	// Migration 0419 enabled row security on orders and order_lines. The app here is a non superuser that
 	// owns them, so it is exempt: row security is not active for it, and it reads both tables (the serve
 	// startup check asserts the same property on every policied table).
-	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines"} {
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines"} {
 		var active bool
 		if err := appConn.QueryRow(ctxT(t), `SELECT row_security_active($1::regclass)`, "public."+table).Scan(&active); err != nil || active {
 			t.Errorf("row security is active for the owning app role on %s (%v, %v)", table, active, err)

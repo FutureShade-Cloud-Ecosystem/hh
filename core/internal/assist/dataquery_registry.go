@@ -86,6 +86,38 @@ var columnRegistry = map[string]string{
 	"ai.quote_lines.line_cost_cents":  ClassMargin,
 	"ai.quote_lines.margin_bps":       ClassMargin,
 	"ai.quote_lines.est_profit_cents": ClassMargin,
+	// ai.purchase_orders: the header subtotal is class cost, gated by the per branch purchasing policy, not the role
+	// list; the notes are tagged personal.
+	"ai.purchase_orders.id":              ClassPlain,
+	"ai.purchase_orders.po_no":           ClassPlain,
+	"ai.purchase_orders.status":          ClassPlain,
+	"ai.purchase_orders.branch_id":       ClassPlain,
+	"ai.purchase_orders.branch_label":    ClassPlain,
+	"ai.purchase_orders.vendor_id":       ClassPlain,
+	"ai.purchase_orders.vendor_name":     ClassPlain,
+	"ai.purchase_orders.expected_at":     ClassPlain,
+	"ai.purchase_orders.ordered_at":      ClassPlain,
+	"ai.purchase_orders.currency":        ClassPlain,
+	"ai.purchase_orders.delivery_method": ClassPlain,
+	"ai.purchase_orders.notes":           ClassPlain,
+	"ai.purchase_orders.line_count":      ClassPlain,
+	"ai.purchase_orders.subtotal_cents":  ClassCost,
+	// ai.purchase_order_lines: unit cost, line total and billed amount are class cost under the same policy.
+	"ai.purchase_order_lines.id":                   ClassPlain,
+	"ai.purchase_order_lines.po_id":                ClassPlain,
+	"ai.purchase_order_lines.po_no":                ClassPlain,
+	"ai.purchase_order_lines.branch_id":            ClassPlain,
+	"ai.purchase_order_lines.line_no":              ClassPlain,
+	"ai.purchase_order_lines.sku":                  ClassPlain,
+	"ai.purchase_order_lines.description":          ClassPlain,
+	"ai.purchase_order_lines.qty_ordered_base":     ClassPlain,
+	"ai.purchase_order_lines.qty_received_base":    ClassPlain,
+	"ai.purchase_order_lines.qty_billed_base":      ClassPlain,
+	"ai.purchase_order_lines.qty_outstanding_base": ClassPlain,
+	"ai.purchase_order_lines.uom":                  ClassPlain,
+	"ai.purchase_order_lines.unit_cost_cents":      ClassCost,
+	"ai.purchase_order_lines.line_total_cents":     ClassCost,
+	"ai.purchase_order_lines.billed_cents":         ClassCost,
 }
 
 // personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
@@ -100,10 +132,16 @@ var personalColumns = map[string]bool{
 	"ai.quotes.contact_name":     true, // the quote screen shows it to staff with reach
 	"ai.quotes.delivery_address": true, // as above
 	"ai.quotes.customer_notes":   true, // free text shown on the quote; may hold anything typed
+	"ai.purchase_orders.notes":   true, // free text on the order
 }
 
 // columnGates names the vocabulary that gates a cost column when it is not the role list.
-var columnGates = map[string]string{}
+var columnGates = map[string]string{
+	"ai.purchase_orders.subtotal_cents":        GatePurchasePolicy,
+	"ai.purchase_order_lines.unit_cost_cents":  GatePurchasePolicy,
+	"ai.purchase_order_lines.line_total_cents": GatePurchasePolicy,
+	"ai.purchase_order_lines.billed_cents":     GatePurchasePolicy,
+}
 
 // PersonalColumns is the tag list, exported for the text index and the egress slices: every "view.column" that
 // holds personal data, sorted.
@@ -149,7 +187,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}
