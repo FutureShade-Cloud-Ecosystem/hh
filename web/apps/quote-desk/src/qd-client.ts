@@ -22,7 +22,7 @@ import type {
   IdentityPolicyCheckResponse,
   QuoteAssistExtraction,
   QuoteAssistScopeGaps,
-  QuoteBranchStock,
+  QuoteBranchPeek,
   QuoteFloorApprovalAnswer,
   QuoteFollowUpHistory,
   QuoteHoldExpiryView,
@@ -62,7 +62,7 @@ import {
 import {
   readApprovalsPage,
   readAvailability,
-  readBranchStocks,
+  readBranchPeeks,
   readExtraction,
   readFloorAnswer,
   readFollowUps,
@@ -1336,10 +1336,10 @@ export class QdClient {
   }
 
   /** The cross branch peek behind a short line. */
-  async availabilityBranches(productId: string): Promise<Result<QuoteBranchStock[]>> {
+  async availabilityBranches(productId: string): Promise<Result<QuoteBranchPeek[]>> {
     const result = await staffQuote.quoteAvailabilityBranches(this.#client, productId);
     if (!result.ok) return result;
-    const rows = readBranchStocks(result.value);
+    const rows = readBranchPeeks(result.value);
     return rows === null ? err("the branch stock is not readable") : ok(rows);
   }
 

@@ -7191,8 +7191,19 @@ export type QuoteBranchStock = {
   soft_held_base: number;
   avg_cost_cents?: number;
 };
-export type QuoteBranchStockList = {
-  branches: QuoteBranchStock[];
+export type QuoteBranchPeek = {
+  product_id: string;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  on_hand_base: number;
+  reserved_base: number;
+  in_transit_base: number;
+  available_base: number;
+  soft_held_base: number;
+};
+export type QuoteBranchPeekList = {
+  branches: QuoteBranchPeek[];
   seam_wired: boolean;
 };
 export type QuoteExpiredHold = {

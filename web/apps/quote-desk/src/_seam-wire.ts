@@ -9,6 +9,7 @@ import type {
   IdentityPolicyCheckResponse,
   QuoteAssistExtraction,
   QuoteAssistScopeGaps,
+  QuoteBranchPeek,
   QuoteBranchStock,
   QuoteFloorApprovalAnswer,
   QuoteFollowUpHistory,
@@ -325,14 +326,22 @@ export function readAvailability(value: unknown): { lines: QuoteLineAvailability
   return { lines, seamWired };
 }
 
+/** One row of the cross branch peek: quantities only, so a cost the wire should not carry is dropped, never passed on. */
+function readBranchPeek(raw: unknown): QuoteBranchPeek | null {
+  const row = readBranchStock(raw);
+  if (row === null) return null;
+  const { avg_cost_cents: _dropped, ...quantities } = row;
+  return quantities;
+}
+
 /** The cross branch peek behind a short line. */
-export function readBranchStocks(value: unknown): QuoteBranchStock[] | null {
+export function readBranchPeeks(value: unknown): QuoteBranchPeek[] | null {
   if (!isRecord(value)) return null;
   const rows = list(value, "branches");
   if (rows === null) return null;
-  const out: QuoteBranchStock[] = [];
+  const out: QuoteBranchPeek[] = [];
   for (const raw of rows) {
-    const row = readBranchStock(raw);
+    const row = readBranchPeek(raw);
     if (row === null) return null;
     out.push(row);
   }
