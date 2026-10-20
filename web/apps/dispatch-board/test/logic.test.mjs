@@ -842,3 +842,15 @@ test("boardProblemLine reads each problem in its own words, never in a generic s
   assert.match(boardProblemLine({ kind: "due-to-commit", runNo: "RUN-PLM-3", daysToCommit: 1 }), /due to commit in 1 day/);
   assert.match(boardProblemLine({ kind: "due-to-commit", runNo: "RUN-PLM-3", daysToCommit: 2 }), /due to commit in 2 days/);
 });
+
+test("dispatchConfirmWords names the truck, driver, and stop count and states that ready loads are marked loaded", async () => {
+  const { PUT_ON_TRUCK_COMMIT_NOTE, dispatchConfirmWords } = await import("../src/dispatch-logic.js");
+  assert.equal(PUT_ON_TRUCK_COMMIT_NOTE, "Putting a load on a truck commits the order.");
+  const one = dispatchConfirmWords({ run_no: "RUN-PLM-2", truck_code: "Truck 03", driver_name: "Driver A (demo)", stop_count: 1 });
+  assert.equal(one.title, "Send Truck 03 with Driver A (demo) and 1 stop?");
+  assert.equal(one.body, "The driver sees the run at once, and marks its 1 load loaded. A sent run cannot be called back here.");
+  const many = dispatchConfirmWords({ run_no: "RUN-PLM-1", truck_code: "Truck 01", driver_name: "Driver A (demo)", stop_count: 3 });
+  assert.equal(many.title, "Send Truck 01 with Driver A (demo) and 3 stops?");
+  assert.equal(many.body, "The driver sees the run at once, and marks its 3 loads loaded. A sent run cannot be called back here.");
+});
+

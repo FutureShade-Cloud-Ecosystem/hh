@@ -32,6 +32,7 @@ test("the load board reads the quick cards, the staging lane, the trucks with th
 
 test("a load put on a truck is committed by the core and the gauge follows", async ({ page, request }) => {
   await openBoard(page, request);
+  await expect(load(page, "ORD-0029")).toContainText("Putting a load on a truck commits the order.");
   await load(page, "ORD-0029").locator("select").first().selectOption({ label: /RUN-PLM-1/ as unknown as string }).catch(async () => {
     await load(page, "ORD-0029").locator("select").first().selectOption({ index: 1 });
   });
@@ -50,7 +51,7 @@ test("the move list names why a truck is not offered", async ({ page, request })
   await expect(option).toContainText("runs on");
 });
 
-test("a truck is dispatched only with a crew, and then loads what is on it", async ({ page, request }) => {
+test("a truck is dispatched only with a crew, behind a confirm naming the truck, driver, and stop count, and then loads what is on it", async ({ page, request }) => {
   await openBoard(page, request);
   await expect(truck(page, "RUN-PLM-2").locator("[data-dispatch-why]")).toContainText("needs a truck and a driver");
   // Pressed without a crew, the core refuses and the refusal shows in that truck's lane, in words.
@@ -58,8 +59,39 @@ test("a truck is dispatched only with a crew, and then loads what is on it", asy
   await expect(truck(page, "RUN-PLM-2").locator("[data-lane-error]")).toContainText("RUN-PLM-2 did not go: a run needs both a truck and a driver before it can be dispatched");
   await truck(page, "RUN-PLM-2").locator("select[data-field='crew-driver']").selectOption({ index: 1 });
   await expect(page.locator("[data-notice]")).toHaveText("Crew set.");
-  await truck(page, "RUN-PLM-2").getByRole("button", { name: "Dispatch" }).click();
+
+  let dispatchCalls = 0;
+  page.on("request", (req) => {
+    if (req.method() === "POST" && req.url().endsWith("/dispatch")) dispatchCalls += 1;
+  });
+
+  const dispatchBtn = truck(page, "RUN-PLM-2").getByRole("button", { name: "Dispatch" });
+  await dispatchBtn.click();
+  const sheet = truck(page, "RUN-PLM-2").locator("[data-sheet='dispatch-run']");
+  await expect(sheet).toContainText("Send Truck 03 with Driver A (demo) and 1 stop?");
+  await expect(sheet).toContainText("The driver sees the run at once, and marks its 1 load loaded. A sent run cannot be called back here.");
+  expect(dispatchCalls).toBe(0);
+
+  // Cancel sends nothing and returns focus to the Dispatch button.
+  await sheet.getByRole("button", { name: "Cancel" }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(dispatchBtn).toBeFocused();
+  expect(dispatchCalls).toBe(0);
+  await expect(truck(page, "RUN-PLM-2")).toHaveAttribute("data-run-status", "PLANNED");
+
+  // Escape also cancels, sends nothing, and returns focus to the Dispatch button.
+  await dispatchBtn.click();
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(dispatchBtn).toBeFocused();
+  expect(dispatchCalls).toBe(0);
+
+  // Only "Send the run" calls the dispatch route.
+  await dispatchBtn.click();
+  await sheet.getByRole("button", { name: "Send the run" }).click();
   await expect(page.locator("[data-notice]")).toContainText("RUN-PLM-2 dispatched");
+  expect(dispatchCalls).toBe(1);
   await expect(truck(page, "RUN-PLM-2")).toHaveAttribute("data-run-status", "DISPATCHED");
   await expect(truck(page, "RUN-PLM-2").locator("li.load")).toHaveAttribute("data-status", "LOADED");
 });

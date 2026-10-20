@@ -1438,3 +1438,29 @@ export function suggestRunsForLoad(
   }
   return out.slice(0, 3);
 }
+
+// ---- dispatch confirm and commit note (UX-30) ---------------------------------------------------
+
+/** Shared commit rule shown at the "Put on a truck" control and on the Schedule form. */
+export const PUT_ON_TRUCK_COMMIT_NOTE = "Putting a load on a truck commits the order.";
+
+/**
+ * The confirm sheet before a run goes out: names the truck, the driver as the record names
+ * them, and the stop count, and states what the core dispatch handler (Service.DispatchRun in
+ * core/internal/dispatch/service.go:930-937) actually does: it sends the run to the driver at
+ * once and marks its ready loads loaded.
+ */
+export function dispatchConfirmWords(
+  run: { readonly run_no?: string; readonly truck_code?: string; readonly driver_name?: string; readonly stop_count?: number } | null | undefined,
+): { readonly title: string; readonly body: string } {
+  const truck = (run?.truck_code ?? "").trim() || (run?.run_no ?? "").trim() || "this truck";
+  const driver = (run?.driver_name ?? "").trim() || "the driver";
+  const n = run?.stop_count ?? 0;
+  const stops = `${n} ${n === 1 ? "stop" : "stops"}`;
+  const loads = `${n} ${n === 1 ? "load" : "loads"}`;
+  return {
+    title: `Send ${truck} with ${driver} and ${stops}?`,
+    body: `The driver sees the run at once, and marks its ${loads} loaded. A sent run cannot be called back here.`,
+  };
+}
+
