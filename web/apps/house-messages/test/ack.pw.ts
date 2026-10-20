@@ -70,6 +70,9 @@ test("the last acknowledgement completes it in words", async ({ browser, request
 
 test("a failed acknowledgement keeps the bubble and says so; nothing is shown as acknowledged", async ({ page, request }) => {
   await openAs(page, request, "sales");
+  // The bubble is drawn from the room's read, which lands after the channel list: the stub goes offline only
+  // once the bubble is there, or the read it is waiting for is the one that is refused.
+  await expect(bubble(page)).toBeVisible();
   await stubPost(request, "offline", { on: true });
   await bubble(page).getByRole("button", { name: "I got it" }).click();
   await expect(bubble(page).locator("[data-bubble-error]")).toContainText("did not go through");

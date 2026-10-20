@@ -207,3 +207,42 @@ test("attestation: a stop that cannot move to DELIVERED refuses in the direct do
   const [row] = await stopRows();
   assertCoreWords(await push("pod", "create", { stop_id: row.id, received_by: "Clerk", affirmed: true }), "illegal status transition");
 });
+
+// ---- the stops pull row against the contract (UX-61) ----
+//
+// The stub once handed every stop a `lines` list the core's stops pull did not
+// carry, so HH Drive read a load list nobody served and every leg passed
+// against a flattering double. The stops pull row is the contract's
+// DispatchStop; the stub's row may carry only keys that schema declares, and
+// each line only keys DispatchDriverLine declares (no money member among them).
+
+function schemaProperties(yaml, name) {
+  const at = yaml.indexOf(`\n    ${name}:\n`);
+  if (at < 0) throw new Error(`${name} not found in the contract`);
+  const rest = yaml.slice(at + 1);
+  const end = rest.slice(1).search(/\n    [A-Za-z]/);
+  const block = end < 0 ? rest : rest.slice(0, end + 1);
+  const props = block.indexOf("\n      properties:\n");
+  if (props < 0) throw new Error(`${name} has no properties`);
+  return new Set([...block.slice(props).matchAll(/\n        ([a-z_0-9]+):/g)].map((m) => m[1]));
+}
+
+test("stops pull: every key of the stub's stop row, and of each line, is declared by the contract", async () => {
+  const yaml = readFileSync(new URL("../../../../core/api/openapi.yaml", import.meta.url), "utf8");
+  const stopKeys = schemaProperties(yaml, "DispatchStop");
+  const lineKeys = schemaProperties(yaml, "DispatchDriverLine");
+  const res = await fetch(`${base}/api/v1/sync/stops?since=0&limit=200`, { headers });
+  const items = (await res.json()).items ?? [];
+  assert.ok(items.length > 0, "the stub pulled no stop");
+  for (const item of items) {
+    for (const key of Object.keys(item.data)) {
+      assert.ok(stopKeys.has(key), `the stub's stop row carries ${key}, which the contract's DispatchStop does not declare`);
+    }
+    assert.ok(Array.isArray(item.data.lines) && item.data.lines.length > 0, "the stub's driver stop carries its load list");
+    for (const line of item.data.lines) {
+      for (const key of Object.keys(line)) {
+        assert.ok(lineKeys.has(key), `a stub line carries ${key}, which DispatchDriverLine does not declare`);
+      }
+    }
+  }
+});

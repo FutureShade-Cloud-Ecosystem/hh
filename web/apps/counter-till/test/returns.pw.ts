@@ -356,7 +356,10 @@ test("a refusal from the server shows in its own words, the note stays drafted, 
   await expect(page.getByTestId("returns-notice")).toContainText("The credit note was refused: pos: over-return on line");
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
   await page.getByRole("button", { name: "Record the credit note" }).click();
-  const keys = (await stubState(page)).keys.filter((key) => key !== "00000000-0000-4000-8000-0000000000aa");
+  // The press reaches the stub after the click returns: its key is waited for, never read at the click.
+  const mine = async () => (await stubState(page)).keys.filter((key) => key !== "00000000-0000-4000-8000-0000000000aa");
+  await expect.poll(async () => (await mine()).length).toBe(2);
+  const keys = await mine();
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
 });

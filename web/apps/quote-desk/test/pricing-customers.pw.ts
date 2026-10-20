@@ -82,6 +82,8 @@ test("a deep price warns, declining saves nothing, confirming saves and logs aga
   await page.getByTestId("pc-save").click();
   await expect(page.getByTestId("floor-headline")).toHaveText("This price puts 2 products under their margin floor.");
   await page.getByTestId("floor-decline").click();
+  // Nothing-saved is read once the warning has gone: read at the click, it would pass whatever the click did next.
+  await expect(page.getByTestId("floor-headline")).toHaveCount(0);
   expect((await pricingState(page)).overrides).toHaveLength(0);
   expect((await pricingState(page)).confirmations).toHaveLength(0);
 

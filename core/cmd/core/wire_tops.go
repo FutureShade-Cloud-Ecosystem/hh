@@ -645,7 +645,25 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		}
 		return raw
 	}())
+	// The model layer's deployment configuration: the operator's environment, never a request. A
+	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
+	assistModelCfg := assist.ModelConfig{
+		AnthropicKey: assist.Secret(assistKey),
+		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
+		GatewayKey:   assist.Secret(os.Getenv(assist.EnvGatewayKey)),
+		DealerTag:    os.Getenv(assist.EnvDealerTag),
+	}
 	assistProvider := assist.NewProviderFromConfig(assistSettings, assistKey, "", log)
+	// The alias table and the conversation log live in Postgres (0416); the DB-free registration
+	// proof (no pool) gets the shipped default table and an in memory log.
+	var (
+		assistAliases assist.AliasStore        = assist.StaticAliases(assist.DefaultAliases())
+		assistConvs   assist.ConversationStore = assist.NewMemoryConversations()
+	)
+	if pool != nil {
+		assistAliases, assistConvs = assistRepo, assistRepo
+	}
+	assistRouter := assist.NewRouter(assistAliases, assistModelCfg, assist.NewStubProvider(), log)
 
 	// DIB-66/67: the quote assist surfaces on the builder.
 	quoteAssistSvc := quoteassist.NewService(
@@ -694,6 +712,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	).
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
+		WithRouter(assistRouter).
+		// Server kept conversations keyed by user and session (the jti), on the append only log.
+		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
