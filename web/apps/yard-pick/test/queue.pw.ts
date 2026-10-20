@@ -71,7 +71,7 @@ for (const size of [
   { width: 390, height: 844 },
   { width: 1024, height: 768 },
 ]) {
-  test(`opening SO-1042 is read-only at ${size.width}x${size.height}; tapping a line or Take this pick claims it, and others see Claimed by role label`, async ({ page, browser }) => {
+  test(`opening SO-1042 is read-only at ${size.width}x${size.height}; tapping a line or Take this pick claims it, and others see Claimed by the role label`, async ({ page, browser }) => {
     await page.setViewportSize(size);
     await page.goto("/");
     await page.locator("[data-pick-card]", { hasText: "SO-1042" }).click();
@@ -96,16 +96,16 @@ for (const size of [
     await page.locator("[data-line]").first().locator(".line-row").click();
     await expect(page.locator("[data-task-status]")).toHaveText("Picking");
 
-    // Another role sees "Claimed by a teammate" on the queue and detail.
+    // Another role sees "Claimed by the Yard Team" (the claimer's role label) on the queue and detail.
     const otherContext = await browser.newContext({ viewport: size });
     const otherPage = await otherContext.newPage();
     await otherPage.addInitScript(managerHandoff);
     await otherPage.goto("/");
     const otherCard = otherPage.locator("[data-pick-card]", { hasText: "SO-1042" });
-    await expect(otherCard).toContainText("Claimed by a teammate");
+    await expect(otherCard).toContainText("Claimed by the Yard Team");
     await otherCard.click();
     await expect(otherPage.locator("[data-pick-order]")).toHaveText("SO-1042");
-    await expect(otherPage.locator("[data-claimed-by]")).toHaveText("Claimed by a teammate");
+    await expect(otherPage.locator("[data-claimed-by]")).toHaveText("Claimed by the Yard Team");
     await otherContext.close();
   });
 }

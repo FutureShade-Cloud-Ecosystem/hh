@@ -181,3 +181,14 @@ func (f *fakeStore) ListPickedLines(_ context.Context, taskID string) ([]PickedL
 	sort.Slice(out, func(i, j int) bool { return out[i].OrderLineNo < out[j].OrderLineNo })
 	return out, nil
 }
+
+func (f *fakeStore) HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error {
+	t, ok := f.tasks[taskID]
+	if !ok {
+		return ErrNotFound
+	}
+	if actorID != "" && notHolder(t.ClaimedBy, actorID) {
+		return ErrNotHolder
+	}
+	return apply(ctx)
+}

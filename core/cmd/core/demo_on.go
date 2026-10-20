@@ -258,6 +258,9 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	}
 
 	// healthz: the same live database ping the default build serves.
+	if err := assistRequireServingRole(ctx, graph.pool); err != nil {
+		return err
+	}
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
 	srv, err := newServer(graph, otelhttp.Wrap(nil)(auditWrap(mux, graph)))

@@ -37,6 +37,9 @@ export default defineConfig({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    // ROLE_NO_WATCH: the harness runs the dev server with the file watcher off, so a Playwright leg survives a box
+    // whose inotify instances other lanes' watchers have exhausted (EMFILE on boot).
+    watch: process.env.ROLE_NO_WATCH ? null : undefined,
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,

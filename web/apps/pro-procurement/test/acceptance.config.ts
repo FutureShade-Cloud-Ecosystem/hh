@@ -35,7 +35,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { ROLE_STUB_PORT: stubPort, ROLE_APP_PORT: appPort },
+      env: { ROLE_STUB_PORT: stubPort, ROLE_APP_PORT: appPort, ROLE_NO_WATCH: "1" },
     },
   ],
 });

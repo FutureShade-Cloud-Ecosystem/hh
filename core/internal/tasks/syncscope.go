@@ -67,7 +67,9 @@ type SyncStore struct {
 	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
 	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
 	tickets PickSource
-	log     *slog.Logger
+	// claimerRoles labels a row's claimer by role on the rows a device reads (claimer_role.go).
+	claimerRoles ClaimerRoleReader
+	log          *slog.Logger
 }
 
 // NewSyncStore wires the adapter; nil seams are legal only where the
@@ -224,6 +226,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	reach := s.ticketReach(ctx, f)
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
+	datas := make([]map[string]any, 0, len(page))
 	for _, r := range page {
 		if r.deleted {
 			tombstones = append(tombstones, sync.Tombstone{ID: r.task.ID, Seq: r.seq})
@@ -233,6 +236,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		if err != nil {
 			return nil, nil, err
 		}
+		datas = append(datas, data)
 		// A transient source fault fails the page: the engine answers 503 and the device retries this
 		// cursor, where a ticket-less row would be cached until the task next moves (its seq is the
 		// only thing that re-sends it).
@@ -242,6 +246,8 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		}
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
 	}
+	// The page's claimers are labelled by role in one read (UX-75); a fault leaves the label off.
+	s.attachClaimerRoles(ctx, datas)
 	return items, tombstones, nil
 }
 
@@ -290,6 +296,9 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 // reply to a write, not a cursor feed, so it degrades and logs). It is the engine's one call for it.
 func (s *SyncStore) DecorateServerState(ctx context.Context, f sync.ScopeFilter, row *sync.RowState) {
 	s.attachTicket(ctx, s.ticketReach(ctx, f), row)
+	if !row.Deleted && row.Data != nil {
+		s.attachClaimerRoles(ctx, []map[string]any{row.Data})
+	}
 }
 
 // pickQuerier is the read surface a pool and a transaction share, so one
@@ -497,21 +506,25 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, claimedBy string
+	var from, branch, claimedBy string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &claimedBy); err != nil {
+		`SELECT status, COALESCE(branch_id::text, ''), COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&from, &branch, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
 	}
-	// Stage is the holder's act (UX-76): the move to STAGED and the stage legs are compared with the claim
-	// on the locked row. The claim itself, the start and the other moves keep their own rules.
-	if (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != "" {
-		if notHolder(claimedBy, actor) {
-			return sync.RowState{}, refused(ErrNotHolder)
+	// Every pick write is held to the task's branch (UX-77, UX-76b) and then to the holder rule, on the locked
+	// row, in this order: the branch fence first, so another branch's user is never told by a holder refusal
+	// that the pick exists.
+	if s.staff != nil {
+		if err := syncBranchFence(ctx, s.staff, f, branch); err != nil {
+			return sync.RowState{}, err
 		}
+	}
+	if err := yardWriteRule(hasStatus, status, photoURL != "", stageLocation != "" || stageRef != "", claimedBy, actor); err != nil {
+		return sync.RowState{}, refused(err)
 	}
 	to := from
 	if hasStatus {
@@ -689,5 +702,65 @@ func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) boo
 		return err
 	}
 	data["ticket"] = v
+	return nil
+}
+
+// syncBranchFence is the direct doors' taskBranchFence for a sync write: the caller's staff authority must be
+// active in the org and reach the task's branch (GLOBAL reaches all). An empty task branch is held by no one.
+func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sync.ScopeFilter, branch string) error {
+	sc, has, err := staff(ctx, f.Actor, f.OrgID)
+	if err != nil {
+		return fmt.Errorf("tasks: branch fence authority: %w", err)
+	}
+	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return refusedf("no active staff authority in this org")
+	}
+	if branch != "" && !sc.CanAccessBranch(branch) {
+		return refusedf("yard: branch out of scope")
+	}
+	return nil
+}
+
+// yardWriteRule is the holder rule of the pick writes through sync (UX-76, UX-76b), applied to the locked row
+// after the branch fence: a write with no actor is refused (nobody could hold the pick), a claim is open to
+// any actor on an unclaimed pick, and start, done, Stage and the done photo are the holder's. A cancel is the
+// holder's; a manager's cancel of someone else's pick is an explicit act with a reason, which a sync op cannot
+// carry, so it goes through the desk (REST) and is refused here.
+func yardWriteRule(hasStatus bool, status string, photo, stageLegs bool, claimedBy, actor string) error {
+	holders := stageLegs || photo
+	if hasStatus {
+		switch status {
+		case StatusAccepted:
+			if actor == "" {
+				return ErrNoActor
+			}
+			return nil
+		case StatusInProgress, StatusDone, StatusStaged:
+			holders = true
+		case StatusCancelled:
+			if actor == "" {
+				return ErrNoActor
+			}
+			if notHolder(claimedBy, actor) {
+				return ErrCancelNotAllowed
+			}
+			return nil
+		default:
+			// PUSHED and QUEUED (and any status this switch does not name): a move on a held pick that is not
+			// the holder's takes work away from them, so it is the holder's too (UX-76b, item 67). The state
+			// machine offers no way back to QUEUED or PUSHED from a claimed pick, but it is the lock-time
+			// holder check, not the matrix, that must answer, so a stranger gets the holder words.
+			holders = true
+		}
+	}
+	if !holders {
+		return nil
+	}
+	if actor == "" {
+		return ErrNoActor
+	}
+	if notHolder(claimedBy, actor) {
+		return ErrNotHolder
+	}
 	return nil
 }

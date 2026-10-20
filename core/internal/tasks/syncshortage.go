@@ -155,6 +155,9 @@ type ShortageSyncStore struct {
 	link identity.UserIDLinker
 	// noticer posts the counter's chat event for a created shortage, the direct door's twin.
 	noticer ShortageNoticer
+	// staff is the branch fence's authority seam (UX-77): the caller's staff context in the org. Nil leaves
+	// the create unfenced by branch, the unwired posture the composition root asserts against at boot.
+	staff identity.SyncStaffResolver
 }
 
 // ShortageNoticer is the counter notice the direct door posts after it stores a shortage: the tasks
@@ -168,6 +171,16 @@ func (s *ShortageSyncStore) WithNoticer(n ShortageNoticer) *ShortageSyncStore {
 	s.noticer = n
 	return s
 }
+
+// WithStaffAuthority wires the branch fence's authority seam: the caller's staff context in the org, read
+// here because the sync core's ScopeFilter carries the subject and the org and no role.
+func (s *ShortageSyncStore) WithStaffAuthority(r identity.SyncStaffResolver) *ShortageSyncStore {
+	s.staff = r
+	return s
+}
+
+// StaffAuthorityWired reports whether the branch fence's seam is wired, the leg the boot fail fast pins.
+func (s *ShortageSyncStore) StaffAuthorityWired() bool { return s.staff != nil }
 
 // NewShortageSyncStore wires the adapter.
 func NewShortageSyncStore(pool *pgxpool.Pool, link identity.UserIDLinker) *ShortageSyncStore {
@@ -416,14 +429,19 @@ func (s *ShortageSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	// The parent task must exist in the caller's org: a shortage against
 	// another org's pick is that org's fact, and the refusal is the same
 	// not-found that an absent task reads (existence never leaks).
-	var parentStatus, parentType string
+	var parentStatus, parentType, parentBranch string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, task_type FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
-		taskID, f.OrgID).Scan(&parentStatus, &parentType); err != nil {
+		`SELECT status, task_type, COALESCE(branch_id::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
+		taskID, f.OrgID).Scan(&parentStatus, &parentType, &parentBranch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: shortage sync parent lock: %w", err)
+	}
+	// The direct door's taskBranchFence, on the locked parent: a yard caller at one branch does not report
+	// a shortage on another branch's pick by naming its task (UX-77).
+	if err := s.branchFence(ctx, f, parentBranch); err != nil {
+		return sync.RowState{}, err
 	}
 	seq, err := allocateScopeSeqTx(ctx, tx, shortagesSeqScope)
 	if err != nil {
@@ -518,16 +536,24 @@ func (s *ShortageSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, k
 
 	// Lock the row under the org predicate; a resolved shortage refuses.
 	var resolved bool
+	var branch string
 	if err := tx.QueryRow(ctx, `
-		SELECT (resolved_at IS NOT NULL) FROM task_shortages
+		SELECT (resolved_at IS NOT NULL),
+		       (SELECT COALESCE(pt.branch_id::text, '') FROM tasks pt WHERE pt.id = task_shortages.task_id)
+		FROM task_shortages
 		WHERE id = $1::uuid AND deleted_at IS NULL
 		  AND EXISTS (SELECT 1 FROM tasks pt WHERE pt.id = task_shortages.task_id AND pt.org_id = $2::uuid)
 		FOR UPDATE`,
-		id, f.OrgID).Scan(&resolved); err != nil {
+		id, f.OrgID).Scan(&resolved, &branch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for shortage sync write: %w", id, err)
+	}
+	// The task's branch fence on the locked shortage (UX-77): a yard caller at one branch does not change
+	// another branch's shortage by naming its id.
+	if err := s.branchFence(ctx, f, branch); err != nil {
+		return sync.RowState{}, err
 	}
 	if resolved {
 		return sync.RowState{}, fmt.Errorf("tasks: a resolved shortage's report is closed: %w", sync.ErrOpRefused)
@@ -585,7 +611,22 @@ func (s *ShortageSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, 
 		return sync.RowState{}, fmt.Errorf("tasks: begin shortage sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// The task's branch fence on the locked shortage (UX-77, main). An absent row falls through to the update's
+	// own not-found answer.
+	var branch string
+	if err := tx.QueryRow(ctx, `
+		SELECT (SELECT COALESCE(pt.branch_id::text, '') FROM tasks pt WHERE pt.id = task_shortages.task_id)
+		FROM task_shortages
+		WHERE id = $1::uuid AND deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM tasks pt WHERE pt.id = task_shortages.task_id AND pt.org_id = $2::uuid)
+		FOR UPDATE`, id, f.OrgID).Scan(&branch); err == nil {
+		if err := s.branchFence(ctx, f, branch); err != nil {
+			return sync.RowState{}, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, fmt.Errorf("tasks: lock %q for shortage sync delete: %w", id, err)
+	}
+	// The tombstone relies on the sync seq trigger (0422): the row lock above, then the counter. An explicit
 	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
 	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
 	r, err := scanSyncShortage(tx.QueryRow(ctx, `
@@ -630,4 +671,14 @@ func optString(fields map[string]any, name string) any {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// branchFence refuses a write on a task whose branch the caller's staff authority does not reach. An
+// unwired seam fences nothing (the composition root refuses to boot that way); a wired seam that finds no
+// active standing refuses, never writes unfenced.
+func (s *ShortageSyncStore) branchFence(ctx context.Context, f sync.ScopeFilter, branch string) error {
+	if s.staff == nil {
+		return nil
+	}
+	return syncBranchFence(ctx, s.staff, f, branch)
 }

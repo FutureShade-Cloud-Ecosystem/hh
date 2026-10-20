@@ -37,7 +37,7 @@ impl AuthState {
         )
     }
 
-    fn service(&self) -> Result<Arc<AuthService>, AuthCode> {
+    pub(crate) fn service(&self) -> Result<Arc<AuthService>, AuthCode> {
         self.0.clone().ok_or(AuthCode::Unavailable)
     }
 }

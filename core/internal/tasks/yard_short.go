@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -63,6 +64,27 @@ const ErrNotHolderWords = "Someone else is on this pick."
 func notHolder(claimedBy, actorID string) bool {
 	return claimedBy != "" && claimedBy != actorID
 }
+
+// ErrCancelNotAllowed is a cancel from a person who neither holds the pick nor stands above the yard hands
+// (a Yard Manager, or a Tier 1 leader): the holder's call, or an explicit manager act. → 409.
+var ErrCancelNotAllowed = errors.New("tasks: only the holder or a yard manager may cancel this pick")
+
+// ErrCancelNotAllowedWords is what the REST door answers and the screen shows.
+const ErrCancelNotAllowedWords = "Only the person on this pick or a yard manager can cancel it."
+
+// canOverrideHolder is the role ranking behind a manager's cancel of a pick someone else holds: the Yard
+// Manager (a Tier 2 branch role, identity staffcontext rbac.go) and anyone above it, the Tier 1 leadership
+// roles. Other Tier 2 managers are the same tier, not above, and the frontline roles are the yard hands.
+func canOverrideHolder(sc identity.StaffContext) bool {
+	return sc.RoleCode == "YARD_MANAGER" || sc.Tier == identity.TierLeadership
+}
+
+// ErrNoActor is a yard write from a staff login with no linked ERP user: nobody to hold the pick, so nothing
+// is claimed or changed. → 403.
+var ErrNoActor = errors.New("tasks: this sign in is not linked to a staff account")
+
+// ErrNoActorWords is what the REST door answers and the screen shows.
+const ErrNoActorWords = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it."
 
 // ErrNotPickTask is a pick record or skid count submitted against a task that is not a PICK task (for
 // example a NEED_WEIGHT, DISPATCH, or OTHER task). The yard handlers, syncpick, and the fake store all
@@ -244,8 +266,14 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	change := YardSkidChange{
 		OrderID: task.OrderID, ActorID: in.ActorID, SkidCount: in.SkidCount, Reason: in.Reason, Note: in.Note,
 	}
-	res, err := s.yardOrders.RecordSkids(ctx, change)
-	if err != nil {
+	// The skid count is the holder's (UX-76b): compared on the task row locked across the order call, in the
+	// transaction the count is made in, as the pick record is.
+	var res YardSkidResult
+	if err := s.store.HolderLocked(ctx, in.TaskID, in.ActorID, func(ctx context.Context) error {
+		r, e := s.yardOrders.RecordSkids(ctx, change)
+		res = r
+		return e
+	}); err != nil {
 		return YardSkidResult{}, err
 	}
 	if res.Changed {

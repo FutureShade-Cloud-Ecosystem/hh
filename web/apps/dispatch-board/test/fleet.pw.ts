@@ -24,7 +24,7 @@ test("the registry lists every truck and driver with its facts in the yard's uni
   await expect(truckCard(page, "Truck 04")).toContainText("2,425 lb");
   await expect(truckCard(page, "Truck 01")).toContainText("In use");
   await expect(driverCard(page, "Driver A (demo)")).toContainText("Licence A");
-  await expect(driverCard(page, "Driver A (demo)")).toContainText("No staff login");
+  await expect(driverCard(page, "Driver A (demo)")).toContainText("No sign in account");
   await expect(page.locator("main")).not.toContainText(" kg");
   await expect(page.locator("[data-action='new-run']")).toHaveCount(0);
 });
@@ -100,16 +100,16 @@ test("a driver is added, linked to a staff login id, and the core's words answer
   await sheetField(page, "name").fill("Driver D (demo)");
   await sheetField(page, "login").fill("not-an-id");
   await page.locator("[data-sheet]").getByRole("button", { name: "Add driver" }).click();
-  await expect(page.locator("[data-sheet-error]")).toContainText("A staff login id is a long id with dashes");
+  await expect(page.locator("[data-sheet-error]")).toContainText("A driver's sign in account is a long id with dashes");
   await sheetField(page, "login").fill("d0200000-0000-4000-9000-000000000001");
   await sheetField(page, "phone").fill("619-555-0144");
   await page.locator("[data-sheet]").getByRole("button", { name: "Add driver" }).click();
   await expect(page.locator("[data-notice]")).toHaveText("Driver D (demo) added to the drivers.");
-  await expect(driverCard(page, "Driver D (demo)")).toContainText("Has a staff login");
+  await expect(driverCard(page, "Driver D (demo)")).toContainText("Has a sign in account");
   await expect(driverCard(page, "Driver D (demo)")).toContainText("619-555-0144");
   await driverCard(page, "Driver D (demo)").getByRole("button", { name: "Take out of use" }).click();
   await expect(driverCard(page, "Driver D (demo)")).toContainText("Out of use");
-  await expect(driverCard(page, "Driver D (demo)")).toContainText("Has a staff login");
+  await expect(driverCard(page, "Driver D (demo)")).toContainText("Has a sign in account");
 });
 
 test("below the manage level the core's gate answers, and the screen says who may", async ({ page, request }) => {

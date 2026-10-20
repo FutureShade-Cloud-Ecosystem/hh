@@ -142,8 +142,6 @@ func (g *holderGuard) syncPush(who, scope string, op apigen.SyncPushOperation) a
 	return res[0]
 }
 
-func refusedStatus(code int) bool { return code == http.StatusConflict || code == http.StatusForbidden }
-
 // Each write runs on its own pick, so one accepted write cannot make another look refused.
 func TestYardHolderGuard_NonHolderStageAndSavePickAreRefused(t *testing.T) {
 	type leg struct {
@@ -151,10 +149,11 @@ func TestYardHolderGuard_NonHolderStageAndSavePickAreRefused(t *testing.T) {
 		send func(g *holderGuard) (refused bool, detail string)
 	}
 	refusedRest := func(code int, body string) (bool, string) {
-		return refusedStatus(code) && body != "", "got " + http.StatusText(code) + " " + body
+		// Exactly the holder's 409 and its words: a branch fence 403 must never make this leg pass (UX-76b).
+		return code == http.StatusConflict && strings.Contains(body, ErrNotHolderWords), "got " + http.StatusText(code) + " " + body
 	}
 	refusedSync := func(res apigen.SyncPushResult) (bool, string) {
-		return res.Status == "rejected" && res.Error != nil && *res.Error != "", "got " + res.Status
+		return res.Status == "rejected" && res.Error != nil && strings.Contains(*res.Error, "someone else is on this pick"), "got " + res.Status
 	}
 	legs := []leg{
 		{"REST stage", func(g *holderGuard) (bool, string) {
@@ -176,7 +175,7 @@ func TestYardHolderGuard_NonHolderStageAndSavePickAreRefused(t *testing.T) {
 			g := newHolderGuard(t)
 			g.as(g.b)
 			if ok, detail := l.send(g); !ok {
-				t.Errorf("%s from a non holder must be refused with a plain 409 or 403 (REST) or a rejected op with words (sync); %s", l.name, detail)
+				t.Errorf("%s from a non holder must be refused with the holder 409 and its words (REST) or a rejected op with the holder words (sync); %s", l.name, detail)
 			}
 			if s := g.status(); s != "IN_PROGRESS" {
 				t.Errorf("a refused write changes nothing: the pick is %s", s)

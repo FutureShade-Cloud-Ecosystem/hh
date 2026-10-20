@@ -375,6 +375,7 @@ var ownedObjects = map[string]string{
 	"assist_model_aliases":            "assist",            // 0416_assist_aliases_and_conversations
 	"assist_model_prices":             "assist",            // 0417_assist_metering
 	"assist_pro_caps":                 "assist",            // 0417_assist_metering
+	"assist_query_log":                "assist",            // 0419_assist_orders_views_and_query_log
 	"assist_role_limits":              "assist",            // 0155_assist_limits
 	"assist_settings":                 "assist",            // 0153_assist_commands_config
 	"assist_spend":                    "assist",            // 0417_assist_metering
@@ -666,6 +667,7 @@ var ownedObjects = map[string]string{
 	"warranty_recovery_actions":       "warranty",          // 0130_warranty_recovery_board
 	"warranty_recovery_balances":      "warranty",          // 0130_warranty_recovery_board
 	"demo_box":                        "demo",              // runtime created by demo populate's writeDemoBox, outside the frozen migration chain by that file's own statement
+	"pg_catalog":                      "system",            // the PostgreSQL system catalogue, no module's data; stated so the map covers what the scan meets; every module access to it is an allowlist entry
 	"information_schema":              "system",            // the PostgreSQL catalog itself, no module's data; it is stated here so the map covers everything the scan meets, and every module access to it is an allowlist entry
 	"warranty_settlement_postings":    "warranty",          // 0129_warranty_settlement_paths
 	"warranty_sla_alerts":             "warranty",          // 0132_warranty_sla

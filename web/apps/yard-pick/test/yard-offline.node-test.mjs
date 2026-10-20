@@ -26,7 +26,16 @@ function nextKey() {
   return `00000000-0000-4000-8000-${String(keyCounter).padStart(12, "0")}`;
 }
 
-async function rig(extra = {}) {
+/** Back online. Every write fires a background sync it does not await, and one
+ * that started while the fake server was offline can reach its push after the
+ * flip and send a lone write ahead of the explicit cycle. Let those rest first,
+ * so a test counting pushes sees the queue go out together. */
+async function online(layer, server) {
+  await layer.runner.settled();
+  server.setOffline(false);
+}
+
+async function rig({ wrapTransport, ...extra } = {}) {
   const server = new FakeSyncServer();
   // The world, in the projection the demo sync surface serves: the task rows
   // carry the task and the ticket words; the shortage rows carry the shortage.
@@ -68,7 +77,7 @@ async function rig(extra = {}) {
   const layer = new YardOffline({
     store,
     sql: backend.sql,
-    transport: server.transport(),
+    transport: wrapTransport ? wrapTransport(server.transport()) : server.transport(),
     actorId: ACTOR,
     newKey: nextKey,
     ...extra,
@@ -119,7 +128,7 @@ test("offline, a claim and a start stay local, then drain in order", async () =>
   assert.equal(read.value.task.claimed_by, ACTOR);
   assert.equal(await layer.waiting(), 2);
   // Back online: the outbox drains, in enqueue order, and the reads keep the truth.
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.equal(server.appliedOrder.length, 2);
@@ -137,6 +146,42 @@ test("offline, a claim and a start stay local, then drain in order", async () =>
   assert.equal(pushes[0].ops[1].base_seq === undefined, true);
 });
 
+test("a background sync and an explicit cycle that overlap push each queued write once", async () => {
+  // Hold the server's answer to a push so the background sync a write fires
+  // is still in flight when the explicit cycle starts.
+  let held = false;
+  let open = () => {};
+  let arrived = () => {};
+  const arrival = new Promise((resolve) => (arrived = resolve));
+  const gate = new Promise((resolve) => (open = resolve));
+  const { layer, server } = await rig({
+    wrapTransport: (inner) => ({
+      pull: (...args) => inner.pull(...args),
+      push: async (...args) => {
+        const answer = await inner.push(...args);
+        if (held) {
+          held = false;
+          arrived();
+          await gate;
+        }
+        return answer;
+      },
+    }),
+  });
+  held = true;
+  const claimed = await layer.claim(TASK);
+  assert.equal(claimed.ok, true);
+  await arrival; // the background sync's push is at the server, unanswered
+  const explicit = layer.cycle();
+  open();
+  await explicit;
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  const pushes = server.requests.filter((r) => r.kind === "push");
+  const sent = pushes.flatMap((p) => p.ops).filter((o) => o.payload.id === TASK);
+  assert.equal(sent.length, 1, "the claim reaches the server in one push, not two");
+});
+
 test("a shortage reported offline lands, and a correction the server moved first waits as a review card", async () => {
   const { layer, server, store } = await rig();
   // Offline: the picker reports the shortage.
@@ -149,7 +194,7 @@ test("a shortage reported offline lands, and a correction the server moved first
     note: "Split bags at the rack",
   });
   assert.equal(reported.ok, true);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   // The shortage is in the store now, with the server's seq.
@@ -170,7 +215,7 @@ test("a shortage reported offline lands, and a correction the server moved first
   });
   assert.equal(corrected.ok, true);
   server.touch("shortages", shortageId, { qty_short: "5.0000" });
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   // The stale correction never merges on its own: a review card waits.
   const cards = await layer.openCards();
@@ -193,7 +238,7 @@ test("a queued pick the server reassigned first comes back superseded, and the s
   await layer.claim(TASK);
   // The server reassigns the ticket while the claim waits in the outbox.
   server.touch("pick_tasks", TASK, { status: "CANCELLED", claimed_by: "dispatch" });
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const cards = await layer.openCards();
   const superseded = cards.find((c) => c.kind === "superseded");
@@ -293,7 +338,7 @@ test("every queued write declares only fields the core's sync stores admit (the 
   await layer.stage(TASK, "Bay 4", "");
   const reported = await layer.reportShortage(TASK, { orderLineNo: 2, description: "Polymeric sand, grey, 18 kg", qtyShort: "4", uom: "BAG", note: "Split bags" });
   assert.equal(reported.ok, true);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.deepEqual(payloadOffenders(server.requests), []);
@@ -329,7 +374,7 @@ test("a direct door refuses in words while a write is still waiting, and says no
   assert.equal(waiting.ok, false);
   if (waiting.ok) return;
   assert.match(waiting.error, /still waiting/);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.setOnline(false);
   const nosignal = await layer.recordSkids(TASK, 2, "COUNT_CORRECTION", "");
   assert.equal(nosignal.ok, false);
@@ -460,7 +505,7 @@ test("the record drains in order behind the claim and the start, lands, and the 
   const shortage = await layer.reportShortage(TASK, { orderLineNo: 2, description: "Polymeric sand, grey, 18 kg", qtyShort: "2", uom: "BAG", note: "" });
   assert.equal(shortage.ok, true);
   assert.equal(await layer.waiting(), 4);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.equal(server.appliedOrder.length, 4, "all four writes applied");
@@ -483,7 +528,7 @@ test("a record the core refuses comes back as a Not accepted card with the core'
   await layer.recordLines(TASK, [recordLine()]);
   const [queued] = await layer.store.outbox.pending();
   server.refuse(queued.key, "line 1: that is more than was ordered, the yard cannot raise a quantity");
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const card = (await layer.openCards()).find((c) => c.kind === "rejected");
   assert.ok(card !== undefined, "a rejected card waits");
@@ -500,7 +545,7 @@ test("a record the server moved the ticket under comes back superseded, and the 
   server.setOffline(true);
   await layer.recordLines(TASK, [recordLine()]);
   server.touch("pick_tasks", TASK, { status: "CANCELLED", claimed_by: "dispatch" });
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const card = (await layer.openCards()).find((c) => c.kind === "superseded");
   assert.ok(card !== undefined, "the server wins card shows");
@@ -535,7 +580,7 @@ test("a second record of the same pick before any pull goes blind and still drai
   await layer.recordLines(TASK, [recordLine({ qty_picked: "20", short_reason: "NOT_IN_YARD" })]);
   await layer.recordLines(TASK, [recordLine({ qty_picked: "24" })]);
   assert.equal(await layer.waiting(), 2);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.equal((await layer.openCards()).length, 0);
@@ -555,7 +600,7 @@ test("the shortage report's payload drops the stamped legs the core refuses", as
   for (const stamped of ["reported_at", "resolved_at", "resolved_by", "resolution", "reported_by"]) {
     assert.equal(stamped in queued.payload, false, `${stamped} is the server's`);
   }
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.deepEqual(payloadOffenders(server.requests), []);
 });
@@ -576,7 +621,7 @@ test("a record queued behind this device's own shortage report goes blind: the r
   for (const op of queued.filter((row) => row.scope === "pick_tasks")) {
     assert.equal(op.baseSeq, null, `the ${Object.keys(op.payload).filter((k) => k !== "id").join(",")} write names no base after the report`);
   }
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.equal((await layer.openCards()).length, 0, "no server wins card for the device's own earlier report");
@@ -594,7 +639,7 @@ test("a refused second record puts the server's earlier lines back, not an empty
   await layer.recordLines(TASK, [recordLine({ qty_picked: "24" })]);
   const [queued] = await layer.store.outbox.pending();
   server.refuse(queued.key, "line 1: refused by test");
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const after = await layer.pick(TASK);
   assert.equal(after.value.picked.length, 1);
@@ -608,7 +653,7 @@ test("a refused record is taken back when the refusal arrives after a restart", 
   await layer.recordLines(TASK, [recordLine()]);
   const [queued] = await layer.store.outbox.pending();
   server.refuse(queued.key, "line 1: refused by test");
-  server.setOffline(false);
+  await online(layer, server);
   const fresh = new YardOffline({ store, sql: backend.sql, transport: server.transport(), actorId: ACTOR, newKey: nextKey });
   await fresh.cycle();
   const after = await fresh.pick(TASK);

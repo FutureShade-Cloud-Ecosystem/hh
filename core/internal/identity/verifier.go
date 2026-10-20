@@ -225,6 +225,15 @@ type tokenHeader struct {
 // verifier could run at all (operational). Every message is static text:
 // token content never enters an error, so no response or log built from
 // these errors can echo it.
+//
+// One refusal still returns the token beside its error: a revocation
+// refusal (the credential error "token revoked", HH-678) hands back the
+// verified Token alongside the *VerifyError, because the sign-out route
+// needs the revoked token's jti and exp to retry persisting its revocation
+// row. That Token is a payload for that retry and nothing more: callers
+// must always check err != nil and never trust a returned Token as an
+// authenticated session when err != nil. Every other refusal returns the
+// zero Token.
 func (v *Verifier) Verify(ctx context.Context, token string) (Token, error) {
 	headerJSON, claimsJSON, sig, signed, err := splitCompact(token)
 	if err != nil {

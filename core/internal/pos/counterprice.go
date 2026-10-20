@@ -97,6 +97,19 @@ func (s *Service) WithCounterQuoter(q CounterQuoter) *Service { s.counterPrices 
 // a screen with no price on that tile rather than a fault banner. A price nobody can compute must
 // never render as $0.00.
 func (s *Service) CounterPrices(ctx context.Context, in CounterPriceInput) (CounterPrices, error) {
+	// THE BRANCH WALL, before any customer or price is read: a read that prices at a branch the caller's
+	// resolved authority does not reach is refused with the words create sale gives for it, never answered
+	// at that branch's rules and the named account's prices. A read naming no branch is the dealer wide
+	// picture and stays answered; a caller that cannot be resolved is the 401 the guard's door would give.
+	if branch := strings.TrimSpace(in.BranchID); branch != "" {
+		caller, err := s.caller(ctx)
+		if err != nil {
+			return CounterPrices{}, err
+		}
+		if !caller.CanAccessBranch(branch) {
+			return CounterPrices{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branch)
+		}
+	}
 	out := CounterPrices{CustomerType: "RETAIL", Prices: []pricing.CounterQuote{}}
 	quoter := s.counterQuoter()
 	if len(in.Items) == 0 || quoter == nil {

@@ -1089,6 +1089,8 @@ export type AssistField = {
 export type AssistItem = {
   title: string;
   fields: AssistField[];
+  ref?: AssistRef;
+  cite?: number;
 };
 export type AssistRef = {
   kind: "product" | "order" | "customer" | "quote";
@@ -1102,6 +1104,36 @@ export type AssistResult = {
   empty: boolean;
   note?: string;
   ref?: AssistRef;
+  notice?: AssistNotice;
+  scope?: AssistScope;
+};
+export type AssistNotice = {
+  code: "model_unavailable" | "refused" | "too_broad";
+  class?: "cost" | "margin" | "payment_trail" | "pii" | "capability" | "disabled";
+};
+export type AssistScopeBranch = {
+  id: string;
+  label: string;
+};
+export type AssistScopePeriod = {
+  from: string;
+  to: string;
+  label: string;
+};
+export type AssistScopeAccount = {
+  label: string;
+};
+export type AssistScope = {
+  branches?: AssistScopeBranch[];
+  all_branches?: boolean;
+  account?: AssistScopeAccount;
+  period?: AssistScopePeriod;
+  as_of: string;
+};
+export type AssistCitation = {
+  n: number;
+  label: string;
+  ref: AssistRef;
 };
 export type AssistInvocation = {
   command: string;
@@ -1147,12 +1179,11 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
-  notice?: AssistNotice;
   conversation_id?: string;
-};
-export type AssistNotice = {
-  code: "model_unavailable";
-  class?: string;
+  citations?: AssistCitation[];
+  notice?: AssistNotice;
+  scope?: AssistScope;
+  answer_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
@@ -4337,6 +4368,7 @@ export type Task = {
   created_by?: string;
   assigned_to?: string;
   claimed_by?: string;
+  claimed_by_role?: string;
   claimed_at?: string | null;
   pushed_at?: string | null;
   accept_deadline_at?: string | null;

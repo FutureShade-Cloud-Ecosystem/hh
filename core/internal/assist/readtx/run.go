@@ -82,6 +82,29 @@ type Reader struct {
 // carry this reader's audience. The caller builds c from an already resolved
 // Caller; Run never takes claims from request input.
 func (r *Reader) Run(ctx context.Context, c Claims, stmt string, args []any, scan func(pgx.Rows) error) error {
+	return r.Do(ctx, c, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, stmt, args...)
+		if err != nil {
+			return mapError(err)
+		}
+		defer rows.Close()
+		if err := scan(rows); err != nil {
+			return err
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return mapError(err)
+		}
+		return nil
+	})
+}
+
+// Do opens the same read only transaction as Run, sets it up the same way (backend pid, bound
+// claim, timeouts, SET LOCAL ROLE the reader) and hands it to fn, then rolls back. It exists for a
+// caller that needs more than one statement under one claim (an EXPLAIN, then the query). fn gets
+// the transaction after the role is set, so every statement it runs is the reader's. Errors fn
+// returns pass through untouched; errors from the driver inside fn are the caller's to map (MapError).
+func (r *Reader) Do(ctx context.Context, c Claims, fn func(tx pgx.Tx) error) error {
 	if c.Audience != r.audience {
 		return fail(CodeAudience)
 	}
@@ -117,17 +140,18 @@ func (r *Reader) Run(ctx context.Context, c Claims, stmt string, args []any, sca
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+pgx.Identifier{r.role}.Sanitize()); err != nil {
 		return mapError(err)
 	}
-	rows, err := tx.Query(ctx, stmt, args...)
-	if err != nil {
-		return mapError(err)
+	return fn(tx)
+}
+
+// MapError turns a driver error from a statement fn ran inside Do into the coded Error. Nothing of
+// the driver's text survives.
+func MapError(err error) error {
+	if err == nil {
+		return nil
 	}
-	defer rows.Close()
-	if err := scan(rows); err != nil {
-		return err
+	var e *Error
+	if errors.As(err, &e) {
+		return e
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return mapError(err)
-	}
-	return nil
+	return mapError(err)
 }

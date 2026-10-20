@@ -113,3 +113,35 @@ test.describe("desktop 1440", () => {
     await page.screenshot({ path: join(SHOTS, "quote-desktop.png"), fullPage: true });
   });
 });
+
+// UX-70 round 3: the dealer's served zone reaches the quote page, whatever the machine's own zone is.
+// 05:30 UTC is the previous evening in Los Angeles; the page must read that day, never the UTC or Tokyo one.
+for (const machineZone of ["UTC", "Asia/Tokyo"]) {
+  test.describe(`the dealer's zone, machine in ${machineZone}`, () => {
+    test.use({ viewport: { width: 390, height: 844 }, timezoneId: machineZone });
+
+    test("a quote's Created day reads in the zone the dealer serves", async ({ page }) => {
+      const boundary = new Date();
+      boundary.setUTCHours(5, 30, 0, 0);
+      const dayIn = (timeZone: string): string => new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" }).format(boundary);
+      const pacificDay = dayIn("America/Los_Angeles");
+      expect(pacificDay).not.toBe(dayIn("UTC"));
+      expect(pacificDay).not.toBe(dayIn("Asia/Tokyo"));
+      await page.route("**/api/v1/tenant/config", async (route) => {
+        const response = await route.fetch();
+        const cfg = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...cfg, business_zone: "America/Los_Angeles" } });
+      });
+      await page.route("**/api/v1/tenant/quotes/*", async (route) => {
+        const response = await route.fetch();
+        const detail = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...detail, created_at: boundary.toISOString() } });
+      });
+      await signIn(page, "owner");
+      await openQuotes(page);
+      await page.getByTestId("quotes-row").first().click();
+      await expect(page.getByTestId("quote-lines")).toBeVisible();
+      await expect(page.locator("hh-pro-frame")).toContainText(`Created ${pacificDay}`);
+    });
+  });
+}

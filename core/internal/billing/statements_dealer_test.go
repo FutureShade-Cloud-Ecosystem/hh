@@ -14,7 +14,8 @@ import (
 // it is asked to save.
 type headerlessStore struct {
 	statementStore
-	saved Statement
+	saved  Statement
+	notice *StatementNotice
 }
 
 func (headerlessStore) CreditPolicy(context.Context, string) (CreditPolicy, error) {
@@ -32,8 +33,9 @@ func (headerlessStore) BranchHeader(context.Context, string) (StatementHeader, e
 func (headerlessStore) CreateRun(context.Context, string, string, time.Time, string) (string, error) {
 	return "run1", nil
 }
-func (s *headerlessStore) SaveStatement(_ context.Context, _ string, st Statement, _ *StatementNotice, _ StatementOutbox) (string, error) {
+func (s *headerlessStore) SaveStatement(_ context.Context, _ string, st Statement, n *StatementNotice, _ StatementOutbox) (string, error) {
 	s.saved = st
+	s.notice = n
 	return "st1", nil
 }
 func (headerlessStore) FinishRun(context.Context, string, string, int, int, string) error { return nil }

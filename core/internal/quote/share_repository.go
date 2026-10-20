@@ -205,6 +205,21 @@ func (r *Repository) PublicQuote(ctx context.Context, quoteID string) (PublicQuo
 	return v, nil
 }
 
+// HasLines reports whether the quote has at least one line.
+func (r *Repository) HasLines(ctx context.Context, quoteID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	if !looksLikeUUID(quoteID) {
+		return false, ErrNotFound
+	}
+	var n int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM quote_lines WHERE quote_id = $1`, quoteID).Scan(&n); err != nil {
+		return false, fmt.Errorf("count quote lines: %w", err)
+	}
+	return n > 0, nil
+}
+
 // MarkSent moves DRAFT -> SENT under the quote row lock, recording the transition on the same tx.
 // Idempotent: an already-SENT quote is a no-op, not an error, because minting a second link for a
 // quote already out with a customer is a legitimate act.

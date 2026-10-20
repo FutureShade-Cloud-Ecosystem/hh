@@ -127,6 +127,7 @@ test("a line is exactly the eight fields the yard's pull list names, and nothing
 test("a task is the narrow shape the board reads, and a null ticket stays null", () => {
   assert.deepEqual(Object.keys(toTask(rawTask)).sort(), [
     "claimed_by",
+    "claimed_by_role",
     "created_at",
     "id",
     "open_shortages",
@@ -140,6 +141,12 @@ test("a task is the narrow shape the board reads, and a null ticket stays null",
   ]);
   assert.equal(toTicket(null), null);
   assert.equal(toTicket(undefined), null);
+});
+
+test("a task carries the claimer's role label as served, and empty when none is", () => {
+  assert.equal(toTask({ ...rawTask, claimed_by: "u1", claimed_by_role: "Yard Manager" }).claimed_by_role, "Yard Manager");
+  assert.equal(toTask(rawTask).claimed_by_role, "");
+  assert.equal(toTask({ ...rawTask, claimed_by_role: 7 }).claimed_by_role, "");
 });
 
 test("garbage in is empty out, never a guess", () => {

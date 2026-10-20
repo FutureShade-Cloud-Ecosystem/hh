@@ -323,6 +323,11 @@ func (s *Service) PickQueue(ctx context.Context, f TaskFilter) ([]PickQueueEntry
 	if err != nil {
 		return nil, err
 	}
+	ptrs := make([]*Task, len(tasks))
+	for i := range tasks {
+		ptrs[i] = &tasks[i]
+	}
+	s.labelClaimers(ctx, ptrs) // one role read for the board (UX-75)
 	out := make([]PickQueueEntry, 0, len(tasks))
 	for _, t := range tasks {
 		out = append(out, s.decorate(ctx, t))
@@ -340,6 +345,7 @@ func (s *Service) PickDetail(ctx context.Context, taskID string) (PickQueueEntry
 	if err != nil {
 		return PickQueueEntry{}, err
 	}
+	s.labelClaimers(ctx, []*Task{&t}) // the claimer by role, never by name (UX-75)
 	e := PickQueueEntry{Task: t}
 	if s.picks != nil {
 		if ticket, err := s.picks.PickTicket(ctx, t.OrderID); err == nil {
