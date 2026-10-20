@@ -349,7 +349,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	shortageSync := tasks.NewShortageSyncStore(pool, link).WithStaffAuthority(syncStaff)
+	if pool != nil && !shortageSync.StaffAuthorityWired() {
+		panic("tasks: shortage sync branch fence not wired - a yard device could report on another branch's pick")
+	}
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}

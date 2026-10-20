@@ -1318,7 +1318,13 @@ type AssistAnswer struct {
 	Clarify        *AssistClarify     `json:"clarify,omitempty"`
 	Carried        *[]string          `json:"carried,omitempty"`
 	Suggest        *[]string          `json:"suggest,omitempty"`
+	Notice         *AssistNotice      `json:"notice,omitempty"`
 	ConversationId *string            `json:"conversation_id,omitempty"`
+}
+
+type AssistNotice struct {
+	Code  string  `json:"code"`
+	Class *string `json:"class,omitempty"`
 }
 
 type AssistBudget struct {

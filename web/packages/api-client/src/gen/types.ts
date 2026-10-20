@@ -1147,7 +1147,12 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
+  notice?: AssistNotice;
   conversation_id?: string;
+};
+export type AssistNotice = {
+  code: "model_unavailable";
+  class?: string;
 };
 export type AssistBudget = {
   tokens: number;

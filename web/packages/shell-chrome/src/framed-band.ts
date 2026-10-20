@@ -5,10 +5,6 @@
 // and the account chip's persona name with the role label (the tier words
 // the person knows, read only; the role's RBAC never changes).
 
-/** The demo tenant's word for the band's lockup. The demo apps frame the
- * demo tenant; the white-label tenant config leads when it lands. */
-export const FRAMED_BAND_ORG = 'Gable Landscape Supply';
-
 /** The centred selector's words: the app, then the surface the demo provides
  * ("Counter Till > New sale"). No surface is the app's front door, named by
  * the app alone. */

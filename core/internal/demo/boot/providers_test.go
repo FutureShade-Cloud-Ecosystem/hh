@@ -14,6 +14,8 @@ var deny = ProviderDeny{
 	PrefixExceptions: []string{
 		"PLANE_API_URL", "PLANE_API_KEY", "PLANE_PROJECT_ID",
 		"PLANE_WORKSPACE_SLUG", "PLANE_FEEDBACK_MODULE",
+		// The assistant's two (slice 3), by exact name.
+		"HOS_ASSIST_ANTHROPIC_API_KEY", "HOS_ASSIST_DEALER_CAP_MICROCENTS",
 	},
 	Names:       []string{"SMS_PROVIDER", "HOS_CARD_BASE_URL", "NATS_URL", "HOS_STATEMENT_NOTICES"},
 	CardVar:     "HOS_CARD_PROCESSOR",
@@ -33,7 +35,8 @@ func TestRefuseProviderVarsRefusals(t *testing.T) {
 		{"bistrack pair", []string{"BISTRACK_API_KEY=x"}, "BISTRACK_API_KEY"},
 		{"twilio credential", []string{"TWILIO_AUTH_TOKEN=x"}, "TWILIO_AUTH_TOKEN"},
 		{"live gateway key", []string{"HOS_PAYMENT_API_KEY=x"}, "HOS_PAYMENT_API_KEY"},
-		{"assist key", []string{"HOS_ASSIST_ANTHROPIC_API_KEY=x"}, "HOS_ASSIST_ANTHROPIC_API_KEY"},
+		{"assist key lookalike", []string{"HOS_ASSIST_ANTHROPIC_API_KEY_2=x"}, "HOS_ASSIST_ANTHROPIC_API_KEY_2"},
+		{"assist future name", []string{"HOS_ASSIST_SOMETHING_NEW=x"}, "HOS_ASSIST_SOMETHING_NEW"},
 		{"assist gateway url", []string{"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1"}, "HOS_ASSIST_GATEWAY_URL"},
 		{"assist gateway key", []string{"HOS_ASSIST_GATEWAY_KEY=x"}, "HOS_ASSIST_GATEWAY_KEY"},
 		{"assist dealer tag", []string{"HOS_ASSIST_DEALER_TAG=x"}, "HOS_ASSIST_DEALER_TAG"},
@@ -119,5 +122,42 @@ func TestRefuseProviderVarsRefusesAnUnknownNameUnderTheExplicitPrefix(t *testing
 	// The default zero value keeps the old behaviour (no explicit prefix).
 	if err := RefuseProviderVars([]string{"CORE_BRAND_NEW_WIRE=1"}, deny); err != nil {
 		t.Fatalf("zero explicit prefix refused: %v", err)
+	}
+}
+
+// Slice 3: a demo box that carries the assistant's key must carry a
+// positive dealer cap, or the boot refuses with a message naming the cap and
+// never the key's value. No key means no requirement (the stub serves).
+func TestRefuseAssistKeyWithoutCap(t *testing.T) {
+	const keyValue = "fake-key-must-not-print"
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{"no key, no cap", map[string]string{}, false},
+		{"empty key, no cap", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": "  "}, false},
+		{"cap without key", map[string]string{"HOS_ASSIST_DEALER_CAP_MICROCENTS": "5"}, false},
+		{"key with a cap", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "5000000"}, false},
+		{"key, cap unset", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue}, true},
+		{"key, cap empty", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": ""}, true},
+		{"key, cap zero", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "0"}, true},
+		{"key, cap negative", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "-4"}, true},
+		{"key, cap not a number", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "lots"}, true},
+	}
+	for _, c := range cases {
+		err := RefuseAssistKeyWithoutCap(func(k string) string { return c.env[k] })
+		if (err != nil) != c.wantErr {
+			t.Fatalf("%s: err = %v, wantErr %v", c.name, err, c.wantErr)
+		}
+		if err == nil {
+			continue
+		}
+		if !strings.Contains(err.Error(), "HOS_ASSIST_DEALER_CAP_MICROCENTS") {
+			t.Fatalf("%s: refusal %q does not name the missing cap", c.name, err)
+		}
+		if strings.Contains(err.Error(), keyValue) {
+			t.Fatalf("%s: refusal carries the key's value", c.name)
+		}
 	}
 }
