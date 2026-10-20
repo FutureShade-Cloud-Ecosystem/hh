@@ -177,6 +177,10 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 	var outs []Output
 	var selects []string
 	seen := map[string]bool{}
+	// orderExpr is what ORDER BY names for each output: the input column (qualified, so it cannot resolve to the
+	// text alias of the same name) or the aggregate expression. Every select is cast to text under its own name,
+	// and a bare name in ORDER BY resolves to the output column first, which ordered numbers as text.
+	orderExpr := map[string]string{}
 	addPlain := func(name string) error {
 		if seen[name] {
 			return nil
@@ -189,6 +193,7 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 			return invalid("An aggregate query may only select the columns it groups by.")
 		}
 		seen[name] = true
+		orderExpr[name] = qi(c.view.Schema, c.view.Table, name)
 		outs = append(outs, Output{Name: name, Label: col.Label, Type: col.Type, Class: col.Class})
 		selects = append(selects, fmt.Sprintf("(%s)::text AS %s", qi(name), qi(name)))
 		return nil
@@ -225,6 +230,7 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 				continue
 			}
 			seen[out.Name] = true
+			orderExpr[out.Name] = expr
 			outs = append(outs, out)
 			selects = append(selects, fmt.Sprintf("(%s)::text AS %s", expr, qi(out.Name)))
 		}
@@ -269,7 +275,11 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 		if ob.Dir == "desc" {
 			dir = "DESC"
 		}
-		orders = append(orders, qi(ob.Col)+" "+dir+" NULLS LAST")
+		expr, ok := orderExpr[ob.Col]
+		if !ok {
+			expr = qi(c.view.Schema, c.view.Table, ob.Col)
+		}
+		orders = append(orders, expr+" "+dir+" NULLS LAST")
 	}
 	if len(orders) == 0 && !aggregate {
 		for _, d := range c.view.DefaultOrder {
@@ -278,7 +288,7 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 				if d.Dir == "desc" {
 					dir = "DESC"
 				}
-				orders = append(orders, qi(d.Col)+" "+dir+" NULLS LAST")
+				orders = append(orders, qi(c.view.Schema, c.view.Table, d.Col)+" "+dir+" NULLS LAST")
 			}
 		}
 	}

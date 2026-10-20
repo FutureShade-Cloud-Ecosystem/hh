@@ -174,9 +174,40 @@ func (s *Service) AskConversation(ctx context.Context, c Caller, conversationID,
 	}
 	ans.ConversationID = id
 	if aerr := s.convs.AppendExchange(ctx, id, c.UserID, c.SessionKey, Exchange{
-		Question: question, Answer: ans.Text, Ran: ans.Ran, Clarify: ans.Clarify,
+		Question: question, Answer: ans.Text, Ran: redactRan(ans.Ran), Clarify: ans.Clarify,
 	}); aerr != nil && s.log != nil {
 		s.log.Error("assist: conversation log write failed, this exchange is not kept", "err", aerr)
 	}
 	return ans, nil
+}
+
+// redactRan is what the conversation store keeps of the recorded commands (PII-CLASSES-r2): a data.query call is
+// saved with the marker in place of every personal filter value, column and operator kept, exactly as the query
+// log keeps it (loggedSpec); a spec that does not parse is saved as {"unparsed":true}. The question and answer
+// text are not touched, by design. The answer returned to the caller is not touched either: only the copy that is
+// saved changes, so a later turn rebuilt from the store never carries the value.
+func redactRan(ran []Invocation) []Invocation {
+	if len(ran) == 0 {
+		return ran
+	}
+	out := make([]Invocation, len(ran))
+	for i, inv := range ran {
+		out[i] = inv
+		if inv.Command != DataQueryCode {
+			continue
+		}
+		args := make(Args, len(inv.Args))
+		for k, v := range inv.Args {
+			args[k] = v
+		}
+		if raw, ok := args["spec"]; ok {
+			if sp, err := ParseSpec(raw); err == nil {
+				args["spec"] = string(loggedSpec(sp))
+			} else {
+				args["spec"] = `{"unparsed":true}`
+			}
+		}
+		out[i].Args = args
+	}
+	return out
 }
