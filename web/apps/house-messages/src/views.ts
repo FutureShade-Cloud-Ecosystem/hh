@@ -1174,7 +1174,7 @@ function renderSettingsView(m: Model): TemplateResult {
                 ${(s?.membershipRules ?? []).map(
                   (r) => html`
                     <tr>
-                      <td><strong>#${r.channel_name}</strong></td>
+                      <td><strong>${channelTitle({ id: r.channel_id, kind: "TEAM", name: r.channel_name, topic: "", tier: "STANDARD", unread_count: 0, mentioned: false })}</strong></td>
                       <td>${r.joins_automatically}</td>
                       <td>${r.leaves_automatically}</td>
                       <td><span class="tag tag-plain">${r.visibility}</span></td>
@@ -1291,7 +1291,7 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
             ${m.channels.map(
               (c) => html`
                 <div class="ch" style="justify-content: space-between;">
-                  <span>#${channelTitle(c)}</span>
+                  <span>${channelTitle(c)}</span>
                   <span class="tag tag-plain">${c.tier === "ESCALATION" ? "All (escalation)" : "All"}</span>
                 </div>
               `,
@@ -1367,7 +1367,7 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
               ${directory.map(
                 (dc) => html`
                   <tr>
-                    <td><strong>#${dc.name}</strong></td>
+                    <td><strong>${channelTitle({ id: dc.id, kind: "TEAM", slug: dc.slug, name: dc.name, topic: dc.topic, tier: "STANDARD", unread_count: 0, mentioned: false })}</strong></td>
                     <td>${dc.member_count} member${dc.member_count === 1 ? "" : "s"}</td>
                     <td>
                       ${dc.membership_source === "DERIVED"

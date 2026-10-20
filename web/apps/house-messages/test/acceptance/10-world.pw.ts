@@ -1,6 +1,7 @@
 // The common role legs for House Messages on the demo image (ROLE-GOES-LIVE, section 6): the card, the
 // wall, the branch and the money. Then what the screen shows against what the core answers.
 import { test, expect, arriveFromFrontDoor, bare, channelsOf, mint, shot, staff } from "./helpers.js";
+import { channelTitle } from "../../src/messages-logic.js";
 
 test("L-card: Sales signs in from its card on the front door and opens House Messages from the tile", async ({ page }, testInfo) => {
   await page.goto("/");
@@ -42,7 +43,7 @@ test("L-cost and the money rule: the screen shows the core's rooms and words, an
   await arriveFromFrontDoor(page, "sales");
   const core = await channelsOf(page, "sales");
   const shown = await page.locator("[data-channel-list] .ch-name").allInnerTexts();
-  expect([...shown].sort()).toEqual(core.map((c) => c.name.trim() === "" ? (c.kind === "DM" ? "Direct message" : "Untitled room") : c.name).sort());
+  expect([...shown].sort()).toEqual(core.map((c) => channelTitle(c as any)).sort());
   // A dollar figure may appear only inside a message body the core sent; the chrome carries none.
   const chrome = await page.evaluate(() => {
     const root = document.querySelector("house-messages-app")?.shadowRoot;

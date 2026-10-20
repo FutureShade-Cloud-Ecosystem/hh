@@ -174,8 +174,66 @@ export function channelGroups(channels: readonly Channel[]): ChannelGroup[] {
   );
 }
 
+const DEALER_ROOM_SLUGS: Readonly<Record<string, string>> = {
+  "portal-inbox": "Portal inbox",
+  "alerts-all": "All alerts",
+  "house-unassigned": "Unassigned",
+  office: "Office",
+  finance: "Finance",
+  escalations: "Escalations",
+  feedback: "Feedback",
+};
+
+const DEALER_BRANCH_SUFFIXES: readonly { suffix: string; label: string }[] = [
+  { suffix: "-point-loma", label: "Point Loma" },
+  { suffix: "-julian", label: "Julian" },
+  { suffix: "-trenton", label: "Trenton" },
+  { suffix: "-kingston", label: "Kingston" },
+  { suffix: "-la-jolla", label: "La Jolla" },
+];
+
+const DEALER_ROLE_PREFIXES: Readonly<Record<string, string>> = {
+  house: "House",
+  drivers: "Drivers",
+  sales: "Sales",
+  yard: "Yard",
+  payments: "Payments",
+  branch: "Branch",
+};
+
+function dealerLabelForSlug(rawSlug: string): string | null {
+  const clean = rawSlug.trim().replace(/^#+/, "").toLowerCase();
+  if (clean === "") return null;
+  const direct = DEALER_ROOM_SLUGS[clean];
+  if (direct !== undefined) return direct;
+  for (const b of DEALER_BRANCH_SUFFIXES) {
+    if (clean.endsWith(b.suffix)) {
+      const prefix = clean.slice(0, clean.length - b.suffix.length);
+      const roleLabel = DEALER_ROLE_PREFIXES[prefix];
+      if (roleLabel !== undefined) return `${roleLabel}, ${b.label}`;
+    }
+  }
+  return null;
+}
+
 export function channelTitle(channel: Channel): string {
-  if (channel.name.trim() !== "") return channel.name;
+  const rawName = channel.name.trim();
+  const rawSlug = (channel.slug ?? "").trim();
+  if (rawName.startsWith("#")) {
+    const mapped = dealerLabelForSlug(rawSlug || rawName);
+    if (mapped !== null) return mapped;
+    const stripped = rawName.replace(/^#+/, "").replace(/-/g, " ").trim();
+    if (stripped !== "") return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  }
+  if (rawSlug !== "" && rawName.toLowerCase() === rawSlug.toLowerCase()) {
+    const mapped = dealerLabelForSlug(rawSlug);
+    if (mapped !== null) return mapped;
+  }
+  if (rawName !== "") return rawName;
+  if (rawSlug !== "") {
+    const mapped = dealerLabelForSlug(rawSlug);
+    if (mapped !== null) return mapped;
+  }
   return channel.kind === "DM" ? "Direct message" : "Untitled room";
 }
 

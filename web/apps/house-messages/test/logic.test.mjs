@@ -127,8 +127,15 @@ test("unread words: a count, a cap, and a mention", () => {
   assert.equal(totalUnread([ch({ unread_count: 2 }), ch({ unread_count: 5 })]), 7);
 });
 
-test("a channel's title is its name, and a nameless one still reads", () => {
+test("a channel's title uses its display name when given, or maps core slugs to dealer words", () => {
   assert.equal(channelTitle(ch({ name: "Yard" })), "Yard");
+  assert.equal(channelTitle(ch({ slug: "house-julian", name: "#house-julian" })), "House, Julian");
+  assert.equal(channelTitle(ch({ slug: "portal-inbox", name: "#portal-inbox" })), "Portal inbox");
+  assert.equal(channelTitle(ch({ slug: "alerts-all", name: "#alerts-all" })), "All alerts");
+  assert.equal(channelTitle(ch({ slug: "house-unassigned", name: "#house-unassigned" })), "Unassigned");
+  assert.equal(channelTitle(ch({ slug: "drivers-point-loma", name: "#drivers-point-loma" })), "Drivers, Point Loma");
+  assert.equal(channelTitle(ch({ slug: "yard-point-loma", name: "#yard-point-loma" })), "Yard, Point Loma");
+  assert.equal(channelTitle(ch({ slug: "office", name: "#office" })), "Office");
   assert.equal(channelTitle(ch({ name: "", kind: "DM" })), "Direct message");
   assert.equal(channelTitle(ch({ name: "", kind: "TEAM" })), "Untitled room");
 });
