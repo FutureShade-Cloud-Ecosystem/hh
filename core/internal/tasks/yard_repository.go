@@ -638,3 +638,49 @@ func (r *Repository) ListPickedLines(ctx context.Context, taskID string) ([]Pick
 	}
 	return out, rows.Err()
 }
+
+// HolderLocked runs apply with the task row locked (FOR UPDATE) and the actor checked against the claim on
+// that locked row: ErrNotHolder when someone else holds the pick (the doors refuse a person's write with no
+// actor before they reach here). The skid count's
+// guard (UX-76b): the order call inside apply may need a pooled connection, so it takes a record slot as
+// RecordPickLocked does, and the lock is held across the call so a claim and a count cannot cross.
+func (r *Repository) HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if !looksLikeUUID(taskID) {
+		return ErrNotFound
+	}
+	if r.recordSlots == nil {
+		return ErrRecordPoolTooSmall
+	}
+	select {
+	case r.recordSlots <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-r.recordSlots }()
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("tasks: begin holder lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&claimedBy); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("tasks: lock %q for holder check: %w", taskID, err)
+	}
+	if notHolder(claimedBy, actorID) {
+		return ErrNotHolder
+	}
+	if err := apply(ctx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("tasks: commit holder lock: %w", err)
+	}
+	return nil
+}

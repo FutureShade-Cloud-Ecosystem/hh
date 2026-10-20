@@ -475,3 +475,14 @@ test("the core's holder refusal reads as one plain line on both doors (UX-76)", 
   assert.equal(yardError("tasks: someone else is on this pick", 409, "fallback"), "Someone else is on this pick.");
   assert.equal(recordRefusalWords("sync: operation refused: tasks: someone else is on this pick"), "Someone else is on this pick.");
 });
+
+test("the cancel refusal and the no actor refusal read as plain lines on both doors (UX-76b)", () => {
+  const cancel = "Only the person on this pick or a yard manager can cancel it.";
+  assert.equal(yardError("Only the person on this pick or a yard manager can cancel it.", 409, "fallback"), cancel);
+  assert.equal(yardError("tasks: only the holder or a yard manager may cancel this pick", 409, "fallback"), cancel);
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: only the holder or a yard manager may cancel this pick"), cancel);
+  const noActor = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.";
+  assert.equal(yardError("Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.", 403, "fallback"), noActor);
+  assert.equal(yardError("tasks: this sign in is not linked to a staff account", 403, "fallback"), noActor);
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: this sign in is not linked to a staff account"), noActor);
+});

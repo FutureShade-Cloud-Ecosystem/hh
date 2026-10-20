@@ -162,6 +162,10 @@ type TransitionInput struct {
 	ActorID  string // "" = system transition (audited as NULL actor)
 	Note     string
 	PhotoURL string // set only when To == DONE
+	// OverrideRole is the role code of a caller who may cancel a pick someone else holds (a Yard Manager or a
+	// Tier 1 leader, decided by the handler from the staff context). Used only for To == CANCELLED: a cancel
+	// over the holder then needs Note as its reason and writes the audit event naming the role.
+	OverrideRole string
 }
 
 // TaskFilter is the picking-queue query projection over tasks (GET /tasks?status=&branch_id=). Empty

@@ -85,6 +85,49 @@ test("L-card: the front door's role code asks for a persona only in the five con
   await expect(page.locator("hh-pro-frame")).toHaveCount(0);
 });
 
+test("L-card: a slow session check and slow data call on boot stay in the frame with the loading pattern, and a network failure stays in the frame with Try again", async ({ page }) => {
+  let mode: "slow" | "fail" | "ok" = "slow";
+  await page.route("**/api/v1/**", async (route) => {
+    const url = route.request().url();
+    if (/auth|session|mint|tenant\/config|demo/.test(url)) return route.continue();
+    if (mode === "slow") {
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    }
+    if (mode === "fail") {
+      return route.abort("failed");
+    }
+    return route.continue();
+  });
+
+  for (const entry of [
+    { href: "/pro-pay/?as=ap_finance", role: "Accounts payable", stateId: "landing-state", readyText: "INV-" },
+    { href: "/pro-field/?as=field_crew", role: "Field crew", stateId: "landing-state", readyText: "SO-" },
+    { href: "/pro-procurement/?as=account_admin", role: "Owner", stateId: "surface-state", readyText: "SO-" },
+  ]) {
+    mode = "slow";
+    await page.goto(entry.href);
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId(entry.stateId);
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await expect(page.locator("hh-pro-frame")).toContainText(entry.readyText, { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+
+    mode = "fail";
+    await page.goto(entry.href);
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    mode = "ok";
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.locator("hh-pro-frame")).toContainText(entry.readyText);
+  }
+});
+
 // ---- L-wall ---------------------------------------------------------------------------------------------
 
 const FLOW_OF: Readonly<Record<string, string>> = {
