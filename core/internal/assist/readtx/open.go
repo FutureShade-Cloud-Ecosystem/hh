@@ -84,14 +84,15 @@ func openOne(ctx context.Context, url Secret, audience string, signer *Signer, l
 	if audience == AudiencePro {
 		role, login = roles.ProReader, roles.ProLogin
 	}
-	_ = login
-	return opened{
-		reader: &Reader{
-			audience: audience, role: role, signer: signer, limits: DefaultLimits,
-			begin: func(ctx context.Context, o pgx.TxOptions) (pgx.Tx, error) { return pool.BeginTx(ctx, o) },
-		},
-		pool: pool,
-	}, nil
+	rd := &Reader{
+		audience: audience, role: role, signer: signer, limits: DefaultLimits,
+		begin: func(ctx context.Context, o pgx.TxOptions) (pgx.Tx, error) { return pool.BeginTx(ctx, o) },
+	}
+	if err := rd.startupCheck(ctx, login); err != nil {
+		pool.Close()
+		return opened{}, err
+	}
+	return opened{reader: rd, pool: pool}, nil
 }
 
 // sqlState renders only a Postgres error's five character code, which is safe to
