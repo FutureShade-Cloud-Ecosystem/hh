@@ -50,3 +50,24 @@ test("the views feed their cells through those words", async () => {
   assert.equal(/pctWords\(item\.(margin|floor)_bps\)/.test(view), false, "no raw percent of a possibly absent leg");
   assert.equal(typeof readFloor, "function");
 });
+
+// S3 round 2 P2: the header must not state a partial total as the whole claim.
+import { ledgerTotalWords } from "../src/pricing-logic.ts";
+
+test("the ledger header says the total covers the rows shown when any accrual is withheld", () => {
+  const rows = [{ accrual_cents: 250 }, { accrual_cents: null }];
+  assert.equal(ledgerTotalWords(250, rows), "$2.50 over the 1 claim shown, 1 not shown");
+  assert.equal(ledgerTotalWords(250, [{ accrual_cents: 250 }, { accrual_cents: null }, { accrual_cents: null }]), "$2.50 over the 1 claim shown, 2 not shown");
+  assert.equal(ledgerTotalWords(0, [{ accrual_cents: null }]), "$0.00 over the 0 claims shown, 1 not shown");
+});
+
+test("the ledger header is unchanged when every accrual is shown", () => {
+  assert.equal(ledgerTotalWords(3750, [{ accrual_cents: 3500 }, { accrual_cents: 250 }]), "$37.50 over 2 claims");
+  assert.equal(ledgerTotalWords(250, [{ accrual_cents: 250 }]), "$2.50 over 1 claim");
+});
+
+test("the view renders the header through the helper", async () => {
+  const { readFileSync } = await import("node:fs");
+  const view = readFileSync(new URL("../src/views-pricing.ts", import.meta.url), "utf8");
+  assert.match(view, /ledgerTotalWords\(m\.totalCents, m\.rows\)/);
+});

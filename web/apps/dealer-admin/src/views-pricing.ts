@@ -52,6 +52,7 @@ import {
   customerTypeWord,
   marginEmptyWords,
   costCellWords,
+  ledgerTotalWords,
   WITHHELD_FIGURE_WORDS,
   marginCellWords,
   moneyWords,
@@ -1616,7 +1617,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       <div class="card-head">
         <h2 class="card-title">Accrual ledger</h2>
         ${m.phase === "ready"
-          ? html`<span class="count" data-test="pr-ledger-total">${moneyWords(m.totalCents)} over ${m.count} ${m.count === 1 ? "claim" : "claims"}</span>`
+          ? html`<span class="count" data-test="pr-ledger-total">${ledgerTotalWords(m.totalCents, m.rows)}</span>`
           : nothing}
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
