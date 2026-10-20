@@ -125,7 +125,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -225,5 +225,67 @@ func rawStockBalancesView() ViewDef {
 		Default:      []string{"sku", "product_name", "branch_label", "on_hand_base", "reserved_base", "available_base", "uom"},
 		DefaultOrder: []OrderBy{{Col: "sku", Dir: "asc"}, {Col: "branch_label", Dir: "asc"}},
 		CiteKind:     RefProduct, CiteIDCol: "product_id", CiteLabelCol: "sku", CiteLabelPrefix: "Stock ",
+	}
+}
+
+func quotesView() ViewDef { return classify(rawQuotesView()) }
+
+func rawQuotesView() ViewDef {
+	return ViewDef{
+		Name: "ai.quotes", Schema: "ai", Table: "quotes", Title: "Quotes", MinTier: 2, Large: true,
+		About: "One row per quote: number, status, branch, customer, contact, delivery, dates and totals in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Quote id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_no", Label: "Quote", Type: typeText, Filter: true, Group: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "valid_until", Label: "Valid until", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true},
+			{Name: "contact_name", Label: "Contact", Type: typeText, Filter: true, Group: true},
+			{Name: "delivery_address", Label: "Delivery address", Type: typeText, Filter: true},
+			{Name: "customer_notes", Label: "Customer notes", Type: typeText, Filter: true},
+			{Name: "fulfillment", Label: "Fulfilment", Type: typeText, Filter: true, Group: true},
+			{Name: "requested_date", Label: "Requested date", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "deposit_pct", Label: "Deposit percent", Type: typeInt, Filter: true, Agg: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+			{Name: "tax_cents", Label: "Tax", Type: typeCents, Filter: true, Agg: true},
+			{Name: "delivery_fee_cents", Label: "Delivery fee", Type: typeCents, Filter: true, Agg: true},
+			{Name: "total_cents", Label: "Total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "created_at", Label: "Created", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"quote_no", "customer_name", "branch_label", "status", "created_at", "total_cents"},
+		DefaultOrder: []OrderBy{{Col: "created_at", Dir: "desc"}, {Col: "quote_no", Dir: "asc"}},
+		Period:       "created_at",
+		CiteKind:     RefQuote, CiteIDCol: "id", CiteLabelCol: "quote_no", CiteLabelPrefix: "Quote ",
+	}
+}
+
+func quoteLinesView() ViewDef { return classify(rawQuoteLinesView()) }
+
+func rawQuoteLinesView() ViewDef {
+	return ViewDef{
+		Name: "ai.quote_lines", Schema: "ai", Table: "quote_lines", Title: "Quote lines", MinTier: 2, Large: true,
+		About: "One row per quote line: the quote, description, quantity with its unit, price, discount and total in cents, and where you may see it the line's cost, margin in basis points and estimated profit.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Line id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_id", Label: "Quote id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_no", Label: "Quote", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "line_no", Label: "Line", Type: typeInt, Filter: true, Group: true},
+			{Name: "description", Label: "Description", Type: typeText, Filter: true, Group: true},
+			{Name: "qty_entered", Label: "Quantity", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "unit_price_cents", Label: "Unit price", Type: typeCents, Filter: true, Agg: true},
+			{Name: "disc_pct", Label: "Discount percent", Type: typeInt, Filter: true, Agg: true},
+			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "line_cost_cents", Label: "Line cost", Type: typeCents, Filter: true, Agg: true},
+			{Name: "margin_bps", Label: "Margin (basis points)", Type: typeInt, Filter: true, Agg: true},
+			{Name: "est_profit_cents", Label: "Estimated profit", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"quote_no", "line_no", "description", "qty_entered", "uom", "line_total_cents"},
+		DefaultOrder: []OrderBy{{Col: "quote_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
+		CiteKind:     RefQuote, CiteIDCol: "quote_id", CiteLabelCol: "quote_no", CiteLabelPrefix: "Quote ",
 	}
 }

@@ -50,6 +50,42 @@ var columnRegistry = map[string]string{
 	"ai.stock_balances.available_base": ClassPlain,
 	"ai.stock_balances.uom":            ClassPlain,
 	"ai.stock_balances.avg_cost_cents": ClassCost,
+	// ai.quotes: what the quote screens show; the personal text is tagged, not gated.
+	"ai.quotes.id":                 ClassPlain,
+	"ai.quotes.quote_no":           ClassPlain,
+	"ai.quotes.status":             ClassPlain,
+	"ai.quotes.valid_until":        ClassPlain,
+	"ai.quotes.branch_id":          ClassPlain,
+	"ai.quotes.branch_label":       ClassPlain,
+	"ai.quotes.customer_id":        ClassPlain,
+	"ai.quotes.customer_name":      ClassPlain,
+	"ai.quotes.contact_name":       ClassPlain,
+	"ai.quotes.delivery_address":   ClassPlain,
+	"ai.quotes.customer_notes":     ClassPlain,
+	"ai.quotes.fulfillment":        ClassPlain,
+	"ai.quotes.requested_date":     ClassPlain,
+	"ai.quotes.deposit_pct":        ClassPlain,
+	"ai.quotes.subtotal_cents":     ClassPlain,
+	"ai.quotes.tax_cents":          ClassPlain,
+	"ai.quotes.delivery_fee_cents": ClassPlain,
+	"ai.quotes.total_cents":        ClassPlain,
+	"ai.quotes.created_at":         ClassPlain,
+	// ai.quote_lines: the margin cells are class margin, gated by the cost and margin role list as the quote
+	// screen's margin glance is.
+	"ai.quote_lines.id":               ClassPlain,
+	"ai.quote_lines.quote_id":         ClassPlain,
+	"ai.quote_lines.quote_no":         ClassPlain,
+	"ai.quote_lines.branch_id":        ClassPlain,
+	"ai.quote_lines.line_no":          ClassPlain,
+	"ai.quote_lines.description":      ClassPlain,
+	"ai.quote_lines.qty_entered":      ClassPlain,
+	"ai.quote_lines.uom":              ClassPlain,
+	"ai.quote_lines.unit_price_cents": ClassPlain,
+	"ai.quote_lines.disc_pct":         ClassPlain,
+	"ai.quote_lines.line_total_cents": ClassPlain,
+	"ai.quote_lines.line_cost_cents":  ClassMargin,
+	"ai.quote_lines.margin_bps":       ClassMargin,
+	"ai.quote_lines.est_profit_cents": ClassMargin,
 }
 
 // personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
@@ -59,7 +95,11 @@ var columnRegistry = map[string]string{
 // the asker typed, and counted for the retention purge. Free text columns that may hold anything typed carry it
 // too and stay plain; they are never indexed unless the scrubber has run on them.
 var personalColumns = map[string]bool{
-	"ai.orders.customer_name": true, // customers.name: may be a person for a sole trader
+	"ai.orders.customer_name":    true, // customers.name: may be a person for a sole trader
+	"ai.quotes.customer_name":    true, // as above
+	"ai.quotes.contact_name":     true, // the quote screen shows it to staff with reach
+	"ai.quotes.delivery_address": true, // as above
+	"ai.quotes.customer_notes":   true, // free text shown on the quote; may hold anything typed
 }
 
 // columnGates names the vocabulary that gates a cost column when it is not the role list.
@@ -109,7 +149,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}
