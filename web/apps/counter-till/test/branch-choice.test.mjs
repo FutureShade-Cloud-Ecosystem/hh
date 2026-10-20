@@ -11,7 +11,7 @@ const EAST = { id: "b-east", code: "EST", name: "East Yard" };
 
 function rig(rows, keyValue) {
   const fetch = async () => ({ status: 200, ok: true, text: async () => JSON.stringify(rows), arrayBuffer: async () => new ArrayBuffer(0) });
-  const store = { getItem: (k) => (k === SESSION_BRANCHES_KEY ? (keyValue ?? null) : null), setItem() {} };
+  const store = { getItem: (k) => (k === SESSION_BRANCHES_KEY ? (keyValue ?? null) : null), setItem() {}, removeItem() {} };
   return { client: new TillClient(new ApiClient({ baseUrl: "", fetch })), store };
 }
 

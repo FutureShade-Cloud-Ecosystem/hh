@@ -624,7 +624,7 @@ export class QdClient {
    * branch is taken as it is. With several granted, the front door's session branch key is read through the granted
    * list (a forged or stale id is dropped): exactly one chosen and granted lands on it; several chosen, or none, is
    * an "ask" for the desk's own chooser, never an invented branch. No granted branch at all, or a row this app
-   * cannot read, is a refusal in words. The store is a test seam; it defaults to this tab's sessionStorage.
+   * cannot read, is a refusal in words. The store is a test seam; it defaults to this tab's own key store.
    */
   async resolveBranchChoice(store?: BranchKeyStore): Promise<Result<BranchResolution>> {
     const result = await staffBranches.branchesList(this.#client);

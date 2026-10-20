@@ -442,6 +442,10 @@ test.describe("after sign in", () => {
         await setTheme(page, theme);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(overflow).toBeLessThanOrEqual(0);
+        const shots = process.env.UX79_SHOTS;
+        if (shots !== undefined && shots !== "" && width !== 1024) {
+          await page.screenshot({ path: `${shots}/front-door-picker-${theme === "brand" ? "charcoal" : theme}-${width}.png` });
+        }
       }
     }
     // At 390x844 on a phone, targets on the picker card are at least 44 px tall.

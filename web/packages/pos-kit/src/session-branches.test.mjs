@@ -54,6 +54,7 @@ test("a store that throws reads as no choice and writes nothing", () => {
   const broken = {
     getItem() { throw new Error("blocked"); },
     setItem() { throw new Error("blocked"); },
+    removeItem() { throw new Error("blocked"); },
   };
   assert.deepEqual(readSessionBranchIds(GRANTED, broken), []);
   assert.doesNotThrow(() => writeSessionBranchIds(["b1"], broken));
