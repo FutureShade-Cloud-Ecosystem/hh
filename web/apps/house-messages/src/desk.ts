@@ -157,6 +157,7 @@ export class MessagesDesk {
   readonly #reactions = new Map<string, readonly ReactionItem[]>();
   #activeReactPickerMsgId: string | null = null;
   #editingMessageId: string | null = null;
+  #confirmingDeleteId: string | null = null;
   readonly #seenCounts = new Map<string, number>();
   #mentionsList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string }[] = [];
   #savedList: readonly { readonly message: Message; readonly channel_id: string; readonly channel_name: string; readonly saved_at: string }[] = [];
@@ -585,6 +586,7 @@ export class MessagesDesk {
     this.#activeTab = "messages";
     this.#activeReactPickerMsgId = null;
     this.#editingMessageId = null;
+    this.#confirmingDeleteId = null;
     this.#error = "";
     this.#notice = "";
     this.#held = [];
@@ -890,6 +892,7 @@ export class MessagesDesk {
 
   async #deleteMsg(channelId: string, msgId: string): Promise<void> {
     if (!channelId || !msgId) return;
+    this.#confirmingDeleteId = null;
     const res = await this.#api.deleteMessage(channelId, msgId);
     if (this.#stopped) return;
     if (res.ok) {
@@ -1135,6 +1138,7 @@ export class MessagesDesk {
       case "edit-msg": {
         const msgId = control.getAttribute("data-id") ?? id;
         this.#editingMessageId = msgId;
+        this.#confirmingDeleteId = null;
         this.#host.repaint();
         return true;
       }
@@ -1151,6 +1155,17 @@ export class MessagesDesk {
         return true;
       }
       case "delete-msg": {
+        const msgId = control.getAttribute("data-id") ?? id;
+        this.#confirmingDeleteId = msgId;
+        this.#editingMessageId = null;
+        this.#host.repaint();
+        return true;
+      }
+      case "cancel-delete-msg":
+        this.#confirmingDeleteId = null;
+        this.#host.repaint();
+        return true;
+      case "confirm-delete-msg": {
         const msgId = control.getAttribute("data-id") ?? id;
         const channelId = control.getAttribute("data-channel") ?? this.#activeId;
         void this.#deleteMsg(channelId, msgId);
@@ -1386,6 +1401,7 @@ export class MessagesDesk {
       reactions: this.#reactions,
       activeReactPickerMsgId: this.#activeReactPickerMsgId,
       editingMessageId: this.#editingMessageId,
+      confirmingDeleteId: this.#confirmingDeleteId,
       seenCounts: this.#seenCounts,
       attachments,
     };

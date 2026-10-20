@@ -555,11 +555,12 @@ export function toggleReactionList(
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 export function canEditMessage(
-  message: Pick<Message, "author_id" | "kind" | "created_at" | "requires_ack">,
+  message: Pick<Message, "author_id" | "kind" | "created_at" | "requires_ack"> & { readonly deleted_at?: string | null },
   meId: string,
   now: number
 ): boolean {
   if (message.author_id !== meId) return false;
+  if (message.deleted_at) return false;
   if (message.kind !== "TEXT") return false;
   if (message.requires_ack) return false;
   const createdMs = Date.parse(message.created_at);

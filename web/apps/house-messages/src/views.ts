@@ -178,6 +178,7 @@ export interface ConvoModel {
   readonly reactions: ReadonlyMap<string, readonly ReactionItem[]>;
   readonly activeReactPickerMsgId: string | null;
   readonly editingMessageId: string | null;
+  readonly confirmingDeleteId: string | null;
   readonly seenCounts: ReadonlyMap<string, number>;
 
   // C6 Files
@@ -388,6 +389,12 @@ function renderMessageBody(msg: Message, c: ConvoModel): TemplateResult {
   `;
 }
 
+function deletePreview(body: string): string {
+  const clean = body.replace(/\s+/g, " ").trim();
+  if (clean.length <= 60) return clean;
+  return `${clean.slice(0, 57).trimEnd()}...`;
+}
+
 function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean): TemplateResult {
   const mine = msg.author_id !== undefined && msg.author_id !== "" && msg.author_id === m.meId;
   const isEvent = msg.kind === "EVENT";
@@ -403,7 +410,9 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
   const replies = open ?? [];
   const initials = isEvent ? "" : initialsOf(msg.author_name || (mine ? "You" : "Colleague"));
 
-  const canEdit = canEditMessage(msg, m.meId, m.now);
+  const isDeleted = Boolean(msg.deleted_at);
+  const canEdit = !isDeleted && canEditMessage(msg, m.meId, m.now);
+  const isConfirmingDelete = !isDeleted && c.confirmingDeleteId === msg.id;
   const msgReactions = c.reactions.get(msg.id) ?? [];
   const isReactOpen = c.activeReactPickerMsgId === msg.id;
   const seenCount = c.seenCounts.get(msg.id) ?? 0;
@@ -417,9 +426,20 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         <span class="who">${who}</span>
         ${kind !== "" && !mine && who !== kind ? html`<span class="kind">${kind}</span>` : nothing}
         <span class="when">${timeWords(msg.created_at, m.now)}</span>
-        ${msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
+        ${!isDeleted && msg.edited_at ? html`<span class="dim small edited-marker">(edited)</span>` : nothing}
       </div>
       ${renderMessageBody(msg, c)}
+      ${isConfirmingDelete
+        ? html`
+          <div class="delete-confirm" role="group" aria-label="Confirm delete" data-delete-confirm=${msg.id}>
+            <span class="small">Delete \u201c${deletePreview(msg.body)}\u201d? This cannot be undone.</span>
+            <div class="delete-confirm-actions">
+              <button type="button" class="btn btn-danger small-btn" data-action="confirm-delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete message</button>
+              <button type="button" class="btn btn-secondary small-btn" data-action="cancel-delete-msg" data-id=${msg.id}>Cancel</button>
+            </div>
+          </div>
+        `
+        : nothing}
       ${why === "" ? nothing : html`<p class="why" data-why>${why}</p>`}
       ${eventDetails?.actionPill
         ? html`
@@ -430,7 +450,7 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
           </div>
         `
         : nothing}
-      ${msg.kind === "TEXT"
+      ${msg.kind === "TEXT" && !isDeleted
         ? html`
           <div class="reactions-row">
             ${msgReactions.map(
@@ -477,23 +497,29 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         `
         : nothing}
       ${renderAck(c.acks.get(msg.id), msg)}
-      <div class="msg-foot">
-        ${canEdit
-          ? html`
-            <button type="button" class="link small" data-action="edit-msg" data-id=${msg.id}>Edit</button>
-            <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
-          `
-          : nothing}
-        ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
-        <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
-        ${isReply
-          ? nothing
-          : html`
-              <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
-              <button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>${msg.reply_count > 0 ? "Open thread" : "Reply"}</button>
-              ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
-            `}
-      </div>
+      ${isDeleted
+        ? nothing
+        : html`
+          <div class="msg-foot">
+            ${canEdit
+              ? html`
+                <button type="button" class="link small" data-action="edit-msg" data-id=${msg.id}>Edit</button>
+                <button type="button" class="link small" data-action="delete-msg" data-id=${msg.id} data-channel=${msg.channel_id}>Delete</button>
+              `
+              : nothing}
+            ${seenCount > 0 ? html`<span class="dim small" data-seen-by>Seen ${seenCount}</span>` : nothing}
+            <button type="button" class="link small" data-action="toggle-save-msg" data-id=${msg.id}>Save</button>
+            ${isReply
+              ? nothing
+              : html`
+                  <button type="button" class="link btn-replies" data-action="toggle-thread" data-id=${msg.id}>${repliesWord(msg.reply_count)}</button>
+                  ${(msg.reply_count ?? 0) > 0
+                    ? html`<button type="button" class="btn btn-secondary small-btn btn-open-thread" data-action="open-thread" data-id=${msg.id}>Open thread</button>`
+                    : nothing}
+                  ${open !== undefined ? html`<button type="button" class="link" data-action="reply" data-id=${msg.id}>Reply in thread</button>` : nothing}
+                `}
+          </div>
+        `}
       ${open === undefined
         ? nothing
         : html`<ul class="thread" data-thread>${replies.map((r) => renderMessage(r, c, m, true))}</ul>`}

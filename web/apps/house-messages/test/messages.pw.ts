@@ -333,7 +333,10 @@ test("C3: edit and delete own text message within 10 minutes shows (edited) and 
   await expect(ownMsg.locator(".edited-marker")).toHaveText("(edited)");
 
   await ownMsg.locator("[data-action='delete-msg']").click();
+  await expect(ownMsg.locator("[data-delete-confirm]")).toContainText("Quick update on the pavers - edited");
+  await ownMsg.locator("[data-action='confirm-delete-msg']").click();
   await expect(ownMsg.locator(".text")).toHaveText("This message was deleted");
+  await expect(ownMsg.locator("button")).toHaveCount(0);
 });
 
 test("C3: Mentions, Saved, and Search views open from left rail", async ({ page, request }) => {

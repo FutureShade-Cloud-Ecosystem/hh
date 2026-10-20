@@ -429,6 +429,9 @@ test("C3 logic: canEditMessage checks 10 minute window, author match, non-ackabl
 
   const eventMsg = { ...recentMsg, kind: "EVENT" };
   assert.equal(canEditMessage(eventMsg, "me", now), false);
+
+  const deletedMsg = { ...recentMsg, deleted_at: new Date(now).toISOString() };
+  assert.equal(canEditMessage(deletedMsg, "me", now), false);
 });
 
 test("C4 logic: membership rule line formatting for automatic joins and leaves", () => {

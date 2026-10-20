@@ -1,0 +1,117 @@
+// UX-36 Playwright legs:
+// - B12 + B15: the strip leads with an h1 ("Nothing unread" or "<n> unread") and the polling line reads "Updates while this page is open".
+// - B13: slug-named rooms from the core render dealer labels ("House, Julian", "Portal inbox", "All alerts", "Unassigned", "Drivers, Point Loma").
+// - B14: deleting a message asks for confirmation naming the message first, and a deleted message renders zero action buttons.
+// - B15: a message with no replies renders a single Reply button.
+import { test, expect, accountItem, openAs, channel, CH, stubPost } from "./helpers.js";
+import { join } from "node:path";
+
+test("B12 and B15: the page has an h1 leading with the unread summary, and polling says Updates while this page is open", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await stubPost(request, "tickets", { enabled: false });
+  await page.reload();
+
+  const heading = page.locator("[data-live] h1[data-total-unread]");
+  await expect(heading).toBeVisible();
+  await expect(heading).toHaveText("9 unread");
+  await expect(page.locator("[data-live-words]")).toHaveText("Updates while this page is open");
+
+  // Once every unread channel is opened and marked read, the h1 leads with Nothing unread.
+  for (const id of [CH.branch, CH.yard, CH.deliveries, CH.esc, CH.house, CH.dm]) {
+    await channel(page, id).click();
+    await expect(channel(page, id).locator("[data-unread]")).toHaveCount(0);
+  }
+  await expect(heading).toHaveText("Nothing unread");
+});
+
+test("B13: core slug-named channels render dealer labels instead of raw slugs", async ({ page, request }) => {
+  await page.route("**/api/v1/messaging/channels", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({
+      status: 200,
+      json: {
+        channels: [
+          { id: "c1000000-0000-4000-9000-000000000001", kind: "TEAM", slug: "house-julian", name: "#house-julian", topic: "", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+          { id: "c1000000-0000-4000-9000-000000000002", kind: "TOPIC", slug: "portal-inbox", name: "#portal-inbox", topic: "", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+          { id: "c1000000-0000-4000-9000-000000000003", kind: "TEAM", slug: "alerts-all", name: "#alerts-all", topic: "", tier: "FIREHOSE", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+          { id: "c1000000-0000-4000-9000-000000000004", kind: "TEAM", slug: "house-unassigned", name: "#house-unassigned", topic: "", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+          { id: "c1000000-0000-4000-9000-000000000005", kind: "TEAM", slug: "drivers-point-loma", name: "#drivers-point-loma", topic: "", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+        ],
+      },
+    });
+  });
+
+  await openAs(page, request, "sales");
+  const list = page.locator("[data-channel-list]");
+  await expect(list.locator(".ch-name", { hasText: "House, Julian" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "Portal inbox" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "All alerts" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "Unassigned" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "Drivers, Point Loma" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: /^#/ })).toHaveCount(0);
+});
+
+test("B14: deleting a message requires confirmation naming the message, and a deleted message shows no actions", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.branch).click();
+
+  await page.locator("textarea[data-field='draft']").fill("Check pallet 9 before loading");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+
+  const ownMsg = page.locator("[data-conversation] li[data-msg].mine").last();
+  await expect(ownMsg).toContainText("Check pallet 9 before loading");
+
+  // Pressing Delete opens the confirmation naming the message instead of deleting at once.
+  await ownMsg.locator("[data-action='delete-msg']").click();
+  const confirmBox = ownMsg.locator("[data-delete-confirm]");
+  await expect(confirmBox).toBeVisible();
+  await expect(confirmBox).toContainText("Check pallet 9 before loading");
+  await expect(ownMsg.locator("[data-body]")).toHaveText("Check pallet 9 before loading");
+
+  // Cancel keeps the message intact.
+  await confirmBox.locator("[data-action='cancel-delete-msg']").click();
+  await expect(confirmBox).toHaveCount(0);
+  await expect(ownMsg.locator("[data-body]")).toHaveText("Check pallet 9 before loading");
+
+  // Confirming deletes the message and removes every action button on the tombstone.
+  await ownMsg.locator("[data-action='delete-msg']").click();
+  await ownMsg.locator("[data-action='confirm-delete-msg']").click();
+  await expect(ownMsg.locator("[data-body]")).toHaveText("This message was deleted");
+  await expect(ownMsg.locator("button")).toHaveCount(0);
+});
+
+test("B15: a message with zero replies shows a single Reply action", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.yard).click();
+
+  const noReplyMsg = page.locator("[data-conversation] li[data-msg]").nth(1);
+  await expect(noReplyMsg).toContainText("Gate code for the second yard");
+  await expect(noReplyMsg.getByRole("button", { name: "Reply", exact: true })).toHaveCount(1);
+});
+
+const shotDir = process.env.UX36_SHOT_DIR ?? "";
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 1024, height: 768 },
+]) {
+  for (const theme of ["light", "brand"] as const) {
+    test(`UX-36 screenshots at ${size.width}x${size.height} (${theme})`, async ({ page, request }) => {
+      test.skip(shotDir === "", "set UX36_SHOT_DIR to capture screenshots");
+      await page.setViewportSize(size);
+      await openAs(page, request, "sales");
+      await stubPost(request, "tickets", { enabled: false });
+      await page.reload();
+      await expect(page.locator("[data-live-words]")).toHaveText("Updates while this page is open");
+      if (theme === "brand") await accountItem(page, "Brand theme");
+      await page.screenshot({ path: join(shotDir, `ux36-list-${theme}-${size.width}x${size.height}.png`), fullPage: true });
+
+      await channel(page, CH.branch).click();
+      await page.locator("textarea[data-field='draft']").fill("Check pallet 9 before loading");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      const ownMsg = page.locator("[data-conversation] li[data-msg].mine").last();
+      await ownMsg.locator("[data-action='delete-msg']").click();
+      await expect(ownMsg.locator("[data-delete-confirm]")).toBeVisible();
+      await page.screenshot({ path: join(shotDir, `ux36-delete-confirm-${theme}-${size.width}x${size.height}.png`), fullPage: true });
+    });
+  }
+}
