@@ -37,6 +37,7 @@
 // delegation rule: listen on the HOST, read the control off composedPath(),
 // never @click in a template and never event.target.closest, because the
 // shadow boundary retargets the target to this element.
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
@@ -733,8 +734,17 @@ export class FrontDoorApp extends HHElement {
     }
   };
 
+  /** The dealer's name from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     this.addEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.addEventListener("click", this.#onHostClick);
     // Light is the box's default unless the person chose otherwise in this tab (the choice is carried
@@ -1373,7 +1383,7 @@ export class FrontDoorApp extends HHElement {
     return html`
       <section class="contractors" data-testid="contractor-section" aria-labelledby="contractor-heading">
         <h3 class="coming-next-heading" id="contractor-heading">Contractor accounts</h3>
-        <p class="intro">Summit Ridge Builders buys from Gable Landscape Supply. Tap a role to open the Pro apps as it.</p>
+        <p class="intro">Summit Ridge Builders buys from ${this.#dealerName === "" ? "the dealer" : this.#dealerName}. Tap a role to open the Pro apps as it.</p>
         <div class="cards">
           ${this.#contractors.map(
             (entry) => html`

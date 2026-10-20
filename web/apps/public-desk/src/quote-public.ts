@@ -39,7 +39,7 @@ import {
   type StatusBadgeKind,
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
-import { DEALER_NAME } from "./dealer.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
@@ -696,6 +696,10 @@ export class QuotePublicPage extends HHElement {
     `,
   ];
 
+  /** The dealer named in the header band, from the tenant config; empty until the read lands. */
+  @state()
+  private dealerName = "";
+
   @state()
   private quote: QuoteViewRef | null = null;
   @state()
@@ -773,6 +777,9 @@ export class QuotePublicPage extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      this.dealerName = name;
+    });
     const params = new URLSearchParams(location.search);
     this.token = params.get("t") ?? "";
     // The staff print action opens this page and asks the browser to print it
@@ -1539,7 +1546,7 @@ export class QuotePublicPage extends HHElement {
     // The dealer's header band opens EVERY state of the page: whose quote
     // this is does not depend on the quote having loaded (or on the link
     // being alive).
-    return html`<header class="dealer"><span class="dealer-name">${DEALER_NAME}</span></header>${this.renderBody()}`;
+    return html`<header class="dealer"><span class="dealer-name">${this.dealerName}</span></header>${this.renderBody()}`;
   }
 
   /**

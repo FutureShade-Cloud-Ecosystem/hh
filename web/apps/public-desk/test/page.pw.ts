@@ -13,7 +13,8 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { expect, test, type Page, type Response } from "@playwright/test";
-import { DEALER_NAME } from "../src/dealer.js";
+// The stub fixture's dealer, served as the tenant config.
+const DEALER_NAME = "Gable Landscape Supply";
 
 const GOOD_TOKEN = "q-demo-25";
 
