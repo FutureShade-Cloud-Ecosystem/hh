@@ -523,7 +523,7 @@ func TestStockTruth_FourBucketView_EveryBranchAlways(t *testing.T) {
 	p := mkProduct(t, pool, "W4B-BUCKETS")
 	seedBalance(t, pool, p, branch1, 50, 600)
 
-	rows, err := svc.AvailabilityAllBranches(ctx, p)
+	rows, err := svc.AvailabilityAllBranches(ctx, stampTestOrg(t, pool), p)
 	if err != nil {
 		t.Fatalf("AvailabilityAllBranches: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestStockTruth_FourBucketView_EveryBranchAlways(t *testing.T) {
 		t.Fatalf("ShipTransfer: %v", err)
 	}
 
-	rows, err = svc.AvailabilityAllBranches(ctx, p)
+	rows, err = svc.AvailabilityAllBranches(ctx, stampTestOrg(t, pool), p)
 	if err != nil {
 		t.Fatalf("AvailabilityAllBranches: %v", err)
 	}
@@ -910,5 +910,84 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 		if r.ProductID == p {
 			t.Fatal("a fully hard-reserved product passed the in-stock-only filter")
 		}
+	}
+}
+
+// ux88OrgA and ux88OrgB are two invented org anchors for the dealer-org legs: the seeded branches carry
+// no org, so a leg that reads "the caller's branches" stamps them first and restores them after.
+const (
+	ux88OrgA = "88a00000-0000-4000-8000-000000000001"
+	ux88OrgB = "88a00000-0000-4000-8000-000000000002"
+)
+
+// stampTestOrg puts both seeded branches in org A for the leg and returns org A's id.
+func stampTestOrg(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgA})
+	return ux88OrgA
+}
+
+// stampBranchOrgs sets each named branch's org for the leg (planting the org anchors it needs) and
+// restores the branches to no org when the leg ends.
+func stampBranchOrgs(t *testing.T, pool *pgxpool.Pool, byBranch map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES
+		($1, 'ux88-org-a', 'UX88 Org A'), ($2, 'ux88-org-b', 'UX88 Org B') ON CONFLICT (id) DO NOTHING`, ux88OrgA, ux88OrgB); err != nil {
+		t.Fatalf("plant org anchors: %v", err)
+	}
+	for branch, org := range byBranch {
+		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $2 WHERE id = $1`, branch, org); err != nil {
+			t.Fatalf("stamp branch org: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		for branch := range byBranch {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1`, branch)
+		}
+	})
+}
+
+// UX-88: the all-branch reads hold to the caller's org. Kingston sits in org B, Trenton in org A; an
+// org A caller sees Trenton only, an org B caller Kingston only, an org with no branch nothing, and an
+// empty org is refused. The peek carries no cost at all.
+func TestUX88_AllBranchReadsHeldToTheOrg(t *testing.T) {
+	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
+	svc := newIntSvc(pool)
+	ctx := context.Background()
+	p := mkProduct(t, pool, "UX88-ORG")
+	seedBalance(t, pool, p, branch1, 50, 600)
+	seedBalance(t, pool, p, branch2, 70, 700)
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+
+	codes := func(rows []BranchPeek) []string {
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.BranchCode)
+		}
+		return out
+	}
+	a, err := svc.AvailabilityPeek(ctx, ux88OrgA, p)
+	if err != nil || len(a) != 1 || a[0].BranchID != branch1 || a[0].OnHandBase != 50 {
+		t.Fatalf("org A peek = %v %+v, %v, want Trenton alone at 50", codes(a), a, err)
+	}
+	b, err := svc.AvailabilityPeek(ctx, ux88OrgB, p)
+	if err != nil || len(b) != 1 || b[0].BranchID != branch2 || b[0].OnHandBase != 70 {
+		t.Fatalf("org B peek = %v %+v, %v, want Kingston alone at 70", codes(b), b, err)
+	}
+	none, err := svc.AvailabilityPeek(ctx, "88a00000-0000-4000-8000-0000000000ff", p)
+	if err != nil || len(none) != 0 {
+		t.Fatalf("an org with no branch = %+v, %v, want nothing", none, err)
+	}
+	if _, err := svc.AvailabilityPeek(ctx, "", p); err == nil {
+		t.Fatal("an empty org must be refused, never read as every org")
+	}
+	full, err := svc.AvailabilityAllBranches(ctx, ux88OrgA, p)
+	if err != nil || len(full) != 1 || full[0].BranchID != branch1 || full[0].AvgCostCents != 600 {
+		t.Fatalf("org A full read = %+v, %v, want Trenton alone at cost 600", full, err)
+	}
+	if _, err := svc.AvailabilityAllBranches(ctx, "", p); err == nil {
+		t.Fatal("an empty org must be refused on the full read too")
 	}
 }

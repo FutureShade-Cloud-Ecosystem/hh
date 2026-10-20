@@ -415,14 +415,14 @@ func (a w5aQuoteAvailability) AvailabilityAtBranch(ctx context.Context, productI
 	return w5aBranchStock(b), nil
 }
 
-func (a w5aQuoteAvailability) AvailabilityAllBranches(ctx context.Context, productID string) ([]quote.BranchStock, error) {
-	rows, err := a.svc.AvailabilityAllBranches(ctx, productID)
+func (a w5aQuoteAvailability) AvailabilityPeek(ctx context.Context, orgID, productID string) ([]quote.BranchPeek, error) {
+	rows, err := a.svc.AvailabilityPeek(ctx, orgID, productID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]quote.BranchStock, len(rows))
+	out := make([]quote.BranchPeek, len(rows))
 	for i, b := range rows {
-		out[i] = w5aBranchStock(b)
+		out[i] = quote.BranchPeek(b)
 	}
 	return out, nil
 }
@@ -533,7 +533,7 @@ type pricingFloorCandidates struct {
 	inventory *inventory.Service
 }
 
-func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]pricing.CandidateProduct, error) {
+func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, orgID, categoryID, productID, branchID string, limit int) ([]pricing.CandidateProduct, error) {
 	if limit <= 0 {
 		limit = pricing.PreviewProductCap + 1
 	}
@@ -580,7 +580,7 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryI
 		if categoryID != "" && cat != categoryID {
 			continue
 		}
-		cost, branches, err := a.candidateCost(ctx, p.ID, branchID)
+		cost, branches, err := a.candidateCost(ctx, orgID, p.ID, branchID)
 		if err != nil {
 			return nil, err
 		}
@@ -595,12 +595,12 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryI
 // no branch every branch's own row (BranchCosts, the preview grades each one) alongside the
 // highest any branch carries, read from inventory's one-row-per-branch availability answer
 // (it left-joins the branch cost, so a branch with no cost row reports 0).
-func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, branchID string) (int64, []pricing.CandidateBranchCost, error) {
+func (a pricingFloorCandidates) candidateCost(ctx context.Context, orgID, productID, branchID string) (int64, []pricing.CandidateBranchCost, error) {
 	if branchID != "" {
 		cost, _, err := a.inventory.CurrentCostCents(ctx, productID, branchID)
 		return cost, nil, err
 	}
-	branches, err := a.inventory.AvailabilityAllBranches(ctx, productID)
+	branches, err := a.inventory.AvailabilityAllBranches(ctx, orgID, productID)
 	if err != nil {
 		return 0, nil, err
 	}

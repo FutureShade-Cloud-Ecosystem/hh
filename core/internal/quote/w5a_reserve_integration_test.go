@@ -76,14 +76,14 @@ func (a w5aAvail) AvailabilityAtBranch(ctx context.Context, productID, branchID 
 	}, nil
 }
 
-func (a w5aAvail) AvailabilityAllBranches(ctx context.Context, productID string) ([]BranchStock, error) {
-	rows, err := a.svc.AvailabilityAllBranches(ctx, productID)
+func (a w5aAvail) AvailabilityPeek(ctx context.Context, orgID, productID string) ([]BranchPeek, error) {
+	rows, err := a.svc.AvailabilityPeek(ctx, orgID, productID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]BranchStock, len(rows))
+	out := make([]BranchPeek, len(rows))
 	for i, b := range rows {
-		out[i], _ = a.AvailabilityAtBranch(ctx, b.ProductID, b.BranchID)
+		out[i] = BranchPeek(b)
 	}
 	return out, nil
 }
@@ -140,6 +140,7 @@ func w5aStaffSvc(t *testing.T, pool *pgxpool.Pool) (*StaffService, *Repository) 
 		WithStockReserver(w5aInvReserver{svc: invSvc}).
 		WithAvailability(w5aAvail{svc: invSvc})
 	repo.WithStockReserver(w5aInvReserver{svc: invSvc})
+	w5aStampOrg(t, pool)
 	if !svc.QuoteEditSeamsWired() {
 		t.Fatal("the quote edit seams did not bind")
 	}
@@ -455,7 +456,7 @@ func TestIntegration_W5A_AvailabilityChipsGradeAgainstAvailable(t *testing.T) {
 
 	// The cross-branch peek returns EVERY branch, including ones with none (inventory's stated rule:
 	// a missing row reads as a bug, not as an answer).
-	peek, err := svc.CrossBranchPeek(ctx, w5aProduct)
+	peek, err := svc.CrossBranchPeek(ctx, w5aOrgID, w5aProduct)
 	if err != nil {
 		t.Fatalf("cross-branch peek: %v", err)
 	}
@@ -478,7 +479,7 @@ func w5aBaseUOM(t *testing.T, pool *pgxpool.Pool) string {
 // w5aAvailableAt reads AVAILABLE at Trenton through the same seam the chips use.
 func w5aAvailableAt(t *testing.T, pool *pgxpool.Pool, svc *StaffService, ctx context.Context) float64 {
 	t.Helper()
-	rows, err := svc.CrossBranchPeek(ctx, w5aProduct)
+	rows, err := svc.CrossBranchPeek(ctx, w5aOrgID, w5aProduct)
 	if err != nil {
 		t.Fatalf("read availability: %v", err)
 	}
@@ -489,4 +490,22 @@ func w5aAvailableAt(t *testing.T, pool *pgxpool.Pool, svc *StaffService, ctx con
 	}
 	t.Fatal("Trenton absent from the cross-branch read")
 	return 0
+}
+
+// w5aOrgID is an invented org anchor the seeded branches (which carry no org) are stamped with for the
+// leg, so the cross-branch peek, which holds to the caller's org, has branches to answer with.
+const w5aOrgID = "88a00000-0000-4000-8000-0000000000a5"
+
+func w5aStampOrg(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1, 'ux88-w5a-org', 'UX88 W5A Org') ON CONFLICT (id) DO NOTHING`, w5aOrgID); err != nil {
+		t.Fatalf("plant the org anchor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH' AND org_id IS NULL`, w5aOrgID); err != nil {
+		t.Fatalf("stamp the seeded branches: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE org_id = $1`, w5aOrgID)
+	})
 }

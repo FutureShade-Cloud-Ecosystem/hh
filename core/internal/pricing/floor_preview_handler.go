@@ -55,7 +55,7 @@ type floorNoCostBranchJSON struct {
 	Products   int    `json:"products"`
 }
 
-func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var b floorPreviewBody
 	if !decode(w, r, &b) {
 		return
@@ -64,7 +64,7 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 		!optionalBodyUUID(w, b.CustomerID, "customer_id") || !optionalBodyUUID(w, b.CategoryID, "category_id") {
 		return
 	}
-	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID}
+	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID, OrgID: caller.OrgID}
 	switch b.Kind {
 	case "rule":
 		if b.Rule != nil {
@@ -145,7 +145,7 @@ type floorConfirmationBody struct {
 	RefEntityID   string   `json:"ref_entity_id"`
 }
 
-func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var b floorConfirmationBody
 	if !decode(w, r, &b) {
 		return
@@ -159,7 +159,7 @@ func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, _ gu
 		}
 	}
 	err := h.svc.RecordFloorConfirmation(r.Context(), FloorConfirmation{
-		EntityType: b.EntityType, EntityID: b.EntityID, ProductIDs: b.ProductIDs,
+		OrgID: caller.OrgID, EntityType: b.EntityType, EntityID: b.EntityID, ProductIDs: b.ProductIDs,
 		RefType: b.RefEntityType, RefID: b.RefEntityID,
 	}, staffUserID(r))
 	if err != nil {

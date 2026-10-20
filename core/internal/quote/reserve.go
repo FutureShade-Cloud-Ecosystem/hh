@@ -269,32 +269,24 @@ func (s *StaffService) QuoteAvailability(ctx context.Context, quoteIDOrNo string
 	return out, s.avail != nil, nil
 }
 
-// CrossBranchPeek is the "who else has it" read behind a THIN or NONE chip: one row per branch,
-// every branch present even when it has none (inventory's own stated rule, a missing row reads as a
-// bug rather than as an answer).
-func (s *StaffService) CrossBranchPeek(ctx context.Context, productID string) ([]BranchStock, error) {
-	caller, err := s.caller(ctx)
-	if err != nil {
+// CrossBranchPeek is the "who else has it" read behind a THIN or NONE chip: one row per branch of
+// the caller's dealer org, every such branch present even when it has none (inventory's own stated
+// rule, a missing row reads as a bug rather than as an answer). orgID is the org the middleware
+// resolved for the request. The rows carry quantities only: no role is handed a cost through the peek.
+func (s *StaffService) CrossBranchPeek(ctx context.Context, orgID, productID string) ([]BranchPeek, error) {
+	if _, err := s.caller(ctx); err != nil {
 		return nil, err
 	}
 	if !looksLikeUUID(productID) {
 		return nil, httpx.BadRequestf("product_id must be a uuid")
 	}
 	if s.avail == nil {
-		return []BranchStock{}, nil
+		return []BranchPeek{}, nil
 	}
-	rows, err := s.avail.AvailabilityAllBranches(ctx, productID)
-	if err != nil {
-		return nil, err
+	if orgID == "" {
+		return nil, httpx.BadRequestf("the caller's org is required")
 	}
-	// X3, the same gate as the at-quote read: the peek carries the cost
-	// figure to callers on the list alone.
-	if !s.seesCostAndMargin(caller) {
-		for i := range rows {
-			rows[i].AvgCostCents = 0
-		}
-	}
-	return rows, nil
+	return s.avail.AvailabilityPeek(ctx, orgID, productID)
 }
 
 // - plumbing -

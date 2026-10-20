@@ -23960,7 +23960,7 @@ paths:
       tags:
         - staff-quote
       summary: Read one product's four-bucket stock at every branch
-      description: The cross-branch peek behind a THIN or NONE chip. Every branch is present even when it has none; a missing row would read as a bug rather than as an answer.
+      description: "The cross-branch peek behind a THIN or NONE chip. Every branch of the caller's dealer org is present even when it has none; a missing row would read as a bug rather than as an answer. A branch of another org, or of no org, never appears. The rows carry quantities only: no cost is served to any role."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -23977,11 +23977,11 @@ paths:
             format: uuid
       responses:
         "200":
-          description: One stock row per branch, plus the seam flag
+          description: One stock row per branch of the caller's org, plus the seam flag
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/QuoteBranchStockList"
+                $ref: "#/components/schemas/QuoteBranchPeekList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -54566,9 +54566,44 @@ components:
           type: integer
           format: int64
           description: Present only for callers the cost_visibility list allows, absent otherwise
-    QuoteBranchStockList:
+    QuoteBranchPeek:
       type: object
-      description: One product's stock at every branch, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      description: "The four-bucket quantities of one product at one branch, as the cross-branch peek serves them. There is no cost field: the peek serves quantities only. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
+      required:
+        - product_id
+        - branch_id
+        - branch_code
+        - branch_name
+        - on_hand_base
+        - reserved_base
+        - in_transit_base
+        - available_base
+        - soft_held_base
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        branch_code:
+          type: string
+        branch_name:
+          type: string
+        on_hand_base:
+          type: number
+        reserved_base:
+          type: number
+        in_transit_base:
+          type: number
+        available_base:
+          type: number
+        soft_held_base:
+          type: number
+          description: Carried and rendered even though it does not gate, because soft interest is worth seeing
+    QuoteBranchPeekList:
+      type: object
+      description: One product's stock at every branch of the caller's dealer org, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
       required:
         - branches
         - seam_wired
@@ -54576,7 +54611,7 @@ components:
         branches:
           type: array
           items:
-            $ref: "#/components/schemas/QuoteBranchStock"
+            $ref: "#/components/schemas/QuoteBranchPeek"
         seam_wired:
           type: boolean
     QuoteExpiredHold:

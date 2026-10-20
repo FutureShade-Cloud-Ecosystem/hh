@@ -21,6 +21,9 @@ type FloorChange struct {
 	Kind     string
 	ID       string
 	BranchID string
+	// OrgID is the dealer org the middleware resolved for the request. The candidate seam holds
+	// every cost it reads to that org; an empty OrgID reads nothing across orgs, it is refused.
+	OrgID    string
 	Rule     *Rule
 	Override *Override
 	Policy   *CategoryPolicy
@@ -104,7 +107,7 @@ type CandidateProduct struct {
 // With no branch named, each product also carries every branch location's own cost row, so
 // the preview can grade each branch as a resolve at that branch would be priced.
 type FloorCandidates interface {
-	CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]CandidateProduct, error)
+	CandidateProducts(ctx context.Context, orgID, categoryID, productID, branchID string, limit int) ([]CandidateProduct, error)
 }
 
 // FloorCustomers names the pricing type of a customer, so a customer scoped change is graded
@@ -136,6 +139,8 @@ const MaxPreviewGrades = 4000
 
 // FloorConfirmation is the editor's confirmation of a floor warning.
 type FloorConfirmation struct {
+	// OrgID is the dealer org the middleware resolved for the request (see FloorChange.OrgID).
+	OrgID      string
 	EntityType string
 	EntityID   string
 	ProductIDs []string
@@ -431,7 +436,7 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 	if s.cands == nil {
 		return FloorPreview{}, errNoDB
 	}
-	products, err := s.cands.CandidateProducts(ctx, categoryID, productID, branchID, PreviewProductCap+1)
+	products, err := s.cands.CandidateProducts(ctx, ch.OrgID, categoryID, productID, branchID, PreviewProductCap+1)
 	if err != nil {
 		return FloorPreview{}, fmt.Errorf("floor preview candidates: %w", err)
 	}
@@ -604,8 +609,8 @@ func worseBreach(a, b FloorPreviewItem) bool {
 // partial by design and says so in the contract: the candidates seam drops inactive products
 // (wire_money.go's IsActive filter), so a product reference carrying an inactive product's id is
 // accepted, and no kind beyond product and customer is ever resolved.
-func (s *Service) refMatchesItsKind(ctx context.Context, refType, refID string) error {
-	namesProduct, err := s.refIDNamesProduct(ctx, refID)
+func (s *Service) refMatchesItsKind(ctx context.Context, orgID, refType, refID string) error {
+	namesProduct, err := s.refIDNamesProduct(ctx, orgID, refID)
 	if err != nil {
 		return err
 	}
@@ -622,11 +627,11 @@ func (s *Service) refMatchesItsKind(ctx context.Context, refType, refID string) 
 	return nil
 }
 
-func (s *Service) refIDNamesProduct(ctx context.Context, refID string) (bool, error) {
+func (s *Service) refIDNamesProduct(ctx context.Context, orgID, refID string) (bool, error) {
 	if s.cands == nil {
 		return false, nil
 	}
-	prods, err := s.cands.CandidateProducts(ctx, "", refID, "", 1)
+	prods, err := s.cands.CandidateProducts(ctx, orgID, "", refID, "", 1)
 	if err != nil {
 		return false, fmt.Errorf("floor confirmation reference: %w", err)
 	}
@@ -665,7 +670,7 @@ func (s *Service) RecordFloorConfirmation(ctx context.Context, c FloorConfirmati
 		return badReq("ref_entity_type must be one of product, customer, category, quote, order and come with ref_entity_id")
 	}
 	if c.RefType != "" {
-		if err := s.refMatchesItsKind(ctx, c.RefType, c.RefID); err != nil {
+		if err := s.refMatchesItsKind(ctx, c.OrgID, c.RefType, c.RefID); err != nil {
 			return err
 		}
 	}

@@ -19,6 +19,9 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 )
 
+// fcOrgID is the invented org the seeded branches are stamped with for these legs.
+const fcOrgID = "88a00000-0000-4000-8000-0000000000f1"
+
 func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "floorcand")
@@ -29,6 +32,9 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 	if _, err := pool.Exec(ctx, string(body)); err != nil {
 		t.Fatalf("applying the seed: %v", err)
 	}
+	// The seed's branches carry no org; the candidate seam holds every cost to the caller's org (UX-88).
+	mustExec(t, ctx, pool, `INSERT INTO org (id, slug, name) VALUES ($1, 'ux88-floor-org', 'UX88 Floor Org')`, fcOrgID)
+	mustExec(t, ctx, pool, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, fcOrgID)
 	productSvc := product.NewService(product.NewRepository(pool))
 	invSvc := inventory.NewService(inventory.NewRepository(pool))
 	cands := pricingFloorCandidates{products: productSvc, inventory: invSvc}
@@ -43,7 +49,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		t.Fatalf("no seeded product with a branch cost: %v", err)
 	}
 
-	one, err := cands.CandidateProducts(ctx, "", productID, branchID, 10)
+	one, err := cands.CandidateProducts(ctx, fcOrgID, "", productID, branchID, 10)
 	if err != nil || len(one) != 1 || one[0].ProductID != productID || one[0].BaseUOM == "" || one[0].SKU == "" || one[0].CategoryID != categoryID {
 		t.Fatalf("by product: %+v, %v", one, err)
 	}
@@ -55,19 +61,19 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		SELECT COALESCE(MAX(avg_unit_cost_cents), 0) FROM product_branch_costs WHERE product_id = $1`, productID).Scan(&maxCost); err != nil {
 		t.Fatalf("max branch cost: %v", err)
 	}
-	if def, err := cands.CandidateProducts(ctx, "", productID, "", 10); err != nil || len(def) != 1 || def[0].CostCents != maxCost {
+	if def, err := cands.CandidateProducts(ctx, fcOrgID, "", productID, "", 10); err != nil || len(def) != 1 || def[0].CostCents != maxCost {
 		t.Errorf("with no branch the highest branch cost applies: %+v, %v", def, err)
 	}
-	if none, err := cands.CandidateProducts(ctx, "", "00000000-0000-4000-8000-000000000000", "", 10); err != nil || len(none) != 0 {
+	if none, err := cands.CandidateProducts(ctx, fcOrgID, "", "00000000-0000-4000-8000-000000000000", "", 10); err != nil || len(none) != 0 {
 		t.Errorf("an unknown product is no candidate, not an error: %+v, %v", none, err)
 	}
-	if bad, err := cands.CandidateProducts(ctx, categoryID, productID, "", 10); err != nil || len(bad) != 1 {
+	if bad, err := cands.CandidateProducts(ctx, fcOrgID, categoryID, productID, "", 10); err != nil || len(bad) != 1 {
 		t.Errorf("a product inside its own category: %+v, %v", bad, err)
 	}
-	if bad, err := cands.CandidateProducts(ctx, "00000000-0000-4000-8000-000000000000", productID, "", 10); err != nil || len(bad) != 0 {
+	if bad, err := cands.CandidateProducts(ctx, fcOrgID, "00000000-0000-4000-8000-000000000000", productID, "", 10); err != nil || len(bad) != 0 {
 		t.Errorf("a product outside the named category is no candidate: %+v, %v", bad, err)
 	}
-	cat, err := cands.CandidateProducts(ctx, categoryID, "", "", 1000)
+	cat, err := cands.CandidateProducts(ctx, fcOrgID, categoryID, "", "", 1000)
 	if err != nil || len(cat) == 0 {
 		t.Fatalf("by category: %+v, %v", cat, err)
 	}
@@ -76,7 +82,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 			t.Errorf("a category query returned another category's product: %+v", c)
 		}
 	}
-	capped, err := cands.CandidateProducts(ctx, "", "", "", 3)
+	capped, err := cands.CandidateProducts(ctx, fcOrgID, "", "", "", 3)
 	if err != nil || len(capped) != 3 {
 		t.Fatalf("the limit must hold: %d, %v", len(capped), err)
 	}
@@ -86,7 +92,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM products WHERE is_active`).Scan(&active); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	wide, err := cands.CandidateProducts(ctx, "", "", "", pricing.PreviewProductCap+1)
+	wide, err := cands.CandidateProducts(ctx, fcOrgID, "", "", "", pricing.PreviewProductCap+1)
 	if err != nil || len(wide) != min(active, pricing.PreviewProductCap+1) {
 		t.Errorf("a wide read returns %d, got %d, %v", min(active, pricing.PreviewProductCap+1), len(wide), err)
 	}
@@ -136,13 +142,13 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 			VALUES ($1, 3000, 2000, false)
 			ON CONFLICT (category_id) DO UPDATE SET margin_target_bps = 3000, margin_floor_bps = 2000, margin_enforcement_disabled = false`, categoryID)
 
-		if one, err := cands.CandidateProducts(ctx, categoryID, productID, branches[0], 10); err != nil || len(one) != 1 || one[0].CostCents != 1518 {
+		if one, err := cands.CandidateProducts(ctx, fcOrgID, categoryID, productID, branches[0], 10); err != nil || len(one) != 1 || one[0].CostCents != 1518 {
 			t.Errorf("the cheaper branch's cost: %+v, %v", one, err)
 		}
-		if one, err := cands.CandidateProducts(ctx, categoryID, productID, branches[1], 10); err != nil || len(one) != 1 || one[0].CostCents != 1540 {
+		if one, err := cands.CandidateProducts(ctx, fcOrgID, categoryID, productID, branches[1], 10); err != nil || len(one) != 1 || one[0].CostCents != 1540 {
 			t.Errorf("the dearer branch's cost: %+v, %v", one, err)
 		}
-		noBranch, err := cands.CandidateProducts(ctx, categoryID, productID, "", 10)
+		noBranch, err := cands.CandidateProducts(ctx, fcOrgID, categoryID, productID, "", 10)
 		if err != nil || len(noBranch) != 1 || noBranch[0].CostCents != 1540 {
 			t.Errorf("with no branch the HIGHEST branch cost applies (1540, not the plain average 1529): %+v, %v", noBranch, err)
 		}
@@ -151,7 +157,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 			WithCategoryResolver(productSvc).WithUOMConverter(productSvc).WithMarginGate(pricing.NewIdentityMarginGate()).
 			WithCandidateSource(cands)
 		thirteen := int64(1300)
-		out, err := pricingSvc.PreviewFloor(ctx, pricing.FloorChange{Kind: "rule", Rule: &pricing.Rule{
+		out, err := pricingSvc.PreviewFloor(ctx, pricing.FloorChange{OrgID: fcOrgID, Kind: "rule", Rule: &pricing.Rule{
 			Scope: pricing.ScopeTierCategory, CustomerType: "RETAIL", CategoryID: categoryID,
 			CalcType: pricing.CalcPctOffList, DiscountBps: &thirteen, PriceUOM: baseUOM, Priority: 10}})
 		if err != nil {
@@ -231,7 +237,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		svc := pricing.NewService(pricing.NewRepository(pool)).
 			WithCategoryResolver(productSvc).WithUOMConverter(productSvc).WithMarginGate(pricing.NewIdentityMarginGate()).
 			WithCandidateSource(cands)
-		out, err := svc.PreviewFloor(ctx, pricing.FloorChange{Kind: "category_policy",
+		out, err := svc.PreviewFloor(ctx, pricing.FloorChange{OrgID: fcOrgID, Kind: "category_policy",
 			Policy: &pricing.CategoryPolicy{CategoryID: categoryID, MarginTargetBps: 3000, MarginFloorBps: 2300}})
 		if err != nil {
 			t.Fatalf("PreviewFloor: %v", err)
@@ -296,7 +302,7 @@ func TestFloorCandidates_TheSeamsReadThroughTheOwningServices(t *testing.T) {
 		WithCategoryResolver(productSvc).WithUOMConverter(productSvc).WithMarginGate(pricing.NewIdentityMarginGate()).
 		WithCandidateSource(cands).WithFloorCustomerType(custSvc)
 	ninety := int64(9500)
-	out, err := pricingSvc.PreviewFloor(ctx, pricing.FloorChange{Kind: "override", Override: &pricing.Override{
+	out, err := pricingSvc.PreviewFloor(ctx, pricing.FloorChange{OrgID: fcOrgID, Kind: "override", Override: &pricing.Override{
 		CustomerID: custID, CategoryID: categoryID, CalcType: pricing.CalcPctOffList, DiscountBps: &ninety, PriceUOM: one[0].BaseUOM}})
 	if err != nil {
 		t.Fatalf("PreviewFloor: %v", err)
