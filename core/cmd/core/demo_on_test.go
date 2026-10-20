@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -443,5 +445,65 @@ func TestDemoRoleConfig_RefundApprovalLimitOffOnTheDemoLoadOnly(t *testing.T) {
 	}
 	if !prod.RefundRequiresApproval(25001) {
 		t.Fatal("the decided default must keep the limit on: a dealer who sets a number keeps the gate")
+	}
+}
+
+type priceTable map[string]assist.ModelPrice
+
+func (p priceTable) PriceFor(_ context.Context, alias, model string) (assist.ModelPrice, bool, error) {
+	pr, ok := p[alias+"/"+model]
+	return pr, ok, nil
+}
+
+// Slice 3 (sub item 6): a keyed demo whose model has no price row refuses with a plain message
+// naming the alias, the model and the runbook; a keyless demo needs no row.
+func TestDemoRefusesAKeyedAssistantWithoutAPriceRow(t *testing.T) {
+	ctx := context.Background()
+	aliases := assist.StaticAliases(assist.DefaultAliases())
+	err := demoRefuseAssistWithoutPrice(ctx, aliases, priceTable{}, true)
+	if err == nil {
+		t.Fatal("a keyed demo with no price row was accepted")
+	}
+	for _, want := range []string{"tanyai-premium", "claude-sonnet-5-5", "assist_model_prices", "demo-copies.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not say %q", err, want)
+		}
+	}
+	if err := demoRefuseAssistWithoutPrice(ctx, aliases, priceTable{}, false); err != nil {
+		t.Fatalf("a keyless demo needs no price row, got %v", err)
+	}
+	priced := priceTable{"tanyai-premium/claude-sonnet-5-5": {ID: "p", Alias: "tanyai-premium", Model: "claude-sonnet-5-5", Seq: 1}}
+	if err := demoRefuseAssistWithoutPrice(ctx, aliases, priced, true); err != nil {
+		t.Fatalf("a priced model refused: %v", err)
+	}
+}
+
+// The pin: demoServe ACTS ON the assistant's two wiring guards between the graph build and the
+// listener, returning their errors (the shape TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot
+// holds for G7), and on the cap guard before the graph build. Deleting a call, dropping its
+// return or moving it behind the listener fails here in every demo tagged run.
+func TestDemoServeRunsTheAssistantGuardsAtTheMarkedSpots(t *testing.T) {
+	src, err := os.ReadFile("demo_on.go")
+	if err != nil {
+		t.Fatalf("read demo_on.go: %v", err)
+	}
+	pos := func(s string) int { return bytes.Index(src, []byte(s)) }
+	serveStart := pos("func demoServe(")
+	capGuard := pos("if err := boot.RefuseAssistKeyWithoutCap(getenv); err != nil {\n\t\treturn err\n\t}")
+	routes := pos("graph, err := demoRegisterRoutes(")
+	wired := pos("if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, assistKeyed); err != nil {\n\t\treturn err\n\t}")
+	priced := pos("if err := demoRefuseAssistWithoutPrice(ctx, assistRepo, assistRepo, assistKeyed); err != nil {\n\t\treturn err\n\t}")
+	listen := pos("srv.ListenAndServe()")
+	if serveStart < 0 || routes < 0 || listen < 0 {
+		t.Fatal("demo_on.go no longer shows the serve shape this pin guards")
+	}
+	if capGuard < 0 || wired < 0 || priced < 0 {
+		t.Fatalf("demoServe no longer acts on an assistant guard (cap %d, wired %d, price %d): the demo build could carry a key unbounded", capGuard, wired, priced)
+	}
+	if !(serveStart < capGuard && capGuard < routes && routes < wired && wired < priced && priced < listen) {
+		t.Fatal("the assistant guards are out of order: cap before the graph, wiring and price after it, all before the listener")
+	}
+	if !strings.Contains(string(src), "assistKeyed := strings.TrimSpace(getenv(assist.EnvAPIKey)) != \"\"") {
+		t.Fatal("the guards no longer take their keyed flag from the same variable the wiring reads")
 	}
 }

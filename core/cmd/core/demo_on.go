@@ -246,7 +246,14 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// The assistant's demo wiring: when the key is carried, the wired service
 	// must carry the demo limits, the premium pin and the stub fallback. Like
 	// G7 this reads what the wiring built, not the environment.
-	if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""); err != nil {
+	assistKeyed := strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""
+	if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, assistKeyed); err != nil {
+		return err
+	}
+	// And the model the key would call must have a price row, or the meter would refuse every
+	// paid call: the boot says so plainly instead (the row is an operator step, never a seed).
+	assistRepo := assist.NewRepository(graph.pool)
+	if err := demoRefuseAssistWithoutPrice(ctx, assistRepo, assistRepo, assistKeyed); err != nil {
 		return err
 	}
 
@@ -316,6 +323,20 @@ func demoRefuseAssistNotDemoWired(svc *assist.Service, keyed bool) error {
 	}
 	if !svc.StubFallbackOn() {
 		return errors.New("the demo box carries the assistant's key but the wired assistant has no stub fallback: the demo build answers on the stub when the model cannot be used")
+	}
+	return nil
+}
+
+// demoRefuseAssistWithoutPrice refuses a demo box that carries the assistant's key when the
+// model of tanyai-premium has no row in assist_model_prices. The meter refuses a paid call with no
+// price (slice 2), so a keyed demo without the row would answer every question on the stub; the
+// boot says so in plain words instead. With no key the stub serves and no price is needed.
+func demoRefuseAssistWithoutPrice(ctx context.Context, aliases assist.AliasStore, prices assist.PriceStore, keyed bool) error {
+	if !keyed {
+		return nil
+	}
+	if err := assist.RequirePriceRow(ctx, aliases, prices, assist.AliasPremium); err != nil {
+		return fmt.Errorf("the demo box carries the assistant's key but %w", err)
 	}
 	return nil
 }
