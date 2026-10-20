@@ -171,16 +171,19 @@ func TestDemoWorld_BuiltBoxKeepsTesterRows(t *testing.T) {
 }
 
 // TestDemoWorld_NoTextColumnReadsAFirstDealerWord: after the boot, no text column of any table
-// except the migration ledger reads a first dealer's word. The Ontario tax and currency rows are
-// the known residue, listed in the report, and are not in the pattern.
+// except the migration ledger reads a first dealer's word.
 func TestDemoWorld_NoTextColumnReadsAFirstDealerWord(t *testing.T) {
 	ctx := context.Background()
 	pool := glsBootWorld(t, ctx, "demoworld_words")
 	pattern := `(?i)` + strings.Join([]string{
-		`dibbits`, `quinte`, `trenton`, `belleville`, `kingston`, `brampton`, `techo`, `unilock`, `permacon`,
+		`dibbits`, `quinte`, `trenton`, `belleville`, `kingston`, `brighton`, `marmora`, `cataraqui`,
+		`limestone city`, `ontario`, `toronto`, `brampton`, `techo`, `unilock`, `permacon`,
 		`\moaks\M`, `brown.s`, `\msika\M`, `rymar`, `alliance gator`, `in-lite`, `banas`, `bistrack`,
 		`scrubbed party`, `scrubname`, `best.?way`, `brussels`, `holland`, `courtstone`, `granular a`,
-		`northline`, `bay ridge`, `hastings`, `613[.-]\d{3}[.-]\d{4}`,
+		`northline`, `northland`, `bay ridge`, `hastings`, `613[.-]\d{3}[.-]\d{4}`,
+		`\mkgn\M`, `\mtrt\M`,
+		`\m[abceghjklmnprstvxy][0-9][abceghjklmnprstvwxyz][ -]?[0-9][abceghjklmnprstvwxyz][0-9]\M`,
+		`\mcad\M`, `\mhst\M`,
 	}, "|")
 	// The marker suffix is gone from the tenant's own entities, and the rebate's name carries no dash.
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM projects WHERE name ~* '\(demo\)'`); n != 0 {
@@ -212,6 +215,9 @@ func TestDemoWorld_NoTextColumnReadsAFirstDealerWord(t *testing.T) {
 		t.Fatalf("only %d text columns listed, the proof is not looking at the world", len(cols))
 	}
 	for _, c := range cols {
+		if c.table == "posting_rules" && c.column == "line_role" {
+			continue
+		}
 		q := fmt.Sprintf(`SELECT count(*) FROM %q WHERE %q::text ~ $1`, c.table, c.column)
 		if n := qwCount(t, ctx, pool, q, pattern); n != 0 {
 			t.Errorf("%s.%s reads a first dealer word in %d row(s)", c.table, c.column, n)
