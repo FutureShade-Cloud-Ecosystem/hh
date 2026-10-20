@@ -367,6 +367,14 @@ export class HosPosSearchDrop extends LitElement {
   }
 
   private onKeydown(e: KeyboardEvent, len: number): void {
+    // A printable key on a focused row belongs to the scan field: a gun's burst with a row holding
+    // focus must land in the field (and its Enter with it), never press the row. Space stays the
+    // row's own activation key. The terminal hands focus and the character to the box at once.
+    if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      this.dispatchEvent(new CustomEvent('pos-drop-type', { detail: { key: e.key }, bubbles: true, composed: true }));
+      return;
+    }
     const next = rowStep(this.roveIdx, e.key, len);
     if (next === null) return;
     e.preventDefault();

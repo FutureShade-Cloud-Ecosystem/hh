@@ -107,3 +107,20 @@ test("a letters only label at scanner speed commits only a row that begins with 
   await page.keyboard.press("Enter");
   await expect(lines(page).filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(1);
 });
+
+test("a scan while a result row holds focus lands in the field and adds the scanned product", async ({ page }) => {
+  await signIn(page);
+  await toSearch(page);
+  await page.keyboard.type("polymer");
+  const row = page.getByTestId("drop-row").first();
+  await expect(row).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await expect(row).toBeFocused();
+  // The gun: a burst of characters and its Enter, with the row still holding focus.
+  await page.keyboard.type("HPV-60");
+  await page.keyboard.press("Enter");
+  await expect(lines(page).filter({ hasText: "Charcoal Stone 60 mm" })).toHaveCount(1);
+  await expect(lines(page).filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
+  await expect(page.getByTestId("pos-scan-msg")).toContainText("Added Charcoal Stone 60 mm");
+  await expect(page.getByTestId("pos-scan-input")).toHaveValue("");
+});

@@ -4215,6 +4215,11 @@ export class HosPosTerminal extends LitElement {
       ?.commitDone?.(`Added ${hit.name} · ${hit.sku}`);
   }
 
+  /** A printable key reached a focused result row: the scan field takes the key and the caret. */
+  private dropTyped(d: { key: string }): void {
+    this.renderRoot.querySelector<HTMLElement & { takeChar?: (c: string) => void }>('hos-pos-scan-box')?.takeChar?.(d.key);
+  }
+
   private focusScanBox(): void {
     void this.updateComplete.then(() => {
       this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>('hos-pos-scan-box')?.focusInput?.();
@@ -6497,6 +6502,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         .ticketEpoch=${this.ticketEpoch}
         @pos-drop-exit=${() => this.focusScanBox()}
         @pos-drop-added=${(e: CustomEvent) => this.dropAdded(e.detail)}
+        @pos-drop-type=${(e: CustomEvent) => this.dropTyped(e.detail)}
         @pos-add-product=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
         @pos-add-echo=${(e: CustomEvent<{ id: string }>) => this.onAddEcho(e.detail.id)}
       ></hos-pos-search-drop>
