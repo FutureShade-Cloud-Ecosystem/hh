@@ -94,6 +94,12 @@ test("a save past products that were already under the floor and are no worse sa
   assert.equal(settledNote(preview([item()])), "", "a warned save is told in the warning");
 });
 
+test("a product's line shows no figure when the margin legs were withheld, never a zero (HH-419)", () => {
+  const line = itemLine(item({ marginBps: null, floorBps: null, previousMarginBps: null }));
+  assert.equal(line, "HPV-60, Charcoal Stone 60 mm: under its margin floor for Contractor, price $3.00 per sf (was $4.00)");
+  assert.equal(/%/.test(line), false, "no percentage of any kind rides in a withheld line");
+});
+
 test("the headline says how many products, in the singular and the plural", () => {
   assert.equal(warningHeadline(preview([item()])), "This price puts 1 product under its margin floor.");
   assert.equal(warningHeadline(preview([item(), item({ productId: "p2" })])), "This price puts 2 products under their margin floor.");
