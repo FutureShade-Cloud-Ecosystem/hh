@@ -64,6 +64,13 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 		!optionalBodyUUID(w, b.CustomerID, "customer_id") || !optionalBodyUUID(w, b.CategoryID, "category_id") {
 		return
 	}
+	// The preview grades a change at a customer's type and prices: the account is held to the caller's reach.
+	if !h.fenceCustomer(w, r, b.CustomerID) {
+		return
+	}
+	if b.Rule != nil && !h.fenceCustomer(w, r, b.Rule.CustomerID) {
+		return
+	}
 	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID}
 	switch b.Kind {
 	case "rule":

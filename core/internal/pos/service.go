@@ -442,6 +442,29 @@ func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 	return c, nil
 }
 
+// errCustomerNotFound is the one answer every customer taking door gives for an account the caller cannot use:
+// 404 "customer not found", the same whether the id is no account at all or an account homed at a branch the
+// caller cannot reach (UX-89 round 2), so the answer never says which.
+var errCustomerNotFound = clientErr(http.StatusNotFound, "customer not found")
+
+// customerFor is the one seam the pos doors read a named customer through. It returns the account's facts
+// for a caller who may use it, and errCustomerNotFound for an id that is no account and for an account the
+// customer module's rule (staffcontext CanReachAccountHome) keeps from this caller. Any other read failure
+// is returned as is.
+func (s *Service) customerFor(ctx context.Context, caller identity.StaffContext, customerID string) (customerRec, error) {
+	cust, err := s.store.ReadCustomer(ctx, customerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return customerRec{}, errCustomerNotFound
+		}
+		return customerRec{}, err
+	}
+	if !caller.CanReachAccountHome(cust.HomeBranchID) {
+		return customerRec{}, errCustomerNotFound
+	}
+	return cust, nil
+}
+
 // WithTaxAssessor injects the M5 tax engine (defaults to FlatHSTAssessor{}, flat 13%).
 func (s *Service) WithTaxAssessor(t TaxAssessor) *Service { s.tax = t; return s }
 
@@ -788,7 +811,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		}
 		customerID = walkIn
 	}
-	cust, err := s.store.ReadCustomer(ctx, customerID)
+	cust, err := s.customerFor(ctx, caller, customerID)
 	if err != nil {
 		return nil, nil, err
 	}

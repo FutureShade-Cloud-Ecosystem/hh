@@ -44,14 +44,9 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 	// Customer type drives the engine tier; a walk-in/prospect prices RETAIL.
 	customerType := "RETAIL"
 	if in.CustomerID != "" {
-		cust, err := s.store.ReadCustomer(ctx, in.CustomerID)
+		cust, err := s.customerFor(ctx, caller, in.CustomerID)
 		if err != nil {
 			return PricingOrder{}, err
-		}
-		// THE CUSTOMER WALL, the account read's own rule: an account homed to a branch the caller cannot
-		// reach is not found, never priced at its type or contract prices.
-		if cust.HomeBranchID != "" && !caller.CanAccessBranch(cust.HomeBranchID) {
-			return PricingOrder{}, clientErr(http.StatusNotFound, "pos: customer not found")
 		}
 		customerType = cust.CustomerType
 	}

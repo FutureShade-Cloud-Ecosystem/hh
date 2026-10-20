@@ -85,16 +85,67 @@ func (h *Handler) fenceLine(w http.ResponseWriter, r *http.Request, caller guard
 		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return false
 	}
-	if customerID != "" && h.custReach != nil {
-		ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
-		if err != nil {
-			h.writeErr(w, r, err)
-			return false
-		}
-		if !ok {
-			httpx.Error(w, http.StatusNotFound, "customer not found")
-			return false
-		}
+	return h.fenceCustomer(w, r, customerID)
+}
+
+// fenceCustomer is the one customer answer every pricing door gives (UX-89 round 2): an account the caller
+// cannot reach is answered exactly as an id that is no account, 404 "customer not found", by the customer
+// module's own rule through the seam. It reports whether the request may go on. A handler built without the
+// seam (the DB free unit tests) skips it; the composition root refuses to boot without it.
+func (h *Handler) fenceCustomer(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	if customerID == "" || h.custReach == nil {
+		return true
+	}
+	ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "customer not found")
+		return false
+	}
+	return true
+}
+
+// fenceExistingRule and fenceExistingOverride read the row a write names by id and hold it to its account's
+// reach before the write; a row that is not there falls through to the write's own not found.
+func (h *Handler) fenceExistingRule(w http.ResponseWriter, r *http.Request, id string) bool {
+	if h.custReach == nil {
+		return true
+	}
+	rule, err := h.svc.GetRule(r.Context(), id)
+	if err != nil {
+		return true
+	}
+	return h.fenceOwnedRow(w, r, rule.CustomerID)
+}
+
+func (h *Handler) fenceExistingOverride(w http.ResponseWriter, r *http.Request, id string) bool {
+	if h.custReach == nil {
+		return true
+	}
+	o, err := h.svc.store.GetOverride(r.Context(), id)
+	if err != nil {
+		return true
+	}
+	return h.fenceOwnedRow(w, r, o.CustomerID)
+}
+
+// fenceOwnedRow is fenceCustomer for a row found by its own id (a rule or an override): the row of an
+// unreachable account answers what a missing row answers, 404 "not found".
+func (h *Handler) fenceOwnedRow(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	if customerID == "" || h.custReach == nil {
+		return true
+	}
+	ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "not found")
+		return false
 	}
 	return true
 }
@@ -247,6 +298,30 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request, _ guards.Sta
 		h.writeErr(w, r, err)
 		return
 	}
+	// A rule scoped to one account is that account's price: the list holds only the rules of accounts the
+	// caller reaches, as if an unreachable account had no rules (the reach is asked once per account).
+	if h.custReach != nil {
+		seen := map[string]bool{}
+		kept := rules[:0:0]
+		for _, rl := range rules {
+			if rl.CustomerID != "" {
+				ok, known := seen[rl.CustomerID]
+				if !known {
+					var rerr error
+					if ok, rerr = h.custReach.CustomerReachable(r.Context(), rl.CustomerID); rerr != nil {
+						h.writeErr(w, r, rerr)
+						return
+					}
+					seen[rl.CustomerID] = ok
+				}
+				if !ok {
+					continue
+				}
+			}
+			kept = append(kept, rl)
+		}
+		rules = kept
+	}
 	if rules == nil {
 		rules = []Rule{}
 	}
@@ -290,6 +365,9 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request, _ guards.St
 		!optionalBodyUUID(w, p.ProductID, "product_id") || !optionalBodyUUID(w, p.BranchID, "branch_id") {
 		return
 	}
+	if !h.fenceCustomer(w, r, p.CustomerID) {
+		return
+	}
 	out, err := h.svc.CreateRule(r.Context(), p.toRule(), staffUserID(r))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -306,6 +384,9 @@ func (h *Handler) getRule(w http.ResponseWriter, r *http.Request, _ guards.Staff
 	rule, err := h.svc.GetRule(r.Context(), id)
 	if err != nil {
 		h.writeErr(w, r, err)
+		return
+	}
+	if !h.fenceOwnedRow(w, r, rule.CustomerID) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, rule)
@@ -368,6 +449,12 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, _ guards.St
 		ValidFrom: vf, ValidTo: vt, ClearValidFrom: clearVF, ClearValidTo: clearVT,
 		DetailText: p.DetailText, IsActive: p.IsActive,
 	}
+	if !h.fenceExistingRule(w, r, id) {
+		return
+	}
+	if p.CustomerID != nil && !h.fenceCustomer(w, r, *p.CustomerID) {
+		return
+	}
 	out, err := h.svc.UpdateRule(r.Context(), id, patch, p.Version, staffUserID(r))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -385,6 +472,9 @@ func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, _ guards.St
 	}
 	ver, ok := parseVersion(w, r)
 	if !ok {
+		return
+	}
+	if !h.fenceExistingRule(w, r, id) {
 		return
 	}
 	if err := h.svc.DeleteRule(r.Context(), id, ver, staffUserID(r)); err != nil {
@@ -445,6 +535,9 @@ func (h *Handler) listOverrides(w http.ResponseWriter, r *http.Request, _ guards
 		httpx.Error(w, http.StatusBadRequest, "customerId must be a uuid")
 		return
 	}
+	if !h.fenceCustomer(w, r, customerID) {
+		return
+	}
 	list, err := h.svc.ListOverrides(r.Context(), customerID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -480,6 +573,9 @@ func (h *Handler) createOverride(w http.ResponseWriter, r *http.Request, _ guard
 	if !optionalBodyUUID(w, p.CategoryID, "category_id") {
 		return
 	}
+	if !h.fenceCustomer(w, r, customerID) {
+		return
+	}
 	out, err := h.svc.CreateOverride(r.Context(), Override{
 		CustomerID: customerID, CategoryID: p.CategoryID, CalcType: p.CalcType,
 		PriceCents: p.PriceCents, DiscountBps: p.DiscountBps, MarkupBps: p.MarkupBps,
@@ -499,6 +595,9 @@ func (h *Handler) updateOverride(w http.ResponseWriter, r *http.Request, _ guard
 	}
 	var p overridePayload
 	if !decode(w, r, &p) {
+		return
+	}
+	if !h.fenceExistingOverride(w, r, id) {
 		return
 	}
 	out, err := h.svc.UpdateOverride(r.Context(), id, Override{
@@ -522,6 +621,9 @@ func (h *Handler) deleteOverride(w http.ResponseWriter, r *http.Request, _ guard
 	}
 	ver, ok := parseVersion(w, r)
 	if !ok {
+		return
+	}
+	if !h.fenceExistingOverride(w, r, id) {
 		return
 	}
 	if err := h.svc.DeleteOverride(r.Context(), id, ver, staffUserID(r)); err != nil {

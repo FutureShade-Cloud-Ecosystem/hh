@@ -3,6 +3,7 @@ package customer
 import (
 	"encoding/json"
 	"errors"
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -114,7 +115,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 	}
 	// The branch wall: an account is homed only at a branch the caller is granted. Homed anywhere else
 	// the creator could not read the account back (the account read answers it as not found).
-	if in.HomeBranchID != "" && !caller.CanAccessBranch(in.HomeBranchID) {
+	// A company wide (null home) account is visible to every branch, so only a GLOBAL caller files one: a
+	// branch scoped caller must home the account at a branch it is granted, and a missing home is refused in
+	// the same 403 words as an ungranted one (the door's write refusal, not a 422).
+	if (in.HomeBranchID == "" && caller.Scope != coreidentity.ScopeGlobal) || (in.HomeBranchID != "" && !caller.CanAccessBranch(in.HomeBranchID)) {
 		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return
 	}
@@ -132,6 +136,17 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 	var addr map[string]any
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&addr); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	// The customer wall, the account read's own rule: an account homed at a branch the caller cannot reach
+	// answers as not found, and nothing is written.
+	reachable, rerr := h.svc.AccountReachable(r.Context(), r.PathValue("id"))
+	if rerr != nil {
+		h.writeErr(w, r, rerr)
+		return
+	}
+	if !reachable {
+		httpx.Error(w, http.StatusNotFound, "not found")
 		return
 	}
 	acct, err := h.svc.UpdateBillingAddress(r.Context(), r.PathValue("id"), addr)

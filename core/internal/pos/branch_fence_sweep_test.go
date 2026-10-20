@@ -156,6 +156,11 @@ func TestBranchFence_CounterPricesCustomerWall(t *testing.T) {
 			t.Fatalf("a reachable account %s is answered: %v", id, err)
 		}
 	}
+	// One answer for every customer taking door: the same status and words as an id that is no account.
+	_, err0 := h.svc.CounterPrices(ctx, CounterPriceInput{BranchID: "branch-trt", CustomerID: "cust-kgn", Items: items})
+	if err0 == nil || err0.Error() != "customer not found" {
+		t.Fatalf("the shared words: got %v", err0)
+	}
 	_, err := h.svc.CreatePricingOrder(ctx, PricingOrderInput{BranchID: "branch-trt", CustomerID: "cust-kgn",
 		Lines: []PricingOrderLineInput{{ProductID: "prod-paver", QtyEntered: 1}}})
 	if err == nil || statusOf(t, err) != http.StatusNotFound {
