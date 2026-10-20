@@ -33,6 +33,7 @@ import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "@hardscapehouse/pos-kit/src/branch-chooser.js";
+import { clearSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
@@ -442,6 +443,7 @@ export class QuoteDeskApp extends HHElement {
     }
     if (read.kind === "unusable") {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -453,6 +455,7 @@ export class QuoteDeskApp extends HHElement {
     });
     if (!adopted) {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -535,6 +538,8 @@ export class QuoteDeskApp extends HHElement {
     this.#message = null;
     this.requestUpdate();
     const minted = await this.#account.chooseFlow(flow);
+    // A person signing in from the cards is a change of person: the last person's branch choice goes.
+    clearSessionBranchIds();
     if (!minted.ok) {
       this.#busy = false;
       this.#message = `Sign-in did not go through. ${minted.error}`;
@@ -603,6 +608,7 @@ export class QuoteDeskApp extends HHElement {
       // and the person picks a role again at the front door. Only the handoff's own adopt does this.
       if (fromHandoff) {
         clearFrontDoorHandoff();
+        clearSessionBranchIds();
         this.#toFrontDoor();
       }
       return;
@@ -658,6 +664,7 @@ export class QuoteDeskApp extends HHElement {
     }
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
+    clearSessionBranchIds();
     this.#busy = false;
     this.#roleLabel = null;
     this.#deskUserId = null;

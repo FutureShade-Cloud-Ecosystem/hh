@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   SESSION_BRANCHES_KEY,
+  clearSessionBranchIds,
   decideSessionBranch,
   readSessionBranchIds,
   writeSessionBranchIds,
@@ -67,4 +68,15 @@ test("decide: none granted refuses, one granted is taken, several ask unless exa
   assert.deepEqual(decideSessionBranch(GRANTED, memoryStore({ [SESSION_BRANCHES_KEY]: '{"ids":["b1","b2"]}' })), { kind: "ask" });
   assert.deepEqual(decideSessionBranch(GRANTED, memoryStore()), { kind: "ask" });
   assert.deepEqual(decideSessionBranch(GRANTED, memoryStore({ [SESSION_BRANCHES_KEY]: '{"ids":["forged"]}' })), { kind: "ask" });
+});
+
+test("clearing the key leaves nothing for the next person: the next read is none and the next decision asks", () => {
+  const store = memoryStore();
+  writeSessionBranchIds(["b2"], store);
+  assert.deepEqual(decideSessionBranch(GRANTED, store), { kind: "one", id: "b2" });
+  clearSessionBranchIds(store);
+  assert.equal(store.getItem(SESSION_BRANCHES_KEY), null);
+  assert.deepEqual(readSessionBranchIds(GRANTED, store), []);
+  assert.deepEqual(decideSessionBranch(GRANTED, store), { kind: "ask" });
+  assert.doesNotThrow(() => clearSessionBranchIds(memoryStore()));
 });

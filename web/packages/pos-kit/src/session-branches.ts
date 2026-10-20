@@ -17,6 +17,11 @@ export function writeSessionBranchIds(ids: readonly string[], store?: BranchKeyS
   new ThrowSafeMirror(SESSION_BRANCHES_KEY, store).write({ ids: [...ids] });
 }
 
+/** Drop the key: a sign out, a Switch role or a new person must leave nothing for the next person; the next desk asks. */
+export function clearSessionBranchIds(store?: BranchKeyStore): void {
+  new ThrowSafeMirror(SESSION_BRANCHES_KEY, store).clear();
+}
+
 /** The chosen ids that the core also granted, once each, in the order written. Anything else is dropped. */
 export function readSessionBranchIds(granted: readonly { readonly id: string }[], store?: BranchKeyStore): string[] {
   const parsed = new ThrowSafeMirror(SESSION_BRANCHES_KEY, store).read();

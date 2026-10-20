@@ -526,6 +526,48 @@ test.describe("after sign in", () => {
     await expect(page.getByTestId("header-word")).not.toContainText("West Yard");
   });
 
+  test("the branch key is the next person's problem: Sign out, Switch role, a new sign in and the demo persona walk all clear it", async ({ page, baseURL }) => {
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, { personas: true }, { role: { role_code: "general_manager", role_name: "General Manager", scope: "GLOBAL" } });
+    const seeded = () => page.evaluate(() => window.sessionStorage.setItem("hh.session.branches.v1", JSON.stringify({ ids: ["branch-east"] })));
+    await page.goto("/");
+    await seeded(); // the last person's choice, left in a shared counter tab
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // a new sign in cleared it
+
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).toEqual(["branch-west", "branch-east"]);
+    await page.getByRole("button", { name: "Switch role" }).click();
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // Switch role cleared it
+
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).not.toBeNull();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByTestId("signin-submit")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // Sign out cleared it
+
+    // The demo persona walk signs in as another person: the last person's choice goes with it.
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    await seeded();
+    await page.getByTestId("persona-walk").locator("summary").click();
+    await page.getByTestId("persona-walk").locator('[data-action="persona"]').first().click();
+    await expect.poll(() => branchKey(page)).toBeNull();
+  });
+
   test("role and branch picker: All branches selects every granted branch and Open writes all of their ids", async ({ page, baseURL }) => {
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({

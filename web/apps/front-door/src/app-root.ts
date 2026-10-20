@@ -52,7 +52,7 @@ import {
 // door's bundle carries the registry and the drawing rules, not the till.
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import { writeSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
+import { clearSessionBranchIds, writeSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import {
   COMING_ROLES,
   comingHeading,
@@ -889,6 +889,8 @@ export class FrontDoorApp extends HHElement {
       const control = form.elements.namedItem(name);
       return control instanceof HTMLInputElement ? control.value : "";
     };
+    // A new sign in is a possible change of person: nothing the last person chose carries over.
+    clearSessionBranchIds();
     void this.#console?.submit(field("email"), field("password")).then(() => {
       if (this.#console?.phase === "signed-in") {
         void this.#loadBranches();
@@ -994,6 +996,7 @@ export class FrontDoorApp extends HHElement {
       if (this.#console !== null) {
         this.#approvalCount = 0;
         this.#screen = { kind: "home" };
+        clearSessionBranchIds();
         void this.#console.switchRole().then(() => {
           void this.#loadBranches();
           void this.#loadTenantZone();
@@ -1008,6 +1011,7 @@ export class FrontDoorApp extends HHElement {
       if (this.#console !== null) {
         this.#approvalCount = 0;
         this.#screen = { kind: "home" };
+        clearSessionBranchIds();
         void this.#console.signOut();
         return;
       }
@@ -1023,7 +1027,10 @@ export class FrontDoorApp extends HHElement {
   #onConsoleAction(action: string | null, control: Element): void {
     const session = this.#console;
     if (session === null) return;
-    if (action === "google") void session.google();
+    if (action === "google") {
+      clearSessionBranchIds();
+      void session.google();
+    }
     if (action === "methods-retry") void session.retryMethods();
     if (action === "select-role") {
       const roleId = control.getAttribute("data-role");
@@ -1045,6 +1052,7 @@ export class FrontDoorApp extends HHElement {
       const persona = control.getAttribute("data-persona");
       if (typeof persona === "string" && persona !== "") {
         this.#screen = { kind: "home" };
+        clearSessionBranchIds();
         void session.persona(persona).then(() => this.#loadApprovals());
       }
     }
@@ -1112,6 +1120,7 @@ export class FrontDoorApp extends HHElement {
 
   /** Switch role and Sign out end the same way: custody wiped, picker back. */
   #endSession(): void {
+    clearSessionBranchIds();
     this.#store.clear();
     this.#session = null;
     this.#approvalCount = 0;

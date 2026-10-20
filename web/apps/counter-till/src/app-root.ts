@@ -53,6 +53,7 @@ import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import "@hardscapehouse/pos-kit/src/branch-chooser.js";
+import { clearSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 
 // The flows this app offers a card for. The flow table is the box's whole
 // mint set (the Counter Till's pair plus the personas the roles roadmap
@@ -662,7 +663,7 @@ export class CounterTillApp extends HHElement {
     // path at all (test/no-default-adopt.test.mjs reads the built files).
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
-      void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
+      void this.#flowsLoaded.then(() => this.#chooseFlow(popped, true));
     } else if (import.meta.env.MODE === "demo") {
       void this.#adoptFromFrontDoor();
     }
@@ -694,6 +695,7 @@ export class CounterTillApp extends HHElement {
     }
     if (read.kind === "unusable") {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -705,6 +707,7 @@ export class CounterTillApp extends HHElement {
     });
     if (!adopted) {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -1014,12 +1017,15 @@ export class CounterTillApp extends HHElement {
     };
   }
 
-  async #chooseFlow(flow: string): Promise<void> {
+  async #chooseFlow(flow: string, samePerson = false): Promise<void> {
     if (this.#busy || flow === "") return;
     this.#busy = true;
     this.#message = null;
     this.requestUpdate();
     const minted = await this.#account.chooseFlow(flow);
+    // A person signing in from the cards is a change of person: the last person's branch choice goes. A pop-out
+    // window is the same person on a second window, and keeps the choice its opener was given.
+    if (!samePerson) clearSessionBranchIds();
     if (!minted.ok) {
       this.#busy = false;
       this.#message = `Sign-in did not go through. ${minted.error}`;
@@ -1102,6 +1108,7 @@ export class CounterTillApp extends HHElement {
     }
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
+    clearSessionBranchIds();
     this.#busy = false;
     this.#till = null;
     this.#activeFlow = null;
@@ -1166,6 +1173,7 @@ export class CounterTillApp extends HHElement {
       // minted by the cards route has no key to drop.
       if (fromHandoff) {
         clearFrontDoorHandoff();
+        clearSessionBranchIds();
         this.#toFrontDoor();
       }
       return;

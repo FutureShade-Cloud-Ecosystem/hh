@@ -34,18 +34,18 @@ function handoffRecord(): Record<string, unknown> {
 }
 
 /** The front door's two keys, seeded once before any app script runs: the handoff and the branch key. */
-async function arrive(page: Page, branchKey: unknown, theme: "light" | "dark" = "light"): Promise<void> {
+async function arrive(page: Page, branchKey: unknown, theme: "light" | "dark" = "light", withHandoff = true): Promise<void> {
   await page.addInitScript(
     ({ handoff, handoffValue, branch, branchValue, themeValue }) => {
       if (window.name === "arrived") return;
       window.name = "arrived";
-      window.sessionStorage.setItem(handoff, handoffValue);
+      if (handoffValue !== null) window.sessionStorage.setItem(handoff, handoffValue);
       window.sessionStorage.setItem("hh-demo.theme.v1", themeValue);
       if (branchValue !== null) window.sessionStorage.setItem(branch, branchValue);
     },
     {
       handoff: HANDOFF_KEY,
-      handoffValue: JSON.stringify(handoffRecord()),
+      handoffValue: withHandoff ? JSON.stringify(handoffRecord()) : null,
       branch: BRANCH_KEY,
       branchValue: branchKey === null ? null : typeof branchKey === "string" ? branchKey : JSON.stringify(branchKey),
       themeValue: JSON.stringify(theme),
@@ -238,4 +238,27 @@ test("narrowed to two of three branches on the front door, the chooser offers th
   await expect(radios).toHaveCount(2, { timeout: 15_000 });
   await expect(radios.nth(0)).toContainText(WEST.name);
   await expect(radios.nth(1)).toContainText(NORTH.name);
+});
+
+test("Sign out at the desk clears the branch key, so a shared counter tab asks the next person", async ({ page }) => {
+  await grant(page, [WEST, EAST]);
+  await arrive(page, { ids: [WEST.id] });
+  await page.goto("/");
+  await expect(ready(page)).toBeAttached({ timeout: 15_000 });
+  expect(await keyIds(page)).toEqual([WEST.id]);
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(await keyIds(page)).toBeNull();
+});
+
+test("A different person signing in from the cards clears the branch key left by the last one", async ({ page }) => {
+  await arrive(page, { ids: [WEST.id] }, "light", false);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(await keyIds(page)).toEqual([WEST.id]);
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(ready(page)).toBeAttached({ timeout: 15_000 });
+  expect(await keyIds(page)).toBeNull();
 });
