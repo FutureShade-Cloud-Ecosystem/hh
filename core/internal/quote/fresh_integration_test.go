@@ -44,11 +44,14 @@ func TestIntegration_Fresh_QuoteTermsRefoldReachesTheFeed(t *testing.T) {
 	harness.Fresh(t, c)
 }
 
-// TestIntegration_Fresh_QuoteTermsOwnerChangeReachesTheFeed: a terms write that
-// names another salesperson changes the quote's owner and moves no served
-// money; the row must still re-serve.
-func TestIntegration_Fresh_QuoteTermsOwnerChangeReachesTheFeed(t *testing.T) {
+// TestIntegration_Fresh_QuoteTermsOwnerChangeReachesTheNewOwnersFeed: a terms
+// write that names another salesperson changes the quote's owner and moves no
+// served money. The quote desk's read ladder is part of the pull, so the row
+// must reach the NEW owner's device, which is the fence change case: a filter
+// the quote did not belong to before the write.
+func TestIntegration_Fresh_QuoteTermsOwnerChangeReachesTheNewOwnersFeed(t *testing.T) {
 	f, c, id := freshQuoteCase(t)
+	c.Filter.Actor = testkit.SubSalesManager
 	c.Write = func(ctx context.Context) (string, error) {
 		_, err := f.repo.UpdateTermsGuarded(ctx, id, TermsInput{Fulfillment: "PICKUP", SalespersonID: testkit.UserSalesMgrID},
 			[]string{"DRAFT", "SENT"}, testkit.UserInsideSalesID, 1300)
