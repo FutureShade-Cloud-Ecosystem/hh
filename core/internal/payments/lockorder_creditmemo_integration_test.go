@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 func TestIntegration_LockOrder_CreditMemoBesideAnOrderHolderDrawingTheInvoicesCounter(t *testing.T) {
@@ -113,6 +114,106 @@ func TestIntegration_LockOrder_CreditMemoBesideAnOrderHolderDrawingTheInvoicesCo
 
 	release()
 	for who, ch := range map[string]chan error{"credit memo": errMemo, "order holder": errHolder} {
+		err := loAnswer(t, who, ch)
+		if loIsDeadlock(err) || (err != nil && strings.Contains(err.Error(), "40P01")) {
+			t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
+		}
+		if err != nil {
+			t.Fatalf("%s failed: %v", who, err)
+		}
+	}
+}
+
+// The same, for the invoice the memo REVERSES (reverses_invoice_id is a foreign key to invoices, so the insert
+// takes FOR KEY SHARE on it after the counter draw). The holder is the POS account credit's statement: it
+// locks the invoice FOR UPDATE and draws the invoices counter. The memo takes the invoice FOR NO KEY UPDATE
+// before its insert (LOCK-ORDER.md step 3), so it queues behind the credit instead of holding the counter
+// while it waits for the row.
+func TestIntegration_LockOrder_CreditMemoBesideAnInvoiceHolderDrawingTheInvoicesCounter(t *testing.T) {
+	r := newLORig(t, 4)
+	ctx := context.Background()
+	invID := r.invoice("CMR", 10_000)
+	if _, err := r.obs.Exec(ctx, `INSERT INTO invoice_lines (invoice_id, line_no, description, qty_entered, uom_entered, qty_base,
+		unit_price_cents, price_uom, line_total_cents, tax_cents)
+		VALUES ($1::uuid, 1, 'lock order line', 1, 'EA', 1, 10000, 'EA', 10000, 0)`, invID); err != nil {
+		t.Fatalf("seed the invoice line: %v", err)
+	}
+	for _, q := range []string{
+		`CREATE OR REPLACE FUNCTION sf1_park_inv() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN
+		   IF NEW.scope = 'invoices' AND current_setting('application_name') = 'sf1-park' THEN
+		     PERFORM pg_advisory_xact_lock(4242004);
+		   END IF;
+		   RETURN NULL;
+		 END $$`,
+		`CREATE TRIGGER sf1_park_inv AFTER UPDATE ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_inv()`,
+	} {
+		if _, err := r.obs.Exec(ctx, q); err != nil {
+			t.Fatalf("park trigger: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = r.obs.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_inv ON scope_sequences`)
+		_, _ = r.obs.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_inv()`)
+		_, _ = r.obs.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, r.custID)
+		_, _ = r.obs.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, r.custID)
+	})
+
+	cfg := r.pool.Config().Copy()
+	cfg.ConnConfig.RuntimeParams["application_name"] = "sf1-park"
+	cfg.MaxConns = 2
+	parkPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("park pool: %v", err)
+	}
+	defer parkPool.Close()
+	hold, err := r.obs.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer hold.Release()
+	if _, err := hold.Exec(ctx, `SELECT pg_advisory_lock(4242004)`); err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_, _ = hold.Exec(ctx, `SELECT pg_advisory_unlock(4242004)`)
+		}
+	}
+	defer release()
+
+	errMemo := make(chan error, 1)
+	go func() {
+		_, err := billing.NewInvoiceWriter(parkPool).IssueCreditMemo(ctx, billing.CreditMemoInput{
+			CustomerID: r.custID, BranchID: r.branchID, ReversesInvoiceID: invID,
+			Memo: "lock order leg", IdempotencyKey: fmt.Sprintf("lo-cmr-%d", time.Now().UnixNano()),
+		})
+		errMemo <- err
+	}()
+	r.waitSessions("the credit memo parked on its invoices counter touch", 1, `wait_event_type = 'Lock' AND wait_event = 'advisory'`)
+
+	errHolder := make(chan error, 1)
+	go func() {
+		tx, err := r.pool.Begin(ctx)
+		if err != nil {
+			errHolder <- err
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		// The POS account credit's statement: the invoice row FOR UPDATE and the invoices counter draw.
+		if _, err := pos.NewRepository(r.pool).ApplyCreditToInvoice(ctx, tx, invID, 300); err != nil {
+			errHolder <- fmt.Errorf("holder: %w", err)
+			return
+		}
+		errHolder <- tx.Commit(ctx)
+	}()
+	r.waitSessions("the invoice holder waiting behind the parked memo", 1, `wait_event_type = 'Lock' AND wait_event <> 'advisory'`)
+
+	release()
+	for who, ch := range map[string]chan error{"credit memo": errMemo, "invoice holder": errHolder} {
 		err := loAnswer(t, who, ch)
 		if loIsDeadlock(err) || (err != nil && strings.Contains(err.Error(), "40P01")) {
 			t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
