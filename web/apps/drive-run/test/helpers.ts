@@ -119,7 +119,13 @@ export async function failStop(page: Page, n: number, reason: string): Promise<v
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill(reason);
+  const presetRadio = page.getByRole("radio", { name: reason, exact: true });
+  if ((await presetRadio.count()) > 0 && reason !== "Other, say what") {
+    await presetRadio.check();
+  } else {
+    await page.getByRole("radio", { name: "Other, say what" }).check();
+    await page.getByLabel("What stopped this delivery?").fill(reason);
+  }
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
   await page.getByRole("button", { name: "Back to my run" }).click();

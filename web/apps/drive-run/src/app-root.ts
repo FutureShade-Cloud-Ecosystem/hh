@@ -29,7 +29,7 @@ import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
-import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canRecordFailure, canSign, normalizeName, resolveFailureReason, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
 import {
@@ -122,7 +122,9 @@ export class DriveRunApp extends HHElement {
   // load as an image address, and one taken before this visit shows as a tile.
   readonly #thumbs = new Map<string, string[]>();
 
-  // Could not deliver's draft: the reason in the driver's words.
+  // Could not deliver's draft: the chosen preset, the Other note, and the resolved reason.
+  #failPreset = "";
+  #failOtherText = "";
   #failReason = "";
   #closing = false;
 
@@ -188,6 +190,8 @@ export class DriveRunApp extends HHElement {
     }
     if (action === "open-fail") {
       if (this.#view.kind === "stop") {
+        this.#failPreset = "";
+        this.#failOtherText = "";
         this.#failReason = "";
         this.#error = "";
         this.#notice = "";
@@ -242,17 +246,23 @@ export class DriveRunApp extends HHElement {
     }
   };
 
-  // The form fields: the typed name, the recipient's confirmation, the photo.
+  // The form fields: the typed name, the recipient's confirmation, the photo, and the failure reason.
   readonly #onField = (event: Event): void => {
     const target = event.target;
     if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "reason") {
-      this.#failReason = target.value;
+      this.#failOtherText = target.value;
+      this.#failReason = resolveFailureReason(this.#failPreset, this.#failOtherText);
       this.requestUpdate();
       return;
     }
     if (!(target instanceof HTMLInputElement)) return;
     const field = target.getAttribute("data-field");
-    if (field === "name") {
+    if (field === "preset-reason") {
+      const preset = target.getAttribute("data-reason") ?? "";
+      this.#failPreset = preset;
+      this.#failReason = resolveFailureReason(preset, this.#failOtherText);
+      this.requestUpdate();
+    } else if (field === "name") {
       this.#podName = target.value;
       this.requestUpdate();
     } else if (field === "affirm") {
@@ -463,6 +473,13 @@ export class DriveRunApp extends HHElement {
       const number = link.getAttribute("data-tel") ?? "";
       if (/^[0-9+().\-\sx]+$/.test(number)) link.setAttribute("href", `tel:${number.replace(/\s+/g, "")}`);
     }
+    for (const radio of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement>('input[data-field="preset-reason"]'))) {
+      radio.checked = radio.getAttribute("data-reason") === this.#failPreset;
+    }
+    const reasonField = this.renderRoot.querySelector<HTMLTextAreaElement>('textarea[data-field="reason"]');
+    if (reasonField !== null && reasonField.value !== this.#failOtherText) {
+      reasonField.value = this.#failOtherText;
+    }
     const sheetOpen = this.#view.kind === "pod" || this.#view.kind === "fail";
     const pageBehind = this.renderRoot.querySelector<HTMLElement>("[data-page-behind]");
     if (pageBehind !== null) pageBehind.inert = sheetOpen;
@@ -471,7 +488,7 @@ export class DriveRunApp extends HHElement {
     if (this.#sheetFocusPending === "dialog" && sheetOpen) {
       this.#sheetFocusPending = null;
       const firstField = this.renderRoot.querySelector<HTMLElement>(
-        '[role="dialog"] textarea:not([disabled]), [role="dialog"] input[type="text"]:not([disabled]), [role="dialog"] button:not([disabled])',
+        '[role="dialog"] textarea:not([disabled]), [role="dialog"] input[type="text"]:not([disabled]), [role="dialog"] input[type="radio"]:not([disabled]), [role="dialog"] button:not([disabled])',
       );
       firstField?.focus();
     } else if (this.#sheetFocusPending === "opener" && !sheetOpen) {
@@ -895,7 +912,13 @@ export class DriveRunApp extends HHElement {
                 error: this.#error,
               })
             : this.#view.kind === "fail"
-              ? renderFail({ stop: found.stop, reason: this.#failReason, busy: this.#busy, error: this.#error })
+              ? renderFail({
+                  stop: found.stop,
+                  preset: this.#failPreset,
+                  reason: this.#failReason,
+                  busy: this.#busy,
+                  error: this.#error,
+                })
               : nothing}
         `;
       }

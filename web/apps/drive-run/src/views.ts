@@ -15,6 +15,9 @@ import type { DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
+  FAILURE_REASON_OTHER,
+  FAILURE_REASON_PRESETS,
+  FAILURE_REASON_SHEET_PROMPT,
   HANDBACK_BODY,
   HANDBACK_PROMPT,
   PROOF_WAITING_WORDS,
@@ -24,7 +27,6 @@ import {
   closeLine,
   driverActions,
   formatGlossaryTime,
-  formatTime,
   groupStops,
   loadOrderLine,
   qtyLabel,
@@ -233,7 +235,7 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
           </div>`
         : nothing}
       ${stop.pod_received_by !== ""
-        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
+        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatGlossaryTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
         : nothing}
       ${stop.proof_waiting ? html`<p class="dim" data-proof-waiting role="status">${PROOF_WAITING_WORDS}</p>` : nothing}
     </section>
@@ -336,14 +338,33 @@ export function renderLatePhoto(stop: DriverStop, busy: boolean): TemplateResult
 
 export interface FailModel {
   readonly stop: DriverStop;
+  readonly preset?: string;
   readonly reason: string;
   readonly busy: boolean;
   readonly error: string;
 }
 
-/** Could not deliver: the reason in the driver's own words, and what happens to the load. */
+function reasonRadioRow(reason: string, selectedPreset: string, busy: boolean): TemplateResult {
+  const isSelected = selectedPreset === reason;
+  return html`
+    <label class="reason-row ${isSelected ? "reason-row-selected" : ""}" data-reason-option=${reason} data-tap>
+      <input
+        type="radio"
+        name="fail-reason"
+        class="reason-radio"
+        data-field="preset-reason"
+        data-reason=${reason}
+        ?disabled=${busy}
+      />
+      <span class="reason-text">${reason}</span>
+    </label>
+  `;
+}
+
+/** Could not deliver: the board's preset reasons plus free text for Other, and what happens to the load. */
 export function renderFail(model: FailModel): TemplateResult {
   const { stop } = model;
+  const selectedPreset = model.preset ?? "";
   return html`
     <div class="sheet-scrim" data-sheet-scrim>
       <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-sheet="fail">
@@ -359,8 +380,18 @@ export function renderFail(model: FailModel): TemplateResult {
         </div>
         ${renderMessages(model.error, "")}
         <div class="sheet-body">
-          <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
-          <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
+          <fieldset class="reason-group" data-reason-group>
+            <legend class="field-label">${FAILURE_REASON_SHEET_PROMPT}</legend>
+            <div class="reason-list">
+              ${FAILURE_REASON_PRESETS.map((reason) => reasonRadioRow(reason, selectedPreset, model.busy))}
+            </div>
+          </fieldset>
+          ${selectedPreset === FAILURE_REASON_OTHER
+            ? html`
+                <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
+                <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
+              `
+            : nothing}
           <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
           <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
             Could not deliver

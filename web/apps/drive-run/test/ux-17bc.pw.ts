@@ -232,6 +232,11 @@ test("UX-17bc screenshot capture across 390x844, 1024x768, 1440x900 in light and
     await setTheme(page, theme);
     await page.locator('button[data-action="open-fail"]').click();
     await expect(page.getByRole("heading", { name: "Could not deliver" })).toBeVisible();
+    const gateRadio = page.getByRole("radio", { name: "Gate locked" });
+    if ((await gateRadio.count()) > 0) {
+      await gateRadio.check();
+      await gateRadio.blur();
+    }
     for (const size of sizes) {
       await page.setViewportSize(size);
       await page.screenshot({
@@ -296,6 +301,10 @@ test("UX-17b: my run shows NEXT STOP, LOADED AT THE YARD, WAITING and DELIVERED 
     await expect(waitingGroup.locator("[data-stop]")).toContainText("Valley Municipal Works (demo)");
 
     await expect(page.locator("[data-staleness]")).toContainText("as of 8:30 PM");
+
+    await deliveredGroup.locator("[data-stop]").click();
+    await expect(page.locator(".signed")).toHaveText("Signed by Site lead (demo) at 12:04 PM · 1 photo on the proof");
+    await page.getByRole("button", { name: "Back to my run" }).click();
   }
 });
 
@@ -449,4 +458,51 @@ test("UX-17c: reason sheet and proof sheet are modal dialogs over an inert stop 
   await podDialog.getByRole("button", { name: "Not yet" }).click();
   await expect(podDialog).toHaveCount(0);
   expect(await activeDataAction(page)).toBe("open-pod");
+});
+
+test("UX-17c: reason sheet offers the five board preset reasons as a radio group, reveals free text on Other, say what, and records the chosen reason", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.locator("[data-stop]").first().click();
+  await page.getByRole("button", { name: "Mark loaded" }).click();
+  await page.getByRole("button", { name: "Mark en route" }).click();
+
+  await page.locator('button[data-action="open-fail"]').click();
+  const failDialog = page.getByRole("dialog");
+  await expect(failDialog).toBeVisible();
+  await expect(failDialog).toContainText("Why could it not be delivered?");
+  await expect(failDialog.locator("[data-handback-words]")).toContainText("Bring the load back to the yard");
+
+  const expectedPresets = [
+    "Nobody on site",
+    "Gate locked",
+    "Site not ready",
+    "Customer refused",
+    "Other, say what",
+  ];
+  for (const label of expectedPresets) {
+    await expect(failDialog.getByRole("radio", { name: label })).toBeVisible();
+  }
+  await expect(failDialog.getByLabel("What stopped this delivery?")).toHaveCount(0);
+
+  const confirm = failDialog.getByRole("button", { name: "Could not deliver" });
+  await expect(confirm).toBeDisabled();
+
+  await failDialog.getByRole("radio", { name: "Other, say what" }).check();
+  await expect(failDialog.getByLabel("What stopped this delivery?")).toBeVisible();
+  await expect(confirm).toBeDisabled();
+  await failDialog.getByLabel("What stopped this delivery?").fill("   ");
+  await expect(confirm).toBeDisabled();
+  await failDialog.getByLabel("What stopped this delivery?").fill("Driveway blocked by crane");
+  await expect(confirm).toBeEnabled();
+
+  await failDialog.getByRole("radio", { name: "Gate locked" }).check();
+  await expect(failDialog.getByLabel("What stopped this delivery?")).toHaveCount(0);
+  await expect(confirm).toBeEnabled();
+
+  await confirm.click();
+  await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
+  await expect(page.locator("[data-handback]")).toContainText("Gate locked");
 });

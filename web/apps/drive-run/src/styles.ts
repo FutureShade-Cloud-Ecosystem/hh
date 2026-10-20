@@ -279,7 +279,7 @@ export const driveStyles = css`
   .sheet {
     width: 100%;
     max-width: 620px;
-    max-height: calc(100vh - var(--hh-s-64));
+    max-height: calc(100vh - 96px);
     overflow-y: auto;
     background: var(--hh-card);
     color: var(--hh-text);
@@ -288,6 +288,60 @@ export const driveStyles = css`
     box-shadow: var(--hh-elev-3);
     padding: var(--hh-s-16) var(--hh-s-16) calc(var(--hh-s-24) + var(--hh-safe-bottom));
     margin: 0;
+  }
+  .reason-group {
+    border: 0;
+    margin: 0 0 var(--hh-s-12);
+    padding: 0;
+    min-width: 0;
+  }
+  .reason-group > legend {
+    padding: 0;
+    margin-bottom: var(--hh-s-8);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--hh-text);
+  }
+  .reason-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+  }
+  .reason-row {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+    min-height: 48px;
+    padding: var(--hh-s-8) var(--hh-s-16);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .reason-row:has(input:focus-visible) {
+    outline: 3px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .reason-radio:focus {
+    outline: none;
+  }
+  .reason-row-selected {
+    border: 2px solid var(--hh-accent-text);
+    background: var(--hh-row-alt);
+    font-weight: 700;
+  }
+  .reason-radio {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--hh-accent-text);
+    flex: none;
+  }
+  .reason-text {
+    min-width: 0;
   }
   .sheet-grab {
     width: var(--hh-s-40);

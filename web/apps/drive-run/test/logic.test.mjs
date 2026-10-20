@@ -97,8 +97,9 @@ test("a server sentence loses its module prefix and a raw status word reads plai
   assert.equal(STOP_LABEL.EN_ROUTE, "En route");
 });
 
-test("a time reads in the dealer's zone, 24 hour, and an unreadable one is blank", () => {
-  assert.equal(formatTime("2000-01-01T15:30:00Z", "America/Toronto"), "10:30");
+test("a time reads in the dealer's zone using glossary 12-hour AM/PM form, and an unreadable one is blank", () => {
+  const janMorningUtc = new Date(Date.UTC(2000, 0, 1, 15, 30)).toISOString();
+  assert.equal(formatTime(janMorningUtc, "America/Toronto"), "10:30 AM");
   assert.equal(formatTime("not a time", "America/Toronto"), "");
   assert.equal(formatTime(null, "America/Toronto"), "");
 });
@@ -263,9 +264,28 @@ test("a name the door would refuse blocks the sign control, with the words", () 
   assert.doesNotMatch(PROOF_QUEUED_NOTICE, /delivered|told/);
 });
 
-// ---- UX-17b: stop groups, load order line, and house-zone staleness ----
+// ---- UX-17b & UX-17c: stop groups, load order line, house-zone staleness, and preset failure reasons ----
+import * as driveLogic from "../src/drive-logic.ts";
 import { groupStops, loadOrderLine } from "../src/drive-logic.ts";
 import { stalenessWords } from "../src/views.ts";
+
+test("preset failure reasons list the five board choices and resolveFailureReason requires free text only for Other, say what", () => {
+  assert.deepEqual(driveLogic.FAILURE_REASON_PRESETS, [
+    "Nobody on site",
+    "Gate locked",
+    "Site not ready",
+    "Customer refused",
+    "Other, say what",
+  ]);
+  assert.equal(driveLogic.resolveFailureReason?.("Nobody on site", ""), "Nobody on site");
+  assert.equal(driveLogic.resolveFailureReason?.("Gate locked", "ignored"), "Gate locked");
+  assert.equal(driveLogic.resolveFailureReason?.("Site not ready", ""), "Site not ready");
+  assert.equal(driveLogic.resolveFailureReason?.("Customer refused", ""), "Customer refused");
+  assert.equal(driveLogic.resolveFailureReason?.("Other, say what", ""), "");
+  assert.equal(canRecordFailure(driveLogic.resolveFailureReason?.("Other, say what", "   ") ?? ""), false);
+  assert.equal(driveLogic.resolveFailureReason?.("Other, say what", "Driveway washed out"), "Driveway washed out");
+  assert.equal(canRecordFailure(driveLogic.resolveFailureReason?.("Other, say what", "Driveway washed out") ?? ""), true);
+});
 
 test("loadOrderLine names the last stop in delivery order first (back of truck) and the first stop last", () => {
   assert.equal(loadOrderLine([]), "");

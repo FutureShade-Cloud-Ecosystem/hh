@@ -202,12 +202,9 @@ export function plainSentence(msg: string | null | undefined): string {
   return m ? (m[2] ?? "").trim() : s;
 }
 
-/** A clock time in the dealer's zone, 24 hour; blank when the instant cannot be read. */
+/** A clock time in the dealer's zone, in the glossary 12-hour AM/PM form; blank when the instant cannot be read. */
 export function formatTime(ts: string | null | undefined, zone: string): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+  return formatGlossaryTime(ts, zone);
 }
 
 /** A glossary clock time in the dealer's zone ("8:30 PM"), with a plain space before AM or PM. */
@@ -339,6 +336,24 @@ export const HANDBACK_TITLE = "Recorded. This stop is closed.";
 export const HANDBACK_BODY =
   "Bring the load back to the yard: the order is free to be booked again, and a dispatcher will set a new date.";
 export const HANDBACK_PROMPT = "What stopped this delivery?";
+export const FAILURE_REASON_SHEET_PROMPT = "Why could it not be delivered?";
+export const FAILURE_REASON_OTHER = "Other, say what";
+
+/** The board's five preset failure reasons on the could not deliver sheet, in board order. */
+export const FAILURE_REASON_PRESETS: readonly string[] = [
+  "Nobody on site",
+  "Gate locked",
+  "Site not ready",
+  "Customer refused",
+  FAILURE_REASON_OTHER,
+];
+
+/** Resolves the free-text failure_reason string to record for a chosen preset and optional Other note. */
+export function resolveFailureReason(preset: string, otherText: string = ""): string {
+  if (preset === FAILURE_REASON_OTHER) return otherText;
+  if (FAILURE_REASON_PRESETS.includes(preset)) return preset;
+  return "";
+}
 
 /** The core refuses a failed stop with no reason (400), so the control stays grey until there is one. */
 export function canRecordFailure(reason: string): boolean {
