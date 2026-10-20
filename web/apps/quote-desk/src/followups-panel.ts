@@ -107,7 +107,7 @@ export class QdQuoteFollowups extends PanelBase {
         return;
       }
       this.unavailable = "";
-      this.error = spokenRefusal(shareErrorMessage(result.status, result.error));
+      this.error = "The follow-ups did not load. Check the connection and press Refresh.";
       return;
     }
     this.unavailable = "";
@@ -205,6 +205,12 @@ export class QdQuoteFollowups extends PanelBase {
       </fieldset>`;
     }
     if (!this.loaded) return nothing;
+    if (this.history === null && this.error !== "") {
+      return html`<fieldset data-testid="fu-box">
+        <legend>Follow-ups</legend>
+        <p class="err" role="alert" data-testid="fu-error">${this.error}</p>
+      </fieldset>`;
+    }
     const plan = this.history?.plan;
     const contact = contactLine(this.history, (iso) => this.whenLabel(iso));
     return html`

@@ -138,7 +138,7 @@ export class QdApprovals extends PanelBase {
       // decision offered on a stale row is the server's to refuse.
       this.items = [];
       this.loaded = false; // no count is shown beside a failed read
-      this.error = result.error;
+      this.error = "The approvals did not load. Check the connection and press Refresh.";
       return;
     }
     this.error = "";
