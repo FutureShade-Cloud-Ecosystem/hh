@@ -2266,7 +2266,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="card-head"><h2 class="card-title">Preview a price file</h2></div>
       <p class="pr-hint">
         The preview diffs the file against the retail anchor and writes nothing. The apply must echo the preview's
-        digest; the server refuses a file that changed under you.
+        digest; a file that changed under you is refused.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
