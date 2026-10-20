@@ -1129,6 +1129,7 @@ export type AssistMessage = {
 };
 export type AssistChatRequest = {
   question: string;
+  conversation_id?: string;
   history?: AssistMessage[];
 };
 export type AssistUsage = {
@@ -1146,6 +1147,7 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
+  conversation_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
@@ -1201,8 +1203,9 @@ export type AssistUserLimitResetResult = {
   source: "role";
 };
 export type AssistSettings = {
-  provider: "stub" | "anthropic";
+  provider: "stub" | "anthropic" | "routed";
   model: string;
+  route?: string;
   chat_enabled: boolean;
   spend_visible_to_non_admin: boolean;
 };
@@ -5240,6 +5243,37 @@ export type PosReturnRequestPage = {
 };
 export type PosReturnRequestReject = {
   reason: string;
+};
+export type PosCardRefundAttempt = {
+  id: string;
+  refund_key: string;
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  customer_id: string;
+  customer_name: string;
+  gateway_ref: string;
+  refund_ref: string;
+  amount_cents: number;
+  status: "IN_FLIGHT" | "UNBOOKED" | "BOOKED" | "FAILED";
+  last_error: string;
+  initiated_by: string;
+  resolved_by?: string;
+  resolved_at?: string;
+  resolution_note?: string;
+  attempted_at: string;
+  processor_at?: string;
+  booked_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+export type PosCardRefundAttemptList = {
+  items: PosCardRefundAttempt[];
+};
+export type PosResolveCardRefundAttemptInput = {
+  outcome: "REFUNDED" | "NOT_REFUNDED";
+  refund_ref?: string;
+  note?: string;
 };
 export type PosParkedLineInput = {
   product_id: string;

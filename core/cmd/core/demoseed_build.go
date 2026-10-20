@@ -1155,6 +1155,7 @@ func (b *builder) purchaseOrders() {
 			"vendor_id", vendorID,
 			"branch_id", b.branchID(po.Branch),
 			"status", po.Status,
+			"currency", "CAD",
 			"expected_at", b.day(po.ExpectedIn),
 			"ordered_at", b.ago(po.AgeHours),
 			"notes", "",
