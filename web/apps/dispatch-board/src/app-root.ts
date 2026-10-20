@@ -20,6 +20,7 @@ import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/s
 import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
@@ -159,8 +160,15 @@ export class DispatchBoardApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    // The dealer leads the header once the served config names one (row 1858); until then no lockup is drawn.
+    void readDealerName().then((name) => {
+      this.#dealerName = name;
+      this.requestUpdate();
+    });
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.addEventListener("keydown", this.#onHostKey);
@@ -227,9 +235,10 @@ export class DispatchBoardApp extends HHElement {
   // name a current value) rides the same pass.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
+    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string; dealerName: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
+      header.dealerName = this.#dealerName;
       header.theme = this.#theme;
     }
     const widget = this.renderRoot.querySelector("hh-feedback");
