@@ -817,6 +817,8 @@ export class ProFieldApp extends HHElement {
 
   async #setUserStatus(id: string, status: string): Promise<void> {
     if (id === "" || (status !== "active" && status !== "inactive")) return;
+    const target = this.#team.users.find((u) => u.id === id);
+    if (target !== undefined && target.status === "pending") return;
     this.#team.notice = "";
     this.#team.error = "";
     this.requestUpdate();

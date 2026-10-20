@@ -363,7 +363,9 @@ function memberRow(user: TenantUser): TemplateResult {
       </select>
       ${user.status === "active"
         ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="inactive" data-testid="member-deactivate">Deactivate</button>`
-        : html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`}
+        : user.status === "inactive"
+          ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`
+          : nothing}
     </div>
   </li>`;
 }

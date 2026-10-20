@@ -274,6 +274,31 @@ test.describe("phone", () => {
     await expect(crewRow).toContainText("Active");
   });
 
+  test("a pending member row shows Invited and is not offered Reactivate or Deactivate", async ({ page }) => {
+    await page.route("**/api/v1/tenant/users", async (route) => {
+      const response = await route.fetch();
+      const users = (await response.json()) as Record<string, unknown>[];
+      users.push({
+        id: "00000000-0000-4000-8000-000000009999",
+        customer_id: "00000000-0000-4000-8000-000000001001",
+        email: "contractor.pending@hh-demo.invalid",
+        name: "Pending crew",
+        role: "field_crew",
+        status: "pending",
+        notification_prefs: {},
+        created_at: "",
+        updated_at: "",
+      });
+      await route.fulfill({ response, json: users });
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const pendingRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.pending@hh-demo.invalid" });
+    await expect(pendingRow).toContainText("Invited");
+    await expect(pendingRow.getByTestId("member-reactivate")).toHaveCount(0);
+    await expect(pendingRow.getByTestId("member-deactivate")).toHaveCount(0);
+  });
+
   test("the last owner's refusal reads in plain words, for the role picker and for Deactivate", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
