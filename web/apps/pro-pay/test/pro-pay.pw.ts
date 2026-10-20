@@ -128,6 +128,47 @@ test.describe("phone", () => {
     await shot(page, "pay-select-phone");
   });
 
+  test("Select all and each payable invoice toggle are at least 44 high, and tapping the row text checks the invoice", async ({ page }) => {
+    await signIn(page, "ap");
+    const selectAll = page.getByRole("button", { name: "Select all 2" });
+    await expect(selectAll).toBeVisible();
+    await expect.poll(async () => (await selectAll.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+    for (const no of ["INV-20403", "INV-20402"]) {
+      const row = page.getByTestId("invoice-row").filter({ hasText: no });
+      const box = row.getByRole("checkbox");
+      await expect.poll(async () => (await box.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await expect.poll(async () => (await box.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(44);
+      await row.locator(".inv-sub").click();
+      await expect(box).toHaveAttribute("aria-checked", "true");
+    }
+    await expect(page.getByTestId("picked-count")).toHaveText("2 of 2 selected");
+  });
+
+  test("keyboard focus shows a ring on the invoice checkbox and on the invoice number", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByRole("button", { name: "Select all 2" }).focus();
+    await page.keyboard.press("Tab");
+    const hit = page.getByTestId("invoice-row").first().getByRole("checkbox");
+    await expect(hit).toBeFocused();
+    await expect.poll(() => hit.locator(".box").evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+    await page.keyboard.press("Tab");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect(open).toBeFocused();
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+  });
+
+  test("the invoice number is underlined so it reads as the way into the statement", async ({ page }) => {
+    await signIn(page, "ap");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).textDecorationLine)).toContain("underline");
+  });
+
+  test("the statement button is named for what it does, and the selected count is a polite live region", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByRole("button", { name: "Open statement for INV-20403" })).toBeVisible();
+    await expect(page.getByTestId("picked-count")).toHaveAttribute("aria-live", "polite");
+  });
+
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();

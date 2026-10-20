@@ -23,6 +23,12 @@ export interface SurfaceSelect {
   surface: string;
 }
 
+const framedControlStyles = css`
+  .seg-btn {
+    color: var(--hh-text);
+  }
+`;
+
 export class HHProFrame extends HHElement {
   static properties = {
     ...HHElement.properties,
@@ -36,6 +42,7 @@ export class HHProFrame extends HHElement {
 
   static styles = [
     baseStyles,
+    framedControlStyles,
     css`
       :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
       .strip {
@@ -173,6 +180,11 @@ export class HHProFrame extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    const root = this.getRootNode();
+    const sheet = framedControlStyles.styleSheet;
+    if (root instanceof ShadowRoot && sheet && !root.adoptedStyleSheets.includes(sheet)) {
+      root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
   }
