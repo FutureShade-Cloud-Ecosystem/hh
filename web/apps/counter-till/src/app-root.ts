@@ -623,6 +623,7 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("hh-branch-chosen", this.#onBranchChosen);
     // The terminal reports which layout it is in (composed, so the host hears it): the design
     // system's position gate allows no @ binding here, so the listener lives in code.
     this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
@@ -791,6 +792,7 @@ export class CounterTillApp extends HHElement {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("hh-branch-chosen", this.#onBranchChosen);
     this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
     this.removeEventListener("keydown", this.#onHostKey);
@@ -1293,9 +1295,8 @@ export class CounterTillApp extends HHElement {
             `
           : this.#surface === "branch"
             ? html`<hh-branch-chooser
-                .branches=${this.#branchChoices}
+                data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
                 action-label="Open the Counter Till"
-                @hh-branch-chosen=${this.#onBranchChosen}
               ></hh-branch-chooser>`
             : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
       </main>

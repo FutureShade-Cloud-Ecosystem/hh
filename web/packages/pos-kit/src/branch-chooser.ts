@@ -16,8 +16,25 @@ export const BRANCH_CHOSEN_EVENT = "hh-branch-chosen";
 
 @customElement("hh-branch-chooser")
 export class HHBranchChooser extends LitElement {
-  /** The person's granted branches, as the core named them. */
-  @property({ attribute: false }) branches: readonly ChooserBranch[] = [];
+  /** The person's granted branches, as the core named them, carried as JSON in data-branches (templates bind only data- and aria- values). */
+  @property({
+    attribute: "data-branches",
+    converter: {
+      fromAttribute: (value: string | null): readonly ChooserBranch[] => {
+        try {
+          const parsed: unknown = JSON.parse(value ?? "[]");
+          if (!Array.isArray(parsed)) return [];
+          return parsed.flatMap((row: unknown) => {
+            const { id, name } = (row ?? {}) as { id?: unknown; name?: unknown };
+            return typeof id === "string" && typeof name === "string" ? [{ id, name }] : [];
+          });
+        } catch {
+          return [];
+        }
+      },
+    },
+  })
+  branches: readonly ChooserBranch[] = [];
   /** What the confirm says, naming where it goes ("Open the Counter Till"). */
   @property({ attribute: "action-label" }) actionLabel = "Continue";
   @state() private chosen = "";

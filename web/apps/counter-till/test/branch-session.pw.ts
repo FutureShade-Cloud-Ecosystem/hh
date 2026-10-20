@@ -80,7 +80,7 @@ test("a general manager with two grants and one branch chosen lands on it, with 
   await page.goto("/");
   await expect(ready(page)).toBeAttached({ timeout: 15_000 });
   await expect(page.getByTestId("branch-chooser")).toHaveCount(0);
-  expect(seen.some((url) => url.includes(EAST.id))).toBe(true);
+  await expect.poll(() => seen.some((url) => url.includes(EAST.id)), { timeout: 10_000 }).toBe(true);
 });
 
 test("both branches chosen: the desk asks once inside, names the granted branches, and lands on the pick", async ({ page }) => {

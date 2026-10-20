@@ -248,6 +248,7 @@ export class QuoteDeskApp extends HHElement {
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("hh-branch-chosen", this.#onBranchChosen);
     // The desk's navigation ear: a hash change (a control's walk, the
     // browser's back or forward) re-reads the address bar.
     window.addEventListener("hashchange", this.#onHashChange);
@@ -344,6 +345,7 @@ export class QuoteDeskApp extends HHElement {
     this.#stopHostSignOut = null;
     window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("hh-branch-chosen", this.#onBranchChosen);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
@@ -787,9 +789,8 @@ export class QuoteDeskApp extends HHElement {
             `
           : this.#surface === "branch"
             ? html`<hh-branch-chooser
-                .branches=${this.#branchChoices}
+                data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
                 action-label="Open the Quote Desk"
-                @hh-branch-chosen=${this.#onBranchChosen}
               ></hh-branch-chooser>`
             : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
