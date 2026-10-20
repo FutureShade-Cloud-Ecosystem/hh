@@ -55,6 +55,8 @@ import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model
 export interface DeskHost {
   /** Asks the root to repaint. */
   readonly repaint: () => void;
+  /** Runs once the repaint in flight has reached the page, so a focus move finds its control. */
+  readonly afterPaint: (run: () => void) => void;
   /** A control or field the screen carries, found by a selector in the root's own shadow root. */
   readonly find: (selector: string) => Element | null;
   /** The clock, so a test pins the time words. */
@@ -900,6 +902,21 @@ export class MessagesDesk {
         m.id === msgId ? { ...m, body: "This message was deleted", deleted_at: (res.value as any).deleted_at ?? new Date().toISOString() } : m
       );
       this.#host.repaint();
+      // The deleted message keeps no controls: focus goes to the next message's first control, else the room.
+      this.#host.afterPaint(() => {
+        const row = this.#host.find(`li[data-msg='${msgId}']`);
+        let next = row?.nextElementSibling ?? null;
+        while (next !== null) {
+          const first = next.querySelector("button");
+          if (first instanceof HTMLElement) {
+            first.focus();
+            return;
+          }
+          next = next.nextElementSibling;
+        }
+        const room = this.#host.find("[data-conversation]");
+        if (room instanceof HTMLElement) room.focus();
+      });
     } else {
       this.#error = refusalWords("The deletion", res.error, res.status ?? null);
       this.#host.repaint();
@@ -971,6 +988,41 @@ export class MessagesDesk {
   }
 
   // ---- presses ----------------------------------------------------------------------------------
+
+  #focusControl(selector: string): void {
+    const found = this.#host.find(selector);
+    if (found instanceof HTMLElement) found.focus();
+  }
+
+  /** Closes the delete confirm as Cancel and returns focus to that message's Delete control. */
+  #cancelDelete(): void {
+    const msgId = this.#confirmingDeleteId;
+    this.#confirmingDeleteId = null;
+    this.#host.repaint();
+    if (msgId !== null) this.#host.afterPaint(() => this.#focusControl(`[data-action='delete-msg'][data-id='${msgId}']`));
+  }
+
+  /**
+   * A key pressed while the screen is open. With a delete confirm showing, Escape closes it as Cancel and Tab
+   * stays between its two buttons. True when the desk used the key.
+   */
+  key(event: KeyboardEvent): boolean {
+    if (this.#confirmingDeleteId === null) return false;
+    if (event.key === "Escape") {
+      this.#cancelDelete();
+      return true;
+    }
+    if (event.key !== "Tab") return false;
+    const group = this.#host.find("[data-delete-confirm]");
+    if (group === null) return false;
+    const buttons = Array.from(group.querySelectorAll("button"));
+    if (buttons.length === 0) return false;
+    const at = buttons.indexOf(event.composedPath()[0] as HTMLButtonElement);
+    const edge = event.shiftKey ? 0 : buttons.length - 1;
+    if (at !== -1 && at !== edge) return false;
+    buttons[event.shiftKey ? buttons.length - 1 : 0].focus();
+    return true;
+  }
 
   /** Acts on a control carrying a data-action. True when the desk handled it. */
   press(control: Element): boolean {
@@ -1159,11 +1211,11 @@ export class MessagesDesk {
         this.#confirmingDeleteId = msgId;
         this.#editingMessageId = null;
         this.#host.repaint();
+        this.#host.afterPaint(() => this.#focusControl(`[data-action='cancel-delete-msg'][data-id='${msgId}']`));
         return true;
       }
       case "cancel-delete-msg":
-        this.#confirmingDeleteId = null;
-        this.#host.repaint();
+        this.#cancelDelete();
         return true;
       case "confirm-delete-msg": {
         const msgId = control.getAttribute("data-id") ?? id;

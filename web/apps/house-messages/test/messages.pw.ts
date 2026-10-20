@@ -15,7 +15,7 @@ test("the channel list groups rooms and shows each unread count; the payments ro
   await openAs(page, request, "sales");
   const list = page.locator("[data-channel-list]");
   await expect(list.getByRole("heading", { name: "Direct messages" })).toBeVisible();
-  await expect(list.getByRole("heading", { name: "Rooms" })).toBeVisible();
+  await expect(list.getByRole("heading", { name: "Channels" })).toBeVisible();
   await expect(list.getByRole("heading", { name: "Branch" })).toBeVisible();
   await expect(channel(page, CH.branch)).toContainText("Point Loma");
   await expect(channel(page, CH.branch).locator("[data-unread]")).toHaveText("2");

@@ -162,7 +162,7 @@ export interface ChannelGroup {
 
 const GROUPS: readonly { label: string; kinds: readonly Channel["kind"][] }[] = [
   { label: "Direct messages", kinds: ["DM"] },
-  { label: "Rooms", kinds: ["TEAM", "TOPIC"] },
+  { label: "", kinds: ["TEAM", "TOPIC"] },
   { label: "Branch", kinds: ["BRANCH"] },
   { label: "Approvals", kinds: ["APPROVAL"] },
 ];
@@ -201,7 +201,7 @@ function titleCaseSlug(raw: string): string {
     .join(" ");
 }
 
-function dealerLabelForSlug(rawSlug: string, branchName?: string): string | null {
+function dealerLabelForSlug(rawSlug: string): string | null {
   const clean = rawSlug.trim().replace(/^#+/, "").toLowerCase();
   if (clean === "") return null;
   const direct = DEALER_ROOM_SLUGS[clean];
@@ -212,33 +212,29 @@ function dealerLabelForSlug(rawSlug: string, branchName?: string): string | null
     const rest = clean.slice(dashIdx + 1);
     const roleLabel = DEALER_ROLE_PREFIXES[prefix];
     if (roleLabel !== undefined && rest !== "") {
-      const resolvedBranch = branchName?.trim() || titleCaseSlug(rest);
+      const resolvedBranch = titleCaseSlug(rest);
       if (resolvedBranch !== "") return `${roleLabel}, ${resolvedBranch}`;
     }
   }
   return null;
 }
 
-export function channelTitle(
-  channel: Pick<Channel, "name"> & Partial<Pick<Channel, "kind" | "slug" | "branch_id">>,
-  branchNames?: Readonly<Record<string, string>>,
-): string {
+export function channelTitle(channel: Pick<Channel, "name"> & Partial<Pick<Channel, "kind" | "slug">>): string {
   const rawName = channel.name.trim();
   const rawSlug = (channel.slug ?? "").trim();
-  const branchName = channel.branch_id ? branchNames?.[channel.branch_id] : undefined;
   if (rawName.startsWith("#")) {
-    const mapped = dealerLabelForSlug(rawName, branchName) ?? dealerLabelForSlug(rawSlug, branchName);
+    const mapped = dealerLabelForSlug(rawName) ?? dealerLabelForSlug(rawSlug);
     if (mapped !== null) return mapped;
     const stripped = rawName.replace(/^#+/, "").replace(/-/g, " ").trim();
     if (stripped !== "") return stripped.charAt(0).toUpperCase() + stripped.slice(1);
   }
   if (rawSlug !== "" && rawName.toLowerCase() === rawSlug.toLowerCase() && channel.kind !== "TOPIC") {
-    const mapped = dealerLabelForSlug(rawSlug, branchName);
+    const mapped = dealerLabelForSlug(rawSlug);
     if (mapped !== null) return mapped;
   }
   if (rawName !== "") return rawName;
   if (rawSlug !== "") {
-    const mapped = dealerLabelForSlug(rawSlug, branchName);
+    const mapped = dealerLabelForSlug(rawSlug);
     if (mapped !== null) return mapped;
   }
   return channel.kind === "DM" ? "Direct message" : "Untitled room";

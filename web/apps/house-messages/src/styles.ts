@@ -33,7 +33,7 @@ export const messagesStyles = css`
 
   /* The strip: the unread heading first, then how the screen is connected. */
   .strip { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-12); background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); min-height: 44px; }
-  .strip .strip-title { margin: 0; font-size: 16px; line-height: 22px; font-weight: 700; color: var(--hh-text); font-variant-numeric: normal; font-feature-settings: normal; }
+  .strip .strip-title { margin: 0; font-size: var(--hh-s-16); line-height: var(--hh-s-24); font-weight: 700; color: var(--hh-text); font-variant-numeric: normal; font-feature-settings: normal; }
   .strip .live { display: inline-flex; align-items: center; gap: var(--hh-s-8); font-weight: 400; }
   .dot { width: 10px; height: 10px; border-radius: var(--hh-radius-pill); background: var(--hh-text-dim); flex: none; }
   .dot-live { background: var(--hh-state-good); }

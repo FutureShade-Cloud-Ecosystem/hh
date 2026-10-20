@@ -260,10 +260,10 @@ function renderStrip(m: Model): TemplateResult {
   const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" ? "strip strip-warn" : "strip";
   const retry = state === "reconnecting" || state === "offline";
   return html`
-    <div class="${tone}" role="status" data-live>
+    <div class="${tone}" data-live>
       <h1 class="strip-title" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</h1>
       <span class="spacer"></span>
-      <span class="live dim small"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
+      <span class="live dim small" role="status"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
       ${retry ? html`<button type="button" class="btn btn-secondary small-btn" data-action="retry-live">Retry now</button>` : nothing}
       ${m.stale === "" ? nothing : html`<span class="small words-bad" data-stale>${m.stale}</span>`}
     </div>
@@ -340,7 +340,7 @@ function renderRail(m: Model): TemplateResult {
       ${groups.map(
         (g) => html`
           <div class="ch-group">
-            <h4 class="group-title">${g.label}</h4>
+            ${g.label === "" ? nothing : html`<h4 class="group-title">${g.label}</h4>`}
             <ul class="ch-list">
               ${g.channels.map((c) => renderChannelItem(c, m.activeId, false))}
             </ul>
@@ -808,7 +808,7 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
   const subtitle = isGroup ? c.groupSubtitle : ch.topic ? ch.topic : channelLine(ch);
 
   return html`
-    <section class="convo" data-conversation>
+    <section class="convo" data-conversation tabindex="-1">
       <div class="convo-head">
         <button type="button" class="btn btn-secondary small-btn back" data-action="back">Back</button>
         <div class="titles">

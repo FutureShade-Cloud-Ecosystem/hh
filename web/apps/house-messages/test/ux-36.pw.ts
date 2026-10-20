@@ -80,6 +80,82 @@ test("B14: deleting a message requires confirmation naming the message, and a de
   await expect(ownMsg.locator("button")).toHaveCount(0);
 });
 
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 1440, height: 900 },
+]) {
+  for (const theme of ["light", "brand"] as const) {
+    test(`r3 P2: the delete confirm is keyboard complete at ${size.width}x${size.height} (${theme})`, async ({ page, request }) => {
+      await page.setViewportSize(size);
+      await openAs(page, request, "sales");
+      if (theme === "brand") await accountItem(page, "Brand theme");
+      await channel(page, CH.branch).click();
+      await page.locator("textarea[data-field='draft']").fill("Check pallet 9 before loading");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      const ownMsg = page.locator("[data-conversation] li[data-msg].mine").last();
+      await expect(ownMsg).toContainText("Check pallet 9 before loading");
+      const del = ownMsg.locator("[data-action='delete-msg']");
+      const cancel = ownMsg.locator("[data-action='cancel-delete-msg']");
+      const confirm = ownMsg.locator("[data-action='confirm-delete-msg']");
+
+      // Open by keyboard: focus lands on Cancel, the safe default.
+      await del.focus();
+      await page.keyboard.press("Enter");
+      await expect(ownMsg.locator("[data-delete-confirm]")).toBeVisible();
+      await expect(cancel).toBeFocused();
+
+      // Tab stays inside the confirm, both ways.
+      await page.keyboard.press("Tab");
+      await expect(confirm).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(cancel).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(confirm).toBeFocused();
+
+      // Escape closes it as Cancel and returns focus to the message's Delete control.
+      await page.keyboard.press("Escape");
+      await expect(ownMsg.locator("[data-delete-confirm]")).toHaveCount(0);
+      await expect(del).toBeFocused();
+      await expect(ownMsg.locator("[data-body]")).toHaveText("Check pallet 9 before loading");
+
+      // Cancel by keyboard returns focus to Delete too.
+      await page.keyboard.press("Enter");
+      await expect(cancel).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(ownMsg.locator("[data-delete-confirm]")).toHaveCount(0);
+      await expect(del).toBeFocused();
+
+      // Delete message: the tombstone has no controls, so focus moves on to a control or the list, never body.
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Tab");
+      await expect(confirm).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(ownMsg.locator("[data-body]")).toHaveText("This message was deleted");
+      const focusedInside = await page.evaluate(() => {
+        let node: Element | null = document.activeElement;
+        while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement;
+        const conv = node?.getRootNode() instanceof ShadowRoot ? (node.getRootNode() as ShadowRoot).querySelector("[data-conversation]") : null;
+        return node !== null && node !== document.body && conv !== null && conv.contains(node);
+      });
+      expect(focusedInside).toBe(true);
+    });
+  }
+}
+
+test("r3 P3: the h1 sits outside the status region, which stays announced", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await expect(page.locator("[data-live] h1[data-total-unread]")).toBeVisible();
+  expect(await page.locator("[data-live] h1[data-total-unread]").evaluate((el) => el.closest("[role='status']"))).toBeNull();
+  await expect(page.locator("[data-live] [role='status'] [data-live-words]")).toBeVisible();
+});
+
+test("r3 P3: the room list carries one heading, Channels, and no Rooms heading", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  const list = page.locator("[data-channel-list]");
+  await expect(list.getByRole("heading", { name: "Channels" })).toHaveCount(1);
+  await expect(list.getByRole("heading", { name: "Rooms" })).toHaveCount(0);
+});
+
 test("B15: a message with zero replies shows a single Reply action", async ({ page, request }) => {
   await openAs(page, request, "sales");
   await channel(page, CH.yard).click();

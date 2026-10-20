@@ -110,13 +110,13 @@ test("channel groups: direct messages, rooms, the branch, then approvals, each i
     ch({ id: "d", kind: "DM", name: "A colleague" }),
     ch({ id: "e", kind: "TEAM", name: "Yard" }),
   ]);
-  assert.deepEqual(groups.map((g) => g.label), ["Direct messages", "Rooms", "Branch", "Approvals"]);
+  assert.deepEqual(groups.map((g) => g.label), ["Direct messages", "", "Branch", "Approvals"]);
   assert.deepEqual(groups[1].channels.map((c) => c.id), ["c", "e"]);
 });
 
 test("a group with no channel is not drawn", () => {
   const groups = channelGroups([ch({ kind: "TEAM" })]);
-  assert.deepEqual(groups.map((g) => g.label), ["Rooms"]);
+  assert.deepEqual(groups.map((g) => g.label), [""]);
 });
 
 test("unread words: a count, a cap, and a mention", () => {
@@ -139,10 +139,8 @@ test("a channel's title uses its display name when given, or maps core slugs to 
   assert.equal(channelTitle(ch({ slug: "house-plm", name: "#house-point-loma" })), "House, Point Loma");
   assert.equal(channelTitle(ch({ slug: "house-coastal-bend", name: "#house-coastal-bend" })), "House, Coastal Bend");
   assert.equal(channelTitle(ch({ slug: "house-coastal-bend", name: "" })), "House, Coastal Bend");
-  assert.equal(
-    channelTitle(ch({ slug: "yard-b1", name: "#yard-b1", branch_id: "b1" }), { b1: "Harbor Yard" }),
-    "Yard, Harbor Yard",
-  );
+  // No caller feeds a branch map, so the title takes the channel alone (r3 P3).
+  assert.equal(channelTitle.length, 1);
   assert.equal(channelTitle(ch({ slug: "office", name: "#office" })), "Office");
   assert.equal(channelTitle(ch({ name: "", kind: "DM" })), "Direct message");
   assert.equal(channelTitle(ch({ name: "", kind: "TEAM" })), "Untitled room");

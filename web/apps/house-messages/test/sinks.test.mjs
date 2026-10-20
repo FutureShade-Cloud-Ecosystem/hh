@@ -71,3 +71,11 @@ test("messages-logic.ts and views.ts contain no hardcoded branch names (white-la
   }
   assert.deepEqual(offenders, []);
 });
+
+test("the strip title takes the design system's value-named tokens, not raw pixel sizes (r3 P3)", () => {
+  const css = readFileSync(join(srcDir, "styles.ts"), "utf8");
+  const rule = css.split("\n").find((line) => line.includes(".strip .strip-title"));
+  assert.ok(rule, "the strip title rule is present");
+  assert.doesNotMatch(rule, /\b(font-size|line-height):\s*\d+px/);
+  assert.match(rule, /font-size:\s*var\(--hh-s-\d+\)/);
+});
