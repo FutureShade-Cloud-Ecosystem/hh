@@ -157,7 +157,7 @@ in each transaction was compared pairwise across transactions. What it found:
 | `UpdateTermsGuarded`: `quotes` terms and refold | `quotes` | not inside a money transaction (the quote order-payment door takes `quotes` by an explicit draw before `LockPaymentsSequenceTx`, which is the order it already ran in) | none new |
 | customers, pos_parked_tickets, warranty_claims | `customers`, `parked_tickets`, `warranty_claims` | none of the POS ring, returns, order cancel, `MarkNSF`, `ReversePayment` or the credit memo writes these tables in its transaction (checked at source; the warranty credit memo runs in the billing writer's own transaction, and warranty updates its claim afterward) | none |
 | `MarkSheetPostedTx` (count sheet post, inside the stock adjust transaction) | none: explicit draw | n/a | nothing added |
-| `ReopenRun`, `MoveRunDate` (dispatch): `UPDATE delivery_runs` then `delivery_stops` | `runs` then `stops` | not money, but a crossing with the sync cancel of a run (`RunsSyncStore.Write`), which takes the run row `FOR UPDATE`, then un-assigns its stops (`stops`), then draws the run's seq (`runs`) | **deadlock twice over.** First, across two runs: the cancel took stops then runs, the reopen runs then stops (`TestIntegration_SeqTrigger_RunFirstWritersTakeStopsBeforeRuns`). The first fix (take `stops` first) closed that and opened the same pair on ONE run: the reopen holding the `stops` counter waiting on the run row, the cancel holding the row waiting on the counter (PR 556 review P2-1). The dispatch order is **the run row, then `stops`, then `runs`**, the cancel's own: `lockRunThenStopsSeqTx` (run row `FOR UPDATE`, then a non advancing take of `stops`) first in both writers; red then green on both shapes (`TestIntegration_SeqTrigger_RunFirstWritersAndTheSyncCancelOnTheSameRun`, ReopenRun and MoveRunDate) |
+| `ReopenRun`, `MoveRunDate` (dispatch): `UPDATE delivery_runs` then `delivery_stops` | `runs` then `stops` | not money, but a crossing with the sync cancel of a run (`RunsSyncStore.Write`), which takes the run row `FOR UPDATE`, then un-assigns its stops (`stops`), then draws the run's seq (`runs`) | **deadlock twice over.** First, across two runs: the cancel took stops then runs, the reopen runs then stops (`TestIntegration_SeqTrigger_RunFirstWritersTakeStopsBeforeRuns`). The first fix (take `stops` first) closed that and opened the same pair on ONE run: the reopen holding the `stops` counter waiting on the run row, the cancel holding the row waiting on the counter (PR 556 review P2-1). The dispatch order is **the run row (`FOR NO KEY UPDATE`), then `stops`, then `runs`**, the cancel's own: `lockRunThenStopsSeqTx` (run row `FOR NO KEY UPDATE`, then a non advancing take of `stops`) first in both writers; red then green on both shapes (`TestIntegration_SeqTrigger_RunFirstWritersAndTheSyncCancelOnTheSameRun`, ReopenRun and MoveRunDate). **Why `FOR NO KEY UPDATE` and not `FOR UPDATE`:** every write that sets a stop's `run_id` takes the `stops` counter and then, at its foreign key check, `FOR KEY SHARE` on the run row; `FOR UPDATE` conflicts with that, so a run writer holding the row while it waited for the counter cycled against a stop write holding the counter while it waited for the row (PR 556 review, round 3; `TestIntegration_SeqTrigger_AStopCreateBesideRunWritersOnTheSameRun`: ReopenRun, MoveRunDate and the sync cancel, each red then green). The sync cancel's pre-image read had the same strength since before the trigger and is fixed the same way |
 
 The pairwise comparison over every non fixture transaction in the run found one opposite order among the
 trigger's draws, and it is the dispatch pair above. (`payments` before `invoices` is the only order the money
@@ -165,6 +165,25 @@ transactions take them in, and the trigger's `payments` draws all sit in front o
 `invoices` before `payments` entries in the log are the non advancing `payments` lock logged after an invoice
 raise inside one transaction, the order this file documents.) `stock_balances` is not in the trigger: SF-7 adds
 it with a take of the counter right after its stock rows, and a concurrent sale beside a restocking return.
+
+### The row lock strength sweep (PR 556, round 3)
+
+A foreign key check takes `FOR KEY SHARE` on the parent row AFTER the child's counter draw. A writer that holds a
+parent row `FOR UPDATE` and then wants a counter that a child write draws therefore cycles against that child
+(`FOR UPDATE` conflicts with `KEY SHARE`). Every non test `FOR UPDATE` on a table a trigger table points at was
+read for that shape. Fixed, each red first on a deterministic leg: the run row (`lockRunThenStopsSeqTx` and the
+sync cancel's pre-image, now `FOR NO KEY UPDATE`; stop create beside ReopenRun, MoveRunDate and the sync cancel),
+the last admin guard's customer row (`portal` `guardedAdminUpdate`, beside a team insert), and the credit memo
+(it now takes the order row and the invoice it reverses `FOR NO KEY UPDATE` before its insert, the order of steps
+1 and 3 above, beside an order row holder that then draws the invoices counter). Read and safe: the other
+`orders` lockers (every invoice writer takes the order row before the invoices counter, so there is no child
+write to meet; delivery stops and will call children are drawn by no order locker), the `payments` lockers
+(the reversal and `MarkNSF` lock the parent first), `plan` (every plan line writer locks the plan row first),
+`tasks` (every shortage writer locks the task row before the shortages counter), `portal_users`,
+`warranty_claims`, `uoms` (no child counter drawn after the lock), the `delivery_stops` lockers (the only child,
+a pod photo, draws a counter no stop locker takes; the pod store locks the photo row, `FOR UPDATE OF p`), the
+`FOR UPDATE` statements whose `locations` is only in a subquery (a subquery's rows are not locked), and the
+statements that lock a joined table `OF` another.
 
 ## The legs
 

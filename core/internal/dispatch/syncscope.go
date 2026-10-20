@@ -83,7 +83,7 @@ func allocateSyncSeqTx(ctx context.Context, tx pgx.Tx, scope string) (int64, err
 // payments counter.
 //
 // THE DISPATCH ORDER is the run row, then the stops counter, then the runs counter. The sync cancel
-// of a run (RunsSyncStore.Write) takes exactly that: the run row FOR UPDATE, the un-assign's stops
+// of a run (RunsSyncStore.Write) takes exactly that: the run row FOR NO KEY UPDATE, the un-assign's stops
 // draw, the run's own runs draw. A writer that updates a run (ReopenRun, MoveRunDate: the sync seq
 // trigger, 0422, draws the runs counter at that statement) takes the same three in the same order,
 // through lockRunThenStopsSeqTx. Taking the stops counter before the run row would be safe across two
@@ -99,10 +99,18 @@ func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 }
 
 // lockRunThenStopsSeqTx is the first two steps of the dispatch order for a writer that is about to
-// update a run: the run row FOR UPDATE (a row that is not there locks nothing, and the writer's own
-// update then reports it), then the stops counter.
+// update a run: the run row FOR NO KEY UPDATE (a row that is not there locks nothing, and the writer's
+// own update then reports it), then the stops counter.
+//
+// Why NO KEY UPDATE and not FOR UPDATE: every write that sets a stop's run_id takes the stops counter
+// first and then, at its foreign key check, FOR KEY SHARE on the run row. FOR UPDATE conflicts with that
+// KEY SHARE, so a run writer holding the row FOR UPDATE while it waited for the counter would cycle
+// against a stop write holding the counter while it waited for the row (PR 556 review, round 3).
+// NO KEY UPDATE does not conflict with KEY SHARE and still conflicts with itself, so run writers on one
+// run keep queueing on each other. These writers change no key column of delivery_runs (its unique
+// indexes are id and run_no).
 func lockRunThenStopsSeqTx(ctx context.Context, tx pgx.Tx, runID string) error {
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_runs WHERE id = $1 FOR UPDATE`, runID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_runs WHERE id = $1 FOR NO KEY UPDATE`, runID); err != nil {
 		return fmt.Errorf("dispatch: lock the run row: %w", err)
 	}
 	return lockStopsSeqTx(ctx, tx)

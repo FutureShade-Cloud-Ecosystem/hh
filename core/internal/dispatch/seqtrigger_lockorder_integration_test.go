@@ -265,3 +265,138 @@ func TestIntegration_SeqTrigger_RunFirstWritersAndTheSyncCancelOnTheSameRun(t *t
 		})
 	}
 }
+
+// A stop write beside a run writer on ONE run. Every write that sets a stop's run_id draws the stops counter
+// first (its explicit draw or the BEFORE trigger) and only then, at the foreign key check, takes FOR KEY SHARE
+// on the run row. A run writer that held the run FOR UPDATE and then wanted the stops counter would cross it:
+// FOR UPDATE conflicts with FOR KEY SHARE (PR 556 review, round 3). The run writers take the run row FOR NO
+// KEY UPDATE, which does not conflict with KEY SHARE and still conflicts with itself, so same-run run writers
+// keep queueing on each other (the legs above).
+//
+// The STOP CREATE is the parked session here: it stands holding the stops counter it drew (the trigger parks
+// the sessions of the park pool right after they touch that counter), the run writer starts behind it (it takes
+// the run row, then queues on the counter), and the test releases only when the writer is seen waiting. In the
+// crossing shape the stop create then wants KEY SHARE on the run row the writer holds.
+func TestIntegration_SeqTrigger_AStopCreateBesideRunWritersOnTheSameRun(t *testing.T) {
+	writers := map[string]func(f *syncFixture, runID string) error{
+		"ReopenRun": func(f *syncFixture, runID string) error {
+			return NewRepository(f.pool).ReopenRun(context.Background(), runID, "stop create leg", "", time.Now())
+		},
+		"MoveRunDate": func(f *syncFixture, runID string) error {
+			from := syncToday()
+			to := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+			_, _, _, err := NewRepository(f.pool).MoveRunDate(context.Background(), runID, from, to, Reschedule{
+				BranchID: testkit.BranchNorthAID, EntityType: RescheduleEntityRun, EntityID: runID,
+				FromDate: from, ToDate: to, Reason: "stop create leg"})
+			return err
+		},
+		"sync cancel": func(f *syncFixture, runID string) error {
+			info, _ := sync.Lookup("runs")
+			res, err := f.engine.Push(context.Background(), info, f.north, []apigen.SyncPushOperation{
+				syncOp("update", syncFreshKey(), map[string]any{"id": runID, "status": RunCancelled}, nil)})
+			if err == nil && len(res.Results) == 1 && res.Results[0].Status != "applied" {
+				err = fmt.Errorf("the sync cancel answered %+v", res.Results[0])
+			}
+			return err
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			ctx := context.Background()
+			for _, q := range []string{
+				`CREATE OR REPLACE FUNCTION sf1_park_stops() RETURNS trigger LANGUAGE plpgsql AS $$
+				 BEGIN
+				   IF NEW.scope = 'stops' AND current_setting('application_name') = 'sf1-park' THEN
+				     PERFORM pg_advisory_xact_lock(4242002);
+				   END IF;
+				   RETURN NULL;
+				 END $$`,
+				`CREATE TRIGGER sf1_park_stops AFTER UPDATE ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_stops()`,
+			} {
+				if _, err := f.pool.Exec(ctx, q); err != nil {
+					t.Fatalf("park trigger: %v", err)
+				}
+			}
+			t.Cleanup(func() {
+				c := context.Background()
+				_, _ = f.pool.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_stops ON scope_sequences`)
+				_, _ = f.pool.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_stops()`)
+			})
+
+			run := syncOpenRun(t, f)
+			orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+			// The counter row must exist, or the parked session's first draw is an INSERT and no UPDATE
+			// trigger fires to park it.
+			if _, err := f.pool.Exec(ctx, `INSERT INTO scope_sequences (scope, next_value) VALUES ('stops', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+				t.Fatalf("seed the stops counter: %v", err)
+			}
+
+			cfg := f.pool.Config().Copy()
+			cfg.ConnConfig.RuntimeParams["application_name"] = "sf1-park"
+			cfg.MaxConns = 2
+			parkPool, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatalf("park pool: %v", err)
+			}
+			defer parkPool.Close()
+			parkEngine := sync.NewEngine()
+			if err := parkEngine.RegisterScope("stops",
+				NewStopsSyncStore(parkPool, testOrders{pool: parkPool}, linkedSyncUser(parkPool))); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+
+			hold, err := f.pool.Acquire(ctx)
+			if err != nil {
+				t.Fatalf("acquire: %v", err)
+			}
+			defer hold.Release()
+			if _, err := hold.Exec(ctx, `SELECT pg_advisory_lock(4242002)`); err != nil {
+				t.Fatalf("hold: %v", err)
+			}
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					_, _ = hold.Exec(ctx, `SELECT pg_advisory_unlock(4242002)`)
+				}
+			}
+			defer release()
+
+			errS := make(chan error, 1)
+			go func() {
+				info, _ := sync.Lookup("stops")
+				res, err := parkEngine.Push(ctx, info, f.north, []apigen.SyncPushOperation{
+					syncOp("create", syncFreshKey(), map[string]any{
+						"order_id": orderID, "scheduled_date": syncToday(), "run_id": run.ID,
+						"address_line": "Fixture address", "city": "Fixture City"}, nil)})
+				if err == nil && len(res.Results) == 1 && res.Results[0].Status != "applied" {
+					err = fmt.Errorf("the stop create answered %+v", res.Results[0])
+				}
+				errS <- err
+			}()
+			waitFor(t, f, "the stop create parked on its stops counter touch",
+				`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)
+
+			errW := make(chan error, 1)
+			go func() { errW <- write(f, run.ID) }()
+			waitFor(t, f, "the "+name+" waiting behind the parked stop create",
+				`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event <> 'advisory'`)
+
+			release()
+			for who, ch := range map[string]chan error{"stop create": errS, name: errW} {
+				select {
+				case err := <-ch:
+					if err != nil {
+						if strings.Contains(err.Error(), "40P01") || strings.Contains(err.Error(), "deadlock") {
+							t.Fatalf("%s was killed as a deadlock victim on the same run: %v", who, err)
+						}
+						t.Logf("%s answered: %v", who, err)
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatalf("%s never finished", who)
+				}
+			}
+		})
+	}
+}

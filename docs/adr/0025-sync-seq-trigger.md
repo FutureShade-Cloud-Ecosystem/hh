@@ -64,8 +64,11 @@ The database draws the seq when the writer did not.
   `core/internal/payments/LOCK-ORDER.md`: a table written inside a money transaction gets its counter's place in
   that order before it gets a trigger; a writer that updates a row ahead of a counter it needs takes that counter
   first, without advancing it (`LockPaymentsSequenceTx` for payments), and always AFTER the row locks the other
-  writers of the same row take first. Dispatch's order is the run row, then the `stops` counter, then the `runs`
-  counter (`lockRunThenStopsSeqTx`): taking `stops` before the row is safe across two runs and a deadlock on one.
+  writers of the same row take first. Dispatch's order is the run row (`FOR NO KEY UPDATE`), then the `stops`
+  counter, then the `runs` counter (`lockRunThenStopsSeqTx`): taking `stops` before the row is safe across two
+  runs and a deadlock on one. The row lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`, because a stop write takes
+  the `stops` counter and then `FOR KEY SHARE` on the run row at its foreign key check, and `FOR UPDATE` conflicts
+  with that; `FOR NO KEY UPDATE` does not, and still conflicts with itself, so run writers keep queueing.
 - **Hidden behaviour.** A comment at `syncSeqCTE` (`dispatch/syncscope.go`) and this record say so.
 
 ## Left out, and why
