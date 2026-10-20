@@ -608,6 +608,72 @@ test.describe("phone", () => {
     await page.waitForURL(/\/pro-[a-z]+\/$/);
     expect(new URL(page.url()).pathname).toBe(`/pro-${target === "procurement" ? "procurement" : target}/`);
   });
+
+  test("Orders at 390x844 has zero serious contrast violations across the section segments", async ({ page }) => {
+    const contrastOffenders = (floor = 4.5) =>
+      page.evaluate((minRatio: number) => {
+        const parse = (v: string): [number, number, number, number] | null => {
+          const m = v.match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const p = m[1].split(",").map((s) => Number.parseFloat(s));
+          return p.length >= 3 && p.slice(0, 3).every((n) => !Number.isNaN(n))
+            ? [p[0], p[1], p[2], p.length > 3 && !Number.isNaN(p[3]) ? p[3] : 1]
+            : null;
+        };
+        const over = (t: [number, number, number, number], b: [number, number, number, number]): [number, number, number, number] => {
+          const a = t[3] + b[3] * (1 - t[3]);
+          if (a === 0) return [0, 0, 0, 1];
+          const mix = (x: number, y: number): number => (t[3] * x + b[3] * (1 - t[3]) * y) / a;
+          return [mix(t[0], b[0]), mix(t[1], b[1]), mix(t[2], b[2]), 1];
+        };
+        const parentOf = (n: Element): Element | null => {
+          if (n.parentElement) return n.parentElement;
+          const root = n.getRootNode();
+          return root instanceof ShadowRoot ? root.host : null;
+        };
+        const backdrop = (el: Element): [number, number, number, number] => {
+          let acc: [number, number, number, number] | null = null;
+          for (let cur: Element | null = el; cur !== null; cur = parentOf(cur)) {
+            const layer = parse(getComputedStyle(cur).backgroundColor);
+            if (layer && layer[3] > 0) {
+              acc = acc === null ? layer : over(acc, layer);
+              if (acc[3] >= 1) return acc;
+            }
+          }
+          return acc === null ? [255, 255, 255, 1] : over(acc, [255, 255, 255, 1]);
+        };
+        const ch = (v: number): number => {
+          const s = v / 255;
+          return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        const lum = (c: [number, number, number, number]): number => 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+        const ratio = (a: [number, number, number, number], b: [number, number, number, number]): number =>
+          (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        const out: { text: string; ratio: number }[] = [];
+        const walk = (root: Element | ShadowRoot | Document): void => {
+          for (const el of Array.from(root.querySelectorAll("*"))) {
+            if (el.shadowRoot) walk(el.shadowRoot);
+            const cs = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            if (cs.display === "none" || cs.visibility === "hidden" || rect.width < 1 || rect.height < 1) continue;
+            if (!Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "")) continue;
+            const ink = parse(cs.color);
+            if (!ink) continue;
+            const r = ratio(ink, backdrop(el));
+            if (r < minRatio) out.push({ text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40), ratio: Math.round(r * 100) / 100 });
+          }
+        };
+        walk(document);
+        return out;
+      }, floor);
+
+    await signIn(page, "owner");
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+  });
 });
 
 test.describe("desktop", () => {
