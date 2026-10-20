@@ -149,3 +149,25 @@ export async function accountItem(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: /^Account/ }).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
+
+/** Runs in the page before any script: the front door's record for a yard manager, who holds Pick, Drive and Messages. */
+export function managerHandoff(): void {
+  const part = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "d0200000-0000-4000-9000-000000000009", exp })}.c2ln`;
+  const record = {
+    token,
+    tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
+    flow: "yard-manager",
+    roleLabel: "Yard Manager",
+    user: { userId: "d0200000-0000-4000-9000-000000000009", email: "manager@hh-demo.invalid", name: "Yard manager (demo)" },
+    roleCode: "yard_manager",
+    roleName: "Yard Manager",
+    tier: 2,
+    scope: "BRANCH",
+  };
+  if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", JSON.stringify(record));
+  }
+}

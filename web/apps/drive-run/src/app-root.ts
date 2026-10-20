@@ -132,6 +132,9 @@ export class DriveRunApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // The role code the frame's tabs follow; set with the label from the handoff, the console entry or the mint.
+  #roleCode = "";
+
   // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
   #org = "";
 
@@ -290,6 +293,7 @@ export class DriveRunApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
         void this.#loadRuns();
       }
@@ -305,6 +309,7 @@ export class DriveRunApp extends HHElement {
   #onRecovered(outcome: AppStart): void {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
+      this.#roleCode = outcome.entry.roleCode;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       void this.#loadRuns();
     } else if (outcome.kind === "front-door" && outcome.why === "ended") {
@@ -411,7 +416,7 @@ export class DriveRunApp extends HHElement {
       current: "drive",
       bellAction: "open-conflicts",
       bellCount: this.#openCards.length,
-      tabs: fieldTabsForRole("driver"),
+      tabs: fieldTabsForRole(this.#roleCode),
     });
     // The offline strip and the card list take their state through properties
     // (the position gate refuses a bound value outside data- and aria-), the
@@ -751,6 +756,7 @@ export class DriveRunApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#roleCode = result.value.roleCode;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadRuns();
       } else {
@@ -765,6 +771,7 @@ export class DriveRunApp extends HHElement {
   #onSignOut(): void {
     // The frame's account chip names no role once the person is out.
     this.#roleLabel = "";
+    this.#roleCode = "";
     this.#sessions.clear();
     this.#phase = "loading";
     this.#runs = [];

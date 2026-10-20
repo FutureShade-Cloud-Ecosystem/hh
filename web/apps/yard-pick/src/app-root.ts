@@ -183,6 +183,9 @@ export class YardPickApp extends HHElement {
   // The role label the frame shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // The role code the frame's tabs follow; set with the label from the handoff, the console entry or the mint.
+  #roleCode = "";
+
   // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
   #org = "";
 
@@ -460,6 +463,7 @@ export class YardPickApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#roleCode = handoff.session.roleCode;
         this.#me = handoff.session.user.userId;
         clearFrontDoorHandoff();
         void this.#loadWorld();
@@ -476,6 +480,7 @@ export class YardPickApp extends HHElement {
   #onRecovered(outcome: AppStart): void {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
+      this.#roleCode = outcome.entry.roleCode;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       this.#me = outcome.entry.userId;
       void this.#loadWorld();
@@ -541,7 +546,7 @@ export class YardPickApp extends HHElement {
       current: "pick",
       bellAction: "open-changes",
       bellCount: this.#changesWaiting !== null && /^\d+$/.test(this.#changesWaiting) ? Number(this.#changesWaiting) : 0,
-      tabs: fieldTabsForRole("yard_team"),
+      tabs: fieldTabsForRole(this.#roleCode),
     });
     // The offline strip and the card list take their state through properties
     // (the position gate refuses a bound value outside data- and aria-), the
@@ -1211,6 +1216,7 @@ export class YardPickApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#roleCode = result.value.roleCode;
         this.#me = result.value.user.userId;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadWorld();
@@ -1226,6 +1232,7 @@ export class YardPickApp extends HHElement {
   #onSignOut(): void {
     // The frame's account chip names no role once the person is out.
     this.#roleLabel = "";
+    this.#roleCode = "";
     this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";

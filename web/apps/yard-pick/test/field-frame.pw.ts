@@ -2,7 +2,7 @@
 // state, the bell and the account chip; on a phone a bottom tab bar of the tabs the role holds; Switch role, Sign out and
 // Theme reached from the account menu by keyboard. Every assertion waits.
 import { test, expect } from "@playwright/test";
-import { yardHandoff } from "./helpers.js";
+import { managerHandoff, yardHandoff } from "./helpers.js";
 
 const PHONE = { width: 390, height: 844 };
 const TABLET = { width: 1024, height: 768 };
@@ -106,4 +106,15 @@ test("the bell opens the changes waiting on the yard, with their count", async (
   await expect(bell).toHaveAccessibleName(/2 waiting/);
   await bell.click();
   await expect(page.getByRole("heading", { name: /Changes waiting/ })).toBeVisible();
+});
+
+test("a yard manager holds all three tabs, whichever of the two apps the page is", async ({ page }) => {
+  await page.setViewportSize(PHONE);
+  
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await expect(page.locator("hh-field-frame[signed-in]")).toBeVisible();
+  const bar = page.getByRole("navigation", { name: "Field apps" });
+  for (const name of ["Pick", "Drive", "Messages"]) await expect(bar.getByText(name, { exact: true })).toBeVisible();
+  await expect(bar.locator("[aria-current='page']")).toHaveText("Pick");
 });

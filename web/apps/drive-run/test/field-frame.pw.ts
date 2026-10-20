@@ -1,7 +1,7 @@
 // GAPS-r2 G2: the Field frame on HH Drive. The tenant's lockup, a small DEMO chip, the surface chip with the sync
 // state, the bell and the account chip; on a phone a bottom tab bar of the tabs the role holds; Switch role, Sign out and
 // Theme reached from the account menu by keyboard. Every assertion waits.
-import { test, expect, driverHandoff, resetStub } from "./helpers.js";
+import { test, expect, driverHandoff, managerHandoff, resetStub } from "./helpers.js";
 
 const PHONE = { width: 390, height: 844 };
 const TABLET = { width: 1024, height: 768 };
@@ -110,4 +110,15 @@ test("the bell opens the review of anything the sync set aside", async ({ page, 
   await expect(page.locator("[data-stop]")).toHaveCount(3);
   await page.getByRole("button", { name: /^Alerts/ }).click();
   await expect(page.locator("hh-field-frame [data-selector]")).toContainText("Review");
+});
+
+test("a yard manager holds all three tabs, whichever of the two apps the page is", async ({ page, request }) => {
+  await page.setViewportSize(PHONE);
+  await resetStub(request);
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await expect(page.locator("hh-field-frame[signed-in]")).toBeVisible();
+  const bar = page.getByRole("navigation", { name: "Field apps" });
+  for (const name of ["Pick", "Drive", "Messages"]) await expect(bar.getByText(name, { exact: true })).toBeVisible();
+  await expect(bar.locator("[aria-current='page']")).toHaveText("Drive");
 });
