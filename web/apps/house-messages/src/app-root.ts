@@ -313,7 +313,7 @@ export class HouseMessagesApp extends HHElement {
       <hh-field-frame></hh-field-frame>
       <main class="entry">
         <h1>House Messages</h1>
-        <p>Read what the house is saying and acknowledge what needs you. Demo data only.</p>
+        <p>Read what the house is saying and acknowledge what needs you.</p>
         ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() })}
       </main>
     `;
