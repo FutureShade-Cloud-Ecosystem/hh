@@ -210,3 +210,14 @@ func isLoopbackHost(host string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// DemoLimitsInForce reports whether this service enforces the demo's per visitor, per address and
+// box wide buckets. The demo boot reads it off the service the composition built, so a wiring that
+// drifted from the demo flag is caught before a key is ever used.
+func (s *Service) DemoLimitsInForce() bool {
+	if s == nil || s.rates == nil || s.rates.demo == nil {
+		return false
+	}
+	d := s.rates.demo
+	return d.Visitor != nil && d.Address != nil && d.Wide != nil
+}

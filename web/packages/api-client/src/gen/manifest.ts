@@ -153,6 +153,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "AssistChatRequest",
   "AssistUsage",
   "AssistAnswer",
+  "AssistNotice",
   "AssistBudget",
   "AssistSpend",
   "AssistMe",
