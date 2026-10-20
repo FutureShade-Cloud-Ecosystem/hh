@@ -356,7 +356,7 @@ export class DispatchDesk {
     if (this.#sheetSeeded === key) return;
     this.#sheetSeeded = key;
     if (sheet.kind === "dispatch-run") {
-      const btn = this.#host.find("[data-sheet=\"dispatch-run\"] [data-action=\"sheet-submit\"]");
+      const btn = this.#host.find("[data-sheet=\"dispatch-run\"] [data-action=\"sheet-cancel\"]");
       if (btn instanceof HTMLElement) btn.focus();
       return;
     }

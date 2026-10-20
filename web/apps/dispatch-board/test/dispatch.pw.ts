@@ -70,6 +70,7 @@ test("a truck is dispatched only with a crew, behind a confirm naming the truck,
   const sheet = truck(page, "RUN-PLM-2").locator("[data-sheet='dispatch-run']");
   await expect(sheet).toContainText("Send Truck 03 with Driver A (demo) and 1 stop?");
   await expect(sheet).toContainText("The driver sees the run at once. Sending it marks its 1 ready load loaded. A sent run cannot be called back here.");
+  await expect(sheet.getByRole("button", { name: "Cancel" })).toBeFocused();
   expect(dispatchCalls).toBe(0);
 
   // Cancel sends nothing and returns focus to the Dispatch button.
