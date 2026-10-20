@@ -1,12 +1,17 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -369,5 +374,46 @@ func TestCreateFromOrderRefusesAnOrderWithNoBranch(t *testing.T) {
 	}
 	if len(store.tasks) != 0 || len(notifier.posts) != 0 {
 		t.Fatalf("a refused create writes nothing and tells no one: %d tasks, %d posts", len(store.tasks), len(notifier.posts))
+	}
+}
+
+// UX-81 round 3: a task is created only for an order on a branch the caller reaches. The REST create answers an
+// order outside the caller's reach EXACTLY as it answers an unknown order, 422 "order not found" (the door's own
+// answer for an order it cannot use), so the refusal tells nothing: a 403 "branch out of scope" would confirm the
+// order exists on another branch.
+func TestCreateRefusesAnOrderOutsideTheCallersBranchReachAsUnknown(t *testing.T) {
+	const otherBranch = "99999999-9999-4999-8999-999999999999"
+	create := func(sc identity.StaffContext, order string) (*Handler, *fakeStore, int, string) {
+		svc, store, _ := newSvc(t)
+		h := NewHandler(svc, nil)
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(`{"order_id":"`+order+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r = r.WithContext(identity.ContextWithStaff(r.Context(), sc))
+		w := httptest.NewRecorder()
+		h.create(w, r, guards.StaffCaller{})
+		return h, store, w.Code, strings.TrimSpace(w.Body.String())
+	}
+	scoped := func(branch string) identity.StaffContext {
+		return identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", RoleCode: "YARD_TEAM", Tier: identity.TierFrontline,
+			Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{branch: true}}
+	}
+	_, _, unknownCode, unknownBody := create(scoped(branchA), "33333333-3333-4333-8333-333333333333")
+	if unknownCode != http.StatusUnprocessableEntity || !strings.Contains(unknownBody, "order not found") {
+		t.Fatalf("the unknown order answer is the pattern: %d %s", unknownCode, unknownBody)
+	}
+	_, store, code, body := create(scoped(otherBranch), knownOrder)
+	if code != unknownCode || body != unknownBody {
+		t.Errorf("an order on another branch must answer exactly as an unknown order (%d %s), got %d %s", unknownCode, unknownBody, code, body)
+	}
+	if len(store.tasks) != 0 {
+		t.Errorf("a refused create writes nothing: %d tasks", len(store.tasks))
+	}
+	if _, store, code, body := create(scoped(branchA), knownOrder); code != http.StatusCreated || len(store.tasks) != 1 {
+		t.Errorf("the order's own branch still creates: %d %s, %d tasks", code, body, len(store.tasks))
+	}
+	global := scoped(branchA)
+	global.Scope, global.Tier, global.Branches = identity.ScopeGlobal, identity.TierLeadership, nil
+	if _, _, code, body := create(global, knownOrder); code != http.StatusCreated {
+		t.Errorf("a GLOBAL caller still creates: %d %s", code, body)
 	}
 }

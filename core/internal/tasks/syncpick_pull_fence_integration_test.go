@@ -291,3 +291,55 @@ func TestPickPullFence_AReplayNeverAnswersForARowOutOfReach(t *testing.T) {
 		t.Errorf("the owning branch's device still resolves its key: found %v err %v", found, err)
 	}
 }
+
+// unknownOrders is an order seam that knows no order, the answer a sync create meets for an id that is not an order.
+type unknownOrders struct{}
+
+func (unknownOrders) OrderBrief(context.Context, string) (OrderBrief, error) {
+	return OrderBrief{}, ErrUnknownOrder
+}
+
+// TestPickPullFence_ASyncCreateOnAnotherBranchsOrderIsRefusedAsUnknown (UX-81 round 3): a branch B device that
+// names an order on branch A used to create a pick on branch A's board. The create is held to the caller's reach
+// (callerReaches, the rule of Load and the pull) and an order out of reach is refused with exactly the words and
+// status an unknown order gets, so the refusal tells nothing.
+func TestPickPullFence_ASyncCreateOnAnotherBranchsOrderIsRefusedAsUnknown(t *testing.T) {
+	d := newPickDoor(t)
+	staffOf := func(sc identity.StaffContext) func(context.Context, string, string) (identity.StaffContext, bool, error) {
+		return func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, true, nil }
+	}
+	b := scopedTo(uuid.NewString(), d.branchB)
+	onA := NewSyncStore(d.pool, pickDoorOrders{branch: d.branchA}, nil).WithStaffAuthority(staffOf(b))
+	unknown := NewSyncStore(d.pool, unknownOrders{}, nil).WithStaffAuthority(staffOf(b))
+	create := func(s *SyncStore) error {
+		_, err := s.Create(context.Background(), d.f, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+		return err
+	}
+	wantErr := create(unknown)
+	if wantErr == nil || !errors.Is(wantErr, hhsync.ErrOpRefused) {
+		t.Fatalf("the unknown order refusal is the pattern: %v", wantErr)
+	}
+	gotErr := create(onA)
+	if gotErr == nil || gotErr.Error() != wantErr.Error() || !errors.Is(gotErr, hhsync.ErrOpRefused) {
+		t.Errorf("an order on another branch must be refused with exactly the unknown order words:\n got  %v\n want %v", gotErr, wantErr)
+	}
+	var n int
+	if err := d.pool.QueryRow(context.Background(), `SELECT count(*) FROM tasks WHERE org_id = $1::uuid`, d.org).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a refused create writes no row: %d rows, %v", n, err)
+	}
+	// The order's own branch and a GLOBAL caller still create.
+	own := NewSyncStore(d.pool, pickDoorOrders{branch: d.branchA}, nil).WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchA)))
+	if err := create(own); err != nil {
+		t.Errorf("the order's own branch still creates: %v", err)
+	}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	if err := create(NewSyncStore(d.pool, pickDoorOrders{branch: d.branchA}, nil).WithStaffAuthority(staffOf(global))); err != nil {
+		t.Errorf("a GLOBAL caller still creates: %v", err)
+	}
+	// A scoped caller on a branchless order meets the same unknown order words (it must not learn the order exists).
+	none := NewSyncStore(d.pool, pickDoorOrders{branch: ""}, nil).WithStaffAuthority(staffOf(b))
+	if err := create(none); err == nil || err.Error() != wantErr.Error() {
+		t.Errorf("a scoped caller on a branchless order meets the unknown order words too: %v", err)
+	}
+}
