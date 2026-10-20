@@ -922,7 +922,7 @@ export class ManagerHomeApp extends HHElement {
     if (qa === "message-branch") {
       this.#landing = {
         ...this.#landing,
-        notice: "Messaging opens in the Messages app; it is not on this box yet.",
+        notice: "Messaging opens in the Messages app; it is not available yet.",
       };
       this.requestUpdate();
     }
@@ -939,7 +939,7 @@ export class ManagerHomeApp extends HHElement {
     }
     this.#landing = {
       ...this.#landing,
-      notice: `Escalation (${targetRef}) opens in the Messages app; it is not on this box yet.`,
+      notice: `Escalation (${targetRef}) opens in the Messages app; it is not available yet.`,
     };
     this.requestUpdate();
   }
