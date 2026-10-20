@@ -260,6 +260,7 @@ func healthyRules() []RuleRef {
 		"payment.received":       {"cash", "ar", "card_clearing"},
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"payment.reversed":       {"ar", "bank", "undeposited", "card_clearing"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
@@ -309,5 +310,73 @@ func TestAC14_TillOverShort(t *testing.T) {
 	}
 	if len(fZero.journals) != 0 {
 		t.Fatalf("a balanced drawer must book nothing, got %d journals", len(fZero.journals))
+	}
+}
+
+// SF-2d, the payment reversal's legs: Dr AR / Cr the account the original receipt's cash leg sits on now, chosen the
+// way the bounce chooses it (DEPOSITED to the bank, else card to clearing, else undeposited funds), the full amount,
+// and one journal however often the event is delivered.
+func TestPaymentReversedLegs(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name, method, status, want string
+	}{
+		{"cheque undeposited", "CHEQUE", "RECEIVED", "1020"},
+		{"card in clearing", "CARD", "RECEIVED", "1010"},
+		{"card deposited", "CARD", "DEPOSITED", "1000"},
+		{"cheque deposited", "CHEQUE", "DEPOSITED", "1000"},
+	}
+	for _, c := range cases {
+		f := newFakeStore()
+		svc := newTestService(f).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: c.method, Status: c.status, AmountCents: 12000}})
+		for i := 0; i < 2; i++ { // delivered twice
+			if err := svc.consume(ctx, ev("payment.reversed", map[string]any{
+				"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": c.method,
+			})); err != nil {
+				t.Fatalf("%s: consume: %v", c.name, err)
+			}
+		}
+		d := f.lastInserted()
+		wantLeg(t, d, "1100", 12000, 0)
+		wantLeg(t, d, c.want, 0, 12000)
+		if !d.balanced() {
+			t.Fatalf("%s: unbalanced", c.name)
+		}
+		if d.IdempotencyKey != "payment.reversed:rev1" {
+			t.Fatalf("%s: key %q", c.name, d.IdempotencyKey)
+		}
+	}
+	// A malformed event is an error, never a silent ack.
+	svc := newTestService(newFakeStore()).WithPaymentReader(fakePaymentReader{})
+	if err := svc.consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev1"})); err == nil {
+		t.Fatal("a reversal naming no original must be refused")
+	}
+}
+
+// The topic is posted by the consumer and its four roles are required at boot.
+func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
+	found := false
+	for _, topic := range PostedTopics {
+		if topic == "payment.reversed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("payment.reversed must be a topic the posting consumer owns")
+	}
+	for _, role := range []string{"ar", "bank", "undeposited", "card_clearing"} {
+		f := newFakeStore()
+		svc := newTestService(f)
+		var without []RuleRef
+		for _, r := range healthyRules() {
+			if r.EventType == "payment.reversed" && r.LineRole == role {
+				continue
+			}
+			without = append(without, r)
+		}
+		f.activeRules = without
+		if err := svc.ValidatePostingRules(context.Background()); err == nil {
+			t.Fatalf("a missing payment.reversed %s rule must fail the boot validation", role)
+		}
 	}
 }

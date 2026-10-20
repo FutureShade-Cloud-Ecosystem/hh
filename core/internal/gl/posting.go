@@ -43,6 +43,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildTaxRelief(ctx, e.Payload)
 	case "payment.bounced":
 		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
+	case "payment.reversed":
+		draft, post, err = s.buildPaymentReversed(ctx, e.Payload)
 	case "order.fulfilled":
 		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
 	case "deposit.released":
@@ -409,6 +411,85 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 		BranchID:       branch,
 		OccurredAt:     s.clock(),
 		Lines:          lines,
+	}, true, nil
+}
+
+// paymentReversedPayload is what payments/reversal.go emits in the reversal's own transaction: the reversing row's
+// id, the original's id, the full amount, the original's method.
+type paymentReversedPayload struct {
+	PaymentID         string `json:"payment_id"`          // the reversing (VOID) payments row
+	ReversesPaymentID string `json:"reverses_payment_id"` // the original receipt
+	AmountCents       int64  `json:"amount_cents"`
+	Method            string `json:"method"`
+}
+
+// buildPaymentReversed books the reversal of a received payment: Dr AR / Cr the account the original receipt's cash
+// leg sits on NOW, chosen the way buildPaymentBounced chooses it: 1000 bank if the original was DEPOSITED (a bank
+// match moved it out of clearing), else 1010 card clearing for a card, else 1020 undeposited funds. The payload does
+// not carry the original's status, and the status is not a fact the payments module puts on the event, so it is read
+// through the sibling payment seam (PaymentReader), as the receipt builder does. A deposit of a reversed payment is
+// refused (SF-2b), so the status read here cannot move between the reversal and this posting except by an unmatch,
+// whose own clearing journal puts the money back on 1010 or 1020, and then this reversal credits that same account.
+//
+// The reversal is the FULL amount of the original against AR, as the subledger's contra rows are (reversal.go gives
+// back every allocation of the payment): a partly allocated or multi invoice original reverses the same one amount.
+func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentReversedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed payload: %w", err)
+	}
+	if p.PaymentID == "" || p.ReversesPaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed missing payment_id or reverses_payment_id")
+	}
+	if s.payments == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment reader not configured")
+	}
+	f, err := s.payments.PaymentForGL(ctx, p.ReversesPaymentID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	amount := p.AmountCents
+	if amount == 0 {
+		amount = f.AmountCents
+	}
+	if amount == 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed has no amount")
+	}
+	method := p.Method
+	if method == "" {
+		method = f.Method
+	}
+	et := "payment.reversed"
+	rules, err := s.store.PostingAccounts(ctx, et, f.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	cashRole := "undeposited"
+	switch {
+	case f.Status == "DEPOSITED":
+		cashRole = "bank"
+	case method == "CARD":
+		cashRole = "card_clearing"
+	}
+	cashCode, err := pick(rules, et, cashRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.reversed:" + p.PaymentID,
+		Memo:           "Payment reversal " + method,
+		BranchID:       f.BranchID,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(arCode, amount, "AR reinstated (payment reversed)"),
+			cr(cashCode, amount, "reverse receipt ("+method+")"),
+		},
 	}, true, nil
 }
 
@@ -1046,6 +1127,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"payment.received":       {"cash", "ar", "card_clearing"},
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"payment.reversed":       {"ar", "bank", "undeposited", "card_clearing"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
