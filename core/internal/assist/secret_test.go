@@ -6,21 +6,34 @@ package assist
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx"
 )
 
 const probeKey = "sk-probe-9f8e7d6c5b4a"
 
 func TestSecret_EveryKeyHolderFormatsWithoutTheKey(t *testing.T) {
-	cfg := ModelConfig{AnthropicKey: Secret(probeKey), GatewayKey: Secret(probeKey), GatewayURL: "http://gw", DealerTag: "tag"}
-	oaiCfg := OpenAICompatConfig{BaseURL: "http://gw", Key: Secret(probeKey), DealerTag: "tag", Model: "m"}
+	cfg := ModelConfig{AnthropicKey: redact.NewSecret(probeKey), GatewayKey: redact.NewSecret(probeKey), GatewayURL: "http://gw", DealerTag: "tag"}
+	oaiCfg := OpenAICompatConfig{BaseURL: "http://gw", Key: redact.NewSecret(probeKey), DealerTag: "tag", Model: "m"}
 	router := NewRouter(nil, cfg, nil, nil)
 	anth := NewAnthropicProvider(probeKey, "m", "http://gw")
 	oai := NewOpenAICompatProvider(oaiCfg)
+	rcfg := readtx.Config{ReaderURL: redact.NewSecret(probeKey), ProReaderURL: redact.NewSecret(probeKey), ClaimsKey: redact.NewSecret(probeKey)}
+	signer, err := readtx.NewSigner(redact.NewSecret(probeKey + "-padded-to-the-minimum-length"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	holders := map[string]any{
-		"Secret":                  Secret(probeKey),
-		"*Secret":                 func() *Secret { s := Secret(probeKey); return &s }(),
+		"readtx.Config":           rcfg,
+		"*readtx.Config":          &rcfg,
+		"readtx.Signer":           *signer,
+		"*readtx.Signer":          signer,
+		"readtx.Readers":          readtx.Readers{},
+		"redact.Secret":           redact.NewSecret(probeKey),
+		"*redact.Secret":          func() *redact.Secret { s := redact.NewSecret(probeKey); return &s }(),
 		"ModelConfig":             cfg,
 		"*ModelConfig":            &cfg,
 		"OpenAICompatConfig":      oaiCfg,
@@ -34,7 +47,7 @@ func TestSecret_EveryKeyHolderFormatsWithoutTheKey(t *testing.T) {
 		"struct holding a config": struct{ C ModelConfig }{cfg},
 		"struct holding a router": struct{ R *Router }{router},
 		"slice of providers":      []Provider{anth, oai},
-		"map holding a secret":    map[string]Secret{"k": Secret(probeKey)},
+		"map holding a secret":    map[string]redact.Secret{"k": redact.NewSecret(probeKey)},
 	}
 	for name, v := range holders {
 		outs := []string{
@@ -53,10 +66,10 @@ func TestSecret_EveryKeyHolderFormatsWithoutTheKey(t *testing.T) {
 }
 
 func TestSecret_RevealIsTheOnlyWayOut(t *testing.T) {
-	if Secret(probeKey).Reveal() != probeKey {
+	if redact.NewSecret(probeKey).Reveal() != probeKey {
 		t.Fatal("Reveal must return the value")
 	}
-	if got := Secret("").String(); got == Secret(probeKey).String() {
+	if got := redact.NewSecret("").String(); got == redact.NewSecret(probeKey).String() {
 		t.Fatal("set and unset must be told apart")
 	}
 }

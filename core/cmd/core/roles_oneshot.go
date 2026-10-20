@@ -85,6 +85,21 @@ func migrateRole(getenv func(string) string) error {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migrate: apply failed %s: %w", version, err)
 		}
+		// A file that switches role (SET ROLE, SET LOCAL ROLE) must RESET ROLE before it
+		// ends: the bookkeeping below must run as the migrating role, and an object a
+		// switched role made must not be committed on a connection still switched. The
+		// assist migrations create their objects under SET LOCAL ROLE so the owner is
+		// right by construction (plan 3.1a); this turns a forgotten reset into a loud
+		// failure that rolls the whole file back.
+		var current, session string
+		if err := tx.QueryRow(ctx, `SELECT current_user::text, session_user::text`).Scan(&current, &session); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("migrate: role check %s: %w", version, err)
+		}
+		if current != session {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("migrate: %s left the role set (current user %q, session user %q): a migration that uses SET ROLE or SET LOCAL ROLE must RESET ROLE before the file ends", version, current, session)
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); err != nil {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migrate: record failed %s: %w", version, err)

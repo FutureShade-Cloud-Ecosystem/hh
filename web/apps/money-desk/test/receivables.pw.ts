@@ -267,7 +267,8 @@ test("a lost answer then a changed cheque number sends the same key; the refusal
   // kept for the next press, and the account reloads so the check the words ask for reads the balances.
   await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
   await page.getByRole("button", { name: "Record payment" }).click();
-  expect(posts).toHaveLength(2);
+  // The route handler records the post when the request leaves the page, which can be after the click returns.
+  await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(page.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(page.locator("[data-error]")).toContainText("press Record payment to record this one");
@@ -310,7 +311,7 @@ test("a held key re-used for a different payment: the error words say both, the 
   await page.locator("[data-field='receive-amount']").fill("50.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 5000");
   await page.getByRole("button", { name: "Record payment" }).click();
-  expect(posts).toHaveLength(2);
+  await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(page.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
@@ -372,12 +373,15 @@ test("the same re-use from a duplicated tab: the copied key refuses the new cheq
   await expect(tabB.locator("[data-card]")).toHaveCount(4);
   await tabB.locator("[data-register-row]", { hasText: "Granite Edge Landscaping" }).first().getByRole("button").click();
   await expect(tabB.getByRole("heading", { name: "Granite Edge Landscaping (demo)" })).toBeVisible();
+  // The row's invoice arrives prefilled once the account has loaded, and that read overwrites the picks and the
+  // amount: the clear, the pick and the typing below wait for it, as the other tab's openAccount does.
+  await expect(tabB.locator("[data-field='receive-amount']")).not.toHaveValue("");
   await tabB.getByRole("button", { name: "Clear" }).first().click();
   await tabB.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await tabB.locator("[data-field='receive-amount']").fill("50.00");
   await tabB.locator("[data-field='receive-reference']").fill("Cheque 5000");
   await tabB.getByRole("button", { name: "Record payment" }).click();
-  expect(postsB).toHaveLength(1);
+  await expect.poll(() => postsB.length).toBe(1);
   expect(postsB[0]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(tabB.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(tabB.locator("[data-notice]")).toHaveCount(0);
@@ -622,6 +626,7 @@ test("the held key survives a sign out and a sign in of the same user", async ({
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);
@@ -640,6 +645,7 @@ test("held keys are never shared across users: another user starts with none, an
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='financial-controller']").click();
   await page.getByRole("button", { name: "Receivables", exact: true }).click();
@@ -651,6 +657,7 @@ test("held keys are never shared across users: another user starts with none, an
   expect(posts).toHaveLength(2);
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
   // The first user signs in again and still holds the first key: the route answers its replay.
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);

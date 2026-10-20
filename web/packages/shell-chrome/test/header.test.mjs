@@ -227,3 +227,21 @@ test('FLOOR: phone and tablet targets are at least 44 px, each control named by 
 test('FLOOR: the phone band drops the sync chip and the org word, the r4 frame\u2019s own rule', () => {
   assert.ok(headerSrc.includes('max-width: 500px'), 'the sub 500px band hides the chip');
 });
+
+// ── the TanyAI button (PANEL-API r1 section 5) ───────────────────────────────────────────────────
+
+test('a host that mounts the panel sets assist and the band carries one labelled Ask TanyAI button', () => {
+  const markup = visible(renderKit(ShellHeader, { ...BASE, assist: true }));
+  const button = actionButton(markup, 'assist');
+  assert.ok(button !== null, 'the assist button renders');
+  assert.match(button, /aria-label="Ask TanyAI"/);
+  assert.equal((markup.match(/data-action="assist"/g) ?? []).length, 1);
+  assert.match(headerSrc, /hh-shell-assist/, 'the click emits the one event the shell listens for');
+});
+
+test('assist is off by default: a host with no panel gets no dead Ask TanyAI button', () => {
+  const markup = visible(renderKit(ShellHeader, BASE));
+  assert.equal(actionButton(markup, 'assist'), null);
+  assert.equal((markup.match(/data-action="assist"/g) ?? []).length, 0);
+  assert.equal(new ShellHeader().assist, false);
+});

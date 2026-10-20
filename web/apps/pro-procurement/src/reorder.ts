@@ -10,7 +10,7 @@
 // out, because money arithmetic is the core's, never the screen's.
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantOrders, type TenantReorderLine, type TenantReorderPreview } from "@hardscapehouse/api-client";
-import { money, qtyWithUnit } from "@hardscapehouse/pro-kit";
+import { priceWords, qtyWords } from "./figures.js";
 import { actionFailure, button, cancelButton, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
 
 export function reorderModalWords(): string {
@@ -68,7 +68,7 @@ function lineRow(state: ReorderState, line: TenantReorderLine): TemplateResult {
     return html`<li>
       <div class="result off" data-testid="reorder-line-off">
         <span class="name">${line.description}</span>
-        <span class="dim">${qtyWithUnit(line.qty_entered, line.uom_entered)}</span>
+        <span class="dim">${qtyWords(line.qty_entered, line.uom_entered)}</span>
         ${line.reason === undefined || line.reason === "" ? nothing : html`<span class="mono dim">${line.reason}</span>`}
       </div>
     </li>`;
@@ -76,8 +76,8 @@ function lineRow(state: ReorderState, line: TenantReorderLine): TemplateResult {
   return html`<li>
     <button type="button" class="result ${chosen ? "chosen" : ""}" data-action="toggle-reorder-line" data-line="${line.line_no}" data-testid="reorder-line">
       <span class="name">${line.description}</span>
-      <span class="dim">${qtyWithUnit(line.qty_entered, line.uom_entered)}</span>
-      <span class="mono">${money(line.line_total_cents)}</span>
+      <span class="dim">${qtyWords(line.qty_entered, line.uom_entered)}</span>
+      <span class="mono">${priceWords(line.line_total_cents)}</span>
     </button>
   </li>`;
 }

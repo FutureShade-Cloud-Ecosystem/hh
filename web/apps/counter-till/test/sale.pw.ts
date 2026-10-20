@@ -21,6 +21,7 @@
 // committed sale back through the same proxy, with the bearer and org header
 // the staff routes require.
 import { expect, test, type Page, type Response, type Route } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 // A leg that pins the stub's clock never leaves it pinned: the stub is one server for the whole
 // suite, and the next leg's session tokens are minted on whatever clock it holds.
@@ -817,7 +818,9 @@ test("the pop-out opens the till on a second window, signed in as the same role"
   // second window's own session open finds or opens the same one.
   await expect(second.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
   await expect(second.getByTestId("pagectx")).toContainText("Point Loma Yard");
+  await openAccountMenu(second);
   await expect(second.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(second);
   await second.close();
 });
 
@@ -976,7 +979,9 @@ test("a parked ticket survives the hand-over: the next login at the branch sees 
   // left it once resumed. The resumed ticket prices fresh through the engine
   // (the new tab's display memory is cold, so the ticket resumes for the
   // walk-in and the line reads retail until an account is picked).
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await signIn(page, "Sales manager");
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
@@ -1368,7 +1373,9 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   expect(bannerBox).not.toBeNull();
   expect(bannerBox?.y ?? -1).toBeGreaterThanOrEqual(0);
   expect((bannerBox?.y ?? 0) + (bannerBox?.height ?? 0)).toBeLessThan((viewport?.height ?? 900) / 2);
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toBeVisible();
+  await closeAccountMenu(page);
 
   // The pop-out: the same bar, same place, in its own first viewport.
   const popped = context.waitForEvent("page");
@@ -1438,7 +1445,8 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   expect(noticeRight).toBeGreaterThanOrEqual(buttonRight - 2);
   expect((box?.x ?? 0)).toBeLessThanOrEqual(buttonRight);
   expect((box?.y ?? 0)).toBeGreaterThanOrEqual((btnBox?.y ?? 0) + (btnBox?.height ?? 0));
-  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThan(300);
+  // The one band (about 61px) sits above the bar now, so the first band ends a little lower.
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThan(380);
   // Fully inside the window (ui3d P2-1): the left edge on screen, no
   // horizontal overflow, at this width...
   const wide = page.viewportSize()?.width ?? 0;
@@ -2032,54 +2040,22 @@ test("a failed reload's error banner does not outlive the next good reload", asy
   await expect(parkedDialog).toBeVisible();
 });
 
-test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
-  page,
-}) => {
+test("the band is on a compact scale: one bar about 60px, the DEMO chip in it, no app-local header", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, "Sales");
+  const band = page.locator("hh-shell-header");
+  const box = await band.boundingBox();
+  expect(box?.height ?? 999).toBeLessThanOrEqual(72);
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await expect(page.getByRole("note")).toBeVisible();
+  await expect(page.getByRole("note")).toHaveText("DEMO");
   const measured = await page.evaluate(() => {
     const root = document.querySelector("ct-app-root")?.shadowRoot;
-    const height = (selector: string): number => root?.querySelector(selector)?.getBoundingClientRect().height ?? -1;
-    const theme = root?.querySelector("[data-testid=theme-control]");
-    return {
-      bar: height(".surfacebar"),
-      banner: height(".demo-banner"),
-      theme: height("[data-testid=theme-control]"),
-      themeFont: theme === null || theme === undefined ? "" : getComputedStyle(theme).fontSize,
-    };
+    return { header: root?.querySelector("header") !== null, strip: root?.querySelector(".demo-banner") !== null };
   });
-  expect(measured.bar).toBeLessThanOrEqual(56);
-  expect(measured.bar).toBeGreaterThanOrEqual(44);
-  expect(measured.theme).toBeLessThan(40);
-  expect(measured.themeFont).toBe("11px");
-  expect(measured.banner).toBeLessThan(32);
-  // The banner stays visible and legible.
-  await expect(page.getByRole("note")).toBeVisible();
-  await expect(page.getByRole("note")).toContainText("Everything on this box is invented demo data");
+  expect(measured).toEqual({ header: false, strip: false });
 });
 
-test("the entry page's header is on the same compact scale as the till's top bar", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  const measured = await page.evaluate(() => {
-    const root = document.querySelector("ct-app-root")?.shadowRoot;
-    const height = (selector: string): number => root?.querySelector(selector)?.getBoundingClientRect().height ?? -1;
-    const theme = root?.querySelector("[data-testid=theme-control]");
-    return {
-      header: height("header"),
-      banner: height(".demo-banner"),
-      theme: height("[data-testid=theme-control]"),
-      themeFont: theme === null || theme === undefined ? "" : getComputedStyle(theme).fontSize,
-    };
-  });
-  expect(measured.header).toBeLessThanOrEqual(64);
-  expect(measured.header).toBeGreaterThanOrEqual(44);
-  expect(measured.theme).toBeLessThan(40);
-  expect(measured.themeFont).toBe("11px");
-  expect(measured.banner).toBeLessThan(32);
-  await expect(page.getByRole("note")).toBeVisible();
-});
 
 test("the sold-actions buttons drop their fill while a receipt loads, in the colour-is-the-state rule", async ({
   page,

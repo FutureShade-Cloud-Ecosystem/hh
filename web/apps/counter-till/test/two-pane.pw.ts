@@ -103,10 +103,18 @@ async function expectScreenIsTheWindow(page: Page): Promise<void> {
     };
     const screen = walk(document).find((el) => el.matches(".till-screen"));
     const r = screen?.getBoundingClientRect();
-    return { top: r?.top ?? -1, bottom: r?.bottom ?? -1, scrollY: window.scrollY, innerH: window.innerHeight };
+    const band = document.querySelector("ct-app-root")?.shadowRoot?.querySelector("hh-shell-header");
+    return {
+      top: r?.top ?? -1,
+      bottom: r?.bottom ?? -1,
+      band: band?.getBoundingClientRect().height ?? 0,
+      scrollY: window.scrollY,
+      innerH: window.innerHeight,
+    };
   });
   expect(g.scrollY).toBe(0);
-  expect(Math.abs(g.top)).toBeLessThanOrEqual(1);
+  // The screen is the window below the one band.
+  expect(Math.abs(g.top - g.band)).toBeLessThanOrEqual(1);
   expect(Math.abs(g.bottom - g.innerH)).toBeLessThanOrEqual(1);
 }
 
@@ -172,7 +180,7 @@ test("the Items pane scrolls its lines inside itself and keeps search and fulfil
   await expectScreenIsTheWindow(page);
 });
 
-test("the swap button sits in the header beside the theme, flips the panes and survives a reload", async ({
+test("the swap button sits in the surface bar under the band, flips the panes and survives a reload", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -184,10 +192,10 @@ test("the swap button sits in the header beside the theme, flips the panes and s
   const swap = page.getByTestId("swap-panes");
   await expect(swap).toBeVisible();
   await expect(swap).toHaveAccessibleName("Swap panes");
-  const theme = (await page.getByTestId("theme-control").boundingBox())!;
+  // The theme moved into the band's account menu; the swap button stays in the surface bar, below the band.
+  const band = (await page.locator("hh-shell-header").boundingBox())!;
   const sw = (await swap.boundingBox())!;
-  expect(sw.x).toBeLessThan(theme.x);
-  expect(Math.abs(sw.y - theme.y)).toBeLessThan(theme.height);
+  expect(sw.y).toBeGreaterThanOrEqual(band.y + band.height - 1);
 
   // Items on the left to begin with.
   let items = (await box(page, "pos-pane-items"))!;
@@ -290,26 +298,6 @@ test("1024x768 keeps two panes side by side", async ({ page }) => {
   expect(Math.abs(items.y - steps.y)).toBeLessThanOrEqual(1);
 });
 
-test("the header badge sits at the left edge before the Demo pill, at the front door's size", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page);
-  const badge = page.getByTestId("till-header-badge");
-  await expect(badge).toBeVisible();
-  const b = (await badge.boundingBox())!;
-  expect(b.x).toBeLessThanOrEqual(24);
-  const mark = (await badge.locator(".brand-mark").boundingBox())!;
-  expect(Math.round(mark.width)).toBe(30);
-  expect(Math.round(mark.height)).toBe(30);
-  await expect(badge).toContainText("HH Yard");
-  const pill = page.locator(".demo-banner").first();
-  if (await pill.count()) {
-    const p = (await pill.boundingBox())!;
-    expect(b.x + b.width).toBeLessThanOrEqual(p.x + 1);
-  }
-});
-
 test("no CA$ in any text the till renders, hidden disclosures included", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await twoPaneWithTicket(page);
@@ -361,11 +349,3 @@ for (const [width, height] of ALL_SIZES) {
     expect(sideways).toBeLessThanOrEqual(0);
   });
 }
-
-test("the badge's product name is 16px, the front door's lockup size", async ({ page }) => {
-  await signIn(page);
-  const size = await page.getByTestId("till-header-badge").locator(".brand-product").evaluate(
-    (el) => getComputedStyle(el).fontSize,
-  );
-  expect(size).toBe("16px");
-});

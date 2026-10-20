@@ -1,10 +1,9 @@
-// The signed-in chrome (visual review round 1, P2-1; reshaped by the shared
-// header adoption, item 5 of HH-RD2's polish round 2, decision log row 938):
-// the chrome IS the design system's hos-app-header, the front door's shape.
-// The desk keeps one bar: the house lockup and the demo badge, the role's
-// name centred, Switch role and Sign out right, and the theme control is the
-// app's own, inside the bar's named theme slot (the item 5 followup). These
-// check the bar's shape, not its pixels.
+// The signed-in chrome (visual review round 1, P2-1; reshaped by the ONE
+// band adoption, PR 503 round 1): the chrome IS the shell chrome's
+// hh-shell-header in band variant. The desk keeps the one band: the dealer
+// lockup, the centred selector, the DEMO and Synced chips, and the account
+// chip's menu carries Theme, Feedback, Switch role and Sign out. These
+// check the band's shape, not its pixels.
 import { expect, test, type Page } from "@playwright/test";
 
 // The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
@@ -21,49 +20,41 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 for (const width of [1440, 820]) {
-  test(`the shared header carries the lockup, the role and Sign out at ${width}`, async ({ page }) => {
+  test(`the band carries the lockup, the role and Sign out at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await signIn(page);
-    const bar = page.getByTestId("qd-bar");
-    await expect(bar).toBeVisible();
-    await expect(page.getByTestId("header-word")).toHaveText("Sales");
-    await expect(bar.getByRole("img", { name: "HH Yard, a Hardscape House product" })).toBeVisible();
-    const barBox = (await bar.boundingBox())!;
-    expect(barBox.x).toBe(0);
-    expect(barBox.width).toBe(width);
+    const band = page.locator("hh-shell-header");
+    await expect(band).toBeVisible();
+    await expect(band).toContainText("Gable Landscape Supply");
+    await expect(band.locator("button.selector")).toContainText("Quote Desk > Quotes");
+    await expect(band.getByText("DEMO", { exact: true })).toHaveCount(1);
+    await expect(band).toContainText("Synced");
+    const bandBox = (await band.boundingBox())!;
+    expect(bandBox.x).toBe(0);
+    expect(bandBox.width).toBe(width);
+    await openAccountMenu(page);
+    await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
     const signOut = page.getByRole("button", { name: "Sign out", exact: true });
     await expect(signOut).toHaveClass(/btn-secondary/);
     const signBox = (await signOut.boundingBox())!;
-    expect(signBox.height).toBeLessThanOrEqual(40);
+    expect(signBox.height).toBeLessThanOrEqual(48);
     expect(signBox.x + signBox.width).toBeLessThanOrEqual(width - 12);
-    // The demo marker is the header element's own note, inside the bar, not a
-    // full-bleed fill. At the desktop width it is the one-line slim strip; at
-    // the narrow width the element's left zone wraps the banner's copy (the
-    // front door's own shape: its zones stack only under 480px), so the
-    // one-line bound is a desktop fact and the bar grows with the wrap.
-    const demo = bar.getByRole("note");
-    await expect(demo).toBeVisible();
-    const demoBox = (await demo.boundingBox())!;
-    if (width >= 1440) {
-      expect(demoBox.height).toBeLessThanOrEqual(36);
-      expect(barBox.height).toBeLessThanOrEqual(120);
-    }
-    expect(demoBox.width).toBeLessThan(width - 24);
-    expect(demoBox.x).toBeGreaterThan(0);
-    // The theme control rides the header's theme slot, inside the bar and
-    // inside the viewport.
     const toggle = page.getByTestId("theme-control");
     await expect(toggle).toBeVisible();
     const toggleBox = (await toggle.boundingBox())!;
     expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(width - 12);
-    expect(toggleBox.y).toBeGreaterThanOrEqual(barBox.y);
-    expect(toggleBox.y + toggleBox.height).toBeLessThanOrEqual(barBox.y + barBox.height + 0.5);
+    expect(toggleBox.y).toBeGreaterThanOrEqual(bandBox.y);
   });
 }
 
 // The theme control (visual review round 1, P2-5): the ERP's light look was
-// unreachable. The bar's theme slot carries the till's cycle (Auto, Light,
+// unreachable. The band's account menu carries the till's cycle (Auto, Light,
 // Brand); the brand sheet (the dark half) is the tokens' default and light is the opt-in
 // data-theme attribute. This suite serves a demo mode build (playwright.config.ts
 // runs vite --mode demo), and a demo build starts on Light (decision log row
@@ -76,6 +67,7 @@ test("the theme control starts on Light in the demo build and cycles Light, Bran
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
+  await openAccountMenu(page);
   const toggle = page.getByTestId("theme-control");
   const root = page.locator("html");
   // The system is dark, so a light root can only be the demo build's own start.
@@ -104,6 +96,7 @@ test("Auto follows the system's light setting", async ({ browser }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   const toggle = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   await toggle.click();
   await toggle.click();
   await expect(toggle).toHaveText("Theme: Auto");
@@ -130,4 +123,3 @@ test("the desk's UI face is Outfit, self-hosted, not a system fallback", async (
   });
   expect(faces).toEqual({ 400: true, 500: true, 600: true, 700: true });
 });
-

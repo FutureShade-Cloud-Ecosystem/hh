@@ -3,6 +3,7 @@
 // Sign out; and a read that failed for a reason that may pass says so and offers a retry, while a quote the server
 // says is not there says it may not exist.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { open, signIn } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
@@ -43,6 +44,7 @@ test("after Sign out the tab title does not keep the last quote's number", async
   await signIn(page);
   await open(page, "Q-1001");
   await expect.poll(() => page.title()).toBe("Gable Landscape Supply · Q-1001");
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   expect(await page.title()).toBe("Gable Landscape Supply · Quote Desk");

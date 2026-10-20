@@ -40,6 +40,7 @@
 // data-testid="header-word"; the till keeps its own session bar's
 // data-testid="signed-in-role".
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "../../account-menu";
 import { paceMint } from "../helpers.js";
 
 const FRONT_DOOR_SESSION_KEY = "hh-demo.front-door.session.v1";
@@ -143,7 +144,9 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   // not the handoff's claim).
   await page.getByRole("button", { name: "Counter Till", exact: true }).click();
   await expect(page).toHaveURL(/\/till\/$/);
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: SIGN_ANSWER_MS });
+  await closeAccountMenu(page);
   await expect(page.locator("hos-pos-flow-steps")).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByTestId("session-dot").or(page.getByRole("button", { name: "Open Session" })),

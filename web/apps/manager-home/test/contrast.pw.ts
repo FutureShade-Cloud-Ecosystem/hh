@@ -125,7 +125,10 @@ for (const size of SIZES) {
 
       // The way in, unsigned.
       await page.goto("/");
-      if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+      if (theme === "brand") {
+        await page.locator("hh-shell-header button.account").click();
+        await page.getByRole("button", { name: "Brand theme" }).click();
+      }
       await expect(page.locator("[data-flow='yard-manager']")).toBeVisible();
       await check(page, "the way in");
 

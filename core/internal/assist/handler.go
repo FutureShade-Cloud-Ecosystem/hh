@@ -105,6 +105,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 func CallerFrom(r *http.Request) Caller {
 	sc, _ := identity.StaffContextFromContext(r.Context())
 	c := Caller{
+		Address:  clientAddress(r),
 		UserID:   sc.UserID,
 		RoleCode: sc.RoleCode,
 		Tier:     int(sc.Tier),
