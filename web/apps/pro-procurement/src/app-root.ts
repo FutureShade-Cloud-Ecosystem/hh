@@ -21,7 +21,6 @@ import {
   CAPABILITIES,
   InMemoryTenantSession,
   appOf,
-  can,
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,

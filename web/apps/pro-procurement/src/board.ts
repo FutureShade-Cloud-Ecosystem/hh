@@ -77,7 +77,7 @@ function quoteCard(quote: TenantQuote): TemplateResult {
 
 function orderCard(order: TenantOrder, page: Page): TemplateResult {
   const tracking = trackingOf(order.status, order.fulfillment);
-  const mayBuy = page.session.can("view_orders_deliveries");
+  const mayBuy = page.session.can("create_orders");
   return html`<div class="card" data-testid="board-order">
     <span class="rowline"><span class="mono figure">${order.order_no}</span><span class="grow"></span><span class="mono figure">${money(order.total_cents)}</span></span>
     <span class="rowline">${tracking === null ? statusChip("order", order.status) : trackingChip(tracking)}<span class="grow"></span><span class="dim">Wanted ${calendarDay(order.requested_date)}</span></span>
