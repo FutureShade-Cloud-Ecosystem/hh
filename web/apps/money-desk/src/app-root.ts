@@ -95,6 +95,8 @@ export class MoneyDeskApp extends HHElement {
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
     .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
     @media (max-width: 520px) { .areas { padding-inline: var(--hh-s-12); } }
+    .assist-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--hh-s-8); }
+    .assist-btn svg { width: 18px; height: 18px; display: block; }
   `];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
@@ -673,7 +675,11 @@ export class MoneyDeskApp extends HHElement {
 
   // The TanyAI button rides the same slot, beside the theme control, once someone is signed in.
   private renderAssistControl(): TemplateResult {
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="assist" aria-label="Ask TanyAI" aria-haspopup="dialog">Ask TanyAI</button>`;
+    return html`<button slot="theme" type="button" class="btn btn-secondary assist-btn" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    </button>`;
   }
 
   // The desks the role holds, as the area switch: the controller's five, Payables and Receivables' four and the General
