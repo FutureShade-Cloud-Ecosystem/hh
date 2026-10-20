@@ -90,7 +90,11 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// HH-419: the floor preview's margin legs ride only to the cost and margin list, the same rule the
 	// stock reads answer through; the boot fail-fast keeps an unwired boot from handing every pricing
 	// editor each product's margin, and so its cost.
-	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg).
+		WithCustomerReach(pricingCustomerReach{svc: customer.NewService(customer.NewRepository(pool))})
+	if !pricingHandler.CustomerReachWired() {
+		panic("pricing: customer reach not wired - resolve and the low margin report would price any named account")
+	}
 	if !pricingHandler.CostRolesWired() {
 		panic("pricing: cost roles not wired - the floor preview would answer the margin legs to every editor")
 	}
@@ -620,6 +624,14 @@ func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, br
 // pricingFloorCustomers satisfies pricing.FloorCustomers over customer.Service.ResolveAccount, so
 // a customer scoped change is graded at that customer's own pricing type.
 type pricingFloorCustomers struct{ svc *customer.Service }
+
+// pricingCustomerReach answers the pricing doors' reach question with the customer module's own rule,
+// the one the account read holds to (UX-89).
+type pricingCustomerReach struct{ svc *customer.Service }
+
+func (a pricingCustomerReach) CustomerReachable(ctx context.Context, customerID string) (bool, error) {
+	return a.svc.AccountReachable(ctx, customerID)
+}
 
 func (a pricingFloorCustomers) CustomerType(ctx context.Context, customerID string) (string, error) {
 	acct, err := a.svc.ResolveAccount(ctx, customerID)

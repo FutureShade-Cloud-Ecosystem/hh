@@ -18,6 +18,7 @@ package customer
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 
@@ -63,4 +64,23 @@ func (s *Service) GetAccount(ctx context.Context, customerID string) (Account, e
 		return Account{}, ErrNotFound
 	}
 	return acct, nil
+}
+
+// AccountReachable reports whether the caller may see one account: the same rule GetAccount holds the
+// read to (an account homed to a branch the caller reaches, or to none, is visible), answered as a
+// yes or no for the doors that price or file against a named customer and must treat an account the
+// caller cannot reach as an unknown one. An id that is not a uuid is not an account, so false.
+func (s *Service) AccountReachable(ctx context.Context, customerID string) (bool, error) {
+	_, err := s.GetAccount(ctx, customerID)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	}
+	var bad httpx.BadRequestError
+	if errors.As(err, &bad) {
+		return false, nil
+	}
+	return false, err
 }

@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -51,6 +52,51 @@ type Handler struct {
 	svc       *Service
 	log       *slog.Logger
 	costRoles CostRoles
+	custReach CustomerReach
+}
+
+// CustomerReach is the customer module's own reach rule, declared here by the consumer because pricing
+// reads pricing tables only. It answers whether the caller (the stamped staff context on ctx) may see
+// the account: false for an account homed to a branch the caller cannot reach and for an unknown one,
+// the same answer the customer read gives as not found. The composition root implements it over the
+// customer service.
+type CustomerReach interface {
+	CustomerReachable(ctx context.Context, customerID string) (bool, error)
+}
+
+// WithCustomerReach wires the customer reach rule the resolve and low margin doors hold a named
+// customer to. CustomerReachWired is the boot check that it was.
+func (h *Handler) WithCustomerReach(c CustomerReach) *Handler {
+	h.custReach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is wired.
+func (h *Handler) CustomerReachWired() bool { return h.custReach != nil }
+
+// fenceLine holds one priced line to the caller's reach before anything is resolved: a branch the caller
+// is not granted is a 403 in words (the till's wording for a branch outside the grants), and a named
+// customer the caller cannot reach is a 404, as the account read answers it. A line naming no branch is
+// the dealer wide picture and stays answered. It reports whether the line may go on. A handler built
+// without the customer rule (the DB free unit tests) skips the customer half; the composition root
+// refuses to boot without it.
+func (h *Handler) fenceLine(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller, branchID, customerID string) bool {
+	if branchID != "" && !caller.CanAccessBranch(branchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
+		return false
+	}
+	if customerID != "" && h.custReach != nil {
+		ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
+		if err != nil {
+			h.writeErr(w, r, err)
+			return false
+		}
+		if !ok {
+			httpx.Error(w, http.StatusNotFound, "customer not found")
+			return false
+		}
+	}
+	return true
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
@@ -143,7 +189,7 @@ type resolveRequest struct {
 	DocRefID   string `json:"doc_ref_id"`
 }
 
-func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req resolveRequest
 	if !decode(w, r, &req) {
 		return
@@ -156,6 +202,9 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, _ guards.Staff
 	}
 	if req.DocRefType != "" && !docRefTypes[req.DocRefType] {
 		httpx.Error(w, http.StatusBadRequest, "doc_ref_type must be 'quote' or 'order'")
+		return
+	}
+	if !h.fenceLine(w, r, caller, req.BranchID, req.CustomerID) {
 		return
 	}
 	bd, err := h.svc.ResolvePrice(r.Context(), ResolveInput{
@@ -520,7 +569,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request, _ guards.Sta
 // returns only the breaching lines (margin < target/floor), worst-first. The batch input
 // is a quoting EXPORT that does not exist yet (D-PA-3), this endpoint is the read-only
 // classifier preview, not the principal's daily live-sales report.
-func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req struct {
 		Lines []resolveRequest `json:"lines"`
 	}
@@ -529,6 +578,9 @@ func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guar
 	}
 	inputs := make([]ResolveInput, 0, len(req.Lines))
 	for _, l := range req.Lines {
+		if !h.fenceLine(w, r, caller, l.BranchID, l.CustomerID) {
+			return
+		}
 		inputs = append(inputs, ResolveInput{
 			CustomerID: l.CustomerID, CustomerType: l.CustomerType, ProductID: l.ProductID,
 			CategoryID: l.CategoryID, BranchID: l.BranchID, QtyEntered: l.QtyEntered,
@@ -885,7 +937,9 @@ func ClientStatus(err error) (status int, msg string, ok bool) {
 		return http.StatusUnprocessableEntity, "references a nonexistent customer, product, category or branch", true
 	case errors.Is(err, errNotFound):
 		return http.StatusNotFound, "not found", true
-	case errors.Is(err, errNoConversion):
+	case isNoConversion(err):
+		// Both the pricing sentinel and the product module's own ErrNoConversion (the real converter's
+		// answer): a product with no factor for the unit asked is a request to correct, not a server fault.
 		return http.StatusUnprocessableEntity, "no uom conversion factor", true
 	case errors.Is(err, errNoListPrice):
 		return http.StatusUnprocessableEntity, "no retail anchor for product", true
