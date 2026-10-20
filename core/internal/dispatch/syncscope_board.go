@@ -67,10 +67,35 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
-// willCallSyncScope is the will_call scope's own sequence counter. The
-// two board scopes over delivery_stops draw from the stops stream (the
-// shared-stream note above); will_call has its table to itself.
+// willCallSyncScope is the one sequence counter of the will_call_pickups
+// table. Every writer draws from it: the staff REST writes, the staff
+// sync writes and the contractor's pickups sync writes (UX-72). Both
+// device feeds read the table by seq > since, so two counters over one
+// table cross and a feed skips the rows the lower counter hands out
+// after the higher one. The two board scopes over delivery_stops draw
+// from the stops stream (the shared-stream note above).
 const willCallSyncScope = "will_call"
+
+// legacyPickupsSeqScope is the counter the contractor's pickups writes
+// drew from before there was one counter. It is read, never advanced:
+// rows it numbered sit in the table, and the will_call counter is lifted
+// above it on its next draw so no new row can land below one a device
+// has already consumed. The row is frozen once the lift has happened.
+const legacyPickupsSeqScope = "pickups"
+
+// willCallSeqUpsert, a format over the two scope names, draws the next
+// will_call seq. The counter row is lifted to at least the legacy
+// pickups counter first, so a deployment
+// that ran both writers keeps every new seq above every existing row
+// (will_call rows sit at or below the will_call counter, the legacy
+// contractor rows at or below the pickups counter). No migration is
+// needed: the lift happens inside the draw, under the will_call row's
+// lock, and the legacy row never moves again.
+const willCallSeqUpsert = `INSERT INTO scope_sequences (scope, next_value)
+	VALUES ('%[1]s', COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0) + 1)
+	ON CONFLICT (scope) DO UPDATE SET next_value = GREATEST(scope_sequences.next_value,
+		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0)) + 1
+	RETURNING next_value`
 
 // - loads -
 

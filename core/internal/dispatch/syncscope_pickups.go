@@ -41,21 +41,11 @@ import (
 // composition root's staff paths, which this adapter never drives.
 type pickupsLinker = identity.UserIDLinker
 
-// pickupsSeqScope names the scope_sequences counter row the pickups
-// writes draw from.
-const pickupsSeqScope = "pickups"
-
 // allocatePickupsSeqTx draws the next pickups seq inside the caller's
-// transaction.
+// transaction. The table has one counter (willCallSyncScope), so the
+// contractor's writes draw from it like every staff write.
 func allocatePickupsSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
-	var next int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO scope_sequences (scope) VALUES ($1)
-		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		 RETURNING next_value`, pickupsSeqScope).Scan(&next); err != nil {
-		return 0, fmt.Errorf("dispatch: seq allocate for scope %s: %w", pickupsSeqScope, err)
-	}
-	return next, nil
+	return allocateSyncSeqTx(ctx, tx, willCallSyncScope)
 }
 
 // TenantOrderReader is the tenant half of the order seam: the order

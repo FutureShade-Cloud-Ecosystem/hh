@@ -841,15 +841,36 @@ func (r *Repository) InsertPickup(ctx context.Context, orderID, branchID, tokenH
 		return WillCall{}, err
 	}
 	var id string
-	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
+	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+		return tx.QueryRow(ctx, `
 INSERT INTO will_call_pickups (order_id, branch_id, token_hash, expires_at, created_by, seq)
-VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, (SELECT next_value FROM seq)) RETURNING id::text`,
-		orderID, branchID, tokenHash, expires, createdBy).Scan(&id)
+VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, $6) RETURNING id::text`,
+			orderID, branchID, tokenHash, expires, createdBy, seq).Scan(&id)
+	})
 	if err != nil {
 		return WillCall{}, err
 	}
 	w, err := scanPickup(pool.QueryRow(ctx, `SELECT `+pickupCols+` FROM will_call_pickups WHERE id = $1`, id))
 	return w, err
+}
+
+// withWillCallSeq runs one staff write to will_call_pickups in a short
+// transaction that draws the table's one seq first (the same counter the
+// contractor's sync writes and the staff sync writes draw from).
+func withWillCallSeq(ctx context.Context, pool *pgxpool.Pool, write func(tx pgx.Tx, seq int64) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	seq, err := allocateSyncSeqTx(ctx, tx, willCallSyncScope)
+	if err != nil {
+		return err
+	}
+	if err := write(tx, seq); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // PickupByTokenHash resolves a scanned token.
@@ -899,15 +920,17 @@ func (r *Repository) ConfirmPickup(ctx context.Context, id, sigRef, collectedBy 
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
+	var changed bool
+	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+		tag, err := tx.Exec(ctx, `
 UPDATE will_call_pickups
    SET status = 'CONFIRMED', signature_ref = $2, collected_by = $3, confirmed_at = $4,
-       seq = (SELECT next_value FROM seq)
- WHERE id = $1 AND status = 'ACTIVE'`, id, sigRef, collectedBy, at)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+       seq = $5
+ WHERE id = $1 AND status = 'ACTIVE'`, id, sigRef, collectedBy, at, seq)
+		changed = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	return changed && err == nil, err
 }
 
 // RevokePickup kills a live token (a reprinted tag, a cancelled order). The will_call scope's seq
@@ -917,13 +940,15 @@ func (r *Repository) RevokePickup(ctx context.Context, id string, at time.Time) 
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+
-		`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = (SELECT next_value FROM seq)
-		 WHERE id = $1 AND status = 'ACTIVE'`, id, at)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	var changed bool
+	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = $3
+			 WHERE id = $1 AND status = 'ACTIVE'`, id, at, seq)
+		changed = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	return changed && err == nil, err
 }
 
 // LogPickupEvent records a scan or a confirm against a token. Best-effort by contract: the caller
