@@ -693,6 +693,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	).
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
+		// Slice 2: every provider call is reserved and settled in the spend table, and the dealer
+		// wide cap (FutureBuild's deployment variable, never an assist setting) bounds them all.
+		WithMetering(assistRepo, assistRepo).
+		WithDealerCap(assist.ParseDealerCap(os.Getenv(assist.EnvDealerCap))).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 

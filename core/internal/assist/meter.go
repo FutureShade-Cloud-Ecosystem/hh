@@ -30,6 +30,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -238,6 +240,21 @@ func newUUID() string {
 func (s *Service) WithMetering(spend SpendStore, prices PriceStore) *Service {
 	s.spend, s.prices = spend, prices
 	return s
+}
+
+// EnvDealerCap names the deployment variable that carries the dealer wide monthly cap in micro
+// cents. FutureBuild sets it at deploy from its own configuration. It is deliberately not an
+// assist setting: a dealer admin writes settings, and the cap is the one number above them.
+const EnvDealerCap = "HOS_ASSIST_DEALER_CAP_MICROCENTS"
+
+// ParseDealerCap reads the variable's value. Anything that is not a positive whole number reads as
+// zero, which refuses paid calls: a typo must not open the cap.
+func ParseDealerCap(raw string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // WithDealerCap sets the dealer wide monthly cap in micro cents. It is deployment configuration set
