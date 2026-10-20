@@ -18,8 +18,9 @@
 -- task type, pick_tasks for PICK rows and weights for NEED_WEIGHT rows, and its writers draw them
 -- explicitly), dashboard_user_widgets (stream still to be ruled).
 -- will_call_pickups is in, on its single stream will_call (the pickups UX-72 change put every writer on
--- it, the counter lifted past the frozen pickups value). Its floor is the greatest seq the table holds,
--- which covers any value the old pickups counter handed out to a row, and its rows are re-drawn
+-- it, the counter lifted past the frozen pickups value). Its floor is the greatest of the will_call counter,
+-- the legacy pickups counter and the greatest seq the table holds (a device cursor can sit at a number the
+-- old counter handed out although no row holds it now), and its rows are re-drawn
 -- explicitly below, which is what lets a staff pickup that sat under a contractor device's cursor reach
 -- that device.
 -- docs/adr/0025-sync-seq-trigger.md records the reasoning.
@@ -111,6 +112,13 @@ BEGIN
             EXECUTE format('SELECT COALESCE(max(seq), 0) FROM %I', t) INTO n;
             top := greatest(top, n);
         END LOOP;
+        -- will_call_pickups moved from the old pickups counter to will_call (UX-72). A contractor device may hold
+        -- a cursor the old counter handed out to a row that a staff write has since re-drawn lower, so no row
+        -- holds that number but the device's cursor does: the floor includes the legacy counter.
+        IF m.stream = 'will_call' THEN
+            SELECT COALESCE(max(next_value), 0) INTO n FROM scope_sequences WHERE scope = 'pickups';
+            top := greatest(top, n);
+        END IF;
         INSERT INTO scope_sequences (scope, next_value) VALUES (m.stream, top)
         ON CONFLICT (scope) DO UPDATE SET next_value = greatest(scope_sequences.next_value, EXCLUDED.next_value);
     END LOOP;

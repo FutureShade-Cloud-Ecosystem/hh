@@ -63,7 +63,9 @@ The database draws the seq when the writer did not.
   one order and another that takes them in the other can deadlock. The rule, written in
   `core/internal/payments/LOCK-ORDER.md`: a table written inside a money transaction gets its counter's place in
   that order before it gets a trigger; a writer that updates a row ahead of a counter it needs takes that counter
-  first, without advancing it (`LockPaymentsSequenceTx` for payments, `lockStopsSeqTx` for dispatch's stops).
+  first, without advancing it (`LockPaymentsSequenceTx` for payments), and always AFTER the row locks the other
+  writers of the same row take first. Dispatch's order is the run row, then the `stops` counter, then the `runs`
+  counter (`lockRunThenStopsSeqTx`): taking `stops` before the row is safe across two runs and a deadlock on one.
 - **Hidden behaviour.** A comment at `syncSeqCTE` (`dispatch/syncscope.go`) and this record say so.
 
 ## Left out, and why
@@ -81,8 +83,10 @@ The database draws the seq when the writer did not.
 ## `will_call_pickups`
 
 In the trigger, on its single stream `will_call` (UX-72 put every writer on it, the counter lifted past the
-frozen `pickups` value). The migration's floor is the greatest seq the table holds, which covers any value the
-old counter handed out to a row, and its rows are re-drawn explicitly, so a staff pickup that sat below a
+frozen `pickups` value). The migration's floor is the greatest of the `will_call` counter, the legacy `pickups` counter and the greatest
+seq the table holds. The legacy counter matters because a contractor device may hold a cursor the old counter
+handed out to a row a staff write later re-drew lower; no row holds that number, but the device's cursor does,
+so the re-draw must land above it. The rows are re-drawn explicitly, so a staff pickup that sat below a
 contractor device's cursor reaches that device.
 
 ## What the trigger does not fix
