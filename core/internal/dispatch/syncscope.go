@@ -60,13 +60,18 @@ const (
 )
 
 // allocateSyncSeqTx draws the next seq of one scope inside the caller's
-// transaction, the same upsert every module write path runs.
+// transaction, the same upsert every module write path runs. The
+// will_call scope draws the lifted form (willCallSeqUpsert).
 func allocateSyncSeqTx(ctx context.Context, tx pgx.Tx, scope string) (int64, error) {
 	var next int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO scope_sequences (scope) VALUES ($1)
+	query := `INSERT INTO scope_sequences (scope) VALUES ($1)
 		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		 RETURNING next_value`, scope).Scan(&next); err != nil {
+		 RETURNING next_value`
+	args := []any{scope}
+	if scope == willCallSyncScope {
+		query, args = fmt.Sprintf(willCallSeqUpsert, willCallSyncScope, legacyPickupsSeqScope), nil
+	}
+	if err := tx.QueryRow(ctx, query, args...).Scan(&next); err != nil {
 		return 0, fmt.Errorf("dispatch: seq allocate for scope %s: %w", scope, err)
 	}
 	return next, nil
