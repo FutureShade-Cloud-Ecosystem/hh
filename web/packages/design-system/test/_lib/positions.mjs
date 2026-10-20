@@ -121,7 +121,7 @@ export const PORTED_PROPERTY_OR_EVENT = new Set([
   '@blur', '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
   '@hos-customer-selected', '@input', '@keydown', '@open-order', '@order-changed',
   '@order-lifecycle-loaded', '@order-status-changed', '@pointercancel', '@pointerdown',
-  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-discount-apply', '@pos-discount-close', '@pos-discount-remove', '@pos-drop-exit',
+  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-discount-apply', '@pos-discount-close', '@pos-discount-remove', '@pos-drop-added', '@pos-drop-exit', '@pos-drop-type',
   '@pos-flow-goto', '@pos-legend-dismiss', '@pos-panel-focus', '@pos-parked-close',
   '@pos-parked-discard', '@pos-parked-resume', '@pos-relief-applied', '@pos-relief-close',
   '@pos-return-close',

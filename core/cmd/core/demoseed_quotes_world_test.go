@@ -226,7 +226,7 @@ func qwWithoutContractor(table string) string {
 // the seed's org stamp addresses. The stamp cannot land on the first apply (the org row does not
 // exist until the populate provisions it), so it lands on the first apply AFTER the populate, which
 // in this world is the one that adds the quotes. The fingerprints around that apply keep these rows
-// in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
+// in, minus the columns the stamp itself moves (see qwDriverStampColumns), and the assertion
 // below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
 	stamp := qwClock.In(seedLocation()).Format("20060102")
@@ -235,9 +235,10 @@ func qwDriverDayIDs() []string {
 	return ids
 }
 
-// qwDriverStampColumns are the only columns the org stamp moves on a Driver day row: the org it
-// sets, the updated_at it bumps, and the row version (xmin) any update changes.
-var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
+// qwDriverStampColumns are the only columns the org stamp and the seq repair move on a Driver day
+// row: the org it sets, the updated_at it bumps, the sync seq the repair draws, and the row version
+// (xmin) any update changes.
+var qwDriverStampColumns = []string{"org_id", "updated_at", "seq", "row_version"}
 
 // qwTaskRepairColumns are the only columns the task sync repair (repairDemoTaskSync) moves on a
 // demo task row: the org it stamps, the seq it draws from the type's counter, and the row version
@@ -490,6 +491,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if runsStamped != 1 || stopsStamped != len(driverDayIDs)-1 {
 		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
 			runsStamped, stopsStamped, len(driverDayIDs)-1)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT (SELECT count(*) FROM delivery_runs WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL)
+		+ (SELECT count(*) FROM delivery_stops WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL)`, driverDayIDs); n != len(driverDayIDs) {
+		t.Errorf("the seq repair left %d of %d Driver day rows on the sync feeds, want all of them", n, len(driverDayIDs))
 	}
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
 		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {
