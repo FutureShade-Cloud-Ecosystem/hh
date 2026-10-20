@@ -229,3 +229,28 @@ for (const size of [
     });
   }
 }
+
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 1440, height: 900 },
+]) {
+  for (const theme of ["light", "brand"] as const) {
+    test(`UX-36 r3 screenshots at ${size.width}x${size.height} (${theme})`, async ({ page, request }) => {
+      test.skip(shotDir === "", "set UX36_SHOT_DIR to capture screenshots");
+      await page.setViewportSize(size);
+      await openAs(page, request, "sales");
+      if (theme === "brand") await accountItem(page, "Brand theme");
+      const modeName = theme === "brand" ? "charcoal" : "light";
+      await page.screenshot({ path: join(shotDir, `r3-list-heading-${modeName}-${size.width}x${size.height}.png`), fullPage: true });
+
+      await channel(page, CH.branch).click();
+      await page.locator("textarea[data-field='draft']").fill("Check pallet 9 before loading");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      const ownMsg = page.locator("[data-conversation] li[data-msg].mine").last();
+      await ownMsg.locator("[data-action='delete-msg']").focus();
+      await page.keyboard.press("Enter");
+      await expect(ownMsg.locator("[data-action='cancel-delete-msg']")).toBeFocused();
+      await page.screenshot({ path: join(shotDir, `r3-delete-focus-${modeName}-${size.width}x${size.height}.png`), fullPage: true });
+    });
+  }
+}
