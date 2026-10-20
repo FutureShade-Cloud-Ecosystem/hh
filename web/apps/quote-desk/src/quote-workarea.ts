@@ -2957,7 +2957,7 @@ export class QdQuoteWorkarea extends LitElement {
         this.notSent = notSentWords(`the text could not be sent: ${spokenRefusal(sms.error || "refused")}`, wasDraft);
         return;
       }
-      this.notice = sentByText(text.phoneMasked);
+      this.notice = sentByText(text.phoneMasked, wasDraft);
       await this.loadAll();
       if (ctx.stale) return;
       this.quoteChanged();

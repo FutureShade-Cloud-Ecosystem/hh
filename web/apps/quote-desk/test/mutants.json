@@ -409,8 +409,8 @@
   {
     "id": "wa-send-reload",
     "file": "src/quote-workarea.ts",
-    "find": "      this.notice = sentByText(text.phoneMasked);\n      await this.loadAll();\n      if (ctx.stale) return;",
-    "replace": "      this.notice = sentByText(text.phoneMasked);\n      await this.loadAll();",
+    "find": "      this.notice = sentByText(text.phoneMasked, wasDraft);\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = sentByText(text.phoneMasked, wasDraft);\n      await this.loadAll();",
     "test": "guard send reload:"
   },
   {

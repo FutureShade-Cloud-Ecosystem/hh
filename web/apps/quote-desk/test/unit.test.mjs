@@ -194,6 +194,7 @@ test("a send that reached no one leads with that, and success is claimed only fo
   assert.doesNotMatch(notSentWords("x", true), /Quote sent|is now Sent/);
   assert.equal(sentByText("(***) ***-**34"), "Sent by text to the customer's number on file ((***) ***-**34). The quote is now Sent and its follow-ups have started.");
   assert.match(sentByText(""), /^Sent by text to the customer's number on file\./);
+  assert.equal(sentByText("(***) ***-**34", false), "Sent by text to the customer's number on file ((***) ***-**34).");
 });
 
 // ── the spoken refusal ─────────────────────────────────────────────────────────

@@ -280,9 +280,9 @@ export function spokenRefusal(msg: string): string {
  * sentByText: the success words, only for a text the core queued. They name the channel and the number on
  * file (masked by the core), and say what the status and the reminders now are.
  */
-export function sentByText(phoneMasked: string): string {
+export function sentByText(phoneMasked: string, draft = true): string {
   const where = phoneMasked === "" ? "the customer's number on file" : `the customer's number on file (${phoneMasked})`;
-  return `Sent by text to ${where}. The quote is now Sent and its follow-ups have started.`;
+  return draft ? `Sent by text to ${where}. The quote is now Sent and its follow-ups have started.` : `Sent by text to ${where}.`;
 }
 
 /**

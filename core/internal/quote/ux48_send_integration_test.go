@@ -161,3 +161,59 @@ func mintAndSend(svc *StaffService, ctx context.Context, quoteID string, ttl tim
 	}
 	return m, nil
 }
+
+// A text to a quote that is not a draft (the dealer's multi accept switch lets an Accepted or Converted quote be shared
+// again) queues once, answers success and leaves the status alone; a retry does not queue a second text.
+func TestIntegration_UX48_ATextToANonDraftQuoteQueuesOnceAndLeavesTheStatus(t *testing.T) {
+	for _, status := range []string{"ACCEPTED", "CONVERTED", "SENT"} {
+		t.Run(status, func(t *testing.T) {
+			pool := intPool(t)
+			setMultiAccept(t, pool, true)
+			now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+			cust, quoteID, _, _ := seedQuote(t, pool, status, nil)
+			cleanupShares(t, pool, quoteID)
+			cleanupPlans(t, quoteID)
+
+			staff := shareSvc(t, pool, now)
+			q := &fakeQueue{consent: map[string]bool{cust: true}}
+			auto := NewAutomationService(NewFollowUpRepository(pool)).WithStaff(staff).WithQueue(q).
+				WithBaseURL("http://localhost:5173").WithClock(func() time.Time { return now })
+			ctx := qCtxAs(intStaff(intTrenton))
+
+			if _, err := auto.ShareBySMS(ctx, quoteID, 0); err != nil {
+				t.Fatalf("a text to a %s quote answered failure after queueing it: %v", status, err)
+			}
+			if len(q.shares) != 1 {
+				t.Fatalf("the text queue holds %d share notice(s), want 1", len(q.shares))
+			}
+			if got := quoteStatus(t, pool, quoteID); got != status {
+				t.Fatalf("the text moved the quote from %s to %s", status, got)
+			}
+		})
+	}
+}
+
+func TestIntegration_UX48_ARetryOfATextToANonDraftQuoteIsRefusedBeforeItQueuesNothingMore(t *testing.T) {
+	pool := intPool(t)
+	setMultiAccept(t, pool, true)
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	cust, quoteID, _, _ := seedQuote(t, pool, "ACCEPTED", nil)
+	cleanupShares(t, pool, quoteID)
+	cleanupPlans(t, quoteID)
+	staff := shareSvc(t, pool, now)
+	q := &fakeQueue{consent: map[string]bool{cust: true}}
+	auto := NewAutomationService(NewFollowUpRepository(pool)).WithStaff(staff).WithQueue(q).
+		WithBaseURL("http://localhost:5173").WithClock(func() time.Time { return now })
+	ctx := qCtxAs(intStaff(intTrenton))
+	if _, err := auto.ShareBySMS(ctx, quoteID, 0); err != nil {
+		t.Fatalf("first text: %v", err)
+	}
+	// The dealer switches multi accept off; the quote can no longer be shared, and the second press queues nothing.
+	setMultiAccept(t, pool, false)
+	if _, err := auto.ShareBySMS(ctx, quoteID, 0); err == nil {
+		t.Fatal("with multi accept off a text to an Accepted quote was accepted")
+	}
+	if len(q.shares) != 1 {
+		t.Fatalf("after the retry the text queue holds %d notice(s), want 1", len(q.shares))
+	}
+}
