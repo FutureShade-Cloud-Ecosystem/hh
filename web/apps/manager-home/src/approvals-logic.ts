@@ -204,14 +204,14 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
   {
     id: "0e000000-0000-4000-9000-0000000000j1",
     kind: "JE_OVER_THRESHOLD",
-    title: "JE-0087 · Gable Landscape Supply",
+    title: "JE-0087 · Freight reclass",
     amount: "$1,240.00",
     amountLabel: "to reclassify",
     summary: "Reclassify freight in to cost of goods",
     timeAgo: "Dispatch asked yesterday, waiting on the financial controller",
     status: "PENDING",
     detailTitle: "JE-0087 · Reclassify freight in to cost of goods",
-    detailSubtitle: "Gable Landscape Supply · $1,240.00 · both branches",
+    detailSubtitle: "Journal entry · $1,240.00 · both branches",
     journalLines: [
       { account: "5100 Cost of goods sold", debit: "$1,240.00", credit: "" },
       { account: "5400 Freight in", debit: "", credit: "$1,240.00" },
