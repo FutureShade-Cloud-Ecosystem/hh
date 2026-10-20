@@ -168,6 +168,7 @@ export function signInScreen(
         ${methodsBlock(session, busy, invalid)}
       </section>
       <footer class="signin-footer" data-testid="signin-footer">
+        <p class="signin-footer-copy">Powered by HardscapeOS</p>
         ${footControls}
       </footer>
       ${personaBlock}

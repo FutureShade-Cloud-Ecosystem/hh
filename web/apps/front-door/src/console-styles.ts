@@ -211,12 +211,15 @@ export const consoleStyles = css`
   .signin-footer {
     display: grid;
     justify-items: center;
-    gap: var(--hh-s-8);
+    gap: var(--hh-s-4);
     text-align: center;
     color: var(--hh-text-dim);
     font-size: 12px;
     font-weight: 400;
     line-height: 1.3;
+  }
+  .signin-footer-copy {
+    margin: 0;
   }
   .signin-quiet-controls {
     display: inline-flex;
