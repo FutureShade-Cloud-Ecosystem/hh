@@ -40,6 +40,14 @@ func ruleFixture(t *testing.T) (*Consumer, *fakeStore) {
 	}); err != nil {
 		t.Fatalf("seed rep assignment: %v", err)
 	}
+	// The fence's defaults: the three staffers are global and hold the payment trail, so the rule tests
+	// below prove the rules; payment_fence_test.go proves the fence by taking one of those away.
+	trail := &fakeTrail{holds: map[string]bool{}}
+	for _, u := range []string{uRepSam, uClerkAvi, uOtherPat} {
+		f.setRecipient(u, PaymentRecipient{PlatformUserID: "p-" + u, OrgIDs: []string{"org-1"}, Global: true})
+		trail.holds["p-"+u] = true
+	}
+	c.svc.WithPaymentAccess(trail).WithPaymentRecipients(f)
 	return c, f
 }
 

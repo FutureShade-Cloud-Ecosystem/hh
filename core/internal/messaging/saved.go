@@ -33,8 +33,21 @@ func clampSavedLimit(limit int) int {
 	return limit
 }
 
+// SaveMessage saves a message for the caller. A message of a money room the caller's trail does not
+// admit is refused as not a member (HH-424): the repository resolves the room, so the fence asks after
+// the save and takes the row back, leaving nothing saved.
 func (s *Service) SaveMessage(ctx context.Context, c Caller, messageID string) (SavedMessage, error) {
-	return s.repo.SaveMessage(ctx, c.UserID, messageID)
+	item, err := s.repo.SaveMessage(ctx, c.UserID, messageID)
+	if err != nil {
+		return SavedMessage{}, err
+	}
+	if !s.RoomAdmits(ctx, c.UserID, item.ChannelID) {
+		if derr := s.repo.DeleteSavedMessage(ctx, c.UserID, messageID); derr != nil {
+			return SavedMessage{}, derr
+		}
+		return SavedMessage{}, ErrNotMember
+	}
+	return item, nil
 }
 
 func (s *Service) ListSavedMessages(ctx context.Context, c Caller, limit int) ([]SavedMessage, error) {
@@ -42,10 +55,15 @@ func (s *Service) ListSavedMessages(ctx context.Context, c Caller, limit int) ([
 	if err != nil {
 		return nil, err
 	}
-	if items == nil {
-		items = []SavedMessage{}
+	// Saved before a role change must not read back once the reader refuses (HH-424).
+	admitted := map[string]bool{}
+	kept := make([]SavedMessage, 0, len(items))
+	for _, it := range items {
+		if s.admits(ctx, admitted, c.UserID, it.ChannelID) {
+			kept = append(kept, it)
+		}
 	}
-	return items, nil
+	return kept, nil
 }
 
 func (s *Service) DeleteSavedMessage(ctx context.Context, c Caller, messageID string) error {

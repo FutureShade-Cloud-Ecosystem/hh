@@ -378,11 +378,12 @@ export interface FloorItem {
   /** That branch's name, when the answer named it (a branch-less preview names the yard). */
   branchName: string;
   finalCents: number;
-  marginBps: number;
-  floorBps: number;
+  /** The margin legs ride only to a caller on the cost list; null is absent, never zero. */
+  marginBps: number | null;
+  floorBps: number | null;
   priceUom: string;
   previousFinalCents: number;
-  previousMarginBps: number;
+  previousMarginBps: number | null;
   alreadyUnderFloor: boolean;
 }
 
@@ -414,15 +415,15 @@ function readFloorItem(value: unknown): FloorItem | null {
   const sku = str(value, "sku");
   const name = str(value, "name");
   const finalCents = int(value, "final_cents");
-  const marginBps = int(value, "margin_bps");
-  const floorBps = int(value, "floor_bps");
+  const marginBps = nullableInt(value, "margin_bps");
+  const floorBps = nullableInt(value, "floor_bps");
   const priceUom = str(value, "price_uom");
   const previousFinalCents = int(value, "previous_final_cents");
-  const previousMarginBps = int(value, "previous_margin_bps");
+  const previousMarginBps = nullableInt(value, "previous_margin_bps");
   const alreadyUnderFloor = bool(value, "already_under_floor");
   if (
-    productId === null || sku === null || name === null || finalCents === null || marginBps === null || floorBps === null ||
-    priceUom === null || previousFinalCents === null || previousMarginBps === null || alreadyUnderFloor === null
+    productId === null || sku === null || name === null || finalCents === null || marginBps === undefined || floorBps === undefined ||
+    priceUom === null || previousFinalCents === null || previousMarginBps === undefined || alreadyUnderFloor === null
   ) {
     return null;
   }

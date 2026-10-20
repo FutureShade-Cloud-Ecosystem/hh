@@ -47,9 +47,10 @@ func optionalBodyUUID(w http.ResponseWriter, val, field string) bool {
 // the quantity-break editor (gated on D-PA-6 values) and list-price recompute (unbuilt
 // costing seam), see RegisterRoutes.
 type Handler struct {
-	userLink identity.UserIDLinker
-	svc      *Service
-	log      *slog.Logger
+	userLink  identity.UserIDLinker
+	svc       *Service
+	log       *slog.Logger
+	costRoles CostRoles
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
