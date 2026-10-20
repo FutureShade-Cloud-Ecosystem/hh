@@ -163,6 +163,12 @@ test.describe("phone", () => {
     await expect.poll(() => open.evaluate((el) => getComputedStyle(el).textDecorationLine)).toContain("underline");
   });
 
+  test("the statement button is named for what it does, and the selected count is a polite live region", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByRole("button", { name: "Open statement for INV-20403" })).toBeVisible();
+    await expect(page.getByTestId("picked-count")).toHaveAttribute("aria-live", "polite");
+  });
+
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
