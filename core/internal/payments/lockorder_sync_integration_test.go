@@ -270,7 +270,7 @@ func (r *loRig) statementLine(cents int64) string {
 	if err := r.obs.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&acct); err != nil {
 		r.t.Skipf("no seeded bank account: %v", err)
 	}
-	day := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	day := time.Now().UTC().Truncate(24 * time.Hour)
 	ref := "LO-" + r.suffix
 	var id string
 	if err := r.obs.QueryRow(ctx, `
