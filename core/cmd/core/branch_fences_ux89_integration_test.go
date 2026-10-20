@@ -16,14 +16,21 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestUX89_BranchAndCustomerFencesAtTheRoute(t *testing.T) {
@@ -416,5 +423,148 @@ func TestUX89R2_EveryCustomerDoorAgrees(t *testing.T) {
 	}
 	if n := count(`SELECT count(*) FROM customer_category_overrides WHERE id = $1 AND discount_bps = 5000`, overrideB); n != 1 {
 		t.Errorf("a refused override write changed North B's override")
+	}
+}
+
+// Round 2, item 121.3: the AR doors that take a customer hold the same wall with the same one answer
+// (404 {"error":"customer not found"}, identical for an account homed at North B and for an id that is no
+// account), and the shared (no home) account works at North A: the statement preview, the AP contact routes
+// (read, write, delete), the account payment policy (read, write), and the manual hold and paylink beside the
+// preview. No refused write lands.
+func TestUX89R2_ARDoorsAgree(t *testing.T) {
+	// The AR routes sit behind role configuration levels no kit role below the global one passes, and a global
+	// caller reaches every branch, so the doors are mounted here on the kit's StaffGuards double (the real
+	// guards over a settable authority) with the real handlers, pool and customer seam, and the caller is a
+	// branch scoped manager granted North A only.
+	pool := wiringPool(t)
+	sg := testkit.NewStaffGuards(t)
+	sg.SetAuthority(coreidentity.StaffAuthority{RoleID: "sales_manager", Tier: coreidentity.TierManager, Scope: coreidentity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}})
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	reach := customerModuleReach{svc: customer.NewService(customer.NewRepository(pool))}
+	mux := http.NewServeMux()
+	arRepo := billing.NewARLandingRepository(pool)
+	billing.NewARLandingHandler(billing.NewARLandingService(arRepo),
+		billing.NewARReminderService(arRepo, billing.NewARLandingService(arRepo), billing.UnwiredSender{}, "").WithCustomerReach(reach), log).
+		WithCustomerReach(reach).RegisterRoutes(mux, sg.Guards)
+	billing.NewC8S3S4Handler(billing.NewRepository(pool), log).WithCustomerReach(reach).RegisterRoutes(mux, sg.Guards)
+	finstmt.NewC8WalkHandler(pool, log).WithCustomerReach(reach).RegisterC8WalkRoutes(mux, sg.Guards)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
+	token := sg.Bearer(t)
+	do := func(_ string, method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		req.Header.Set("Content-Type", "application/json")
+		rsp := httptest.NewRecorder()
+		mux.ServeHTTP(rsp, req)
+		return rsp
+	}
+	graph := struct{ pool *pgxpool.Pool }{pool}
+	one := func(q string, args ...any) string {
+		t.Helper()
+		var v string
+		if err := graph.pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		return v
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := graph.pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n
+	}
+	plant := func(acct string, home any) string {
+		return one(`INSERT INTO customers (account_no, name, customer_type, home_branch_id, org_id)
+			VALUES ($1, 'UX89 AR door proof', 'CONTRACTOR', $2::uuid, $3::uuid) RETURNING id::text`, acct, home, testkit.OrgNorthID)
+	}
+	custB := plant("UX89AR-B-"+suffix, testkit.BranchNorthBID)
+	custShared := plant("UX89AR-S-"+suffix, nil)
+	const unknown = "3ef10000-0000-4000-8000-0000000000ef"
+	run := one(`INSERT INTO ar_statement_runs (mode, as_of_date, status) VALUES ('INTERIM', current_date, 'COMPLETED') RETURNING id::text`)
+	stmt := map[string]string{}
+	for _, c := range []string{custB, custShared} {
+		stmt[c] = one(`INSERT INTO ar_statements (run_id, customer_id, as_of_date) VALUES ($1::uuid, $2::uuid, current_date) RETURNING id::text`, run, c)
+		if _, err := graph.pool.Exec(ctx, `INSERT INTO ar_ap_contacts (customer_id, contact_name, email) VALUES ($1::uuid, 'Original AP', 'ap@example.test')`, c); err != nil {
+			t.Fatalf("plant ap contact: %v", err)
+		}
+		if _, err := graph.pool.Exec(ctx, `INSERT INTO ar_account_payment_policy (customer_id, ach_first, surcharge_rate_bps, min_ach_cents) VALUES ($1::uuid, false, 100, 5000)`, c); err != nil {
+			t.Fatalf("plant payment policy: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		ids := []string{custB, custShared}
+		_, _ = graph.pool.Exec(bg, `DELETE FROM ar_statements WHERE run_id = $1`, run)
+		_, _ = graph.pool.Exec(bg, `DELETE FROM ar_statement_runs WHERE id = $1`, run)
+		_, _ = graph.pool.Exec(bg, `DELETE FROM ar_ap_contacts WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = graph.pool.Exec(bg, `DELETE FROM ar_account_payment_policy WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = graph.pool.Exec(bg, `DELETE FROM credit_holds WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = graph.pool.Exec(bg, `DELETE FROM customers WHERE account_no LIKE $1`, "UX89AR-%-"+suffix)
+	})
+
+	const rep, mgr = "rep", "mgr"
+	const nf = `{"error":"customer not found"}`
+	agree := func(door, who, method string, path func(string) string, body string) {
+		t.Helper()
+		b := do(who, method, path(custB), body)
+		u := do(who, method, path(unknown), body)
+		if b.Code != 404 || u.Code != 404 || b.Body.String() != u.Body.String() || strings.TrimSpace(b.Body.String()) != nf {
+			t.Errorf("%s: want one 404 %s for North B's account and an unknown id, got %d %q | %d %q", door, nf, b.Code, b.Body.String(), u.Code, u.Body.String())
+		}
+	}
+	shared := func(door, who, method, path, body string, want int) {
+		t.Helper()
+		if s := do(who, method, path, body); s.Code != want {
+			t.Errorf("%s: the shared account must work at North A: want %d, got %d: %s", door, want, s.Code, s.Body.String())
+		}
+	}
+	prev := func(c string) string {
+		sid := stmt[c]
+		if sid == "" {
+			sid = "3ef10000-0000-4000-8000-0000000000f0"
+		}
+		return "/api/v1/billing/ar/customers/" + c + "/statements/" + sid + "/preview"
+	}
+	ap := func(c string) string { return "/api/v1/ar/customers/" + c + "/ap-contact" }
+	pol := func(c string) string { return "/api/v1/ar/customers/" + c + "/payment-policy" }
+
+	agree("statement preview", rep, http.MethodGet, prev, "")
+	shared("statement preview", rep, http.MethodGet, prev(custShared), "", http.StatusOK)
+	agree("ap contact read", mgr, http.MethodGet, ap, "")
+	shared("ap contact read", mgr, http.MethodGet, ap(custShared), "", http.StatusOK)
+	agree("ap contact write", mgr, http.MethodPut, ap, `{"contact_name":"Intruder","email":"x@example.test"}`)
+	shared("ap contact write", mgr, http.MethodPut, ap(custShared), `{"contact_name":"Shared AP","email":"s@example.test"}`, http.StatusOK)
+	agree("ap contact delete", mgr, http.MethodDelete, ap, "")
+	agree("payment policy read", rep, http.MethodGet, pol, "")
+	shared("payment policy read", rep, http.MethodGet, pol(custShared), "", http.StatusOK)
+	agree("payment policy write", mgr, http.MethodPut, pol, `{"ach_first":true,"surcharge_rate_bps":999,"min_ach_cents":1}`)
+	shared("payment policy write", mgr, http.MethodPut, pol(custShared), `{"ach_first":true,"surcharge_rate_bps":200,"min_ach_cents":100}`, http.StatusOK)
+
+	// the hold and paylink carry the customer in the body: one leg each.
+	for _, c := range []struct{ door, path, body string }{
+		{"manual hold", "/api/v1/ar/holds", `{"customer_id":"%s","reason":"ux89 proof"}`},
+		{"paylink", "/api/v1/ar/payments/paylink", `{"customer_id":"%s","channel":"EMAIL"}`},
+	} {
+		b := do(mgr, http.MethodPost, c.path, fmt.Sprintf(c.body, custB))
+		u := do(mgr, http.MethodPost, c.path, fmt.Sprintf(c.body, unknown))
+		if b.Code != 404 || u.Code != 404 || b.Body.String() != u.Body.String() || strings.TrimSpace(b.Body.String()) != nf {
+			t.Errorf("%s: want one 404 %s, got %d %q | %d %q", c.door, nf, b.Code, b.Body.String(), u.Code, u.Body.String())
+		}
+	}
+
+	// no refused write landed on North B's account.
+	if n := count(`SELECT count(*) FROM ar_ap_contacts WHERE customer_id = $1 AND contact_name = 'Original AP'`, custB); n != 1 {
+		t.Errorf("North B's AP contact was changed or deleted")
+	}
+	if n := count(`SELECT count(*) FROM ar_account_payment_policy WHERE customer_id = $1 AND surcharge_rate_bps = 100 AND min_ach_cents = 5000 AND NOT ach_first`, custB); n != 1 {
+		t.Errorf("North B's payment policy was changed")
+	}
+	if n := count(`SELECT count(*) FROM credit_holds WHERE customer_id = $1`, custB); n != 0 {
+		t.Errorf("a refused manual hold landed on North B's account")
 	}
 }

@@ -18,7 +18,6 @@ package customer
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/uuid"
 
@@ -31,6 +30,21 @@ import (
 // this package and must not be widened.
 type accountReadStore interface {
 	GetAccountScoped(ctx context.Context, customerID string, reach AccountReach) (Account, bool, error)
+}
+
+// accountReachOf is the reach of one caller as the account queries take it: unbounded for a global caller, the
+// granted branches otherwise.
+func accountReachOf(caller identity.StaffContext) AccountReach {
+	reach := AccountReach{Global: caller.Scope == identity.ScopeGlobal}
+	if !reach.Global {
+		reach.BranchIDs = make([]string, 0, len(caller.Branches))
+		for id, granted := range caller.Branches {
+			if granted {
+				reach.BranchIDs = append(reach.BranchIDs, id)
+			}
+		}
+	}
+	return reach
 }
 
 // GetAccount answers one account, balance composed in, within the caller's reach. The caller is the
@@ -47,15 +61,7 @@ func (s *Service) GetAccount(ctx context.Context, customerID string) (Account, e
 	if !ok {
 		return Account{}, ErrLookupNotConfigured
 	}
-	reach := AccountReach{Global: caller.Scope == identity.ScopeGlobal}
-	if !reach.Global {
-		reach.BranchIDs = make([]string, 0, len(caller.Branches))
-		for id, granted := range caller.Branches {
-			if granted {
-				reach.BranchIDs = append(reach.BranchIDs, id)
-			}
-		}
-	}
+	reach := accountReachOf(caller)
 	acct, found, err := rs.GetAccountScoped(ctx, customerID, reach)
 	if err != nil {
 		return Account{}, err
@@ -71,16 +77,22 @@ func (s *Service) GetAccount(ctx context.Context, customerID string) (Account, e
 // yes or no for the doors that price or file against a named customer and must treat an account the
 // caller cannot reach as an unknown one. An id that is not a uuid is not an account, so false.
 func (s *Service) AccountReachable(ctx context.Context, customerID string) (bool, error) {
-	_, err := s.GetAccount(ctx, customerID)
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, ErrNotFound):
+	// The question needs the caller's AUTHORITY (scope and branches), not a linked users id: a door whose
+	// caller stamp carries no linker (the stamp is authority only) still asks it.
+	caller, ok := identity.StaffContextFromContext(ctx)
+	if !ok {
+		return false, ErrUnauthenticated
+	}
+	if _, err := uuid.Parse(customerID); err != nil {
 		return false, nil
 	}
-	var bad httpx.BadRequestError
-	if errors.As(err, &bad) {
-		return false, nil
+	rs, ok := s.store.(accountReadStore)
+	if !ok {
+		return false, ErrLookupNotConfigured
 	}
-	return false, err
+	_, found, err := rs.GetAccountScoped(ctx, customerID, accountReachOf(caller))
+	if err != nil {
+		return false, err
+	}
+	return found, nil
 }

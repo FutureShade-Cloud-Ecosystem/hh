@@ -416,6 +416,31 @@ type ARReminderService struct {
 	baseURL string
 	now     func() time.Time
 	zone    houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+	reach   CustomerReach   // the customer module's reach rule for the AP contact routes (UX-89); nil = the AR rule
+}
+
+// WithCustomerReach binds the customer module's account rule the AP contact routes check an account with, in
+// place of the AR landing's own (home branch or an invoice in the branch), so the shared (no home) account
+// works at any branch and the AP contact agrees with every other customer door.
+func (s *ARReminderService) WithCustomerReach(c CustomerReach) *ARReminderService {
+	s.reach = c
+	return s
+}
+
+// apAccount is the account check the three AP contact operations make: the customer module's rule when
+// bound, the AR landing's own otherwise.
+func (s *ARReminderService) apAccount(ctx context.Context, customerID string) error {
+	if s.reach == nil {
+		return s.account(ctx, customerID)
+	}
+	ok, err := s.reach.CustomerReachable(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
@@ -656,7 +681,7 @@ func (s *ARReminderService) ResolvePaperPathFlag(ctx context.Context, flagID, st
 
 // APContact reads one account's tagged contact.
 func (s *ARReminderService) APContact(ctx context.Context, customerID string) (APContact, bool, error) {
-	if err := s.account(ctx, customerID); err != nil {
+	if err := s.apAccount(ctx, customerID); err != nil {
 		return APContact{}, false, err
 	}
 	return s.store.ReadAPContact(ctx, customerID)
@@ -668,7 +693,7 @@ func (s *ARReminderService) TagAPContact(ctx context.Context, c APContact, actor
 	if err != nil {
 		return APContact{}, err
 	}
-	if err := s.account(ctx, clean.CustomerID); err != nil {
+	if err := s.apAccount(ctx, clean.CustomerID); err != nil {
 		return APContact{}, err
 	}
 	if err := s.store.UpsertAPContact(ctx, clean, actorID); err != nil {
@@ -679,7 +704,7 @@ func (s *ARReminderService) TagAPContact(ctx context.Context, c APContact, actor
 
 // UntagAPContact removes it. The sends already made keep their AP_CONTACT kind, see 0183.
 func (s *ARReminderService) UntagAPContact(ctx context.Context, customerID string) error {
-	if err := s.account(ctx, customerID); err != nil {
+	if err := s.apAccount(ctx, customerID); err != nil {
 		return err
 	}
 	return s.store.DeleteAPContact(ctx, customerID)

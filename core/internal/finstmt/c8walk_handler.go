@@ -147,8 +147,15 @@ func c8Errf(format string, args ...any) error {
 // is delegated to the underlying billing.ARLandingRepository, the file the cross-module allowlist
 // already covers.
 type C8WalkHandler struct {
-	repo *billing.ARLandingRepository
-	log  *slog.Logger
+	repo  *billing.ARLandingRepository
+	log   *slog.Logger
+	reach billing.CustomerReach // the customer module's reach rule for the payment policy routes (UX-89)
+}
+
+// WithCustomerReach binds the customer reach rule the payment policy routes hold their customer to.
+func (h *C8WalkHandler) WithCustomerReach(c billing.CustomerReach) *C8WalkHandler {
+	h.reach = c
+	return h
 }
 
 // NewC8WalkHandler wires the new walk's surface.
@@ -240,6 +247,9 @@ func (h *C8WalkHandler) getAccountPaymentPolicy(w http.ResponseWriter, r *http.R
 		httpx.Error(w, http.StatusBadRequest, "invalid customer_id")
 		return
 	}
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
+		return
+	}
 	p, err := h.repo.ReadAccountPaymentPolicy(r.Context(), customerID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -257,6 +267,9 @@ func (h *C8WalkHandler) putAccountPaymentPolicy(w http.ResponseWriter, r *http.R
 	customerID := r.PathValue("customerID")
 	if _, err := uuid.Parse(customerID); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid customer_id")
+		return
+	}
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
 		return
 	}
 	var in C8AccountPaymentPolicyInput

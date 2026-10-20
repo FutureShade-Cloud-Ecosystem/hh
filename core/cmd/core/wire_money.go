@@ -91,7 +91,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// stock reads answer through; the boot fail-fast keeps an unwired boot from handing every pricing
 	// editor each product's margin, and so its cost.
 	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg).
-		WithCustomerReach(pricingCustomerReach{svc: customer.NewService(customer.NewRepository(pool))})
+		WithCustomerReach(customerModuleReach{svc: customer.NewService(customer.NewRepository(pool))})
 	if !pricingHandler.CustomerReachWired() {
 		panic("pricing: customer reach not wired - resolve and the low margin report would price any named account")
 	}
@@ -625,11 +625,11 @@ func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, br
 // a customer scoped change is graded at that customer's own pricing type.
 type pricingFloorCustomers struct{ svc *customer.Service }
 
-// pricingCustomerReach answers the pricing doors' reach question with the customer module's own rule,
+// customerModuleReach answers the pricing doors' reach question with the customer module's own rule,
 // the one the account read holds to (UX-89).
-type pricingCustomerReach struct{ svc *customer.Service }
+type customerModuleReach struct{ svc *customer.Service }
 
-func (a pricingCustomerReach) CustomerReachable(ctx context.Context, customerID string) (bool, error) {
+func (a customerModuleReach) CustomerReachable(ctx context.Context, customerID string) (bool, error) {
 	return a.svc.AccountReachable(ctx, customerID)
 }
 
