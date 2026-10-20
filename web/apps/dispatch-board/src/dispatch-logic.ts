@@ -28,7 +28,7 @@ import type {
   DispatchTruck,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
-import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseDayInZone, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type StopStatus = "READY" | "LOADED" | "EN_ROUTE" | "DELIVERED" | "FAILED" | "CANCELLED";
 export type RunStatus = "PLANNED" | "DISPATCHED" | "COMPLETED" | "CANCELLED";
@@ -657,13 +657,34 @@ export function formatTime(ts?: string | null, zone: string = houseZone()): stri
   if (!ts) return "";
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  return new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" })
+    .format(date)
+    .replace(/[\u202f\u00a0]/g, " ");
 }
 
 /** The freshness line on the quick cards strip, formatted in the yard's timezone. */
-export function asOfLabel(ts?: string | null, zone: string = houseZone()): string {
+export function asOfLabel(
+  ts?: string | null,
+  zone: string = houseZone(),
+  today?: string,
+): string {
+  if (!ts) return "";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "";
   const time = formatTime(ts, zone);
-  return time === "" ? "" : `As of ${time}`;
+  const readDay = houseDayInZone(zone, date);
+  const isToday =
+    today !== undefined
+      ? readDay === today
+      : readDay === houseDayInZone(zone) && readDay === todayISO();
+  if (isToday) return `As of ${time}`;
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+  return `As of ${day}, ${time}`;
 }
 
 /** One line of address from the parts that are present. A blank segment is skipped, not printed. */
@@ -1132,7 +1153,7 @@ export function historyRow(c: DispatchPolicyChange): HistoryRow {
     now: valueWord(c.field, c.after),
     who: c.who && c.who.trim() !== "" ? c.who : "Somebody",
     when: when !== null && !Number.isNaN(when.getTime())
-      ? when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      ? when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).replace(/[\u202f\u00a0]/g, " ")
       : "",
   };
 }
@@ -1191,7 +1212,7 @@ export function scanLoadLine(l: DispatchScanLoad): string {
   const parts = [scanStageLabel(l.furthest).toLowerCase()];
   if (l.pod_signature_ref) parts.push("signed for");
   if (!Number.isNaN(when.getTime())) {
-    parts.push(`last scanned ${when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
+    parts.push(`last scanned ${when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).replace(/[\u202f\u00a0]/g, " ")}`);
   }
   return `${l.load_ref}: ${parts.join(", ")}`;
 }

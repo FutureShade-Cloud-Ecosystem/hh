@@ -259,7 +259,7 @@ test("the day board shows every stop by stage and offers only the moves the life
   const run4 = truck(page, "RUN-PLM-4");
   await expect(run4.locator("[data-col='EN_ROUTE'] li.load")).toHaveCount(1);
   await expect(run4.locator("[data-col='LOADED'] li.load")).toHaveCount(1);
-  await expect(run4.locator("[data-pod-note]")).toContainText("HH Drive");
+  await expect(run4.locator("[data-pod-note]")).toContainText("Drive");
   await expect(run4.getByRole("button", { name: "Complete run" })).toBeVisible();
   // A ready stop on a planned run is loaded from here, a loaded one goes en route only once dispatched.
   const stop = load(page, "ORD-0012");
@@ -538,14 +538,14 @@ test("UX-37d B29: dealer words replace Staff login id, paste the order id, Latit
 
   await page.locator("[data-tab-id='schedule']").first().click();
   await expect(page.locator("[data-schedule]")).toBeVisible();
-  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.");
+  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
   await expect(page.locator("[data-schedule]")).not.toContainText("paste the order id");
   await expect(page.locator("[data-schedule]")).toContainText("Map pin (optional)");
   await expect(page.locator("[data-schedule]")).not.toContainText("Latitude, optional");
   await expect(page.locator("[data-schedule]")).not.toContainText("Longitude, optional");
 
   await page.locator("[data-tab-id='willcall']").first().click();
-  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.");
+  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
   await expect(page.locator("[data-willcall]")).not.toContainText("paste the order id");
 
   await page.locator("[data-tab-id='fleet']").first().click();
@@ -564,9 +564,9 @@ test("UX-37d B30: quick cards state their period and the strip shows one As of <
   const t1 = `${today}T18:04:00Z`;
   const t2 = `${today}T18:19:00Z`;
   const fmtLA = (iso: string) =>
-    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
-      new Date(iso),
-    );
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" })
+      .format(new Date(iso))
+      .replace(/[\u202f\u00a0]/g, " ");
   await page.clock.setFixedTime(new Date(t1));
   await page.addInitScript(dispatchHandoff);
   await page.goto("/");
@@ -594,9 +594,9 @@ test("UX-37d fix round 1: the board serves business_zone from the surface config
   const podInstant = `${today}T18:04:00Z`;
   const readInstant = `${today}T18:15:00Z`;
   const fmtLA = (iso: string) =>
-    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
-      new Date(iso),
-    );
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" })
+      .format(new Date(iso))
+      .replace(/[\u202f\u00a0]/g, " ");
   await stubPost(request, "stop", {
     order_no: "ORD-0009",
     status: "DELIVERED",
@@ -622,4 +622,72 @@ test("UX-37d fix round 1: a stalling surface config route never holds the load b
   await page.addInitScript(dispatchHandoff);
   await page.goto("/");
   await expect(page.locator("[data-card='card.deliveries']")).toBeVisible({ timeout: 2000 });
+});
+
+test("UX-37d round 2 P2-1: clock times on the board render in glossary 12-hour AM/PM form in houseZone with a plain space", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const today = await stubToday(request);
+  const podInstant = `${today}T15:15:00Z`;
+  const readInstant = `${today}T15:15:00Z`;
+  const expectedTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+    .format(new Date(podInstant))
+    .replace(/[\u202f\u00a0]/g, " ");
+  await stubPost(request, "stop", {
+    order_no: "ORD-0009",
+    status: "DELIVERED",
+    pod_received_by: "Site foreman",
+    pod_at: podInstant,
+  });
+  await page.clock.setFixedTime(new Date(readInstant));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${expectedTime}`);
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(load(page, "ORD-0009")).toContainText(`Signed by Site foreman at ${expectedTime}`);
+});
+
+test("UX-37d round 2 P2-2: Drive is named plainly without HH prefix on driver sheet, stop POD note, and day board matrix", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("[data-tab-id='fleet']").first().click();
+  await page.locator("[data-drivers]").getByRole("button", { name: "Add driver" }).click();
+  await expect(page.locator("#driver-login-hint")).toContainText("opens Drive and sees their own runs");
+  await expect(page.locator("#driver-login-hint")).not.toContainText("HH Drive");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(page.locator("section.matrix")).toContainText("the driver signs for the delivery on Drive.");
+  await expect(page.locator("section.matrix")).not.toContainText("HH Drive");
+  await expect(page.locator("[data-pod-note]").first()).toHaveText("The driver signs for the delivery on Drive.");
+});
+
+test("UX-37d round 2 P2-3: order number hints use a neutral example SO-1041 without a fixture prefix", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("[data-tab-id='schedule']").first().click();
+  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-schedule] #order-hint")).not.toContainText("ORD-");
+
+  await page.locator("[data-tab-id='willcall']").first().click();
+  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-willcall] #wc-hint")).not.toContainText("ORD-");
+});
+
+test("UX-37d round 2 P2-4: As of carries the glossary date when the read time is not today, else As of 8:15 AM", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  await page.clock.setFixedTime(new Date("2026-03-02T03:15:00Z"));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible();
+
+  await page.clock.setFixedTime(new Date("2026-03-02T16:15:00Z"));
+  await page.locator("[data-card='card.deliveries']").click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText("As of Mar 1, 2026, 7:15 PM");
+
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText("As of 8:15 AM");
 });

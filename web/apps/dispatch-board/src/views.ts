@@ -383,7 +383,7 @@ function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
               <label>Licence class<input class="control" type="text" data-field="licence" data-initial=${initial(driver?.licence_class)} maxlength="20" autocomplete="off" /></label>
               <label>Driver's sign in account<input class="control" type="text" data-field="login" data-initial=${initial(driver?.user_id)} aria-describedby="driver-login-hint" autocomplete="off" /></label>
             </div>
-            <p class="small dim" id="driver-login-hint">Optional. A driver with a sign in account opens HH Drive and sees their own runs. Leave it empty for a casual or contract driver.</p>
+            <p class="small dim" id="driver-login-hint">Optional. A driver with a sign in account opens Drive and sees their own runs. Leave it empty for a casual or contract driver.</p>
           `}
       ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
       <div class="actions">
@@ -1092,7 +1092,7 @@ function dayStopCard(model: BoardModel, stop: DispatchStop, runs: readonly Dispa
       <div class="actions">
         ${actions.map((a) =>
           a.action === "POD"
-            ? html`<span class="small dim" data-pod-note>The driver signs for the delivery on HH Drive.</span>`
+            ? html`<span class="small dim" data-pod-note>The driver signs for the delivery on Drive.</span>`
             : html`<button type="button" class="btn btn-secondary small-btn"
                 data-action=${a.action === "FAILED" ? "open-sheet" : "stop-status"}
                 data-sheet-kind=${a.action === "FAILED" ? "fail-stop" : ""}
@@ -1178,7 +1178,7 @@ export function renderDayBoard(model: BoardModel): TemplateResult {
           <p class="dim">Open a truck with New truck, then put loads on it.</p></div>`}
     <section class="panel matrix" aria-label="How a stop moves">
       <h3>How a stop moves</h3>
-      <p class="dim">Ready, then Loaded, then En route, then Delivered. A stop can be cancelled before it leaves, and could not be delivered once it is on the road. The board only offers the move the stop is allowed, and the driver signs for the delivery on HH Drive.</p>
+      <p class="dim">Ready, then Loaded, then En route, then Delivered. A stop can be cancelled before it leaves, and could not be delivered once it is on the road. The board only offers the move the stop is allowed, and the driver signs for the delivery on Drive.</p>
     </section>
   `;
 }
@@ -1194,7 +1194,7 @@ function scheduleForm(model: BoardModel): TemplateResult {
       <form class="sched-form" data-schedule novalidate>
         <label class="wide">Order number
           <input class="control" type="text" data-field="order" autocomplete="off" maxlength="64" aria-describedby="order-hint" />
-          <span class="small dim" id="order-hint">Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.</span>
+          <span class="small dim" id="order-hint">Order number on the paperwork, like SO-1041.</span>
         </label>
         <label>Delivery day<input class="control" type="date" data-field="day" /></label>
         ${text("window", "Time window")}
@@ -1404,7 +1404,7 @@ export function renderWillCall(model: BoardModel): TemplateResult {
       <div class="wc-form">
         <label class="wc-order">Order number
           <input class="control" type="text" data-field="wc-order" autocomplete="off" maxlength="64" aria-describedby="wc-hint" />
-          <span class="small dim" id="wc-hint">Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.</span>
+          <span class="small dim" id="wc-hint">Order number on the paperwork, like SO-1041.</span>
         </label>
         <div class="actions">
           <button type="button" class="btn btn-secondary" data-action="wc-lookup" ?disabled=${model.busy}>Look up</button>

@@ -21,6 +21,7 @@ import {
   filterBoard,
   fmtNum,
   fmtWeight,
+  formatTime,
   shortDay,
   toCuYd,
   toWeight,
@@ -235,8 +236,12 @@ test("a card's scope is named: the day, the working window or open now", () => {
   assert.equal(cardScopeLabel(v, "card.unassigned"), "next 14 days");
   assert.equal(cardScopeLabel(v, "card.pickups"), "open now");
   const stamp = new Date(Date.UTC(2026, 0, 15, 15, 4, 0)).toISOString();
-  assert.equal(asOfLabel(stamp, "America/Los_Angeles"), "As of 07:04");
-  assert.equal(asOfLabel(stamp, "America/New_York"), "As of 10:04");
+  assert.equal(formatTime(stamp, "America/Los_Angeles"), "7:04 AM");
+  assert.equal(formatTime(stamp, "America/Los_Angeles").includes("\u202f"), false);
+  assert.equal(asOfLabel(stamp, "America/Los_Angeles", "2026-01-15"), "As of 7:04 AM");
+  assert.equal(asOfLabel(stamp, "America/New_York", "2026-01-15"), "As of 10:04 AM");
+  assert.equal(asOfLabel("2026-03-02T03:15:00Z", "America/Los_Angeles", "2026-03-02"), "As of Mar 1, 2026, 7:15 PM");
+  assert.equal(asOfLabel("2026-03-02T16:15:00Z", "America/Los_Angeles", "2026-03-02"), "As of 8:15 AM");
   assert.equal(asOfLabel(""), "");
 });
 
