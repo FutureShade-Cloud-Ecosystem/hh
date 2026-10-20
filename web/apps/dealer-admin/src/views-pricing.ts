@@ -1696,7 +1696,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
           <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
         </label>
         <label class="field">
-          <span class="field-label">When it happened (empty is the server clock)</span>
+          <span class="field-label">When it happened (empty means now)</span>
           <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
         </label>
         <label class="field">
