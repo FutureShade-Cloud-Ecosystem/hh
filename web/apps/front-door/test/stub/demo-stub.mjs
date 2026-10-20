@@ -301,8 +301,8 @@ function consoleUserBlock() {
     display_name: CONSOLE_USER.name,
     role_code: role.role_code,
     role_name: role.role_name,
-    tier: 2,
-    scope: "BRANCH",
+    tier: typeof role.tier === "number" ? role.tier : 2,
+    scope: typeof role.scope === "string" ? role.scope : "BRANCH",
   };
 }
 
@@ -608,6 +608,24 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (path === "/api/v1/branches" && request.method === "GET") {
+    if (Array.isArray(consoleArms.branches)) {
+      sendJson(response, 200, consoleArms.branches);
+      return;
+    }
+    const roleCode = String(consoleArms.role?.role_code ?? "sales_manager");
+    const scope = String(consoleArms.role?.scope ?? "");
+    if (roleCode.includes("general_manager") || scope === "GLOBAL") {
+      sendJson(response, 200, [
+        { id: "branch-point-loma", code: "PLM", name: "Point Loma" },
+        { id: "branch-julian", code: "JUL", name: "Julian" },
+      ]);
+      return;
+    }
+    sendJson(response, 200, [{ id: "branch-point-loma", code: "PLM", name: "Point Loma" }]);
+    return;
+  }
+
   if (path === "/api/v1/tenant/config" && request.method === "GET") {
     sendJson(response, 200, {
       id: "demo-dealer",
@@ -616,6 +634,7 @@ const server = createServer(async (request, response) => {
       primary_color: "#3a7d56",
       support_email: "support@gablelandscape.invalid",
       support_phone: "",
+      ...(typeof consoleArms.businessZone === "string" ? { business_zone: consoleArms.businessZone } : {}),
     });
     return;
   }
