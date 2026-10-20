@@ -150,6 +150,26 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles) ([]st
 		add("role %s is a member of the predefined role %s", row[0], row[1])
 	}
 
+	// The function users role is no assist role: no assist role may be a member, and it
+	// carries no power and no login.
+	rows, err = collect(`SELECT r.rolname FROM pg_roles r WHERE r.rolname = ANY($1) AND pg_has_role(r.oid, $2, 'MEMBER')`, roles.all(), roles.FunctionUsers)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		add("assist role %s is a member of the function users role %s", row[0], roles.FunctionUsers)
+	}
+	rows, err = collect(`SELECT rolname, rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication OR rolcanlogin
+		FROM pg_roles WHERE rolname = $1`, roles.FunctionUsers)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		add("the function users role %s is missing", roles.FunctionUsers)
+	} else if rows[0][1].(bool) {
+		add("the function users role %s carries a power or a login", roles.FunctionUsers)
+	}
+
 	// 3. Table privileges outside the plan's list. Writes: never, on anything the
 	// role does not own. SELECT: only a reader on a view of its own schema.
 	rows, err = collect(`
@@ -258,6 +278,7 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 		{"a function created by the superuser", `CREATE FUNCTION ai.bad_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'`, `DROP FUNCTION ai.bad_fn()`, "bad_fn"},
 		{"the verifier owned by the view owner", `ALTER FUNCTION ai.claims() OWNER TO ` + q(pgx.Identifier{roles.ViewOwner}), `ALTER FUNCTION ai.claims() OWNER TO ` + q(pgx.Identifier{roles.ClaimsOwner}), "ai.claims"},
 		{"the verifier owned by the superuser", `ALTER FUNCTION ai.claims() OWNER TO ` + q(pgx.Identifier{appRole}), `ALTER FUNCTION ai.claims() OWNER TO ` + q(pgx.Identifier{roles.ClaimsOwner}), "holds superuser"},
+		{"a login in the function users role", `GRANT ` + q(pgx.Identifier{roles.FunctionUsers}) + ` TO ` + q(pgx.Identifier{roles.ProLogin}), `REVOKE ` + q(pgx.Identifier{roles.FunctionUsers}) + ` FROM ` + q(pgx.Identifier{roles.ProLogin}), "function users role"},
 		{"a login in pg_monitor", `GRANT pg_monitor TO ` + q(pgx.Identifier{roles.Login}), `REVOKE pg_monitor FROM ` + q(pgx.Identifier{roles.Login}), "pg_monitor"},
 		{"a reader with BYPASSRLS", `ALTER ROLE ` + q(pgx.Identifier{roles.Reader}) + ` BYPASSRLS`, `ALTER ROLE ` + q(pgx.Identifier{roles.Reader}) + ` NOBYPASSRLS`, "rolbypassrls"},
 		{"a login with CREATEROLE", `ALTER ROLE ` + q(pgx.Identifier{roles.ProLogin}) + ` CREATEROLE`, `ALTER ROLE ` + q(pgx.Identifier{roles.ProLogin}) + ` NOCREATEROLE`, "rolcreaterole"},

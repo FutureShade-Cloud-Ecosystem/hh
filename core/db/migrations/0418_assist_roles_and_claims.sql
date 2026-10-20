@@ -6,6 +6,15 @@
 -- session reaches nothing: not the app role, not an owner. No view, row policy or
 -- base table grant is made here; the data slices add them on top.
 --
+-- A seventh role, app_function_users_<suffix>, is not an assist role. This file closes
+-- EXECUTE on every existing function outside ai (and, by default privileges, every
+-- future function of the migrating role) to PUBLIC, so that the assist roles hold no
+-- function; the function users role gets that EXECUTE back and the migrating role is a
+-- member. A serving role that is separate from the migrating role and not a superuser
+-- MUST be made a member (GRANT app_function_users_<suffix> TO <serving role>) or it
+-- loses citext, pg_trgm and pgcrypto functions; slice 5's serve startup check verifies
+-- it. No assist role may ever be a member; the catalogue test fails if one is.
+--
 -- Role names are cluster wide and dealer databases may share a cluster, so every
 -- name ends in a suffix derived from current_database(): the name in ASCII lower
 -- case, every other character an underscore; a name that derivation changed, or
@@ -34,6 +43,7 @@ DECLARE
   v_pro       text;
   v_login     text;
   v_pro_login text;
+  v_fn_users  text;
   app         text := current_user;
   is_super    boolean;
   crypto_schema text;
@@ -53,6 +63,7 @@ BEGIN
   v_pro       := 'assist_pro_reader_'   || suffix;
   v_login     := 'assist_login_'        || suffix;
   v_pro_login := 'assist_pro_login_'    || suffix;
+  v_fn_users  := 'app_function_users_'  || suffix;
 
   SELECT rolsuper INTO is_super FROM pg_roles WHERE rolname = current_user;
 
@@ -68,6 +79,17 @@ BEGIN
       EXECUTE format('CREATE ROLE %I LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION', r);
     END IF;
   END LOOP;
+
+  -- The function users role (not an assist role): it gets EXECUTE back on every function
+  -- this file closes to PUBLIC, and on functions the migrating role creates later. The
+  -- migrating role is a member. A serving role that is separate from the migrating role
+  -- and not a superuser must be made a member too (GRANT <this role> TO <serving role>),
+  -- or it loses citext, pg_trgm and pgcrypto functions; the serve startup check of slice
+  -- 5 verifies it. No assist role is ever a member (the catalogue test fails if one is).
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_fn_users) THEN
+    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION', v_fn_users);
+  END IF;
+  EXECUTE format('GRANT %I TO %I', v_fn_users, app);
 
   -- Each login is a member of its reader role only, and can become nothing else.
   EXECUTE format('GRANT %I TO %I', v_reader, v_login);
@@ -95,7 +117,7 @@ BEGIN
 
   -- Functions: nothing outside ai is executable by the assist roles. Postgres grants
   -- EXECUTE on every new function to PUBLIC, so revoke it from PUBLIC on every
-  -- existing function outside the system schemas and give it back to the app role,
+  -- existing function outside the system schemas and give it back to the function users role,
   -- and do the same by default for functions the migrate role creates from now on.
   FOR r IN
     SELECT p.oid::regprocedure::text
@@ -104,9 +126,10 @@ BEGIN
       AND n.nspname NOT LIKE 'pg\_%' AND n.nspname NOT IN ('ai', 'ai_pro')
   LOOP
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', r);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', r, app);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', r, v_fn_users);
   END LOOP;
   EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', app);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I GRANT EXECUTE ON FUNCTIONS TO %I', app, v_fn_users);
   -- Functions the two owners create in ai and ai_pro start closed too (a schema level
   -- default cannot subtract the global PUBLIC default, so this is the global form).
   EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', v_view);

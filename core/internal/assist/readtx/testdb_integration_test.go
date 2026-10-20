@@ -112,7 +112,7 @@ func loginPasswords(t *testing.T, admin *pgx.Conn) (staffURL, proURL string) {
 // freshMigratedDB creates an empty database on the cluster of the gate database,
 // installs pgcrypto and applies migration 0418 to it, and drops it (with its
 // roles) when the test ends. It returns an admin connection to it and its name.
-func freshMigratedDB(t *testing.T, prefix string) (*pgx.Conn, string) {
+func freshMigratedDB(t *testing.T, prefix string, exts ...string) (*pgx.Conn, string) {
 	t.Helper()
 	gate := gateURL(t)
 	root := connect(t, gate)
@@ -128,7 +128,7 @@ func freshMigratedDB(t *testing.T, prefix string) (*pgx.Conn, string) {
 		}
 		defer c.Close(ctxT(t))
 		_, _ = c.Exec(ctxT(t), `DROP DATABASE IF EXISTS `+pgx.Identifier{name}.Sanitize()+` WITH (FORCE)`)
-		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner} {
+		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner, roles.FunctionUsers} {
 			_, _ = c.Exec(ctxT(t), `DROP ROLE IF EXISTS `+pgx.Identifier{r}.Sanitize())
 		}
 	})
@@ -137,11 +137,19 @@ func freshMigratedDB(t *testing.T, prefix string) (*pgx.Conn, string) {
 		t.Fatal(err)
 	}
 	conn := connect(t, withDatabase(t, gate, name))
-	if _, err := conn.Exec(ctxT(t), `CREATE EXTENSION pgcrypto`); err != nil {
-		t.Fatalf("pgcrypto: %v", err)
+	for _, ext := range append([]string{"pgcrypto"}, exts...) {
+		if _, err := conn.Exec(ctxT(t), `CREATE EXTENSION `+ext); err != nil {
+			t.Fatalf("extension %s: %v", ext, err)
+		}
 	}
 	if _, err := conn.Exec(ctxT(t), string(body)); err != nil {
 		t.Fatalf("0418 on a fresh database: %v", err)
 	}
 	return conn, name
+}
+
+// freshMigratedDBBefore is freshMigratedDB with extra extensions installed before
+// 0418 runs, so the migration meets their functions.
+func freshMigratedDBBefore(t *testing.T, prefix string, exts ...string) (*pgx.Conn, string) {
+	return freshMigratedDB(t, prefix, exts...)
 }

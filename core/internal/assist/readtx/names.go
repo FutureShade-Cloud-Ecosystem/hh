@@ -22,6 +22,10 @@ type Roles struct {
 	ProReader   string
 	Login       string
 	ProLogin    string
+	// FunctionUsers is not an assist role: it receives EXECUTE on every function
+	// migration 0418 closes to PUBLIC, and a serving role that is separate from the
+	// migrating role must be made a member. No assist role may ever be.
+	FunctionUsers string
 }
 
 const maxSuffix = 30
@@ -47,12 +51,13 @@ func Suffix(database string) string {
 func RolesFor(database string) Roles {
 	s := Suffix(database)
 	return Roles{
-		ViewOwner:   "assist_view_owner_" + s,
-		ClaimsOwner: "assist_claims_owner_" + s,
-		Reader:      "assist_reader_" + s,
-		ProReader:   "assist_pro_reader_" + s,
-		Login:       "assist_login_" + s,
-		ProLogin:    "assist_pro_login_" + s,
+		ViewOwner:     "assist_view_owner_" + s,
+		ClaimsOwner:   "assist_claims_owner_" + s,
+		Reader:        "assist_reader_" + s,
+		ProReader:     "assist_pro_reader_" + s,
+		Login:         "assist_login_" + s,
+		ProLogin:      "assist_pro_login_" + s,
+		FunctionUsers: "app_function_users_" + s,
 	}
 }
 
