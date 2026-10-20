@@ -73,7 +73,9 @@ export class DemoTenantSignInAdapter implements TenantSignInAdapter {
       const [local, domain, ...rest] = (request.email ?? "").trim().toLowerCase().split("@");
       const known = TENANT_ROLES.find((role) => role === local);
       if (rest.length > 0 || domain !== DEMO_EMAIL_DOMAIN || known === undefined) return err(NOT_A_DEMO_ACCOUNT_WORDS);
-      return this.#mintRole(known);
+      const minted = await this.#mintRole(known);
+      if (!minted.ok) return minted;
+      return ok({ ...minted.value, notice: `Signed in as the demo ${ROLE_LABELS[known]}. No email is sent in the demo.` });
     }
     return err(PICK_A_ROLE_WORDS);
   }
