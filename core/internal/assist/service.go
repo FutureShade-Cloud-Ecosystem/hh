@@ -91,6 +91,15 @@ type Answer struct {
 	// The client sends it back on the next turn instead of its own history. Absent when the bearer
 	// has no session id or no store is wired.
 	ConversationID string `json:"conversation_id,omitempty"`
+
+	// -- TanyAI slice 5 (PANEL-API.md 8.2) -------------------------------------------------------
+	// Citations are the verified citations of the text, Notice the one structured notice, Scope what
+	// the figures cover, AnswerID an opaque id for the feedback route. All present only on an answer
+	// that ran data.query.
+	Citations []Citation `json:"citations,omitempty"`
+	Notice    *Notice    `json:"notice,omitempty"`
+	Scope     *Scope     `json:"scope,omitempty"`
+	AnswerID  string     `json:"answer_id,omitempty"`
 }
 
 // LimitReachedMessage is the exact sentence an over-budget user sees. It is a constant so the test,
@@ -130,6 +139,9 @@ type Service struct {
 	dealerCap int64
 	rates     *RateLimits
 	zone      houseday.Source
+
+	// qlog, when attached, receives the per exchange summary row (citations.go).
+	qlog QueryLog
 
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
@@ -307,6 +319,7 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	tag := newExchangeTag()
 	msgs := append([]Message{{Role: RoleSystem, Text: systemPromptFor(tag)}}, sanitizeHistory(history)...)
 	run := &askRun{tag: tag, msgs: append(msgs, Message{Role: RoleUser, Text: question})}
+	defer s.flushExchangeLog(ctx, c, run)
 
 	if len(res.Calls) > 0 {
 		// A RESOLVED FOLLOW-UP SKIPS THE PROVIDER'S FIRST ROUND. The resolver already decided which
@@ -351,13 +364,21 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	// Step 7: the ledger row, always, including the stub's zeros.
 	s.record(ctx, c, run.ident(id), run.in, run.out)
 
-	return Answer{
+	ans := Answer{
 		Text:    out.text,
 		Results: run.results,
 		Ran:     run.ran,
 		Carried: res.Carried,
 		Usage:   usageOf(run.ident(id), run.in, run.out),
-	}, nil
+	}
+	if run.queried > 0 {
+		// The citations are the ones the text uses and the exchange's own results hold; the label and
+		// ref come from those results, never from the text.
+		ans.Citations = citationsIn(run, out.text)
+		ans.Notice, ans.Scope = run.notice, run.scope
+		ans.AnswerID = newAnswerID()
+	}
+	return ans, nil
 }
 
 // newExchangeTag is the random tag of one exchange's data envelope: 64 bits from the system's
@@ -396,6 +417,13 @@ type askRun struct {
 	alias     string
 	note      string
 	answerNow bool
+	// data.query: the citations the exchange's results offer (numbered as the model sees them), how many
+	// data.query calls ran, and the notice and scope the first of them produced.
+	citeN   int
+	cites   []Citation
+	queried int
+	notice  *Notice
+	scope   *Scope
 	// provider and model are who answered last, for the ledger row and the usage report.
 	provider, model string
 }
@@ -485,6 +513,7 @@ func (s *Service) exec(ctx context.Context, c Caller, run *askRun, text string, 
 			})
 			continue
 		}
+		run.absorb(call.Command, &out)
 		run.results = append(run.results, out)
 		run.ran = append(run.ran, Invocation{Command: call.Command, Args: call.Args})
 		run.msgs = append(run.msgs, Message{Role: RoleTool, ToolCallID: call.ID, ToolName: call.Command, Text: envelope(run.tag, call.Command, renderResult(out)), Result: &out})
@@ -521,6 +550,9 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 			return outcome{text: speak(run.results)}, nil
 		}
 		if len(reply.ToolCalls) == 0 {
+			if run.queried > 0 && !checkAnswerFigures(run, reply.Text) {
+				return outcome{fail: failCitation}, nil
+			}
 			o := outcome{text: reply.Text}
 			if run.executed == 0 {
 				// Suggest rides along UNCHANGED from the provider. The service does not decide what
@@ -549,6 +581,7 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 const (
 	failUnknownCommand = "Your last reply was rejected: it called a command that is not in your tool list. Call only the tools you were given, or answer in words."
 	failBadArguments   = "Your last reply was rejected: a tool call's arguments were not one valid JSON object. Send the arguments as a single JSON object."
+	failCitation       = "Your last reply was rejected: it stated a figure without citing a result row as [n], cited a row that does not exist, or stated a figure that is not in the results. Cite every figure with its row number in brackets and state only figures that are in the results."
 	failBound          = "The lookup loop reached its limit. Do not call more tools: answer now in words from the results you already have."
 )
 
