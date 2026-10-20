@@ -53,6 +53,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 )
 
 // seqTable is one table the repair sequences. scope is "" when the table draws from a counter
@@ -93,7 +95,7 @@ var demoSeqTables = []seqTable{
 	{"po_receipts", ""},
 	{"purchasing_receipt_lines", ""},
 	{"warranty_claims", "warranty_claims"},
-	{"will_call_pickups", "pickups"},
+	{"will_call_pickups", dispatch.WillCallSeqScope},
 	{"will_call_pickup_events", ""},
 	{"dispatch_drivers", "drivers"},
 	{"dispatch_trucks", "trucks"},

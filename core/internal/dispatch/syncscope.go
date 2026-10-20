@@ -60,13 +60,18 @@ const (
 )
 
 // allocateSyncSeqTx draws the next seq of one scope inside the caller's
-// transaction, the same upsert every module write path runs.
+// transaction, the same upsert every module write path runs. The
+// will_call scope draws the lifted form (willCallSeqUpsert).
 func allocateSyncSeqTx(ctx context.Context, tx pgx.Tx, scope string) (int64, error) {
 	var next int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO scope_sequences (scope) VALUES ($1)
+	query := `INSERT INTO scope_sequences (scope) VALUES ($1)
 		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		 RETURNING next_value`, scope).Scan(&next); err != nil {
+		 RETURNING next_value`
+	args := []any{scope}
+	if scope == willCallSyncScope {
+		query, args = fmt.Sprintf(willCallSeqUpsert, willCallSyncScope, legacyPickupsSeqScope), nil
+	}
+	if err := tx.QueryRow(ctx, query, args...).Scan(&next); err != nil {
 		return 0, fmt.Errorf("dispatch: seq allocate for scope %s: %w", scope, err)
 	}
 	return next, nil
@@ -75,11 +80,15 @@ func allocateSyncSeqTx(ctx context.Context, tx pgx.Tx, scope string) (int64, err
 // lockStopsSeqTx takes the stops counter row on the caller's transaction WITHOUT advancing it (the
 // upsert writes the value the row already holds, and a missing row is seeded at 0 so the next
 // draw still hands out 1), the non advancing take payments.LockPaymentsSequenceTx is for the
-// payments counter. The dispatch lock order is stops before runs: the sync cancel of a run
-// un-assigns its stops (the stops counter) and then draws the run's own seq (the runs counter).
-// A writer that updates a run first (ReopenRun, MoveRunDate: the sync seq trigger, 0422, draws
-// the runs counter at that statement) takes the stops counter here, before it, so no two
-// dispatch transactions take the two counters in opposite orders.
+// payments counter.
+//
+// THE DISPATCH ORDER is the run row, then the stops counter, then the runs counter. The sync cancel
+// of a run (RunsSyncStore.Write) takes exactly that: the run row FOR UPDATE, the un-assign's stops
+// draw, the run's own runs draw. A writer that updates a run (ReopenRun, MoveRunDate: the sync seq
+// trigger, 0422, draws the runs counter at that statement) takes the same three in the same order,
+// through lockRunThenStopsSeqTx. Taking the stops counter before the run row would be safe across two
+// different runs and a deadlock on one: the writer holding the counter while it waits for the row the
+// cancel holds while it waits for the counter.
 func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO scope_sequences (scope, next_value) VALUES ('stops', 0)
@@ -87,6 +96,16 @@ func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 		return fmt.Errorf("dispatch: lock the stops counter: %w", err)
 	}
 	return nil
+}
+
+// lockRunThenStopsSeqTx is the first two steps of the dispatch order for a writer that is about to
+// update a run: the run row FOR UPDATE (a row that is not there locks nothing, and the writer's own
+// update then reports it), then the stops counter.
+func lockRunThenStopsSeqTx(ctx context.Context, tx pgx.Tx, runID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_runs WHERE id = $1 FOR UPDATE`, runID); err != nil {
+		return fmt.Errorf("dispatch: lock the run row: %w", err)
+	}
+	return lockStopsSeqTx(ctx, tx)
 }
 
 // syncSeqCTE is the data-modifying CTE the repository's single-statement

@@ -1522,12 +1522,27 @@ components:
         suggest:
           type: array
           items: { type: string }
+        notice: { $ref: "#/components/schemas/AssistNotice" }
         conversation_id:
           type: string
           description: >-
             The opaque, server issued id of the conversation this exchange
             belongs to; send it on the next turn instead of history. Absent when
             the bearer carries no session id.
+
+    AssistNotice:
+      type: object
+      description: >-
+        The one quiet note an answer may carry. The core sends the code and the
+        class and no words; the panel words them. The only code this contract
+        sends today is model_unavailable, set on a demo copy when the answer
+        was given on the stub because the model could not be used.
+      required: [code]
+      properties:
+        code:
+          type: string
+          enum: [model_unavailable]
+        class: { type: string }
 
     AssistBudget:
       type: object

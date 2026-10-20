@@ -25,7 +25,8 @@ test("the landing is today's run: the run, its crew line and its stops in stop o
   await expect(stops.nth(0)).toContainText("AM");
   await expect(stops.nth(0).locator("[data-stop-no]")).toHaveText("1");
   await expect(stops.nth(2)).toContainText("Valley Municipal Works");
-  await expect(stops.nth(0).locator("[data-stop-status]")).toHaveText("Ready");
+  await expect(stops.nth(0).locator("[data-stop-status]")).toHaveText("Next stop");
+  await expect(stops.nth(1).locator("[data-stop-status]")).toHaveText("Waiting");
 });
 
 // The two hours at which the dealer's day and the UTC day disagree and agree.
@@ -117,7 +118,7 @@ test("a stop moves loaded then en route, and the run sheet follows", async ({ pa
   await expect(page.locator("[data-stop-status]")).toHaveText("En route");
   await expect(page.getByRole("button", { name: "Mark loaded" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
-  await expect(page.locator("[data-stop]").first().locator("[data-stop-status]")).toHaveText("En route");
+  await expect(page.locator("[data-stop]").first().locator("[data-stop-status]")).toHaveText("Next stop");
   await expect(page.locator("[data-progress]")).toHaveText("3 stops left · 0 delivered");
 });
 

@@ -115,7 +115,7 @@ func (r *Repository) ReopenRun(ctx context.Context, runID, reason, actorID strin
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockStopsSeqTx(ctx, tx); err != nil {
+	if err := lockRunThenStopsSeqTx(ctx, tx, runID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

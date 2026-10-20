@@ -91,3 +91,22 @@ test("this desk mounts no TanyAI panel, so its band carries no Ask TanyAI button
   await expect(page.locator("hh-shell-header")).toBeVisible();
   await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
 });
+
+// A second dealer, invented, served as the tenant config: the band names whoever the config names.
+const SECOND_DEALER = { id: "coastal", dealer_name: "Coastal Stone Supply", logo_url: "", primary_color: "#3a7d56", support_email: "help@coastal.invalid", support_phone: "" };
+
+test("the band names the dealer the tenant config serves, not a built in name", async ({ page }) => {
+  await page.route("**/api/v1/tenant/config", (route) => route.fulfill({ json: SECOND_DEALER }));
+  await boot(page, 1440, 900);
+  const band = page.locator("hh-shell-header");
+  await expect(band).toContainText("Coastal Stone Supply");
+  await expect(band).not.toContainText("Gable Landscape Supply");
+});
+
+test("until the tenant config lands the band names no dealer", async ({ page }) => {
+  await page.route("**/api/v1/tenant/config", (route) => route.fulfill({ status: 503, json: { error: "unavailable" } }));
+  await boot(page, 1440, 900);
+  const band = page.locator("hh-shell-header");
+  await expect(band).not.toContainText("Gable Landscape Supply");
+  await expect(band).not.toContainText("Coastal Stone Supply");
+});

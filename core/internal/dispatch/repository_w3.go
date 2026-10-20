@@ -418,7 +418,7 @@ func (r *Repository) MoveRunDate(ctx context.Context, runID, fromDate, toDate st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := lockStopsSeqTx(ctx, tx); err != nil {
+	if err := lockRunThenStopsSeqTx(ctx, tx, runID); err != nil {
 		return "", 0, false, err
 	}
 	tag, err := tx.Exec(ctx, `
