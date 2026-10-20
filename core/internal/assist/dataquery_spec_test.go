@@ -187,7 +187,7 @@ func TestAggregateShapes(t *testing.T) {
 }
 
 func TestCatalogueIsPerAskerAndDropsWhatTheTierFloorRefuses(t *testing.T) {
-	if len(CatalogueFor(dqManager)) != 7 {
+	if len(CatalogueFor(dqManager)) != 11 {
 		t.Fatalf("a dqManager sees %d views", len(CatalogueFor(dqManager)))
 	}
 	frontline := Caller{UserID: "u", Tier: 3, BranchIDs: []string{"22222222-2222-2222-2222-222222222222"}}
@@ -196,5 +196,32 @@ func TestCatalogueIsPerAskerAndDropsWhatTheTierFloorRefuses(t *testing.T) {
 	}
 	if got := CatalogueFor(Caller{}); len(got) != 0 {
 		t.Errorf("a caller with no role sees %d views", len(got))
+	}
+}
+
+// Slice 7a found it: every select is cast to text under its own name, and a bare name in ORDER BY resolves to the
+// output column before the input column, so a numeric column was ordered as text (900 before 7000). The order
+// must name the input column (qualified) or the aggregate expression, never the text alias.
+func TestOrderByNeverUsesTheTextAlias(t *testing.T) {
+	got, err := dqCompileFor(t, dqManager, `{"view":"ai.orders","select":["order_no","total_cents"],"order_by":[{"col":"total_cents","dir":"desc"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.SQL, `ORDER BY "total_cents"`) || !strings.Contains(got.SQL, `ORDER BY "ai"."orders"."total_cents" DESC`) {
+		t.Errorf("a numeric column is ordered through its text alias: %s", got.SQL)
+	}
+	agg, err := dqCompileFor(t, dqManager, `{"view":"ai.orders","group_by":["branch_label"],"aggregate":[{"fn":"sum","col":"total_cents"}],"order_by":[{"col":"sum_total_cents","dir":"desc"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(agg.SQL, `ORDER BY "sum_total_cents"`) || !strings.Contains(agg.SQL, `ORDER BY sum("total_cents") DESC`) {
+		t.Errorf("an aggregate is ordered through its text alias: %s", agg.SQL)
+	}
+	def, err := dqCompileFor(t, dqManager, `{"view":"ai.orders","select":["order_no","total_cents","created_at"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(def.SQL, `ORDER BY "created_at"`) {
+		t.Errorf("the default order uses a text alias: %s", def.SQL)
 	}
 }

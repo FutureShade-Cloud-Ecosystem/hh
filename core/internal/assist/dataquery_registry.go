@@ -118,6 +118,56 @@ var columnRegistry = map[string]string{
 	"ai.purchase_order_lines.unit_cost_cents":      ClassCost,
 	"ai.purchase_order_lines.line_total_cents":     ClassCost,
 	"ai.purchase_order_lines.billed_cents":         ClassCost,
+	// ai.invoices: the invoice's own figures are not sensitive (the register shows them to any staff with reach).
+	"ai.invoices.id":             ClassPlain,
+	"ai.invoices.invoice_no":     ClassPlain,
+	"ai.invoices.doc_type":       ClassPlain,
+	"ai.invoices.status":         ClassPlain,
+	"ai.invoices.issue_date":     ClassPlain,
+	"ai.invoices.due_date":       ClassPlain,
+	"ai.invoices.branch_id":      ClassPlain,
+	"ai.invoices.branch_label":   ClassPlain,
+	"ai.invoices.customer_id":    ClassPlain,
+	"ai.invoices.customer_name":  ClassPlain,
+	"ai.invoices.account_no":     ClassPlain,
+	"ai.invoices.order_id":       ClassPlain,
+	"ai.invoices.order_no":       ClassPlain,
+	"ai.invoices.subtotal_cents": ClassPlain,
+	"ai.invoices.tax_cents":      ClassPlain,
+	"ai.invoices.holdback_cents": ClassPlain,
+	"ai.invoices.total_cents":    ClassPlain,
+	"ai.invoices.balance_cents":  ClassPlain,
+	// ai.ar_aging: the aging screen's per account buckets.
+	"ai.ar_aging.customer_id":        ClassPlain,
+	"ai.ar_aging.customer_name":      ClassPlain,
+	"ai.ar_aging.account_no":         ClassPlain,
+	"ai.ar_aging.as_of":              ClassPlain,
+	"ai.ar_aging.current_cents":      ClassPlain,
+	"ai.ar_aging.days_1_30_cents":    ClassPlain,
+	"ai.ar_aging.days_31_60_cents":   ClassPlain,
+	"ai.ar_aging.days_61_90_cents":   ClassPlain,
+	"ai.ar_aging.days_90_plus_cents": ClassPlain,
+	"ai.ar_aging.open_cents":         ClassPlain,
+	// ai.payments: what identifies a payment is plain; what the payment trail screens show (method, status, the
+	// amount and the unapplied figure) is class payment, held by the claim's payment trail (ruling 87).
+	"ai.payments.id":              ClassPlain,
+	"ai.payments.payment_no":      ClassPlain,
+	"ai.payments.received_at":     ClassPlain,
+	"ai.payments.branch_id":       ClassPlain,
+	"ai.payments.branch_label":    ClassPlain,
+	"ai.payments.customer_id":     ClassPlain,
+	"ai.payments.customer_name":   ClassPlain,
+	"ai.payments.method":          ClassPayment,
+	"ai.payments.status":          ClassPayment,
+	"ai.payments.amount_cents":    ClassPayment,
+	"ai.payments.unapplied_cents": ClassPayment,
+	// ai.payment_allocations: rows exist only for an asker who holds the trail; the amount and date stay class payment.
+	"ai.payment_allocations.payment_id":   ClassPlain,
+	"ai.payment_allocations.payment_no":   ClassPlain,
+	"ai.payment_allocations.invoice_id":   ClassPlain,
+	"ai.payment_allocations.invoice_no":   ClassPlain,
+	"ai.payment_allocations.amount_cents": ClassPayment,
+	"ai.payment_allocations.allocated_at": ClassPayment,
 }
 
 // personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
@@ -133,6 +183,9 @@ var personalColumns = map[string]bool{
 	"ai.quotes.delivery_address": true, // as above
 	"ai.quotes.customer_notes":   true, // free text shown on the quote; may hold anything typed
 	"ai.purchase_orders.notes":   true, // free text on the order
+	"ai.invoices.customer_name":  true, // as ai.orders.customer_name
+	"ai.ar_aging.customer_name":  true, // as above
+	"ai.payments.customer_name":  true, // as above
 }
 
 // columnGates names the vocabulary that gates a cost column when it is not the role list.
@@ -141,6 +194,12 @@ var columnGates = map[string]string{
 	"ai.purchase_order_lines.unit_cost_cents":  GatePurchasePolicy,
 	"ai.purchase_order_lines.line_total_cents": GatePurchasePolicy,
 	"ai.purchase_order_lines.billed_cents":     GatePurchasePolicy,
+	"ai.payments.method":                       GatePaymentTrail,
+	"ai.payments.status":                       GatePaymentTrail,
+	"ai.payments.amount_cents":                 GatePaymentTrail,
+	"ai.payments.unapplied_cents":              GatePaymentTrail,
+	"ai.payment_allocations.amount_cents":      GatePaymentTrail,
+	"ai.payment_allocations.allocated_at":      GatePaymentTrail,
 }
 
 // PersonalColumns is the tag list, exported for the text index and the egress slices: every "view.column" that
@@ -187,7 +246,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView(), rawInvoicesView(), rawARAgingView(), rawPaymentsView(), rawPaymentAllocationsView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}
