@@ -108,3 +108,9 @@ export async function chooseReason(page: Page, scope: keyof typeof REASON_FIELD,
   }
   await page.locator(`select[data-field="${REASON_FIELD[scope]}"]`).selectOption(code);
 }
+
+/** Opens the Field frame's account menu and presses one item (Switch role, Sign out, Brand theme, Light theme). */
+export async function accountItem(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: /^Account/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}

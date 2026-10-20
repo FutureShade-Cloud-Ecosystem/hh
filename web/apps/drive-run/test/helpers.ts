@@ -143,3 +143,9 @@ export const test = base.extend<{ pinned: void }>({
 });
 
 export { expect };
+
+/** Opens the Field frame's account menu and presses one item (Switch role, Sign out, Brand theme, Light theme). */
+export async function accountItem(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: /^Account/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}

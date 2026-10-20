@@ -23,8 +23,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header and hh-sheet: the shared design-system chrome elements.
-import "@hardscapehouse/design-system/src/header.js";
+// hh-sheet: the shared design-system chrome element.
 import "@hardscapehouse/design-system/src/sheet.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -33,12 +32,14 @@ import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } fro
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
-import "@hardscapehouse/shell-chrome";
+import { fieldTabsForRole, setFieldFrame } from "@hardscapehouse/shell-chrome";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import { YardOffline, bannerMode, openYardOfflineOpfs, type QueueAnswer } from "./yard-offline.js";
 import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
+import type { ShellSyncState } from "@hardscapehouse/shell-chrome";
 import {
   RESOLVE_WALL_NAMES,
   CHANGE_ACK_WALL,
@@ -179,8 +180,11 @@ export class YardPickApp extends HHElement {
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
 
-  // The role label the header shows; set from the handoff or the mint.
+  // The role label the frame shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
+  #org = "";
 
   // The theme: light by default (the yard reads this in daylight), brand
   // (the dark half) one tap away. Held in memory only: nothing here persists.
@@ -425,6 +429,10 @@ export class YardPickApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      this.#org = name;
+      this.requestUpdate();
+    });
     this.addEventListener("click", this.#onHostClick);
     // input and change do not leave this element's own shadow root (change is
     // not composed), so the form listeners sit on the root itself.
@@ -521,11 +529,20 @@ export class YardPickApp extends HHElement {
   // the yard is typing into, so a re-render never eats a typed number.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
+    setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
+      org: this.#org,
+      appName: "Yard Pick",
+      surface: this.#surfaceWords(),
+      roleLabel: this.#roleLabel,
+      syncState: this.#syncState as ShellSyncState,
+      theme: this.#theme,
+      signedIn: this.#sessions.current !== null,
+      demo: true,
+      current: "pick",
+      bellAction: "open-changes",
+      bellCount: this.#changesWaiting !== null && /^\d+$/.test(this.#changesWaiting) ? Number(this.#changesWaiting) : 0,
+      tabs: fieldTabsForRole("yard_team"),
+    });
     // The offline strip and the card list take their state through properties
     // (the position gate refuses a bound value outside data- and aria-), the
     // same pass the header's label rides.
@@ -1207,6 +1224,8 @@ export class YardPickApp extends HHElement {
   }
 
   #onSignOut(): void {
+    // The frame's account chip names no role once the person is out.
+    this.#roleLabel = "";
     this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";
@@ -1237,23 +1256,21 @@ export class YardPickApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
-  // theme a tap moves to. It is a control like any other: the app's own
-  // 56 px floor applies.
-  private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary theme-button" data-action="theme">${label}</button>`;
+  // The surface the frame's chip names beside the app.
+  #surfaceWords(): string {
+    if (this.#view.kind === "pick") return "Pick";
+    if (this.#view.kind === "changes") return "Changes waiting";
+    if (this.#view.kind === "conflicts") return "Review";
+    return "Pick queue";
   }
 
-  // When signed in, the header slot carries the theme toggle, the "Changes
-  // waiting on the yard" door with its badge, the Review door, and Refresh.
+  // The doors the old header carried, now the first row of the board: the "Changes waiting on the yard" door with its
+  // badge, the Review door, and Refresh. Theme, Switch role and Sign out live in the frame's account menu.
   private renderHeaderControls(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
     const waiting = this.#changesWaiting;
     const conflicts = this.#openCards.length;
     return html`
-      <div slot="theme" class="header-extra">
-        <button type="button" class="btn btn-secondary theme-button" data-action="theme" data-tap>${label}</button>
+      <div class="header-extra">
         <button type="button" class="btn btn-secondary header-door" data-action="open-changes" data-changes-door data-tap>
           <span>Changes waiting on the yard</span>
           ${waiting !== null ? html`<span class="pill branch-pill" data-changes-count>${waiting}</span>` : nothing}
@@ -1338,10 +1355,11 @@ export class YardPickApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderHeaderControls()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
       <main>
+        ${this.renderHeaderControls()}
         ${this.renderWork()}
       </main>
     `;
@@ -1351,7 +1369,7 @@ export class YardPickApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       <main>
         ${renderEntry(this.#entryView)}
       </main>

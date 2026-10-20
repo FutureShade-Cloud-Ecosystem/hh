@@ -6,6 +6,11 @@
 import { css } from "lit";
 
 export const messagesStyles = css`
+  :host { display: block; }
+  /* The Field frame's phone tab bar is fixed to the foot: the page clears it (the frame's FIELD_TABBAR_CLEARANCE). */
+  @media (max-width: 767.98px) {
+    :host { padding-bottom: calc(var(--hh-s-64) + var(--hh-s-24) + var(--hh-safe-bottom)); }
+  }
   .desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) var(--hh-s-24); }
   h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; }
   h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
