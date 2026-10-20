@@ -160,7 +160,7 @@ func NewProviderFromConfig(s Settings, apiKey, baseURL string, log *slog.Logger)
 	if len(route) == 0 {
 		return NewStubProvider()
 	}
-	r := NewRouter(nil, ModelConfig{AnthropicKey: apiKey, AnthropicBaseURL: baseURL}, NewStubProvider(), log)
+	r := NewRouter(nil, ModelConfig{AnthropicKey: Secret(apiKey), AnthropicBaseURL: baseURL}, NewStubProvider(), log)
 	p, ok := r.Resolve(context.Background(), route[0])
 	if !ok {
 		if log != nil {

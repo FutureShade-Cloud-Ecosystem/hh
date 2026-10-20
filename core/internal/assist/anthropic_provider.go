@@ -51,7 +51,7 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicProvider talks to an Anthropic-style Messages API.
 type AnthropicProvider struct {
-	key     string // never logged, never rendered, never serialised
+	key     Secret // never logged, never rendered, never serialised
 	model   string
 	baseURL string
 	http    *http.Client
@@ -68,7 +68,7 @@ func NewAnthropicProvider(key, model, baseURL string) *AnthropicProvider {
 		baseURL = "https://api.anthropic.com"
 	}
 	return &AnthropicProvider{
-		key:     key,
+		key:     Secret(key),
 		model:   model,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		// A bounded timeout, because an assistant that hangs holds a request goroutine and a user's
@@ -88,8 +88,8 @@ func (p *AnthropicProvider) Model() string { return p.model }
 
 // String and GoString keep the key out of any log line or error that formats the provider (%v,
 // %+v and %#v would otherwise print every field, unexported ones included).
-func (p *AnthropicProvider) String() string   { return "anthropic:" + p.model }
-func (p *AnthropicProvider) GoString() string { return p.String() }
+func (p AnthropicProvider) String() string   { return "anthropic:" + p.model }
+func (p AnthropicProvider) GoString() string { return p.String() }
 
 // Stream is declared and not implemented.
 func (*AnthropicProvider) Stream(context.Context, CompletionRequest) (<-chan StreamEvent, error) {
@@ -200,7 +200,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	// The one place the key is used. It goes onto a header of a request being sent, and into
 	// nothing else, not a struct that gets logged, not an error, not a retry record.
-	httpReq.Header.Set("x-api-key", p.key)
+	httpReq.Header.Set("x-api-key", p.key.Reveal())
 
 	resp, err := p.http.Do(httpReq)
 	if err != nil {

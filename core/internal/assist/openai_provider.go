@@ -29,11 +29,17 @@ import (
 // OpenAICompatConfig is deployment configuration. None of it ever comes from a request.
 type OpenAICompatConfig struct {
 	BaseURL   string // including the version prefix, for example http://gateway:4000/v1
-	Key       string // the dealer's key; never logged, never rendered
+	Key       Secret // the dealer's key; never logged, never rendered
 	DealerTag string // the dealer's tag for the gateway's metering and reconciliation
 	Model     string // the gateway's model name for this alias
 	HTTP      *http.Client
 }
+
+// String and GoString keep the key out of any dump of the config.
+func (c OpenAICompatConfig) String() string {
+	return "OpenAICompatConfig{key:" + c.Key.String() + " model:" + c.Model + "}"
+}
+func (c OpenAICompatConfig) GoString() string { return c.String() }
 
 // HeaderDealerTag is the header the dealer tag travels in.
 const HeaderDealerTag = "X-Dealer-Tag"
@@ -41,7 +47,7 @@ const HeaderDealerTag = "X-Dealer-Tag"
 // OpenAICompatProvider talks to an OpenAI compatible chat completions endpoint.
 type OpenAICompatProvider struct {
 	baseURL string
-	key     string // never logged, never rendered, never serialised
+	key     Secret // never logged, never rendered, never serialised
 	tag     string
 	model   string
 	http    *http.Client
@@ -70,8 +76,8 @@ func (p *OpenAICompatProvider) Name() string  { return "openai_compatible" }
 func (p *OpenAICompatProvider) Model() string { return p.model }
 
 // String and GoString keep the key out of any log line or error that formats the provider.
-func (p *OpenAICompatProvider) String() string   { return "openai_compatible:" + p.model }
-func (p *OpenAICompatProvider) GoString() string { return p.String() }
+func (p OpenAICompatProvider) String() string   { return "openai_compatible:" + p.model }
+func (p OpenAICompatProvider) GoString() string { return p.String() }
 
 // Stream is declared and not implemented.
 func (*OpenAICompatProvider) Stream(context.Context, CompletionRequest) (<-chan StreamEvent, error) {
@@ -227,8 +233,8 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req CompletionReque
 	httpReq.Header.Set("content-type", "application/json")
 	// The only place the key and the dealer tag are used. Both come from the struct, which was built
 	// from deployment configuration, and from nowhere on the request.
-	if p.key != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.key)
+	if p.key.Set() {
+		httpReq.Header.Set("Authorization", "Bearer "+p.key.Reveal())
 	}
 	if p.tag != "" {
 		httpReq.Header.Set(HeaderDealerTag, p.tag)

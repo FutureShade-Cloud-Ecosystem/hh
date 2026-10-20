@@ -45,18 +45,18 @@ const (
 
 // ModelConfig is the deployment's model configuration.
 type ModelConfig struct {
-	AnthropicKey     string // HOS_ASSIST_ANTHROPIC_API_KEY
+	AnthropicKey     Secret // HOS_ASSIST_ANTHROPIC_API_KEY
 	AnthropicBaseURL string // empty is the vendor's own endpoint
 	GatewayURL       string // HOS_ASSIST_GATEWAY_URL, the OpenAI compatible gateway, version prefix included
-	GatewayKey       string // HOS_ASSIST_GATEWAY_KEY, this dealer's key
+	GatewayKey       Secret // HOS_ASSIST_GATEWAY_KEY, this dealer's key
 	DealerTag        string // HOS_ASSIST_DEALER_TAG, this dealer's tag
 }
 
 // String keeps every credential out of any log line that formats the config.
 func (m ModelConfig) String() string {
-	return "ModelConfig{anthropic_key_present:" + boolWord(m.AnthropicKey != "") +
+	return "ModelConfig{anthropic_key_present:" + boolWord(m.AnthropicKey.Set()) +
 		" gateway_url_set:" + boolWord(m.GatewayURL != "") +
-		" gateway_key_present:" + boolWord(m.GatewayKey != "") + "}"
+		" gateway_key_present:" + boolWord(m.GatewayKey.Set()) + "}"
 }
 
 // GoString matches String for %#v.
@@ -133,8 +133,13 @@ func NewRouter(aliases AliasStore, cfg ModelConfig, stub Provider, log *slog.Log
 	return &Router{aliases: aliases, cfg: cfg, stub: stub, log: log}
 }
 
+// String and GoString print presence only: the router holds both keys in its config, and fmt does
+// not call methods on unexported fields, so the router answers for itself.
+func (r Router) String() string   { return "Router{" + r.cfg.String() + "}" }
+func (r Router) GoString() string { return r.String() }
+
 // KeyPresent reports whether the Anthropic credential is configured (a boolean, never the key).
-func (r *Router) KeyPresent() bool { return strings.TrimSpace(r.cfg.AnthropicKey) != "" }
+func (r *Router) KeyPresent() bool { return strings.TrimSpace(r.cfg.AnthropicKey.Reveal()) != "" }
 
 // Resolve returns the provider for an alias and whether it is a real, configured one. An alias not
 // in the table, disabled, of the stub kind, or missing its configuration resolves to the stub with
@@ -160,7 +165,7 @@ func (r *Router) Resolve(ctx context.Context, alias string) (p Provider, ok bool
 				return r.stub, false
 			}
 			base := firstNonEmpty(row.BaseURL, r.cfg.AnthropicBaseURL)
-			return NewAnthropicProvider(r.cfg.AnthropicKey, row.Model, base), true
+			return NewAnthropicProvider(r.cfg.AnthropicKey.Reveal(), row.Model, base), true
 		case AdapterOpenAICompatible:
 			base := firstNonEmpty(row.BaseURL, r.cfg.GatewayURL)
 			if strings.TrimSpace(base) == "" {

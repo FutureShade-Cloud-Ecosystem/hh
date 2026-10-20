@@ -647,9 +647,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The model layer's deployment configuration: the operator's environment, never a request. A
 	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
 	assistModelCfg := assist.ModelConfig{
-		AnthropicKey: assistKey,
+		AnthropicKey: assist.Secret(assistKey),
 		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
-		GatewayKey:   os.Getenv(assist.EnvGatewayKey),
+		GatewayKey:   assist.Secret(os.Getenv(assist.EnvGatewayKey)),
 		DealerTag:    os.Getenv(assist.EnvDealerTag),
 	}
 	assistProvider := assist.NewProviderFromConfig(assistSettings, assistKey, "", log)
