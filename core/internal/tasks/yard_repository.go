@@ -104,12 +104,16 @@ func (r *Repository) Stage(ctx context.Context, in StageInput) (Task, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, taskType string
-	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType); err != nil {
+	var from, taskType, claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrNotFound
 		}
 		return Task{}, fmt.Errorf("tasks: lock %q for stage: %w", in.TaskID, err)
+	}
+	// The holder's act: compared on the locked row, in this transaction (UX-76).
+	if notHolder(claimedBy, in.ActorID) {
+		return Task{}, ErrNotHolder
 	}
 	if from == StatusStaged {
 		return Task{}, ErrNoTransition
@@ -565,6 +569,10 @@ func (r *Repository) RecordPickLocked(ctx context.Context, taskID, actorID strin
 	}
 	if err := pickClosed(task.Status); err != nil {
 		return nil, err
+	}
+	// Save pick is the holder's act: compared on the locked row, before the order is told anything (UX-76).
+	if notHolder(task.ClaimedBy, actorID) {
+		return nil, ErrNotHolder
 	}
 	lines, err := apply(ctx, task)
 	if err != nil {

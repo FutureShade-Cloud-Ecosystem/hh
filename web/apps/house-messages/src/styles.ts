@@ -31,9 +31,10 @@ export const messagesStyles = css`
     box-sizing: border-box;
   }
 
-  /* The strip: how the screen is connected, and the unread total. */
+  /* The strip: the unread heading first, then how the screen is connected. */
   .strip { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-8) var(--hh-s-16); margin-bottom: var(--hh-s-12); background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); min-height: 44px; }
-  .strip .live { display: inline-flex; align-items: center; gap: var(--hh-s-8); font-weight: 600; }
+  .strip .strip-title { margin: 0; font-size: var(--hh-s-16); line-height: var(--hh-s-24); font-weight: 700; color: var(--hh-text); font-variant-numeric: normal; font-feature-settings: normal; }
+  .strip .live { display: inline-flex; align-items: center; gap: var(--hh-s-8); font-weight: 400; }
   .dot { width: 10px; height: 10px; border-radius: var(--hh-radius-pill); background: var(--hh-text-dim); flex: none; }
   .dot-live { background: var(--hh-state-good); }
   .dot-watch { background: var(--hh-state-watch); }
@@ -152,6 +153,9 @@ export const messagesStyles = css`
   .event-actions { margin-top: var(--hh-s-6); }
   .btn-action-pill { min-height: 44px; font-weight: 600; }
   .msg-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8); margin-top: var(--hh-s-6); }
+  .delete-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-8) var(--hh-s-12); margin-top: var(--hh-s-8); padding: var(--hh-s-8) var(--hh-s-12); background: var(--hh-card); border: 1px solid var(--hh-state-stop); border-inline-start: 4px solid var(--hh-state-stop); border-radius: var(--hh-radius-control); }
+  .delete-confirm-actions { display: inline-flex; flex-wrap: wrap; gap: var(--hh-s-8); }
+  .btn-danger { background: var(--hh-card); color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); font-weight: 700; }
   .btn-replies { min-height: 44px; }
   .btn-open-thread { min-height: 44px; }
   .thread { margin: var(--hh-s-8) 0 0 var(--hh-s-16); padding-inline-start: var(--hh-s-12); border-inline-start: 2px solid var(--hh-line); display: grid; gap: var(--hh-s-8); }

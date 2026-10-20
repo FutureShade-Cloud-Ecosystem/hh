@@ -4,6 +4,7 @@
 // reload keeps the session. Run by the base-aware config (test/popout-base-aware.config.ts),
 // where BASE_URL is /till/; at the root (the default harness) the entry cards are the way in.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 const HANDOFF_KEY = "hh-demo.front-door.session.v1";
 const MIRROR_KEY = "hh-auth.session.v2";
@@ -80,11 +81,17 @@ test("the kept key survives a reload under /till/, and Sign out sends the person
   await standInFrontDoor(page);
   await seedHandoff(page, handoffRecord());
   await page.goto("");
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await closeAccountMenu(page);
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key) !== null, HANDOFF_KEY)).toBe(true);
   await page.reload();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales", { timeout: 15_000 });
+  await closeAccountMenu(page);
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await closeAccountMenu(page);
   await expect(page).toHaveURL((url) => url.pathname === "/");
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key), HANDOFF_KEY)).toBeNull();
 });

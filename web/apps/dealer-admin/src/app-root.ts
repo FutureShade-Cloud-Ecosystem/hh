@@ -20,9 +20,11 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import type { DemoFlow } from "@hardscapehouse/api-client";
@@ -31,6 +33,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
 import { errorWords, staffRefusalWords } from "./dealer-logic.js";
 import { ConfigApi, type CellConfig } from "./config-api.js";
@@ -355,6 +358,10 @@ export class DealerAdminApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // Framed by the Work shell: the host's band is the one band; standalone,
+  // this app renders the board's white band above its app-local header.
+  readonly #framed = framedByShell();
+
   // The theme: light by default, brand (the dark half) one tap away. Held in
   // memory only: nothing here persists.
   #theme: "light" | "dark" = "light";
@@ -395,6 +402,13 @@ export class DealerAdminApp extends HHElement {
 
   // Every control rides data-action names; one host listener reads them, as
   // the till's and Manager Home's do.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -406,8 +420,7 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "open-surface") {
@@ -800,8 +813,27 @@ export class DealerAdminApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+  };
+
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // change, input and keydown do not leave this element's own shadow root,
@@ -856,6 +888,7 @@ export class DealerAdminApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     this.renderRoot.removeEventListener("input", this.#onHostInput);
@@ -865,18 +898,8 @@ export class DealerAdminApp extends HHElement {
     super.disconnectedCallback();
   }
 
-  // The role label is the one header input the position gate keeps out of a
-  // template (only data- and aria- attributes take a bound value), so it is
-  // set on the element here, after each render. The register's role selects
-  // take the same road: the option list is the catalog's names, and the
-  // row's current role is mirrored onto the element here.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
     for (const select of this.renderRoot.querySelectorAll<HTMLSelectElement>('select[data-action="assign-role"]')) {
       const id = select.getAttribute("data-user-id") ?? "";
       const row = this.#staff.rows.find((m) => m.user_id === id);
@@ -993,6 +1016,39 @@ export class DealerAdminApp extends HHElement {
       } else if (el.value !== value) {
         el.value = value;
       }
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when the app stands alone; framed by the Work shell, the host's band is
+    // the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header
+    // used to (theme, switch role, sign out): the actions ride the band's
+    // accountMenu template and their clicks bubble back to #onHostClick.
+    const session = this.#sessions.current;
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = this.#dealerName;
+      band.demo = true;
+      band.user = framedBandAccount(session?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#surface));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.theme = this.#theme;
+      band.accountMenu = html`
+        ${session !== null
+          ? html`<p>Signed in as <strong data-testid="signed-in-role">${this.#roleLabel}</strong></p>`
+          : nothing}
+        ${this.renderThemeControl()}
+        ${session !== null
+          ? html`
+              <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
+              <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
+            `
+          : nothing}
+      `;
     }
   }
 
@@ -2083,11 +2139,10 @@ export class DealerAdminApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
-  // theme a tap moves to.
+  // The theme control of the account area: one button, its value beside the word.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    return html`<button type="button" class="btn btn-secondary" data-action="theme" data-testid="theme-control">${label}</button>`;
   }
 
   // The app's own left list: grouped navigation rail per Change 11 boards.
@@ -2141,7 +2196,7 @@ export class DealerAdminApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo product-name="Admin" product-sub="Dealer Admin · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <main>
         <div class="app-body">
           ${this.renderSurfaceList()}
@@ -2200,7 +2255,7 @@ export class DealerAdminApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo product-name="Admin" product-sub="Dealer Admin · HH Work shell">${this.renderThemeControl()}</hos-app-header>
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <main>
         ${this.renderEntry()}
       </main>

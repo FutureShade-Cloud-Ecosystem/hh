@@ -10,8 +10,14 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 async function brand(page: Page): Promise<void> {
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let i = 0; i < 3; i += 1) {
     if ((await control.textContent())?.includes("Brand")) return;
     await control.click();

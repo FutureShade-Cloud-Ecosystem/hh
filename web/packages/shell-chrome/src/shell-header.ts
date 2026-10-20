@@ -39,6 +39,14 @@ import {
   type SwitcherGroup,
 } from './shell-state.js';
 
+/** The band's two variants: the compact band the fixture pages host serves,
+ * and the board's white band (GAPS-r2 row G1): the GABLE lockup at the left,
+ * the "App > Surface" selector centred, DEMO and Synced chips in the chip
+ * run, the bell with its count, the pin, the account chip. */
+export const SHELL_HEADER_VARIANTS = ['compact', 'band'] as const;
+
+export type ShellHeaderVariant = (typeof SHELL_HEADER_VARIANTS)[number];
+
 /** The badge mark, the measured H geometry the design system's own header
  * carries (its source of truth is the design system's src/header.ts, rows 953
  * and 968): the badge yellow square ground, the mark in the accent ink. */
@@ -63,6 +71,143 @@ const styles = css`
     padding: var(--hh-s-8) var(--hh-s-16);
     background: var(--hh-card);
     border-bottom: 1px solid var(--hh-line);
+  }
+  /* The board's white band (GAPS-r2 row G1): the lockup at the left, the
+   * selector centred by the grid's middle column, the chip run at the right.
+   * The lockup is the dealer's word alone (rows 1520, 1826, 1856: one white
+   * labeled band, never the HH mark beside the dealer name). */
+  .band[data-variant='band'] {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    /* The board's band is 56px tall with its bottom rule inside: 44px controls
+     * and a 5px pad above and below. */
+    min-height: 56px;
+    padding-block: 5px;
+  }
+  .band[data-variant='band'] .brand {
+    justify-self: start;
+  }
+  .band[data-variant='band'] .lockup {
+    color: var(--hh-text);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .band[data-variant='band'] .selector {
+    justify-self: center;
+  }
+  .band[data-variant='band'] .cluster {
+    justify-self: end;
+    margin-left: 0;
+  }
+  .band[data-variant='band'] + .panel {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  /* The board's DEMO marker is one outlined chip, never a second filled strip. */
+  .band[data-variant='band'] .demo {
+    background: transparent;
+    color: var(--hh-accent-text);
+    border: 1px solid currentColor;
+  }
+  /* Phone width: the band never widens the page. The lockup and the chip run
+   * share the first row (the lockup truncates), the selector takes a row of its
+   * own, and the account chip keeps its initial only. */
+  @media (max-width: 640px) {
+    .band[data-variant='band'] {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding-inline: var(--hh-s-12);
+    }
+    .band[data-variant='band'] .brand {
+      min-width: 0;
+      /* A nowrap word's min-content is its whole width, so the box is clamped to its track here: the lockup
+       * gives way (ellipsis) before the run of chips and icons ever overlaps it. */
+      max-width: 100%;
+    }
+    .band[data-variant='band'] .lockup {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .band[data-variant='band'] .selector {
+      grid-row: 2;
+      grid-column: 1 / -1;
+      justify-self: stretch;
+      min-width: 0;
+    }
+    .band[data-variant='band'] .account-word {
+      display: none;
+    }
+  }
+  /* Small phones (390): the first row keeps the board's lockup and the run of icons, so the DEMO marker drops to the
+   * right end of the selector's row (the last row, so it is anchored to the band's bottom) and the selector yields
+   * its width. One DEMO marker still; it never sits over the lockup. */
+  @media (max-width: 440px) {
+    .band[data-variant='band'] {
+      position: relative;
+    }
+    .band[data-variant='band'] .demo {
+      position: absolute;
+      right: var(--hh-s-12);
+      bottom: 16px;
+    }
+    .band[data-variant='band'] .selector {
+      margin-right: 72px;
+    }
+  }
+  /* The account chip's menu: the actions the app-local header used to carry
+   * (Theme, Feedback, Switch role, Sign out) ride the slot, so the band is
+   * the one band. */
+  .account-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: var(--hh-s-16);
+    z-index: var(--hh-z-dropdown);
+    min-width: 220px;
+    max-width: min(320px, calc(100% - var(--hh-s-32)));
+    display: grid;
+    gap: 2px;
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: 12px;
+    box-shadow: var(--hh-elev-2);
+    padding: 6px;
+  }
+  .account-menu p {
+    margin: 0;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    font-size: 13px;
+    color: var(--hh-text-dim);
+  }
+  .account-menu strong {
+    color: var(--hh-text);
+  }
+  /* One face for every action in the menu, whatever class the app gave the
+   * button (btn-secondary, theme-btn): the app's own class sheets do not reach
+   * into the band's shadow. */
+  .account-menu button {
+    width: 100%;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 var(--hh-s-12);
+    background: transparent;
+    color: var(--hh-text);
+    border: 1px solid var(--hh-control-line);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .account-menu button:hover:not(:disabled) {
+    background: var(--hh-row-alt);
+  }
+  .account-menu button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 1px;
   }
   .brand {
     display: flex;
@@ -389,6 +534,7 @@ export class ShellHeader extends HHElement {
     ...HHElement.properties,
     org: { attribute: 'org' },
     demo: { type: Boolean, attribute: 'demo' },
+    assist: { type: Boolean, attribute: 'assist' },
     user: { attribute: 'user' },
     breadcrumb: { attribute: 'breadcrumb' },
     groups: { attribute: false },
@@ -401,6 +547,10 @@ export class ShellHeader extends HHElement {
     stalls: { type: Number, attribute: 'stalls' },
     notifications: { type: Number, attribute: 'notifications' },
     selectorOpen: { type: Boolean, attribute: 'selector-open' },
+    variant: { attribute: 'variant' },
+    accountOpen: { type: Boolean, attribute: 'account-open' },
+    accountMenu: { attribute: false },
+    theme: { attribute: 'theme' },
   };
 
   /** The org's name, beside the mark. Empty renders no word. */
@@ -429,11 +579,31 @@ export class ShellHeader extends HHElement {
   declare notifications: number;
   /** The selector panel. The control toggles it; a shell may set it too. */
   declare selectorOpen: boolean;
+  /** The band's variant: compact (the default, the fixture pages host) or
+   * band (the board's white band: lockup left, selector centred, DEMO and
+   * Synced chips in the run). */
+  declare variant: string;
+  /** The host mounts a TanyAI panel and answers the assist press: only then does the band carry the Ask TanyAI
+   * button, so no band ever shows a button that does nothing. */
+  declare assist: boolean;
+  /** The account chip's menu, open or closed. The chip toggles it in the band
+   * variant; a shell may set it too. */
+  declare accountOpen: boolean;
+  /** The account menu's content: the app hands its own template (the Theme,
+   * Feedback, Switch role and Sign out actions the app-local header used to
+   * carry). It renders inside the band's shadow, and the actions' clicks
+   * bubble back to the app's own delegation, so no listener moves. */
+  declare accountMenu: unknown;
+  /** The theme the band applies to the document root, the sheet's own
+   * contract: light sets data-theme, dark removes it. The app drives it from
+   * its own theme control in the account menu. */
+  declare theme: string;
 
   constructor() {
     super();
     this.org = '';
     this.demo = false;
+    this.assist = false;
     this.user = '';
     this.breadcrumb = '';
     this.groups = [];
@@ -446,6 +616,10 @@ export class ShellHeader extends HHElement {
     this.stalls = 0;
     this.notifications = 0;
     this.selectorOpen = false;
+    this.variant = 'compact';
+    this.accountOpen = false;
+    this.accountMenu = null;
+    this.theme = '';
   }
 
   override connectedCallback(): void {
@@ -471,8 +645,26 @@ export class ShellHeader extends HHElement {
           `expected one of: ${SHELL_SYNC_STATES.join(', ')}`,
       );
     }
-    if (changed.has('selectorOpen')) {
-      if (this.selectorOpen) this.#startOutsideWatch();
+    if (changed.has('variant') && !(SHELL_HEADER_VARIANTS as readonly string[]).includes(this.variant)) {
+      // Same rule as the sync chip: an unknown variant is a defect at the
+      // call site, refused loudly, never a quietly wrong band.
+      throw new Error(
+        `hh-shell-header was given the unknown variant ${JSON.stringify(this.variant)}; ` +
+          `expected one of: ${SHELL_HEADER_VARIANTS.join(', ')}`,
+      );
+    }
+    if (changed.has('theme') && typeof document !== 'undefined') {
+      // The theme is a document concern (the sheet's own attribute contract),
+      // applied here because the app-local header that used to apply it is
+      // gone in the band's world: one band carries it.
+      const root: Document['documentElement'] | undefined = document.documentElement;
+      if (root !== undefined && root !== null) {
+        if (this.theme === 'light') root.setAttribute('data-theme', 'light');
+        else if (this.theme === 'dark') root.removeAttribute('data-theme');
+      }
+    }
+    if (changed.has('selectorOpen') || changed.has('accountOpen')) {
+      if (this.selectorOpen || this.accountOpen) this.#startOutsideWatch();
       else this.#stopOutsideWatch();
     }
   }
@@ -513,13 +705,35 @@ export class ShellHeader extends HHElement {
       return;
     }
     if (action === 'account') {
+      // The band variant's chip opens its own menu (the slot's actions); the
+      // event still rides for a shell that carries a menu of its own.
+      if (this.variant === 'band') {
+        this.accountOpen = !this.accountOpen;
+        if (this.accountOpen) this.#focusAccountMenu();
+      }
       this.#emit('hh-shell-account');
     }
   };
 
+  #focusAccountMenu(): void {
+    void this.updateComplete.then(() => {
+      const first = this.renderRoot.querySelector('.account-menu button');
+      (first instanceof HTMLElement ? first : null)?.focus();
+    });
+  }
+
   /** The menu keyboard, the original launcher's, one keyboard for the house. */
   readonly #onKeyDown = (event: Event): void => {
     const key = (event as KeyboardEvent).key;
+    if (this.accountOpen && key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.accountOpen = false;
+      void this.updateComplete.then(() =>
+        this.renderRoot.querySelector<HTMLButtonElement>('button.account')?.focus(),
+      );
+      return;
+    }
     const path = event.composedPath();
     const onControl = path.some(
       (node) => node instanceof Element && node.hasAttribute?.('data-action') && node.getAttribute('data-action') === 'selector',
@@ -585,6 +799,7 @@ export class ShellHeader extends HHElement {
   readonly #onDocPointerDown = (event: Event): void => {
     if (event.composedPath().includes(this)) return;
     this.selectorOpen = false;
+    this.accountOpen = false;
   };
 
   #startOutsideWatch(): void {
@@ -607,14 +822,21 @@ export class ShellHeader extends HHElement {
     });
     const initials = initialsOf(this.user);
     const bellName = this.notifications > 0 ? `Notifications, ${this.notifications} unread` : 'Notifications';
+    const isBand = this.variant === 'band';
     return html`
-      <header class="band" role="banner">
+      <header class="band" data-variant=${isBand ? 'band' : 'compact'} role="banner">
         <div class="brand">
-          <span class="mark" aria-hidden="true">
-            <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
-          </span>
-          ${this.org !== '' ? html`<span class="org">${this.org}</span>` : nothing}
-          ${this.demo ? html`<span class="demo" role="note">Demo</span>` : nothing}
+          ${isBand
+            ? nothing
+            : html`<span class="mark" aria-hidden="true">
+                <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
+              </span>`}
+          ${this.org !== ''
+            ? isBand
+              ? html`<span class="lockup">${this.org}</span>`
+              : html`<span class="org">${this.org}</span>`
+            : nothing}
+          ${this.demo && !isBand ? html`<span class="demo" role="note">Demo</span>` : nothing}
         </div>
         <button
           class="selector"
@@ -634,16 +856,19 @@ export class ShellHeader extends HHElement {
           </span>
         </button>
         <div class="cluster">
+          ${this.demo && isBand ? html`<span class="demo" role="note">DEMO</span>` : nothing}
           <span class="chip" data-state=${this.syncState} data-kind=${chip.kind} data-alarm=${chip.alarm ? 'true' : 'false'}>
             <span class="dot" aria-hidden="true"></span>
             <span class="word">${chip.label}</span>
             ${chip.note !== '' ? html`<span class="note">${chip.note}</span>` : nothing}
           </span>
-          <button class="icon-btn" type="button" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI">
+          ${this.assist
+            ? html`<button class="icon-btn" type="button" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
-          </button>
+          </button>`
+            : nothing}
           <button class="icon-btn" type="button" data-action="notifications" aria-label=${bellName}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
@@ -665,13 +890,23 @@ export class ShellHeader extends HHElement {
               <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
             </svg>
           </button>
-          <button class="account" type="button" data-action="account" aria-label=${this.user === '' ? 'Account' : `${this.user} account`}>
+          <button
+            class="account"
+            type="button"
+            data-action="account"
+            aria-haspopup=${isBand ? 'menu' : nothing}
+            aria-expanded=${isBand ? (this.accountOpen ? 'true' : 'false') : nothing}
+            aria-label=${this.user === '' ? 'Account' : `${this.user} account`}
+          >
             <span class="avatar" aria-hidden="true" data-initials=${initials}>${initials}</span>
             <span class="account-word">${this.user === '' ? 'Account' : this.user}</span>
           </button>
         </div>
       </header>
       ${this.selectorOpen ? this.#renderPanel() : nothing}
+      ${this.accountOpen && isBand
+        ? html`<div class="account-menu" role="group" aria-label="Account actions">${this.accountMenu ?? nothing}</div>`
+        : nothing}
     `;
   }
 

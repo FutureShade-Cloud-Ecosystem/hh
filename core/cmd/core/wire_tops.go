@@ -153,6 +153,8 @@ type topsSpine struct {
 	posHandler *pos.Handler
 	// posSvc is held so a wiring test can read the role configuration the till's service was built with.
 	posSvc *pos.Service
+	// assistSvc is held so the demo serve can read which limits the wiring gave it (demoRefuseAssistWithoutDemoLimits).
+	assistSvc *assist.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -648,6 +650,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}())
 	// The model layer's deployment configuration: the operator's environment, never a request. A
 	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
+	if cfg.DemoMode {
+		// The demo's route is tanyai-premium by composition, never by a settings row.
+		assistSettings = assist.DemoSettings(assistSettings)
+	}
 	assistModelCfg := assist.ModelConfig{
 		AnthropicKey: redact.NewSecret(assistKey),
 		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
@@ -665,6 +671,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		assistAliases, assistConvs = assistRepo, assistRepo
 	}
 	assistRouter := assist.NewRouter(assistAliases, assistModelCfg, assist.NewStubProvider(), log)
+	if cfg.DemoMode {
+		assistRouter = assistRouter.Only(assist.AliasPremium) // the demo reaches one alias
+	}
 
 	// DIB-66/67: the quote assist surfaces on the builder.
 	quoteAssistSvc := quoteassist.NewService(
@@ -726,6 +735,11 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// Server kept conversations keyed by user and session (the jti), on the append only log.
 		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
+	// A demo copy is pinned to tanyai-premium and answers on the stub, and says so, when the model
+	// cannot be used.
+	if cfg.DemoMode {
+		assistSvc = assistSvc.WithPinnedRoute(assist.AliasPremium).WithStubFallback()
+	}
 	// The quote rails call the provider only through the assist service's meter (reservation,
 	// dealer cap, settlement); bound here because the service is built after them.
 	if quoteRails != nil {
@@ -796,6 +810,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRefunder:  cardRefunder,
 		posHandler:    posHandler,
 		posSvc:        posSvc,
+		assistSvc:     assistSvc,
 	}
 }
 

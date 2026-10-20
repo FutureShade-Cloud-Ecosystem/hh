@@ -498,3 +498,29 @@ test("the public copy lists no admin persona card and refuses to enter one; the 
   assert.equal(partner.session.personaRoles.length, LIVE_ROLES.length);
   assert.ok(partner.session.personaRoles.some((role) => role.flow === "financial-controller"));
 });
+
+test("role picker state on ConsoleSession: heldRoles and chooseRole, with the granted branches held as information only", async () => {
+  const account = new FakeAccountSurface();
+  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+  account.script(ownAnswer("general_manager,sales_manager", "General Manager")(1, w.clock.now() + 900_000));
+  await w.session.submit(EMAIL, FAKE_PASSWORD);
+  assert.deepEqual(
+    w.session.heldRoles.map((r) => r.id),
+    ["general_manager", "sales_manager"],
+  );
+  assert.equal(w.session.chosenRole?.id, "general_manager");
+  w.session.chooseRole("sales_manager");
+  assert.equal(w.session.chosenRole?.id, "sales_manager");
+
+  w.session.setBranches([
+    { id: "b-west", code: "WST", name: "West Yard" },
+    { id: "b-east", code: "EST", name: "East Yard" },
+  ]);
+  assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"]);
+  // No choice machinery is left on the session: the branches are shown, not picked.
+  for (const gone of ["chooseBranch", "focusBranchOption", "chosenBranchIds", "chosenBranches", "isMultiBranchRole", "allBranchesChosen"]) {
+    assert.equal(gone in w.session, false, `${gone} is gone`);
+  }
+  w.session.chooseRole("general_manager");
+  assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"], "a role switch leaves the list as it was");
+});

@@ -463,9 +463,10 @@ func (f *the169Fixture) pickupsKit() harness.Kit {
 			return map[string]any{"id": row["id"], "status": "CONFIRMED", "collected_by": "FX Crew Member", "affirmed": true}
 		},
 		Desk: func(ctx context.Context, row map[string]any) error {
-			// The desk's revoke: the module's own write, stamped.
+			// The desk's revoke: the module's own write, stamped from the table's one
+			// counter (the will_call scope, which the contractor's writes draw too).
 			_, err := f.pool.Exec(ctx, `UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = now(), seq = $2 WHERE id = $1::uuid`,
-				row["id"], drawSeqT(ctx, f.pool, "pickups"))
+				row["id"], drawSeqT(ctx, f.pool, "will_call"))
 			return err
 		},
 	}

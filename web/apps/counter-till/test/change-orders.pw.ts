@@ -17,6 +17,7 @@
 //     the server offers no button on an applied change (next_actions is
 //     empty), which is the re-entrancy ruling made visible.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
 function dollars(cents: number): string {
@@ -388,7 +389,11 @@ test.describe("review screens", () => {
       test(`${theme} ${viewport}: the line edit, then the change request`, async ({ page }) => {
         await page.setViewportSize({ width: viewport, height: viewport === 1440 ? 900 : 844 });
         await signIn(page, "Sales manager");
-        if (theme === "brand") await page.getByTestId("theme-control").click();
+        if (theme === "brand") {
+          await openAccountMenu(page);
+          await page.getByTestId("theme-control").click();
+          await closeAccountMenu(page);
+        }
         const sale = await ringCharcoalSale(page);
         const manager = await bearer(page, "sales-manager");
         const auth = { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" };

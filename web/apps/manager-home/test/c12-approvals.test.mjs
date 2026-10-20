@@ -2,7 +2,7 @@
 // Credit detail card, and Journal entry Not yours to decide detail card.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOARD_APPROVAL_ITEMS, itemsForKind, kindCount } from "../src/approvals-logic.ts";
+import { BOARD_APPROVAL_ITEMS, itemsForKind, kindCount, pendingCounts } from "../src/approvals-logic.ts";
 import { renderApprovals } from "../src/approvals-views.ts";
 
 function flattenTemplate(value) {
@@ -20,19 +20,24 @@ function flattenTemplate(value) {
   return "";
 }
 
-test("WALK-C12 kindCount returns board counts in closed vocabulary order", () => {
-  const rows = [
-    { id: "0e000000-0000-4000-9000-0000000000a1", branch_id: "br-1", policy_type: "MARGIN_BELOW_MINIMUM", detail: "Q-2001", subject_ref: "quote:1", amount_cents: 0, status: "PENDING" },
-  ];
-  assert.equal(kindCount("MARGIN_BELOW_MINIMUM", rows), 2);
-  assert.equal(kindCount("CREDIT_LIMIT_EXCEEDED", rows), 1);
-  assert.equal(kindCount("COD_CONSTRAINT", rows), 0);
-  assert.equal(kindCount("JE_OVER_THRESHOLD", rows), 1);
-  assert.equal(kindCount("FREIGHT_ABOVE_QUOTE", rows), 0);
+test("UX-47 kindCount follows the core's rows, never a constant", () => {
+  const row = (id, policy_type, status) => ({ id, branch_id: "br-1", policy_type, detail: "Quote Q-2001", subject_ref: "quote:1", amount_cents: 0, status });
+  const rows = [row("r1", "MARGIN_BELOW_MINIMUM", "PENDING"), row("r2", "MARGIN_BELOW_MINIMUM", "APPROVED")];
+  assert.equal(kindCount("MARGIN_BELOW_MINIMUM", rows), 1);
+  assert.equal(kindCount("CREDIT_LIMIT_EXCEEDED", rows), 0);
+  assert.equal(kindCount("MARGIN_BELOW_MINIMUM", [], [], { MARGIN_BELOW_MINIMUM: 3 }), 3);
+  const counts = pendingCounts(rows);
+  assert.equal(counts.MARGIN_BELOW_MINIMUM, 1);
+  assert.equal(counts.CREDIT_LIMIT_EXCEEDED, 0);
 });
 
-test("WALK-C12 itemsForKind returns empty for Margin when server sends zero margin rows", () => {
-  assert.deepEqual(itemsForKind("MARGIN_BELOW_MINIMUM", []), []);
+test("UX-47 itemsForKind never invents a request and lists waiting before decided", () => {
+  const row = (id, status) => ({ id, branch_id: "br-1", policy_type: "CREDIT_LIMIT_EXCEEDED", detail: "Order SO-1 over its limit", subject_ref: "order:1", amount_cents: 500, status });
+  assert.deepEqual(itemsForKind("CREDIT_LIMIT_EXCEEDED", []), []);
+  const items = itemsForKind("CREDIT_LIMIT_EXCEEDED", [row("d1", "APPROVED"), row("p1", "PENDING")]);
+  assert.deepEqual(items.map((i) => [i.id, i.status]), [["p1", "PENDING"], ["d1", "APPROVED"]]);
+  assert.equal(items[0].title, "SO-1");
+  assert.equal(items[0].amountLabel, "at stake");
 });
 
 test("WALK-C12 renderApprovals renders Margin, Credit, and Journal entry detail cards", () => {
@@ -49,19 +54,20 @@ test("WALK-C12 renderApprovals renders Margin, Credit, and Journal entry detail 
       busyId: "",
     }),
   );
-  assert.match(marginMarkup, /Q-2041 · Seat wall block, tan blend/);
+  assert.match(marginMarkup, /Q-2001 · Seat wall block, tan blend/);
   assert.match(marginMarkup, /18\.4%/);
   assert.match(marginMarkup, /22\.0%/);
   assert.match(marginMarkup, /3\.6 points/);
   assert.match(marginMarkup, /\$35\.59 on this line/);
   assert.match(marginMarkup, /Approve at a different price/);
-  assert.match(marginMarkup, /Reason, needed to decline/);
+  assert.doesNotMatch(marginMarkup, /Jordan Lee|Elena Ruiz|Priya Shah|Morgan Ellis|Decline/);
+  assert.match(marginMarkup, /Reason, needed to reject/);
 
   const creditMarkup = flattenTemplate(
     renderApprovals({
       phase: "ready",
       kind: "CREDIT_LIMIT_EXCEEDED",
-      rows: [],
+      rows: [{ id: "0e000000-0000-4000-9000-0000000000c1", branch_id: "br-1", policy_type: "CREDIT_LIMIT_EXCEEDED", detail: "x", subject_ref: "order:1", amount_cents: 0, status: "PENDING" }],
       error: "",
       refusal: "",
       busyId: "",
@@ -77,7 +83,7 @@ test("WALK-C12 renderApprovals renders Margin, Credit, and Journal entry detail 
     renderApprovals({
       phase: "ready",
       kind: "JE_OVER_THRESHOLD",
-      rows: [],
+      rows: [{ id: "0e000000-0000-4000-9000-0000000000j1", branch_id: "br-1", policy_type: "JE_OVER_THRESHOLD", detail: "x", subject_ref: "je:1", amount_cents: 0, status: "PENDING" }],
       error: "",
       refusal: "",
       busyId: "",
@@ -87,7 +93,7 @@ test("WALK-C12 renderApprovals renders Margin, Credit, and Journal entry detail 
   assert.match(jeMarkup, /5100 Cost of goods sold/);
   assert.match(jeMarkup, /5400 Freight in/);
   assert.match(jeMarkup, /DECIDED BY THE CONTROLLER/);
-  assert.match(jeMarkup, /Message Morgan Ellis/);
+  assert.match(jeMarkup, /Message the financial controller/);
   assert.match(jeMarkup, /Open the journal entry/);
   assert.equal(BOARD_APPROVAL_ITEMS.length, 4);
 });

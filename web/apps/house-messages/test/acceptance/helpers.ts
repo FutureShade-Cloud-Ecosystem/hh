@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 export const BASE = process.env.MSG_IMAGE_URL ?? "http://127.0.0.1:5801";
 
-export type Flow = "sales" | "yard-manager" | "payables-receivables";
+export type Flow = "sales" | "yard-manager" | "yard-team" | "payables-receivables";
 
 export interface Minted {
   token: string;

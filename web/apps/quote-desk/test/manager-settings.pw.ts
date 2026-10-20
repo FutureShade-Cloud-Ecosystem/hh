@@ -28,15 +28,15 @@ test("the Sales manager reaches the margin policy and reads every settings box t
   expect(text).not.toMatch(/not readable|Forbidden|could not be read/i);
 });
 
-test("the Demo pill sits in the logo's row at 1440 and does not wrap under it", async ({ page }) => {
+test("the Demo chip sits in the band's row at 1440 and does not wrap under the lockup", async ({ page }) => {
   await signIn(page, "Sales manager");
-  const rows = await page.locator("hos-app-header").evaluate((header) => {
+  const rows = await page.locator("hh-shell-header").evaluate((header) => {
     const root = header.shadowRoot as ShadowRoot;
-    const brand = root.querySelector(".brand")?.getBoundingClientRect();
-    const banner = root.querySelector(".demo-banner")?.getBoundingClientRect();
-    return brand === undefined || banner === undefined ? null : { brandTop: brand.top, brandBottom: brand.bottom, bannerTop: banner.top, bannerBottom: banner.bottom };
+    const lockup = root.querySelector(".lockup")?.getBoundingClientRect();
+    const demo = root.querySelector(".demo")?.getBoundingClientRect();
+    return lockup === undefined || demo === undefined ? null : { lockupTop: lockup.top, lockupBottom: lockup.bottom, demoTop: demo.top, demoBottom: demo.bottom };
   });
   expect(rows).not.toBeNull();
-  // The pill starts above the logo's bottom edge: the same row, not a second one.
-  expect(rows!.bannerTop).toBeLessThan(rows!.brandBottom);
+  // The chip starts above the lockup's bottom edge: the same row, not a second one.
+  expect(rows!.demoTop).toBeLessThan(rows!.lockupBottom);
 });

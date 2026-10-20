@@ -67,10 +67,48 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
-// willCallSyncScope is the will_call scope's own sequence counter. The
-// two board scopes over delivery_stops draw from the stops stream (the
-// shared-stream note above); will_call has its table to itself.
+// willCallSyncScope is the one sequence counter of the will_call_pickups
+// table. Every writer draws from it: the staff REST writes, the staff
+// sync writes and the contractor's pickups sync writes (UX-72). Both
+// device feeds read the table by seq > since, so two counters over one
+// table cross and a feed skips the rows the lower counter hands out
+// after the higher one. The two board scopes over delivery_stops draw
+// from the stops stream (the shared-stream note above).
 const willCallSyncScope = "will_call"
+
+// WillCallSeqScope is the scope every live writer of will_call_pickups draws its seq from, exported so
+// the demo seq repair names the same stream by this constant and not by a second literal.
+const WillCallSeqScope = willCallSyncScope
+
+// legacyPickupsSeqScope is the counter the contractor's pickups writes
+// drew from before there was one counter. It is read, never advanced:
+// rows it numbered sit in the table, and the will_call counter is lifted
+// above it on its next draw so no new row can land below one a device
+// has already consumed. The row is frozen once the lift has happened.
+const legacyPickupsSeqScope = "pickups"
+
+// Lock order for will_call_pickups, the same for every writer: the pickup
+// row's lock first (SELECT ... FOR UPDATE), then this draw. A writer that
+// drew first and let its UPDATE take the row would cycle against one that
+// locks the row and then draws. A mint has no row to lock yet, so it draws
+// first, which cannot cycle: no other writer can name a row not yet inserted.
+//
+// willCallSeqUpsert, a format over the two scope names, draws the next
+// will_call seq. Because scope_sequences holds the last value issued
+// (the upsert increments and returns next_value), the draw lifts above
+// the will_call counter, the legacy pickups counter, and the highest
+// seq on any row in will_call_pickups, then adds 1 so the returned value
+// is strictly above both counters and every row. No migration is needed:
+// the lift happens inside the draw, under the will_call row's lock, and
+// the legacy row never moves again.
+const willCallSeqUpsert = `INSERT INTO scope_sequences (scope, next_value)
+	VALUES ('%[1]s', GREATEST(
+		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0),
+		COALESCE((SELECT MAX(seq) FROM will_call_pickups), 0)) + 1)
+	ON CONFLICT (scope) DO UPDATE SET next_value = GREATEST(scope_sequences.next_value,
+		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0),
+		COALESCE((SELECT MAX(seq) FROM will_call_pickups), 0)) + 1
+	RETURNING next_value`
 
 // - loads -
 
@@ -1028,6 +1066,17 @@ func (s *WillCallSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, 
 		return sync.RowState{}, fmt.Errorf("dispatch: begin will_call sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The one lock order: the row lock, then the draw (as Write does).
+	var locked int
+	if err := tx.QueryRow(ctx, `
+		SELECT 1 FROM will_call_pickups
+		WHERE id = $1::uuid AND deleted_at IS NULL
+		  AND branch_id IN (SELECT id FROM locations WHERE org_id = $2::uuid) FOR UPDATE`,
+		id, f.OrgID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	} else if err != nil {
+		return sync.RowState{}, fmt.Errorf("dispatch: lock pickup %q for will_call sync delete: %w", id, err)
+	}
 	seq, err := allocateSyncSeqTx(ctx, tx, willCallSyncScope)
 	if err != nil {
 		return sync.RowState{}, err

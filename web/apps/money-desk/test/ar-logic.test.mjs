@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -22,19 +23,37 @@ test("cents read as dollars, and a missing figure is never a plausible zero", ()
   assert.equal(centsToField(5), "0.05");
 });
 
-test("the four cards carry the words the landing draws", () => {
-  assert.equal(cardTitle("ESCALATION"), "Escalation");
-  assert.equal(cardTitle("LATE"), "Late");
-  assert.equal(cardTitle("WARN"), "Overdue");
-  assert.equal(cardTitle("CURRENT"), "Current");
-  assert.equal(cardRange({ bucket: "ESCALATION", from_days: 90 }), "90 days and over");
-  assert.equal(cardRange({ bucket: "LATE", from_days: 61, to_days: 89 }), "61 to 89 days");
-  assert.equal(cardRange({ bucket: "WARN", from_days: 1, to_days: 60 }), "1 to 60 days");
-  assert.equal(cardRange({ bucket: "CURRENT", from_days: 0 }), "Not yet due");
+test("each card is titled by the days its tier covers, from the days the core sends", () => {
+  assert.equal(cardTitleFor({ bucket: "ESCALATION", from_days: 90 }), "90 days and over");
+  assert.equal(cardTitleFor({ bucket: "LATE", from_days: 61, to_days: 89 }), "61 to 89 days");
+  assert.equal(cardTitleFor({ bucket: "WARN", from_days: 1, to_days: 60 }), "1 to 60 days");
+  assert.equal(cardTitleFor({ bucket: "CURRENT", from_days: 0 }), "Current");
+  // A dealer who retunes the tiers sees their own ranges.
+  assert.equal(cardTitleFor({ bucket: "ESCALATION", from_days: 75 }), "75 days and over");
+  assert.equal(cardTitleFor({ bucket: "LATE", from_days: 31, to_days: 74 }), "31 to 74 days");
+  assert.equal(cardTitleFor({ bucket: "WARN", from_days: 1, to_days: 30 }), "1 to 30 days");
+  assert.equal(cardCovers({ bucket: "WARN", from_days: 1, to_days: 30 }), "Past due");
+  assert.equal(cardCovers({ bucket: "CURRENT", from_days: 0 }), "Not yet due");
+});
+
+test("every day lands in exactly one register band, in one vocabulary, and the boundaries meet", () => {
+  const at = (n) => bucketLabelFor(n);
+  assert.deepEqual(at(0), { label: "Current", key: "CURRENT" });
+  assert.deepEqual(at(30), { label: "1 to 30 days", key: "1_30" });
+  assert.deepEqual(at(31), { label: "31 to 60 days", key: "31_60" });
+  assert.deepEqual(at(60), { label: "31 to 60 days", key: "31_60" });
+  assert.deepEqual(at(61), { label: "61 to 90 days", key: "61_90" });
+  assert.deepEqual(at(90), { label: "61 to 90 days", key: "61_90" });
+  assert.deepEqual(at(91), { label: "Over 90 days", key: "90_PLUS" });
+  // The core's key names the band; the core's older label never reaches the screen.
+  assert.equal(bucketWord("90_PLUS", "91 and over"), "Over 90 days");
+  assert.equal(bucketWord("1_30", "1 to 30"), "1 to 30 days");
+  assert.equal(bucketWord(undefined, "61 to 90"), "61 to 90 days");
+  assert.equal(bucketWord(undefined, "91 and over"), "Over 90 days");
 });
 
 test("a status reads as a word, and a tone that never carries the meaning alone", () => {
-  assert.equal(statusWord("OVERDUE"), "Overdue");
+  assert.equal(statusWord("OVERDUE"), "Past due");
   assert.equal(statusWord("DUE_SOON"), "Due soon");
   assert.equal(statusWord("CREDIT_HOLD"), "Credit hold");
   assert.equal(statusTone("OVERDUE"), "stop");
@@ -130,13 +149,13 @@ test("a day reads as a count from the server's own day, never a calendar literal
 
 test("a register row's marks: the day count is the status word, a promise or a dispute rides as a second mark", () => {
   const base = { status: "OVERDUE", days_overdue: 122, disputed: false };
-  assert.deepEqual(rowMarks(base), [{ word: "122d overdue", tone: "stop", dashed: false }]);
+  assert.deepEqual(rowMarks(base), [{ word: "122d past due", tone: "stop", dashed: false }]);
   assert.deepEqual(rowMarks({ ...base, promised_date: "2030-01-01" }), [
-    { word: "122d overdue", tone: "stop", dashed: false },
+    { word: "122d past due", tone: "stop", dashed: false },
     { word: "promise open", tone: "watch", dashed: true },
   ]);
   assert.deepEqual(rowMarks({ ...base, status: "DISPUTED", disputed: true }), [
-    { word: "122d overdue", tone: "stop", dashed: false },
+    { word: "122d past due", tone: "stop", dashed: false },
     { word: "disputed", tone: "info", dashed: false },
   ]);
   assert.deepEqual(rowMarks({ status: "DUE_SOON", days_overdue: 0, disputed: false }), [{ word: "due soon", tone: "watch", dashed: false }]);
@@ -247,4 +266,49 @@ test("an overpayment banner comes from the server preview, never browser money m
   assert.equal(overpaymentPreview({ unapplied_cents: 1 }, ""), true);
   assert.equal(overpaymentPreview({ unapplied_cents: 0 }, ""), false);
   assert.equal(overpaymentPreview(null, "The server could not be reached"), false);
+});
+
+test("a one day range says 1 day, and a card whose tier range runs backwards is not shown", () => {
+  // warn = 1: the first card covers one day.
+  assert.equal(cardTitleFor({ bucket: "WARN", from_days: 1, to_days: 1 }), "1 day");
+  assert.equal(cardTitleFor({ bucket: "LATE", from_days: 5, to_days: 5 }), "5 days");
+  // escalate = warn + 1: the middle card would read 61 to 60 and can hold nothing.
+  assert.equal(cardShown({ bucket: "LATE", from_days: 61, to_days: 60 }), false);
+  assert.equal(cardShown({ bucket: "LATE", from_days: 61, to_days: 89 }), true);
+  assert.equal(cardShown({ bucket: "ESCALATION", from_days: 61 }), true);
+  assert.equal(cardShown({ bucket: "CURRENT", from_days: 0 }), true);
+  assert.equal(cardShown({ bucket: "WARN", from_days: 1, to_days: 1 }), true);
+});
+
+test("the statement strip names its bands in the screen's one vocabulary; its last band is over 60, as the core sums it", () => {
+  assert.deepEqual(STATEMENT_STRIP_LABELS, ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"]);
+});
+
+// A Pacific dealer at 21:30 on the second of a month: already the third in UTC and in Toronto. The
+// instant is built from numbers so no committed line reads as a calendar date.
+const PACIFIC_EVENING = new Date(Date.UTC(2026, 6, 3, 4, 30));
+
+test("a timestamp made this Pacific evening reads today, never tomorrow, in any machine zone", () => {
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  try {
+    const asOf = houseDay(PACIFIC_EVENING);
+    assert.equal(asOf, "2026-07-02");
+    assert.equal(relativeDay(PACIFIC_EVENING.toISOString(), asOf), "today");
+    assert.equal(relativeDay("2026-07-01T20:00:00-07:00", asOf), "1 day ago");
+    assert.equal(relativeDay("2026-07-02", asOf), "today");
+  } finally {
+    resetHouseZone();
+  }
+});
+
+test("the money desk surface config read serves the dealer's zone for the day words", async () => {
+  const { ApiClient } = await import("@hardscapehouse/api-client");
+  const { GlApi } = await import("../src/gl/gl-api.ts");
+  const fetch = async () => new Response(JSON.stringify({ surface_id: "money-desk", business_zone: "America/Los_Angeles" }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    await new GlApi(new ApiClient({ baseUrl: "http://core.test", fetch })).legacyImportSource();
+    assert.equal(houseDay(PACIFIC_EVENING), "2026-07-02");
+  } finally {
+    resetHouseZone();
+  }
 });
