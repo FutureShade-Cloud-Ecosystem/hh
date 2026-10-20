@@ -8,7 +8,7 @@
 // position the gate allows); there is no text input in this app at all (the card field is the processor's frame).
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantBillingSummary, TenantInvoice, TenantInvoiceDetail, TenantInvoiceLine, TenantPayment, TenantPaymentMethod } from "@hardscapehouse/api-client";
-import { money, calendarDay, houseDay, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
+import { money, calendarDay, houseMoment, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
 import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, isPayable, payableCents, type MethodKind } from "./pay-core.js";
 import { SANDBOX_NOTE } from "./hosted-field.js";
 
@@ -168,7 +168,7 @@ export function invoiceDetailScreen(state: ViewState): TemplateResult {
       <h3>Payments on this invoice</h3>
       ${history.length === 0
         ? html`<p class="quiet" data-testid="detail-history-empty">No payments yet.</p>`
-        : html`<ul class="lines" data-testid="detail-history">${history.map((p) => html`<li class="line"><span class="line-desc">${tender(p.method ?? "")}</span><span class="mono line-qty">${houseDay(p.received_at)}</span><span class="mono line-total">${money(p.amount_cents)}</span></li>`)}</ul>`}
+        : html`<ul class="lines" data-testid="detail-history">${history.map((p) => html`<li class="line"><span class="line-desc">${tender(p.method ?? "")}</span><span class="mono line-qty">${houseMoment(p.received_at)}</span><span class="mono line-total">${money(p.amount_cents)}</span></li>`)}</ul>`}
       ${state.canPay && payNowCents > 0 ? html`<button type="button" class="btn btn-primary detail-pay" data-action="pay-this" data-id="${d.id}" data-testid="pay-this">Pay ${money(payNowCents)}</button>` : nothing}
     </section>`;
 }
@@ -200,7 +200,7 @@ function sheetBody(state: ViewState, sheet: Sheet): TemplateResult {
     return html`<div class="receipt" data-testid="receipt" role="status">
       <p class="receipt-head">Payment received</p>
       <p class="big mono" data-testid="receipt-amount">${money(r.amount_cents)}</p>
-      <p class="quiet"><span class="mono" data-testid="receipt-no">${r.payment_no}</span> · ${tender(r.method)} · ${houseDay(r.received_at)}</p>
+      <p class="quiet"><span class="mono" data-testid="receipt-no">${r.payment_no}</span> · ${tender(r.method)} · ${houseMoment(r.received_at)}</p>
       ${sheet.differs ? html`<p class="notice-line" data-testid="receipt-differs">The dealer's books settled ${money(r.amount_cents)}, not the ${money(sheet.expectedCents)} shown before paying. The receipt above is the figure that counts.</p>` : nothing}
       <button type="button" class="btn btn-primary" data-action="done" data-testid="receipt-done">Done</button>
     </div>`;
@@ -299,7 +299,7 @@ export function statementsScreen(state: ViewState): TemplateResult {
     <ul class="payments" data-testid="payment-rows">
       ${state.payments.map((p) => html`<li class="pay-row" data-testid="payment-row">
         <div class="pay-top"><span class="mono">${p.payment_no}</span>${statusChip("payment", p.status)}<span class="pay-amount mono">${money(p.amount_cents)}</span></div>
-        <div class="quiet">${tender(p.method)} · ${houseDay(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
+        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
       </li>`)}
     </ul>`;
 }

@@ -1,6 +1,7 @@
 // The words a contractor reads (UX-37, glossary): an unknown figure says what is missing, one word for
 // the day asked for, "your dealer" never dealer internals. Pure functions and the order row's words.
 import { test } from "node:test";
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import assert from "node:assert/strict";
 import { priceWords, qtyWords } from "../src/figures.ts";
 import { orderRowWords } from "../src/views.ts";
@@ -38,7 +39,15 @@ const plain = (t) => flat(t).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
 
 test("dayWords reads a bare day, a moment in the dealer's zone, and Not set for anything unreadable", () => {
   assert.equal(dayWords("2042-05-09"), "May 9, 2042");
-  assert.equal(dayWords("2042-05-09T02:00:00Z"), "May 8, 2042");
+  // 05:00 UTC is the 9th in Toronto (the unserved default) and the 8th in Los Angeles: the two zones differ.
+  try {
+    resetHouseZone();
+    assert.equal(dayWords("2042-05-09T05:00:00Z"), "May 9, 2042");
+    serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+    assert.equal(dayWords("2042-05-09T05:00:00Z"), "May 8, 2042");
+  } finally {
+    resetHouseZone();
+  }
   assert.equal(dayWords(null), "Not set");
   assert.equal(dayWords(undefined), "Not set");
   assert.equal(dayWords("soon"), "Not set");

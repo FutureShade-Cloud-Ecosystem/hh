@@ -605,6 +605,8 @@ test.describe("phone", () => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
     await expect(page.getByTestId("detail-history")).toContainText(pacificDay);
+    // A payment is a moment, so it reads the day and the clock time ("Mar 1, 2026, 8:15 AM"), not the day alone.
+    await expect(page.getByTestId("detail-history")).toContainText(/\d{4}, \d{1,2}:\d{2} [AP]M/);
   });
 
   test("nothing a person typed, was given or paid with rests in web storage, the address bar or the console", async ({ page }) => {
