@@ -184,9 +184,9 @@ var union15ForbiddenWholeValues = []string{
 }
 
 // findForbiddenDecodedJSON walks the decoded JSON in raw and returns every
-// match of forbiddenKeys (as an object key), forbiddenWholeValues (as a whole
-// number or whole string value), and (when forbidNull is true) "null" for any
-// JSON null value.
+// match of forbiddenKeys (contained case-insensitively in any object key),
+// forbiddenWholeValues (as a whole number or whole string value), and (when
+// forbidNull is true) "null" for any JSON null value.
 func findForbiddenDecodedJSON(raw []byte, forbiddenKeys, forbiddenWholeValues []string, forbidNull bool) ([]string, error) {
 	w, err := walkDecodedJSON(raw)
 	if err != nil {
@@ -194,8 +194,9 @@ func findForbiddenDecodedJSON(raw []byte, forbiddenKeys, forbiddenWholeValues []
 	}
 	var found []string
 	for _, forbidden := range forbiddenKeys {
+		lowerForbidden := strings.ToLower(forbidden)
 		for _, k := range w.Keys {
-			if strings.EqualFold(k, forbidden) {
+			if strings.Contains(strings.ToLower(k), lowerForbidden) {
 				found = append(found, k)
 			}
 		}
@@ -461,8 +462,28 @@ func TestFreightRaise_DriverCardScanTeeth(t *testing.T) {
 			want: "proposed_freight_cents",
 		},
 		{
+			name: "carries_money_total_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","money_total":0}`,
+			want: "money_total",
+		},
+		{
+			name: "carries_proposed_freight_cents_total_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","proposed_freight_cents_total":0}`,
+			want: "proposed_freight_cents_total",
+		},
+		{
+			name: "carries_nested_key_in_array_object",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","items":[{"delta_cents":0}]}`,
+			want: "delta_cents",
+		},
+		{
 			name: "carries_whole_8000_number",
 			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","loads":8000}`,
+			want: "8000",
+		},
+		{
+			name: "carries_float_8000_0_number",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","loads":8000.0}`,
 			want: "8000",
 		},
 		{
@@ -504,8 +525,9 @@ func TestFreightRaise_DriverCardScanTeeth(t *testing.T) {
 			if !spy.failed {
 				t.Fatalf("expected assertFreightRaiseDriverCardJSON to fail on %s (%s), but it passed", tc.name, tc.body)
 			}
-			if !strings.Contains(spy.msgs[0], tc.want) {
-				t.Fatalf("expected failure message %q to name %q", spy.msgs[0], tc.want)
+			wantNamed := fmt.Sprintf("carries %q", tc.want)
+			if !strings.Contains(spy.msgs[0], wantNamed) {
+				t.Fatalf("expected failure message %q to contain %q", spy.msgs[0], wantNamed)
 			}
 		})
 	}
@@ -548,6 +570,21 @@ func TestUnion15_DriverBoardScanTeeth(t *testing.T) {
 			want: "freight_cents",
 		},
 		{
+			name: "carries_freight_cents_total_key",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","freight_cents_total":0}]}`,
+			want: "freight_cents_total",
+		},
+		{
+			name: "carries_load_value_cents_key",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","load_value_cents":0}]}`,
+			want: "load_value_cents",
+		},
+		{
+			name: "carries_nested_key_in_array_object",
+			body: `{"value_visible":false,"runs":[{"id":"r-1","stops":[{"id":"s-1","value_cents":0}]}]}`,
+			want: "value_cents",
+		},
+		{
 			name: "carries_whole_353125_number",
 			body: `{"value_visible":false,"unassigned":[{"id":"s-1","stop_no":353125}]}`,
 			want: "353125",
@@ -560,6 +597,11 @@ func TestUnion15_DriverBoardScanTeeth(t *testing.T) {
 		{
 			name: "carries_whole_9500_number",
 			body: `{"value_visible":false,"unassigned":[{"id":"s-1","stop_no":9500}]}`,
+			want: "9500",
+		},
+		{
+			name: "carries_float_9500_0_number",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","stop_no":9500.0}]}`,
 			want: "9500",
 		},
 		{
@@ -576,8 +618,9 @@ func TestUnion15_DriverBoardScanTeeth(t *testing.T) {
 			if !spy.failed {
 				t.Fatalf("expected assertUnion15DriverBoardJSON to fail on %s (%s), but it passed", tc.name, tc.body)
 			}
-			if !strings.Contains(spy.msgs[0], tc.want) {
-				t.Fatalf("expected failure message %q to name %q", spy.msgs[0], tc.want)
+			wantNamed := fmt.Sprintf("carries %q", tc.want)
+			if !strings.Contains(spy.msgs[0], wantNamed) {
+				t.Fatalf("expected failure message %q to contain %q", spy.msgs[0], wantNamed)
 			}
 		})
 	}
