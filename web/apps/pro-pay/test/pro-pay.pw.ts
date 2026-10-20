@@ -157,6 +157,12 @@ test.describe("phone", () => {
     await expect.poll(() => open.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
   });
 
+  test("the invoice number is underlined so it reads as the way into the statement", async ({ page }) => {
+    await signIn(page, "ap");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).textDecorationLine)).toContain("underline");
+  });
+
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();

@@ -38,7 +38,7 @@ export const screenStyles = css`
   .inv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: var(--hh-s-4); padding: 0; min-height: var(--hh-h-input); border: 0; background: transparent; color: inherit; text-align: left; font: inherit; }
   .inv-top { display: flex; align-items: center; gap: var(--hh-s-8); flex-wrap: wrap; }
   .inv-no { font-weight: 600; }
-  .inv-open { min-height: var(--hh-h-input); min-width: var(--hh-h-input); margin: -10px 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; display: inline-flex; align-items: center; cursor: pointer; }
+  .inv-open { min-height: var(--hh-h-input); min-width: var(--hh-h-input); margin: -10px 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; display: inline-flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   .inv-sub { position: relative; font-size: 0.8125rem; color: var(--hh-text-dim); }
   .inv-sub.late { color: var(--hh-danger); }
   .inv-amount { display: flex; flex-direction: column; align-items: flex-end; font-weight: 600; }
