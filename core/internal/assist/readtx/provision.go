@@ -9,8 +9,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The two deployment passwords, set by the provisioning oneshot.
@@ -53,11 +55,45 @@ func scramVerifier(pw Secret, salt []byte) (string, error) {
 	return fmt.Sprintf("SCRAM-SHA-256$%d:%s$%s:%s", scramIter, b.EncodeToString(salt), b.EncodeToString(stored[:]), b.EncodeToString(server)), nil
 }
 
+// quietStatementLogging turns statement logging off for the current transaction,
+// so that a server set to log_statement = all or mod does not write the bind
+// parameters of the statements that follow (a SCRAM verifier, the claims key) into
+// its log. Both settings are superuser only: where the role lacks the privilege
+// the attempt is rolled back to a savepoint, the transaction carries on, and the
+// answer is false so the oneshot can say so. Any other failure is an error.
+func quietStatementLogging(ctx context.Context, tx pgx.Tx) (bool, error) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return false, errors.New("readtx: cannot open a savepoint")
+	}
+	for _, stmt := range []string{`SET LOCAL log_statement = 'none'`, `SET LOCAL log_min_duration_statement = -1`} {
+		if _, err := sp.Exec(ctx, stmt); err != nil {
+			_ = sp.Rollback(ctx)
+			var pg *pgconn.PgError
+			if errors.As(err, &pg) && pg.Code == "42501" {
+				return false, nil
+			}
+			return false, fmt.Errorf("readtx: cannot adjust statement logging%s", sqlState(err))
+		}
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return false, errors.New("readtx: cannot release the savepoint")
+	}
+	return true, nil
+}
+
+func warnLogging(warn io.Writer, quiet bool) {
+	if !quiet && warn != nil {
+		fmt.Fprintln(warn, "warning: this role may not silence statement logging; if the server logs statements (log_statement = all or mod) the values sent next can appear in its log")
+	}
+}
+
 // ProvisionLogins sets the staff login's password, and the contractor login's when
 // a password is given, in one transaction on conn (the migrate role's connection).
 // The role names come from the connected database. Nothing is printed; the
-// returned names are role names only.
-func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret) ([]string, error) {
+// returned names are role names only. warn receives one line where the role may
+// not silence statement logging (see quietStatementLogging).
+func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret, warn io.Writer) ([]string, error) {
 	if staff.IsEmpty() {
 		return nil, errors.New("readtx: " + EnvReaderPassword + " is not set")
 	}
@@ -79,6 +115,11 @@ func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret) ([]
 		return nil, errors.New("readtx: cannot begin")
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	quiet, err := quietStatementLogging(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	warnLogging(warn, quiet)
 	var done []string
 	for _, j := range jobs {
 		salt := make([]byte, 16)
@@ -112,7 +153,7 @@ func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret) ([]
 // key, and keeps only the two most recent keys. Writing the key that is already
 // current changes nothing. It returns the key id, which is not a secret: it is in
 // every signed claim.
-func ProvisionClaimsKey(ctx context.Context, conn *pgx.Conn, key Secret) (int32, error) {
+func ProvisionClaimsKey(ctx context.Context, conn *pgx.Conn, key Secret, warn io.Writer) (int32, error) {
 	if len(key.Reveal()) < minKeyLen {
 		return 0, errors.New("readtx: the claims signing key is missing or shorter than 32 characters")
 	}
@@ -127,6 +168,11 @@ func ProvisionClaimsKey(ctx context.Context, conn *pgx.Conn, key Secret) (int32,
 		return 0, errors.New("readtx: cannot begin")
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	quiet, err := quietStatementLogging(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	warnLogging(warn, quiet)
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+pgx.Identifier{owner}.Sanitize()); err != nil {
 		return 0, fmt.Errorf("readtx: cannot become the claims owner%s", sqlState(err))
 	}

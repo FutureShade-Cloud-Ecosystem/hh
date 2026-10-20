@@ -33,7 +33,7 @@ func assistLoginsRole(getenv func(string) string, out io.Writer) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	names, err := readtx.ProvisionLogins(context.Background(), conn, staff, pro)
+	names, err := readtx.ProvisionLogins(context.Background(), conn, staff, pro, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("assist-logins: %w", err)
 	}
@@ -53,7 +53,7 @@ func assistClaimsKeyRole(getenv func(string) string, out io.Writer) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	id, err := readtx.ProvisionClaimsKey(context.Background(), conn, key)
+	id, err := readtx.ProvisionClaimsKey(context.Background(), conn, key, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("assist-claims-key: %w", err)
 	}
