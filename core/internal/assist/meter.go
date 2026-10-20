@@ -391,7 +391,21 @@ func (s *Service) SweepReservations(ctx context.Context, grace time.Duration) (i
 	if s.spend == nil {
 		return 0, nil
 	}
-	open, err := s.spend.Unsettled(ctx, s.now().Add(-grace))
+	return SweepReservations(ctx, s.spend, s.now(), grace)
+}
+
+// SpendSweepJobName is the name the sweep is registered and scheduled under in `core jobs`.
+const SpendSweepJobName = "assist.spend_reservation_sweep"
+
+// ReservationGrace is how long a reservation may stay open before the sweep voids it: longer than
+// any provider call can run, so a live call is never voided under its own settlement.
+const ReservationGrace = 15 * time.Minute
+
+// SweepReservations is the sweep over a store, for the worker's job (which holds a store, not a
+// service). It voids each reservation older than the grace with neither a settlement nor a void.
+// It settles nothing: what the provider billed is not provable from here.
+func SweepReservations(ctx context.Context, store SpendStore, now time.Time, grace time.Duration) (int, error) {
+	open, err := store.Unsettled(ctx, now.Add(-grace))
 	if err != nil {
 		return 0, err
 	}
@@ -399,7 +413,7 @@ func (s *Service) SweepReservations(ctx context.Context, grace time.Duration) (i
 	for _, r := range open {
 		v := r
 		v.Kind, v.TokensIn, v.TokensOut, v.TokensCached, v.CostMicroCents = SpendVoid, 0, 0, 0, 0
-		if err := s.spend.Void(ctx, v); err != nil {
+		if err := store.Void(ctx, v); err != nil {
 			return n, err
 		}
 		n++
