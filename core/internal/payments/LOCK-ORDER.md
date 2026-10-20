@@ -239,7 +239,7 @@ prove it where a statement returns it). INSERTs keep their explicit draws (a new
 | delivery_runs | `AssignRunCrew`, `UpdateRunStatus`, the sync `Delete` | `..._AssignRunCrewBesideARunWrite` |
 | count_sheets | freeze, save counts, approve, cancel, mark posted | `..._CancelSheetBesideASheetWrite` (invcount) |
 | purchasing_pos | `bumpPOHeaderSeq`, `ApplyWarrantyCredit`, `SetPOStatus`, `UpdateExpectedAt`, `UpdateDeliveryMethod` | `..._PurchasingPOWriterBesideAPOWrite` |
-| vendors | `UpdateVendorMaster` | `..._VendorMasterWriterBesideAVendorWrite` |
+| vendors | `UpdateVendorMaster` (round 3c dropped its draw; round 3e made vendors a counter first table, so it now takes the counter first and the 3c leg is replaced by `..._CounterFirst_VendorEditBesideALoadBatch`) | see "Counter first tables" |
 | permission_approval_requests | `SaveDecision`, `SaveDecisionTx`, `ConsumeApprovedFloorTx` | `..._ApprovalDecideBesideARequestWrite` (sync package) |
 | portal_users | `UpdateRole`, `UpdateStatus`, plain and under the last admin guard | `..._TeamMemberWritersBesideAUserWrite` |
 | quotes | the customer side `transition` (Reject, Accept paths) | `..._QuoteTransitionBesideAQuoteWrite` (also proves the quote's seq moved) |

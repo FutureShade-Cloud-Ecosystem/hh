@@ -1,6 +1,6 @@
 //go:build integration
 
-// seqtrigger_drawbeforelock_integration_test.go: the draw before lock legs for purchasing_pos and vendors
+// seqtrigger_drawbeforelock_integration_test.go: the draw before lock leg for purchasing_pos (the vendors leg of round 3c is replaced by the counter first leg, seqtrigger_counterfirst_integration_test.go: vendors is a loader table, its counter comes first)
 // (PR 556, round 3c).
 //
 // The single row writers of both tables used to draw their counter in a CTE and then lock the row. A writer
@@ -32,28 +32,4 @@ func TestIntegration_DrawBeforeLock_PurchasingPOWriterBesideAPOWrite(t *testing.
 	park.WaitBlocked("the delivery method write waits")
 
 	park.Answers(map[string]chan error{"touch": touch, "set delivery method": set})
-}
-
-func TestIntegration_DrawBeforeLock_VendorMasterWriterBesideAVendorWrite(t *testing.T) {
-	h := newHarness(t)
-	vendorMasterCleanup(t, h)
-	org := h.orgID(t)
-	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Draw Before Lock Supply (demo)"})
-	if err != nil {
-		t.Fatalf("create vendor: %v", err)
-	}
-
-	park := testkit.NewDrawPark(t, h.pool, "vendors", 55010003)
-	touch := park.TouchRow("vendors", "updated_at = now()", v.ID)
-	park.WaitParked("the vendor touch stands between its row lock and its draw")
-
-	name := "Draw Before Lock Supply Ltd (demo)"
-	edit := make(chan error, 1)
-	go func() {
-		_, err := NewRepository(h.pool).UpdateVendorMaster(context.Background(), org, v.ID, &name, nil, nil, nil)
-		edit <- err
-	}()
-	park.WaitBlocked("the vendor edit waits")
-
-	park.Answers(map[string]chan error{"touch": touch, "vendor edit": edit})
 }
