@@ -228,6 +228,7 @@ var shapeCensusUncovered = map[string]string{
 
 	// The handler's own fence (beyond the role gate: the gate admits, the
 	// fence (a query the route's own vocabulary demands) still refuses).
+	"tasksList":              "the route's cells sit with yard_team alone (the yard-pick work cell per roleconfig), so every other planted caller 403s at the role gate, and the admitting leg itself is now refused by the handler's own branch fence (internal/tasks/handler.go, list calls yardBranchFence, UX-81 round 5: a branch scoped caller must name a reachable branch_id query, the handler's own 403, where the route had no fence at all before). The census sends no query string, so no planted caller reaches a 2xx",
 	"yardListPendingTickets": "the route's cells sit with yard_team alone (the yard-pick work cell per roleconfig), so every other planted caller 403s at the role gate, and the admitting leg itself is refused by the handler's own branch fence (internal/tasks/yard_handler.go, yardBranchFence: a branch scoped caller must name a reachable branch_id query, the handler's own 403). No planted caller reaches a 2xx: the kit's driver principal holds no yard-pick cell either (driver x yard-pick is LevelNone, internal/roleconfig/matrix_test.go), so the role gate 403s it before the fence",
 	"yardListPickQueue":      "the same shape as its sibling (yard-pick cells (yard_team alone), then the handler's own branch fence (yardBranchFence (a branch scoped caller must name a reachable branch_id query))); all legs 403 (the gate for six, the fence for the seventh)",
 }
