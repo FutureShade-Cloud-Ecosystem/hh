@@ -133,6 +133,8 @@ export class DispatchDesk {
   #formSeeded: string | null = null;
   // The sheet whose starting field values the screen has already been given.
   #sheetSeeded: string | null = null;
+  // A control selector to restore focus to after a confirm sheet cancels.
+  #focusAfterRender: string | null = null;
   // The run currently opened in the run-detail drawer. Empty when the drawer is closed.
   #selectedRunId = "";
   // The list of "fix" lines the dispatcher has applied to the current view, kept in memory only.
@@ -342,11 +344,22 @@ export class DispatchDesk {
     } else {
       this.#formSeeded = null;
     }
+    if (this.#focusAfterRender !== null) {
+      const sel = this.#focusAfterRender;
+      this.#focusAfterRender = null;
+      const btn = this.#host.find(sel);
+      if (btn instanceof HTMLElement) btn.focus();
+    }
     const sheet = this.#sheet;
     if (sheet === null) return;
     const key = `${sheet.kind}:${sheet.id}`;
     if (this.#sheetSeeded === key) return;
     this.#sheetSeeded = key;
+    if (sheet.kind === "dispatch-run") {
+      const btn = this.#host.find("[data-sheet=\"dispatch-run\"] [data-action=\"sheet-cancel\"]");
+      if (btn instanceof HTMLElement) btn.focus();
+      return;
+    }
     // A fresh sheet takes what the person had typed (after a refusal) or the row it edits (data-initial).
     const saved = sheet.values ?? {};
     for (const el of this.#host.findAll("[data-sheet] [data-field]")) {
@@ -513,10 +526,7 @@ export class DispatchDesk {
         return true;
       }
       case "sheet-cancel":
-        this.#sheet = null;
-        this.#trail = null;
-        this.#sheetSeeded = null;
-        this.#host.repaint();
+        this.#cancelSheet();
         return true;
       case "sheet-submit":
         void this.#submitSheet();
@@ -531,7 +541,7 @@ export class DispatchDesk {
         void this.#advance(attr("data-stop-id"), attr("data-status-to") as DispatchStop["status"]);
         return true;
       case "dispatch-run":
-        void this.#runAction(attr("data-run-id"), "dispatch");
+        this.#pressDispatch(attr("data-run-id"));
         return true;
       case "cancel-run":
         void this.#runAction(attr("data-run-id"), "cancel");
@@ -547,8 +557,12 @@ export class DispatchDesk {
     }
   }
 
-  /** Enter in the will call order box looks the order up. (A change event would race the button the person is reaching for.) */
+  /** Enter in the will call order box looks the order up; Escape cancels an open sheet. */
   key(target: Element, key: string): boolean {
+    if (key === "Escape" && this.#sheet !== null) {
+      this.#cancelSheet();
+      return true;
+    }
     if (key === "Enter" && target.getAttribute("data-field") === "wc-order") {
       void this.#wcLookup();
       return true;
@@ -988,6 +1002,25 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  #cancelSheet(): void {
+    const prev = this.#sheet;
+    this.#sheet = null;
+    this.#trail = null;
+    this.#sheetSeeded = null;
+    this.#focusAfterRender = prev?.kind === "dispatch-run" ? `button[data-action="dispatch-run"][data-run-id="${prev.id}"]` : null;
+    this.#host.repaint();
+  }
+
+  #pressDispatch(runId: string): void {
+    const runs = [...(this.#view?.loads.map((r) => r.run) ?? []), ...(this.#day?.runs ?? [])];
+    const run = runs.find((r) => r.id === runId);
+    if (run !== undefined && Boolean(run.truck_id) && Boolean(run.driver_id) && run.stop_count > 0) {
+      this.#openSheet("dispatch-run", runId);
+      return;
+    }
+    void this.#runAction(runId, "dispatch");
+  }
+
   /** Everything typed in the open sheet, so a refusal can put it back. */
   #typed(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -1064,6 +1097,10 @@ export class DispatchDesk {
       }
       case "cancel-run": {
         await this.#runAction(sheet.id, "cancel");
+        return;
+      }
+      case "dispatch-run": {
+        await this.#runAction(sheet.id, "dispatch");
         return;
       }
       case "edit-policy": {

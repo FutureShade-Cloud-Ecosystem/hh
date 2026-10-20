@@ -967,6 +967,9 @@ var demoDriverDayStops = []driverDayStopSpec{
 	{Key: "D2", Cust: "C04", Prod: "P03", Qty: "520.0000", QtyF: 520,
 		Contact: "Site super, rear laneway", Phone: "613-555-0242", Addr: "15 Woodhaven Dr",
 		City: "Kingston", Postal: "K7M 7S3", Lat: 44.2209, Lng: -76.5342, WeightKg: "1768.0000"},
+	{Key: "D3", Cust: "C05", Prod: "P02", Qty: "300.0000", QtyF: 300,
+		Contact: "Homeowner, side drive", Phone: "613-555-0243", Addr: "88 Bagot St",
+		City: "Kingston", Postal: "K7K 3B7", Lat: 44.2338, Lng: -76.4879, WeightKg: "930.0000"},
 }
 
 // -- §16 what the demo stock COSTS, so the two cost-class measures stop lying ---------------------

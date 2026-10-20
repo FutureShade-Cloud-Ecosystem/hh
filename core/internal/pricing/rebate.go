@@ -103,6 +103,9 @@ type RebateAccrual struct {
 	AccrualCents int64     `json:"accrual_cents"`
 	RateNote     string    `json:"rate_note"`
 	AccruedAt    time.Time `json:"accrued_at"`
+	// Basis is the program's rate basis, projection-only from the ledger read: the handler uses it to
+	// hold basis_cents out of a cost basis row for a caller off the cost list (HH-419).
+	Basis string `json:"-"`
 }
 
 // RebateSaleLine is one sold line offered to the engine. It carries everything the three bases

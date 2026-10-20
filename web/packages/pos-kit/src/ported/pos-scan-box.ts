@@ -101,6 +101,23 @@ export class HosPosScanBox extends LitElement {
     void this.updateComplete.then(() => this.focusInput());
   }
 
+  /**
+   * takeChar: the first character of an entry typed or scanned while a result row held focus. The
+   * box takes focus and starts a fresh entry with it (replacing the old text, as a selected field
+   * would); the rest of the burst, and its Enter, then arrive in the field natively.
+   */
+  takeChar(ch: string): void {
+    this.keyGapsMs = [];
+    this.lastKeyAt = Date.now();
+    this.code = ch;
+    if (this.unified) this.emitTerm(ch);
+    const el = this.renderRoot?.querySelector('input');
+    if (el) {
+      el.value = ch; // synchronous: the next keystroke of the burst is already on its way
+      el.focus();
+    }
+  }
+
   @state() private code = '';
   @state() private busy = false;
   @state() private msg = '';

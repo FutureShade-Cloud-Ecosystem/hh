@@ -15,7 +15,6 @@
 // what the contract gives, and this file invents nothing past them.
 import type { TenantOrder } from "@hardscapehouse/api-client";
 import { TRACKING_WORDS, calendarDay, houseDay, trackingOf, type Tracking } from "@hardscapehouse/pro-kit";
-import { roadStep } from "./sections.js";
 
 export type StepState = "done" | "current" | "upcoming";
 
@@ -47,12 +46,12 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
     doneRank = currentIndex;
   } else if (tracking === "invoiced") {
     doneRank = flow.length;
-  } else if (order.status === "READY") {
-    // Ready at the yard on a delivery: picking is done, the road is a stop's word.
+  } else if (order.status === "READY" || order.status === "PARTIALLY_FULFILLED") {
+    // Ready at the yard on a delivery, or part delivered: picking is done, and
+    // the road step is a delivery stop's to speak for.
     doneRank = flow.indexOf("picking") + 1;
   } else {
-    // Part delivered: a truck went out; what is still to come is not known here.
-    doneRank = flow.indexOf(roadStep(order.fulfillment)) + 1;
+    doneRank = 0;
   }
   return flow.map((step, index) => ({
     tracking: step,
@@ -131,4 +130,16 @@ export function instructionsNote(order: Pick<TenantOrder, "status" | "fulfillmen
   if (order.fulfillment !== "DELIVERY") return "This order is not a delivery, so its notes are set by the dealer.";
   if (DISPATCHED.includes(order.status)) return "The truck already left with these notes.";
   return "";
+}
+
+/** The core's delivery instructions bound (core/internal/portal/orders.go maxDeliveryInstructionsLen = 2000). */
+export const MAX_INSTRUCTIONS_LENGTH = 2000;
+
+/** The length at which the character count appears near the limit. */
+export const INSTRUCTIONS_COUNT_THRESHOLD = 1800;
+
+/** The character count line shown when the draft is near the 2000 character limit, or empty before then. */
+export function instructionsCountWords(draft: string): string {
+  if (draft.length < INSTRUCTIONS_COUNT_THRESHOLD) return "";
+  return `${draft.length} / ${MAX_INSTRUCTIONS_LENGTH} characters`;
 }
