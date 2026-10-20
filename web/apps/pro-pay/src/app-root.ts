@@ -64,10 +64,12 @@ export class ProPayApp extends HHElement {
   readonly #sender: PaySender;
   #surface: SurfaceId = "invoices";
   #load: Load = "loading";
+  #errorWords = "";
   #loads = 0;
   #dealerName = "";
   #message = "";
   #busy = false;
+  #personaRole: string | null = null;
   #unsubscribe: (() => void) | null = null;
 
   #invoices: readonly TenantInvoice[] = [];
@@ -85,9 +87,16 @@ export class ProPayApp extends HHElement {
 
   constructor() {
     super();
-    this.#session = new InMemoryTenantSession({ adapter: import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter() });
+    this.#session = new InMemoryTenantSession({
+      adapter: import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter(),
+      onCustody: () => this.requestUpdate(),
+    });
     this.#client = tenantClient(this.#session);
     this.#sender = new PaySender(this.#client, { canPay: () => this.#session.can("pay_invoices") });
+  }
+
+  #inFrame(): boolean {
+    return this.#session.current() !== null || this.#personaRole !== null;
   }
 
   // ---- events: one host listener, acting on data- names ----------------------------------------------------------
@@ -131,15 +140,19 @@ export class ProPayApp extends HHElement {
   };
 
   readonly #onSignOut = (): void => {
+    this.#personaRole = null;
     void this.#session.signOut();
   };
 
   connectedCallback(): void {
     super.connectedCallback();
     // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
-    if (import.meta.env.MODE === "demo") {
+    if (import.meta.env.MODE === "demo" || import.meta.env.DEV) {
       const asked = demoRoleFromAddress(window.location.search);
-      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+      if (asked !== null) {
+        this.#personaRole = asked;
+        void this.#signIn({ method: "persona", roleLabel: asked });
+      }
     }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
@@ -178,6 +191,7 @@ export class ProPayApp extends HHElement {
   #reset(): void {
     this.#surface = "invoices";
     this.#load = "loading";
+    this.#errorWords = "";
     this.#loads += 1;
     this.#invoices = [];
     this.#summary = null;
@@ -203,14 +217,43 @@ export class ProPayApp extends HHElement {
   async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#busy = true;
     this.#message = "";
+    this.#errorWords = "";
+    if (!("password" in input) && input.method === "persona") this.#personaRole = input.roleLabel ?? null;
+    this.#load = "loading";
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);
     this.#busy = false;
     if (result.ok) {
       this.#message = "";
       void this.#loadSurface();
-    } else {
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
       this.#message = result.error;
+    } else {
+      this.#load = "error";
+      this.#errorWords = result.error;
+    }
+    this.requestUpdate();
+  }
+
+  async #retrySession(): Promise<void> {
+    if (this.#session.current() === null && this.#personaRole !== null) {
+      await this.#signIn({ method: "persona", roleLabel: this.#personaRole });
+      return;
+    }
+    this.#load = "loading";
+    this.#errorWords = "";
+    this.requestUpdate();
+    const result = await this.#session.check();
+    if (result.ok) {
+      this.#message = "";
+      void this.#loadSurface();
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
+      this.#message = result.error;
+    } else {
+      this.#load = "error";
+      this.#errorWords = result.error;
     }
     this.requestUpdate();
   }
@@ -235,6 +278,7 @@ export class ProPayApp extends HHElement {
       return;
     }
     this.#load = "loading";
+    this.#errorWords = "";
     this.requestUpdate();
     const state = surface === "invoices" ? await this.#fetchInvoices() : surface === "payment-methods" ? await this.#fetchMethods() : await this.#fetchStatements();
     if (sequence !== this.#loads || this.#session.profile() === null) return;
@@ -248,7 +292,10 @@ export class ProPayApp extends HHElement {
 
   async #fetchInvoices(): Promise<Load | "lapsed"> {
     const [summary, rows] = await Promise.all([tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
-    if (!rows.ok) return failure(rows);
+    if (!rows.ok) {
+      if (rows.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      return failure(rows);
+    }
     this.#invoices = rows.value;
     this.#summary = summary.ok ? summary.value : null;
     const payable = new Set(rows.value.filter(isPayable).map((i) => i.id));
@@ -271,14 +318,20 @@ export class ProPayApp extends HHElement {
 
   async #fetchMethods(): Promise<Load | "lapsed"> {
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
-    if (!answer.ok) return failure(answer);
+    if (!answer.ok) {
+      if (answer.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      return failure(answer);
+    }
     this.#methods = answer.value;
     return "ready";
   }
 
   async #fetchStatements(): Promise<Load | "lapsed"> {
     const [payments, summary, rows] = await Promise.all([tenantPayments.tenantListPayments(this.#client), tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
-    if (!payments.ok) return failure(payments);
+    if (!payments.ok) {
+      if (payments.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      return failure(payments);
+    }
     this.#payments = payments.value;
     this.#summary = summary.ok ? summary.value : null;
     if (rows.ok) this.#invoices = rows.value;
@@ -300,6 +353,7 @@ export class ProPayApp extends HHElement {
 
   /** The session is gone (expired, or the person was deactivated): sign out and say so. */
   async #lapse(): Promise<void> {
+    this.#personaRole = null;
     this.#message = LAPSED_WORDS;
     await this.#session.signOut();
   }
@@ -309,7 +363,8 @@ export class ProPayApp extends HHElement {
   #act(action: string, id: string): void {
     switch (action) {
       case "retry":
-        void this.#loadSurface();
+        if (this.#session.profile() === null) void this.#retrySession();
+        else void this.#loadSurface();
         break;
       case "open":
         void this.#openInvoice(id);
@@ -571,7 +626,7 @@ export class ProPayApp extends HHElement {
     super.updated(changed);
     const root = document.documentElement;
     root.setAttribute("data-brand", "hh-pro");
-    if (this.#session.profile() === null) root.removeAttribute("data-theme");
+    if (!this.#inFrame()) root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", "light");
     const signin = this.renderRoot.querySelector("hh-pro-signin") as HHProSignIn | null;
     if (signin !== null) {
@@ -617,7 +672,7 @@ export class ProPayApp extends HHElement {
       case "refusal":
         return html`<hh-pro-state data-state="refusal" data-testid="landing-state"></hh-pro-state>`;
       case "error":
-        return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
+        return html`<hh-pro-state data-state="error" data-testid="landing-state">${this.#errorWords !== "" ? this.#errorWords : "This did not load. Nothing was changed."}</hh-pro-state>`;
       default:
         return html`<hh-pro-state data-state="loading" data-testid="landing-state"></hh-pro-state>`;
     }
@@ -637,12 +692,12 @@ export class ProPayApp extends HHElement {
   }
 
   render(): TemplateResult {
+    if (!this.#inFrame()) return html`<hh-pro-signin></hh-pro-signin>`;
     const profile = this.#session.profile();
-    if (profile === null) return html`<hh-pro-signin></hh-pro-signin>`;
     const surface = surfaceOf("pay", this.#surface);
     const held = CAPABILITIES.filter((c) => this.#session.can(c)).join(" ");
     const state = this.#state();
-    return html`<hh-pro-frame data-app="pay" data-surface="${this.#surface}" data-dealer="${this.#dealerName}" data-role="${roleLabel(profile.role)}" data-capabilities="${held}">
+    return html`<hh-pro-frame data-app="pay" data-surface="${this.#surface}" data-dealer="${this.#dealerName}" data-role="${profile === null ? (this.#personaRole ?? "") : roleLabel(profile.role)}" data-capabilities="${held}">
       <h1 data-testid="surface-title">${surface === undefined ? "" : surface.label}</h1>
       <div class="screen">${this.#body(state)}</div>
       ${state.sheet === null ? nothing : sheetView(state)}

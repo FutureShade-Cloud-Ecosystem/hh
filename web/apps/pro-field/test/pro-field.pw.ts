@@ -83,6 +83,40 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-rows")).toBeVisible();
   });
 
+  test("a slow session check and slow data call keep the signed in frame with the loading pattern, never the sign in page", async ({ page }) => {
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-", { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+  });
+
+  test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
+    let failMe = true;
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (failMe) return route.abort("failed");
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    failMe = false;
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-");
+  });
+
   test("an empty answer shows this app's own empty words", async ({ page, request }) => {
     await request.post("/_stub/control", { data: { empty: "orders" } });
     await signIn(page, "field");

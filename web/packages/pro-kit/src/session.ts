@@ -101,6 +101,8 @@ export interface TenantSession {
   signIn(email: string, password: string): Promise<Result<TenantProfile>>;
   /** Any way in other than email and password; the profile is the core's answer from tenant me. */
   signInWith(request: SignInRequest): Promise<Result<TenantProfile>>;
+  /** Re-read tenant me for the live token after a network failure on the session check. */
+  check(): Promise<Result<TenantProfile>>;
   /** What the sign in card offers, from the adapter. */
   options(): SignInOptions;
   signOut(): Promise<void>;
@@ -137,6 +139,8 @@ export interface InMemoryTenantSessionOptions {
   baseUrl?: string;
   fetch?: FetchLike;
   now?: () => number;
+  /** Heard as soon as a bearer is adopted into custody or cleared, while tenant me may still be in flight. */
+  onCustody?: () => void;
 }
 
 export class InMemoryTenantSession implements TenantSession {
@@ -144,7 +148,9 @@ export class InMemoryTenantSession implements TenantSession {
   readonly #adapter: TenantSignInAdapter;
   readonly #client: ApiClient;
   readonly #listeners = new Set<() => void>();
+  readonly #onCustody?: () => void;
   #profile: TenantProfile | null = null;
+  #notice: string | undefined = undefined;
   // Bumped by every sign in at entry and by sign out; a call that finds it moved has been superseded.
   #generation = 0;
   readonly headers: HeaderProvider;
@@ -153,6 +159,7 @@ export class InMemoryTenantSession implements TenantSession {
     const now = options.now ?? Date.now;
     this.#sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, memoryStorage()), now });
     this.#adapter = options.adapter;
+    this.#onCustody = options.onCustody;
     this.headers = authHeaderProvider({ callerClass: "tenant", sessions: this.#sessions });
     this.#client = new ApiClient({ baseUrl: options.baseUrl ?? "", fetch: options.fetch, headers: this.headers });
   }
@@ -164,6 +171,12 @@ export class InMemoryTenantSession implements TenantSession {
   async signInWith(request: SignInRequest): Promise<Result<TenantProfile>> {
     const adapter = this.#adapter;
     return this.#enter(async () => (adapter.signInWith === undefined ? err<TenantAnswer>(UNAVAILABLE_METHOD_WORDS) : adapter.signInWith(request)));
+  }
+
+  async check(): Promise<Result<TenantProfile>> {
+    if (this.current() === null) return err(NOT_SIGNED_IN_WORDS, 401);
+    const generation = ++this.#generation;
+    return this.#readMe(generation);
   }
 
   options(): SignInOptions {
@@ -179,6 +192,7 @@ export class InMemoryTenantSession implements TenantSession {
     // A tenant sign in has no organisation and no platform exchange to ask: the adapter's answer is the
     // session, adopted straight into custody (the auth controller's exchange path is for staff).
     const generation = ++this.#generation;
+    this.#notice = undefined;
     if (this.#profile !== null) {
       this.#profile = null;
       this.#notify();
@@ -191,15 +205,24 @@ export class InMemoryTenantSession implements TenantSession {
       await this.#clearCustody();
       return err(UNAVAILABLE_WORDS);
     }
+    this.#notice = held.notice;
+    this.#onCustody?.();
+    return this.#readMe(generation);
+  }
+
+  async #readMe(generation: number): Promise<Result<TenantProfile>> {
     const answer = await tenantAuth.tenantGetMe(this.#client);
     if (generation !== this.#generation) return err(REPLACED_WORDS);
     if (!answer.ok) {
-      const ended = this.#clearCustody();
-      this.#profile = null;
-      this.#notify();
-      await ended;
-      const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : answer.status === 403 ? CANNOT_OPEN_WORDS : UNAVAILABLE_WORDS;
-      return answer.status === undefined ? err(words) : err(words, answer.status);
+      if (answer.status === 401 || answer.status === 403) {
+        const ended = this.#clearCustody();
+        this.#profile = null;
+        this.#notify();
+        await ended;
+        const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : CANNOT_OPEN_WORDS;
+        return err(words, answer.status);
+      }
+      return answer.status === undefined ? err(UNAVAILABLE_WORDS) : err(UNAVAILABLE_WORDS, answer.status);
     }
     const me = answer.value;
     this.#profile = {
@@ -208,7 +231,7 @@ export class InMemoryTenantSession implements TenantSession {
       name: me.name,
       role: me.role,
       capabilities: { ...me.capabilities },
-      ...(held.notice === undefined ? {} : { notice: held.notice }),
+      ...(this.#notice === undefined ? {} : { notice: this.#notice }),
     };
     this.#notify();
     return { ok: true, value: this.#copy(this.#profile) };
@@ -225,6 +248,8 @@ export class InMemoryTenantSession implements TenantSession {
   async #clearCustody(): Promise<void> {
     // Custody goes first and at once, so nothing that lands during the adapter's own sign out can keep it alive.
     this.#sessions.clear();
+    this.#notice = undefined;
+    this.#onCustody?.();
     try {
       await this.#adapter.signOut();
     } catch {

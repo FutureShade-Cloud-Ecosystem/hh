@@ -322,3 +322,36 @@ test("an unusable adapter answer is refused in plain words", async () => {
   assert.doesNotMatch(result.error, /sign-in failed|unusable|session/i);
   assert.equal(session.current(), null);
 });
+
+test("a 403 from tenant me clears custody and signs the person out, while a network or 5xx failure keeps custody and check recovers", async () => {
+  const { session: forbiddenSession, adapterCalls: forbiddenCalls } = rig({ meStatus: 403 });
+  const refused = await forbiddenSession.signIn("o@hh-demo.invalid", "pw");
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, 403);
+  assert.equal(forbiddenSession.current(), null);
+  assert.equal(forbiddenCalls.signOut, 1);
+
+  let failMe = true;
+  const adapter = {
+    signIn: async (email) => ({ ok: true, value: { token: SECRET_TOKEN, expiresAtMs: NOW + 3_600_000, user: { userId: "u-1", email, name: "Contractor owner" } } }),
+    signOut: async () => {},
+  };
+  const fetchLike = async () => {
+    if (failMe) throw new Error("network down");
+    return { status: 200, ok: true, text: async () => JSON.stringify(me("ap_finance")), arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const custodyHeard = [];
+  const session = new InMemoryTenantSession({ adapter, fetch: fetchLike, now: () => NOW, onCustody: () => custodyHeard.push(session.current() !== null) });
+  const first = await session.signIn("ap@hh-demo.invalid", "pw");
+  assert.equal(first.ok, false);
+  assert.equal(first.error, "Pro is not reachable right now. Try again in a moment.");
+  assert.notEqual(session.current(), null, "a network failure on tenant me never drops the adopted token");
+  assert.equal(session.profile(), null);
+  assert.deepEqual(custodyHeard, [true]);
+
+  failMe = false;
+  const recovered = await session.check();
+  assert.equal(recovered.ok, true);
+  assert.equal(session.profile().role, "ap_finance");
+});
+

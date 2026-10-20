@@ -484,6 +484,42 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-state").getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
+  test("a slow session check and slow data call keep the signed in frame with the loading pattern, never the sign in page", async ({ page }) => {
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await shot(page, "slow-390x844-light");
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-", { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+  });
+
+  test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
+    let failMe = true;
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (failMe) return route.abort("failed");
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    await shot(page, "unreachable-390x844-light");
+    failMe = false;
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
+  });
+
   test("an invoice opens to its statement: lines, the core's tax, the balance and the payments on it", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20403" }).getByRole("button", { name: /INV-20403/ }).click();
@@ -592,5 +628,42 @@ test.describe("desktop", () => {
     await page.getByTestId("check-payment").click();
     await expect(page.getByTestId("receipt-amount")).toContainText("$");
     await shot(page, "pay-receipt-desktop");
+  });
+
+  test("a slow session check and network failure keep the signed in frame on a wide page", async ({ page }) => {
+    let mode: "slow" | "fail" | "ok" = "slow";
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      if (mode === "slow") {
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+        return route.continue();
+      }
+      if (mode === "fail" && route.request().url().endsWith("/tenant/me")) {
+        return route.abort("failed");
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await shot(page, "slow-1440x900-light");
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-", { timeout: 6000 });
+
+    await page.getByTestId("frame-sign-out").click();
+    await expect(page.locator("hh-pro-signin")).toBeVisible();
+    mode = "fail";
+    await signInAgain(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    await shot(page, "unreachable-1440x900-light");
+    mode = "ok";
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
   });
 });
