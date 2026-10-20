@@ -29,6 +29,14 @@
 // so a yard hand asking about a branch they cannot reach gets exactly what the yard console would
 // give them, because it is the yard console's own answer.
 //
+// HOW THE ASSISTANT READS DATA. The assistant reads data only through the assist logins (package
+// readtx): two database roles, one for staff and one for contractors, that hold no privilege but
+// the ai and ai_pro objects and the one function that verifies the signed claims of who is asking.
+// Each tool call is one read only transaction on that login, with the asker's claims bound to the
+// transaction's backend, rolled back at the end. It is never the app role, which owns every table
+// and, on some boxes, is a superuser. A user's data reach is decided in the database by those
+// claims, so a model that wrote its own SQL could still reach nothing the asker could not.
+//
 // WHAT THIS PACKAGE IMPORTS: nothing from another domain. The readers below are CONSUMER
 // interfaces, declared here in the language of the questions being asked, and satisfied by thin
 // adapters wired in main.go (see NOTES-FIX-431.md, PARK 1). That keeps the dependency arrow

@@ -7,6 +7,7 @@ package assist
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func newEscalationRig(t *testing.T, mainReplies, altReplies []string, premiumRep
 		{Alias: AliasAlt, AdapterKind: AdapterOpenAICompatible, BaseURL: r.alt.URL(), Model: "open-alt", Enabled: true},
 		{Alias: AliasPremium, AdapterKind: AdapterAnthropic, Model: "claude-sonnet-5-5", Enabled: true},
 	}
-	router := NewRouter(StaticAliases(rows), ModelConfig{AnthropicKey: "k", AnthropicBaseURL: r.premium.URL(), GatewayKey: "gw-key", DealerTag: "dealer-1"}, NewStubProvider(), nil)
+	router := NewRouter(StaticAliases(rows), ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: r.premium.URL(), GatewayKey: redact.NewSecret("gw-key"), DealerTag: "dealer-1"}, NewStubProvider(), nil)
 	set := StaticSettings{KeyProvider: ProviderRouted}
 	r.svc = chatService(NewStubProvider(), &fakeLedger{}, newFakeLimits(), set, r.rd).WithRouter(router)
 	return r
