@@ -27,6 +27,7 @@ package assist
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -104,11 +105,13 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 func CallerFrom(r *http.Request) Caller {
 	sc, _ := identity.StaffContextFromContext(r.Context())
 	c := Caller{
-		UserID:   sc.UserID,
-		RoleCode: sc.RoleCode,
-		Tier:     int(sc.Tier),
-		Global:   sc.Scope == identity.ScopeGlobal,
-		IsAdmin:  sc.IsAdmin(),
+		SessionID: sessionIDFrom(r),
+		Address:   clientAddress(r),
+		UserID:    sc.UserID,
+		RoleCode:  sc.RoleCode,
+		Tier:      int(sc.Tier),
+		Global:    sc.Scope == identity.ScopeGlobal,
+		IsAdmin:   sc.IsAdmin(),
 	}
 	if !c.Global {
 		for id, ok := range sc.Branches {
@@ -370,4 +373,26 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		}
 		httpx.Error(w, http.StatusInternalServerError, "Something went wrong on our side.")
 	}
+}
+
+// sessionIDFrom reads the jti of the bearer token the guard has already verified. It keys a rate
+// limit and is read from the payload only; a request without a bearer or without a jti reads as
+// empty, and the limit falls back to the user alone.
+func sessionIDFrom(r *http.Request) string {
+	raw := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		ID string `json:"jti"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || len(claims.ID) > 128 {
+		return ""
+	}
+	return claims.ID
 }

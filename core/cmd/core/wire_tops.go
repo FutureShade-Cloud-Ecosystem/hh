@@ -697,6 +697,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// wide cap (FutureBuild's deployment variable, never an assist setting) bounds them all.
 		WithMetering(assistRepo, assistRepo).
 		WithDealerCap(assist.ParseDealerCap(os.Getenv(assist.EnvDealerCap))).
+		// Per asker rate limit on every build; the demo's per visitor, per address and box wide
+		// buckets only on a demo copy.
+		WithRateLimits(assist.NewRateLimits(assistDemoLimits(cfg.DemoMode), time.Now)).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
@@ -800,4 +803,12 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	// the attempt rows through it on the seam's read-only arm, the same
 	// store the service's own captures write.
 	return paySvc, payStore, payVault
+}
+
+// assistDemoLimits returns the demo copy's extra assistant rate buckets, and nil everywhere else.
+func assistDemoLimits(demoMode bool) *assist.DemoLimits {
+	if !demoMode {
+		return nil
+	}
+	return assist.NewDemoLimits(time.Now)
 }

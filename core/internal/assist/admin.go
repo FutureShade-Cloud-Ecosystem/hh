@@ -188,6 +188,10 @@ func (s *Service) SetSetting(ctx context.Context, key, value, actorID string) er
 		if !isTrue(value) && !isFalse(value) {
 			return badArg("%s is a yes/no setting, use true or false.", key)
 		}
+	case KeyRateRequests, KeyRateWindowSeconds:
+		if !validRateSetting(key, value) {
+			return badArg("%s is out of range.", key)
+		}
 	default:
 		return badArg("%q isn't an assistant setting.", key)
 	}

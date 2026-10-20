@@ -110,6 +110,7 @@ type Service struct {
 	spend     SpendStore
 	prices    PriceStore
 	dealerCap int64
+	rates     *RateLimits
 
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
@@ -211,6 +212,12 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	cfg := s.Settings(ctx)
 	if !cfg.ChatEnabled {
 		return Answer{Text: ChatDisabledMessage}, nil
+	}
+
+	// Slice 2: the rate limit, before the budget and before anything that can cost. A refused
+	// request charges nothing and is an ordinary answer.
+	if err := s.admit(ctx, c); err != nil {
+		return Answer{Text: RateLimitedMessage, Results: []Result{}}, nil
 	}
 
 	// Step 2: the caller's own commands, and nothing else, become the tool set.
