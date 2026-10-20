@@ -15,6 +15,7 @@ import { createFinstmtWorld } from "./finstmt-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
+import { createAssistWorld } from "./assist-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -26,6 +27,8 @@ const bankrecWorld = createBankrecWorld();
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
 const lienWorld = createLienWorld();
+// The TanyAI panel's staff assist routes (PANEL-API r1), answered by its own module.
+const assistWorld = createAssistWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -946,6 +949,7 @@ async function handle(req, res) {
     bankrecWorld.reset();
     taxWorld.reset();
     lienWorld.reset();
+    assistWorld.reset();
     return send(res, 200, { ok: true });
   }
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
@@ -958,6 +962,13 @@ async function handle(req, res) {
     const body = await readBody(req);
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
+  }
+  if (path.startsWith("/api/v1/assist/") || path.startsWith("/_stub/assist")) {
+    if (path.startsWith("/api/v1/") && (req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" ? await readBody(req) : null;
+    if (body === null && method === "POST") return refuse(res, 400, "invalid_json");
+    const answer = await assistWorld.handle(req, url, body);
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (path === "/api/v1/demo/flows") return send(res, 200, { flows: FLOWS });
   if (method === "POST" && path === "/api/v1/demo/session") {

@@ -468,6 +468,8 @@ export class ShellTanyai extends HHElement {
       .composedPath()
       .find((n): n is Element => n instanceof Element && n.hasAttribute('data-action'));
     if (control === undefined) return;
+    // The panel owns its clicks: a host that delegates on data-action names must not see ours.
+    event.stopPropagation();
     const num = (name: string): number => Number(control.getAttribute(name) ?? '-1');
     switch (control.getAttribute('data-action')) {
       case 'close':
