@@ -59,6 +59,15 @@ test("L-card: a Pro app opened with no card shows the sign in card with the demo
   await expect(page.locator("hh-pro-frame")).toHaveAttribute("data-role", "Accounts payable");
 });
 
+test("L-card: typing a demo role address and pressing Email me a sign in link words the direct demo sign in", async ({ page }) => {
+  await page.goto("/pro-procurement/");
+  await expect(page.locator("hh-pro-signin")).toBeVisible();
+  await page.getByTestId("signin-email").fill("buyer@hh-demo.invalid");
+  await page.getByRole("button", { name: "Email me a sign in link", exact: true }).click();
+  await expect(page.locator("hh-pro-frame")).toHaveAttribute("data-role", "Buyer");
+  await expect(page.getByTestId("notice")).toHaveText("Signed in as the demo Buyer. No email is sent in the demo.");
+});
+
 test("L-card: hopping to another Pro app carries the role, so the person is not signed out on the way", async ({ page }) => {
   await page.goto("/pro-procurement/?as=buyer");
   await expect(page.locator("hh-pro-frame")).toHaveAttribute("data-role", "Buyer");

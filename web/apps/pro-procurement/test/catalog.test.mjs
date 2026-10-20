@@ -6,6 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { catalogLoad, catalogView, catalogInput, CATALOG_WORDS } from "../src/catalog.ts";
 import { productLoad, productView, productCommand, productAddToPlan } from "../src/product.ts";
+import { tenantProcurement } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession, tenantClient, stubAdapter } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
 import { spawnStub } from "@hardscapehouse/pro-kit/test-stub/spawn-stub.mjs";
@@ -150,6 +151,32 @@ test("the product command answers only its own actions", async () => {
   await productLoad(page);
   assert.equal(productCommand("add-to-plan-open", { getAttribute: () => null }, page), true);
   assert.equal(productCommand("no-such-action", { getAttribute: () => null }, page), false);
+});
+
+test("retrying add to a new plan after the line add fails reuses the created plan instead of creating a second one", async () => {
+  const page = await makePage("owner", { surface: "product", productId: "a10000-0000-4000-8000-000000000006" });
+  const fields = { "plan-qty": "0", "plan-uom": "CY", "new-plan-name": "Retry terrace" };
+  page.field = (name) => (name in fields ? { value: fields[name] } : null);
+  await productLoad(page);
+  productCommand("add-to-plan-open", { getAttribute: () => null }, page);
+  productCommand("choose-plan", { getAttribute: (attr) => (attr === "data-plan" ? "new" : null) }, page);
+
+  // First attempt: project is created, then line add fails because qty is 0.
+  productCommand("add-to-plan", { getAttribute: () => null }, page);
+  await new Promise((r) => setTimeout(r, 40));
+
+  // Retry with a valid quantity: must reuse the created plan rather than creating a second one.
+  fields["plan-qty"] = "4";
+  productCommand("add-to-plan", { getAttribute: () => null }, page);
+  await new Promise((r) => setTimeout(r, 40));
+
+  const listed = await tenantProcurement.tenantListProcurementProjects(page.client);
+  assert.equal(listed.ok, true);
+  if (listed.ok) {
+    const matching = listed.value.projects.filter((p) => p.name === "Retry terrace");
+    assert.equal(matching.length, 1, `expected 1 plan named Retry terrace, found ${matching.length}`);
+    assert.equal(matching[0].line_count, 1);
+  }
 });
 
 async function scopePeek(page) {
