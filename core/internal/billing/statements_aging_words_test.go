@@ -16,12 +16,12 @@ func TestRenderStatementHTML_AgingWordsAndFooterDate(t *testing.T) {
 	out := RenderStatementHTML(StatementHeader{BranchName: "Branch"}, r, nil, asOf)
 
 	for _, want := range []string{">Current<", ">1 to 30 days<", ">31 to 60 days<", ">Over 60 days<", ">Total due<",
-		"is over 60 days past due", "Statement generated Mar 1, 2026."} {
+		"is over 60 days past due", "As of Mar 1, 2026<", "Statement generated Mar 1, 2026."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("statement lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"1-30 days", "31-60 days", "60+ days", "more than 60 days", "generated 2026-03-01"} {
+	for _, bad := range []string{"1-30 days", "31-60 days", "60+ days", "more than 60 days", "generated 2026-03-01", "1 March 2026"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("statement still carries %q", bad)
 		}

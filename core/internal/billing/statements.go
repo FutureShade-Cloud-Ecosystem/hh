@@ -420,7 +420,7 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 		b.WriteString(`<div style="color:#555;font-size:12px">` + esc(h.Phone) + `</div>`)
 	}
 	b.WriteString(`</div><div style="text-align:right"><h2 style="margin:0;font-size:18px">STATEMENT</h2>`)
-	b.WriteString(`<div style="color:#555;font-size:12px">As of ` + asOf.Format("2 January 2006") + `</div></div></header>`)
+	b.WriteString(`<div style="color:#555;font-size:12px">As of ` + asOf.Format("Jan 2, 2006") + `</div></div></header>`)
 
 	// Account block
 	b.WriteString(`<section style="margin-bottom:24px"><div style="font-weight:600">` + esc(r.CustomerName) + `</div>`)
