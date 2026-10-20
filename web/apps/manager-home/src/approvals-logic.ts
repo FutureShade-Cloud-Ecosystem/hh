@@ -82,6 +82,8 @@ export interface ApprovalCardItem {
   readonly kind: string;
   readonly title: string;
   readonly amount: string;
+  /** What the figure measures, said beside it ("under the floor", "at stake"); empty when there is no figure. */
+  readonly amountLabel: string;
   readonly summary: string;
   readonly timeAgo: string;
   readonly status: "PENDING" | "APPROVED" | "REJECTED";
@@ -104,24 +106,17 @@ export interface ApprovalCardItem {
   };
 }
 
-export const DEFAULT_APPROVAL_COUNTS: Readonly<Record<string, number>> = Object.freeze({
-  MARGIN_BELOW_MINIMUM: 2,
-  CREDIT_LIMIT_EXCEEDED: 1,
-  COD_CONSTRAINT: 0,
-  JE_OVER_THRESHOLD: 1,
-  FREIGHT_ABOVE_QUOTE: 0,
-});
-
 export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
   {
     id: "0e000000-0000-4000-9000-0000000000a1",
     kind: "MARGIN_BELOW_MINIMUM",
-    title: "Q-2041 · Bluffside Builders",
-    amount: "$771.46",
+    title: "Q-2001 · Bluffside Builders",
+    amount: "$35.59",
+    amountLabel: "under the floor",
     summary: "Margin floor, line 2",
-    timeAgo: "Jordan Lee asked 2 days ago",
+    timeAgo: "Inside Sales asked 2 days ago",
     status: "PENDING",
-    detailTitle: "Q-2041 · Seat wall block, tan blend",
+    detailTitle: "Q-2001 · Seat wall block, tan blend",
     detailSubtitle: "Bluffside Builders · quote total $4,187.88 · Point Loma",
     marginMetrics: {
       lineMargin: "18.4%",
@@ -141,7 +136,7 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
       },
     ],
     metadata: [
-      { label: "Asked by", value: "Jordan Lee, Inside Sales, 2 days ago" },
+      { label: "Asked by", value: "Inside Sales, 2 days ago" },
       { label: "Their note", value: "Granite Supply quoted $6.40 on the same block; the customer will go there for the walls." },
       { label: "Customer standing", value: "Terms 30 days. Past due $14,820.00 (61 to 90), account on hold. 41 orders and $186,400.00 in the last 12 months.", tone: "watch" },
       { label: "The whole quote", value: "24.6% margin on $3,886.66, above its floor; only this line is under." },
@@ -151,9 +146,10 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
     id: "0e000000-0000-4000-9000-0000000000a4",
     kind: "MARGIN_BELOW_MINIMUM",
     title: "Q-2044 · Fieldstone Pools and Patios",
-    amount: "$4,312.75",
+    amount: "$72.10",
+    amountLabel: "under the floor",
     summary: "Margin floor, line 1",
-    timeAgo: "Elena Ruiz asked yesterday",
+    timeAgo: "Counter Sales asked yesterday",
     status: "PENDING",
     detailTitle: "Q-2044 · Fieldstone Pools and Patios",
     detailSubtitle: "Fieldstone Pools and Patios · quote total $4,312.75 · Point Loma",
@@ -176,7 +172,7 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
       },
     ],
     metadata: [
-      { label: "Asked by", value: "Elena Ruiz, Counter Sales, yesterday" },
+      { label: "Asked by", value: "Counter Sales, yesterday" },
       { label: "Their note", value: "Customer matching existing patio coping, asked for contractor tier." },
       { label: "Customer standing", value: "In good standing: nothing past due, 3 years as a customer.", tone: "good" },
       { label: "The whole quote", value: "21.4% margin on $4,312.75." },
@@ -186,7 +182,8 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
     id: "0e000000-0000-4000-9000-0000000000c1",
     kind: "CREDIT_LIMIT_EXCEEDED",
     title: "SO-PLM-1049 · Fieldstone Pools and Patios",
-    amount: "$11,350.00",
+    amount: "$2,100.00",
+    amountLabel: "over the limit",
     summary: "Credit hold, over limit by $2,100.00",
     timeAgo: "Placed by the system today",
     status: "PENDING",
@@ -209,8 +206,9 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
     kind: "JE_OVER_THRESHOLD",
     title: "JE-0087 · Freight reclass",
     amount: "$1,240.00",
+    amountLabel: "to reclassify",
     summary: "Reclassify freight in to cost of goods",
-    timeAgo: "Priya Shah asked yesterday, waiting on Morgan Ellis",
+    timeAgo: "Dispatch asked yesterday, waiting on the financial controller",
     status: "PENDING",
     detailTitle: "JE-0087 · Reclassify freight in to cost of goods",
     detailSubtitle: "Journal entry · $1,240.00 · both branches",
@@ -219,35 +217,57 @@ export const BOARD_APPROVAL_ITEMS: readonly ApprovalCardItem[] = Object.freeze([
       { account: "5400 Freight in", debit: "", credit: "$1,240.00" },
     ],
     metadata: [
-      { label: "Asked by", value: "Priya Shah, Dispatcher, yesterday" },
+      { label: "Asked by", value: "Dispatcher, yesterday" },
       { label: "Their note", value: "Inbound freight on PO-PLM-136 was posted to freight in; it belongs in cost of goods for the quarter." },
-      { label: "Waiting on", value: "Morgan Ellis, Financial Controller. A general manager does not decide journal entries.", tone: "watch" },
+      { label: "Waiting on", value: "The financial controller. A general manager does not decide journal entries.", tone: "watch" },
     ],
     notYours: {
-      waitingOn: "Morgan Ellis, Financial Controller. A general manager does not decide journal entries.",
+      waitingOn: "The financial controller. A general manager does not decide journal entries.",
       badge: "DECIDED BY THE CONTROLLER",
-      delegateName: "Morgan Ellis",
+      delegateName: "the financial controller",
     },
   },
 ]);
 
+// The reference a request names, read from its words ("Quote Q-2002 line 1 ..."): one id on a row. A row whose words
+// carry none is titled by its kind, never by the raw subject reference.
+export function refOfDetail(detail: string): string {
+  const m = /\b([A-Z]{1,4}-[A-Z0-9][A-Z0-9-]*)\b/.exec(detail);
+  return m ? m[1] : "";
+}
+
+// The row's second line: the words of the request without the reference the title already carries.
+function summaryOfDetail(detail: string, ref: string): string {
+  if (ref === "") return detail;
+  const rest = detail.replace(new RegExp(`^(?:Quote|Order|Journal entry|Journal)?\\s*${ref}\\s*`), "").trim();
+  return rest === "" ? detail : rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+const FIGURE_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  MARGIN_BELOW_MINIMUM: "at stake",
+  CREDIT_LIMIT_EXCEEDED: "at stake",
+  COD_CONSTRAINT: "at stake",
+  JE_OVER_THRESHOLD: "to post",
+  FREIGHT_ABOVE_QUOTE: "above the quote",
+});
+
 export function toApprovalCardItem(row: ApprovalRow): ApprovalCardItem {
   const isPending = row.status === "PENDING";
-  const amountStr = row.amount_cents > 0 ? `$${(row.amount_cents / 100).toFixed(2)}` : "";
+  const amountStr = row.amount_cents > 0 ? formatDollars(row.amount_cents) : "";
+  const ref = refOfDetail(row.detail);
+  const status = isPending ? "PENDING" : row.status === "APPROVED" ? "APPROVED" : "REJECTED";
   return {
     id: row.id,
     kind: row.policy_type,
-    title: row.subject_ref !== "" ? `${row.subject_ref} · Pending approval` : row.detail,
+    title: ref !== "" ? ref : kindWord(row.policy_type),
     amount: amountStr,
-    summary: row.detail,
-    timeAgo: "Recently submitted",
-    status: isPending ? "PENDING" : row.status === "APPROVED" ? "APPROVED" : "REJECTED",
-    detailTitle: row.detail,
-    detailSubtitle: `${kindWord(row.policy_type)} · ${row.subject_ref}`,
-    metadata: [
-      { label: "Submitted", value: "Recently" },
-      { label: "Details", value: row.detail },
-    ],
+    amountLabel: amountStr === "" ? "" : (FIGURE_LABEL[row.policy_type] ?? "at stake"),
+    summary: summaryOfDetail(row.detail, ref),
+    timeAgo: status === "PENDING" ? "Waiting for a decision" : "Decided",
+    status,
+    detailTitle: ref !== "" ? `${ref} · ${kindWord(row.policy_type)}` : kindWord(row.policy_type),
+    detailSubtitle: "",
+    metadata: [{ label: "The request", value: row.detail }],
   };
 }
 
@@ -318,6 +338,7 @@ export function toChangeOrderCardItem(row: ChangeOrderQueueRow, detail: ChangeOr
     kind: "CHANGE_ORDER",
     title: `${row.change_no} · ${row.order_no}`,
     amount: formatChangeOrderCents(row.delta_cents),
+    amountLabel: "change",
     summary: row.reason,
     timeAgo: `${changeOrderStatusWord(row.status)} · requested by ${row.requested_by_role || "staff"}`,
     status: isPending ? "PENDING" : row.status === "APPROVED" ? "APPROVED" : "REJECTED",
@@ -341,22 +362,30 @@ export function toChangeOrderCardItem(row: ChangeOrderQueueRow, detail: ChangeOr
   };
 }
 
+// The core's rows win. A board item only enriches the row whose id it carries; it never stands in for a row the core
+// does not have (a decision on an invented id is a 404 the person is told was a yes). Waiting rows first, then the
+// decided ones, so a decision moves a row down instead of leaving it looking undecided.
 export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readonly ApprovalCardItem[] {
-  const matchingRows = rows.filter((r) => r.policy_type === kind);
-  if (kind === "MARGIN_BELOW_MINIMUM" && matchingRows.length === 0) {
-    return [];
-  }
-  const boardItems = BOARD_APPROVAL_ITEMS.filter((item) => item.kind === kind);
-  if (boardItems.length > 0) {
-    return boardItems.map((item) => {
-      const matchingRow = rows.find((r) => r.id === item.id || (r.subject_ref !== "" && item.title.includes(r.subject_ref)));
-      if (matchingRow && matchingRow.status !== "PENDING") {
-        return { ...item, status: matchingRow.status as "APPROVED" | "REJECTED" };
-      }
-      return item;
+  const items = rows
+    .filter((r) => r.policy_type === kind)
+    .map((row) => {
+      const board = BOARD_APPROVAL_ITEMS.find((b) => b.id === row.id);
+      const card = toApprovalCardItem(row);
+      if (board === undefined) return card;
+      // The board only adds what the core row lacks (the customer in the title, the role label, the metric bands). The
+      // row's own figure, its word, its summary and its status stay the core's: no figure on the row, none shown.
+      const sameRef = refOfDetail(board.title) === refOfDetail(row.detail);
+      return {
+        ...board,
+        title: sameRef ? board.title : card.title,
+        amount: card.amount,
+        amountLabel: card.amountLabel,
+        summary: card.summary,
+        timeAgo: card.status === "PENDING" ? board.timeAgo : card.timeAgo,
+        status: card.status,
+      };
     });
-  }
-  return matchingRows.map(toApprovalCardItem);
+  return [...items.filter((i) => i.status === "PENDING"), ...items.filter((i) => i.status !== "PENDING")];
 }
 
 export function changeOrderItems(
@@ -366,13 +395,28 @@ export function changeOrderItems(
   return queue.map((row) => toChangeOrderCardItem(row, details.get(row.id) ?? null));
 }
 
-export function kindCount(kind: string, rows: readonly ApprovalRow[], changeOrderQueue: readonly ChangeOrderQueueRow[] = []): number {
-  if (kind === "CHANGE_ORDER") {
-    return changeOrderQueue.length;
-  }
-  const matchingRows = rows.filter((r) => r.policy_type === kind && r.status === "PENDING");
-  if (matchingRows.length > 0 && kind === "FREIGHT_ABOVE_QUOTE") return matchingRows.length;
-  return DEFAULT_APPROVAL_COUNTS[kind] ?? 0;
+/** The waiting count of a tab: the core's own count when the view holds one, else this kind's waiting rows. */
+export function kindCount(
+  kind: string,
+  rows: readonly ApprovalRow[],
+  changeOrderQueue: readonly ChangeOrderQueueRow[] = [],
+  counts?: Readonly<Record<string, number>>,
+): number {
+  if (kind === "CHANGE_ORDER") return changeOrderQueue.length;
+  if (counts && kind in counts) return counts[kind];
+  return rows.filter((r) => r.policy_type === kind && r.status === "PENDING").length;
 }
 
+/** Waiting rows counted per kind, from the core's list of waiting requests. */
+export function pendingCounts(rows: readonly Pick<ApprovalRow, "policy_type" | "status">[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of APPROVAL_KINDS) out[k.kind] = 0;
+  for (const r of rows) if (r.status === "PENDING") out[r.policy_type] = (out[r.policy_type] ?? 0) + 1;
+  return out;
+}
 
+/** The sentence that names the thing a decision is about: "Q-2002, $35.59 under the floor". */
+export function decisionSubject(item: Pick<ApprovalCardItem, "title" | "amount" | "amountLabel">): string {
+  const ref = item.title.split(" · ")[0];
+  return item.amount === "" ? ref : `${ref}, ${item.amount} ${item.amountLabel}`;
+}
