@@ -46,7 +46,7 @@ export const screenStyles = css`
   .box-gap { width: 24px; flex: none; }
   .box-hit { flex: none; width: var(--hh-h-input); height: var(--hh-h-input); min-height: var(--hh-h-input); margin: -10px; padding: 0; border: 0; background: transparent; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .box-hit:focus-visible { outline: none; }
-  .box-hit:focus-visible > .box, .inv-open:focus-visible { outline: 2px solid var(--hh-focus); outline-offset: 2px; border-radius: var(--hh-radius-control); }
+  .box-hit:focus-visible > .box, .inv-open:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; border-radius: var(--hh-radius-control); }
   .box { flex: none; width: 24px; height: 24px; padding: 0; min-height: 24px; border: 2px solid var(--hh-control-line); border-radius: var(--hh-radius-control); background: var(--hh-field); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .box[aria-checked="true"], [aria-checked="true"] > .box { background: var(--hh-accent); border-color: var(--hh-accent); }
   .box .mark { width: 10px; height: 6px; border-left: 2px solid var(--hh-accent-ink); border-bottom: 2px solid var(--hh-accent-ink); transform: rotate(-45deg) translate(1px, -1px); opacity: 0; }

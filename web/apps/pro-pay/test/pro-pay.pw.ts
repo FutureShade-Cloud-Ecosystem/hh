@@ -144,6 +144,19 @@ test.describe("phone", () => {
     await expect(page.getByTestId("picked-count")).toHaveText("2 of 2 selected");
   });
 
+  test("keyboard focus shows a ring on the invoice checkbox and on the invoice number", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByRole("button", { name: "Select all 2" }).focus();
+    await page.keyboard.press("Tab");
+    const hit = page.getByTestId("invoice-row").first().getByRole("checkbox");
+    await expect(hit).toBeFocused();
+    await expect.poll(() => hit.locator(".box").evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+    await page.keyboard.press("Tab");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect(open).toBeFocused();
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+  });
+
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
