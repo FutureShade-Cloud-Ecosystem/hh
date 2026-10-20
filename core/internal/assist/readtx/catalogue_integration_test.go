@@ -37,6 +37,10 @@ var assistReaderViews = map[string]bool{
 	"ai.quote_lines":          true, // slice 6b
 	"ai.purchase_orders":      true, // slice 6b
 	"ai.purchase_order_lines": true, // slice 6b
+	"ai.invoices":             true, // slice 7a
+	"ai.ar_aging":             true, // slice 7a
+	"ai.payments":             true, // slice 7a
+	"ai.payment_allocations":  true, // slice 7a
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
@@ -44,7 +48,7 @@ var assistReaderViews = map[string]bool{
 var viewOwnerColumns = map[string][]string{
 	"public.orders":               {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
 	"public.order_lines":          {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
-	"public.customers":            {"id", "name"},                                                                                                                                                                                                                                                  // slice 5
+	"public.customers":            {"account_no", "id", "name"},                                                                                                                                                                                                                                    // slice 5
 	"public.locations":            {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
 	"public.stock_balances":       {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
 	"public.product_branch_costs": {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
@@ -54,6 +58,10 @@ var viewOwnerColumns = map[string][]string{
 	"public.purchasing_pos":       {"branch_id", "currency", "delivery_method", "expected_at", "id", "notes", "ordered_at", "po_no", "status", "vendor_id"},                                                                                                                                        // slice 6b
 	"public.purchasing_po_lines":  {"billed_cents", "description", "id", "line_no", "po_id", "product_id", "qty_billed_base", "qty_ordered_base", "qty_received_base", "unit_cost_cents", "uom"},                                                                                                   // slice 6b
 	"public.vendors":              {"id", "name"},                                                                                                                                                                                                                                                  // slice 6b
+	"public.invoices":             {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
+	"public.payments":             {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
+	"public.payment_allocations":  {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+	"public.system_settings":      {"key", "value"},                                                                                                                                                                                                                                                // slice 7a: one row only, by policy (the business zone)
 }
 
 func (r Roles) all() []string {
@@ -455,7 +463,7 @@ func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
 	q := pgx.Identifier.Sanitize
 	for _, p := range []struct{ name, plant, revert, mention string }{
 		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
-		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.account_no"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.payment_terms_days"},
 		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
 	} {
 		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {
