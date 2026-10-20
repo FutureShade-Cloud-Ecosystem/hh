@@ -1081,3 +1081,12 @@ test("a draft or a void invoice is neither listed as open nor picked, and never 
   await expect(page.locator("[data-invoice-row]", { hasText: "INV-1201" })).toHaveCount(0);
   await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
 });
+
+test("while the invoices are loading or have failed, Remind gives no reason that reads as nothing owed", async ({ page, request }) => {
+  await openDesk(page, request);
+  await page.route("**/api/v1/ar/register?*customer_id=*", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoices-failed]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeDisabled();
+  await expect(page.getByText("Nothing on this account is overdue.")).toHaveCount(0);
+});

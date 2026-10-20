@@ -968,7 +968,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
       </div>
       <div class="actions">
         <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!overdueOnAccount}>Remind</button>
-        ${overdueOnAccount ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
+        ${overdueOnAccount || account.invoicesState !== "ready" ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
