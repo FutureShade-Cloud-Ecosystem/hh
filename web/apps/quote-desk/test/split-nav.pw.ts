@@ -328,6 +328,8 @@ test("split search: the quote page adds lines through the search and add box, no
   expect(where.scan, "no scan box on the quote page").toBe(0);
   expect(where.search, "one search and add box on the quote page").toBe(1);
   const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  // The quote's lines arrive after its page opens; the count the adds are measured from waits for them.
+  await expect(page.getByTestId("qb-line")).not.toHaveCount(0);
   const before = await page.getByTestId("qb-line").count();
   // A code adds on Enter; a name search adds on a click; a pause adds nothing.
   await box.fill("EDG-08");
