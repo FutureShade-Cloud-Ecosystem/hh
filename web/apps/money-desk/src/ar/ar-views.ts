@@ -359,7 +359,7 @@ function register(model: DeskModel): TemplateResult {
             <div class="scroll">
               <table class="stack reg">
                 <thead>
-                  <tr><th>Invoice</th><th>Account</th><th>Branch</th><th>Due</th><th>Status</th><th class="num">Balance</th><th><span class="visually-hidden">Act</span></th></tr>
+                  <tr><th>Invoice</th><th>Account</th><th>Branch</th><th>Due</th><th>Status</th><th class="num">Balance due</th><th><span class="visually-hidden">Act</span></th></tr>
                 </thead>
                 <tbody>${rows.map((r) => registerRowView(model, r))}</tbody>
               </table>
@@ -747,7 +747,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
       <div class="scroll">
         <table class="stack inv">
           <thead>
-            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Balance</th><th class="num">Pick</th><th class="num">Applied</th></tr>
+            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Balance due</th><th class="num">Pick</th><th class="num">Applied</th></tr>
           </thead>
           <tbody>
             ${rows.map((r) => {
@@ -803,8 +803,8 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
-      <p class="label gap">Method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
-      ${segmented("Method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
+      <p class="label gap">Payment method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
+      ${segmented("Payment method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
       ${pol !== null && pol.surcharge_rate_bps > 0 && account.method === "CARD" && surchargeCents > 0
         ? html`<p class="alert alert-warn" role="status" data-card-surcharge>Card surcharge: ${formatMoney(surchargeCents)} at ${(pol.surcharge_rate_bps / 100).toFixed(2)}% (${pol.surcharge_rate_bps} bps).</p>`
         : nothing}
@@ -954,6 +954,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
   const hold = model.holds.find((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const promised = account.invoices.some((r) => typeof r.promised_date === "string" && r.promised_date !== "");
   const disputes = account.invoices.filter((r) => r.disputed).length;
+  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID");
   return html`
     <button type="button" class="link back" data-action="back">‹ Receivables</button>
     <div class="head">
@@ -965,7 +966,8 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
           ${disputes > 0 ? html`<span class="pill pill-info">${disputes} ${disputes === 1 ? "dispute" : "disputes"}</span>` : nothing}</p>
       </div>
       <div class="actions">
-        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID")} title="${account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID") ? "" : "Nothing on this account is overdue."}">Remind</button>
+        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!overdueOnAccount}>Remind</button>
+        ${overdueOnAccount ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
