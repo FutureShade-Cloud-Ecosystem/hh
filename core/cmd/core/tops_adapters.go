@@ -221,7 +221,7 @@ func (a cardAttemptAlerter) PostCardAttemptAlert(ctx context.Context, attemptID,
 	if processorRef != "" {
 		body += ", charge ref " + processorRef
 	}
-	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", "card-attempt:"+attemptID+":"+status, body,
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "finance", "card-attempt:"+attemptID+":"+status, body,
 		messaging.EventRef{Topic: "payment.card_attempt", Entity: "card_charge_attempt:" + attemptID, Summary: body}, false)
 	return err
 }
