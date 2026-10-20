@@ -300,7 +300,7 @@ type posStore interface {
 	InsertReturnRequest(ctx context.Context, rr returnRequestRow, lines []ReturnRequestLineInput) (ReturnRequest, error)
 	GetReturnRequest(ctx context.Context, id string) (ReturnRequest, bool, error)
 	ListReturnRequestsByCustomer(ctx context.Context, customerID string, limit int) ([]ReturnRequest, error)
-	ListReturnRequestsByStatus(ctx context.Context, status string, limit int) ([]ReturnRequest, error)
+	ListReturnRequestsByStatus(ctx context.Context, status string, branchIDs []string, limit int) ([]ReturnRequest, error)
 	LockReturnRequestStatus(ctx context.Context, tx pgx.Tx, id string) (status string, found bool, err error)
 	DecideReturnRequestTx(ctx context.Context, tx pgx.Tx, d requestDecision) error
 	// pricing orders

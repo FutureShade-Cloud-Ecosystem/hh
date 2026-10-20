@@ -597,7 +597,9 @@ func (s *Service) ZReportFor(ctx context.Context, sessionID string) (ZReport, er
 		return ZReport{}, err
 	}
 	if !caller.CanAccessBranch(sess.BranchID) {
-		return ZReport{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
+		// Not found, as for a session that does not exist: a refusal naming the branch is an existence
+		// oracle on random session ids (the pos by id reads answer the same way).
+		return ZReport{}, errNotFound
 	}
 	return s.deriveZReport(ctx, sess)
 }
@@ -758,9 +760,10 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 	if err != nil {
 		return SessionDetail{}, err
 	}
-	// The branch wall on a read of a drawer's tenders and movements, the words every till write gives.
+	// The branch wall on a read of a drawer's tenders and movements. Not found, as for a session that does
+	// not exist: a refusal naming the branch is an existence oracle on random session ids.
 	if !caller.CanAccessBranch(sess.BranchID) {
-		return SessionDetail{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
+		return SessionDetail{}, errNotFound
 	}
 	tenders, err := s.store.SessionTenders(ctx, id)
 	if err != nil {
@@ -796,6 +799,18 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 
 // Policy returns the branch variance threshold + close grain.
 func (s *Service) Policy(ctx context.Context, branchID string) (TillPolicy, error) {
+	// The branch wall: a branch's variance threshold, close grain and blind close setting are read only by
+	// a caller granted that branch, with the words every till write gives. A read naming no branch answers
+	// the dealer default, as before.
+	if branchID != "" {
+		caller, err := s.caller(ctx)
+		if err != nil {
+			return TillPolicy{}, err
+		}
+		if !caller.CanAccessBranch(branchID) {
+			return TillPolicy{}, forbidden("till: caller cannot access branch %s", branchID)
+		}
+	}
 	return s.store.Policy(ctx, branchID)
 }
 

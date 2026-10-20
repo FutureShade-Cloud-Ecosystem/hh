@@ -165,6 +165,11 @@ func (s *CatalogueService) Workbook(ctx context.Context, q CatalogueQuery) (*Wor
 	return s.build(rows, buckets, q), nil
 }
 
+// OPEN BY DESIGN (UX-89): the available quantity at a named branch is the stock glance's own figure, the
+// same one the browse read answers to any staff caller with no branch wall. The export adds nothing to
+// it, so it is listed open beside the glance rather than fenced alone; the day the glance takes a wall,
+// this read takes the same one.
+//
 // readStock runs the batched four-bucket read and indexes it by product id.
 //
 // A FAILURE HERE IS NOT AN EXPORT FAILURE. The browse read is a separate, staff-guarded call that the
