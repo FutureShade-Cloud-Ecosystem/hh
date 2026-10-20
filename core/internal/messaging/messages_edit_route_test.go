@@ -13,6 +13,7 @@ package messaging
 // drifting back into the catch-all.
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -306,5 +307,29 @@ func (f *adminStore) plantMessage(channelID, id, authorID, kind string, requires
 func frontlineAuthority() identity.StaffAuthority {
 	return identity.StaffAuthority{
 		RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+	}
+}
+
+// A repeat delete of a tombstone answers the row as it stands and runs no delete write: nothing
+// changed, so the feed seq must not be bumped by the second DELETE either (the repository's
+// UPDATE always drew a fresh seq; the service wall now short circuits it).
+func TestRoute_DeleteMessage_RepeatDeleteRunsNoWrite(t *testing.T) {
+	f := newAdminStore()
+	deleted := time.Now().Add(-time.Minute)
+	f.setMember(chGen, uAlice)
+	f.plantMessage(chGen, msgGone, uAlice, MsgText, false, time.Now(), &deleted)
+	f.singleMessages = map[string]Message{
+		msgGone: {ID: msgGone, ChannelID: chGen, AuthorID: uAlice, Kind: MsgText, Body: "", DeletedAt: &deleted},
+	}
+	svc := &Service{repo: f.fakeStore}
+	m, err := svc.DeleteMessage(context.Background(), Caller{UserID: uAlice}, chGen, msgGone)
+	if err != nil {
+		t.Fatalf("a repeat delete is the no-op it reads as: %v", err)
+	}
+	if m.DeletedAt == nil || !m.DeletedAt.Equal(deleted) {
+		t.Fatalf("the tombstone is answered as it stands: %+v", m)
+	}
+	if len(f.deletedMessages) != 0 {
+		t.Fatalf("a repeat delete must run no delete write: %+v", f.deletedMessages)
 	}
 }

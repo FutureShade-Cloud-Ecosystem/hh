@@ -186,6 +186,14 @@ func (h *Handler) auditXLSX(w http.ResponseWriter, r *http.Request, caller guard
 	}
 	// The audit read names no branch; a branch_id on the request is still held to the caller's reach
 	// so no export door answers for a branch the caller cannot read.
+	//
+	// PRR-437: this check is DEFENSE IN DEPTH and is kept on purpose. The route is gated
+	// RequireAdmin, and an admin is tier 1 global scope, always in reach, so as wired the check
+	// cannot fire. It is kept because the route, not this function, is what decided that: if the
+	// gate is ever relaxed to RequireManager (the statements door's gate), the reach fence is
+	// already here rather than remembered. reachBranch is also the shared fence every other export
+	// door applies, so removing it here would make the audit door the one door with a different
+	// rule to reason about.
 	if b := strings.TrimSpace(r.URL.Query().Get("branch_id")); b != "" && !reachBranch(w, caller, b) {
 		return
 	}

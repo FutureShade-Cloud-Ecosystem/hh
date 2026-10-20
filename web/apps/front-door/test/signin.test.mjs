@@ -110,7 +110,7 @@ test("the micro apps' role table is the front door's role catalog: each live rol
   const { APP_IDS, APP_ROLES, ROLE_FLOWS } = await import("@hardscapehouse/pos-kit/src/ported/boot-custody.js");
   const appOfTile = (tile) => {
     if (tile.name === "Dealer Admin") return "dealer-admin";
-    const byHref = { "/till/": "counter-till", "/quote/": "quote-desk", "/home/": "manager-home", "/drive/": "drive-run", "/buying-and-stock/": "buying-and-stock", "/money-desk/": "money-desk", "/yard/": "yard-pick" };
+    const byHref = { "/till/": "counter-till", "/quote/": "quote-desk", "/home/": "manager-home", "/drive/": "drive-run", "/buying-and-stock/": "buying-and-stock", "/money-desk/": "money-desk", "/yard/": "yard-pick", "/dispatch/": "dispatch-board", "/messages/": "house-messages" };
     return byHref[tile.href] ?? null;
   };
   for (const appId of APP_IDS.filter((id) => id !== "role-template")) {

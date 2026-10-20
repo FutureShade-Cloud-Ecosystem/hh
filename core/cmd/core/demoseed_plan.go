@@ -510,15 +510,15 @@ type runSpec struct {
 }
 
 // Eight runs over six days: two already completed, one out on the road right now, five planned
-// ahead (R5 and R8 share tomorrow: R5 is Point Loma's, with the three orders that moved there and
-// a Point Loma truck and driver; R8 is the Driver persona's own tomorrow, one Julian stop). A PLANNED run with no truck and no driver is legal and common (the board's
-// "needs a crew" column), and R6 is exactly that.
+// ahead (R5 and R8 share tomorrow: R5 is Point Loma's West loop, with a Point Loma truck and
+// driver; R8 is the Driver persona's own tomorrow, one Julian stop). A PLANNED run with no truck
+// and no driver is legal and common (the board's "needs a crew" column), and R6 is exactly that.
 var demoRuns = []runSpec{
 	{"R1", 0, "T1", "D1", -2, 7 * 60, "COMPLETED", "Kingston east loop"},
 	{"R2", 1, "T3", "D3", -1, 7 * 60, "COMPLETED", "Trenton bulk run"},
 	{"R3", 0, "T2", "D2", 0, 7 * 60, "DISPATCHED", "Boom set, wall block"},
 	{"R4", 0, "T1", "D1", 0, 13 * 60, "PLANNED", "Kingston afternoon"},
-	{"R5", 1, "T3", "D3", 1, 8*60 + 15, "PLANNED", "West loop, the three moved orders"},
+	{"R5", 1, "T3", "D3", 1, 8*60 + 15, "PLANNED", "West loop"},
 	{"R8", 0, "T1", "D1", 1, 7*60 + 30, "PLANNED", "Kingston morning drop"},
 	{"R6", 1, "", "", 2, 0, "PLANNED", "Needs a truck and a driver"},
 	{"R7", 1, "T4", "D4", 3, 9 * 60, "PLANNED", "Small drops, over capacity, on purpose"},
@@ -621,15 +621,15 @@ type taskSpec struct {
 	Weight   string
 }
 
-// The open PICK tasks (QUEUED, PUSHED) sit where the yard team can reach them: branch 1, the Point
-// Loma main yard the demo populate converges the yard persona onto, with their orders (O03, O05,
-// O06, O07), because a task's branch is its order's branch. K06 (O03) is one of the four: O03
-// already sits at Point Loma with a Point Loma ticket (SP12 on R7), so re-statusing its pick from
-// ACCEPTED to QUEUED gives Point Loma its fourth open pick without moving an order, splitting a
-// stop, or seeding a new row a day (the day-keyed options the review named would pile a task a day
-// onto the queue), and ACCEPTED stays covered by K05. K03 (O01) stays at branch 0 so the other
-// branch's view still holds an open pick. The stops, runs and scans of O05 to O07 stay where they
-// were: dispatch reads an order through a LEFT JOIN with no branch fence.
+// The open PICK tasks (QUEUED, PUSHED) sit at branch 1, the Point Loma main yard the demo
+// populate converges the yard persona onto, with their orders (O03, O05, O06, O07); a task's
+// branch is its order's branch. K06 (O03) is one of the four at Point Loma: O03 already sits at
+// Point Loma with a Point Loma ticket (SP12 on R7), so re-statusing its pick from ACCEPTED to
+// QUEUED gives Point Loma its fourth open pick without moving an order, splitting a stop, or
+// seeding a new row a day (the day-keyed options the review named would pile a task a day onto
+// the queue). ACCEPTED stays covered by K05 (O02) at branch 0. K03 (O01) also stays at branch 0
+// so the other branch's view still holds an open pick. The stops, runs and scans of O05 to O07
+// stay where they were: dispatch reads an order through a LEFT JOIN with no branch fence.
 var demoTasks = []taskSpec{
 	{"K01", "O06", 1, "PICK", "QUEUED", "NORMAL", 2, 0, "", "", 0, ""},
 	{"K02", "O07", 1, "PICK", "QUEUED", "HIGH", 5, 0, "", "", 0, ""},

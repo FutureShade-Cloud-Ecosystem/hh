@@ -110,8 +110,9 @@ the core's exchange:
   Feedback and Sign out. The role entry says "Continue as <the person's own role
   label>" and lands them where the matrix says (`landingFor` over `src/roles.ts`).
   A role with no screens on this site says so and offers no way in.
-- Where `personas` is true the eight live and five coming cards of the demo appear
-  (after sign in on the testers' copy, on the sign in screen on the public copy);
+- Where `personas` is true the thirteen live cards of the demo appear (no coming row:
+  every role of ROLE-ACCESS-r3 is live, so the matrix's "coming" disclosure does not render),
+  after sign in on the testers' copy, on the sign in screen on the public copy;
   a card calls `POST /api/v1/auth/persona {persona}` with the role code, adopts the
   answer through the same custody with no refresh, and shows a refusal in the card
   that earned it while the others keep working.
