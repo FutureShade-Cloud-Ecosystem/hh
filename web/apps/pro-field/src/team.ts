@@ -23,3 +23,28 @@ export const ROLE_OPTIONS: readonly RoleOption[] = [
 export function memberRowWords(user: TenantUser): string {
   return [user.name, user.email, roleLabel(user.role), statusWords("team", user.status)].join(" ");
 }
+
+/**
+ * Whether changing this member's role would demote the last active owner on
+ * the account.
+ */
+export function isLastActiveOwnerDemotion(users: readonly Pick<TenantUser, "id" | "role" | "status">[], userId: string, nextRole: string): boolean {
+  const target = users.find((user) => user.id === userId);
+  if (target === undefined || target.role !== "account_admin" || target.status !== "active" || nextRole === "account_admin") return false;
+  const activeOwners = users.filter((user) => user.role === "account_admin" && user.status === "active");
+  return activeOwners.length <= 1;
+}
+
+/**
+ * The confirmation words before a role change is sent: names the person and
+ * the new role, and warns an owner demoting themself that Team access ends as
+ * soon as the change saves.
+ */
+export function roleChangeConfirmWords(user: Pick<TenantUser, "id" | "name" | "role">, nextRole: string, currentUserId: string): string {
+  const from = roleLabel(user.role);
+  const to = roleLabel(nextRole);
+  if (user.id === currentUserId && user.role === "account_admin" && nextRole !== "account_admin") {
+    return `Change your role from ${from} to ${to}? You will lose access to Team and user management as soon as this saves.`;
+  }
+  return `Change ${user.name} from ${from} to ${to}?`;
+}
