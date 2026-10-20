@@ -9,10 +9,11 @@
 // document pages, on the design system's cards.
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantQuotes, type TenantQuote, type TenantQuoteDetail } from "@hardscapehouse/api-client";
-import { calendarDay, houseDay, money, qtyWithUnit, statusChip, totalsLine } from "@hardscapehouse/pro-kit";
+import { dayWords, priceWords, qtyWords, totalWords } from "./figures.js";
+import { statusChip } from "@hardscapehouse/pro-kit";
 import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, readCursorPages, LIST_CUT_WORDS, type Page, type SurfaceAnswer } from "./views.js";
 
-export const QUOTES_EMPTY = "No quotes yet. Submit an RFQ and the dealer's quotes land here.";
+export const QUOTES_EMPTY = "No quotes yet. Request a quote and the dealer's quotes land here.";
 export const ACCEPT_ON_LINK_WORDS =
   "A quote is accepted through the link the dealer sent you, where you confirm the quantities and type your name; ask the dealer for the link.";
 const NO_QUOTE_WORDS = "That quote is not here anymore.";
@@ -57,22 +58,22 @@ export function quotesHeading(dataRaw: unknown): string {
 function lineRow(line: TenantQuoteDetail["lines"][number]): TemplateResult {
   return html`<li>
     <div class="card" data-testid="quote-line">
-      <span class="rowline"><span class="name">${line.description}</span><span class="grow"></span><span class="mono figure">${money(line.line_total_cents)}</span></span>
-      <span class="rowline dim"><span>${qtyWithUnit(line.qty_entered, line.uom_entered)}</span><span class="grow"></span><span class="mono">${money(line.unit_price_cents)}</span></span>
+      <span class="rowline"><span class="name">${line.description}</span><span class="grow"></span><span class="mono figure">${priceWords(line.line_total_cents)}</span></span>
+      <span class="rowline dim"><span>${qtyWords(line.qty_entered, line.uom_entered)}</span><span class="grow"></span><span class="mono">${priceWords(line.unit_price_cents)}</span></span>
     </div>
   </li>`;
 }
 
 function quoteBody(quote: TenantQuoteDetail): TemplateResult {
-  const totals = totalsLine(quote);
+  const totals = totalWords(quote);
   const isSent = quote.status === "SENT";
   const canReject = quote.status === "SENT" || quote.status === "ACCEPTED";
   const canConvert = quote.status === "ACCEPTED";
   return html`<div class="card">
       ${metaLine([
         statusChip("quote", quote.status),
-        html`<span>Created ${houseDay(quote.created_at)}</span>`,
-        html`<span>Valid until ${calendarDay(quote.valid_until)}</span>`,
+        html`<span>Created ${dayWords(quote.created_at)}</span>`,
+        html`<span>Valid until ${dayWords(quote.valid_until)}</span>`,
       ])}
       <ul class="cards" data-testid="quote-lines">${quote.lines.map(lineRow)}</ul>
       <div class="facts" data-testid="quote-totals">
@@ -98,8 +99,8 @@ export function quotesView(dataRaw: unknown, page: Page): TemplateResult {
         ${data.quotes.map(
           (quote) => html`<li>
             <button type="button" class="card" data-action="open-quote" data-quote="${quote.id}" data-testid="quotes-row">
-              <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${money(quote.total_cents)}</span></span>
-              <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${calendarDay(quote.valid_until)}</span></span>
+              <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${priceWords(quote.total_cents)}</span></span>
+              <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${dayWords(quote.valid_until)}</span></span>
             </button>
           </li>`,
         )}
