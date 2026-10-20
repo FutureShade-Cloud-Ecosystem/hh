@@ -84,17 +84,20 @@ const willCallSyncScope = "will_call"
 const legacyPickupsSeqScope = "pickups"
 
 // willCallSeqUpsert, a format over the two scope names, draws the next
-// will_call seq. The counter row is lifted to at least the legacy
-// pickups counter first, so a deployment
-// that ran both writers keeps every new seq above every existing row
-// (will_call rows sit at or below the will_call counter, the legacy
-// contractor rows at or below the pickups counter). No migration is
-// needed: the lift happens inside the draw, under the will_call row's
-// lock, and the legacy row never moves again.
+// will_call seq. Because scope_sequences holds the last value issued
+// (the upsert increments and returns next_value), the draw lifts above
+// the will_call counter, the legacy pickups counter, and the highest
+// seq on any row in will_call_pickups, then adds 1 so the returned value
+// is strictly above both counters and every row. No migration is needed:
+// the lift happens inside the draw, under the will_call row's lock, and
+// the legacy row never moves again.
 const willCallSeqUpsert = `INSERT INTO scope_sequences (scope, next_value)
-	VALUES ('%[1]s', COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0) + 1)
+	VALUES ('%[1]s', GREATEST(
+		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0),
+		COALESCE((SELECT MAX(seq) FROM will_call_pickups), 0)) + 1)
 	ON CONFLICT (scope) DO UPDATE SET next_value = GREATEST(scope_sequences.next_value,
-		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0)) + 1
+		COALESCE((SELECT next_value FROM scope_sequences WHERE scope = '%[2]s'), 0),
+		COALESCE((SELECT MAX(seq) FROM will_call_pickups), 0)) + 1
 	RETURNING next_value`
 
 // - loads -
