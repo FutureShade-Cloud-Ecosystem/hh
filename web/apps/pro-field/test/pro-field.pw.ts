@@ -100,6 +100,23 @@ test.describe("phone", () => {
     await expect(page.locator("hh-pro-signin")).toHaveCount(0);
   });
 
+  test("the section nav waits for the profile, so it never reshuffles under a tap", async ({ page }) => {
+    let releaseMe!: () => void;
+    const meHeld = new Promise<void>((resolve) => {
+      releaseMe = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "GET") await meHeld;
+      await route.continue();
+    });
+    await signIn(page, "owner");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.getByTestId("section-nav")).toHaveCount(0);
+    releaseMe();
+    await expect(page.getByTestId("section-nav").getByRole("button", { name: "Projects" })).toBeVisible();
+    await expect(page.getByTestId("section-nav").getByRole("button")).toHaveCount(4);
+  });
+
   test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
     let failMe = true;
     await page.route("**/api/v1/tenant/me", async (route) => {

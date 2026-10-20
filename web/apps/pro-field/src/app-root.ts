@@ -1100,6 +1100,8 @@ export class ProFieldApp extends HHElement {
     if (!this.#inFrame()) return html`<hh-pro-signin></hh-pro-signin>`;
     const profile = this.#session.profile();
     const held = CAPABILITIES.filter((capability) => this.#session.can(capability)).join(" ");
+    // The nav waits for the profile: its sections come from the held capabilities, so drawing it earlier would
+    // reshuffle it under a tap when tenant me lands.
     const sections = sectionsFor((capability) => this.#session.can(capability));
     return html`<hh-pro-frame
       data-app="field"
@@ -1111,7 +1113,7 @@ export class ProFieldApp extends HHElement {
       <div class="stack">
         <div class="topline">
           <h1 data-testid="surface-title">${this.#title()}</h1>
-          ${this.#order === null ? sectionNav(sections, this.#section) : nothing}
+          ${this.#order === null && profile !== null ? sectionNav(sections, this.#section) : nothing}
         </div>
         ${this.#renderBody()}
       </div>
