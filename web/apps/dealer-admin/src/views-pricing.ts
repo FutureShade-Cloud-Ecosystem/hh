@@ -2478,8 +2478,8 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
     <section class="card">
       <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
       <p class="pr-hint">
-        One line through the resolver, before it is quoted: the server grades it against the category's target and floor
-        and names the breach, if there is one.
+        One line through the resolver, before it is quoted: it is graded against the category's target and floor,
+        and the breach is named, if there is one.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Customer id</span>
