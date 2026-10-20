@@ -6,7 +6,7 @@
 // system at 1440 and 390.
 import { html, nothing, type TemplateResult } from "lit";
 import type { InvCountLine, InvCountReasonCode, InvCountReconRun, InvCountSheet, InvCountSheetDetail, InvCountNegativeStockRow } from "@hardscapehouse/api-client";
-import { confirmCancelWords, confirmPostLines, confirmPostWords, entryState, reconStatusTone, reconStatusWord, reconcilePeriodWord, sheetScopeWord, sheetStatusTone, sheetStatusWord, signTone } from "./counts-logic.js";
+import { confirmCancelWords, confirmPostLines, confirmPostWords, entryState, reconStatusTone, reconStatusWord, reconcilePeriodWord, sheetStatusTone, sheetStatusWord, sheetTypeWord, signTone } from "./counts-logic.js";
 import { formatMoney, formatQty } from "../po/po-money.js";
 import { whenWords } from "../po/po-logic.js";
 
@@ -111,7 +111,7 @@ function sheetsPane(model: CountsModel): TemplateResult {
                   <tr>
                     <th>Sheet</th>
                     <th>Branch</th>
-                    <th>Scope</th>
+                    <th>Type</th>
                     <th>Status</th>
                     <th>Frozen</th>
                     <th><span class="visually-hidden">Open</span></th>
@@ -123,7 +123,7 @@ function sheetsPane(model: CountsModel): TemplateResult {
                       <tr data-sheet-row=${s.sheet_no}>
                         <td class="code" data-label="Sheet">${s.sheet_no}</td>
                         <td data-label="Branch">${model.branchNames.get(s.branch_id) ?? s.branch_id}</td>
-                        <td data-label="Scope">${sheetScopeWord(s.scope)}</td>
+                        <td data-label="Type">${sheetTypeWord(s.scope)}</td>
                         <td data-label="Status">${statusPill(s.status)}</td>
                         <td data-label="Frozen">${s.freeze_at === undefined ? html`<span class="dim">not yet</span>` : whenWords(s.freeze_at, model.today)}</td>
                         <td class="pick" data-label="Open">
@@ -144,7 +144,7 @@ function sheetsPane(model: CountsModel): TemplateResult {
             ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
           </select>
         </label>
-        <label>Scope
+        <label>Type
           <select data-field="sheet-scope">
             <option value="FULL">Full count</option>
             <option value="AD_HOC">Ad-hoc</option>
@@ -310,7 +310,7 @@ function variancePane(model: CountsModel): TemplateResult {
               <button type="button" class="btn btn-primary" data-action="post-sheet" ?disabled=${model.busy}>Post adjustment</button>
               <button type="button" class="btn btn-secondary" data-action="cancel-sheet" ?disabled=${model.busy}>Cancel sheet</button>
             </div>
-            <p class="foot dim">Approving and posting are manager seats' moves: the Procurement Manager's among the demo roles. The maker never approves their own count, and posting writes the stock moves and the reason-coded journal.</p>
+            <p class="foot dim">Approving and posting are manager seats' moves. The maker never approves their own count, and posting writes the stock moves and the reason-coded journals.</p>
           `
         : nothing}
       ${notice(model)}

@@ -80,7 +80,7 @@ function lookup(model: VendorsModel): TemplateResult {
   return html`
     <section class="panel" aria-label="Find an order by the vendor's number" data-order-lookup>
       <div class="panel-head"><h3>Find the order a vendor quoted</h3></div>
-      <p class="dim">A vendor writes our order number its own way. Type it as it came back; the core finds the order.</p>
+      <p class="dim">A vendor writes our order number its own way. Type it as it came back, and the order is found.</p>
       <div class="inline-form">
         <label>The number as the vendor wrote it
           <input type="text" autocomplete="off" data-field="v-ref" data-v-ref />
