@@ -313,12 +313,22 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 			   SET status = 'DEPOSITED',
 			       metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 			       updated_at = now()
-			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED'`,
+			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL`,
 			claimPaymentIDs, m.StatementLineID)
 		if cerr != nil {
 			return "", fmt.Errorf("bankrec: claim payment: %w", cerr)
 		}
 		if int(ct.RowsAffected()) != len(claimPaymentIDs) {
+			// The UPDATE above decided: its row lock and its WHERE, re-checked after any concurrent
+			// commit (a reversal stamps reversed_at and leaves the status RECEIVED), refused these rows.
+			// This read only names WHY, after the decision; it decides nothing.
+			var reversed int
+			if rerr := tx.QueryRow(ctx,
+				`SELECT count(*) FROM payments WHERE id = ANY($1::uuid[]) AND reversed_at IS NOT NULL`,
+				claimPaymentIDs).Scan(&reversed); rerr == nil && reversed > 0 {
+				return "", conflict("bankrec: a payment has been reversed and cannot be matched to a bank line (%d of %d reversed)",
+					reversed, len(claimPaymentIDs))
+			}
 			return "", conflict("bankrec: payment already claimed or not RECEIVED (claimed %d of %d)",
 				ct.RowsAffected(), len(claimPaymentIDs))
 		}
