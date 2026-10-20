@@ -160,6 +160,53 @@ func assertDriverPayloadJSON(t testing.TB, raw []byte, extraWholeValues ...strin
 	}
 }
 
+var freightRaiseForbiddenKeys = []string{
+	"money",
+	"quoted_freight_cents",
+	"proposed_freight_cents",
+	"delta_cents",
+}
+
+var freightRaiseForbiddenWholeValues = []string{
+	"26000",
+	"34000",
+	"8000",
+}
+
+// assertFreightRaiseDriverCardJSON walks the decoded JSON of a freight raise
+// card and fails t if it carries any forbidden money key, any forbidden whole
+// number or whole string figure, or any JSON null value.
+func assertFreightRaiseDriverCardJSON(t testing.TB, drvJSON []byte) {
+	t.Helper()
+	w, err := walkDecodedJSON(drvJSON)
+	if err != nil {
+		t.Fatalf("decode driver's card JSON: %v, %s", err, drvJSON)
+		return
+	}
+	for _, forbidden := range freightRaiseForbiddenKeys {
+		for _, k := range w.Keys {
+			if strings.EqualFold(k, forbidden) {
+				t.Fatalf("a driver's card carries forbidden key %q, %s", k, drvJSON)
+			}
+		}
+	}
+	for _, forbidden := range freightRaiseForbiddenWholeValues {
+		for _, n := range w.Numbers {
+			if numberEqualsPlanted(n, forbidden) {
+				t.Fatalf("a driver's card carries forbidden number %s, %s", n, drvJSON)
+			}
+		}
+		for _, s := range w.Strings {
+			if s == forbidden || numberEqualsPlanted(strings.TrimSpace(s), forbidden) {
+				t.Fatalf("a driver's card carries forbidden string value %q, %s", s, drvJSON)
+			}
+		}
+	}
+	if w.Nulls > 0 {
+		t.Fatalf("a driver's card carries null, %s", drvJSON)
+	}
+}
+
 type spyTB struct {
 	testing.TB
 	failed bool
@@ -322,4 +369,101 @@ func TestAssertDriverPayloadJSON_Teeth(t *testing.T) {
 			t.Fatalf("expected clean payload with order_id holding a-12 and timestamp holding 9500 to pass, got failure: %v", spy.msgs)
 		}
 	})
+}
+
+func TestFreightRaise_DriverCardScanTeeth(t *testing.T) {
+	cleanCard := []byte(`{
+		"id": "0195f3a2-8000-7b12-9c34-000000000001",
+		"order_id": "0195f3a2-1111-7b12-9c34-000000000002",
+		"order_no": "#SO-KGN-1041",
+		"customer_name": "Bay of Quinte Landscaping",
+		"branch_id": "b-kgn",
+		"loads": 2,
+		"asked_by": "a dispatch manager",
+		"asked_at": "2026-08-31T09:00:00Z",
+		"state": "PARKED",
+		"approval_id": "0195f3a2-2222-7b12-9c34-000000000003"
+	}`)
+	t.Run("card_with_id_holding_8000_passes", func(t *testing.T) {
+		spy := &spyTB{TB: t}
+		assertFreightRaiseDriverCardJSON(spy, cleanCard)
+		if spy.failed {
+			t.Fatalf("expected card with id holding 8000 to pass, got failure: %v", spy.msgs)
+		}
+	})
+
+	mustFailCases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "carries_delta_cents_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","delta_cents":0}`,
+			want: "delta_cents",
+		},
+		{
+			name: "carries_money_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","money":{}}`,
+			want: "money",
+		},
+		{
+			name: "carries_quoted_freight_cents_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","quoted_freight_cents":0}`,
+			want: "quoted_freight_cents",
+		},
+		{
+			name: "carries_proposed_freight_cents_key",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","proposed_freight_cents":0}`,
+			want: "proposed_freight_cents",
+		},
+		{
+			name: "carries_whole_8000_number",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","loads":8000}`,
+			want: "8000",
+		},
+		{
+			name: "carries_whole_8000_string",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","state":"8000"}`,
+			want: "8000",
+		},
+		{
+			name: "carries_whole_26000_number",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","loads":26000}`,
+			want: "26000",
+		},
+		{
+			name: "carries_whole_26000_string",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","state":"26000"}`,
+			want: "26000",
+		},
+		{
+			name: "carries_whole_34000_number",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","loads":34000}`,
+			want: "34000",
+		},
+		{
+			name: "carries_whole_34000_string",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","state":"34000"}`,
+			want: "34000",
+		},
+		{
+			name: "carries_json_null",
+			body: `{"id":"0195f3a2-8000-7b12-9c34-000000000001","order_no":null}`,
+			want: "null",
+		},
+	}
+
+	for _, tc := range mustFailCases {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &spyTB{TB: t}
+			assertFreightRaiseDriverCardJSON(spy, []byte(tc.body))
+			if !spy.failed {
+				t.Fatalf("expected assertFreightRaiseDriverCardJSON to fail on %s (%s), but it passed", tc.name, tc.body)
+			}
+			if !strings.Contains(spy.msgs[0], tc.want) {
+				t.Fatalf("expected failure message %q to name %q", spy.msgs[0], tc.want)
+			}
+		})
+	}
 }
