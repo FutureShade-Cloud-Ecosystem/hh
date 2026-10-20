@@ -79,6 +79,11 @@ func NewAnthropicProvider(key, model, baseURL string) *AnthropicProvider {
 func (p *AnthropicProvider) Name() string  { return "anthropic" }
 func (p *AnthropicProvider) Model() string { return p.model }
 
+// Stream is declared and not implemented.
+func (*AnthropicProvider) Stream(context.Context, CompletionRequest) (<-chan StreamEvent, error) {
+	return nil, ErrStreamingUnsupported
+}
+
 // The wire shapes, kept minimal and local. Only the fields this pilot sends or reads.
 type antReq struct {
 	Model     string    `json:"model"`

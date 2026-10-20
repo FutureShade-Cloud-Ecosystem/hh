@@ -66,6 +66,11 @@ func (p *StubProvider) clock() time.Time {
 func (*StubProvider) Name() string  { return "stub" }
 func (*StubProvider) Model() string { return "hos-stub-1" }
 
+// Stream is declared and not implemented.
+func (*StubProvider) Stream(context.Context, CompletionRequest) (<-chan StreamEvent, error) {
+	return nil, ErrStreamingUnsupported
+}
+
 // Complete implements the two-phase protocol: a tool call on the first pass, a sentence on the
 // second (once the service has handed back results).
 func (p *StubProvider) Complete(_ context.Context, req CompletionRequest) (Reply, error) {
