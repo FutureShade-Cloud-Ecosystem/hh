@@ -259,27 +259,37 @@ func TestDemoServeRefusesTheAssistantKeyWithoutItsCap(t *testing.T) {
 }
 
 // Slice 3: the demo wiring must carry the assistant's per visitor, per
-// address and box wide limits whenever the key is carried. The guard reads
-// the service the wiring built (like G7 reads the card rail), so a service
-// built without them refuses, and one built the way the demo composition
-// builds it passes.
-func TestDemoRefusesAnAssistantWithoutTheDemoLimits(t *testing.T) {
-	bare := assist.NewService(nil, nil, nil, nil, nil, nil)
-	if err := demoRefuseAssistWithoutDemoLimits(bare, true); err == nil {
-		t.Fatal("a keyed demo with an unlimited assistant was accepted")
+// address and box wide limits, the tanyai-premium pin and the stub fallback
+// whenever the key is carried. The guard reads the service the wiring built
+// (like G7 reads the card rail), so a service built without any one of them
+// refuses, and one built the way the demo composition builds it passes.
+func TestDemoRefusesAnAssistantThatIsNotDemoWired(t *testing.T) {
+	bare := func() *assist.Service { return assist.NewService(nil, nil, nil, nil, nil, nil) }
+	limits := func(s *assist.Service) *assist.Service {
+		return s.WithRateLimits(assist.NewRateLimits(assistDemoLimits(true), time.Now))
 	}
-	if err := demoRefuseAssistWithoutDemoLimits(nil, true); err == nil {
+	if err := demoRefuseAssistNotDemoWired(nil, true); err == nil {
 		t.Fatal("a keyed demo with no assistant was accepted")
 	}
-	if err := demoRefuseAssistWithoutDemoLimits(bare, false); err != nil {
-		t.Fatalf("a keyless demo needs no limits to be safe, got %v", err)
+	if err := demoRefuseAssistNotDemoWired(bare(), false); err != nil {
+		t.Fatalf("a keyless demo needs nothing to be safe, got %v", err)
 	}
-	limited := assist.NewService(nil, nil, nil, nil, nil, nil).
-		WithRateLimits(assist.NewRateLimits(assistDemoLimits(true), time.Now))
-	if err := demoRefuseAssistWithoutDemoLimits(limited, true); err != nil {
-		t.Fatalf("the demo composition's limits refused: %v", err)
+	for name, svc := range map[string]*assist.Service{
+		"no limits":        bare().WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"limits only":      limits(bare()),
+		"no pin":           limits(bare()).WithStubFallback(),
+		"pinned elsewhere": limits(bare()).WithPinnedRoute(assist.AliasMain).WithStubFallback(),
+		"no stub fallback": limits(bare()).WithPinnedRoute(assist.AliasPremium),
+	} {
+		if err := demoRefuseAssistNotDemoWired(svc, true); err == nil {
+			t.Fatalf("%s: a keyed demo was accepted", name)
+		}
 	}
-	// The composition root asks for them by the configuration's own demo flag.
+	whole := limits(bare()).WithPinnedRoute(assist.AliasPremium).WithStubFallback()
+	if err := demoRefuseAssistNotDemoWired(whole, true); err != nil {
+		t.Fatalf("the demo composition refused: %v", err)
+	}
+	// The composition root asks for the limits by the configuration's own demo flag.
 	if assistDemoLimits(true) == nil || assistDemoLimits(false) != nil {
 		t.Fatal("assistDemoLimits must be non-nil for a demo copy and nil elsewhere")
 	}

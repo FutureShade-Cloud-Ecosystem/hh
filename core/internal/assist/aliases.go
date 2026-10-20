@@ -120,6 +120,19 @@ type Router struct {
 	stub    Provider
 	http    *http.Client
 	log     *slog.Logger
+	// only, when set, is the one alias this router will resolve; every other alias lands on the
+	// stub (a demo copy reaches tanyai-premium and nothing else).
+	only map[string]bool
+}
+
+// Only restricts the router to the named aliases: any other alias resolves to the stub with ok
+// false, whatever its row says. The demo composition uses it so the demo can reach one alias.
+func (r *Router) Only(aliases ...string) *Router {
+	r.only = map[string]bool{}
+	for _, a := range aliases {
+		r.only[a] = true
+	}
+	return r
 }
 
 // NewRouter builds the router. stub is the provider every unresolvable alias lands on.
@@ -145,6 +158,9 @@ func (r *Router) KeyPresent() bool { return strings.TrimSpace(r.cfg.AnthropicKey
 // in the table, disabled, of the stub kind, or missing its configuration resolves to the stub with
 // ok false: a model string that is not an alias row is never sent to any vendor.
 func (r *Router) Resolve(ctx context.Context, alias string) (p Provider, ok bool) {
+	if r.only != nil && !r.only[alias] {
+		return r.stub, false
+	}
 	rows, err := r.aliases.Aliases(ctx)
 	if err != nil {
 		if r.log != nil {

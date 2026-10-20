@@ -649,6 +649,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}())
 	// The model layer's deployment configuration: the operator's environment, never a request. A
 	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
+	if cfg.DemoMode {
+		// The demo's route is tanyai-premium by composition, never by a settings row.
+		assistSettings = assist.DemoSettings(assistSettings)
+	}
 	assistModelCfg := assist.ModelConfig{
 		AnthropicKey: assist.Secret(assistKey),
 		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
@@ -666,6 +670,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		assistAliases, assistConvs = assistRepo, assistRepo
 	}
 	assistRouter := assist.NewRouter(assistAliases, assistModelCfg, assist.NewStubProvider(), log)
+	if cfg.DemoMode {
+		assistRouter = assistRouter.Only(assist.AliasPremium) // the demo reaches one alias
+	}
 
 	// DIB-66/67: the quote assist surfaces on the builder.
 	quoteAssistSvc := quoteassist.NewService(
@@ -727,9 +734,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// Server kept conversations keyed by user and session (the jti), on the append only log.
 		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
-	// A demo copy answers on the stub, and says so, when the model cannot be used.
+	// A demo copy is pinned to tanyai-premium and answers on the stub, and says so, when the model
+	// cannot be used.
 	if cfg.DemoMode {
-		assistSvc = assistSvc.WithStubFallback()
+		assistSvc = assistSvc.WithPinnedRoute(assist.AliasPremium).WithStubFallback()
 	}
 	// The quote rails call the provider only through the assist service's meter (reservation,
 	// dealer cap, settlement); bound here because the service is built after them.

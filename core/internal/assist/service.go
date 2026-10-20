@@ -151,6 +151,10 @@ type Service struct {
 	// additive rather than load-bearing.
 	resolver *Resolver
 
+	// pinned, when set, is the alias the service always routes to, whatever the settings row says
+	// (the demo's tanyai-premium).
+	pinned string
+
 	// stubFallback is the demo copy's rule: when the model cannot be used (no key, no dealer cap, a
 	// cap reached, no price row) the question is answered on the stub and the answer says so,
 	// instead of the plain unavailable or over limit answer other builds give.
@@ -191,6 +195,17 @@ func (s *Service) WithRouter(r *Router) *Service { s.router = r; return s }
 // answered as a fresh one.
 func (s *Service) WithResolver(r *Resolver) *Service { s.resolver = r; return s }
 
+// WithPinnedRoute fixes the route to one alias: every settings read reports the native provider
+// through that alias, so the settings table cannot send the service anywhere else. The demo
+// composition pins tanyai-premium; the pin is the composition's and no request carries it.
+func (s *Service) WithPinnedRoute(alias string) *Service { s.pinned = alias; return s }
+
+// PinnedRoute is the alias the route is pinned to, or empty when it is not.
+func (s *Service) PinnedRoute() string { return s.pinned }
+
+// StubFallbackOn reports whether the demo's stub fallback is switched on.
+func (s *Service) StubFallbackOn() bool { return s != nil && s.stubFallback }
+
 // WithStubFallback switches on the demo copy's rule: a paid call refused by the meter for a cap,
 // a missing cap or a missing price row is answered on the stub with the model_unavailable notice,
 // and so is any exchange the stub answered because no key or route was usable. A user's own
@@ -220,8 +235,17 @@ func (s *Service) RunCommand(ctx context.Context, c Caller, code string, a Args)
 	return s.reg.Run(ctx, c, code, a)
 }
 
-// Settings resolves the config, defaulting on any failure.
+// Settings resolves the config, defaulting on any failure. A pinned route (the demo's) overrides
+// the provider, model and route the table holds.
 func (s *Service) Settings(ctx context.Context) Settings {
+	set := s.readSettings(ctx)
+	if s.pinned != "" {
+		set.Provider, set.Model, set.Route = ProviderAnthropic, s.pinned, ""
+	}
+	return set
+}
+
+func (s *Service) readSettings(ctx context.Context) Settings {
 	if s.settings == nil {
 		return DefaultSettings()
 	}

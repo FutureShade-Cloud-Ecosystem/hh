@@ -243,10 +243,10 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 		return err
 	}
 
-	// The assistant's demo limits: when the key is carried, the wired service
-	// must enforce the per visitor, per address and box wide buckets. Like G7
-	// this reads what the wiring built, not the environment.
-	if err := demoRefuseAssistWithoutDemoLimits(graph.tops.assistSvc, strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""); err != nil {
+	// The assistant's demo wiring: when the key is carried, the wired service
+	// must carry the demo limits, the premium pin and the stub fallback. Like
+	// G7 this reads what the wiring built, not the environment.
+	if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""); err != nil {
 		return err
 	}
 
@@ -296,18 +296,26 @@ func demoRefuseLiveCardRail(paySvc *payment.Service) error {
 	return nil
 }
 
-// demoRefuseAssistWithoutDemoLimits refuses a demo box that carries the
-// assistant's key while the wired assistant lacks the demo's per visitor, per
-// address and box wide limits. Demo personas are shared users, so the per
-// asker limit alone would let one visitor spend the box's allowance. A nil
+// demoRefuseAssistNotDemoWired refuses a demo box that carries the
+// assistant's key while the wired assistant is not the demo's: the per
+// visitor, per address and box wide limits must be in force (demo personas
+// are shared users, so the per asker limit alone would let one visitor spend
+// the box's allowance), the route must be pinned to tanyai-premium so the
+// settings table cannot move it, and the stub fallback must be on. A nil
 // service refuses too (fail closed); with no key the stub serves and nothing
-// is spent, so there is nothing to limit.
-func demoRefuseAssistWithoutDemoLimits(svc *assist.Service, keyed bool) error {
+// is spent, so there is nothing to bound.
+func demoRefuseAssistNotDemoWired(svc *assist.Service, keyed bool) error {
 	if !keyed {
 		return nil
 	}
 	if !svc.DemoLimitsInForce() {
 		return errors.New("the demo box carries the assistant's key but the wired assistant lacks the demo's per visitor, per address and box wide limits: the demo build refuses to spend without them")
+	}
+	if svc.PinnedRoute() != assist.AliasPremium {
+		return errors.New("the demo box carries the assistant's key but the wired assistant's route is not pinned to tanyai-premium: the demo build reaches that one alias and no other")
+	}
+	if !svc.StubFallbackOn() {
+		return errors.New("the demo box carries the assistant's key but the wired assistant has no stub fallback: the demo build answers on the stub when the model cannot be used")
 	}
 	return nil
 }
