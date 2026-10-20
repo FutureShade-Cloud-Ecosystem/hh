@@ -7,11 +7,13 @@ package assist
 import (
 	"context"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 )
 
 // demoPremiumRig is a service whose settings route to tanyai-premium, with a strict fake behind
 // it, the stub fallback switched on (as the demo composition does) and the given key and cap.
-func demoPremiumRig(t *testing.T, key Secret, sp *memSpend, prices memPrices, dealerCap int64) (*Service, *strictAnthropic) {
+func demoPremiumRig(t *testing.T, key redact.Secret, sp *memSpend, prices memPrices, dealerCap int64) (*Service, *strictAnthropic) {
 	t.Helper()
 	fake := newStrictAnthropic(t, antTextReply("the model answered"))
 	rows := []AliasRow{{Alias: AliasPremium, AdapterKind: AdapterAnthropic, Model: "claude-sonnet-5-5", Enabled: true}}
@@ -47,7 +49,7 @@ func wantModelUnavailable(t *testing.T, what string, ans Answer, err error) {
 }
 
 func TestDemoFallback_NoKeyAnswersOnTheStubAndSaysSo(t *testing.T) {
-	svc, fake := demoPremiumRig(t, "", &memSpend{}, premiumPrices, 1<<60)
+	svc, fake := demoPremiumRig(t, redact.NewSecret(""), &memSpend{}, premiumPrices, 1<<60)
 	ans, err := svc.Ask(context.Background(), manager(), "where is order SO-4?", nil)
 	wantModelUnavailable(t, "no key", ans, err)
 	if n := len(fake.Requests()); n != 0 {
@@ -58,7 +60,7 @@ func TestDemoFallback_NoKeyAnswersOnTheStubAndSaysSo(t *testing.T) {
 func TestDemoFallback_DealerCapReachedAnswersOnTheStubAndSaysSo(t *testing.T) {
 	sp := &memSpend{}
 	seedDealerSpend(sp, 8_000_000)
-	svc, fake := demoPremiumRig(t, "k", sp, premiumPrices, 8_000_000)
+	svc, fake := demoPremiumRig(t, redact.NewSecret("k"), sp, premiumPrices, 8_000_000)
 	ans, err := svc.Ask(context.Background(), manager(), "where is order SO-4?", nil)
 	wantModelUnavailable(t, "cap reached", ans, err)
 	if n := len(fake.Requests()); n != 0 {
@@ -72,7 +74,7 @@ func TestDemoFallback_DealerCapReachedAnswersOnTheStubAndSaysSo(t *testing.T) {
 }
 
 func TestDemoFallback_NoCapConfiguredAnswersOnTheStubAndSaysSo(t *testing.T) {
-	svc, fake := demoPremiumRig(t, "k", &memSpend{}, premiumPrices, 0)
+	svc, fake := demoPremiumRig(t, redact.NewSecret("k"), &memSpend{}, premiumPrices, 0)
 	ans, err := svc.Ask(context.Background(), manager(), "where is order SO-4?", nil)
 	wantModelUnavailable(t, "no cap", ans, err)
 	if n := len(fake.Requests()); n != 0 {
@@ -81,7 +83,7 @@ func TestDemoFallback_NoCapConfiguredAnswersOnTheStubAndSaysSo(t *testing.T) {
 }
 
 func TestDemoFallback_NoPriceRowAnswersOnTheStubAndSaysSo(t *testing.T) {
-	svc, fake := demoPremiumRig(t, "k", &memSpend{}, memPrices{}, 1<<60)
+	svc, fake := demoPremiumRig(t, redact.NewSecret("k"), &memSpend{}, memPrices{}, 1<<60)
 	ans, err := svc.Ask(context.Background(), manager(), "where is order SO-4?", nil)
 	wantModelUnavailable(t, "no price row", ans, err)
 	if n := len(fake.Requests()); n != 0 {
@@ -91,7 +93,7 @@ func TestDemoFallback_NoPriceRowAnswersOnTheStubAndSaysSo(t *testing.T) {
 
 // The notice is for the fallback only: a keyed, capped demo answers on the model with no notice.
 func TestDemoFallback_ModelAnswersCarryNoNotice(t *testing.T) {
-	svc, fake := demoPremiumRig(t, "k", &memSpend{}, premiumPrices, 1<<60)
+	svc, fake := demoPremiumRig(t, redact.NewSecret("k"), &memSpend{}, premiumPrices, 1<<60)
 	ans, err := svc.Ask(context.Background(), manager(), "hello", nil)
 	if err != nil || ans.Text != "the model answered" {
 		t.Fatalf("ask = %q (%v)", ans.Text, err)
@@ -109,7 +111,7 @@ func TestDemoFallback_ModelAnswersCarryNoNotice(t *testing.T) {
 func TestDemoFallback_OffOutsideTheDemo(t *testing.T) {
 	sp := &memSpend{}
 	seedDealerSpend(sp, 8_000_000)
-	svc, _ := demoPremiumRig(t, "k", sp, premiumPrices, 8_000_000)
+	svc, _ := demoPremiumRig(t, redact.NewSecret("k"), sp, premiumPrices, 8_000_000)
 	svc.stubFallback = false
 	ans, err := svc.Ask(context.Background(), manager(), "where is order SO-4?", nil)
 	if err != nil || !ans.LimitReached || ans.Notice != nil {

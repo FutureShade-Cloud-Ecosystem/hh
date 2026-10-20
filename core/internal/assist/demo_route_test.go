@@ -8,6 +8,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 )
 
 type demoRouteRig struct {
@@ -30,7 +32,7 @@ func newDemoRouteRig(t *testing.T, set StaticSettings) *demoRouteRig {
 		{Alias: AliasCA, AdapterKind: AdapterOpenAICompatible, BaseURL: r.ca.URL(), Model: "open-ca", Enabled: true},
 		{Alias: AliasPremium, AdapterKind: AdapterAnthropic, Model: "claude-sonnet-5-5", Enabled: true},
 	}
-	r.router = NewRouter(StaticAliases(rows), ModelConfig{AnthropicKey: "k", AnthropicBaseURL: r.premium.URL(), GatewayKey: "gw-key", DealerTag: "dealer-1"}, NewStubProvider(), nil).
+	r.router = NewRouter(StaticAliases(rows), ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: r.premium.URL(), GatewayKey: redact.NewSecret("gw-key"), DealerTag: "dealer-1"}, NewStubProvider(), nil).
 		Only(AliasPremium)
 	r.svc = chatService(NewStubProvider(), &fakeLedger{}, newFakeLimits(), set, seededReaders()).
 		WithRouter(r.router).
