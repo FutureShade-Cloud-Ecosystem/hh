@@ -769,7 +769,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The claim's cost fields follow the dealer's cost and margin role list, the predicate every module's
 	// screen asks (inventory, quote, pricing, tasks, dispatch); a global caller on the list gets every branch.
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).
-		WithCostGate(spine.roleCfg, assistDeps.Branches).RegisterRoutes(r, g)
+		WithCostGate(spine.roleCfg, assistDeps.Branches).
+		WithPurchaseCostPolicy(assistadapt.NewPurchaseCostPolicy(ops.purchasingSvc)).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
 	// consumers (order's multi-ship invoicer, warranty's customer credit,

@@ -28,3 +28,11 @@ core/internal/assist/dataquery_registry.go
 core/internal/assist/dataquery_shape.go
 core/cmd/core/assist_startup.go
 core/db/migrations/0420_assist_registry_cost_inventory.sql
+# Slice 6b: the quote margin rule (the screen's role list gate and the margin arithmetic), the purchasing policy
+# read and its adapter, the quote and purchasing views and their policies.
+core/internal/quote/staff.go
+core/internal/quote/builder.go
+core/internal/quote/floor.go
+core/internal/purchasing/vendor_order_repository.go
+core/internal/assist/adapters/purchasing_policy.go
+core/db/migrations/0425_assist_quotes_purchasing.sql

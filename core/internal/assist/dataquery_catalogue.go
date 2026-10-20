@@ -49,6 +49,13 @@ type ColumnDef struct {
 	Search bool // may use the contains operator
 	Agg    bool // may be summed, averaged, minimised or maximised
 	Hidden bool // never selected by a question (record id columns used for citations)
+	// Personal is the sensitivity tag of the registry (not a class, it gates nothing): the column holds personal
+	// data. Set from the registry, never in a view definition.
+	Personal bool
+	// Gate names which of the two cost vocabularies decides a cost column: "" or GateRoleList for the dealer's
+	// cost and margin role list (stock, quote margin), GatePurchasePolicy for the per branch purchasing policy
+	// (what the dealer pays on a purchase order). Set from the registry.
+	Gate string
 }
 
 // ViewDef is one allow listed view.
@@ -88,6 +95,20 @@ func (v ViewDef) col(name string) (ColumnDef, bool) {
 // held by a caller with at least one cost branch and margin by one the dealer's cost rule gives margin (both
 // resolved in Go from the dealer's cost and margin role list, see Handler.costFor); the database then masks
 // cost per row by branch. The payment trail is the role gate's answer. The personal data classes wait for 6b.
+// The two cost vocabularies.
+const (
+	GateRoleList       = "role_list"
+	GatePurchasePolicy = "purchase_policy"
+)
+
+// columnHeld is classHeld for one column: a cost column is held according to the vocabulary that governs it.
+func columnHeld(c Caller, col ColumnDef) bool {
+	if col.Class == ClassCost && col.Gate == GatePurchasePolicy {
+		return c.HasRole() && len(c.POCostBranchIDs) > 0
+	}
+	return classHeld(c, col.Class)
+}
+
 func classHeld(c Caller, class string) bool {
 	switch class {
 	case ClassPlain:
@@ -104,7 +125,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -173,7 +194,7 @@ func filterCatalogue(all []ViewDef, c Caller) []ViewDef {
 		fv := v
 		fv.Columns = nil
 		for _, col := range v.Columns {
-			if classHeld(c, col.Class) {
+			if columnHeld(c, col) {
 				fv.Columns = append(fv.Columns, col)
 			}
 		}
@@ -204,5 +225,125 @@ func rawStockBalancesView() ViewDef {
 		Default:      []string{"sku", "product_name", "branch_label", "on_hand_base", "reserved_base", "available_base", "uom"},
 		DefaultOrder: []OrderBy{{Col: "sku", Dir: "asc"}, {Col: "branch_label", Dir: "asc"}},
 		CiteKind:     RefProduct, CiteIDCol: "product_id", CiteLabelCol: "sku", CiteLabelPrefix: "Stock ",
+	}
+}
+
+func quotesView() ViewDef { return classify(rawQuotesView()) }
+
+func rawQuotesView() ViewDef {
+	return ViewDef{
+		Name: "ai.quotes", Schema: "ai", Table: "quotes", Title: "Quotes", MinTier: 2, Large: true,
+		About: "One row per quote: number, status, branch, customer, contact, delivery, dates and totals in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Quote id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_no", Label: "Quote", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "valid_until", Label: "Valid until", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "contact_name", Label: "Contact", Type: typeText, Filter: true, Group: true},
+			{Name: "delivery_address", Label: "Delivery address", Type: typeText, Filter: true},
+			{Name: "customer_notes", Label: "Customer notes", Type: typeText, Filter: true},
+			{Name: "fulfillment", Label: "Fulfilment", Type: typeText, Filter: true, Group: true},
+			{Name: "requested_date", Label: "Requested date", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "deposit_pct", Label: "Deposit percent", Type: typeInt, Filter: true, Agg: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+			{Name: "tax_cents", Label: "Tax", Type: typeCents, Filter: true, Agg: true},
+			{Name: "delivery_fee_cents", Label: "Delivery fee", Type: typeCents, Filter: true, Agg: true},
+			{Name: "total_cents", Label: "Total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "created_at", Label: "Created", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"quote_no", "customer_name", "branch_label", "status", "created_at", "total_cents"},
+		DefaultOrder: []OrderBy{{Col: "created_at", Dir: "desc"}, {Col: "quote_no", Dir: "asc"}},
+		Period:       "created_at",
+		CiteKind:     RefQuote, CiteIDCol: "id", CiteLabelCol: "quote_no", CiteLabelPrefix: "Quote ",
+	}
+}
+
+func quoteLinesView() ViewDef { return classify(rawQuoteLinesView()) }
+
+func rawQuoteLinesView() ViewDef {
+	return ViewDef{
+		Name: "ai.quote_lines", Schema: "ai", Table: "quote_lines", Title: "Quote lines", MinTier: 2, Large: true,
+		About: "One row per quote line: the quote, description, quantity with its unit, price, discount and total in cents, and where you may see it the line's cost, margin in basis points and estimated profit.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Line id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_id", Label: "Quote id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "quote_no", Label: "Quote", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "line_no", Label: "Line", Type: typeInt, Filter: true, Group: true},
+			{Name: "description", Label: "Description", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "qty_entered", Label: "Quantity", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "unit_price_cents", Label: "Unit price", Type: typeCents, Filter: true, Agg: true},
+			{Name: "disc_pct", Label: "Discount percent", Type: typeInt, Filter: true, Agg: true},
+			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "line_cost_cents", Label: "Line cost", Type: typeCents, Filter: true, Agg: true},
+			{Name: "margin_bps", Label: "Margin (basis points)", Type: typeInt, Filter: true, Agg: true},
+			{Name: "est_profit_cents", Label: "Estimated profit", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"quote_no", "line_no", "description", "qty_entered", "uom", "line_total_cents"},
+		DefaultOrder: []OrderBy{{Col: "quote_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
+		CiteKind:     RefQuote, CiteIDCol: "quote_id", CiteLabelCol: "quote_no", CiteLabelPrefix: "Quote ",
+	}
+}
+
+func purchaseOrdersView() ViewDef { return classify(rawPurchaseOrdersView()) }
+
+// The purchase order views carry no citation: purchasing orders have no routable reference kind in the app, and
+// a link to nothing is worse than none.
+func rawPurchaseOrdersView() ViewDef {
+	return ViewDef{
+		Name: "ai.purchase_orders", Schema: "ai", Table: "purchase_orders", Title: "Purchase orders", MinTier: 2, Large: true,
+		About: "One row per purchase order: number, status, branch, vendor, dates, currency, line count and, where you may see what the dealer pays, the subtotal in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Purchase order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_no", Label: "Purchase order", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "vendor_id", Label: "Vendor id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "vendor_name", Label: "Vendor", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "expected_at", Label: "Expected", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "ordered_at", Label: "Ordered", Type: typeTime, Filter: true, Agg: true},
+			{Name: "document_currency", Label: "Document currency", Type: typeText, Filter: true, Group: true},
+			{Name: "delivery_method", Label: "Delivery method", Type: typeText, Filter: true, Group: true},
+			{Name: "notes", Label: "Notes", Type: typeText, Filter: true},
+			{Name: "line_count", Label: "Lines", Type: typeInt, Filter: true, Agg: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"po_no", "vendor_name", "branch_label", "status", "expected_at", "line_count"},
+		DefaultOrder: []OrderBy{{Col: "po_no", Dir: "asc"}},
+		Period:       "ordered_at",
+	}
+}
+
+func purchaseOrderLinesView() ViewDef { return classify(rawPurchaseOrderLinesView()) }
+
+func rawPurchaseOrderLinesView() ViewDef {
+	return ViewDef{
+		Name: "ai.purchase_order_lines", Schema: "ai", Table: "purchase_order_lines", Title: "Purchase order lines", MinTier: 2, Large: true,
+		About: "One row per purchase order line: the order, product, quantities ordered, received, billed and outstanding in the base unit and, where you may see what the dealer pays, the unit cost, line total and billed amount in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Line id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_id", Label: "Purchase order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "po_no", Label: "Purchase order", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "line_no", Label: "Line", Type: typeInt, Filter: true, Group: true},
+			{Name: "sku", Label: "SKU", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "description", Label: "Description", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "qty_ordered_base", Label: "Ordered", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_received_base", Label: "Received", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_billed_base", Label: "Billed quantity", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "qty_outstanding_base", Label: "Outstanding", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "unit_cost_cents", Label: "Unit cost", Type: typeCents, Filter: true, Agg: true},
+			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "billed_cents", Label: "Billed amount", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"po_no", "line_no", "sku", "description", "qty_ordered_base", "qty_received_base", "uom"},
+		DefaultOrder: []OrderBy{{Col: "po_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
 	}
 }

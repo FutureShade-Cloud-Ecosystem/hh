@@ -698,11 +698,7 @@ func TestFreightRaise_CardMoneyIsAbsentForARefusedRole(t *testing.T) {
 		t.Fatalf("a driver may know the record exists: %v", err)
 	}
 	drvJSON, _ := json.Marshal(driver)
-	for _, forbidden := range []string{"money", "quoted_freight_cents", "proposed_freight_cents", "delta_cents", "26000", "34000", "8000", "null"} {
-		if strings.Contains(string(drvJSON), forbidden) {
-			t.Fatalf("a driver's card carries %q, %s", forbidden, drvJSON)
-		}
-	}
+	assertFreightRaiseDriverCardJSON(t, drvJSON)
 }
 
 // assertFreightTrail proves ONE audit row exists for an action on an order, with the figures the

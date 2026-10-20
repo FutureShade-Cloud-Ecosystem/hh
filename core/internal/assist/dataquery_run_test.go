@@ -2,6 +2,7 @@ package assist
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -259,5 +260,84 @@ func TestQueryForAGlobalCallerScopesAllBranches(t *testing.T) {
 	}
 	if !res.Scope.AllBranches || res.Scope.Period == nil || res.Scope.Period.Label != "2000-02-01 to 2000-02-28" || !res.Empty {
 		t.Errorf("scope = %+v empty=%v", res.Scope, res.Empty)
+	}
+}
+
+// A citation label is the record's own label column, whatever personal text the row carries.
+func TestQueryLabelNeverCarriesAPersonalColumn(t *testing.T) {
+	tx := &scriptTx{plan: cheapPlan, names: []string{"order_no", "customer_name", "__id", "__label"}, data: [][]any{
+		{"SO-1", "Pat Example", "11111111-1111-1111-1111-111111111111", "SO-1"},
+	}}
+	q, _, l := newQuerier(tx)
+	res, err := q.Query(context.Background(), dqManager, `{"view":"ai.orders","select":["order_no","customer_name"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Items[0].Ref.Label; got != "Order SO-1" || strings.Contains(got, "Pat") {
+		t.Errorf("label = %q", got)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", l.rows), "Pat Example") {
+		t.Errorf("a personal value reached the query log: %+v", l.rows)
+	}
+}
+
+// PII-CLASSES-r2 (PR 574 read P2 1): a value filtered on a personal column is never written to the query log.
+// The model writes the spec, often from an earlier answer's rows, so the log cannot tell whether the asker
+// typed the value; the marker replaces every value on a personal column and keeps column and operator.
+func TestQueryLogNeverCarriesAValueFilteredOnAPersonalColumn(t *testing.T) {
+	const secret = "Mrs Zelda Quimby"
+	for name, c := range map[string]struct{ spec, col, op string }{
+		"equals":   {`{"view":"ai.quotes","select":["quote_no"],"where":[{"col":"contact_name","op":"=","value":"` + secret + `"}]}`, "contact_name", "="},
+		"in":       {`{"view":"ai.quotes","select":["quote_no"],"where":[{"col":"delivery_address","op":"in","value":["` + secret + `","7 Elm"]}]}`, "delivery_address", "in"},
+		"between":  {`{"view":"ai.quotes","select":["quote_no"],"where":[{"col":"customer_notes","op":"between","value":["` + secret + `","Zz"]}]}`, "customer_notes", "between"},
+		"contains": {`{"view":"ai.quotes","select":["quote_no"],"where":[{"col":"customer_name","op":"contains","value":"` + secret + `"}]}`, "customer_name", "contains"},
+		"notes":    {`{"view":"ai.purchase_orders","select":["po_no"],"where":[{"col":"notes","op":"=","value":"` + secret + `"}]}`, "notes", "="},
+	} {
+		tx := &scriptTx{plan: cheapPlan, names: []string{"quote_no", "__id", "__label"}}
+		q, _, l := newQuerier(tx)
+		_, _ = q.Query(context.Background(), dqManager, c.spec)
+		if len(l.rows) != 1 {
+			t.Fatalf("%s: %d log rows", name, len(l.rows))
+		}
+		got := string(l.rows[0].Spec)
+		if strings.Contains(got, "Quimby") || strings.Contains(got, "Elm") || strings.Contains(got, "Zz") {
+			t.Errorf("%s: the log carries a personal value: %s", name, got)
+		}
+		var sp Spec
+		if err := json.Unmarshal(l.rows[0].Spec, &sp); err != nil || len(sp.Where) != 1 || sp.Where[0].Col != c.col || sp.Where[0].Op != c.op || string(sp.Where[0].Value) != `"(personal)"` {
+			t.Errorf("%s: the logged filter should keep column and operator and carry the marker: %s (%v)", name, got, err)
+		}
+	}
+}
+
+func TestQueryLogStillCarriesAValueFilteredOnAPlainColumn(t *testing.T) {
+	tx := &scriptTx{plan: cheapPlan, names: []string{"quote_no", "__id", "__label"}}
+	q, _, l := newQuerier(tx)
+	_, _ = q.Query(context.Background(), dqManager, `{"view":"ai.quotes","select":["quote_no"],"where":[{"col":"status","op":"in","value":["SENT","DRAFT"]},{"col":"contact_name","op":"=","value":"Ann Lee"},{"col":"total_cents","op":"between","value":[100,900]}]}`)
+	got := string(l.rows[0].Spec)
+	for _, want := range []string{`"SENT"`, `"DRAFT"`, `[100,900]`, `"contact_name"`, `(personal)`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the log lost %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "Ann Lee") {
+		t.Errorf("the log carries a personal value: %s", got)
+	}
+}
+
+// PR 574 read P3 1: the planner reports base tables, so the large table list names them. A plan that scans
+// purchasing_pos or purchasing_po_lines (the bases of the purchase order views) is checked against the lower bound.
+func TestShapeCheckKnowsEveryBaseTableBehindALargeView(t *testing.T) {
+	for _, rel := range []string{"orders", "order_lines", "stock_balances", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines"} {
+		plan := fmt.Sprintf(`[{"Plan":{"Node Type":"Seq Scan","Relation Name":"%s","Total Cost":500}}]`, rel)
+		if got := CheckShape([]byte(plan), DefaultCostCeiling, 100); !got.TooBroad {
+			t.Errorf("a sequential scan of %s above the lowered bound is not refused", rel)
+		}
+	}
+	for _, rel := range []string{"purchase_orders", "purchase_order_lines"} {
+		plan := fmt.Sprintf(`[{"Plan":{"Node Type":"Seq Scan","Relation Name":"%s","Total Cost":500}}]`, rel)
+		if got := CheckShape([]byte(plan), DefaultCostCeiling, 100); got.TooBroad {
+			t.Errorf("%s is a view name, not a table the planner reports", rel)
+		}
 	}
 }
