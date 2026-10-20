@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 type exportStore struct {
@@ -23,16 +24,16 @@ func (s *exportStore) Settled(_ context.Context, from, to time.Time) ([]assist.S
 }
 
 func TestParseExportMonthIsTheBudgetWindow(t *testing.T) {
-	from, to, err := parseExportMonth("2026-08")
+	from, to, err := parseExportMonth("2026-08", houseday.DefaultZone())
 	if err != nil {
 		t.Fatal(err)
 	}
-	wf, wt := assist.MonthWindow(time.Date(2026, 8, 20, 0, 0, 0, 0, time.Local))
+	wf, wt := assist.MonthWindow(time.Date(2026, 8, 20, 0, 0, 0, 0, houseday.Location()))
 	if !from.Equal(wf) || !to.Equal(wt) {
 		t.Fatalf("window %v to %v, want the budgets' %v to %v", from, to, wf, wt)
 	}
 	for _, bad := range []string{"", "2026", "2026-13", "08-2026", "2026-8-1"} {
-		if _, _, err := parseExportMonth(bad); err == nil {
+		if _, _, err := parseExportMonth(bad, houseday.DefaultZone()); err == nil {
 			t.Errorf("%q was accepted as a month", bad)
 		}
 	}
@@ -61,7 +62,7 @@ func TestWriteAssistBillingExportWritesTheSettlementsAndNothingElse(t *testing.T
 		{Kind: assist.SpendSettlement, Audience: assist.AudienceStaff, StaffUserID: "u1", RoleCode: "R", Alias: "a", Model: "m", TokensIn: 10, TokensOut: 5, CostMicroCents: 7},
 		{Kind: assist.SpendSettlement, Audience: assist.AudienceStaff, StaffUserID: "u1", RoleCode: "R", Alias: "a", Model: "m", TokensIn: 1, TokensOut: 1, CostMicroCents: 3},
 	}}
-	from, to, _ := parseExportMonth("2026-08")
+	from, to, _ := parseExportMonth("2026-08", houseday.DefaultZone())
 	var buf bytes.Buffer
 	if err := writeAssistBillingExport(context.Background(), st, "hh-demo", "2026-08", from, to, "json", &buf); err != nil {
 		t.Fatal(err)

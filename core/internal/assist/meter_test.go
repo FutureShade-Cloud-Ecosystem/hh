@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // memSpend is an append-only SpendStore.
@@ -498,4 +500,52 @@ func (s *Service) withTestMeter() *memSpend {
 		}
 	}
 	return sp
+}
+
+// -- the dealer's month (review P3-1), and the estimate divisor (P3-2) ---------------------------
+
+func TestTheMonthOfBudgetsAndCapsIsTheDealersMonthNotTheServers(t *testing.T) {
+	sp := &memSpend{}
+	mk := func(ex string, when time.Time) SpendRow {
+		return SpendRow{Kind: SpendSettlement, ExchangeID: ex, CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm",
+			Alias: "a", Model: "m", TokensIn: 10, CostMicroCents: 7, At: when}
+	}
+	// 19:00 and 23:00 on the dealer's last evening of August, which are September in UTC for the second.
+	sp.rows = []SpendRow{
+		mk("e1", time.Date(2026, 8, 31, 23, 0, 0, 0, time.UTC)),
+		mk("e2", time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC)),
+		withTokens(mk("e3", time.Date(2026, 9, 1, 5, 0, 0, 0, time.UTC)), 1000), // 01:00 September 1 in Toronto
+	}
+	clock := time.Date(2026, 9, 1, 3, 30, 0, 0, time.UTC) // UTC says September, Toronto says August 31
+	svc := meteredService(&pricedProvider{}, sp).WithClock(func() time.Time { return clock })
+
+	got, err := svc.MonthSpend(context.Background(), "u-sm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TokensIn != 20 {
+		t.Fatalf("month spend = %+v, want August's two rows (20 tokens): the dealer's month, not UTC's", got)
+	}
+	from, to, _ := svc.monthWindow(context.Background())
+	if from.Location().String() != "America/Toronto" || from.Day() != 1 || from.Month() != time.August || to.Month() != time.September {
+		t.Fatalf("window = %v to %v", from, to)
+	}
+}
+
+func withTokens(r SpendRow, n int) SpendRow { r.TokensIn = n; return r }
+
+func TestTheDealersOwnZoneIsHonoured(t *testing.T) {
+	svc := meteredService(&pricedProvider{}, &memSpend{}).
+		WithClock(func() time.Time { return time.Date(2026, 8, 31, 20, 0, 0, 0, time.UTC) }).
+		WithZone(fixedZone("Pacific/Auckland")) // already September 1 there
+	from, _, err := svc.monthWindow(context.Background())
+	if err != nil || from.Month() != time.September {
+		t.Fatalf("window from %v (%v), want September in the dealer's own zone", from, err)
+	}
+}
+
+type fixedZone string
+
+func (z fixedZone) BusinessZone(context.Context) (houseday.Zone, error) {
+	return houseday.NewZone(string(z))
 }

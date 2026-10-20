@@ -17,6 +17,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 func assistBillingExportRole(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
@@ -28,9 +29,8 @@ func assistBillingExportRole(args []string, stdout, stderr io.Writer, getenv fun
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	from, to, err := parseExportMonth(*month)
-	if err != nil {
-		return err
+	if _, err := time.Parse("2006-01", strings.TrimSpace(*month)); err != nil {
+		return fmt.Errorf("assist-billing-export: -month must be YYYY-MM, got %q", *month)
 	}
 	if strings.TrimSpace(*org) == "" {
 		return errors.New("assist-billing-export: -org is required")
@@ -51,13 +51,22 @@ func assistBillingExportRole(args []string, stdout, stderr io.Writer, getenv fun
 	}
 	defer pool.Close()
 
+	// The month is the dealer's month in the dealer's business zone, the one the caps and budgets use.
+	zone, err := houseday.Resolve(ctx, newDealerZone(pool))
+	if err != nil {
+		return fmt.Errorf("assist-billing-export: %w", err)
+	}
+	from, to, err := parseExportMonth(*month, zone)
+	if err != nil {
+		return err
+	}
 	return writeAssistBillingExport(ctx, assist.NewRepository(pool), *org, *month, from, to, *format, stdout)
 }
 
-// parseExportMonth turns YYYY-MM into the half open window the budgets use: a calendar month in
-// the process's own location, the same one MonthWindow reads.
-func parseExportMonth(raw string) (time.Time, time.Time, error) {
-	t, err := time.ParseInLocation("2006-01", strings.TrimSpace(raw), time.Local)
+// parseExportMonth turns YYYY-MM into the half open window the budgets use: a calendar month in the
+// dealer's business zone.
+func parseExportMonth(raw string, zone houseday.Zone) (time.Time, time.Time, error) {
+	t, err := time.ParseInLocation("2006-01", strings.TrimSpace(raw), zone.Location())
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("assist-billing-export: -month must be YYYY-MM, got %q", raw)
 	}

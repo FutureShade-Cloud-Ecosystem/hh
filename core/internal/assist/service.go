@@ -32,6 +32,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // Usage is what one exchange cost, reported back for the surfaces that may see it.
@@ -111,6 +113,7 @@ type Service struct {
 	prices    PriceStore
 	dealerCap int64
 	rates     *RateLimits
+	zone      houseday.Source
 
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is

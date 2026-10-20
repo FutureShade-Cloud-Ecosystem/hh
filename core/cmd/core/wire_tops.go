@@ -698,6 +698,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// Slice 2: every provider call is reserved and settled in the spend table, and the dealer
 		// wide cap (FutureBuild's deployment variable, never an assist setting) bounds them all.
 		WithMetering(assistRepo, assistRepo).
+		WithZone(newDealerZone(pool)). // the dealer's month, not the server clock's
 		WithDealerCap(assist.ParseDealerCap(os.Getenv(assist.EnvDealerCap))).
 		// Per asker rate limit on every build; the demo's per visitor, per address and box wide
 		// buckets only on a demo copy.

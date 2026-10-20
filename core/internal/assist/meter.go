@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // Audience is who a spend row was incurred for.
@@ -416,9 +418,18 @@ func (s *Service) warn(msg string, args ...any) {
 	}
 }
 
-// monthWindow is the current month as a half open window.
-func (s *Service) monthWindow(_ context.Context) (time.Time, time.Time, error) {
-	from, to := MonthWindow(s.now())
+// WithZone attaches the dealer's business zone source. The month of every cap, budget and report is
+// the dealer's month in that zone; with none wired it is the house zone (America/Toronto), never the
+// server clock's location.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// monthWindow is the dealer's current month as a half open window.
+func (s *Service) monthWindow(ctx context.Context) (time.Time, time.Time, error) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	from, to := MonthWindow(s.now().In(zone.Location()))
 	return from, to, nil
 }
 

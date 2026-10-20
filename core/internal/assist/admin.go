@@ -215,4 +215,10 @@ func (s *Service) MySpendVisible(ctx context.Context, c Caller) bool {
 }
 
 // asOfMonth is a small helper the handler uses to label the report with the month it covers.
-func (s *Service) asOfMonth() time.Time { from, _ := MonthWindow(s.now()); return from }
+func (s *Service) asOfMonth() time.Time {
+	from, _, err := s.monthWindow(context.Background())
+	if err != nil {
+		from, _ = MonthWindow(s.now())
+	}
+	return from
+}
