@@ -4,7 +4,7 @@
 // core's own refusal says so in plain words.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { quotesLoad, quotesView, quotesHeading, quotesAccept, quotesReject, quotesConvert, QUOTES_EMPTY } from "../src/quotes.ts";
+import { quotesLoad, quotesView, quotesHeading, quotesAccept, quotesReject, quotesConvert, quotesCommand, QUOTES_EMPTY } from "../src/quotes.ts";
 import { InMemoryTenantSession, tenantClient, stubAdapter, money } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
 import { spawnStub } from "@hardscapehouse/pro-kit/test-stub/spawn-stub.mjs";
@@ -84,7 +84,7 @@ test("the list holds the dealer's quotes with their words, and empties with its 
   await fetch(`${base}/_stub/reset`, { method: "POST" });
 });
 
-test("a sent quote offers Accept and Reject, not Convert; its lines and totals are the core's", async () => {
+test("a sent quote shows the core's acceptance note in place of an Accept button and offers Reject, not Convert", async () => {
   const page = await makePage("pm", { surface: "quotes", quoteId: SENT_ID });
   const answer = await quotesLoad(page);
   assert.equal(answer.kind, "ready");
@@ -98,11 +98,33 @@ test("a sent quote offers Accept and Reject, not Convert; its lines and totals a
   assert.ok(text.includes("Total"), text);
   assert.ok(text.includes(money(answer.data.quote.total_cents)), text);
   assert.ok(text.includes("Valid until"), text);
+  assert.match(text, /link the dealer sent you/, "the core's acceptance note is missing on a sent quote");
   const raw = words(quotesView(answer.data, page));
-  assert.ok(/data-action="accept-quote-open"/.test(raw), "Accept is not offered");
+  assert.equal(/data-action="accept-quote-open"/.test(raw), false, "a sent quote must not offer an Accept button that always fails");
   assert.ok(/data-action="reject-quote-open"/.test(raw), "Reject is not offered");
   assert.equal(/data-action="convert-quote-open"/.test(raw), false, "a sent quote must not offer Convert");
   assert.doesNotMatch(text, /undefined|NaN|!/);
+});
+
+test("a refusal inside a quote modal stays in the modal and does not also print a page notice", async () => {
+  const page = await makePage("buyer", { surface: "quotes", quoteId: SENT_ID });
+  let modalBuild = null;
+  page.openModal = (_testid, build) => {
+    modalBuild = build;
+  };
+  await fetch(`${base}/_stub/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fault: { path: `/api/v1/tenant/quotes/${SENT_ID}/reject`, status: 403 } }) });
+  try {
+    const fakeControl = { getAttribute: () => null };
+    quotesCommand("reject-quote-open", fakeControl, page);
+    assert.ok(modalBuild, "the reject modal did not open");
+    quotesCommand("reject-quote", fakeControl, page);
+    await new Promise((r) => setTimeout(r, 40));
+    const modalText = words(modalBuild(page)).replace(/<[^>]*>/g, " ");
+    assert.match(modalText, /Your role does not open this/, modalText);
+    assert.equal(page.notices.length, 0, "the refusal was printed twice: in the modal and on the page notice");
+  } finally {
+    await fetch(`${base}/_stub/reset`, { method: "POST" });
+  }
 });
 
 test("an accepted quote offers Convert to order; the conversion takes pickup or will call and lands an order", async () => {
