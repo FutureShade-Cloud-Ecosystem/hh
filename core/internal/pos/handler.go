@@ -118,6 +118,14 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// through the drawer and the card rail, both work level.
 	r.Handle("GET /api/v1/pos/pay-balance", g.RequireStaff(h.staff(h.findPayBalance)))
 	r.Handle("POST /api/v1/pos/pay-balance", g.RequireStaff(h.staff(h.takePayBalance)))
+	// HH-767 (HH-690b Leg A): the manager surface over the two-transaction
+	// card refund's attempt ledger. A crash between the two transactions or an
+	// unknown processor outcome leaves an open attempt (IN_FLIGHT or UNBOOKED)
+	// holding its amount against the sale's capture ceiling; a manager at the
+	// sale's branch lists the open rows and resolves one, never the cashier who
+	// started the refund.
+	r.Handle("GET /api/v1/pos/card-refund-attempts", g.RequireManager(h.staff(h.listCardRefundAttempts)))
+	r.Handle("POST /api/v1/pos/card-refund-attempts/{id}/resolve", g.RequireManager(h.staff(h.resolveCardRefundAttempt)))
 }
 
 // findPayBalance answers the orders that owe money and match the term: order
@@ -148,6 +156,34 @@ func (h *Handler) takePayBalance(w http.ResponseWriter, r *http.Request, caller 
 		status = http.StatusOK
 	}
 	httpx.WriteJSON(w, status, out)
+}
+
+// -- HH-767: the card refund attempt manager surface -------------------------
+
+// listCardRefundAttempts answers the open card refund attempts the caller can
+// see: both open statuses by default, the one named status when asked.
+func (h *Handler) listCardRefundAttempts(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	items, err := h.svc.ListOpenCardRefundAttempts(r.Context(), r.URL.Query().Get("status"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// resolveCardRefundAttempt records a manager's judgment of one open attempt:
+// REFUNDED with the processor's refund_ref, or NOT_REFUNDED.
+func (h *Handler) resolveCardRefundAttempt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ResolveCardRefundAttemptInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.ResolveCardRefundAttempt(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // -- W7 handlers -------------------------------------------------------------

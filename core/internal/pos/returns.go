@@ -361,6 +361,7 @@ func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *retu
 		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
 			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID,
 			CustomerID: oc.CustomerID, GatewayRef: oc.GatewayRef, AmountCents: railTotal,
+			InitiatedBy: plan.actor,
 		})
 		if err != nil {
 			return Return{}, false, false, err
@@ -423,6 +424,7 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 		fact := cardRefundFact{
 			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.oc.BranchID,
 			CustomerID: p.oc.CustomerID, GatewayRef: p.oc.GatewayRef, AmountCents: p.stagedRailTotal,
+			InitiatedBy: p.actor,
 		}
 		// An earlier attempt under the same key already refunded at the processor: reuse its ref
 		// and ITS amount (the staging compared the bodies, so the two agree here).
@@ -432,7 +434,27 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 			p.cardRefunds = append(p.cardRefunds, fact)
 			continue
 		}
-		refundRef, err := s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
+		// The live request fence measures from the start of THIS child's call (PR #501 round 2
+		// P2-1): the start is stamped on its own row immediately before the call, so a later
+		// child that starts after its staging window is fenced for its own window. A row a
+		// manager already settled is never sent to the processor.
+		var refundRef string
+		stampKeys := []string{refundKey}
+		for _, later := range plans[i+1:] {
+			if later.in.RefundMethod == RefundCard && !later.in.railOptional && later.stagedRailTotal > 0 && later.stagedRefundRef == "" {
+				stampKeys = append(stampKeys, "refund:"+later.in.IdempotencyKey)
+			}
+		}
+		started, serr := s.store.StampCardRefundCallStart(context.WithoutCancel(ctx), stampKeys)
+		var err error
+		switch {
+		case serr != nil:
+			err = fmt.Errorf("could not stamp the card refund call start: %w", serr)
+		case !started:
+			err = errCardRefundAlreadyResolved
+		default:
+			refundRef, err = s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
+		}
 		if err != nil {
 			reason := trimReason(err.Error())
 			// The failed child: only a decline or a not-dispatched failure is KNOWN to have
@@ -440,7 +462,15 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 			// transport timeout, an unclassified error) holds the attempt IN_FLIGHT with its
 			// reason: the amount stays reserved against the capture ceiling and the same-key
 			// retry refuses instead of refunding again (HH-690 round 2, P1-2).
-			if isCardRefundNoMoneyMoved(err) {
+			if errors.Is(err, errCardRefundAlreadyResolved) {
+				// The manager settled this row before its call began: nothing was sent and
+				// the row is theirs; only the later children close below.
+				slog.Default().Error("pos: a card refund attempt was settled by a manager before its processor call began; the call was not sent",
+					"refund_key", refundKey)
+				if merr := s.store.MarkCardRefundCallNotSent(context.WithoutCancel(ctx), refundKey); merr != nil {
+					slog.Default().Error("pos: the never sent card refund call could not be written on its row", "refund_key", refundKey, "err", merr)
+				}
+			} else if isCardRefundNoMoneyMoved(err) {
 				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), refundKey, reason); ferr != nil {
 					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
 				}
@@ -457,7 +487,9 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 					slog.Default().Warn("pos: the undispatched card refund attempt could not be closed", "err", ferr)
 				}
 			}
-			s.settleCardRefunds(ctx, plans, err)
+			// The children that DID refund keep their own record: the failed child's reason
+			// describes that child, not them.
+			s.settleCardRefundsWithReason(ctx, plans, "a later card refund of this return did not go through; this refund was made at the processor and is not booked yet")
 			return clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 		}
 		p.stagedRefundRef = refundRef
@@ -1173,6 +1205,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
 				RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 				GatewayRef: oc.GatewayRef, RefundRef: plan.stagedRefundRef, AmountCents: railTotal,
+				InitiatedBy: plan.actor,
 			})
 		}
 		refundRef := plan.stagedRefundRef
@@ -1391,6 +1424,20 @@ func trimReason(reason string) string {
 // return's own answer must not change because the record could not be written, so a failure is
 // logged, never returned.
 func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, txErr error) {
+	reason := ""
+	if txErr != nil {
+		reason = trimReason(txErr.Error())
+	}
+	s.settleCardRefundsOutcome(ctx, plans, txErr != nil, reason)
+}
+
+// settleCardRefundsWithReason files the plans' dispatched refunds UNBOOKED with a reason of the
+// caller's choosing (the dispatch's failure path, where the batch error describes one child only).
+func (s *Service) settleCardRefundsWithReason(ctx context.Context, plans []*returnPlan, reason string) {
+	s.settleCardRefundsOutcome(ctx, plans, true, reason)
+}
+
+func (s *Service) settleCardRefundsOutcome(ctx context.Context, plans []*returnPlan, failed bool, reason string) {
 	var facts []cardRefundFact
 	for _, p := range plans {
 		facts = append(facts, p.cardRefunds...)
@@ -1400,8 +1447,8 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 		return
 	}
 	var err error
-	if txErr != nil {
-		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, trimReason(txErr.Error()))
+	if failed {
+		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, reason)
 	} else {
 		keys := make([]string, len(facts))
 		for i, f := range facts {
