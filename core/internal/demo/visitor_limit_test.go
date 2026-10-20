@@ -487,3 +487,73 @@ func TestCeilingReopensAfterTheWindow(t *testing.T) {
 		t.Fatalf("a fresh id after the window answered %d, want 200: the ceiling is a window, not a ban (body: %s)", rsp.Code, rsp.Body.String())
 	}
 }
+
+// AddressCeiling parses the operator's address ceiling: unset, junk and non
+// positive values keep the default, a value is capped, and it is never below
+// the visitor allowance in effect.
+func TestAddressCeiling(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		visitor int
+		want    int
+	}{
+		{"empty", "", DefaultBurstAllowance, DefaultAddressCeiling},
+		{"whitespace only", "   ", DefaultBurstAllowance, DefaultAddressCeiling},
+		{"zero", "0", DefaultBurstAllowance, DefaultAddressCeiling},
+		{"negative", "-3", DefaultBurstAllowance, DefaultAddressCeiling},
+		{"unparseable", "lots", DefaultBurstAllowance, DefaultAddressCeiling},
+		{"within cap", "120", DefaultBurstAllowance, 120},
+		{"with whitespace", "  120  ", DefaultBurstAllowance, 120},
+		{"at cap", "200", DefaultBurstAllowance, 200},
+		{"over cap", "201", DefaultBurstAllowance, MaxAddressCeiling},
+		{"far over cap", "100000", DefaultBurstAllowance, MaxAddressCeiling},
+		{"under the visitor allowance", "8", 14, 14},
+		{"equal to the visitor allowance", "14", 14, 14},
+		{"unset with the largest visitor allowance", "", MaxVisitorAllowance, DefaultAddressCeiling},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := AddressCeiling(c.raw, c.visitor); got != c.want {
+				t.Errorf("AddressCeiling(%q, %d) = %d, want %d", c.raw, c.visitor, got, c.want)
+			}
+		})
+	}
+}
+
+// A mint wired with the operator's ceiling spends its address bucket at that
+// value: a farm of distinct visitor ids from one address is admitted up to
+// the configured ceiling and refused at the next mint.
+func TestMintAddressBucketUsesTheConfiguredCeiling(t *testing.T) {
+	const want = 60
+	ceiling := AddressCeiling("60", DefaultBurstAllowance)
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
+	minter := &fakeMinter{token: "t"}
+	m, err := NewMint(MintDeps{
+		Minter:  minter,
+		Orgs:    &fakeOrgs{id: "org-demo-1", ok: true},
+		Staff:   &fakeStaff{auth: salesAuthority(), ok: true},
+		Audit:   &fakeAudit{},
+		Now:     clock.Now,
+		Limit:   NewAddressLimit(DefaultBurstAllowance, 0, clock.Now),
+		Ceiling: NewAddressLimit(ceiling, 0, clock.Now),
+	})
+	if err != nil {
+		t.Fatalf("NewMint: %v", err)
+	}
+	if m.ceiling.Allowance() != want {
+		t.Fatalf("the ceiling allowance is %d, want %d", m.ceiling.Allowance(), want)
+	}
+	mintAs := func(id string) *httptest.ResponseRecorder {
+		return postSessionFrom(t, m, `{"flow":"sales"}`, "192.0.2.1:1234",
+			map[string]string{"Cookie": "demo_visitor=" + id})
+	}
+	for i := 0; i < want; i++ {
+		if rsp := mintAs(fmt.Sprintf("%032x", i)); rsp.Code != http.StatusOK {
+			t.Fatalf("farm mint %d: status %d, want 200 inside the ceiling (body: %s)", i+1, rsp.Code, rsp.Body.String())
+		}
+	}
+	if rsp := mintAs(fmt.Sprintf("%032x", want)); rsp.Code != http.StatusTooManyRequests {
+		t.Fatalf("the farm's mint %d answered %d, want 429 at the ceiling (body: %s)", want+1, rsp.Code, rsp.Body.String())
+	}
+}

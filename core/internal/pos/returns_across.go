@@ -487,6 +487,7 @@ func (s *Service) stageCardReturnAcrossInTx(ctx context.Context, tx pgx.Tx, plan
 		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
 			RefundKey: "refund:" + child.in.IdempotencyKey, OrderID: child.oc.OrderID, BranchID: child.oc.BranchID,
 			CustomerID: child.oc.CustomerID, GatewayRef: child.oc.GatewayRef, AmountCents: cardCents,
+			InitiatedBy: child.actor,
 		})
 		if err != nil {
 			return ReturnNote{}, false, false, err
