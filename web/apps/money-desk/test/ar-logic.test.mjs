@@ -17,7 +17,7 @@ test("an amount typed is read through the decimal string and never a float", () 
 
 test("cents read as dollars, and a missing figure is never a plausible zero", () => {
   assert.equal(formatMoney(96000), "$960.00");
-  assert.equal(formatMoney(undefined), "(no figure)");
+  assert.equal(formatMoney(undefined), "Not available");
   assert.equal(centsToField(96000), "960.00");
   assert.equal(centsToField(5), "0.05");
 });

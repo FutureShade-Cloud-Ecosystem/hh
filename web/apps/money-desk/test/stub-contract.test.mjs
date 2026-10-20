@@ -175,6 +175,26 @@ test("the landing, the aging and the register answer in the contract's shapes", 
   holds("BillingInvoiceDetail", one.json);
 });
 
+test("the register reads its chip as the core does: no chip is every invoice, PAID the paid ones only, unpaid first, with a total", async () => {
+  await reset();
+  const aging = await call("GET", "/api/v1/ar/aging");
+  const customer = aging.json.items[0].customer_id;
+  const every = await call("GET", `/api/v1/ar/register?customer_id=${customer}`);
+  const paid = await call("GET", `/api/v1/ar/register?customer_id=${customer}&chip=PAID`);
+  const all = await call("GET", `/api/v1/ar/register?customer_id=${customer}&chip=all`);
+  assert.ok(paid.json.items.length > 0 && paid.json.items.every((r) => r.stored_status === "PAID"));
+  assert.ok(all.json.items.length > 0 && all.json.items.every((r) => r.stored_status !== "PAID"));
+  assert.equal(every.json.items.length, paid.json.items.length + all.json.items.length);
+  assert.equal(every.json.total, every.json.items.length);
+  const order = every.json.items.map((r) => r.stored_status === "PAID");
+  assert.deepEqual(order, [...order].sort((a, b) => Number(a) - Number(b)), "unpaid documents come ahead of settled ones");
+  const paged = await call("GET", `/api/v1/ar/register?customer_id=${customer}&limit=1&offset=1`);
+  assert.equal(paged.json.items.length, 1);
+  assert.equal(paged.json.items[0].id, every.json.items[1].id);
+  assert.equal(paged.json.total, every.json.total);
+  assert.equal((await call("GET", "/api/v1/ar/register?chip=nonsense")).status, 400);
+});
+
 test("a payment applies to an invoice and the answer is the contract's receipt", async () => {
   await reset();
   const register = await call("GET", "/api/v1/ar/register");

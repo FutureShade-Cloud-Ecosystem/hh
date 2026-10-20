@@ -55,6 +55,8 @@ export interface AccountModel {
   readonly terms: number | null;
   readonly branchName: string;
   readonly invoices: readonly BillingRegisterRow[];
+  /** Whether the account's invoices have arrived: a failed read is said in words, never shown as an empty table. */
+  readonly invoicesState: "loading" | "ready" | "failed";
   readonly showAll: boolean;
   readonly sub: "invoices" | "statement" | "contacts";
   readonly right: RightMode;
@@ -722,6 +724,20 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
+  if (account.invoicesState !== "ready") {
+    return html`
+      <section class="panel" aria-label="Open invoices">
+        <div class="panel-head"><h3>Open invoices</h3></div>
+        ${account.invoicesState === "loading"
+          ? html`<p class="dim" role="status" data-invoices-loading>Loading this account's invoices.</p>`
+          : html`
+              <p class="alert alert-error" role="alert" data-invoices-failed>We could not load this account's invoices. Try again.</p>
+              <div class="actions"><button type="button" class="btn btn-secondary" data-action="retry-account-invoices">Try again</button></div>
+            `}
+      </section>
+    `;
+  }
+  const balance = account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents;
   return html`
     <section class="panel" aria-label="Open invoices">
       <div class="panel-head">
@@ -753,7 +769,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
             })}
           </tbody>
           <tfoot>
-            <tr><td colspan="5"><b>Open balance</b></td><td class="num"><b data-open-balance>${formatMoney(account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents)}</b></td><td></td><td></td></tr>
+            <tr><td colspan="5"><b>Balance</b> <span class="dim small">as of ${relativeDay(model.asOf, model.asOf)}</span></td><td class="num"><b data-open-balance>${balance === undefined ? html`<span class="dim small">Not shown for this account</span>` : formatMoney(balance)}</b></td><td></td><td></td></tr>
           </tfoot>
         </table>
       </div>
@@ -949,7 +965,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
           ${disputes > 0 ? html`<span class="pill pill-info">${disputes} ${disputes === 1 ? "dispute" : "disputes"}</span>` : nothing}</p>
       </div>
       <div class="actions">
-        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}">Remind</button>
+        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID")} title="${account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID") ? "" : "Nothing on this account is overdue."}">Remind</button>
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
