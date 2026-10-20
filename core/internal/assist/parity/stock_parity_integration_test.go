@@ -37,9 +37,15 @@ func (a allBranches) Branches(context.Context, assist.Caller) ([]assist.NamedBra
 	return a, nil
 }
 
+// stockBranches returns the two BRANCH locations that hold the most stock rows, the fuller first (ties by id).
+// It never assumes they are the only branches or that their rows are the whole table: another package may leave
+// a stray stock row at a third location in a shared database, and that location can sort anywhere.
 func stockBranches(t *testing.T, env *testsupport.Env) []string {
 	t.Helper()
-	rows, err := env.Admin.Query(testsupport.Ctx(t), `SELECT DISTINCT branch_id::text FROM stock_balances ORDER BY 1`)
+	rows, err := env.Admin.Query(testsupport.Ctx(t), `SELECT l.id::text FROM locations l
+		JOIN stock_balances sb ON sb.branch_id = l.id
+		WHERE l.loc_type = 'BRANCH'
+		GROUP BY l.id ORDER BY count(*) DESC, l.id LIMIT 2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +118,7 @@ type stockRig struct {
 func newStockRig(t *testing.T) *stockRig {
 	t.Helper()
 	env := testsupport.Open(t)
+	plantStrayStock(t, env)
 	ctx := testsupport.Ctx(t)
 	r := &stockRig{env: env, branches: stockBranches(t, env), products: map[string]bool{}}
 	if len(r.branches) < 2 {

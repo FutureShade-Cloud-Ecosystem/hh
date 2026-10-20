@@ -25,6 +25,7 @@ func rowsAt(t *testing.T, env *testsupport.Env, table, branch string) int {
 
 func TestPolicy_TheInventoryTablesFollowAudienceTierAndBranches(t *testing.T) {
 	env := testsupport.Open(t)
+	plantStrayStock(t, env)
 	branches := stockBranches(t, env)
 	a, b := branches[0], branches[1]
 	for _, table := range []string{"public.stock_balances", "public.product_branch_costs"} {
@@ -33,7 +34,9 @@ func TestPolicy_TheInventoryTablesFollowAudienceTierAndBranches(t *testing.T) {
 			t.Fatal(err)
 		}
 		atA, atB := rowsAt(t, env, table, a), rowsAt(t, env, table, b)
-		if atA == 0 || atB == 0 || atA+atB != total {
+		// The two branches are the test's own pair; the table may hold more (another package's stray row), so the
+		// pair is never asserted to be the whole table, and the global claim is compared with the whole table.
+		if atA == 0 || atB == 0 || atA+atB > total {
 			t.Fatalf("%s: the policy world is wrong: a=%d b=%d total=%d", table, atA, atB, total)
 		}
 		staff := func(tier int, global bool, br ...string) readtx.Claims {

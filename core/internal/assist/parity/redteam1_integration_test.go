@@ -21,6 +21,7 @@ import (
 func rt1Rig(t *testing.T) (*assist.ReadQuerier, *testsupport.Env, string, string) {
 	t.Helper()
 	env := testsupport.Open(t)
+	plantStrayStock(t, env)
 	br := stockBranches(t, env)
 	if len(br) < 2 {
 		t.Fatalf("need two stock branches, have %d", len(br))
