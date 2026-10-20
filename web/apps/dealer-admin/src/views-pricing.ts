@@ -52,6 +52,7 @@ import {
   customerTypeWord,
   marginEmptyWords,
   costCellWords,
+  WITHHELD_FIGURE_WORDS,
   marginCellWords,
   moneyWords,
   overrideEmptyWords,
@@ -1648,14 +1649,14 @@ function renderLedger(model: PricingModel): TemplateResult {
                 <tbody>
                   ${m.rows.map(
                     (row) => html`
-                      <tr data-accrual=${row.accrual_cents}>
+                      <tr data-accrual=${row.accrual_cents ?? ""}>
                         <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
                         <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
                         <td><span class="chip">${row.source_type}</span></td>
                         <td class="num">${costCellWords(row.basis_cents)}</td>
-                        <td class="mono dim">${row.rate_note}</td>
-                        <td class="num">${moneyWords(row.accrual_cents)}</td>
+                        <td class="mono dim">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
+                        <td class="num">${costCellWords(row.accrual_cents)}</td>
                       </tr>
                     `,
                   )}

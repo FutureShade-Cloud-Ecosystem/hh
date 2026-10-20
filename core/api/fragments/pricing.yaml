@@ -1685,7 +1685,7 @@ paths:
       operationId: pricingVendorRebateLedger
       tags: [staff-pricing]
       summary: Read one vendor's rebate accrual ledger with totals
-      description: On a cost basis row (a percent of cost program) basis_cents is the extended cost and rides only to a caller on the cost_visibility list; it is absent for any other reader. The vendor's accrual always rides.
+      description: On a cost basis row (a percent of cost program) basis_cents is the extended cost and rides only to a caller on the cost_visibility list; it is absent for any other reader. accrual_cents and rate_note are likewise absent on a cost basis row, and total_cents counts only the rows the caller sees, because the accrual with its percent gives the cost back. A cost reader receives the whole claim.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -3092,7 +3092,7 @@ components:
     PricingRebateAccrual:
       type: object
       description: One rebate_accruals row
-      required: [id, program_id, vendor_id, product_id, source_type, qty_base, accrual_cents, rate_note, accrued_at]
+      required: [id, program_id, vendor_id, product_id, source_type, qty_base, accrued_at]
       properties:
         id: { type: string, format: uuid }
         program_id: { type: string, format: uuid }
@@ -3111,8 +3111,8 @@ components:
         source_id: { type: string }
         qty_base: { type: number }
         basis_cents: { type: integer, format: int64, description: "The extended basis the accrual was struck on. On the ledger read it is absent for a cost basis row unless the caller is on the cost_visibility list (never zero): there it is the extended cost." }
-        accrual_cents: { type: integer, format: int64 }
-        rate_note: { type: string }
+        accrual_cents: { type: integer, format: int64, description: "The vendor claim for this row. On the ledger read it is absent for a cost basis row unless the caller is on the cost_visibility list: with the rate it gives the cost back." }
+        rate_note: { type: string, description: "The rate in words. Absent on a cost basis ledger row for a caller off the cost_visibility list." }
         accrued_at: { type: string, format: date-time }
 
     PricingRebateAccrualResult:

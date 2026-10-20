@@ -6061,8 +6061,8 @@ export type PricingRebateAccrual = {
   source_id?: string;
   qty_base: number;
   basis_cents?: number;
-  accrual_cents: number;
-  rate_note: string;
+  accrual_cents?: number;
+  rate_note?: string;
   accrued_at: string;
 };
 export type PricingRebateAccrualResult = {

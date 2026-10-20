@@ -45,6 +45,8 @@ test("the views feed their cells through those words", async () => {
   assert.match(view, /marginCellWords\(item\.margin_bps\)/);
   assert.match(view, /marginCellWords\(item\.floor_bps\)/);
   assert.match(view, /costCellWords\(row\.basis_cents\)/);
+  assert.match(view, /costCellWords\(row\.accrual_cents\)/);
+  assert.match(view, /row\.rate_note === null \? WITHHELD_FIGURE_WORDS/);
   assert.equal(/pctWords\(item\.(margin|floor)_bps\)/.test(view), false, "no raw percent of a possibly absent leg");
   assert.equal(typeof readFloor, "function");
 });

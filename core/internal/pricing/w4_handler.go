@@ -407,9 +407,15 @@ func (h *Handler) vendorLedger(w http.ResponseWriter, r *http.Request, _ guards.
 // ledgerAccrualView is a ledger row on the wire. basis_cents is a pointer here so it can be absent: on
 // a cost basis row it IS the extended cost, which only a caller on the cost and margin list receives
 // (HH-419). The embedded row's own basis_cents is shadowed by this shallower field.
+//
+// On a cost basis row accrual_cents divided by the rate the note states is the cost, and so is the ledger
+// total minus the other rows, so for a caller off the list those rows carry no accrual and no rate note
+// and the total counts only the rows the caller sees; the vendor claim stays whole for a cost reader.
 type ledgerAccrualView struct {
 	RebateAccrual
-	BasisCents *int64 `json:"basis_cents,omitempty"`
+	BasisCents   *int64  `json:"basis_cents,omitempty"`
+	AccrualCents *int64  `json:"accrual_cents,omitempty"`
+	RateNote     *string `json:"rate_note,omitempty"`
 }
 
 type ledgerView struct {
@@ -425,13 +431,14 @@ type ledgerView struct {
 func newLedgerView(l VendorRebateLedger, costOK bool) ledgerView {
 	v := ledgerView{
 		VendorID: l.VendorID, VendorName: l.VendorName, From: l.From, To: l.To,
-		TotalCents: l.TotalCents, AccrualCount: l.AccrualCount, Rows: make([]ledgerAccrualView, 0, len(l.Rows)),
+		AccrualCount: l.AccrualCount, Rows: make([]ledgerAccrualView, 0, len(l.Rows)),
 	}
 	for _, a := range l.Rows {
 		row := ledgerAccrualView{RebateAccrual: a}
 		if costOK || a.Basis != RebatePctOfCost {
-			basis := a.BasisCents
-			row.BasisCents = &basis
+			basis, accrual, note := a.BasisCents, a.AccrualCents, a.RateNote
+			row.BasisCents, row.AccrualCents, row.RateNote = &basis, &accrual, &note
+			v.TotalCents += a.AccrualCents
 		}
 		v.Rows = append(v.Rows, row)
 	}

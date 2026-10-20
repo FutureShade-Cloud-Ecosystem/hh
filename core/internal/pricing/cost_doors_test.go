@@ -112,9 +112,6 @@ func TestCostDoors_LedgerHoldsBasisOutOfCostBasisRowsForACallerOffTheList(t *tes
 	if _, present := byID(hr, "a1")["basis_cents"]; present {
 		t.Fatalf("a cost basis row must not carry basis_cents for a caller off the list: %v", hr)
 	}
-	if byID(hr, "a1")["accrual_cents"] != float64(3500) {
-		t.Fatalf("the vendor's accrual is the work and still rides: %v", hr)
-	}
 	if byID(hr, "a2")["basis_cents"] != float64(100000) {
 		t.Fatalf("a sale basis row is not cost and keeps its basis: %v", hr)
 	}
