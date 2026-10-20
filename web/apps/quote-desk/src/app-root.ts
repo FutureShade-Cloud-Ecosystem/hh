@@ -273,7 +273,7 @@ export class QuoteDeskApp extends HHElement {
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
       band.org = FRAMED_BAND_ORG;
-      band.demo = true;
+      band.demo = this.#demoBuild;
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route.kind));
       band.groups = [];

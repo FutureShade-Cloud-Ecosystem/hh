@@ -13,6 +13,7 @@
 // back as x-stub-saw-org, so a wrong org in the app's client configuration
 // fails right here.
 import { expect, test, type Page, type Response } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
@@ -116,15 +117,19 @@ test("tapping Sales lands on the till with the Demo banner and Sales", async ({ 
 
   const banner = page.getByRole("note");
   await expect(banner).toBeVisible();
-  await expect(banner).toContainText("Demo");
+  await expect(banner).toContainText("DEMO");
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   await expect(page.getByRole("heading", { name: "Till", exact: true })).toBeVisible();
 });
 
 test("tapping Sales manager lands on the till named Sales manager", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
+  await closeAccountMenu(page);
   await expect(page.getByRole("heading", { name: "Till", exact: true })).toBeVisible();
 });
 
@@ -132,10 +137,14 @@ test("sign out returns to the cards", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Till", exact: true })).toBeVisible();
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
+  await closeAccountMenu(page);
 });
 
 test("against a flows route that answers 404 no card renders, the page says so, and no banner shows", async ({ page }) => {

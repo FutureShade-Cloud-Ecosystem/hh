@@ -12,7 +12,8 @@ const pageScrolls = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollHeight > document.documentElement.clientHeight);
 
 test("the sale screen carries only the sale: no returns desk under it, and the page does not scroll", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // The one band (about 61px) sits above the bar now, so the stepper's tallest state needs 60px more window than it did.
+  await page.setViewportSize({ width: 1440, height: 960 });
   await signIn(page);
   await expect(page.getByTestId("returns")).toHaveCount(0);
   await expect(page.getByTestId("till-returns-entry")).toBeVisible();

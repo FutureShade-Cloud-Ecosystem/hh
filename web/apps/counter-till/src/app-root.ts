@@ -150,7 +150,7 @@ export class CounterTillApp extends HHElement {
            What follows the screen (a notice, the returns desk) flows on below the fold. */
         display: flex;
         flex-direction: column;
-        height: 100dvh;
+        height: calc(100dvh - var(--band-h, 61px));
         box-sizing: border-box;
       }
       /* The screen is the window, so the main's own foot padding would push the page 20px past it:
@@ -593,6 +593,8 @@ export class CounterTillApp extends HHElement {
     this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
+    // Framed by the Work shell the till wears no band: the screen is the whole window.
+    if (this.#framed) this.style.setProperty("--band-h", "0px");
     if (this.#framed) {
       window.addEventListener("message", this.#onChromeAction);
       announceChromeControls(window, ["theme", "feedback"]);
@@ -765,6 +767,8 @@ export class CounterTillApp extends HHElement {
     if (import.meta.env.BASE_URL !== "/") window.location.assign("/");
   }
 
+  #bandWatch: ResizeObserver | null = null;
+
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
@@ -775,6 +779,8 @@ export class CounterTillApp extends HHElement {
     window.removeEventListener("hashchange", this.#onHashChange);
     window.removeEventListener("message", this.#onChromeAction);
     this.#theme.stop();
+    this.#bandWatch?.disconnect();
+    this.#bandWatch = null;
     super.disconnectedCallback();
   }
 
@@ -1312,8 +1318,18 @@ export class CounterTillApp extends HHElement {
     // accountMenu template and their clicks bubble back to #onHostClick.
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
+      // The Panels screen is the window below the band: the band's real height (it wraps at phone
+      // width) rides --band-h, so the screen never pushes the page past the fold.
+      if (this.#bandWatch === null && typeof ResizeObserver !== "undefined") {
+        this.#bandWatch = new ResizeObserver(() => {
+          this.style.setProperty("--band-h", `${Math.round(band.getBoundingClientRect().height)}px`);
+        });
+        this.#bandWatch.observe(band);
+      }
       band.org = FRAMED_BAND_ORG;
-      band.demo = true;
+      // The DEMO marker keeps the old banner's rule: only once the flows route has answered with cards, or on the till itself.
+      const demoFlows = this.#entryFlowsState();
+      band.demo = this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0);
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route));
       band.groups = [];
