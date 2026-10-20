@@ -87,3 +87,31 @@ func branchesWithOrders(t *testing.T, e *testsupport.Env) []string {
 	}
 	return out
 }
+
+// plantMany adds n orders at the branches that hold orders (alternating), each with its own created_at
+// (one second apart), and removes them when the test ends. CI's integration job leaves a few hundred
+// orders behind from earlier packages; a parity test that only works on a world under data.query's
+// page size of 100 is a test that depends on test order.
+func plantMany(t *testing.T, env *testsupport.Env, n int) {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	tag := randomHex(t, 3)
+	branches := branchesWithOrders(t, env)
+	if len(branches) < 2 {
+		t.Fatalf("need two branches to plant across, have %d", len(branches))
+	}
+	if _, err := env.Admin.Exec(ctx, `INSERT INTO orders (order_no, customer_id, branch_id, status, total_cents, created_at)
+		SELECT 'SO-S5P-' || $1 || '-' || g, (SELECT customer_id FROM orders LIMIT 1), ($2::uuid[])[1 + g % 2], 'CONFIRMED', 100 * g, now() - (g || ' seconds')::interval
+		FROM generate_series(1, $3) g`, tag, branches[:2], n); err != nil {
+		t.Fatalf("plant orders: %v", err)
+	}
+	dsn := env.AdminURL
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), `DELETE FROM orders WHERE order_no LIKE $1`, "SO-S5P-"+tag+"-%")
+	})
+}

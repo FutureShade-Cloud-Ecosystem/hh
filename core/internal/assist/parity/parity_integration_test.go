@@ -12,10 +12,10 @@ package parity
 // view side is read two ways: raw SQL as the staff reader under the signed claim, and through data.query.
 
 import (
-	"context"
 	"errors"
-	"sort"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -113,8 +113,16 @@ func stringsFrom(t *testing.T, r *readtx.Reader, c assist.Caller, sql string) []
 }
 
 func TestParity_EveryOrderAndLineIsInTheViewIffTheOrderModulesRecordReadReturnsIt(t *testing.T) {
+	t.Run("a world under one page", func(t *testing.T) { parityWorld(t, 0) })
+	t.Run("a world above one page, as CI's is", func(t *testing.T) { parityWorld(t, 120) })
+}
+
+func parityWorld(t *testing.T, extra int) {
 	env := testsupport.Open(t)
 	plantSecondBranch(t, env)
+	if extra > 0 {
+		plantMany(t, env, extra)
+	}
 	world := seededWorld(t, env)
 	branches := branchesWithOrders(t, env)
 	if len(world) < 3 || len(branches) < 2 {
@@ -129,6 +137,7 @@ func TestParity_EveryOrderAndLineIsInTheViewIffTheOrderModulesRecordReadReturnsI
 	staff := env.Readers.Staff
 	ctx := testsupport.Ctx(t)
 
+	createdAt := createdAtOf(t, env)
 	checked := 0
 	for name, c := range callers(branches) {
 		viewOrders := setOf(stringsFrom(t, staff, c, `SELECT id::text FROM ai.orders`))
@@ -159,41 +168,102 @@ func TestParity_EveryOrderAndLineIsInTheViewIffTheOrderModulesRecordReadReturnsI
 			}
 			checked++
 		}
-		// And through data.query: the compiled path returns exactly the same orders.
-		q := &assist.ReadQuerier{Reader: staff, Now: nil}
-		res, err := q.Query(withTrace(ctx), c, `{"view":"ai.orders","select":["order_no"],"limit":100}`)
-		if err != nil {
-			t.Fatalf("%s: data.query: %v", name, err)
-		}
-		var viaQuery []string
-		for _, it := range res.Items {
-			if it.Ref != nil {
-				viaQuery = append(viaQuery, it.Ref.ID)
-			}
-		}
-		var direct []string
-		for id := range viewOrders {
-			direct = append(direct, id)
-		}
-		sort.Strings(viaQuery)
-		sort.Strings(direct)
-		if len(viaQuery) != len(direct) {
-			t.Errorf("%s: data.query returned %d orders, the view holds %d", name, len(viaQuery), len(direct))
-		} else {
-			for i := range direct {
-				if direct[i] != viaQuery[i] {
-					t.Errorf("%s: data.query and the view disagree at %d", name, i)
-					break
-				}
-			}
-		}
+		// And through data.query. A page is at most 100 rows however large the limit asked for, so this leg
+		// asserts the clamp and then walks the caller's whole reach page by page.
+		q := &assist.ReadQuerier{Reader: staff}
+		checkPaged(t, q, c, name, viewOrders, createdAt)
 	}
 	if checked < 10 {
 		t.Fatalf("only %d caller by order pairs were checked", checked)
 	}
 }
 
-func withTrace(ctx context.Context) context.Context { return ctx }
+// createdAtOf maps every order id to its created_at at full precision, read as the admin; the pager uses
+// it as its cursor, because the answer's own times are shown to the minute.
+func createdAtOf(t *testing.T, env *testsupport.Env) map[string]time.Time {
+	t.Helper()
+	rows, err := env.Admin.Query(testsupport.Ctx(t), `SELECT id::text, created_at FROM orders`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	m := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			t.Fatal(err)
+		}
+		m[id] = at
+	}
+	return m
+}
+
+// checkPaged proves data.query's reach for one caller equals the view's rows. First the clamp: a spec asking
+// for far more than 100 gets exactly 100 when more than 100 are in reach (and everything when fewer are).
+// Then the pages: a stable order (created_at, then order_no) with a created_at window that moves to the last
+// row seen, every row of every page in reach, no page over 100, and the union of the pages equal to the view.
+func checkPaged(t *testing.T, q *assist.ReadQuerier, c assist.Caller, name string, view map[string]bool, createdAt map[string]time.Time) {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	big, err := q.Query(ctx, c, `{"view":"ai.orders","select":["order_no"],"limit":1000000}`)
+	if err != nil {
+		t.Fatalf("%s: data.query: %v", name, err)
+	}
+	want := len(view)
+	if want > 100 {
+		want = 100
+	}
+	if len(big.Items) != want {
+		t.Errorf("%s: a limit of a million returned %d rows, want the clamp %d (the view holds %d)", name, len(big.Items), want, len(view))
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; page < 20; page++ {
+		where := ""
+		if cursor != "" {
+			where = fmt.Sprintf(`,"where":[{"col":"created_at","op":">=","value":%q}]`, cursor)
+		}
+		res, err := q.Query(ctx, c, `{"view":"ai.orders","select":["order_no"],"order_by":[{"col":"created_at","dir":"asc"},{"col":"order_no","dir":"asc"}],"limit":100`+where+`}`)
+		if err != nil {
+			t.Fatalf("%s: page %d: %v", name, page, err)
+		}
+		if len(res.Items) > 100 {
+			t.Fatalf("%s: page %d holds %d rows", name, page, len(res.Items))
+		}
+		fresh := 0
+		var last time.Time
+		for _, it := range res.Items {
+			if it.Ref == nil {
+				t.Fatalf("%s: a row with no record ref", name)
+			}
+			if !view[it.Ref.ID] {
+				t.Errorf("%s: page %d returned an order outside the caller's reach", name, page)
+			}
+			if !seen[it.Ref.ID] {
+				seen[it.Ref.ID] = true
+				fresh++
+			}
+			last = createdAt[it.Ref.ID]
+		}
+		if len(res.Items) < 100 {
+			break
+		}
+		if fresh == 0 {
+			t.Fatalf("%s: paging stalled at %s: a whole page of rows share one created_at", name, cursor)
+		}
+		cursor = last.UTC().Format(time.RFC3339Nano)
+	}
+	if len(seen) != len(view) {
+		t.Errorf("%s: the pages hold %d orders, the view holds %d", name, len(seen), len(view))
+	}
+	for id := range view {
+		if !seen[id] {
+			t.Errorf("%s: an order in the view was never returned by data.query", name)
+			break
+		}
+	}
+}
 
 // A frontline caller is refused by the tier floor before anything reaches the database.
 func TestParity_ATierThreeCallerIsRefusedByTheTierFloor(t *testing.T) {
