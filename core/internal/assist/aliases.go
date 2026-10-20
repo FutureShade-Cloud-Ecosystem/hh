@@ -10,8 +10,8 @@ package assist
 // or unconfigured resolves to the deterministic stub.
 //
 // Configuration comes from deployment environment (ModelConfig), set by the operator at deploy and
-// never by a dealer or a request. The names are HOS_ASSIST_*, which a demo box refuses until slice
-// 3 opens them (demoenv_inventory.go).
+// never by a dealer or a request. The names are HOS_ASSIST_*, of which a demo box admits only the
+// key and the dealer cap, behind the caps (demoenv_inventory.go).
 
 import (
 	"context"
