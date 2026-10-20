@@ -910,14 +910,20 @@ export class FrontDoorApp extends HHElement {
       return;
     }
     const path = event.composedPath();
+    // A radio group moves the choice with the arrows; the multi branch toggle group only moves focus.
+    const toggleGroup = path.find(
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("data-testid") === "branch-group",
+    );
     const currentRadio = path.find(
-      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radio",
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement &&
+        (node.getAttribute("role") === "radio" || (toggleGroup !== undefined && node.hasAttribute("aria-pressed"))),
     );
-    const group = path.find(
-      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup",
-    );
+    const group =
+      toggleGroup ??
+      path.find((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup");
     if (currentRadio === undefined || group === undefined || this.#console === null) return;
-    const radios = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const radios = Array.from(group.querySelectorAll<HTMLElement>(toggleGroup !== undefined ? "[aria-pressed]" : '[role="radio"]'));
     const index = radios.indexOf(currentRadio);
     if (index < 0 || radios.length === 0) return;
     event.preventDefault();
@@ -932,12 +938,18 @@ export class FrontDoorApp extends HHElement {
       if (typeof roleId === "string" && roleId !== "") this.#console.chooseRole(roleId);
     } else if (action === "select-branch") {
       const branchId = nextRadio.getAttribute("data-branch-id");
-      if (typeof branchId === "string" && branchId !== "") this.#console.chooseBranch(branchId);
+      if (typeof branchId === "string" && branchId !== "") {
+        if (toggleGroup !== undefined) this.#console.focusBranchOption(branchId);
+        else this.#console.chooseBranch(branchId);
+      }
     }
     void this.updateComplete.then(() => {
       if (groupTestId === null) return;
       const nextGroup = this.renderRoot.querySelector<HTMLElement>(`[data-testid="${groupTestId}"]`);
-      const updatedRadios = nextGroup === null ? [] : Array.from(nextGroup.querySelectorAll<HTMLElement>('[role="radio"]'));
+      const updatedRadios =
+        nextGroup === null
+          ? []
+          : Array.from(nextGroup.querySelectorAll<HTMLElement>(toggleGroup !== undefined ? "[aria-pressed]" : '[role="radio"]'));
       updatedRadios[nextIndex]?.focus();
     });
   };
@@ -1213,7 +1225,7 @@ export class FrontDoorApp extends HHElement {
       const field = this.renderRoot.querySelector<HTMLInputElement>(id);
       if (field !== null) field.readOnly = signingIn;
     }
-    for (const radio of this.renderRoot.querySelectorAll<HTMLElement>('[role="radio"][data-tabstop]')) {
+    for (const radio of this.renderRoot.querySelectorAll<HTMLElement>("[data-tabstop]")) {
       radio.tabIndex = radio.getAttribute("data-tabstop") === "true" ? 0 : -1;
     }
     // Focus returns to where the person was after a refused sign in: the

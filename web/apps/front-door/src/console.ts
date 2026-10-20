@@ -43,6 +43,9 @@ export interface GrantedBranch {
   readonly name: string;
 }
 
+/** The roles that may work more than one branch in a session. */
+export const MULTI_BRANCH_ROLES: readonly string[] = ["general_manager", "sales_manager"];
+
 export type ConsolePhase = "starting" | "signed-out" | "signing-in" | "signed-in";
 
 export type MethodsState =
@@ -214,7 +217,7 @@ export class ConsoleSession {
     const found = roles.find((role) => role.id === roleId);
     if (found === undefined) return;
     this.#chosenRoleId = found.id;
-    if (found.id === "general_manager" && this.#branches.length > 1) {
+    if (MULTI_BRANCH_ROLES.includes(found.id) && this.#branches.length > 1) {
       this.#chosenBranchIds = [];
       this.#activeBranchOption = null;
     }
@@ -237,9 +240,10 @@ export class ConsoleSession {
     return this.#branches.filter((branch) => this.#chosenBranchIds.includes(branch.id));
   }
 
-  /** Whether the chosen role may choose more than one branch (General Manager). */
+  /** Whether the chosen role may choose more than one branch (General Manager and Sales manager). */
   get isMultiBranchRole(): boolean {
-    return this.chosenRole?.id === "general_manager";
+    const role = this.chosenRole;
+    return role !== null && MULTI_BRANCH_ROLES.includes(role.id);
   }
 
   /** True when every granted branch is currently chosen. */
@@ -269,12 +273,28 @@ export class ConsoleSession {
     this.#changed();
   }
 
-  /** Choose or toggle a branch option ("__all__" or a branch id) in the branch picker. */
+  /**
+   * Move the branch group's single tab stop to an option without changing the choice: the arrow keys of a
+   * multi select group only move focus ("__all__" or a branch id).
+   */
+  focusBranchOption(optionId: string): void {
+    if (optionId !== "__all__" && !this.#branches.some((b) => b.id === optionId)) return;
+    this.#activeBranchOption = optionId;
+    this.#changed();
+  }
+
+  /**
+   * Choose or toggle a branch option ("__all__" or a branch id). A multi branch role toggles each branch on
+   * its own, never leaving fewer than one chosen; "__all__" chooses every branch, and pressed again with every
+   * branch chosen it narrows to the first branch. A single branch role chooses exactly the one.
+   */
   chooseBranch(optionId: string): void {
     if (this.#branches.length === 0) return;
     if (optionId === "__all__") {
       if (!this.isMultiBranchRole) return;
-      this.#chosenBranchIds = this.#branches.map((b) => b.id);
+      this.#chosenBranchIds = this.allBranchesChosen
+        ? this.#branches.slice(0, 1).map((b) => b.id)
+        : this.#branches.map((b) => b.id);
       this.#activeBranchOption = "__all__";
       this.#changed();
       return;
@@ -282,9 +302,7 @@ export class ConsoleSession {
     if (!this.#branches.some((b) => b.id === optionId)) return;
     this.#activeBranchOption = optionId;
     if (this.isMultiBranchRole) {
-      if (this.#chosenBranchIds.length === this.#branches.length && this.#branches.length > 1) {
-        this.#chosenBranchIds = [optionId];
-      } else if (this.#chosenBranchIds.includes(optionId)) {
+      if (this.#chosenBranchIds.includes(optionId)) {
         if (this.#chosenBranchIds.length > 1) {
           this.#chosenBranchIds = this.#chosenBranchIds.filter((id) => id !== optionId);
         }

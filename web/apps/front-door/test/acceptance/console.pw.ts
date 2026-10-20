@@ -334,7 +334,7 @@ test.describe("after sign in", () => {
     await expect(page.getByTestId("header-word")).toContainText("North Yard");
   });
 
-  test("role and branch picker: General Manager may choose more than one branch, keyboard arrow keys move within radio groups with one tab stop each, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
+  test("role and branch picker: General Manager may choose more than one branch, keyboard arrow keys move within the groups with one tab stop each, branch chips are toggle buttons, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
     await page.clock.install({ time: new Date(1_000_040_400_000) }); // 09:00 EDT morning in America/Toronto
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({
@@ -374,21 +374,48 @@ test.describe("after sign in", () => {
     await page.keyboard.press("ArrowUp");
     await expect(roleRadios.nth(0)).toHaveAttribute("aria-checked", "true");
 
-    // General Manager branch picker allows choosing one or more branches.
-    const branchGroup = page.getByRole("radiogroup", { name: /your branch/i });
-    const branchRadios = branchGroup.getByRole("radio");
-    await expect(branchRadios).toHaveCount(3); // All branches, West Yard, East Yard
-    await expect(branchGroup.getByRole("radio", { name: "All branches" })).toHaveAttribute("aria-checked", "true");
-    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
-    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "true");
+    // A multi branch role gets toggle buttons in a group, not a radio group: the tree announces each branch's own state.
+    await expect(page.getByRole("radiogroup", { name: /your branch/i })).toHaveCount(0);
+    const branchGroup = page.getByRole("group", { name: /your branches/i });
+    const toggles = branchGroup.getByRole("button");
+    await expect(toggles).toHaveCount(3); // All branches, West Yard, East Yard
+    await expect(branchGroup.getByRole("radio")).toHaveCount(0);
+    const allToggle = branchGroup.getByRole("button", { name: "All branches" });
+    const west = branchGroup.getByRole("button", { name: "West Yard" });
+    const east = branchGroup.getByRole("button", { name: "East Yard" });
+    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(allToggle).toHaveAttribute("tabindex", "0");
+    await expect(west).toHaveAttribute("tabindex", "-1");
 
-    // Selecting one branch narrows to West Yard; selecting East Yard adds it back so both are chosen.
-    await branchGroup.getByRole("radio", { name: "West Yard" }).click();
-    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
-    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "false");
-    await branchGroup.getByRole("radio", { name: "East Yard" }).click();
-    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
-    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "true");
+    // Arrows move focus only; the choice and every pressed state stay as they were.
+    await allToggle.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(west).toBeFocused();
+    await expect(west).toHaveAttribute("tabindex", "0");
+    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // Space toggles the focused branch off, Enter toggles it back on.
+    await page.keyboard.press("Space");
+    await expect(west).toHaveAttribute("aria-pressed", "false");
+    await expect(allToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(east).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("ArrowDown");
+    await expect(east).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect(west).toHaveAttribute("aria-pressed", "true");
+    await expect(allToggle).toHaveAttribute("aria-pressed", "true");
+    // All branches toggles every branch: pressed again it keeps the first branch only, pressed once more it takes all.
+    await allToggle.click();
+    await expect(west).toHaveAttribute("aria-pressed", "true");
+    await expect(east).toHaveAttribute("aria-pressed", "false");
+    await allToggle.click();
+    for (const toggle of [allToggle, west, east]) await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // A click on one branch toggles that branch alone.
+    await east.click();
+    await expect(east).toHaveAttribute("aria-pressed", "false");
+    await expect(west).toHaveAttribute("aria-pressed", "true");
+    await east.click();
+    await expect(east).toHaveAttribute("aria-pressed", "true");
 
     // Demo walk section below the card is collapsed by default.
     const walkDetails = page.getByTestId("persona-walk");
@@ -410,12 +437,40 @@ test.describe("after sign in", () => {
     for (const locator of [
       page.getByRole("button", { name: "Not you? Sign out" }),
       roleRadios.nth(0),
-      branchRadios.nth(0),
+      allToggle,
       page.getByTestId("continue-own"),
     ]) {
       const box = await locator.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
     }
+  });
+
+  test("role and branch picker: the Sales manager is a multi branch role, a single branch role keeps a radio group, and the foot reads Powered by HardscapeOS", async ({ page, baseURL }) => {
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, {}, { role: { role_code: "sales_manager,inside_sales", role_name: "Sales Manager" } });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    await expect(page.getByTestId("entry-footer")).toContainText("Powered by HardscapeOS");
+    const group = page.getByRole("group", { name: /your branches/i });
+    await expect(group.getByRole("button", { name: "All branches" })).toHaveAttribute("aria-pressed", "true");
+    await expect(group.getByRole("button", { name: "West Yard" })).toHaveAttribute("aria-pressed", "true");
+    // The other held role is a single branch role: a radio group, exactly one branch chosen.
+    await page.getByTestId("role-radiogroup").getByRole("radio").filter({ hasText: "Opens Counter Till" }).click();
+    await expect(page.getByRole("group", { name: /your branches/i })).toHaveCount(0);
+    const radios = page.getByRole("radiogroup", { name: /your branch/i }).getByRole("radio");
+    await expect(radios).toHaveCount(2);
+    await expect(radios.nth(0)).toHaveAttribute("aria-checked", "true");
+    await expect(radios.nth(1)).toHaveAttribute("aria-checked", "false");
   });
 
   test("the role entry names the person's own role, continuing lands them, and the header carries them", async ({ page, baseURL }) => {
