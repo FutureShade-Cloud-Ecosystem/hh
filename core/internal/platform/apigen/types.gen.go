@@ -1385,10 +1385,11 @@ type AssistUserLimitResetResult struct {
 }
 
 type AssistSettings struct {
-	Provider               string `json:"provider"`
-	Model                  string `json:"model"`
-	ChatEnabled            bool   `json:"chat_enabled"`
-	SpendVisibleToNonAdmin bool   `json:"spend_visible_to_non_admin"`
+	Provider               string  `json:"provider"`
+	Model                  string  `json:"model"`
+	Route                  *string `json:"route,omitempty"`
+	ChatEnabled            bool    `json:"chat_enabled"`
+	SpendVisibleToNonAdmin bool    `json:"spend_visible_to_non_admin"`
 }
 
 type AssistSettingsResponse struct {

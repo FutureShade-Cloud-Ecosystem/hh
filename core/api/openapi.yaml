@@ -32969,8 +32969,13 @@ components:
           enum:
             - stub
             - anthropic
+            - routed
         model:
           type: string
+          description: An alias (tanyai-main, tanyai-alt, tanyai-premium, tanyai-ca), never a vendor model
+        route:
+          type: string
+          description: The escalation order for the routed provider, aliases comma separated
         chat_enabled:
           type: boolean
         spend_visible_to_non_admin:

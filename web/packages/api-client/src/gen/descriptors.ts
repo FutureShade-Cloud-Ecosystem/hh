@@ -164,7 +164,7 @@ export const SCHEMA_DESCRIPTORS = {
   "AssistRoleLimitResult": {"k":"object","req":["role_code","tokens"],"props":{"role_code":{"k":"string"},"tokens":{"k":"integer"}}},
   "AssistUserLimitResult": {"k":"object","req":["user_id","tokens","source"],"props":{"user_id":{"k":"string"},"tokens":{"k":"integer"},"source":{"k":"lit","v":["user"]}}},
   "AssistUserLimitResetResult": {"k":"object","req":["user_id","source"],"props":{"user_id":{"k":"string"},"source":{"k":"lit","v":["role"]}}},
-  "AssistSettings": {"k":"object","req":["provider","model","chat_enabled","spend_visible_to_non_admin"],"props":{"provider":{"k":"lit","v":["stub","anthropic"]},"model":{"k":"string"},"chat_enabled":{"k":"boolean"},"spend_visible_to_non_admin":{"k":"boolean"}}},
+  "AssistSettings": {"k":"object","req":["provider","model","chat_enabled","spend_visible_to_non_admin"],"props":{"provider":{"k":"lit","v":["stub","anthropic","routed"]},"model":{"k":"string"},"route":{"k":"string"},"chat_enabled":{"k":"boolean"},"spend_visible_to_non_admin":{"k":"boolean"}}},
   "AssistSettingsResponse": {"k":"object","req":["settings","key_env_var","key_present"],"props":{"settings":{"k":"ref","name":"AssistSettings"},"key_env_var":{"k":"string"},"key_present":{"k":"boolean"}}},
   "AssistSettingBody": {"k":"object","req":["key","value"],"props":{"key":{"k":"string"},"value":{"k":"string"}}},
   "AssistSettingResult": {"k":"object","req":["key","value"],"props":{"key":{"k":"string"},"value":{"k":"string"}}},

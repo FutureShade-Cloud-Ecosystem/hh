@@ -1203,8 +1203,9 @@ export type AssistUserLimitResetResult = {
   source: "role";
 };
 export type AssistSettings = {
-  provider: "stub" | "anthropic";
+  provider: "stub" | "anthropic" | "routed";
   model: string;
+  route?: string;
   chat_enabled: boolean;
   spend_visible_to_non_admin: boolean;
 };
