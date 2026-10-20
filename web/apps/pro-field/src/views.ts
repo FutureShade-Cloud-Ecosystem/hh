@@ -13,8 +13,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantAddress, TenantInvite, TenantMe, TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest, TenantUser } from "@hardscapehouse/api-client";
 import {
-  houseDay,
-  money,
   roleLabel,
   statusChip,
   statusWords,
@@ -25,7 +23,7 @@ import {
 import { button, segmented } from "@hardscapehouse/design-system/src/primitives.js";
 import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
-import { priceWords, qtyWords } from "./figures.js";
+import { dayWords, priceWords, qtyWords } from "./figures.js";
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 import { addressKindWords } from "./account.js";
@@ -153,15 +151,8 @@ export function orderView(props: OrderViewProps): TemplateResult {
     ${props.returns ?? nothing}`;
 }
 
-// The dealer's day for the placed line and the journey's first step.
-function placedDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (m === null) return "";
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
-  return `${MONTHS[month - 1]} ${day}`;
-}
+// The dealer's day for the placed line, read through the dealer's zone like the journey's first step.
+const placedDay = dayWords;
 
 function journeyCard(o: TenantOrderDetail): TemplateResult {
   const steps = timelineSteps(o);
@@ -228,7 +219,7 @@ export function projectsList(props: ProjectsProps): TemplateResult {
               <span class="cell">
                 <span class="dim">${project.job_address === "" ? "No address on the job" : project.job_address}</span>
                 <span class="dim">${project.order_count} ${project.order_count === 1 ? "order" : "orders"} · ${project.delivery_count} ${project.delivery_count === 1 ? "delivery" : "deliveries"}</span>
-                <span class="mono total">${money(project.spend_cents)}</span>
+                <span class="mono total">${priceWords(project.spend_cents)}</span>
               </span>
             </button>
           </li>`,
@@ -252,7 +243,7 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
       <h2>${data.name}</h2>
       ${data.job_address === "" ? nothing : html`<p class="dim">${data.job_address}</p>`}
       <p class="facts" data-testid="project-stats">
-        <span><span class="dim">Spend</span> <span class="mono">${money(data.spend_cents)}</span></span>
+        <span><span class="dim">Spend</span> <span class="mono">${priceWords(data.spend_cents)}</span></span>
         <span><span class="dim">Orders</span> ${data.order_count}</span>
         <span><span class="dim">Deliveries</span> ${data.delivery_count}</span>
         <span class="variance-${variance.tone}" data-testid="project-variance"><span class="dim">Against the quote</span> ${variance.words}</span>
@@ -279,8 +270,8 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
         : html`<ul class="lines" data-testid="project-invoices">
             ${data.invoices.map(
               (invoice) => html`<li class="line">
-                <span class="linehead"><span class="mono name">${invoice.invoice_no}</span><span class="mono">${money(invoice.balance_cents)}</span></span>
-                <span class="cell">${statusChip("invoice", invoice.status)}<span class="dim">of ${money(invoice.total_cents)}</span></span>
+                <span class="linehead"><span class="mono name">${invoice.invoice_no}</span><span class="mono">${priceWords(invoice.balance_cents)}</span></span>
+                <span class="cell">${statusChip("invoice", invoice.status)}<span class="dim">of ${priceWords(invoice.total_cents)}</span></span>
               </li>`,
             )}
           </ul>`}
@@ -334,7 +325,7 @@ export function teamView(props: TeamProps): TemplateResult {
             ${props.invites.map(
               (invite) => html`<li class="line">
                 <span class="linehead"><span class="mono name">${invite.email}</span><span class="dim">${roleLabel(invite.role)}</span></span>
-                <span class="dim">Ends ${houseDay(invite.expires_at)}</span>
+                <span class="dim">Ends ${dayWords(invite.expires_at)}</span>
               </li>`,
             )}
           </ul>`}
@@ -483,7 +474,7 @@ function addressesCard(props: AccountProps): TemplateResult {
 }
 
 function addressDetail(address: TenantAddress): TemplateResult {
-  const used = typeof address.last_used_at === "string" && address.last_used_at !== "" ? houseDay(address.last_used_at) : "Not used yet";
+  const used = typeof address.last_used_at === "string" && address.last_used_at !== "" ? dayWords(address.last_used_at) : "Not used yet";
   return html`<div class="card" data-testid="address-detail">
     ${button({ label: "Back", kind: "secondary", action: "back-to-addresses" })}
     <h2>${address.label}</h2>
@@ -590,7 +581,7 @@ function returnRequestRow(request: TenantReturnRequest): TemplateResult {
     <span class="linehead"><span class="mono name">${request.request_no}</span><span class="pchip pchip-${tone}" data-return-status="${request.status}">${words}</span></span>
     <span class="dim">${returnReasonWords(request.reason_code)} · ${what}</span>
     ${request.status === "APPROVED"
-      ? html`<span class="dim">Credited to your account${request.fee_cents > 0 ? ` (less ${money(request.fee_cents)} restocking fee)` : ""}${request.return_no === undefined ? "" : ` as ${request.return_no}`}</span>`
+      ? html`<span class="dim">Credited to your account${request.fee_cents > 0 ? ` (less ${priceWords(request.fee_cents)} restocking fee)` : ""}${request.return_no === undefined ? "" : ` as ${request.return_no}`}</span>`
       : nothing}
     ${request.status === "REJECTED" && request.decision_reason !== undefined && request.decision_reason !== "" ? html`<span class="dim">Declined: ${request.decision_reason}</span>` : nothing}
   </li>`;

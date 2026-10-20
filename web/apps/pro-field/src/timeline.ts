@@ -78,10 +78,10 @@ export interface PromisedWords {
   day: string;
 }
 
-/** The asked-for day, the journey's headline answer: promised for a delivery, ready by for a pickup. */
+/** The day the customer asked for, the journey's headline answer. It is the customer's day, never a dealer promise. */
 export function promisedWords(order: Pick<TenantOrder, "fulfillment" | "requested_date">): PromisedWords {
   return {
-    label: order.fulfillment === "DELIVERY" ? "Promised for" : "Ready by",
+    label: "Wanted by",
     day: /^\d{4}-\d{2}-\d{2}/.test(order.requested_date ?? "") ? calendarDay(order.requested_date) : "Not set",
   };
 }
