@@ -73,6 +73,7 @@ export abstract class ProAppBase<T> extends HHElement {
     css`
       :host { display: block; min-height: 100vh; }
       h1 { margin: 0 0 var(--hh-s-12); font-size: 1.25rem; }
+      .seg-btn { color: var(--hh-text); }
       ul.rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; }
       li.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-12); padding: var(--hh-s-12) var(--hh-s-16); background: var(--hh-row); border-bottom: 1px solid var(--hh-line); }
       .name { font-weight: 600; }

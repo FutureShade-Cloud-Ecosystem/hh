@@ -29,8 +29,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  ci:
-    name: ci
+  # The Go, contract and gate half of the old single ci job. The web suite runs in
+  # the web shards below; the ci job at the end gathers both into the one check
+  # the principal's gate and every lane read.
+  core:
+    name: core, contract and gates
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -213,73 +216,73 @@ jobs:
             HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
             "$RUNNER_TEMP/evening-guard/go" test ./internal/platform/houseday ./internal/billing ./internal/pos ./internal/purchasing \
             -count=1 -p 1 -timeout 30m
-      - name: Web packages (typecheck and Node 22 suite)
+
+  # The web suite, split into parallel shards by measured weight
+  # (web/scripts/ci-web-shards.mjs lists the packages at run time, places the
+  # heavy ones from its weight table and bin packs the rest; Quote Desk's and
+  # Counter Till's Playwright runs split further with --shard=k/m). Every
+  # package lands in exactly one shard, a package missing from the weight table
+  # still lands in one, and the script prints the whole assignment first.
+  #
+  # The design system's real-browser leg drives google-chrome headless over the
+  # DevTools protocol and, because CI is set on this runner, it FAILS instead of
+  # skipping when the binary is missing: a skipped gate is a failed gate. The
+  # script checks google-chrome in the shard that holds the design system and
+  # prints its version. setup-node pins Node 22, whose type stripping of the
+  # packages' .ts sources is on by default (22.18 and later point releases), so
+  # the packages' test and typecheck scripts run as written.
+  web:
+    name: web shard ${{ matrix.shard }} of 6
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the web workspace
+        run: npm --prefix web ci
+      - name: Install the contract tools
+        # The api-client package's idempotence test runs the client generator
+        # (scripts/gen-client/gen-client.mjs), which needs the contract tools'
+        # dependencies (the yaml package); the single job had them from its
+        # contract step, so each shard installs them itself.
+        run: npm --prefix core/api/tools ci
+      - name: Shard assignment test
         working-directory: web
-        # setup-node pins Node 22, whose type stripping of the packages' .ts
-        # sources is on by default (22.18 and later point releases), so the
-        # packages' test and typecheck scripts run as written.
-        #
-        # The design system's real-browser leg drives google-chrome headless
-        # over the DevTools protocol and, because CI is set on this runner, it
-        # FAILS the job instead of skipping when the binary is missing: a
-        # skipped gate is a failed gate. The runner image is expected to ship
-        # google-chrome; this check names it, so an image without one fails
-        # here, naming what is missing.
+        run: node --test scripts/ci-web-shards.node-test.mjs
+      - name: Web packages (typecheck and Node 22 suite), shard ${{ matrix.shard }} of 6
+        working-directory: web
+        run: node scripts/ci-web-shards.mjs run ${{ matrix.shard }} 6
+
+  # The one check the gate reads. It fails unless every job it needs finished
+  # with success: a skipped or cancelled shard fails it, never passes it.
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    needs: [core, web]
+    if: always()
+    steps:
+      - name: Every needed job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          if ! command -v google-chrome >/dev/null 2>&1; then
-            echo "google-chrome is missing from the runner image: the design system's browser leg requires it (that leg fails rather than skip in CI)" >&2
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')"
+          if [ -n "$bad" ]; then
+            echo "not successful: $bad" >&2
             exit 1
           fi
-          # The evidence of the browser leg should name the browser that ran
-          # it: print the version before the suite starts.
-          google-chrome --version
-          # web/node_modules exists already: the install step above the bun
-          # drift gate made it. This loop stays the one typecheck and test
-          # pass over every web package.
-          checked=0
-          for dir in packages/*/ apps/*/; do
-            [ -f "$dir/package.json" ] || continue
-            name="$(basename "$dir")"
-            if grep -q '"typecheck"[[:space:]]*:' "$dir/package.json"; then
-              npm --prefix "$dir" run typecheck
-            elif find "$dir" -path '*/node_modules' -prune -o -name '*.ts' -print | grep -q .; then
-              echo "$name has TypeScript sources but no typecheck script; add one" >&2
-              exit 1
-            else
-              echo "$name: nothing to typecheck"
-            fi
-            if grep -q '"test"[[:space:]]*:' "$dir/package.json"; then
-              npm --prefix "$dir" test
-              checked=$((checked + 1))
-            elif [ -d "$dir/test" ]; then
-              echo "$name has a test directory but no test script; add one" >&2
-              exit 1
-            fi
-          done
-          if [ "$checked" -lt 1 ]; then
-            echo "no web package ran a test suite; the loop above is broken" >&2
-            exit 1
-          fi
-      - name: Evening guard, the date sensitive web specs
-        # The web half of item 55's guard: the date sensitive specs rerun with TZ on the house
-        # zone and with the browser and stub clocks pinned inside the evening window by the
-        # legs themselves (the drive run sheet's legs pin their own clocks on every run, and
-        # the till's day legs pin the page and the stub to the same instant), the same
-        # pinning the drive run sheet's fix introduced. The suite's first run above already
-        # covers these legs on a UTC runner; this second run holds them on the dealer's own
-        # zone, so the pair covers both machines and no wall hour can hide the UTC day class.
-        working-directory: web
-        run: |
-          set -euo pipefail
-          cd apps/drive-run
-          TZ=America/Toronto npx --no-install playwright test test/run-sheet.pw.ts
-          cd ../counter-till
-          TZ=America/Toronto npx --no-install playwright test test/sale.pw.ts
 
   # The demo tag, and the gated legs whose absence the cycle recorded: the
   # demo tag never compiled or ran in CI, and the composition and identity
-  # suites' database legs skipped politely in the ci job above because no
+  # suites' database legs skipped politely in the core job above because no
   # gate variable was set. This job sets them, against one throwaway
   # Postgres service, and migrates the scratch databases the identity
   # suites expect (their fixtures plant rows and read migration-planted
