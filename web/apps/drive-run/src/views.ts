@@ -184,7 +184,7 @@ export function renderConflicts(model: { cards: number }): TemplateResult {
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the run</button>
     <h1>Review</h1>
-    <p class="dim small">What the server answered while you drove. A card is dismissed when you have read it; the record stays.</p>
+    <p class="dim small">What happened to the changes you made while you drove. A card goes away when you have read it; the record stays.</p>
     <hh-shell-conflict-list data-conflict-list></hh-shell-conflict-list>
   `;
 }
@@ -483,12 +483,12 @@ export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
   } else if (view.flows.kind === "unavailable") {
-    body = html`<p class="alert alert-error" role="alert">The demo way in is not available on this box.</p>`;
+    body = html`<p class="alert alert-error" role="alert">The sign in list could not load. Check your signal and try again.</p>`;
   } else {
     const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
     body =
       flow === undefined
-        ? html`<p class="alert alert-error" role="alert">The Driver card is not on this box yet.</p>`
+        ? html`<p class="alert alert-error" role="alert">The Driver role is not available here yet.</p>`
         : html`<button type="button" class="btn btn-primary big" data-action="choose" data-flow=${flow.flow} ?disabled=${view.busy} data-tap>${flow.label}</button>`;
   }
   return html`

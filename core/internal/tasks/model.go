@@ -96,16 +96,19 @@ func validPriority(s string) bool {
 // omitempty so an unset optional never bloats the payload. Money/qty (weight) is a NUMERIC(19,4)
 // emitted as a string, matching the order module's DECIMAL-as-string convention.
 type Task struct {
-	ID               string     `json:"id"`
-	TaskType         string     `json:"task_type"`
-	OrderID          string     `json:"order_id"`
-	OrderLineNo      *int       `json:"order_line_no,omitempty"`
-	BranchID         string     `json:"branch_id,omitempty"`
-	Priority         string     `json:"priority"`
-	Status           string     `json:"status"`
-	CreatedBy        string     `json:"created_by,omitempty"` // "" = system
-	AssignedTo       string     `json:"assigned_to,omitempty"`
-	ClaimedBy        string     `json:"claimed_by,omitempty"`
+	ID          string `json:"id"`
+	TaskType    string `json:"task_type"`
+	OrderID     string `json:"order_id"`
+	OrderLineNo *int   `json:"order_line_no,omitempty"`
+	BranchID    string `json:"branch_id,omitempty"`
+	Priority    string `json:"priority"`
+	Status      string `json:"status"`
+	CreatedBy   string `json:"created_by,omitempty"` // "" = system
+	AssignedTo  string `json:"assigned_to,omitempty"`
+	ClaimedBy   string `json:"claimed_by,omitempty"`
+	// ClaimedByRole is the claimer's staff role label ("Yard Manager"), served on the pick reads
+	// only and never stored: a label, not a name, an email or an id (UX-75, claimer_role.go).
+	ClaimedByRole    string     `json:"claimed_by_role,omitempty"`
 	ClaimedAt        *time.Time `json:"claimed_at,omitempty"`
 	PushedAt         *time.Time `json:"pushed_at,omitempty"`
 	AcceptDeadlineAt *time.Time `json:"accept_deadline_at,omitempty"`

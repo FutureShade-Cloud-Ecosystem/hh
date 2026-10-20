@@ -2695,6 +2695,9 @@ components:
           description: Empty when system-created
         assigned_to: { type: string }
         claimed_by: { type: string }
+        claimed_by_role:
+          type: string
+          description: The claimer's staff role label (for example Yard Manager), served on the pick reads only; never a name, an email or an id. Absent when the pick is unclaimed or the claimer holds no role.
         claimed_at:
           type: [string, "null"]
           format: date-time

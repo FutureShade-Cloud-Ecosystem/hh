@@ -124,6 +124,7 @@ test("the yard manager counts, the procurement manager approves and posts after 
   await showArea(page, "counts");
   await page.locator("[data-sheet-row]", { hasText: "Counted" }).getByRole("button", { name: "Open" }).click();
   await expect(page.locator("[data-count-variance]")).toBeVisible();
+  await expect(page.locator("[data-count-variance]")).toContainText("posting writes the stock moves and the reason-coded journal.");
   await page.getByRole("button", { name: "Approve (checker)" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Approved");
   await page.getByRole("button", { name: "Post adjustment" }).click();

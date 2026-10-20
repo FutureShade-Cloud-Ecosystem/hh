@@ -111,6 +111,8 @@ type Service struct {
 	// holdCheck is the pick hold seam (yard_hold.go, item 9 Opus P2-1). Nil = the yard doors do not
 	// refuse a held order (the additive lane; the composition root asserts the wiring at boot).
 	holdCheck PickHoldCheck
+	// claimerRoles labels a pick's claimer by role on the pick reads (claimer_role.go). Nil = no label.
+	claimerRoles ClaimerRoleReader
 	// roleLabels names a shortage's reporter by role for the yard's notice (UX-76), never by name or id.
 	// Nil = the notice says "a teammate".
 	roleLabels RoleLabeler

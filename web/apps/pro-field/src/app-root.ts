@@ -29,7 +29,7 @@ import {
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,
-  demoRoleFromAddress,
+  demoRoleFromAddress, personaRoleHeld,
   otherAppAddress,
   roleLabel,
   stubAdapter,
@@ -55,6 +55,7 @@ interface OrdersState {
   phase: Phase;
   items: TenantOrder[];
   truncated: boolean;
+  errorWords?: string;
 }
 
 interface InstructionsState {
@@ -165,21 +166,28 @@ export class ProFieldApp extends HHElement {
   #projectSeq = 0;
   #teamSeq = 0;
   #accountSeq = 0;
+  #personaRole: string | null = null;
   #unsubscribe: (() => void) | null = null;
 
   constructor() {
     super();
     const adapter = import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter();
-    this.#session = new InMemoryTenantSession({ adapter });
+    this.#session = new InMemoryTenantSession({ adapter, onCustody: () => this.requestUpdate() });
     this.#client = tenantClient(this.#session);
     this.#port = liveFieldPort(this.#client);
+  }
+
+  #inFrame(): boolean {
+    return this.#session.current() !== null || this.#personaRole !== null;
   }
 
   readonly #onClick = (event: Event): void => {
     const control = event.composedPath().find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     const action = control?.getAttribute("data-action");
     if (action === "retry") {
-      if (this.#section === "projects") {
+      if (this.#session.profile() === null) {
+        void this.#retrySession();
+      } else if (this.#section === "projects") {
         if (this.#project !== null) void this.#loadProject(this.#project.id);
         else void this.#loadProjects();
       } else if (this.#section === "team") {
@@ -358,15 +366,19 @@ export class ProFieldApp extends HHElement {
   };
 
   readonly #onSignOut = (): void => {
+    this.#personaRole = null;
     void this.#session.signOut();
   };
 
   connectedCallback(): void {
     super.connectedCallback();
     // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
-    if (import.meta.env.MODE === "demo") {
+    if (import.meta.env.MODE === "demo" || import.meta.env.DEV) {
       const asked = demoRoleFromAddress(window.location.search);
-      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+      if (asked !== null) {
+        this.#personaRole = asked;
+        void this.#signIn({ method: "persona", roleLabel: asked });
+      }
     }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("pro-signin-submit", this.#onSignIn);
@@ -408,7 +420,7 @@ export class ProFieldApp extends HHElement {
     super.updated(changed);
     const root = document.documentElement;
     root.setAttribute("data-brand", "hh-pro");
-    if (this.#session.profile() === null) root.removeAttribute("data-theme");
+    if (!this.#inFrame()) root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", "light");
     const signin = this.renderRoot.querySelector("hh-pro-signin") as HHProSignIn | null;
     if (signin !== null) {
@@ -470,14 +482,39 @@ export class ProFieldApp extends HHElement {
   async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#signinBusy = true;
     this.#signinMessage = "";
+    this.#personaRole = personaRoleHeld(input, import.meta.env.MODE === "demo" || import.meta.env.DEV);
+    this.#orders = { phase: "loading", items: [], truncated: false };
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);
     this.#signinBusy = false;
     if (result.ok) {
       this.#signinMessage = "";
       void this.#loadOrders();
-    } else {
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
       this.#signinMessage = result.error;
+    } else {
+      this.#orders = { phase: "error", items: [], truncated: false, errorWords: result.error };
+    }
+    this.requestUpdate();
+  }
+
+  async #retrySession(): Promise<void> {
+    if (this.#session.current() === null && this.#personaRole !== null) {
+      await this.#signIn({ method: "persona", roleLabel: this.#personaRole });
+      return;
+    }
+    this.#orders = { phase: "loading", items: [], truncated: false };
+    this.requestUpdate();
+    const result = await this.#session.check();
+    if (result.ok) {
+      this.#signinMessage = "";
+      void this.#loadOrders();
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
+      this.#signinMessage = result.error;
+    } else {
+      this.#orders = { phase: "error", items: [], truncated: false, errorWords: result.error };
     }
     this.requestUpdate();
   }
@@ -494,13 +531,19 @@ export class ProFieldApp extends HHElement {
       this.#orders = { phase: items.length === 0 ? "empty" : "ready", items, truncated: answer.truncated === true };
     } else if (answer.status === 401) {
       // The session is gone (expired, or the person was deactivated): sign out and say so, never blame the role.
+      this.#personaRole = null;
       this.#signinMessage = "You are signed out. Sign in again.";
       await this.#session.signOut();
       return;
     } else if (answer.status === 403) {
       this.#orders = { phase: "refusal", items: [], truncated: false };
     } else {
-      this.#orders = { phase: "error", items: [], truncated: false };
+      this.#orders = {
+        phase: "error",
+        items: [],
+        truncated: false,
+        errorWords: answer.status === undefined ? "Pro is not reachable right now. Try again in a moment." : undefined,
+      };
     }
     this.requestUpdate();
   }
@@ -523,6 +566,7 @@ export class ProFieldApp extends HHElement {
       this.#order = { id, phase: "ready", detail, instructions: { ...freshInstructions(), prefill: detail.delivery_instructions }, returns: freshReturns() };
       void this.#loadReturns();
     } else if (answer.status === 401) {
+      this.#personaRole = null;
       this.#signinMessage = "You are signed out. Sign in again.";
       await this.#session.signOut();
       return;
@@ -1010,6 +1054,7 @@ export class ProFieldApp extends HHElement {
         phase: this.#orders.phase,
         orders: this.#orders.items,
         emptyWords: ordersSurfaceOf(this.#surface)?.emptyWords ?? "",
+        errorWords: this.#orders.errorWords,
         truncated: this.#orders.truncated,
       });
     }
@@ -1052,21 +1097,23 @@ export class ProFieldApp extends HHElement {
   }
 
   render(): TemplateResult {
+    if (!this.#inFrame()) return html`<hh-pro-signin></hh-pro-signin>`;
     const profile = this.#session.profile();
-    if (profile === null) return html`<hh-pro-signin></hh-pro-signin>`;
     const held = CAPABILITIES.filter((capability) => this.#session.can(capability)).join(" ");
+    // The nav waits for the profile: its sections come from the held capabilities, so drawing it earlier would
+    // reshuffle it under a tap when tenant me lands.
     const sections = sectionsFor((capability) => this.#session.can(capability));
     return html`<hh-pro-frame
       data-app="field"
       data-surface="${this.#surface}"
       data-dealer="${this.#dealerName}"
-      data-role="${roleLabel(profile.role)}"
+      data-role="${profile === null ? (this.#personaRole ?? "") : roleLabel(profile.role)}"
       data-capabilities="${held}"
     >
       <div class="stack">
         <div class="topline">
           <h1 data-testid="surface-title">${this.#title()}</h1>
-          ${this.#order === null ? sectionNav(sections, this.#section) : nothing}
+          ${this.#order === null && profile !== null ? sectionNav(sections, this.#section) : nothing}
         </div>
         ${this.#renderBody()}
       </div>
