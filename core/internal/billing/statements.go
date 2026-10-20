@@ -308,7 +308,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 		var notice *StatementNotice
 		if r.TotalCents > 0 {
 			st.DeliveryStatus = DeliveryQueued
-			notice = &StatementNotice{CustomerID: r.CustomerID, AsOfDate: asOf.Format("2006-01-02"), BalanceCents: r.TotalCents}
+			notice = &StatementNotice{CustomerID: r.CustomerID, AsOfDate: asOf.Format("Jan 2, 2006"), BalanceCents: r.TotalCents}
 		}
 		id, err := s.store.SaveStatement(ctx, runID, st, notice, s.outbox)
 		if err != nil {
@@ -441,7 +441,7 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 	}
 	for _, ln := range lines {
 		b.WriteString(`<tr style="border-bottom:1px solid #eee">`)
-		b.WriteString(`<td style="padding:6px 4px">` + ln.Date.Format("2006-01-02") + `</td>`)
+		b.WriteString(`<td style="padding:6px 4px">` + ln.Date.Format("Jan 2, 2006") + `</td>`)
 		b.WriteString(`<td style="padding:6px 4px">` + esc(ln.DocNo) + `</td>`)
 		b.WriteString(`<td style="padding:6px 4px">` + esc(ln.Description) + `</td>`)
 		b.WriteString(`<td style="padding:6px 4px;text-align:right">` + moneyOrBlank(ln.ChargeCents) + `</td>`)

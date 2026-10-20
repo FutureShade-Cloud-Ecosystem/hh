@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -13,17 +14,34 @@ func TestRenderStatementHTML_AgingWordsAndFooterDate(t *testing.T) {
 	asOf := time.Date(2026, time.March, 1, 9, 0, 0, 0, time.FixedZone("dealer", -5*3600))
 	r := AgingRow{CustomerName: "Customer one", AccountNo: "A1", CurrentCents: 100, Days30Cents: 200,
 		Days60Cents: 300, Days60To90Cents: 400, Days90PlusCents: 500, TotalCents: 1500}
-	out := RenderStatementHTML(StatementHeader{BranchName: "Branch"}, r, nil, asOf)
+	lines := []StatementLine{{Date: time.Date(2026, time.February, 14, 0, 0, 0, 0, time.UTC), DocNo: "INV-1"}}
+	out := RenderStatementHTML(StatementHeader{BranchName: "Branch"}, r, lines, asOf)
 
 	for _, want := range []string{">Current<", ">1 to 30 days<", ">31 to 60 days<", ">Over 60 days<", ">Total due<",
-		"is over 60 days past due", "As of Mar 1, 2026<", "Statement generated Mar 1, 2026."} {
+		"is over 60 days past due", "As of Mar 1, 2026<", ">Feb 14, 2026<", "Statement generated Mar 1, 2026."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("statement lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"1-30 days", "31-60 days", "60+ days", "more than 60 days", "generated 2026-03-01", "1 March 2026"} {
+	for _, bad := range []string{"1-30 days", "31-60 days", "60+ days", "more than 60 days", "generated 2026-03-01", "1 March 2026", "2026-02-14"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("statement still carries %q", bad)
 		}
+	}
+}
+
+// The statement notice's reference is read aloud in the customer's text ("your account statement STMT
+// ... is ready"), so its date is in the glossary form too.
+func TestGenerateRun_NoticeReferenceReadsInTheGlossaryForm(t *testing.T) {
+	store := &headerlessStore{}
+	svc := NewStatementService(store)
+	if _, _, err := svc.GenerateRun(context.Background(), RunModeMass, "", time.Date(2026, 3, 31, 12, 0, 0, 0, time.UTC), "actor"); err != nil {
+		t.Fatalf("GenerateRun: %v", err)
+	}
+	if store.notice == nil {
+		t.Fatal("no notice was built for a positive balance")
+	}
+	if got, want := StatementRef(store.notice.AsOfDate), "STMT Mar 31, 2026"; got != want {
+		t.Errorf("notice reference = %q, want %q", got, want)
 	}
 }
