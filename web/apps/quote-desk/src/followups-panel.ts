@@ -15,7 +15,7 @@ import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
-import { isShareable } from "./_quote-edit.js";
+import { isShareable, quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import {
   contactLine,
@@ -26,6 +26,8 @@ import {
   timeline,
   type FollowUpHistory,
 } from "./_quote-followups.js";
+
+const FOLLOWUPS_LOAD_ERROR_WORDS = "The follow-ups did not load. Check the connection and try again.";
 
 @customElement("qd-quote-followups")
 export class QdQuoteFollowups extends PanelBase {
@@ -107,9 +109,16 @@ export class QdQuoteFollowups extends PanelBase {
         return;
       }
       this.unavailable = "";
-      this.error = spokenRefusal(shareErrorMessage(result.status, result.error));
+      if (result.status === 401) {
+        this.error = spokenRefusal(quoteErrorMessage(401, "", "read the follow-ups"));
+      } else if (result.status === 403 || result.status === 409) {
+        this.error = spokenRefusal(shareErrorMessage(result.status, ""));
+      } else {
+        this.error = FOLLOWUPS_LOAD_ERROR_WORDS;
+      }
       return;
     }
+    this.error = "";
     this.unavailable = "";
     this.history = result.value;
     this.loaded = true;
@@ -119,6 +128,7 @@ export class QdQuoteFollowups extends PanelBase {
     if (action === "share") void this.share();
     else if (action === "stop") void this.change(true);
     else if (action === "resume") void this.change(false);
+    else if (action === "retry") this.reload();
   }
 
   private async share(): Promise<void> {
@@ -205,6 +215,15 @@ export class QdQuoteFollowups extends PanelBase {
       </fieldset>`;
     }
     if (!this.loaded) return nothing;
+    if (this.history === null && this.error !== "") {
+      return html`<fieldset data-testid="fu-box">
+        <legend>Follow-ups</legend>
+        <div class="row err" role="alert" data-testid="fu-error">
+          <span>${this.error}</span>
+          ${this.error === FOLLOWUPS_LOAD_ERROR_WORDS ? html`<button type="button" data-action="retry">Try again</button>` : nothing}
+        </div>
+      </fieldset>`;
+    }
     const plan = this.history?.plan;
     const contact = contactLine(this.history, (iso) => this.whenLabel(iso));
     return html`

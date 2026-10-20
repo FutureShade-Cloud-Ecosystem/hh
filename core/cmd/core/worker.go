@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -173,6 +174,12 @@ func worker(getenv func(string) string) error {
 			})
 			raised, err := graph.ops.warrantySvc.SweepSLA(sysCtx, "")
 			return jobs.Result{RowsWritten: int64(len(raised))}, err
+		}).
+		// TanyAI slice 2: void spend reservations whose exchange ended with no settlement. The
+		// schedule row (INTERVAL) is planted by the slice's migration.
+		Register(assist.SpendSweepJobName, func(jobCtx context.Context) (jobs.Result, error) {
+			n, err := assist.SweepReservations(jobCtx, assist.NewRepository(pool), time.Now(), assist.ReservationGrace)
+			return jobs.Result{RowsWritten: int64(n)}, err
 		}).
 		Register("inventory.reservation_expiry", func(jobCtx context.Context) (jobs.Result, error) {
 			n, err := graph.money.inventorySvc.ExpireDueReservations(jobCtx)
