@@ -30,37 +30,8 @@ import (
 	"testing"
 )
 
-// seqStreams: every table that carries the trigger, with its one stream. The source of each
-// stream: the live writers on main that already draw (grep of every scope_sequences draw), the
-// plan's section 3, and PR 532's demoSeqTables, which all agree on the entries below. A table no
-// writer draws for yet (SF-3 to SF-14 own those) takes the stream its scope's store pulls on.
-var seqStreams = map[string]string{
-	"payments":                     "payments",
-	"invoices":                     "invoices",
-	"quotes":                       "quotes",
-	"delivery_runs":                "runs",
-	"delivery_stops":               "stops",
-	"delivery_pod_photos":          "pod",
-	"products":                     "products",
-	"customers":                    "customers",
-	"vendors":                      "vendors",
-	"portal_payment_methods":       "payment_methods",
-	"portal_users":                 "team",
-	"warranty_claims":              "warranty_claims",
-	"pos_parked_tickets":           "parked_tickets",
-	"customer_quote":               "customer_quote",
-	"procurement_projects":         "projects",
-	"dispatch_trucks":              "trucks",
-	"dispatch_drivers":             "drivers",
-	"attachment":                   "attachments",
-	"plan":                         "orders",
-	"plan_line":                    "scope_items",
-	"permission_approval_requests": "approvals",
-	"pricing_list_prices":          "price_matrix",
-	"purchasing_pos":               "purchase_orders",
-	"task_shortages":               "shortages",
-	"count_sheets":                 "cycle_counts",
-}
+// seqStreams is the trigger table to stream map (seqstreams.go).
+var seqStreams = SeqTriggerStreams()
 
 // seqExcluded: served tables with no trigger, each with its reason.
 var seqExcluded = map[string]string{
