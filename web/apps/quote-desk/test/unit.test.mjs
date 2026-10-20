@@ -243,8 +243,8 @@ test("the status words degrade honestly and the phrases say them mid sentence", 
 });
 
 test("the expiry line says No expiry when the quote never expires", () => {
-  assert.equal(expiryLabel({ valid_until: "2026-04-09", expired: false }), "Valid until 2026-04-09");
-  assert.equal(expiryLabel({ valid_until: "2026-01-01", expired: true }), "Expired 2026-01-01");
+  assert.equal(expiryLabel({ valid_until: "2026-04-09", expired: false }), "Valid until Apr 9, 2026");
+  assert.equal(expiryLabel({ valid_until: "2026-01-01", expired: true }), "Expired Jan 1, 2026");
   assert.equal(expiryLabel({ valid_until: "", expired: false }), "No expiry");
   assert.equal(expiryLabel(null), "not set");
 });

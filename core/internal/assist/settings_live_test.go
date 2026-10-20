@@ -6,6 +6,7 @@ package assist
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"sync"
 	"testing"
 )
@@ -30,7 +31,7 @@ func (m *mutableAliases) set(rows []AliasRow) {
 func TestSettingsLive_ProviderRouteAndAliasApplyToTheNextRequest(t *testing.T) {
 	vendor := newModelCapture(t)
 	table := &mutableAliases{rows: DefaultAliases()}
-	router := NewRouter(table, ModelConfig{AnthropicKey: "k", AnthropicBaseURL: vendor.srv.URL, GatewayURL: vendor.srv.URL + "/v1", GatewayKey: "gk", DealerTag: "t"}, NewStubProvider(), nil)
+	router := NewRouter(table, ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: vendor.srv.URL, GatewayURL: vendor.srv.URL + "/v1", GatewayKey: redact.NewSecret("gk"), DealerTag: "t"}, NewStubProvider(), nil)
 	set := StaticSettings{}
 	svc := chatService(NewStubProvider(), &fakeLedger{}, newFakeLimits(), set, seededReaders()).WithRouter(router)
 	ctx := context.Background()

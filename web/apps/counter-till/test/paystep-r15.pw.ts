@@ -5,6 +5,7 @@
 // the Pay balance result in board 02's green; the disabled key hints in the disabled pair; and a
 // closed More holds no boxes off the phone's canvas.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 async function signIn(page: Page): Promise<void> {
   await page.goto("/");
@@ -179,7 +180,11 @@ function ratio(a: string, b: string): number {
 for (const theme of ["light", "brand"] as const) {
   test(`the disabled key hint chips read in the disabled pair (${theme})`, async ({ page }) => {
     await signIn(page);
-    if (theme === "brand") await page.getByTestId("theme-control").click();
+    if (theme === "brand") {
+      await openAccountMenu(page);
+      await page.getByTestId("theme-control").click();
+      await closeAccountMenu(page);
+    }
     const chip = page.locator("hos-pos-hotkey-legend .k.off").first();
     await expect(chip).toBeVisible();
     const got = await chip.evaluate((el) => {

@@ -231,3 +231,27 @@ func TestDefaultBuildCarriesNoOrderRepRepair(t *testing.T) {
 		}
 	}
 }
+
+// yardPersonaGrantRepairSignatures are the yard persona branch-grant repair's load-bearing literals:
+// the DELETE statement and its error prefix. The repair is the demo build's write alone.
+var yardPersonaGrantRepairSignatures = []string{
+	`DELETE FROM user_branch_grants
+	 WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::citext[]))
+	   AND branch_id <> $2::uuid`,
+	"narrowing the yard persona branch grants to its home branch",
+}
+
+func TestDefaultBuildCarriesNoYardPersonaGrantRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-yardgrantrepair", "")
+	for _, sig := range yardPersonaGrantRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the yard persona grant repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-yardgrantrepair", "-tags=demo")
+	for _, sig := range yardPersonaGrantRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the yard persona grant repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}

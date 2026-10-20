@@ -21,13 +21,16 @@ import (
 )
 
 // The demo personas' fixed world: the populate's two role accounts (Trenton
-// grants) and migration 0200's two tour personas (all-branch grants), beside
-// the seeded channels' slugs the inboxes must answer.
+// grants), migration 0200's Yard Team persona (home-branch grant only after
+// demoseed), and migration 0200's Dispatch manager and Driver personas
+// (all-branch grants at seed time), beside the seeded channels' slugs the
+// inboxes must answer.
 const (
-	personaSalesUserID  = "de110000-0000-4000-9000-000000000001"
-	personaManagerID    = "de110000-0000-4000-9000-000000000002"
-	personaYardUserID   = "d0200000-0000-4000-9000-000000000002"
-	personaDriverUserID = "d0200000-0000-4000-9000-000000000003"
+	personaSalesUserID    = "de110000-0000-4000-9000-000000000001"
+	personaManagerID      = "de110000-0000-4000-9000-000000000002"
+	personaDispatchUserID = "d0200000-0000-4000-9000-000000000001"
+	personaYardUserID     = "d0200000-0000-4000-9000-000000000002"
+	personaDriverUserID   = "d0200000-0000-4000-9000-000000000003"
 )
 
 // personaInbox reads one persona's channel list through the module's own
@@ -85,10 +88,21 @@ func TestPopulate_PersonaInboxesAnswerTheirRooms(t *testing.T) {
 		t.Errorf("the Sales manager's inbox missed its branch's house channel: %v", manager)
 	}
 
-	// The Yard Team persona (all-branch grants): both yards' house channels.
+	// The Yard Team persona (home-branch grant only): its home yard's house
+	// and yard channels, and never the other yard's.
 	yard := slugsOf(personaYardUserID)
-	if !yard["house-plm"] || !yard["house-jul"] {
-		t.Errorf("the Yard persona's inbox missed a branch house channel: %v", yard)
+	if !yard["house-plm"] || !yard["yard-plm"] {
+		t.Errorf("the Yard persona's inbox missed its home branch's rooms: %v", yard)
+	}
+	if yard["house-jul"] || yard["yard-jul"] {
+		t.Errorf("the Yard persona's inbox still carries a non-home branch room: %v", yard)
+	}
+
+	// The Dispatch persona (LOGISTICS_MANAGER, all-branch grants at seed time):
+	// both yards' house channels.
+	dispatch := slugsOf(personaDispatchUserID)
+	if !dispatch["house-plm"] || !dispatch["house-jul"] {
+		t.Errorf("the Dispatch manager persona's inbox missed a branch house channel: %v", dispatch)
 	}
 
 	// The Driver persona: both yards' house channels and both drivers' rooms.

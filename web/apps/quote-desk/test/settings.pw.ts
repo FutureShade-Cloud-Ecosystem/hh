@@ -10,6 +10,7 @@
 // off-list caller gets the server's sentence in place of the screen's
 // controls. The stub's world is put back at both ends of the file.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { row, showList } from "./switch-helpers.js";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
@@ -386,6 +387,7 @@ test("the grant does not outlive the person: a salesperson who signs in after th
   await expect(settings(page).getByTestId("qr-details")).toBeVisible();
   await expect(settings(page).getByTestId("qa-details")).toBeVisible();
 
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.request.put("/_stub/general-manager", { data: { member: false } });
   const after: string[] = [];

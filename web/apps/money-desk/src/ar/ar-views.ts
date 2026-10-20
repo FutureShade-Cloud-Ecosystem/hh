@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { cardRange, cardTitle, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -184,7 +184,7 @@ function tabsBar(model: DeskModel): TemplateResult {
 function frame(body: TemplateResult): TemplateResult {
   return html`
     <div class="head">
-      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
+      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, past due first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
       <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
@@ -209,25 +209,25 @@ export function renderLoadFailed(error: string): TemplateResult {
 // ---- receivables home --------------------------------------------------------------------------
 
 const TILE_ORDER = ["card.escalation", "card.late", "card.warn", "card.current"] as const;
-const TILE_WORD: Record<string, string> = { ESCALATION: "Escalation", LATE: "Late", WARN: "Overdue", CURRENT: "Current" };
 
 function tiles(model: DeskModel): TemplateResult {
   const cards = model.landing?.cards ?? [];
   return html`
     <section class="tiles" aria-label="Receivables by age">
       ${TILE_ORDER.map((id) => cards.find((c) => c.id === id)).map((card) =>
-        card === undefined
+        card === undefined || !cardShown(card)
           ? nothing
           : html`
               <article class="tile" data-card="${card.id}">
-                <h3 data-card-title>${cardTitle(card.bucket)}</h3>
+                <h3 data-card-title>${cardTitleFor(card)}</h3>
                 <p class="tile-figure tile-${card.bucket.toLowerCase()}">${formatMoney(card.total_cents)}</p>
-                <p class="dim">${card.accounts} ${card.accounts === 1 ? "account" : "accounts"} · ${cardRange(card)}</p>
+                <p class="dim">${card.accounts} ${card.accounts === 1 ? "account" : "accounts"} · ${cardCovers(card)}</p>
                 <button type="button" class="link" data-action="card" data-card-id="${card.id}" aria-pressed="${model.cardFilter === card.id ? "true" : "false"}">${model.cardFilter === card.id ? "Showing" : "Open"} ›</button>
               </article>
             `,
       )}
     </section>
+    <p class="dim small" data-card-note>As of ${relativeDay(model.asOf, model.asOf)} · Grouped by your past due settings</p>
   `;
 }
 
@@ -316,8 +316,8 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
         <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
         ${overdue
           ? html`<div class="late-line" data-testid="overdue-line">
-              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} late</span>
-              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketLabel}</span>` : nothing}
+              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} past due</span>
+              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketWord(r.bucket_key, bucketLabel)}</span>` : nothing}
             </div>`
           : nothing}
       </td>
@@ -366,7 +366,7 @@ function register(model: DeskModel): TemplateResult {
             </div>
           `}
       <p class="dim small foot" data-register-foot>
-        ${model.selection === null ? "" : `${model.selection.count} ${model.selection.count === 1 ? "invoice" : "invoices"}, ${formatMoney(model.selection.cents)}. `}Overdue first, then by due date. A promise or a dispute rides the row as a second mark, never a colour alone.
+        ${model.selection === null ? "" : `${model.selection.count} ${model.selection.count === 1 ? "invoice" : "invoices"}, ${formatMoney(model.selection.cents)}. `}Past due first, then by due date. A promise or a dispute rides the row as a second mark, never a colour alone.
       </p>
     </section>
   `;
@@ -476,7 +476,7 @@ export function renderHome(model: DeskModel): TemplateResult {
     <div class="head">
       <div>
         <h1>Receivables</h1>
-        <p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p>
+        <p class="dim">The AR register with its aging, past due first. Bounced payments and accounts on hold wait in Needs you.</p>
       </div>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="open-picker">Record a payment</button>
@@ -938,11 +938,11 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 </table>
               </div>
               <dl class="strip">
-                <div><dt>Current</dt><dd>${formatMoney(s.current_cents)}</dd></div>
-                <div><dt>1 to 30</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
-                <div><dt>31 to 60</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
-                <div><dt>Over 60</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
-                <div><dt>Total due</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[0]}</dt><dd>${formatMoney(s.current_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[1]}</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[2]}</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[3]}</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>

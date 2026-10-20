@@ -19,8 +19,9 @@
 // assembly script and the demo box already serve it from, and the session
 // handoff the apps already speak (the front door's key in this tab's session
 // storage, read once and dropped) works between same-origin frames without any
-// app change. The cost, named: the hosted app keeps its own header inside the
-// frame until it grows a framed mode (a fidelity pass item).
+// app change. The framed mode exists (GAPS-r2 row G1): framed, the app wears
+// no band of its own; standing alone it renders the board's white band above
+// its app-local header.
 //
 // The host holds the session in memory only. Each desk app drops the handoff
 // key when it adopts it, so the host writes the key again right before it
