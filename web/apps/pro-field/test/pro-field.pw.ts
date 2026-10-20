@@ -425,6 +425,37 @@ test.describe("phone", () => {
     await expect(page.getByRole("button", { name: "Create invite" })).toBeEnabled();
   });
 
+  test("an expired session on a write says so in dealer words with a sign in action, never raw server words", async ({ page, request }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
+    const input = page.getByTestId("instructions-input");
+    await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await page.route("**/delivery-instructions", async (route) => {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+    });
+    await input.fill("Gate is on the north fence.");
+    await page.getByRole("button", { name: "Save notes" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out. Sign in again to save this.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).not.toContainText("Missing or invalid credentials");
+
+    await request.post("/_stub/reset");
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out. Sign in again to save this.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  });
+
   test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();

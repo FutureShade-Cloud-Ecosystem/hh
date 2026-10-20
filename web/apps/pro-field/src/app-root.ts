@@ -530,6 +530,11 @@ export class ProFieldApp extends HHElement {
     this.requestUpdate();
   }
 
+  async #signOutOnWriteExpiry(): Promise<void> {
+    this.#signinMessage = "You were signed out. Sign in again to save this.";
+    await this.#session.signOut();
+  }
+
   async #saveInstructions(): Promise<void> {
     const order = this.#order;
     if (order === null || order.detail === null || order.instructions.busy) return;
@@ -537,8 +542,12 @@ export class ProFieldApp extends HHElement {
     order.instructions.error = "";
     this.requestUpdate();
     const answer = await this.#port.setDeliveryInstructions(order.id, order.instructions.draft);
-    if (this.#order !== order) return;
     order.instructions.busy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#order !== order) return;
     if (answer.ok) {
       order.detail.delivery_instructions = order.instructions.draft;
       order.instructions.saved = true;
@@ -556,6 +565,10 @@ export class ProFieldApp extends HHElement {
     order.returns.notice = "";
     this.requestUpdate();
     const answer = await this.#port.getReturnEligibility(order.id);
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#order !== order || this.#session.profile() === null) return;
     if (answer.ok) {
       order.returns.eligibility = { phase: "done", data: answer.value, words: "", canRetry: false };
@@ -594,8 +607,12 @@ export class ProFieldApp extends HHElement {
       note: order.returns.form.note,
       lines: built.lines,
     });
-    if (this.#order !== order) return;
     order.returns.form.busy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#order !== order) return;
     if (answer.ok) {
       this.#closeReturnFlow();
       order.returns.notice = `Return request ${answer.value.request_no} sent. The dealer decides it.`;
@@ -686,6 +703,10 @@ export class ProFieldApp extends HHElement {
     const answer = await tenantAuth.tenantUpdateMe(this.#client, { name: account.name.trim() });
     account.profileBusy = false;
     this.#account.profileBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.me = answer.value as typeof account.me;
@@ -712,6 +733,10 @@ export class ProFieldApp extends HHElement {
     const answer = await tenantAuth.tenantChangePassword(this.#client, { current_password: account.pwCurrent, new_password: account.pwNew });
     account.passwordBusy = false;
     this.#account.passwordBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.pwCurrent = "";
@@ -774,6 +799,10 @@ export class ProFieldApp extends HHElement {
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantUpdateUserRole(this.#client, id, { role: role as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.notice = "Role saved.";
@@ -789,6 +818,10 @@ export class ProFieldApp extends HHElement {
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantUpdateUserStatus(this.#client, id, { status });
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.notice = status === "inactive" ? "The member is deactivated. They cannot sign in until reactivated." : "The member is active again.";
@@ -807,6 +840,10 @@ export class ProFieldApp extends HHElement {
     this.requestUpdate();
     const answer = await tenantTeam.tenantCreateInvite(this.#client, { email, role: this.#team.inviteRole as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
     this.#team.inviteBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.inviteEmail = "";
