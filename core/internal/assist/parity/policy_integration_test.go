@@ -69,7 +69,7 @@ func linesAt(t *testing.T, env *testsupport.Env, branch string) int {
 }
 
 func staffClaim(branches []string, global bool) readtx.Claims {
-	return readtx.Claims{Audience: readtx.AudienceStaff, AskerID: "policy-test", BranchIDs: branches, Global: global}
+	return readtx.Claims{Audience: readtx.AudienceStaff, AskerID: "policy-test", Tier: 2, BranchIDs: branches, Global: global}
 }
 
 // The order_lines policy carries its own branch predicate: a staff claim with no grant, a claim for a
@@ -147,4 +147,31 @@ func countAsViewOwnerUnclaimed(t *testing.T, env *testsupport.Env, table string)
 		t.Fatal(err)
 	}
 	return n
+}
+
+// Slice 6a (PR 555 read P3 2): the tier floor is in the claim and in the policies. A tier 3 claim, even one
+// that is global and names every branch, reads nothing from public.orders or public.order_lines, and neither
+// does a claim signed with no tier at all (an old payload); a tier 1 and a tier 2 claim read.
+func TestPolicy_ATierBelowTheFloorReadsNothing(t *testing.T) {
+	env := testsupport.Open(t)
+	plantSecondBranch(t, env)
+	branches := branchesWithOrders(t, env)
+	at := func(tier int) readtx.Claims {
+		c := staffClaim(branches, true)
+		c.Tier = tier
+		return c
+	}
+	for _, table := range []string{"public.orders", "public.order_lines"} {
+		for _, tier := range []int{1, 2} {
+			if got := countAsViewOwner(t, env, at(tier), table); got == 0 {
+				t.Errorf("a tier %d claim reads no rows from %s (positive control)", tier, table)
+			}
+		}
+		if got := countAsViewOwner(t, env, at(3), table); got != 0 {
+			t.Errorf("a tier 3 signed claim reads %d rows from %s, want 0", got, table)
+		}
+		if got := countAsViewOwner(t, env, at(0), table); got != 0 {
+			t.Errorf("a claim with no tier reads %d rows from %s, want 0", got, table)
+		}
+	}
 }

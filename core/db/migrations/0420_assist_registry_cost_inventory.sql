@@ -38,6 +38,24 @@ BEGIN
   EXECUTE format('SET LOCAL ROLE %I', v_claims);
   ALTER TYPE ai.claim_set ADD ATTRIBUTE tier integer;
   RESET ROLE;
+
+  -- 2. The tier floor, in the policies of 0419, as branch reach and audience are: the claim's tier must be
+  -- 1 or 2 (manager or better) for the order family. A tier 3 claim, or a claim with no tier, reads nothing
+  -- even if the Go side ever signed one. ALTER POLICY keeps the policy's role list (the view owner alone).
+  ALTER POLICY assist_staff_orders ON public.orders USING (
+    (SELECT ai.claims()).audience = 'staff'
+    AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+    AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
+  );
+  ALTER POLICY assist_staff_order_lines ON public.order_lines USING (
+    (SELECT ai.claims()).audience = 'staff'
+    AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+    AND EXISTS (
+      SELECT 1 FROM public.orders o
+      WHERE o.id = order_lines.order_id
+        AND ((SELECT ai.claims()).global OR o.branch_id = ANY ((SELECT ai.claims()).branch_ids))
+    )
+  );
 END
 $s6a$;
 
