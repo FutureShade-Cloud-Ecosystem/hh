@@ -1132,7 +1132,7 @@ export function historyRow(c: DispatchPolicyChange): HistoryRow {
     now: valueWord(c.field, c.after),
     who: c.who && c.who.trim() !== "" ? c.who : "Somebody",
     when: when !== null && !Number.isNaN(when.getTime())
-      ? when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      ? when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
       : "",
   };
 }
@@ -1191,7 +1191,7 @@ export function scanLoadLine(l: DispatchScanLoad): string {
   const parts = [scanStageLabel(l.furthest).toLowerCase()];
   if (l.pod_signature_ref) parts.push("signed for");
   if (!Number.isNaN(when.getTime())) {
-    parts.push(`last scanned ${when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
+    parts.push(`last scanned ${when.toLocaleString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
   }
   return `${l.load_ref}: ${parts.join(", ")}`;
 }

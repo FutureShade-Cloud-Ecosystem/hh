@@ -151,6 +151,7 @@ export class DispatchDesk {
     this.#host = host;
     this.#today = host.today();
     this.#date = this.#today;
+    api.watchZone?.(() => host.repaint());
   }
 
   // ---- loads ------------------------------------------------------------------------------------

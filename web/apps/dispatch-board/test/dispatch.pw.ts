@@ -561,16 +561,13 @@ test("UX-37d B29: dealer words replace Staff login id, paste the order id, Latit
 test("UX-37d B30: quick cards state their period and the strip shows one As of <time> line in houseZone updated on reload", async ({ page, request }) => {
   await resetStub(request);
   const today = await stubToday(request);
-  const t1 = `${today}T15:04:00Z`;
-  const t2 = `${today}T15:19:00Z`;
-  const fmtNY = (iso: string) =>
-    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
+  const t1 = `${today}T18:04:00Z`;
+  const t2 = `${today}T18:19:00Z`;
+  const fmtLA = (iso: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
       new Date(iso),
     );
   await page.clock.setFixedTime(new Date(t1));
-  await page.addInitScript(() => {
-    (window as unknown as { __hhHostFacts?: { timezone: string } }).__hhHostFacts = { timezone: "America/New_York" };
-  });
   await page.addInitScript(dispatchHandoff);
   await page.goto("/");
 
@@ -583,9 +580,46 @@ test("UX-37d B30: quick cards state their period and the strip shows one As of <
   await expect(page.locator("[data-card='card.due']")).toContainText("next 14 days");
 
   await expect(page.locator("[data-cards-as-of]")).toHaveCount(1);
-  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtNY(t1)}`);
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(t1)}`);
 
   await page.clock.setFixedTime(new Date(t2));
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtNY(t2)}`);
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(t2)}`);
+});
+
+test("UX-37d fix round 1: the board serves business_zone from the surface config and shows stop and As of times in the Pacific clock without holding a data read", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const today = await stubToday(request);
+  const podInstant = `${today}T18:04:00Z`;
+  const readInstant = `${today}T18:15:00Z`;
+  const fmtLA = (iso: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
+      new Date(iso),
+    );
+  await stubPost(request, "stop", {
+    order_no: "ORD-0009",
+    status: "DELIVERED",
+    pod_received_by: "Site foreman",
+    pod_at: podInstant,
+  });
+  await page.clock.setFixedTime(new Date(readInstant));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible();
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(load(page, "ORD-0009")).toContainText(`Signed by Site foreman at ${fmtLA(podInstant)}`);
+  await page.locator("[data-tab-id='load']").first().click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(readInstant)}`);
+  const cfg = await (await request.post("/_stub/config", { data: {} })).json();
+  expect(cfg.reads).toBe(1);
+});
+
+test("UX-37d fix round 1: a stalling surface config route never holds the load board read", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { delay_ms: 8000 });
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible({ timeout: 2000 });
 });
