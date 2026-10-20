@@ -14,7 +14,7 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { sweepWords } from "./office-logic.js";
@@ -721,7 +721,7 @@ export class ArDesk {
   }
 
   #openInvoices(): BillingRegisterRow[] {
-    return (this.#account?.invoices ?? []).filter((r) => r.status !== "PAID");
+    return (this.#account?.invoices ?? []).filter(isUnpaidInvoice);
   }
 
   #togglePick(invoiceId: string): void {
@@ -972,7 +972,7 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
-    const overdue = register.value.items.filter((r) => r.days_overdue > 0 && r.status !== "PAID").map((r) => r.id);
+    const overdue = register.value.items.filter((r) => r.days_overdue > 0 && isUnpaidInvoice(r)).map((r) => r.id);
     if (overdue.length === 0) {
       this.#busy = false;
       this.#error = "Nothing on this account is overdue, so there is nothing to chase.";

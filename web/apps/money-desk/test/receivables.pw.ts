@@ -1061,3 +1061,23 @@ test("Remind is offered only while the account has an overdue invoice", async ({
   await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeDisabled();
 });
+
+test("a draft or a void invoice is neither listed as open nor picked, and never reaches the allocation", async ({ page, request }) => {
+  await openDesk(page, request);
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toBeVisible();
+  // The account's read carries one draft (INV-1201) and one void (INV-1202), as the core's no chip read does.
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1201" })).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await expect(page.locator("[data-invoice-row] [role='checkbox'][aria-checked='true']")).toHaveCount(2);
+  await page.locator("[data-field='receive-amount']").fill("$5,000.00");
+  await page.locator("[data-field='receive-amount']").blur();
+  await expect(page.locator("[data-allocation]")).not.toContainText("INV-1201");
+  await expect(page.locator("[data-allocation]")).not.toContainText("INV-1202");
+  // The All view shows the paid history but still no draft or void.
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1010" })).toBeVisible();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1201" })).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
+});

@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { cardRange, cardTitle, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -246,7 +246,7 @@ const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
 // "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
 // credit memos are excluded because they offset what is owed rather than what is due.
 function isOpenRow(r: BillingRegisterRow): boolean {
-  return r.status !== "PAID" && r.status !== "CREDIT";
+  return isUnpaidInvoice(r);
 }
 
 function shownRows(model: DeskModel): BillingRegisterRow[] {
@@ -719,8 +719,9 @@ export function renderHolds(model: DeskModel): TemplateResult {
 // ---- an account --------------------------------------------------------------------------------
 
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
-  const paid = account.invoices.filter((r) => r.status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
-  const rows = account.invoices.filter((r) => account.showAll || r.status !== "PAID").concat(account.showAll ? [] : paid.slice(0, 1));
+  // Drafts and voids are not owed and not settled: they are never listed here, so never picked.
+  const paid = account.invoices.filter((r) => r.stored_status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
+  const rows = account.invoices.filter((r) => (account.showAll ? isUnpaidInvoice(r) || r.stored_status === "PAID" : isUnpaidInvoice(r))).concat(account.showAll ? [] : paid.slice(0, 1));
   rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
@@ -894,7 +895,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
 }
 
 function promisePanel(model: DeskModel, account: AccountModel): TemplateResult {
-  const open = account.invoices.filter((r) => r.status !== "PAID");
+  const open = account.invoices.filter(isUnpaidInvoice);
   return html`
     <section class="panel side" aria-label="Record a promise to pay" data-promise-form>
       <div class="panel-head"><h2>Record a promise</h2><button type="button" class="btn btn-secondary small-btn" data-action="back-to-receive">Back to payment</button></div>
@@ -954,7 +955,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
   const hold = model.holds.find((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const promised = account.invoices.some((r) => typeof r.promised_date === "string" && r.promised_date !== "");
   const disputes = account.invoices.filter((r) => r.disputed).length;
-  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && r.status !== "PAID");
+  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && isUnpaidInvoice(r));
   return html`
     <button type="button" class="link back" data-action="back">‹ Receivables</button>
     <div class="head">
