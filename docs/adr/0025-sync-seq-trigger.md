@@ -72,6 +72,8 @@ The database draws the seq when the writer did not.
   On a trigger table the row comes before the counter: rely on the trigger, or lock the row first. A single row
   UPDATE that draws explicitly (a CTE, or a counter allocated ahead of it) with no earlier lock of its row takes the
   counter first and crosses a writer that relies on the trigger; the catalogue refuses a new one.
+  The exception is a counter first table (the load door's tables, `pricing_list_prices`): its counter comes before its
+  rows for every writer, and a trigger relying writer takes the counter first without advancing it.
 - **Hidden behaviour.** A comment at `syncSeqCTE` (`dispatch/syncscope.go`) and this record say so.
 
 ## Left out, and why
