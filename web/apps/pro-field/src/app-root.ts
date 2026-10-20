@@ -551,7 +551,7 @@ export class ProFieldApp extends HHElement {
   }
 
   async #signOutOnWriteExpiry(): Promise<void> {
-    this.#signinMessage = "You were signed out. Sign in again to save this.";
+    this.#signinMessage = "You were signed out, so this was not saved. Sign in again and make the change again.";
     await this.#session.signOut();
   }
 

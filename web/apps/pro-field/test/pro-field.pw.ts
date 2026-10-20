@@ -548,7 +548,7 @@ test.describe("phone", () => {
     });
     await input.fill("Gate is on the north fence.");
     await page.getByRole("button", { name: "Save notes" }).click();
-    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out. Sign in again to save this.");
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
     await expect(page.locator("hh-pro-signin")).not.toContainText("Missing or invalid credentials");
 
@@ -565,7 +565,7 @@ test.describe("phone", () => {
     });
     await page.getByTestId("account-name").fill("Summit Ridge owner");
     await page.getByRole("button", { name: "Save profile" }).click();
-    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out. Sign in again to save this.");
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   });
 
