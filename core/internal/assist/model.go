@@ -64,10 +64,13 @@ type Caller struct {
 	// PaymentTrail is the role gate's answer to "does this caller hold the payment trail reads"
 	// (ruling 87), set by the handler. False means the reads that list payments leave them out.
 	PaymentTrail bool
-	// SessionID is the session token's jti where the request carried one, and Address the
-	// connection's trusted address. Both exist only to key the rate limits; neither grants anything.
-	SessionID string
-	Address   string
+	// Address is the connection's trusted address (the demo mint's rule); it keys the demo rate
+	// limits and never grants anything.
+	Address string
+	// SessionKey is the verified bearer's jti: one value per sign in. It keys server kept
+	// conversations (conversation_store.go) so two visitors on one persona user never share a
+	// history. Empty when the token carries none. It is never an authority.
+	SessionKey string
 }
 
 // HasRole reports whether the caller has any assigned role at all.

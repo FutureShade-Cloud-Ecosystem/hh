@@ -13,6 +13,10 @@ export const driveStyles = css`
     color: var(--hh-text);
     padding-bottom: calc(var(--hh-s-32) + var(--hh-safe-bottom));
   }
+  /* The Field frame's phone tab bar is fixed to the foot: the page clears it (the frame's FIELD_TABBAR_CLEARANCE). */
+  @media (max-width: 767.98px) {
+    :host { padding-bottom: calc(var(--hh-s-64) + var(--hh-s-24) + var(--hh-safe-bottom)); }
+  }
   main {
     max-width: 620px;
     margin: 0 auto;
@@ -143,8 +147,6 @@ export const driveStyles = css`
   .alert { padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); border: 2px solid; font-weight: 600; }
   .alert-error { color: var(--hh-danger); border-color: var(--hh-danger); background: var(--hh-card); }
   .alert-ok { color: var(--hh-success); border-color: var(--hh-success); background: var(--hh-card); }
-
-  .theme-button { min-height: 44px; }
 
   /* Proof of delivery. */
   .field-label { display: block; font-weight: 700; margin-bottom: var(--hh-s-8); }

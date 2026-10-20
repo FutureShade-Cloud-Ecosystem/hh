@@ -241,6 +241,18 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
 	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
+	// HH-424: the targeted payment notices and the money rooms follow the payment trail reader and the
+	// branch reach. The reader is the money spine's late one, bound to the role gate once it exists
+	// (bindPaymentTrail), and unbound it answers no, so the rooms and notices stay closed until then.
+	messagingSvc.WithPaymentAccess(spine.paymentTrail)
+	if pool != nil {
+		reach, reachErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if reachErr != nil {
+			panic("messaging: payment fence identity resolver refused to boot: " + reachErr.Error())
+		}
+		messagingSvc.WithPaymentRecipients(paymentRecipientReader{reach: reach})
+	}
+	messagingHub.WithRoomFence(messagingSvc.RoomAdmits)
 
 	// D10 / S8 (0403): Attachments surface and room attachments mirror seams.
 	attachmentsRepo := attachments.NewRepository(pool)
@@ -457,7 +469,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// answers only that user's own world (its channels and their
 	// messages, its own acks and prefs), so a row outside the caller's
 	// membership is the same as absent whatever org it belongs to.
-	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link)); err != nil {
+	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link)); err != nil {
@@ -523,7 +535,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("vendors", purchasing.NewVendorsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link)); err != nil {
+	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("parked_tickets", pos.NewParkedTicketsStore(pool)); err != nil {
@@ -1924,15 +1936,20 @@ func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABr
 	return err
 }
 
-// cardAttemptEscalations is the card attempt sweep's alerter over messaging's escalations
-// channel, the unionSLANotifier precedent (the card charge design section 4): it is what
+// cardAttemptEscalations is the card attempt sweep's alerter over messaging's finance
+// channel (a money room fenced by the payment trail: the body names an amount and a sale key), the unionSLANotifier precedent (the card charge design section 4): it is what
 // payment.AlertFunc is bound to, once at process start, and its signature is the seam's. The
 // event key arrives already shaped card-attempt:<id>:<status>, so one state of one attempt
 // posts once; the body is the sweep's money facts, never a token or a customer name.
-type cardAttemptEscalations struct{ svc *messaging.Service }
+type cardAttemptEscalations struct{ svc slugPoster }
+
+// slugPoster is the one messaging post the card attempt alert needs; *messaging.Service satisfies it.
+type slugPoster interface {
+	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
+}
 
 func (a cardAttemptEscalations) post(ctx context.Context, key, body string) error {
-	_, _, err := a.svc.PostEventToChannelSlug(ctx, "escalations", key, body,
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, "finance", key, body,
 		messaging.EventRef{Topic: "payment.card_attempt", Entity: key, Summary: body}, false)
 	return err
 }
@@ -2043,4 +2060,19 @@ func (a attachmentsSeamAdapter) ResolveAttachmentMetas(ctx context.Context, orgI
 		}
 	}
 	return res, nil
+}
+
+// paymentRecipientReader answers messaging.PaymentRecipients over the identity module's own reach read
+// (StaffAuthorityResolver.ReachOfUser), so messaging touches none of the identity tables and the branch
+// reach is the guard's walk, not a second definition.
+type paymentRecipientReader struct {
+	reach *erpidentity.StaffAuthorityResolver
+}
+
+func (p paymentRecipientReader) PaymentRecipient(ctx context.Context, userID string) (messaging.PaymentRecipient, error) {
+	r, err := p.reach.ReachOfUser(ctx, userID)
+	if err != nil {
+		return messaging.PaymentRecipient{}, err
+	}
+	return messaging.PaymentRecipient{PlatformUserID: r.PlatformUserID, OrgIDs: r.OrgIDs, Global: r.Global, BranchIDs: r.BranchIDs}, nil
 }

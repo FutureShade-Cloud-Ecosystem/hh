@@ -487,9 +487,7 @@ func TestSpendRowValidate(t *testing.T) {
 // over as settlements, so a test that seeds a user's spend through the ledger still means it.
 func (s *Service) withTestMeter() *memSpend {
 	sp := &memSpend{}
-	key := s.provider.Name() + "/" + s.provider.Model()
-	s.WithMetering(sp, memPrices{key: {ID: "p0", Alias: s.provider.Name(), Model: s.provider.Model(), Seq: 1}}).
-		WithDealerCap(1 << 60)
+	s.WithMetering(sp, anyPrice{}).WithDealerCap(1 << 60)
 	if led, ok := s.ledger.(*fakeLedger); ok {
 		for i, e := range led.entries {
 			sp.rows = append(sp.rows, SpendRow{
@@ -500,6 +498,13 @@ func (s *Service) withTestMeter() *memSpend {
 		}
 	}
 	return sp
+}
+
+// anyPrice prices every alias and model at zero, for tests that are not about money.
+type anyPrice struct{}
+
+func (anyPrice) PriceFor(_ context.Context, alias, model string) (ModelPrice, bool, error) {
+	return ModelPrice{ID: "p0", Alias: alias, Model: model, Seq: 1}, true, nil
 }
 
 // -- the dealer's month (review P3-1), and the estimate divisor (P3-2) ---------------------------

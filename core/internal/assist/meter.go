@@ -295,8 +295,8 @@ func (s *Service) WithDealerCap(microCents int64) *Service {
 	return s
 }
 
-// freeProvider reports whether the provider costs nothing, which is only the stub.
-func (s *Service) freeProvider() bool { return s.provider.Name() == "stub" }
+// freeProvider reports whether a provider costs nothing, which is only the stub.
+func freeProvider(p Provider) bool { return p.Name() == "stub" }
 
 // Complete is complete for callers outside the package (the quote extraction rails): the same
 // budget check, dealer cap, reservation and settlement, as the asking user, in an exchange of its
@@ -308,14 +308,17 @@ func (s *Service) Complete(ctx context.Context, c Caller, req CompletionRequest)
 // complete is the only place this package reaches a provider. Everything the slice adds, the budget
 // check, the dealer cap, the reservation and the settlement, happens here, so a path that calls
 // the provider cannot skip them.
-func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest) (Reply, error) {
-	free := s.freeProvider()
+// meteredComplete is the metered body of Service.complete (service.go), which resolves the provider
+// and the alias per call: every attempt, retry and escalation arrives here with its own provider and
+// takes its own call number.
+func (s *Service) meteredComplete(ctx context.Context, c Caller, p Provider, alias string, req CompletionRequest) (Reply, error) {
+	free := freeProvider(p)
 	if s.spend == nil {
 		if !free {
 			s.warn("assist: a paid provider is configured with no spend table wired, the call is refused")
 			return Reply{}, ErrMeterUnavailable
 		}
-		return s.provider.Complete(ctx, req)
+		return p.Complete(ctx, req)
 	}
 
 	now := s.now()
@@ -331,7 +334,7 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 		return Reply{}, s.meterFailure("read budget", err)
 	}
 
-	alias, model := s.provider.Name(), s.provider.Model()
+	model := p.Model()
 	var price ModelPrice
 	if !free {
 		if s.dealerCap <= 0 {
@@ -382,7 +385,7 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 		return Reply{}, cerr
 	}
 
-	reply, callErr := s.provider.Complete(ctx, req)
+	reply, callErr := p.Complete(ctx, req)
 	if callErr != nil {
 		// The call may have reached the provider, so it is neither settled nor voided here. The
 		// reservation stays, counted at its estimate, and the sweep settles it at that estimate.
@@ -469,4 +472,16 @@ func SweepReservations(ctx context.Context, store SpendStore, now time.Time, gra
 		n++
 	}
 	return n, nil
+}
+
+// refusalAnswer turns a metering refusal into the ordinary answer the user sees. The provider was
+// not reached for any of these, and none is an error to the handler.
+func refusalAnswer(err error) (Answer, bool) {
+	switch {
+	case errors.Is(err, ErrOverBudget), errors.Is(err, ErrDealerCap):
+		return Answer{Text: LimitReachedMessage, LimitReached: true, Results: []Result{}}, true
+	case errors.Is(err, ErrMeterUnavailable):
+		return Answer{Text: UnavailableMessage, Results: []Result{}}, true
+	}
+	return Answer{}, false
 }

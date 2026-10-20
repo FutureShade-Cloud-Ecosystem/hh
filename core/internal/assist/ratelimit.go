@@ -138,9 +138,9 @@ func (l *RateLimits) Admit(c Caller, rs RateSettings) error {
 		lim *ratelimit.AddressLimit
 		key string
 	}
-	buckets := []bucket{{l.asker, "u:" + c.UserID + "|s:" + c.SessionID}}
+	buckets := []bucket{{l.asker, "u:" + c.UserID + "|s:" + c.SessionKey}}
 	if l.demo != nil {
-		visitor := c.SessionID
+		visitor := c.SessionKey
 		if visitor == "" {
 			visitor = "addr:" + c.Address
 		}

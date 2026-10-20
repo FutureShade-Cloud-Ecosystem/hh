@@ -255,6 +255,7 @@ func TestIntegration_PaymentsChannelCanBeSubscribedTo(t *testing.T) {
 	rollupCleanup(t, pool, uAlexMorgan, chPaymentsTrenton)
 	repo := NewRepository(pool)
 	svc := NewService(repo)
+	bindPaymentTrailFor(t, pool, svc, uAlexMorgan)
 
 	if err := repo.SyncMembership(ctx, uAlexMorgan); err != nil {
 		t.Fatalf("sync: %v", err)

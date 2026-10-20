@@ -95,6 +95,11 @@ const (
 	// cancel credited back or kept. Filtered on action alone, like the trail
 	// rows beside it.
 	ActDepositCancelled = "DEPOSIT_CANCELLED"
+	// The manager resolution of an open card refund attempt (pos/card_refund_attempts.go,
+	// HH-767): the who/what/why of a manager judging, after checking the processor, whether
+	// money moved on a refund the two-transaction flow left open. Filtered on action alone,
+	// like the trail rows beside it.
+	ActCardRefundAttemptResolved = "CARD_REFUND_ATTEMPT_RESOLVED"
 )
 
 // sensitiveActions are badged in the viewer and follow the masked-only contract.
@@ -108,6 +113,8 @@ var sensitiveActions = map[string]bool{
 	ActPriceOverride:    true,
 	ActTillOverride:     true,
 	ActTaxReliefAssess:  true,
+
+	ActCardRefundAttemptResolved: true,
 }
 
 // Filter is the admin viewer query.

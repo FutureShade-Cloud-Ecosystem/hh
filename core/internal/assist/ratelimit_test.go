@@ -31,7 +31,7 @@ func TestAskerOverItsRateLimitIsRefusedBeforeTheProvider(t *testing.T) {
 	p := &pricedProvider{reply: Reply{Text: "ok"}}
 	svc, _ := rateService(p, StaticSettings{KeyRateRequests: "2", KeyRateWindowSeconds: "60"}, nil)
 	who := manager()
-	who.SessionID = "jti-a"
+	who.SessionKey = "jti-a"
 
 	for i := 0; i < 2; i++ {
 		if ans := askOnce(svc, who); ans.Text == RateLimitedMessage {
@@ -52,7 +52,7 @@ func TestEachSessionOfAUserHoldsItsOwnBucket(t *testing.T) {
 	p := &pricedProvider{reply: Reply{Text: "ok"}}
 	svc, _ := rateService(p, StaticSettings{KeyRateRequests: "1"}, nil)
 	a, b := manager(), manager()
-	a.SessionID, b.SessionID = "jti-a", "jti-b"
+	a.SessionKey, b.SessionKey = "jti-a", "jti-b"
 	askOnce(svc, a)
 	if askOnce(svc, a).Text != RateLimitedMessage {
 		t.Fatal("the second request in one session passed a limit of one")
@@ -103,7 +103,7 @@ func TestRateSettingsOutOfRangeReadAsTheDefaultNeverUnlimited(t *testing.T) {
 
 func demoCaller(session, addr string) Caller {
 	c := manager() // demo personas are shared users: the same UserID for every visitor
-	c.SessionID, c.Address = session, addr
+	c.SessionKey, c.Address = session, addr
 	return c
 }
 
@@ -194,18 +194,16 @@ func TestClientAddressMirrorsTheDemoMint(t *testing.T) {
 	}
 }
 
-func TestCallerFromReadsTheSessionIDFromTheBearerPayload(t *testing.T) {
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"u","jti":"abc123"}`))
+func TestCallerFromCarriesTheTrustedAddressAndNoBearerParse(t *testing.T) {
 	r := httptest.NewRequest("POST", "/", nil)
 	r.RemoteAddr = "203.0.113.5:1"
+	// A payload with a jti in the header must NOT become the session key here: the key is the
+	// verified scope's (Handler.callerFor sets it), never a re read of the bearer.
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"u","jti":"abc123"}`))
 	r.Header.Set("Authorization", "Bearer h."+payload+".s")
 	c := CallerFrom(r)
-	if c.SessionID != "abc123" || c.Address != "203.0.113.5" {
-		t.Fatalf("caller = session %q address %q", c.SessionID, c.Address)
-	}
-	r.Header.Set("Authorization", "Bearer garbage")
-	if c := CallerFrom(r); c.SessionID != "" {
-		t.Fatalf("a malformed bearer produced session %q", c.SessionID)
+	if c.SessionKey != "" || c.Address != "203.0.113.5" {
+		t.Fatalf("caller = key %q address %q", c.SessionKey, c.Address)
 	}
 }
 

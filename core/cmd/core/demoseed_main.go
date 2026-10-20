@@ -152,6 +152,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// The demo world's words (the glsworld pair): the built plan's strings pass through the demo
 	// dictionary before anything prints or writes. The default build returns the rows as built.
 	rows = glsRewritePlan(rows)
+	summary = glsRewriteSummary(summary)
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
@@ -303,7 +304,7 @@ func writeSummary(out *os.File, s planSummary) {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}
-	fmt.Fprintln(out, "  deposit sales (item 9.9, walk them at the Trenton till and on Pay balance)")
+	fmt.Fprintln(out, "  deposit sales (item 9.9, walk them at the counter till and on Pay balance)")
 	for _, l := range s.DepositOrders {
 		fmt.Fprintf(out, "    %s\n", l)
 	}

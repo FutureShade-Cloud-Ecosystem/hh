@@ -1297,8 +1297,9 @@ type AssistMessage struct {
 }
 
 type AssistChatRequest struct {
-	Question string           `json:"question"`
-	History  *[]AssistMessage `json:"history,omitempty"`
+	Question       string           `json:"question"`
+	ConversationId *string          `json:"conversation_id,omitempty"`
+	History        *[]AssistMessage `json:"history,omitempty"`
 }
 
 type AssistUsage struct {
@@ -1309,14 +1310,15 @@ type AssistUsage struct {
 }
 
 type AssistAnswer struct {
-	Text         string             `json:"text"`
-	Results      []AssistResult     `json:"results"`
-	LimitReached bool               `json:"limit_reached"`
-	Usage        *AssistUsage       `json:"usage,omitempty"`
-	Ran          []AssistInvocation `json:"ran"`
-	Clarify      *AssistClarify     `json:"clarify,omitempty"`
-	Carried      *[]string          `json:"carried,omitempty"`
-	Suggest      *[]string          `json:"suggest,omitempty"`
+	Text           string             `json:"text"`
+	Results        []AssistResult     `json:"results"`
+	LimitReached   bool               `json:"limit_reached"`
+	Usage          *AssistUsage       `json:"usage,omitempty"`
+	Ran            []AssistInvocation `json:"ran"`
+	Clarify        *AssistClarify     `json:"clarify,omitempty"`
+	Carried        *[]string          `json:"carried,omitempty"`
+	Suggest        *[]string          `json:"suggest,omitempty"`
+	ConversationId *string            `json:"conversation_id,omitempty"`
 }
 
 type AssistBudget struct {
@@ -1383,10 +1385,11 @@ type AssistUserLimitResetResult struct {
 }
 
 type AssistSettings struct {
-	Provider               string `json:"provider"`
-	Model                  string `json:"model"`
-	ChatEnabled            bool   `json:"chat_enabled"`
-	SpendVisibleToNonAdmin bool   `json:"spend_visible_to_non_admin"`
+	Provider               string  `json:"provider"`
+	Model                  string  `json:"model"`
+	Route                  *string `json:"route,omitempty"`
+	ChatEnabled            bool    `json:"chat_enabled"`
+	SpendVisibleToNonAdmin bool    `json:"spend_visible_to_non_admin"`
 }
 
 type AssistSettingsResponse struct {
@@ -6100,6 +6103,40 @@ type PosReturnRequestReject struct {
 	Reason string `json:"reason"`
 }
 
+type PosCardRefundAttempt struct {
+	Id             string     `json:"id"`
+	RefundKey      string     `json:"refund_key"`
+	OrderId        string     `json:"order_id"`
+	OrderNo        string     `json:"order_no"`
+	BranchId       string     `json:"branch_id"`
+	CustomerId     string     `json:"customer_id"`
+	CustomerName   string     `json:"customer_name"`
+	GatewayRef     string     `json:"gateway_ref"`
+	RefundRef      string     `json:"refund_ref"`
+	AmountCents    int64      `json:"amount_cents"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error"`
+	InitiatedBy    string     `json:"initiated_by"`
+	ResolvedBy     *string    `json:"resolved_by,omitempty"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNote *string    `json:"resolution_note,omitempty"`
+	AttemptedAt    time.Time  `json:"attempted_at"`
+	ProcessorAt    *time.Time `json:"processor_at,omitempty"`
+	BookedAt       *time.Time `json:"booked_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type PosCardRefundAttemptList struct {
+	Items []PosCardRefundAttempt `json:"items"`
+}
+
+type PosResolveCardRefundAttemptInput struct {
+	Outcome   string  `json:"outcome"`
+	RefundRef *string `json:"refund_ref,omitempty"`
+	Note      *string `json:"note,omitempty"`
+}
+
 type PosParkedLineInput struct {
 	ProductId  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
@@ -6594,12 +6631,12 @@ type PricingFloorPreviewItem struct {
 	BranchCode         *string `json:"branch_code,omitempty"`
 	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
-	MarginBps          int64   `json:"margin_bps"`
-	FloorBps           int64   `json:"floor_bps"`
+	MarginBps          *int64  `json:"margin_bps,omitempty"`
+	FloorBps           *int64  `json:"floor_bps,omitempty"`
 	PriceUom           string  `json:"price_uom"`
 	Source             string  `json:"source"`
 	PreviousFinalCents int64   `json:"previous_final_cents"`
-	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	PreviousMarginBps  *int64  `json:"previous_margin_bps,omitempty"`
 	AlreadyUnderFloor  bool    `json:"already_under_floor"`
 }
 
@@ -7016,9 +7053,9 @@ type PricingRebateAccrual struct {
 	SourceType   string    `json:"source_type"`
 	SourceId     *string   `json:"source_id,omitempty"`
 	QtyBase      float64   `json:"qty_base"`
-	BasisCents   int64     `json:"basis_cents"`
-	AccrualCents int64     `json:"accrual_cents"`
-	RateNote     string    `json:"rate_note"`
+	BasisCents   *int64    `json:"basis_cents,omitempty"`
+	AccrualCents *int64    `json:"accrual_cents,omitempty"`
+	RateNote     *string   `json:"rate_note,omitempty"`
 	AccruedAt    time.Time `json:"accrued_at"`
 }
 

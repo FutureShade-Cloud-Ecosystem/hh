@@ -107,7 +107,7 @@ func TestRedTeam10_EveryOverLimitCaseIsRefusedBeforeTheProvider(t *testing.T) {
 			build: func() (*Service, *pricedProvider, Caller) {
 				svc, p := redTeamService(&memSpend{}, newFakeLimits(), nil, StaticSettings{KeyRateRequests: "1", KeyRateWindowSeconds: "60"})
 				c := manager()
-				c.SessionID = "jti-1"
+				c.SessionKey = "jti-1"
 				_ = svc.rates.Admit(c, RateSettings{Requests: 1, Window: time.Minute})
 				return svc, p, c
 			},

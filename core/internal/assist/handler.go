@@ -27,7 +27,6 @@ package assist
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -67,6 +66,7 @@ func (h *Handler) WithPaymentTrail(t PaymentTrailReader) *Handler {
 // callerFor is CallerFrom plus the payment trail answer, for the routes that run commands.
 func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
 	c := CallerFrom(r)
+	c.SessionKey = sc.SessionID
 	if h.trail == nil {
 		return c, nil
 	}
@@ -105,13 +105,12 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 func CallerFrom(r *http.Request) Caller {
 	sc, _ := identity.StaffContextFromContext(r.Context())
 	c := Caller{
-		SessionID: sessionIDFrom(r),
-		Address:   clientAddress(r),
-		UserID:    sc.UserID,
-		RoleCode:  sc.RoleCode,
-		Tier:      int(sc.Tier),
-		Global:    sc.Scope == identity.ScopeGlobal,
-		IsAdmin:   sc.IsAdmin(),
+		Address:  clientAddress(r),
+		UserID:   sc.UserID,
+		RoleCode: sc.RoleCode,
+		Tier:     int(sc.Tier),
+		Global:   sc.Scope == identity.ScopeGlobal,
+		IsAdmin:  sc.IsAdmin(),
 	}
 	if !c.Global {
 		for id, ok := range sc.Branches {
@@ -165,8 +164,11 @@ func (h *Handler) runCommand(w http.ResponseWriter, r *http.Request, caller guar
 }
 
 type chatBody struct {
-	Question string    `json:"question"`
-	History  []Message `json:"history"`
+	Question string `json:"question"`
+	// ConversationID, when present, replaces History: the history is rebuilt on the server from the
+	// exchange log and History and ran are ignored.
+	ConversationID string    `json:"conversation_id"`
+	History        []Message `json:"history"`
 }
 
 func (h *Handler) chat(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -183,7 +185,7 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request, caller guards.Sta
 		h.fail(w, err)
 		return
 	}
-	ans, err := h.svc.Ask(r.Context(), c, body.Question, body.History)
+	ans, err := h.svc.AskConversation(r.Context(), c, body.ConversationID, body.Question, body.History)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -373,26 +375,4 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		}
 		httpx.Error(w, http.StatusInternalServerError, "Something went wrong on our side.")
 	}
-}
-
-// sessionIDFrom reads the jti of the bearer token the guard has already verified. It keys a rate
-// limit and is read from the payload only; a request without a bearer or without a jti reads as
-// empty, and the limit falls back to the user alone.
-func sessionIDFrom(r *http.Request) string {
-	raw := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-	var claims struct {
-		ID string `json:"jti"`
-	}
-	if json.Unmarshal(payload, &claims) != nil || len(claims.ID) > 128 {
-		return ""
-	}
-	return claims.ID
 }

@@ -8,6 +8,7 @@ import type { InvCountLine, InvCountNegativeStockRow, InvCountReasonCode, InvCou
 import { CountsApi } from "./counts-api.js";
 import { countsFromTyped, varianceNeedsReason } from "./counts-logic.js";
 import { refusalWords, seatFor } from "../inventory/inventory-logic.js";
+import { houseDay } from "../po/po-logic.js";
 import { renderCounts, type CountsModel, type CountsTab } from "./counts-views.js";
 
 type Field = (name: string, key?: string) => string;
@@ -47,6 +48,7 @@ export class CountsDesk {
   constructor(api: CountsApi, host: DeskHost) {
     this.#api = api;
     this.#repaint = host.repaint;
+    api.watchZone(() => host.repaint());
     this.#field = host.field;
     this.#role = host.role;
   }
@@ -401,7 +403,7 @@ export class CountsDesk {
       error: this.#error,
       notice: this.#notice,
       branchNames: this.#branchNames,
-      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      today: houseDay(),
       sheets: this.#sheets,
       detail: this.#detail,
       reasons: this.#reasons,
