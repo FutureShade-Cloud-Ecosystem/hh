@@ -64,6 +64,17 @@ test("after an add the search is empty and focused, and F2 always returns to it"
   await expect(field).toBeFocused();
 });
 
+test("the payment method group says how it is walked", async ({ page }) => {
+  await signIn(page);
+  await page.keyboard.press("F4");
+  await page.keyboard.press("F4");
+  const group = page.getByTestId("pos-paytiles");
+  await expect(group).toBeVisible();
+  const hint = page.getByTestId("pos-paytiles-hint");
+  await expect(hint).toHaveText("Left and Right choose the payment method");
+  await expect(hint).toBeVisible();
+});
+
 test("a scanner's sequence still resolves a code on Enter, and an unknown code is still loud", async ({ page }) => {
   await signIn(page);
   await toSearch(page);

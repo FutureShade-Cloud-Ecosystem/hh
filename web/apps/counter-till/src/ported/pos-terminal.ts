@@ -2177,6 +2177,11 @@ export class HosPosTerminal extends LitElement {
       gap: 8px;
       margin-top: 10px;
     }
+    .paytiles-hint {
+      margin: 6px 0 0;
+      font-size: 11px; /* the small-chrome role (see the type-scale note) */
+      color: var(--hos-text-dim);
+    }
     .paytiles button {
       display: flex;
       align-items: center;
@@ -7206,6 +7211,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 Card
               </button>
             </div>
+            <p class="paytiles-hint" data-testid="pos-paytiles-hint">Left and Right choose the payment method</p>
             ${this.renderAccountCheck()}
             ${this.renderCashTendered()}
             ${this.renderSupplierDeposit()}
