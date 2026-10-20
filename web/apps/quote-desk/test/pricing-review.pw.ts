@@ -5,6 +5,7 @@
 // load, focus stays in the open dialog, a confirmation the log still owes is not lost
 // quietly, and the log names products and keeps a BYPASS row's reason.
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { openPricing, openTab, pricingState, setMode, signIn } from "./pricing-helpers";
 
 test.beforeEach(async ({ request }) => {
@@ -272,9 +273,11 @@ test("the desk's sign out holds once while the log row is owed, then goes", asyn
   await saveNewPaversRule(page, "40");
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-retry-log")).toBeVisible();
+  await openAccountMenu(page, "dispatch");
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page.getByTestId("pricing-leave-warning")).toBeVisible();
   await expect(page.getByTestId("pricing-panel")).toBeVisible();
+  await openAccountMenu(page, "dispatch");
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page.getByTestId("pricing-panel")).toHaveCount(0);
 });

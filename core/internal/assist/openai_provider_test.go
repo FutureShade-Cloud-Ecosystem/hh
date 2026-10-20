@@ -7,6 +7,7 @@ package assist
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -23,7 +24,7 @@ const (
 
 func askAgainstOpenAI(t *testing.T, srv *strictOpenAI, question string, history []Message) (Answer, error) {
 	t.Helper()
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: testGatewayKey, DealerTag: testDealerTag, Model: "open-model"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "open-model"})
 	svc := chatService(p, &fakeLedger{}, newFakeLimits(), nil, seededReaders())
 	return svc.Ask(context.Background(), manager(), question, history)
 }
@@ -60,7 +61,7 @@ func TestOpenAICompat_ToolRoundTripAndRequestShape(t *testing.T) {
 
 func TestOpenAICompat_StructuredOutputOption(t *testing.T) {
 	srv := newStrictOpenAI(t, testGatewayKey, testDealerTag, oaiTextReply(`{"a":1}`))
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: testGatewayKey, DealerTag: testDealerTag, Model: "open-model"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "open-model"})
 	_, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: RoleUser, Text: "q"}},
 		Schema:   &OutputSchema{Name: "spec", Schema: []byte(`{"type":"object"}`)},
@@ -79,7 +80,7 @@ func TestOpenAICompat_StructuredOutputOption(t *testing.T) {
 
 func TestOpenAICompat_UsageCarriesCachedTokens(t *testing.T) {
 	srv := newStrictOpenAI(t, testGatewayKey, testDealerTag, oaiTextReply("ok"))
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: testGatewayKey, DealerTag: testDealerTag, Model: "m"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "m"})
 	r, err := p.Complete(context.Background(), CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "q"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestOpenAICompat_UsageCarriesCachedTokens(t *testing.T) {
 func TestOpenAICompat_InvalidArgumentsAreFlagged(t *testing.T) {
 	srv := newStrictOpenAI(t, testGatewayKey, testDealerTag,
 		oaiToolReply(oaiToolCallJSON("call_1", "order__lookup", `{"order_no": SO-4`)))
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: testGatewayKey, DealerTag: testDealerTag, Model: "m"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "m"})
 	r, err := p.Complete(context.Background(), CompletionRequest{
 		Messages: []Message{{Role: RoleUser, Text: "q"}},
 		Tools:    []ToolSpec{{Name: "order.lookup", Description: "d"}},
@@ -112,7 +113,7 @@ func TestOpenAICompat_InvalidArgumentsAreFlagged(t *testing.T) {
 // tag on the wire are the configured ones, each exactly once.
 func TestOpenAICompat_ARequestCannotChangeTheKeyOrTheTag(t *testing.T) {
 	srv := newStrictOpenAI(t, testGatewayKey, testDealerTag, oaiTextReply("ok"))
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: testGatewayKey, DealerTag: testDealerTag, Model: "m"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL(), Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "m"})
 	type ctxKey string
 	ctx := context.WithValue(context.Background(), ctxKey("Authorization"), "Bearer evil")
 	ctx = context.WithValue(ctx, ctxKey(HeaderDealerTag), "another-dealer")
@@ -161,7 +162,7 @@ func TestOpenAICompat_RedirectIsNotFollowed(t *testing.T) {
 		http.Redirect(w, r, target.URL+"/v1/chat/completions", http.StatusTemporaryRedirect)
 	}))
 	defer redirector.Close()
-	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: redirector.URL + "/v1", Key: testGatewayKey, DealerTag: testDealerTag, Model: "m"})
+	p := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: redirector.URL + "/v1", Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "m"})
 	if _, err := p.Complete(context.Background(), CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "q"}}}); err == nil {
 		t.Fatal("a redirect was accepted as an answer")
 	}
@@ -178,7 +179,7 @@ func TestProviders_KeyNeverInErrorsOrFormatting(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"bad credentials"}}`))
 	}))
 	defer srv.Close()
-	oa := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL, Key: testGatewayKey, DealerTag: testDealerTag, Model: "m"})
+	oa := NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: srv.URL, Key: redact.NewSecret(testGatewayKey), DealerTag: testDealerTag, Model: "m"})
 	an := NewAnthropicProvider(testGatewayKey, "m", srv.URL)
 	for _, p := range []Provider{oa, an} {
 		_, err := p.Complete(context.Background(), CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "q"}}})

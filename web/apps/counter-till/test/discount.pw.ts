@@ -5,6 +5,7 @@
 // Both layouts, Panels and Steps; DISCOUNT_SHOTS_DIR, when set, also writes the light and dark
 // screens at 1440x900 for the review.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { mkdirSync } from "node:fs";
 
 type Layout = "panels" | "stepper";
@@ -237,6 +238,7 @@ test.describe("review screens", () => {
         await signIn(page, layout);
         await ensureSession(page);
         const control = page.getByTestId("theme-control");
+        await openAccountMenu(page);
         if (theme === "dark") await control.click();
         await tenCharcoal(page);
         const name = `${layout === "stepper" ? "steps" : "panels"}-${theme}`;

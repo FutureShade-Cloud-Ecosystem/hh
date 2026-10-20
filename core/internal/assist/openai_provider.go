@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"net/http"
 	"strings"
 	"time"
@@ -28,10 +29,10 @@ import (
 
 // OpenAICompatConfig is deployment configuration. None of it ever comes from a request.
 type OpenAICompatConfig struct {
-	BaseURL   string // including the version prefix, for example http://gateway:4000/v1
-	Key       Secret // the dealer's key; never logged, never rendered
-	DealerTag string // the dealer's tag for the gateway's metering and reconciliation
-	Model     string // the gateway's model name for this alias
+	BaseURL   string        // including the version prefix, for example http://gateway:4000/v1
+	Key       redact.Secret // the dealer's key; never logged, never rendered
+	DealerTag string        // the dealer's tag for the gateway's metering and reconciliation
+	Model     string        // the gateway's model name for this alias
 	HTTP      *http.Client
 }
 
@@ -47,7 +48,7 @@ const HeaderDealerTag = "X-Dealer-Tag"
 // OpenAICompatProvider talks to an OpenAI compatible chat completions endpoint.
 type OpenAICompatProvider struct {
 	baseURL string
-	key     Secret // never logged, never rendered, never serialised
+	key     redact.Secret // never logged, never rendered, never serialised
 	tag     string
 	model   string
 	http    *http.Client
