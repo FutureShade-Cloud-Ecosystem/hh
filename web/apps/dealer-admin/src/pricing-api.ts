@@ -85,12 +85,13 @@ export interface FloorItem {
   readonly branch_code: string;
   readonly branch_name: string;
   readonly final_cents: number;
-  readonly margin_bps: number;
-  readonly floor_bps: number;
+  /** The margin legs ride only to a caller on the cost list: null is absent, never zero. */
+  readonly margin_bps: number | null;
+  readonly floor_bps: number | null;
   readonly price_uom: string;
   readonly source: string;
   readonly previous_final_cents: number;
-  readonly previous_margin_bps: number;
+  readonly previous_margin_bps: number | null;
   readonly already_under_floor: boolean;
 }
 
@@ -105,12 +106,12 @@ export function toFloorItem(raw: unknown): FloorItem {
     branch_code: text(r.branch_code),
     branch_name: text(r.branch_name),
     final_cents: num(r.final_cents),
-    margin_bps: num(r.margin_bps),
-    floor_bps: num(r.floor_bps),
+    margin_bps: maybeNum(r.margin_bps),
+    floor_bps: maybeNum(r.floor_bps),
     price_uom: text(r.price_uom),
     source: text(r.source),
     previous_final_cents: num(r.previous_final_cents),
-    previous_margin_bps: num(r.previous_margin_bps),
+    previous_margin_bps: maybeNum(r.previous_margin_bps),
     already_under_floor: bool(r.already_under_floor),
   };
 }
@@ -344,9 +345,11 @@ export interface AccrualRow {
   readonly source_type: string;
   readonly source_id: string;
   readonly qty_base: number;
-  readonly basis_cents: number;
-  readonly accrual_cents: number;
-  readonly rate_note: string;
+  /** Absent for a cost basis row unless the caller is on the cost list: null, never zero. */
+  readonly basis_cents: number | null;
+  /** Both absent on a cost basis row for a caller off the cost list: null, never zero. */
+  readonly accrual_cents: number | null;
+  readonly rate_note: string | null;
   readonly accrued_at: string;
 }
 
@@ -362,9 +365,9 @@ function toAccrualRow(raw: unknown): AccrualRow {
     source_type: text(r.source_type),
     source_id: text(r.source_id),
     qty_base: num(r.qty_base),
-    basis_cents: num(r.basis_cents),
-    accrual_cents: num(r.accrual_cents),
-    rate_note: text(r.rate_note),
+    basis_cents: maybeNum(r.basis_cents),
+    accrual_cents: maybeNum(r.accrual_cents),
+    rate_note: typeof r.rate_note === "string" ? r.rate_note : null,
     accrued_at: text(r.accrued_at),
   };
 }

@@ -38,6 +38,8 @@ const PAIRS = [
   { selector: ".dealer", ground: "var(--hh-page)" },
   { selector: ".apps-menu summary", ground: "var(--hh-page)" },
   { selector: ".apps-list button", ground: "var(--hh-card)" },
+  { selector: ".signin-footer", ground: "var(--hh-page)" },
+  { selector: ".quiet-control", ground: "var(--hh-page)" },
 ];
 
 for (const { selector, ground } of PAIRS) {

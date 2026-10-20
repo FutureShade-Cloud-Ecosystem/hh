@@ -382,14 +382,25 @@ func (s *Service) NotifyPaymentRules(ctx context.Context, eventKey, paymentID st
 		return res, nil // matched nothing anybody asked for: the rollup is the whole story
 	}
 
+	// A rule is a wish, never an authority (HH-424): a notice carries the payment's amount, customer and
+	// order, so each wisher must also hold the payment trail and reach the payment's branch. A wisher
+	// the fence cannot answer for is withheld, and the others are still told.
+	var fenceErrs []error
 	for _, userID := range sortedKeys(reasons) {
+		may, ferr := s.mayHearPayment(ctx, userID, facts)
+		if ferr != nil {
+			fenceErrs = append(fenceErrs, fmt.Errorf("payment notice fence %s: %w", userID, ferr))
+		}
+		if !may {
+			continue
+		}
 		notice, err := s.deliverPaymentNotice(ctx, eventKey, userID, orderRules(reasons[userID]), facts, ref)
 		if err != nil {
 			return res, err
 		}
 		res.Notices = append(res.Notices, notice)
 	}
-	return res, nil
+	return res, errors.Join(fenceErrs...)
 }
 
 // resolvePaymentOwner answers "whose order is this?" using resolveAssignment, the one place the

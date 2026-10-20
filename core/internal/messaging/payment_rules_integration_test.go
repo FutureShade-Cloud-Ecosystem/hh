@@ -283,6 +283,7 @@ func TestIntegration_PaymentRules_CrossBranchNoticeLandsInTheOptedInUsersDM(t *t
 	ctx := context.Background()
 	repo := NewRepository(pool)
 	svc := NewService(repo)
+	bindPaymentTrailFor(t, pool, svc, uSamRivera)
 
 	if _, err := repo.SetPaymentRule(ctx, uSamRivera, RulePaymentCrossBranch, true); err != nil {
 		t.Fatalf("opt in: %v", err)

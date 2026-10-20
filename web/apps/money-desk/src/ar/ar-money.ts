@@ -8,7 +8,7 @@
 // itself from the original app's cash tendered field.
 import { formatDollars, plainDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
 
-export const MONEY_PLACEHOLDER = "(no figure)";
+export const MONEY_PLACEHOLDER = "Not available";
 
 /** 96000 reads "$960.00"; anything that is not an integer reads the placeholder. */
 export function formatMoney(cents: number | null | undefined): string {
