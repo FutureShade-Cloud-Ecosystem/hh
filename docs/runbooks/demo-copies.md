@@ -101,6 +101,7 @@ The baseline runtime values (every copy):
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_SIGNIN_MODE` | required, no default; `demo` for staging, `console` for the testers' and public copies |
 | `HH_DEMO_MINT_VISITOR_ALLOWANCE` | optional, the per-visitor mint allowance on the testers' copy; staging and public deployments leave this unset (`deploy/demo/README.md`) |
+| `HH_DEMO_MINT_ADDRESS_CEILING` | optional, the mint allowance of one network address, shared by every visitor behind it; staging and public deployments leave this unset (`deploy/demo/README.md`) |
 | `CORE_DEMO_TOKEN_TTL` | optional, the demo session length the mint issues |
 
 The console sign in variables (`CORE_` and `HH_WEB_` names) are listed in the

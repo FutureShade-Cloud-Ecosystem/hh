@@ -219,6 +219,27 @@ const receivablesStyles = css`
     .payment-checklist li { grid-template-columns: auto minmax(0, 1fr) auto; }
     .payment-checklist li > .applied-cell { grid-column: 2 / 4; text-align: start; }
   }
+  /* UX-29: under 900 px the register reflows into one card per row, its Act button under the row's facts, so
+   * every action stays on screen at 200 percent zoom with no sideways scroll of the page or of the card. */
+  @media (max-width: 900px) {
+    table.reg thead { display: none; }
+    table.reg, table.reg tbody { display: block; }
+    table.reg tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: "inv acct bal" "branch due marks" "act act act"; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-12) 0; border-bottom: 1px solid var(--hh-line); }
+    table.reg tbody td { display: block; padding: 0; border: 0; }
+    table.reg tr[aria-current="true"] { background: var(--hh-row-alt); }
+    table.reg tr[aria-current="true"] td { background: none; }
+    table.reg tbody td:nth-child(1) { grid-area: inv; }
+    table.reg tbody td:nth-child(2) { grid-area: acct; }
+    table.reg tbody td:nth-child(3) { grid-area: branch; }
+    table.reg tbody td:nth-child(4) { grid-area: due; }
+    table.reg tbody td:nth-child(5) { grid-area: marks; }
+    table.reg tbody td:nth-child(6) { grid-area: bal; text-align: end; }
+    table.reg tbody td:nth-child(7) { grid-area: act; text-align: start; }
+    table.reg tbody td:nth-child(3)::before, table.reg tbody td:nth-child(4)::before, table.reg tbody td:nth-child(5)::before { display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    table.reg tbody td:nth-child(3)::before { content: "Branch"; }
+    table.reg tbody td:nth-child(4)::before { content: "Due"; }
+    table.reg tbody td:nth-child(5)::before { content: "Status"; }
+  }
   @media (max-width: 520px) {
     table.stack thead { display: none; }
     table.stack, table.stack tbody { display: block; }
@@ -229,13 +250,8 @@ const receivablesStyles = css`
     table.stack tfoot { display: table; width: 100%; }
     table.stack tfoot td:empty { display: none; }
     table.reg tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "inv bal" "acct acct" "due due" "marks marks" "act act"; }
-    table.reg tbody td:nth-child(1) { grid-area: inv; }
-    table.reg tbody td:nth-child(2) { grid-area: acct; }
     table.reg tbody td:nth-child(3) { display: none; }
-    table.reg tbody td:nth-child(4) { grid-area: due; }
-    table.reg tbody td:nth-child(5) { grid-area: marks; }
-    table.reg tbody td:nth-child(6) { grid-area: bal; }
-    table.reg tbody td:nth-child(7) { grid-area: act; text-align: start; }
+    table.reg tbody td:nth-child(6) { text-align: start; }
     table.inv tr { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "inv bal pick" "due due due" "marks marks marks" "applied applied applied"; }
     table.inv tbody td:nth-child(1) { grid-area: inv; }
     table.inv tbody td:nth-child(2), table.inv tbody td:nth-child(5) { display: none; }
@@ -258,6 +274,13 @@ const receivablesStyles = css`
     .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .tile { padding: var(--hh-s-16); }
     .tile-figure { font-size: 24px; }
+  }
+  /* UX-29: touch sizes (a coarse pointer or a phone width) take every control on the page to the 44 px bar. */
+  @media (pointer: coarse), (max-width: 520px) {
+    .btn, .small-btn, .tab, .seg-item, .link { min-height: 44px; }
+    .link { display: inline-flex; align-items: center; padding: 0 var(--hh-s-4); }
+    .areas .gl-tab { min-height: 44px; }
+    hos-app-header { --hh-header-control-min: 44px; }
   }
 `;
 
