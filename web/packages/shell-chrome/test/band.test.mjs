@@ -66,10 +66,11 @@ test('the band DEMO marker is one outlined chip, the board\u2019s style', () => 
   assert.ok((demoRule['border'] ?? '').startsWith('1px solid'), 'the outline is the marker');
 });
 
-test('the compact variant keeps the HH mark, the Demo badge in the brand, and the selector at the left', () => {
+test('the compact variant wears the dealer initial, the Demo badge in the brand, and the selector at the left', () => {
   const compact = visible(renderKit(ShellHeader, { ...BAND, variant: 'compact' }));
   assert.ok(compact.includes('data-variant="compact"'), 'the compact posture is in the markup');
-  assert.ok(compact.includes('class="mark"'), 'the compact band keeps the mark it always had');
+  assert.ok(compact.includes('class="mark"'), 'the compact band keeps its mark chip, now the dealer initial');
+  assert.ok(!compact.includes('viewBox="0 0 3000 3000"'), 'and never the HH mark');
   assert.ok(compact.includes('>Demo<'), 'the compact badge words are unchanged');
   assert.ok(!compact.includes('>DEMO<'), 'no DEMO chip in the compact run');
   const brandAt = compact.indexOf('class="brand"');
