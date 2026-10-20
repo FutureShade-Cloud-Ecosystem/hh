@@ -150,7 +150,9 @@ BEGIN
     );
   END IF;
   -- The wire format is  v1.<key id>.<base64 of the JSON payload>.<hex HMAC SHA 256>  where the
-  -- MAC covers everything before its dot. The MAC check compares the HMAC of each hex string
+  -- MAC covers everything before its dot. The key id is derived from the key itself (the
+  -- provisioning oneshot computes it), and the current and previous keys are the two most
+  -- recently written rows, so a rotation is one new row and a rerun with the same key is a no-op. The MAC check compares the HMAC of each hex string
   -- under the same key, so how long a forged MAC matches the real one cannot show in timing.
   -- Any failure returns NULL; nothing here raises or echoes the payload.
   EXECUTE format($def$
@@ -179,7 +181,8 @@ BEGIN
       kid := parts[2]::pg_catalog.int4;
       SELECT ck.key INTO k FROM ai.claims_key ck
        WHERE ck.key_id = kid
-         AND ck.key_id IN (SELECT ck2.key_id FROM ai.claims_key ck2 ORDER BY ck2.key_id DESC LIMIT 2);
+         AND ck.key_id IN (SELECT ck2.key_id FROM ai.claims_key ck2
+                            ORDER BY ck2.created_at DESC, ck2.key_id DESC LIMIT 2);
       IF k IS NULL THEN
         RETURN NULL;
       END IF;

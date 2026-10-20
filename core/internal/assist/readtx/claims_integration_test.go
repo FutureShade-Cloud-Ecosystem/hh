@@ -17,13 +17,13 @@ import (
 )
 
 // testKey writes a signing key into ai.claims_key as the superuser and removes
-// it when the test ends. It takes the next free key id so that a key already
-// provisioned on the gate database is never disturbed.
+// it when the test ends, under the id the signer derives from the key. A key
+// already provisioned on the gate database is never disturbed.
 func testKey(t *testing.T, conn *pgx.Conn) (id int, secret string) {
 	t.Helper()
 	secret = randomHex(t, 24)
-	if err := conn.QueryRow(ctxT(t), `INSERT INTO ai.claims_key (key_id, key)
-		SELECT coalesce(max(key_id), 0) + 1, $1 FROM ai.claims_key RETURNING key_id`, secret).Scan(&id); err != nil {
+	id = int(KeyID(NewSecret(secret)))
+	if _, err := conn.Exec(ctxT(t), `INSERT INTO ai.claims_key (key_id, key) VALUES ($1, $2)`, id, secret); err != nil {
 		t.Fatalf("insert test key: %v", err)
 	}
 	t.Cleanup(func() {

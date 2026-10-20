@@ -80,3 +80,30 @@ func randomHex(t *testing.T, n int) string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// loginPasswords gives both assist logins a random password for the test and
+// takes it away again when the test ends, so the shared gate database is left
+// with logins that cannot sign in. It returns the two login URLs.
+func loginPasswords(t *testing.T, admin *pgx.Conn) (staffURL, proURL string) {
+	t.Helper()
+	db := currentDatabase(t, admin)
+	roles := RolesFor(db)
+	urls := map[string]string{}
+	for _, login := range []string{roles.Login, roles.ProLogin} {
+		pw := randomHex(t, 16)
+		if _, err := admin.Exec(ctxT(t), `ALTER ROLE `+pgx.Identifier{login}.Sanitize()+` PASSWORD '`+pw+`'`); err != nil {
+			t.Fatalf("set test password: %v", err)
+		}
+		urls[login] = withUser(t, gateURL(t), login, pw)
+		login := login
+		t.Cleanup(func() {
+			c, err := pgx.Connect(ctxT(t), gateURL(t))
+			if err != nil {
+				return
+			}
+			defer c.Close(ctxT(t))
+			_, _ = c.Exec(ctxT(t), `ALTER ROLE `+pgx.Identifier{login}.Sanitize()+` PASSWORD NULL`)
+		})
+	}
+	return urls[roles.Login], urls[roles.ProLogin]
+}
