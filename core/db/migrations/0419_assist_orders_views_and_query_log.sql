@@ -73,6 +73,45 @@ BEGIN
           AND ((SELECT ai.claims()).global OR o.branch_id = ANY ((SELECT ai.claims()).branch_ids))
       )
     )$p$, v_view);
+
+  -- The two views, created under the view owner so their owner is right by construction (plan 3.1a), and
+  -- granted to the staff reader by their owner. Plain columns only: what every manager sees on the order
+  -- screen, no cost, margin, payment detail or contested contact and location text (slice 6's registry brings
+  -- those). citext columns are cast to text, so reading the views needs no EXECUTE on citext's functions.
+  -- Soft deleted rows are not filtered because the order module's own record read does not filter them.
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  CREATE VIEW ai.orders AS
+    SELECT o.id,
+           o.order_no::text AS order_no,
+           o.status,
+           o.fulfillment,
+           o.branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           o.customer_id,
+           COALESCE(c.name, '') AS customer_name,
+           o.requested_date,
+           o.created_at,
+           o.subtotal_cents,
+           o.tax_cents,
+           o.total_cents
+      FROM public.orders o
+      LEFT JOIN public.customers c ON c.id = o.customer_id
+      LEFT JOIN public.locations l ON l.id = o.branch_id;
+  CREATE VIEW ai.order_lines AS
+    SELECT ol.id,
+           ol.order_id,
+           o.order_no::text AS order_no,
+           o.branch_id,
+           ol.line_no,
+           ol.description,
+           ol.qty_entered,
+           ol.uom_entered::text AS uom,
+           ol.unit_price_cents,
+           ol.line_total_cents
+      FROM public.order_lines ol
+      JOIN public.orders o ON o.id = ol.order_id;
+  EXECUTE format('GRANT SELECT ON ai.orders, ai.order_lines TO %I', v_reader);
+  RESET ROLE;
 END
 $s5$;
 
