@@ -956,7 +956,7 @@ function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
         </div>
         <div class="modal-body">
           <label><strong>Channel name</strong></label>
-          <input type="text" data-field="channel-name" placeholder="e.g. yard-julian-receiving" data-value=${modal.name} />
+          <input type="text" data-field="channel-name" placeholder="e.g. yard-receiving" data-value=${modal.name} />
           <label><strong>Purpose (topic)</strong></label>
           <input type="text" data-field="channel-purpose" placeholder="What arrives at the dock..." data-value=${modal.topic} />
           <label><strong>Visibility</strong></label>
@@ -965,7 +965,7 @@ function renderNewChannelModal(m: Model): TemplateResult | typeof nothing {
             <button type="button" class="seg" data-action="set-channel-visibility" data-vis="PRIVATE" aria-pressed="false">Private</button>
           </div>
           <label><strong>Members by rule</strong></label>
-          <p class="dim small">All staff at Point Loma will join automatically.</p>
+          <p class="dim small">All staff at this branch will join automatically.</p>
         </div>
         <div class="modal-foot">
           <button type="button" class="btn btn-secondary" data-action="close-modal">Cancel</button>

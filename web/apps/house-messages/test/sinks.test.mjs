@@ -57,3 +57,17 @@ test("no em or en dash anywhere this app writes", () => {
   walk(appDir);
   assert.deepEqual(offenders, []);
 });
+
+const BRANCH_NAMES = /point[- ]loma|julian|la[- ]jolla|trenton|kingston/i;
+
+test("messages-logic.ts and views.ts contain no hardcoded branch names (white-label rule)", () => {
+  const offenders = [];
+  for (const file of ["messages-logic.ts", "views.ts"]) {
+    const path = join(srcDir, file);
+    const lines = readFileSync(path, "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (BRANCH_NAMES.test(line)) offenders.push(`${file}:${index + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(offenders, []);
+});
