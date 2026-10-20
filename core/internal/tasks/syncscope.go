@@ -497,14 +497,20 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from string
+	var from, branch string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from); err != nil {
+		`SELECT status, COALESCE(branch_id::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&from, &branch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
+	}
+	// Stage is held to the task's branch as the direct door is (UX-77), on the locked row.
+	if s.staff != nil && ((hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != "") {
+		if err := syncBranchFence(ctx, s.staff, f, branch); err != nil {
+			return sync.RowState{}, err
+		}
 	}
 	to := from
 	if hasStatus {
@@ -682,5 +688,21 @@ func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) boo
 		return err
 	}
 	data["ticket"] = v
+	return nil
+}
+
+// syncBranchFence is the direct doors' taskBranchFence for a sync write: the caller's staff authority must be
+// active in the org and reach the task's branch (GLOBAL reaches all). An empty task branch is held by no one.
+func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sync.ScopeFilter, branch string) error {
+	sc, has, err := staff(ctx, f.Actor, f.OrgID)
+	if err != nil {
+		return fmt.Errorf("tasks: branch fence authority: %w", err)
+	}
+	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return refusedf("no active staff authority in this org")
+	}
+	if branch != "" && !sc.CanAccessBranch(branch) {
+		return refusedf("yard: branch out of scope")
+	}
 	return nil
 }
