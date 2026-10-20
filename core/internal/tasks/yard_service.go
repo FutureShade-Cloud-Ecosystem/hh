@@ -446,7 +446,27 @@ func (s *Service) postShortageEvent(ctx context.Context, t Task, sh Shortage) {
 	if sh.Note != "" {
 		body += " Yard note: " + sh.Note
 	}
+	// The yard channel hears first and the counter's notice stays the last post, the one the counter acts on.
+	s.postShortageYardNotice(ctx, t, sh)
 	s.postAudienceEventKeyed(ctx, t, "shortage:"+sh.ID, "task.shortage", AudienceCounter, body)
+}
+
+// postShortageYardNotice tells the branch's yard channel that a shortage was reported on a pick, beside the
+// counter's own notice (UX-76: anyone in the branch may report one, and the holder, who is in that channel,
+// must hear it). It names the pick and the reporter's role label, never a name or an id.
+func (s *Service) postShortageYardNotice(ctx context.Context, t Task, sh Shortage) {
+	who := "a teammate"
+	if s.roleLabels != nil && sh.ReportedBy != "" {
+		if labels, err := s.roleLabels.RoleLabelsForUsers(ctx, []string{sh.ReportedBy}); err == nil && labels[sh.ReportedBy] != "" {
+			who = "the " + labels[sh.ReportedBy]
+		}
+	}
+	pick := "a pick on this branch"
+	if e := s.decorate(ctx, t); e.Ticket != nil && strings.TrimSpace(e.Ticket.OrderNo) != "" {
+		pick = "pick " + strings.TrimSpace(e.Ticket.OrderNo)
+	}
+	body := fmt.Sprintf("A shortage was reported on %s by %s: short %s %s of %s.", pick, who, sh.QtyShort, sh.UOM, sh.Description)
+	s.postAudienceEventKeyed(ctx, t, "shortage.yard:"+sh.ID, "task.shortage_yard", AudienceYard, body)
 }
 
 // postAudienceEvent posts a lifecycle EVENT with an explicit audience, keying idempotency on the

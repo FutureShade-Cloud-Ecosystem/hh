@@ -476,7 +476,12 @@ export const CORE_PICK_CANCELLED = "this pick was cancelled, its record cannot c
  * the picker recorded then never reached the order: the order still bills the full quantity, which the customer sees, so the
  * picker is told to tell the counter. Any other refusal keeps the core's own words.
  */
+/** What the core's holder guard (Stage and Save pick from a person who does not hold the pick) reads as on screen. */
+export const NOT_HOLDER_WORDS = "Someone else is on this pick.";
+const CORE_NOT_HOLDER = "someone else is on this pick";
+
 export function recordRefusalWords(error: string): string {
+  if (error.toLowerCase().includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
   if (error.includes(CORE_PICK_DONE)) {
     return "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
   }
@@ -742,6 +747,7 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
+  if (plain.toLowerCase().includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
   // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
   if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;

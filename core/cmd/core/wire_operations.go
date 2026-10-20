@@ -664,6 +664,15 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
 		WithLogger(log)
+	// The yard's shortage notice names its reporter by role label (UX-76); a nil pool (the wiring shape
+	// tests) leaves it saying "a teammate".
+	if pool != nil {
+		roleLabels, err := erpidentity.NewStaffAuthorityResolver(pool)
+		if err != nil {
+			panic("tasks: yard shortage notice role labels refused to boot: " + err.Error())
+		}
+		yardTasksSvc.WithRoleLabels(roleLabels)
+	}
 	yardTasksSvc.
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
