@@ -80,6 +80,7 @@ import {
   marginPctLabel,
   marginPresent,
   qtyLabel,
+  quoteClampSplit,
   quoteFlowSteps,
   quotePanelTracks,
   quoteSplitFromPointer,
@@ -3817,6 +3818,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>
           </div>`
         : this.renderSummaryPanel();
+    const leftPct = ws.arrangement === "PRIMARY_RIGHT" ? 100 - quoteClampSplit(ws.splitPct) : quoteClampSplit(ws.splitPct);
     const divider = html`<div
       class="divider"
       data-testid="qb-divider"
@@ -3824,6 +3826,9 @@ export class QdQuoteWorkarea extends LitElement {
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize panels"
+      aria-valuemin="20"
+      aria-valuemax="80"
+      aria-valuenow=${leftPct}
       tabindex="0"
     >
       <span class="grip" aria-hidden="true"></span>

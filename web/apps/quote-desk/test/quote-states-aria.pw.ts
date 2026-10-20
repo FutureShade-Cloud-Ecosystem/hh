@@ -85,3 +85,19 @@ test("approvals and follow-ups lists show plain recovery words on a 500, never s
   await expect(page.getByText("Boom")).toHaveCount(0);
 });
 
+test("the panel divider carries aria-valuenow, aria-valuemin and aria-valuemax and updates on keyboard resize", async ({ page }) => {
+  await signIn(page);
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  const divider = page.getByTestId("qb-divider");
+  await expect(divider).toBeVisible();
+  await expect(divider).toHaveAttribute("role", "separator");
+  await expect(divider).toHaveAttribute("aria-valuemin", "20");
+  await expect(divider).toHaveAttribute("aria-valuemax", "80");
+  await expect(divider).toHaveAttribute("aria-valuenow", "58");
+
+  await divider.focus();
+  await divider.press("ArrowRight");
+  await expect(divider).toHaveAttribute("aria-valuenow", "60");
+});
+
+
