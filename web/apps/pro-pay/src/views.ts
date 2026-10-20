@@ -8,7 +8,7 @@
 // position the gate allows); there is no text input in this app at all (the card field is the processor's frame).
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantBillingSummary, TenantInvoice, TenantInvoiceDetail, TenantInvoiceLine, TenantPayment, TenantPaymentMethod } from "@hardscapehouse/api-client";
-import { money, calendarDay, houseDay, qtyWithUnit, statusChip, NO_FIGURE } from "@hardscapehouse/pro-kit";
+import { money, calendarDay, houseDay, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
 import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, isPayable, payableCents, type MethodKind } from "./pay-core.js";
 import { SANDBOX_NOTE } from "./hosted-field.js";
 
@@ -104,7 +104,7 @@ export function invoicesScreen(state: ViewState): TemplateResult {
   const payable = state.invoices.filter(isPayable);
   const picked = payable.filter((i) => state.selected.has(i.id));
   const pickedCents = picked.reduce((sum, i) => sum + payableCents(i), 0);
-  const owed = state.summary === null ? NO_FIGURE : money(state.summary.open_balance_cents);
+  const owed = state.summary === null ? NO_PRICE : money(state.summary.open_balance_cents);
   return html`
     <section class="owed" data-testid="owed">
       <p class="label">Outstanding balance</p>

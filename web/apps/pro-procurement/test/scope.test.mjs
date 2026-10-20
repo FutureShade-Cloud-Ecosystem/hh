@@ -104,7 +104,7 @@ test("a priced line shows its indicative price, an unpriced line the placeholder
   assert.doesNotMatch(text, /undefined|NaN|!/);
 });
 
-test("a fresh line with no price reads as n/a until the RFQ prices it", async () => {
+test("a fresh line with no price reads as Not priced until the RFQ prices it", async () => {
   const page = await makePage("owner", { surface: "scope", projectId: EMPTY_PLAN_ID });
   const created = await scopeAddLine(page, PRODUCTS[0].id, "10", PRODUCTS[0].base_uom);
   assert.equal(created.ok, true);
@@ -113,7 +113,7 @@ test("a fresh line with no price reads as n/a until the RFQ prices it", async ()
   if (answer.kind !== "ready") return;
   const text = words(scopeView(answer.data, page)).replace(/<[^>]*>/g, " ");
   assert.ok(text.includes("Awaiting price"), text);
-  assert.ok(text.includes("n/a"), "an unpriced line must read as the placeholder");
+  assert.ok(text.includes("Not priced"), "an unpriced line must read as the placeholder");
   // The RFQ prices the lines; the server's numbers come back and the page shows them.
   await scopeSubmitRfq(page);
   const priced = await scopeLoad(page);

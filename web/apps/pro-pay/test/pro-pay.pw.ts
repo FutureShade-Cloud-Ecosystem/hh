@@ -532,6 +532,56 @@ test.describe("phone", () => {
     await shot(page, "pay-statements-phone");
   });
 
+  test("invoices, statement detail, the pay receipt and statements show the year on every date and glossary words for unknown figures", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20401" })).toContainText(/Issued [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20403" })).toContainText(/Due [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("invoice-detail")).toContainText(/Issued [A-Z][a-z]{2} \d{1,2}, \d{4} · Due [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await expect(page.getByTestId("detail-history")).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("invoice-back").click();
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("button", { name: /INV-20402/ }).click();
+    await page.getByTestId("pay-this").click();
+    await expect(page.getByTestId("method-option").first()).toBeVisible();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("receipt-done").click();
+    await page.getByTestId("frame-selector").click();
+    await page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" }).getByRole("button", { name: "Statements" }).click();
+    await expect(page.getByTestId("payment-row").first()).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+
+  test("unknown money, quantity and day values on the wire read Not priced, Not counted and Not set, never n/a or a zero", async ({ page }) => {
+    await page.route("**/api/v1/tenant/billing/summary", (route) => route.fulfill({ status: 503, json: { error: "unavailable" } }));
+    await page.route("**/api/v1/tenant/invoices/*", async (route) => {
+      const response = await route.fetch();
+      const detail = (await response.json()) as {
+        issue_date: string;
+        tax_cents: number | null;
+        lines: { qty_entered: string; line_total_cents: number | null }[];
+        payment_history: { received_at: string }[];
+      };
+      detail.issue_date = "";
+      detail.tax_cents = null;
+      if (detail.lines.length > 0) {
+        detail.lines[0]!.qty_entered = "";
+        detail.lines[0]!.line_total_cents = null;
+      }
+      if (detail.payment_history.length > 0) detail.payment_history[0]!.received_at = "";
+      await route.fulfill({ response, json: detail });
+    });
+    await signIn(page, "ap");
+    await expect(page.getByTestId("owed-total")).toHaveText("Not priced");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("invoice-detail")).toContainText("Issued Not set");
+    await expect(page.getByTestId("detail-lines").locator("li").first()).toContainText("Not counted");
+    await expect(page.getByTestId("detail-lines").locator("li").first()).toContainText("Not priced");
+    await expect(page.getByTestId("detail-sums")).toContainText("Not priced");
+    await expect(page.getByTestId("detail-history")).toContainText("Not set");
+    const text = await page.locator("hh-pro-frame").innerText();
+    expect(text).not.toMatch(/\bn\/a\b/i);
+  });
+
   test("nothing a person typed, was given or paid with rests in web storage, the address bar or the console", async ({ page }) => {
     const logged: string[] = [];
     page.on("console", (message) => logged.push(message.text()));
