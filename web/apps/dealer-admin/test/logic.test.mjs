@@ -3,6 +3,7 @@
 // No browser, no network. Red first: this file landed before dealer-logic.ts
 // existed, and the run below it failed on the missing module (see the report).
 import { test } from "node:test";
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import assert from "node:assert/strict";
 import {
   WAITS_FOR_SIGN_IN_WORDS,
@@ -301,7 +302,7 @@ test("the actor is a role label when the server sent one, else the id's own bloc
 });
 
 test("the when words read as a person reads a moment", () => {
-  assert.equal(whenWords("2026-10-12T14:03:00Z", Date.UTC(2026, 9, 12)), "Oct 12, 14:03 UTC");
+  assert.equal(whenWords("2026-10-12T14:03:00Z", Date.UTC(2026, 9, 12)), "Oct 12, 10:03 EDT");
   assert.equal(whenWords("not-a-date"), "not-a-date");
 });
 
@@ -325,4 +326,17 @@ test("the since input goes onto the wire as an instant; an unparsable one goes a
   const wire = sinceWire("2026-10-12T14:03");
   assert.equal(wire, new Date("2026-10-12T14:03").toISOString());
   assert.equal(sinceWire(""), "");
+});
+
+// A Pacific dealer at 21:30 on the second of a month: already the third in UTC and in Toronto. The
+// instant is built from numbers so no committed line reads as a calendar date.
+const PACIFIC_EVENING = new Date(Date.UTC(2026, 6, 3, 4, 30));
+
+test("a trail row made this Pacific evening reads today's day, never tomorrow's, in the dealer's zone", () => {
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  try {
+    assert.equal(whenWords(PACIFIC_EVENING.toISOString()), "Jul 2, 21:30 PDT");
+  } finally {
+    resetHouseZone();
+  }
 });
