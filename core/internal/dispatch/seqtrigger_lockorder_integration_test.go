@@ -12,6 +12,7 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -398,5 +399,239 @@ func TestIntegration_SeqTrigger_AStopCreateBesideRunWritersOnTheSameRun(t *testi
 				}
 			}
 		})
+	}
+}
+
+// A SINGLE STOP WRITE beside the run writers that update many stops (PR 556, round 3b: the class sweep).
+// A stop write (StopsSyncStore.Write) locks the stop row FOR UPDATE and then draws the stops counter. A run
+// writer that took the stops counter first and then updated the run's stops (MoveRunDate's per row trigger
+// draws, ReopenRun's and the sync cancel's one explicit draw) would hold the counter while it waits for a stop
+// row the stop write holds: a cycle. The run writers lock the run's stop rows ascending FOR NO KEY UPDATE
+// before the stops counter, so the order is the stop rows, then the counter, the single stop write's own.
+//
+// The RUN WRITER is the parked session here: it stands holding what it holds at its first stops counter touch
+// (in the crossing shape the counter, with the stop rows still to lock), the stop write starts behind it, and
+// the test releases only when the stop write is seen waiting.
+func TestIntegration_SeqTrigger_RunWritersBesideASingleStopWriteOnOneOfTheirStops(t *testing.T) {
+	writers := map[string]func(f *syncFixture, parkPool *pgxpool.Pool, runID string) error{
+		"ReopenRun": func(f *syncFixture, parkPool *pgxpool.Pool, runID string) error {
+			return NewRepository(parkPool).ReopenRun(context.Background(), runID, "stop write leg", "", time.Now())
+		},
+		"MoveRunDate": func(f *syncFixture, parkPool *pgxpool.Pool, runID string) error {
+			from := syncToday()
+			to := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+			_, _, _, err := NewRepository(parkPool).MoveRunDate(context.Background(), runID, from, to, Reschedule{
+				BranchID: testkit.BranchNorthAID, EntityType: RescheduleEntityRun, EntityID: runID,
+				FromDate: from, ToDate: to, Reason: "stop write leg"})
+			return err
+		},
+		"sync cancel": func(f *syncFixture, parkPool *pgxpool.Pool, runID string) error {
+			// The cancel is a push through an engine on the PARKED pool.
+			e := sync.NewEngine()
+			if err := e.RegisterScope("runs", NewRunsSyncStore(parkPool, linkedSyncUser(parkPool))); err != nil {
+				return err
+			}
+			info, _ := sync.Lookup("runs")
+			res, err := e.Push(context.Background(), info, f.north, []apigen.SyncPushOperation{
+				syncOp("update", syncFreshKey(), map[string]any{"id": runID, "status": RunCancelled}, nil)})
+			if err == nil && len(res.Results) == 1 && res.Results[0].Status != "applied" {
+				err = fmt.Errorf("the sync cancel answered %+v", res.Results[0])
+			}
+			return err
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			ctx := context.Background()
+			for _, q := range []string{
+				`CREATE OR REPLACE FUNCTION sf1_park_stops() RETURNS trigger LANGUAGE plpgsql AS $$
+				 BEGIN
+				   IF NEW.scope = 'stops' AND current_setting('application_name') = 'sf1-park' THEN
+				     PERFORM pg_advisory_xact_lock(4242002);
+				   END IF;
+				   RETURN NULL;
+				 END $$`,
+				`CREATE TRIGGER sf1_park_stops AFTER UPDATE ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_stops()`,
+			} {
+				if _, err := f.pool.Exec(ctx, q); err != nil {
+					t.Fatalf("park trigger: %v", err)
+				}
+			}
+			t.Cleanup(func() {
+				c := context.Background()
+				_, _ = f.pool.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_stops ON scope_sequences`)
+				_, _ = f.pool.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_stops()`)
+			})
+
+			run := syncOpenRun(t, f)
+			orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+			key := syncFreshKey()
+			syncApplied(t, f, "stops", f.north, "create", key, map[string]any{
+				"order_id": orderID, "scheduled_date": syncToday(), "run_id": run.ID,
+				"address_line": "Fixture address", "city": "Fixture City",
+			}, nil)
+			stopID := syncRowOf(t, f, "stops", f.north, key).ID
+			if _, err := f.pool.Exec(ctx, `INSERT INTO scope_sequences (scope, next_value) VALUES ('stops', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+				t.Fatalf("seed the stops counter: %v", err)
+			}
+
+			cfg := f.pool.Config().Copy()
+			cfg.ConnConfig.RuntimeParams["application_name"] = "sf1-park"
+			cfg.MaxConns = 2
+			parkPool, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatalf("park pool: %v", err)
+			}
+			defer parkPool.Close()
+
+			hold, err := f.pool.Acquire(ctx)
+			if err != nil {
+				t.Fatalf("acquire: %v", err)
+			}
+			defer hold.Release()
+			if _, err := hold.Exec(ctx, `SELECT pg_advisory_lock(4242002)`); err != nil {
+				t.Fatalf("hold: %v", err)
+			}
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					_, _ = hold.Exec(ctx, `SELECT pg_advisory_unlock(4242002)`)
+				}
+			}
+			defer release()
+
+			errW := make(chan error, 1)
+			go func() { errW <- write(f, parkPool, run.ID) }()
+			waitFor(t, f, name+" parked on its stops counter touch",
+				`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)
+
+			errS := make(chan error, 1)
+			go func() {
+				info, _ := sync.Lookup("stops")
+				res, err := f.engine.Push(ctx, info, f.north, []apigen.SyncPushOperation{
+					syncOp("update", syncFreshKey(), map[string]any{"id": stopID, "status": StopLoaded}, nil)})
+				if err == nil && len(res.Results) == 1 && res.Results[0].Status == "applied" {
+					err = nil
+				}
+				errS <- err
+			}()
+			waitFor(t, f, "the single stop write waiting behind the parked "+name,
+				`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event <> 'advisory'`)
+
+			release()
+			for who, ch := range map[string]chan error{name: errW, "stop write": errS} {
+				select {
+				case err := <-ch:
+					if err != nil && (strings.Contains(err.Error(), "40P01") || strings.Contains(err.Error(), "deadlock")) {
+						t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
+					}
+					if err != nil {
+						t.Logf("%s answered: %v", who, err)
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatalf("%s never finished", who)
+				}
+			}
+		})
+	}
+}
+
+// The freight split writes the share of several stops one UPDATE at a time in one transaction. Each UPDATE
+// draws the stops counter through the trigger (no explicit seq) and the transaction holds it while it locks
+// the next stop row; a single stop write holds that row and wants the counter. The split locks the stops
+// ascending, FOR NO KEY UPDATE, before the first UPDATE.
+func TestIntegration_SeqTrigger_FreightSplitBesideASingleStopWrite(t *testing.T) {
+	f := newSyncFixture(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`CREATE OR REPLACE FUNCTION sf1_park_stops() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN
+		   IF NEW.scope = 'stops' AND current_setting('application_name') = 'sf1-park' THEN
+		     PERFORM pg_advisory_xact_lock(4242002);
+		   END IF;
+		   RETURN NULL;
+		 END $$`,
+		`CREATE TRIGGER sf1_park_stops AFTER UPDATE ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_stops()`,
+	} {
+		if _, err := f.pool.Exec(ctx, q); err != nil {
+			t.Fatalf("park trigger: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = f.pool.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_stops ON scope_sequences`)
+		_, _ = f.pool.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_stops()`)
+	})
+	run := syncOpenRun(t, f)
+	var ids []string
+	for i := 0; i < 2; i++ {
+		orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+		key := syncFreshKey()
+		syncApplied(t, f, "stops", f.north, "create", key, map[string]any{
+			"order_id": orderID, "scheduled_date": syncToday(), "run_id": run.ID,
+			"address_line": "Fixture address", "city": "Fixture City",
+		}, nil)
+		ids = append(ids, syncRowOf(t, f, "stops", f.north, key).ID)
+	}
+	sort.Strings(ids)
+	if _, err := f.pool.Exec(ctx, `INSERT INTO scope_sequences (scope, next_value) VALUES ('stops', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("seed the stops counter: %v", err)
+	}
+
+	cfg := f.pool.Config().Copy()
+	cfg.ConnConfig.RuntimeParams["application_name"] = "sf1-park"
+	cfg.MaxConns = 2
+	parkPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("park pool: %v", err)
+	}
+	defer parkPool.Close()
+	hold, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer hold.Release()
+	if _, err := hold.Exec(ctx, `SELECT pg_advisory_lock(4242002)`); err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_, _ = hold.Exec(ctx, `SELECT pg_advisory_unlock(4242002)`)
+		}
+	}
+	defer release()
+
+	errSplit := make(chan error, 1)
+	go func() {
+		errSplit <- NewRepository(parkPool).WriteFreightSplit(ctx, ids, []int64{1000, 2000}, true, 2)
+	}()
+	waitFor(t, f, "the freight split parked on its first stops counter touch",
+		`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)
+	errStop := make(chan error, 1)
+	go func() {
+		info, _ := sync.Lookup("stops")
+		_, err := f.engine.Push(ctx, info, f.north, []apigen.SyncPushOperation{
+			syncOp("update", syncFreshKey(), map[string]any{"id": ids[1], "status": StopLoaded}, nil)})
+		errStop <- err
+	}()
+	waitFor(t, f, "the single stop write waiting behind the parked split",
+		`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event <> 'advisory'`)
+	release()
+	for who, ch := range map[string]chan error{"freight split": errSplit, "stop write": errStop} {
+		select {
+		case err := <-ch:
+			if err != nil && (strings.Contains(err.Error(), "40P01") || strings.Contains(err.Error(), "deadlock")) {
+				t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
+			}
+			if err != nil {
+				t.Logf("%s answered: %v", who, err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s never finished", who)
+		}
 	}
 }

@@ -217,6 +217,12 @@ func (r *Repository) writeFreightSplitOn(ctx context.Context, q runner, stopIDs 
 	if len(stopIDs) != len(amounts) {
 		return fmt.Errorf("dispatch: split has %d loads and %d amounts", len(stopIDs), len(amounts))
 	}
+	// The named stops first, ascending, FOR NO KEY UPDATE (PR 556 round 3b): each UPDATE below draws the
+	// stops counter through the sync seq trigger and the transaction holds it while it locks the next stop,
+	// and a single stop write holds ONE stop row and then wants the counter. Rows first, then the counter.
+	if _, err := q.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, stopIDs); err != nil {
+		return fmt.Errorf("dispatch: lock the split's stops: %w", err)
+	}
 	for i, id := range stopIDs {
 		if _, err := q.Exec(ctx, `
 UPDATE delivery_stops SET freight_cents = $2, freight_is_override = $3, load_count = $4,

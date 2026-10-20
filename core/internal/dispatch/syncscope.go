@@ -98,9 +98,9 @@ func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// lockRunThenStopsSeqTx is the first two steps of the dispatch order for a writer that is about to
-// update a run: the run row FOR NO KEY UPDATE (a row that is not there locks nothing, and the writer's
-// own update then reports it), then the stops counter.
+// lockRunThenStopsSeqTx is the first steps of the dispatch order for a writer that is about to update a run
+// and its stops: the run row FOR NO KEY UPDATE (a row that is not there locks nothing, and the writer's
+// own update then reports it), the run's stop rows ascending FOR NO KEY UPDATE, then the stops counter.
 //
 // Why NO KEY UPDATE and not FOR UPDATE: every write that sets a stop's run_id takes the stops counter
 // first and then, at its foreign key check, FOR KEY SHARE on the run row. FOR UPDATE conflicts with that
@@ -112,6 +112,18 @@ func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 func lockRunThenStopsSeqTx(ctx context.Context, tx pgx.Tx, runID string) error {
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_runs WHERE id = $1 FOR NO KEY UPDATE`, runID); err != nil {
 		return fmt.Errorf("dispatch: lock the run row: %w", err)
+	}
+	// The run's stop rows next, ascending (PR 556 round 3b): the writer goes on to update many of them, and a
+	// single stop write (StopsSyncStore.Write) holds ONE stop row and then wants the stops counter. A writer
+	// that took the counter first and the stop rows after would hold the counter while it waits for that row.
+	// Rows first, then the counter, is the single stop write's own order.
+	rows, err := tx.Query(ctx, `SELECT 1 FROM delivery_stops WHERE run_id = $1 ORDER BY id FOR NO KEY UPDATE`, runID)
+	if err != nil {
+		return fmt.Errorf("dispatch: lock the run's stop rows: %w", err)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("dispatch: lock the run's stop rows: %w", err)
 	}
 	return lockStopsSeqTx(ctx, tx)
 }
