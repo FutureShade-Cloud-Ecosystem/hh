@@ -55,3 +55,14 @@ for (const [width, height] of [
     await shot(page, `buying-and-stock-${width}-dark.png`);
   });
 }
+
+// A second dealer, invented, served as the tenant config: the band names whoever the config names.
+const SECOND_DEALER = { id: "coastal", dealer_name: "Coastal Stone Supply", logo_url: "", primary_color: "#3a7d56", support_email: "help@coastal.invalid", support_phone: "" };
+
+test("the band names the dealer the tenant config serves, not a built in name", async ({ page }) => {
+  await page.route("**/api/v1/tenant/config", (route) => route.fulfill({ json: SECOND_DEALER }));
+  await boot(page, 1440, 900);
+  const band = page.locator("hh-shell-header");
+  await expect(band).toContainText("Coastal Stone Supply");
+  await expect(band).not.toContainText("Gable Landscape Supply");
+});
