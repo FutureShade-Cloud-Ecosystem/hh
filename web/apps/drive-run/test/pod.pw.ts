@@ -147,6 +147,8 @@ test("a photo added after delivery is folded into the proof", async ({ page, req
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
+  // The sheet and the page behind it both hold a file input until the sheet has closed.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.locator("input[type=file]").setInputFiles({ name: "late.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.locator(".signed")).toContainText("1 photo on the proof");
   const calls = (await stubLog(request)).map((c) => c.path.split("/").slice(-1)[0]);
