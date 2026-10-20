@@ -29,7 +29,7 @@ import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffFeedback, staffWarranty } from "@hardscapehouse/api-client";
+import { ApiClient, ok, staffFeedback, staffWarranty, type Result } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
   type FeedbackSender,
@@ -52,6 +52,7 @@ import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+import "@hardscapehouse/pos-kit/src/branch-chooser.js";
 
 // The flows this app offers a card for. The flow table is the box's whole
 // mint set (the Counter Till's pair plus the personas the roles roadmap
@@ -433,7 +434,11 @@ export class CounterTillApp extends HHElement {
    * terminal IS the till, in both its modes (the linear flow and the detached
    * multi-card layout, the terminal's own choice to switch).
    */
-  #surface: "entry" | "terminal" = "entry";
+  #surface: "entry" | "branch" | "terminal" = "entry";
+  /** The granted branches the in desk chooser offers while the surface is "branch"; empty otherwise. */
+  #branchChoices: BranchRef[] = [];
+  /** Whether the start that stopped to ask came from the front door's handoff, so the re-start keeps its failure rules. */
+  #branchAskedFromHandoff = false;
   /**
    * Row 955: which surface of the till is up. The sale is the till; Returns is its own surface at
    * `#/returns`, reached by the Returns link in the bar (a plain anchor: no script writes the
@@ -886,6 +891,13 @@ export class CounterTillApp extends HHElement {
     if (action === "feedback") this.#openFeedback();
   };
 
+  /** The in desk chooser wrote the one branch to the session key: start the till again, which now reads it. */
+  readonly #onBranchChosen = (): void => {
+    this.#branchChoices = [];
+    this.#surface = "entry";
+    void this.#initTill(this.#branchAskedFromHandoff);
+  };
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -1100,6 +1112,7 @@ export class CounterTillApp extends HHElement {
     this.#payBalance.reset();
     this.#branch = null;
     this.#surface = "entry";
+    this.#branchChoices = [];
     // The ported surface's session-owned module state goes with the session:
     // the next person's boxes and branch facts are earned by their own login.
     clearSessionState();
@@ -1117,7 +1130,21 @@ export class CounterTillApp extends HHElement {
    * surface can fence itself, so the refusal says so and the cards come back.
    */
   async #initTill(fromHandoff = false): Promise<void> {
-    const branch = await this.#tillClient.resolveBranch();
+    const resolved = await this.#tillClient.resolveBranchChoice();
+    let branch: Result<BranchRef>;
+    if (!resolved.ok) {
+      branch = resolved;
+    } else if (resolved.value.kind === "ask") {
+      // Several branches granted and the front door's key named not exactly one: ask once, here, then start again.
+      this.#branchChoices = resolved.value.choices;
+      this.#branchAskedFromHandoff = fromHandoff;
+      this.#message = null;
+      this.#surface = "branch";
+      this.requestUpdate();
+      return;
+    } else {
+      branch = ok(resolved.value.branch);
+    }
     if (!branch.ok) {
       this.#message = `The till did not start: ${branch.error}`;
       this.#till = null;
@@ -1264,7 +1291,13 @@ export class CounterTillApp extends HHElement {
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
             `
-          : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
+          : this.#surface === "branch"
+            ? html`<hh-branch-chooser
+                .branches=${this.#branchChoices}
+                action-label="Open the Counter Till"
+                @hh-branch-chosen=${this.#onBranchChosen}
+              ></hh-branch-chooser>`
+            : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
       </main>
       <!-- The feedback widget: the shared panel, opened by the bar's Feedback
            button (trigger external: no floating pill, so nothing of the

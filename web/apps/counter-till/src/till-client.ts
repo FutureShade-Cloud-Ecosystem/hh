@@ -31,6 +31,7 @@ export { DEFAULT_HOUSE_ZONE, houseDay, houseDayInZone, houseZone, serveHouseZone
 // This module's own ring path still swaps the card token onto the demo
 // constant, so the value rides in beside the re-export above.
 import { DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { decideSessionBranch, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
 
 /**
  * The float a first use opens the drawer with: an invented, constant amount
@@ -45,6 +46,9 @@ export interface BranchRef {
   code: string;
   name: string;
 }
+
+/** What a desk does with the branches the login reaches: work the one, or ask the person once which of several. */
+export type BranchResolution = { kind: "one"; branch: BranchRef } | { kind: "ask"; choices: BranchRef[] };
 
 export interface DrawerRef {
   id: string;
@@ -211,27 +215,43 @@ export class TillClient {
   }
 
   /**
-   * The branch the login works: the branches route is fenced to the caller's
-   * own grants server-side, so the demo till takes the one row that comes
-   * back. An empty list or a row this app cannot read is a refusal in words,
-   * never an invented branch.
+   * The branch the login works: the branches route is fenced to the caller's own grants server-side. One granted
+   * branch is taken as it is. With several granted, the front door's session branch key is read through the granted
+   * list (a forged or stale id is dropped): exactly one chosen and granted lands on it; several chosen, or none, is
+   * an "ask" for the desk's own chooser, never an invented branch. No granted branch at all, or a row this app
+   * cannot read, is a refusal in words. The store is a test seam; it defaults to this tab's sessionStorage.
    */
-  async resolveBranch(): Promise<Result<BranchRef>> {
+  async resolveBranchChoice(store?: BranchKeyStore): Promise<Result<BranchResolution>> {
     const result = await staffBranches.branchesList(this.#client);
     if (!result.ok) return result;
-    const rows = result.value;
-    if (!Array.isArray(rows) || rows.length !== 1) {
+    const rows = result.value as unknown;
+    if (!Array.isArray(rows) || rows.length === 0) {
       return err("the branch list did not answer exactly the one branch this login reaches");
     }
-    const row = rows[0] as unknown;
-    if (!isRecord(row)) return err("the branch row is not readable");
-    const id = stringAt(row, "id");
-    const code = stringAt(row, "code");
-    const name = stringAt(row, "name");
-    if (id === null || code === null || name === null) {
-      return err("the branch row is missing its id, code or name");
+    const granted: BranchRef[] = [];
+    for (const row of rows as unknown[]) {
+      if (!isRecord(row)) return err("the branch row is not readable");
+      const id = stringAt(row, "id");
+      const code = stringAt(row, "code");
+      const name = stringAt(row, "name");
+      if (id === null || code === null || name === null) {
+        return err("the branch row is missing its id, code or name");
+      }
+      granted.push({ id, code, name });
     }
-    return ok({ id, code, name });
+    const decided = decideSessionBranch(granted, store);
+    if (decided.kind === "ask") return ok({ kind: "ask", choices: granted });
+    const branch = granted.find((row) => row.id === (decided.kind === "one" ? decided.id : ""));
+    if (branch === undefined) return err("the branch list did not answer exactly the one branch this login reaches");
+    return ok({ kind: "one", branch });
+  }
+
+  /** The one branch this tab works, for the panels that read it after the start: refused while the desk still has to ask. */
+  async resolveBranch(store?: BranchKeyStore): Promise<Result<BranchRef>> {
+    const resolved = await this.resolveBranchChoice(store);
+    if (!resolved.ok) return resolved;
+    if (resolved.value.kind === "ask") return err("choose which branch you are working first");
+    return ok(resolved.value.branch);
   }
 
   /**
