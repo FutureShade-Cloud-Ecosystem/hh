@@ -40,7 +40,12 @@ func (s *Service) SpendReport(ctx context.Context) ([]UserSpend, error) {
 	from, to := MonthWindow(s.now())
 
 	spend := map[string]Spend{}
-	if s.ledger != nil {
+	if s.spend != nil {
+		var err error
+		if spend, err = s.spend.UsersMonth(ctx, from, to); err != nil {
+			return nil, err
+		}
+	} else if s.ledger != nil {
 		var err error
 		if spend, err = s.ledger.SpendAll(ctx, from, to); err != nil {
 			return nil, err

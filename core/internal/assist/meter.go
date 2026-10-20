@@ -1,0 +1,391 @@
+package assist
+
+// meter.go, slice 2: no spend without a record of it.
+//
+// THE RULE IS ONE SENTENCE: a provider call is made only after a reservation row for it is written,
+// and every call that was made ends in a settlement row with the usage the provider reported.
+// Everything else here is a consequence.
+//
+//	reserve   estimate (input size plus the call's output ceiling), write the row, refuse the call
+//	          if the write fails. The user gets the plain unavailable answer; nothing was spent.
+//	call      the provider is reached only past the reservation.
+//	settle    actual tokens in, out and cached, cost at the price row in force, that row's id.
+//	sweep     a reservation whose exchange ended with no settlement is voided by a job; the sweep
+//	          settles nothing, because it cannot prove what was spent.
+//
+// MONTHLY SPEND READS THIS TABLE. A call counts once, as its settlement when it has one, as nothing
+// when it was voided, and as its ESTIMATE while it is still open (FoldCalls). So two requests in
+// flight together cannot both pass a budget that only one fits, and a crash between the reservation
+// and the settlement never reads as free.
+//
+// APPEND ONLY. The store has no update or delete verb, and the migration refuses both with the 0154
+// trigger pattern. A correction is a row.
+//
+// NO MARKUP HERE. Cost is the provider's price times the usage. FutureBuild's markup is applied
+// in the billing export, never in this ledger (prices.go).
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// Audience is who a spend row was incurred for.
+type Audience string
+
+const (
+	AudienceStaff    Audience = "staff"
+	AudiencePro      Audience = "pro"
+	AudienceEmbed    Audience = "embed"
+	AudienceMessages Audience = "messages"
+)
+
+// SpendKind is the row's place in a call's life.
+type SpendKind string
+
+const (
+	SpendReservation SpendKind = "reservation"
+	SpendSettlement  SpendKind = "settlement"
+	SpendVoid        SpendKind = "void"
+)
+
+// SpendRow is one row of the append only spend table.
+//
+// An exchange is one question; it makes one or two provider calls, so a call is keyed by the
+// exchange id and its number inside the exchange. A settlement or a void carries the At of its
+// reservation, so a call never straddles a month.
+type SpendRow struct {
+	ID         string
+	Kind       SpendKind
+	ExchangeID string
+	CallNo     int
+	Audience   Audience
+	// Exactly one of the two user ids is set, except for the embed audience, which has neither.
+	StaffUserID  string
+	PortalUserID string
+	RoleCode     string
+	Alias        string
+	Model        string
+	TokensIn     int
+	TokensOut    int
+	TokensCached int
+	// CostMicroCents is integer micro cents (a millionth of a cent). On a reservation it is the
+	// estimate; on a settlement the actual cost; on a void zero.
+	CostMicroCents int64
+	// PriceID names the assist_model_prices row used, empty for a free provider.
+	PriceID string
+	At      time.Time
+}
+
+// Validate is the Go twin of the table's CHECK constraints.
+func (r SpendRow) Validate() error {
+	switch r.Kind {
+	case SpendReservation, SpendSettlement, SpendVoid:
+	default:
+		return fmt.Errorf("assist: spend row kind %q is not reservation, settlement or void", r.Kind)
+	}
+	if r.ExchangeID == "" {
+		return errors.New("assist: spend row has no exchange id")
+	}
+	switch r.Audience {
+	case AudienceStaff, AudienceMessages:
+		if r.StaffUserID == "" || r.PortalUserID != "" {
+			return fmt.Errorf("assist: a %s spend row carries exactly the staff user", r.Audience)
+		}
+	case AudiencePro:
+		if r.PortalUserID == "" || r.StaffUserID != "" {
+			return errors.New("assist: a pro spend row carries exactly the portal user")
+		}
+	case AudienceEmbed:
+		if r.StaffUserID != "" || r.PortalUserID != "" {
+			return errors.New("assist: an embed spend row carries no user")
+		}
+	default:
+		return fmt.Errorf("assist: spend row audience %q is not staff, pro, embed or messages", r.Audience)
+	}
+	if r.TokensIn < 0 || r.TokensOut < 0 || r.TokensCached < 0 || r.CostMicroCents < 0 {
+		return errors.New("assist: spend row has a negative amount")
+	}
+	return nil
+}
+
+func callKey(r SpendRow) string { return fmt.Sprintf("%s/%d", r.ExchangeID, r.CallNo) }
+
+// FoldCalls reduces rows to one effective row per call: the settlement when there is one, nothing
+// when the call was voided, the reservation (its estimate) while the call is open. It is the rule
+// monthly spend, the dealer cap and the sweep all share, and the SQL repeats it.
+func FoldCalls(rows []SpendRow) []SpendRow {
+	best := map[string]SpendRow{}
+	rank := func(k SpendKind) int {
+		switch k {
+		case SpendSettlement:
+			return 0
+		case SpendVoid:
+			return 1
+		}
+		return 2
+	}
+	var order []string
+	for _, r := range rows {
+		k := callKey(r)
+		cur, seen := best[k]
+		if !seen {
+			order = append(order, k)
+		}
+		if !seen || rank(r.Kind) < rank(cur.Kind) {
+			best[k] = r
+		}
+	}
+	var out []SpendRow
+	for _, k := range order {
+		if best[k].Kind != SpendVoid {
+			out = append(out, best[k])
+		}
+	}
+	return out
+}
+
+// SpendStore is the append only spend table.
+type SpendStore interface {
+	Reserve(ctx context.Context, r SpendRow) error
+	Settle(ctx context.Context, r SpendRow) error
+	Void(ctx context.Context, r SpendRow) error
+	// UserMonth is one staff user's spend in [from, to), open reservations counted at their estimate.
+	UserMonth(ctx context.Context, staffUserID string, from, to time.Time) (Spend, error)
+	// UsersMonth is every staff user's spend in [from, to), for the admin surface.
+	UsersMonth(ctx context.Context, from, to time.Time) (map[string]Spend, error)
+	// DealerMonthMicroCents is the cost of every audience together in [from, to), open
+	// reservations counted at their estimate.
+	DealerMonthMicroCents(ctx context.Context, from, to time.Time) (int64, error)
+	// Unsettled lists reservations made before the cutoff that have neither a settlement nor a void.
+	Unsettled(ctx context.Context, reservedBefore time.Time) ([]SpendRow, error)
+	// Settled lists settlement rows in [from, to), for the billing export.
+	Settled(ctx context.Context, from, to time.Time) ([]SpendRow, error)
+}
+
+// Errors the metering path returns. Ask turns each into an ordinary answer.
+var (
+	// ErrMeterUnavailable: the call cannot be recorded, so it is not made.
+	ErrMeterUnavailable = errors.New("assist: spend cannot be recorded, the call was not made")
+	// ErrDealerCap: the dealer wide monthly cap is reached.
+	ErrDealerCap = errors.New("assist: the dealer wide monthly cap is reached")
+)
+
+// UnavailableMessage is the plain answer when a call is refused because it could not be recorded.
+const UnavailableMessage = "The assistant isn't available right now. " +
+	"You can still look things up with the buttons below; those don't use any AI."
+
+// MaxOutputTokens is the output ceiling every provider call is made under, and so what a
+// reservation reserves for the reply. The Anthropic adapter's request ceiling is the same number.
+const MaxOutputTokens = 1024
+
+// estimateInputTokens is a deliberately generous count of the request's input: four bytes a token,
+// rounded up, over every message and every tool description. An under-estimate lets a reservation
+// pass a budget the call then overruns, so the error is made in the other direction.
+func estimateInputTokens(req CompletionRequest) int {
+	n := 0
+	for _, m := range req.Messages {
+		n += len(m.Text) + len(m.ToolName) + 16
+	}
+	for _, t := range req.Tools {
+		n += len(t.Name) + len(t.Description) + len(t.Title) + 32
+		for _, a := range t.Args {
+			n += len(a.Name) + len(a.Label) + len(a.Example) + 16
+		}
+	}
+	return (n + 3) / 4
+}
+
+// exchange identity travels in the context so both calls of one Ask share an exchange id.
+type exchangeKey struct{}
+
+type exchangeState struct {
+	id    string
+	calls int
+}
+
+func withExchange(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(exchangeKey{}).(*exchangeState); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, exchangeKey{}, &exchangeState{id: newUUID()})
+}
+
+// nextCall returns the exchange id and the next call number.
+func nextCall(ctx context.Context) (string, int) {
+	st, ok := ctx.Value(exchangeKey{}).(*exchangeState)
+	if !ok {
+		return newUUID(), 1
+	}
+	st.calls++
+	return st.id, st.calls
+}
+
+func newUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+
+// WithMetering attaches the spend table and the price table. Without them only a free provider (the
+// stub) may be called: a paid provider with nothing to record its spend in is refused.
+func (s *Service) WithMetering(spend SpendStore, prices PriceStore) *Service {
+	s.spend, s.prices = spend, prices
+	return s
+}
+
+// WithDealerCap sets the dealer wide monthly cap in micro cents. It is deployment configuration set
+// by FutureBuild, never an assist setting a dealer admin can write. Zero means not configured, and
+// a paid call is refused until it is.
+func (s *Service) WithDealerCap(microCents int64) *Service {
+	s.dealerCap = microCents
+	return s
+}
+
+// freeProvider reports whether the provider costs nothing, which is only the stub.
+func (s *Service) freeProvider() bool { return s.provider.Name() == "stub" }
+
+// complete is the only place this package reaches a provider. Everything the slice adds, the budget
+// check, the dealer cap, the reservation and the settlement, happens here, so a path that calls
+// the provider cannot skip them.
+func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest) (Reply, error) {
+	free := s.freeProvider()
+	if s.spend == nil {
+		if !free {
+			s.warn("assist: a paid provider is configured with no spend table wired, the call is refused")
+			return Reply{}, ErrMeterUnavailable
+		}
+		return s.provider.Complete(ctx, req)
+	}
+
+	now := s.now()
+	from, to := MonthWindow(now)
+
+	// The caller's own allowance, again: the second call of an exchange and the quote path arrive
+	// here without passing Ask's first check.
+	budget, err := s.Budget(ctx, c)
+	if err != nil {
+		return Reply{}, s.meterFailure("read budget", err)
+	}
+	spent, err := s.MonthSpend(ctx, c.UserID)
+	if err != nil {
+		return Reply{}, s.meterFailure("read month spend", err)
+	}
+	if OverBudget(spent, budget) {
+		return Reply{}, ErrOverBudget
+	}
+
+	alias, model := s.provider.Name(), s.provider.Model()
+	var price ModelPrice
+	if !free {
+		var ok bool
+		price, ok, err = s.prices.PriceFor(ctx, alias, model)
+		if err != nil {
+			return Reply{}, s.meterFailure("read price", err)
+		}
+		if !ok {
+			s.warn("assist: no price row for the model in force, the call is refused", "alias", alias, "model", model)
+			return Reply{}, ErrMeterUnavailable
+		}
+	}
+
+	estIn := estimateInputTokens(req)
+	estCost := price.Cost(estIn, MaxOutputTokens, 0)
+
+	if !free {
+		if err := s.checkDealerCap(ctx, from, to, estCost); err != nil {
+			return Reply{}, err
+		}
+	}
+
+	exchangeID, callNo := nextCall(ctx)
+	row := SpendRow{
+		ExchangeID: exchangeID, CallNo: callNo, Audience: AudienceStaff,
+		StaffUserID: c.UserID, RoleCode: c.RoleCode, Alias: alias, Model: model,
+		PriceID: price.ID, At: now,
+	}
+	res := row
+	res.Kind, res.TokensIn, res.TokensOut, res.CostMicroCents = SpendReservation, estIn, MaxOutputTokens, estCost
+	if err := s.spend.Reserve(ctx, res); err != nil {
+		return Reply{}, s.meterFailure("write reservation", err)
+	}
+
+	reply, callErr := s.provider.Complete(ctx, req)
+	if callErr != nil {
+		// Nothing is settled that cannot be proven. The reservation stays, counted at its
+		// estimate, until the sweep voids it.
+		return reply, callErr
+	}
+
+	set := row
+	set.Kind, set.TokensIn, set.TokensOut, set.TokensCached = SpendSettlement, reply.TokensIn, reply.TokensOut, reply.TokensCached
+	set.CostMicroCents = price.Cost(reply.TokensIn, reply.TokensOut, reply.TokensCached)
+	var werr error
+	for try := 0; try < 3; try++ {
+		if werr = s.spend.Settle(ctx, set); werr == nil {
+			break
+		}
+	}
+	if werr != nil {
+		// The money is spent and the answer is good. The open reservation keeps counting at its
+		// estimate; the failure is loud so an operator reconciles it.
+		s.warn("assist: settlement could not be written, the reservation stands at its estimate",
+			"exchange", exchangeID, "call", callNo, "err", werr)
+	}
+	return reply, nil
+}
+
+// checkDealerCap refuses when this reservation would take the dealer past its monthly cap.
+func (s *Service) checkDealerCap(ctx context.Context, from, to time.Time, est int64) error {
+	if s.dealerCap <= 0 {
+		s.warn("assist: no dealer wide cap is configured, paid calls are refused until FutureBuild sets one")
+		return ErrMeterUnavailable
+	}
+	used, err := s.spend.DealerMonthMicroCents(ctx, from, to)
+	if err != nil {
+		return s.meterFailure("read dealer spend", err)
+	}
+	if used >= s.dealerCap || used+est > s.dealerCap {
+		return ErrDealerCap
+	}
+	return nil
+}
+
+func (s *Service) meterFailure(what string, err error) error {
+	s.warn("assist: metering failed, the call is not made", "step", what, "err", err)
+	return ErrMeterUnavailable
+}
+
+func (s *Service) warn(msg string, args ...any) {
+	if s.log != nil {
+		s.log.Warn(msg, args...)
+	}
+}
+
+// SweepReservations voids reservations that have been open longer than the grace period with no
+// settlement. It settles none, and it returns how many it voided. Run by the worker's job runner.
+func (s *Service) SweepReservations(ctx context.Context, grace time.Duration) (int, error) {
+	if s.spend == nil {
+		return 0, nil
+	}
+	open, err := s.spend.Unsettled(ctx, s.now().Add(-grace))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range open {
+		v := r
+		v.Kind, v.TokensIn, v.TokensOut, v.TokensCached, v.CostMicroCents = SpendVoid, 0, 0, 0, 0
+		if err := s.spend.Void(ctx, v); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}

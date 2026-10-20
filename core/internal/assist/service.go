@@ -106,6 +106,11 @@ type Service struct {
 	staff    StaffLister
 	log      *slog.Logger
 
+	// Slice 2 metering (meter.go): the spend and price tables and the dealer wide cap.
+	spend     SpendStore
+	prices    PriceStore
+	dealerCap int64
+
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
 	// additive rather than load-bearing.
@@ -182,7 +187,14 @@ func (s *Service) Budget(ctx context.Context, c Caller) (Budget, error) {
 }
 
 // MonthSpend is the caller's usage so far this calendar month.
+//
+// With the spend table wired (meter.go) it is read from there, so an open reservation counts at its
+// estimate; the older token ledger is the fallback of a deployment without it.
 func (s *Service) MonthSpend(ctx context.Context, userID string) (Spend, error) {
+	if s.spend != nil {
+		from, to := MonthWindow(s.now())
+		return s.spend.UserMonth(ctx, userID, from, to)
+	}
 	if s.ledger == nil {
 		return Spend{}, nil
 	}
@@ -258,8 +270,11 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		calls = res.Calls
 	} else {
 		// Step 4: the ordinary path, a self-contained question, put to the provider.
-		reply, err := s.provider.Complete(ctx, CompletionRequest{Messages: msgs, Tools: tools})
+		reply, err := s.complete(ctx, c, CompletionRequest{Messages: msgs, Tools: tools})
 		if err != nil {
+			if ans, ok := refusalAnswer(err); ok {
+				return ans, nil
+			}
 			return Answer{}, err
 		}
 		tokensIn, tokensOut = reply.TokensIn, reply.TokensOut
@@ -345,7 +360,7 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	// provider is offered the structured context, and it is offered it for PHRASING: the results are
 	// already decided, already authorised, already formatted.
 	text := ""
-	final, err2 := s.provider.Complete(ctx, CompletionRequest{Messages: msgs, Tools: tools})
+	final, err2 := s.complete(ctx, c, CompletionRequest{Messages: msgs, Tools: tools})
 	if err2 != nil {
 		// The commands already ran and the results are good. Losing the prose is not worth losing
 		// the answer, so the headlines stand in for it, degraded, honest, and still useful.
@@ -429,4 +444,16 @@ func trimHistory(h []Message) []Message {
 		return append([]Message(nil), h...)
 	}
 	return append([]Message(nil), h[len(h)-maxHistory:]...)
+}
+
+// refusalAnswer turns a metering refusal into the ordinary answer the user sees. The provider was
+// not reached for any of these, and none is an error to the handler.
+func refusalAnswer(err error) (Answer, bool) {
+	switch {
+	case errors.Is(err, ErrOverBudget), errors.Is(err, ErrDealerCap):
+		return Answer{Text: LimitReachedMessage, LimitReached: true, Results: []Result{}}, true
+	case errors.Is(err, ErrMeterUnavailable):
+		return Answer{Text: UnavailableMessage, Results: []Result{}}, true
+	}
+	return Answer{}, false
 }

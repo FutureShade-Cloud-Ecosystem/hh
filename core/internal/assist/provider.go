@@ -105,6 +105,9 @@ type Reply struct {
 	ToolCalls []ToolCall
 	TokensIn  int
 	TokensOut int
+	// TokensCached is input served from the provider's cache, billed at the cached price. Zero when
+	// the provider does not report it.
+	TokensCached int
 
 	// Suggest is DIB-513: the command CODES to offer beside a reply that could not answer.
 	//
