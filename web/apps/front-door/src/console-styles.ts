@@ -427,6 +427,9 @@ export const consoleStyles = css`
     background: var(--hh-card);
     color: var(--hh-accent-ink);
   }
+  .picker-box-dot {
+    border-radius: var(--hh-s-4);
+  }
   .picker-option.checked .picker-radio-dot {
     border-color: var(--hh-accent);
     background: var(--hh-accent);
