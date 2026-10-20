@@ -14,6 +14,8 @@ var deny = ProviderDeny{
 	PrefixExceptions: []string{
 		"PLANE_API_URL", "PLANE_API_KEY", "PLANE_PROJECT_ID",
 		"PLANE_WORKSPACE_SLUG", "PLANE_FEEDBACK_MODULE",
+		// The assistant's two (slice 3), by exact name.
+		"HOS_ASSIST_ANTHROPIC_API_KEY", "HOS_ASSIST_DEALER_CAP_MICROCENTS",
 	},
 	Names:       []string{"SMS_PROVIDER", "HOS_CARD_BASE_URL", "NATS_URL", "HOS_STATEMENT_NOTICES"},
 	CardVar:     "HOS_CARD_PROCESSOR",
@@ -33,7 +35,8 @@ func TestRefuseProviderVarsRefusals(t *testing.T) {
 		{"bistrack pair", []string{"BISTRACK_API_KEY=x"}, "BISTRACK_API_KEY"},
 		{"twilio credential", []string{"TWILIO_AUTH_TOKEN=x"}, "TWILIO_AUTH_TOKEN"},
 		{"live gateway key", []string{"HOS_PAYMENT_API_KEY=x"}, "HOS_PAYMENT_API_KEY"},
-		{"assist key", []string{"HOS_ASSIST_ANTHROPIC_API_KEY=x"}, "HOS_ASSIST_ANTHROPIC_API_KEY"},
+		{"assist key lookalike", []string{"HOS_ASSIST_ANTHROPIC_API_KEY_2=x"}, "HOS_ASSIST_ANTHROPIC_API_KEY_2"},
+		{"assist future name", []string{"HOS_ASSIST_SOMETHING_NEW=x"}, "HOS_ASSIST_SOMETHING_NEW"},
 		{"assist gateway url", []string{"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1"}, "HOS_ASSIST_GATEWAY_URL"},
 		{"assist gateway key", []string{"HOS_ASSIST_GATEWAY_KEY=x"}, "HOS_ASSIST_GATEWAY_KEY"},
 		{"assist dealer tag", []string{"HOS_ASSIST_DEALER_TAG=x"}, "HOS_ASSIST_DEALER_TAG"},

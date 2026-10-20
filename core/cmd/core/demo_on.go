@@ -206,7 +206,7 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// mode is a declared shape (its names are on that list).
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
 		Prefixes:         demoEnvDenyPrefixes,
-		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
+		PrefixExceptions: demoEnvPrefixExceptions(),
 		Names:            demoEnvDenyNames,
 		CardVar:          demoEnvCardProcessorVar,
 		CardAllowed:      demoEnvCardProcessorValue,

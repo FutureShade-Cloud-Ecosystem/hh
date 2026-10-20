@@ -172,10 +172,6 @@ func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
 		"BISTRACK_API_KEY=x",
 		"TWILIO_AUTH_TOKEN=x",
 		"HOS_PAYMENT_API_KEY=x",
-		"HOS_ASSIST_ANTHROPIC_API_KEY=x",
-		"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1",
-		"HOS_ASSIST_GATEWAY_KEY=x",
-		"HOS_ASSIST_DEALER_TAG=x",
 	} {
 		env := serveEnv(t)
 		getenv, lookup, environ := envFuncs(env)
@@ -186,6 +182,56 @@ func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "outbound provider") {
 			t.Fatalf("%s: refusal %q is not the provider guard's", kv, err)
+		}
+	}
+}
+
+// Slice 3: the assistant is admitted on a demo box by two exact names and
+// nothing else. Every other HOS_ASSIST_ name (the gateway pair, the dealer
+// tag, a name a later slice adds, a near miss of an admitted name) still
+// refuses the boot with the provider guard's own message.
+func TestDemoServeStillRefusesEveryOtherAssistantName(t *testing.T) {
+	for _, kv := range []string{
+		"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1",
+		"HOS_ASSIST_GATEWAY_KEY=x",
+		"HOS_ASSIST_DEALER_TAG=x",
+		"HOS_ASSIST_SOMETHING_NEW=1",
+		"HOS_ASSIST_ANTHROPIC_API_KEY_2=x",
+		"HOS_ASSIST_DEALER_CAP_MICROCENTS_OLD=1",
+	} {
+		env := serveEnv(t)
+		env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-for-the-guard-test"
+		env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = "1000000"
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), kv)
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err == nil {
+			t.Fatalf("%s: accepted", kv)
+		}
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: refusal %q is not the provider guard naming it", kv, err)
+		}
+	}
+}
+
+// Slice 3: the assistant's key and the dealer cap pass the provider gate.
+// The proof the gate was passed is the next guard's refusal (the made-up
+// database), never an outbound provider error naming either variable, and
+// no refusal ever carries the key's value. Written red first: on main the
+// key refused the boot.
+func TestDemoServeAdmitsTheAssistantKeyAndCap(t *testing.T) {
+	env := serveEnv(t)
+	env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-must-not-print"
+	env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = "1000000"
+	getenv, lookup, environ := envFuncs(env)
+	err := demoServe(getenv, lookup, environ)
+	if err == nil {
+		t.Fatal("the made-up database must still stop the serve")
+	}
+	for _, bad := range []string{"HOS_ASSIST_", "outbound provider", "fake-key-must-not-print"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Fatalf("the assistant's variables refused the boot (%q in %v)", bad, err)
 		}
 	}
 }
