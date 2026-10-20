@@ -170,7 +170,7 @@ test.describe("phone", () => {
     });
     await signIn(page, "field");
     await expect(page.getByTestId("orders-truncated")).toHaveText(
-      "Showing the newest 100 pages of orders. Older orders are cut from this list; ask the dealer if you need an older order.",
+      "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.",
     );
     await expect(page.getByTestId("landing-rows")).toContainText("SO-40001");
   });

@@ -89,7 +89,7 @@ export interface OrdersListProps {
   truncated?: boolean;
 }
 
-export const ORDERS_TRUNCATED_WORDS = "Showing the newest 100 pages of orders. Older orders are cut from this list; ask the dealer if you need an older order.";
+export const ORDERS_TRUNCATED_WORDS = "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.";
 
 export function ordersList(props: OrdersListProps): TemplateResult {
   const truncatedNote = props.truncated ? html`<p class="dim" role="status" data-testid="orders-truncated">${ORDERS_TRUNCATED_WORDS}</p>` : nothing;

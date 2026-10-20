@@ -5,7 +5,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { liveFieldPort } from "../src/port.ts";
 import { ordersSurfaceOf } from "../src/sections.ts";
-import { orderRowWords } from "../src/views.ts";
+import { orderRowWords, ORDERS_TRUNCATED_WORDS } from "../src/views.ts";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession, tenantClient, stubAdapter, surfaceOf, can } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
@@ -167,4 +167,5 @@ test("listOrders marks the answer truncated when the 100 page bound is reached w
   assert.equal(pages, 100);
   assert.equal(cut.value.length, 100);
   assert.equal(cut.truncated, true);
+  assert.equal(ORDERS_TRUNCATED_WORDS, "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.");
 });
