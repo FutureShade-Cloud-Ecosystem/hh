@@ -231,6 +231,8 @@ func qwWithoutContractor(table string) string {
 		return " WHERE invoice_id NOT IN (SELECT id FROM invoices WHERE customer_id = " + c + ")"
 	case "payment_allocations":
 		return " WHERE payment_id NOT IN (SELECT id FROM payments WHERE customer_id = " + c + ")"
+	case "will_call_pickups":
+		return " WHERE order_id NOT IN (SELECT id FROM orders WHERE customer_id = " + c + ")"
 	}
 	return ""
 }
