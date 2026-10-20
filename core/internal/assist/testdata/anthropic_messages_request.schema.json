@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "The subset of the Anthropic Messages API request that the TanyAI adapter relies on. It follows the Messages API reference page 'Create a Message' (docs.anthropic.com/en/api/messages, now served under docs.claude.com) for model, max_tokens, system, messages and tools, and the 'Tool use' guide (docs.anthropic.com/en/docs/build-with-claude/tool-use) for the content blocks: text, tool_use (id, name, input) and tool_result (tool_use_id, content). Tool names follow the documented pattern ^[a-zA-Z0-9_-]{1,64}$. Fields outside the subset are refused here on purpose, so a field the adapter starts sending is a reviewed change to this file. Cross-turn rules (tool_use_id must name a tool_use of the previous assistant turn, alternating roles) are enforced by the strict fake server in strict_anthropic_test.go.",
+  "type": "object",
+  "required": ["model", "max_tokens", "messages"],
+  "additionalProperties": false,
+  "properties": {
+    "model": {"type": "string", "minLength": 1},
+    "max_tokens": {"type": "integer", "minimum": 1},
+    "system": {"type": "string"},
+    "messages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/message"}},
+    "tools": {"type": "array", "items": {"$ref": "#/$defs/tool"}}
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": ["role", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {"enum": ["user", "assistant"]},
+        "content": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/block"}}
+      }
+    },
+    "block": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "additionalProperties": false,
+          "properties": {"type": {"const": "text"}, "text": {"type": "string", "minLength": 1}}
+        },
+        {
+          "type": "object",
+          "required": ["type", "id", "name", "input"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "tool_use"},
+            "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$"},
+            "name": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$"},
+            "input": {"type": "object"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "tool_use_id", "content"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "tool_result"},
+            "tool_use_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$"},
+            "content": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "description", "input_schema"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$"},
+        "description": {"type": "string"},
+        "input_schema": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {"const": "object"},
+            "properties": {"type": "object"},
+            "required": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    }
+  }
+}

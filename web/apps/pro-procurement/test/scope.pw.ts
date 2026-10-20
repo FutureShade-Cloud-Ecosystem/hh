@@ -37,7 +37,7 @@ test.describe("phone 390", () => {
     await signIn(page, "owner");
     await openScopeOf(page, "La Jolla terrace pavers");
     await expect(page.getByTestId("scope-line")).toHaveCount(3);
-    await expect(page.locator("hh-pro-frame")).toContainText("Indicative subtotal");
+    await expect(page.locator("hh-pro-frame")).toContainText("Estimated subtotal");
     await expect(page.locator("hh-pro-frame")).toContainText("$4,352.00");
     await expect(page.locator("hh-pro-frame")).toContainText("850 SF");
     await page.screenshot({ path: join(SHOTS, "scope-phone.png"), fullPage: true });
@@ -56,7 +56,7 @@ test.describe("phone 390", () => {
     await expect(page.getByTestId("notice")).toHaveText("Line updated.");
     const line = page.getByTestId("scope-line").first();
     await expect(line).toContainText("900 SF");
-    await expect(line).toContainText("Awaiting price");
+    await expect(line).toContainText("Not priced");
   });
 
   test("a line comes off the plan, and the server's refusal words surface when it cannot", async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe("phone 390", () => {
     await expect(sheet).toBeVisible();
     await expect(sheet.getByTestId("picker-result")).toHaveCount(2);
     await expect(page.getByTestId("scope-line")).toHaveCount(1);
-    await expect(page.getByTestId("scope-line")).toContainText("Awaiting price");
+    await expect(page.getByTestId("scope-line")).toContainText("Not priced");
     await page.screenshot({ path: join(SHOTS, "scope-picker-phone.png"), fullPage: true });
     await sheet.getByRole("button", { name: "Cancel" }).click();
     await expect(sheet).toHaveCount(0);
@@ -104,7 +104,7 @@ test.describe("phone 390", () => {
     await page.getByTestId("picker-modal-sheet").getByRole("button", { name: "Cancel" }).click();
     // Submit the RFQ: the project goes to Quoting and the lines price.
     await page.getByTestId("submit-rfq").click();
-    await expect(page.getByTestId("notice")).toHaveText("RFQ submitted. Lines priced indicatively.");
+    await expect(page.getByTestId("notice")).toHaveText("Quote requested. Every line is priced as an estimate.");
     await expect(page.locator("hh-pro-frame")).toContainText("Quoting");
     await expect(page.getByTestId("scope-line").first()).toContainText("$38.00");
     await page.screenshot({ path: join(SHOTS, "scope-quoting-phone.png"), fullPage: true });

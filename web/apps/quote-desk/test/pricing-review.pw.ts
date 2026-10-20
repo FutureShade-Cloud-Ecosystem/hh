@@ -53,6 +53,8 @@ test("a check that graded nothing opens a notice and a decline saves nothing", a
   await expect(page.getByTestId("floor-note")).toHaveText("9 products could not be priced, so they could not be checked.");
   await expect(page.getByTestId("floor-item")).toHaveCount(0);
   await page.getByTestId("floor-decline").click();
+  // Nothing-saved is read once the notice has gone: read at the click, it would pass whatever the click did next.
+  await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   expect((await pricingState(page)).writes).toHaveLength(0);
 });
 

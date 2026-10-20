@@ -187,6 +187,19 @@ func qwApply(t *testing.T) (proposed, created int) {
 // the apply that adds the quote world adds the contractor world in the same transaction (the account
 // exists by then), and demoseed_contractor_plan_test.go and internal/demo/world_contractor_test.go
 // hold that world; these fingerprints are about the OTHER worlds not moving.
+// qwSeqMoved is the SQL that drops the columns the demo seq repair moves (the sync seq, the org stamp
+// and the row version an update bumps) from a table's fingerprint, for the tables the repair names
+// alone. It is the named mover of the apply that follows the populate: every other column of those
+// rows still counts, so a status, a price or a name moving on them is seen.
+func qwSeqMoved(table string) string {
+	for _, s := range demoSeqTables {
+		if s.table == table {
+			return " - '{seq,org_id,row_version}'::text[]"
+		}
+	}
+	return ""
+}
+
 func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -194,7 +207,7 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 		var sum string
 		if err := pool.QueryRow(ctx, `
 			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-			  FROM (SELECT to_jsonb(r)::text AS line
+			  FROM (SELECT (to_jsonb(r)`+qwSeqMoved(table)+`)::text AS line
 			          FROM (SELECT *, xmin::text AS row_version FROM `+table+qwWithoutContractor(table)+`) r) s`).Scan(&sum); err != nil {
 			t.Fatalf("fingerprint %s: %v", table, err)
 		}
@@ -286,7 +299,7 @@ func qwFingerprintOrdersRep(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN (to_jsonb(r) - '{seq,org_id,row_version}'::text[]) - $2::text[] ELSE to_jsonb(r) - '{seq,org_id,row_version}'::text[] END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM orders`+qwWithoutContractor("orders")+`) r) s`,
 		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint orders: %v", err)
@@ -312,7 +325,7 @@ func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN (to_jsonb(r) - '{seq,org_id,row_version}'::text[]) - $2::text[] ELSE to_jsonb(r) - '{seq,org_id,row_version}'::text[] END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
 		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint %s: %v", table, err)

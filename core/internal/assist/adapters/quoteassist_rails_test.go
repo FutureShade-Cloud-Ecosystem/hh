@@ -107,8 +107,17 @@ func rep() assist.Caller {
 	return assist.Caller{UserID: "user-rep", RoleCode: "SALES_REP", Tier: 3, BranchIDs: []string{"b-trenton"}}
 }
 
+// directCompleter is the test double for the metered path in the tests that are about the rails'
+// own budget gate and parsing: it calls the provider as the meter would after admitting the call.
+// The metering itself is proved in quoteextract_meter_test.go against the real assist service.
+type directCompleter struct{ p assist.Provider }
+
+func (d directCompleter) Complete(ctx context.Context, _ assist.Caller, req assist.CompletionRequest) (assist.Reply, error) {
+	return d.p.Complete(ctx, req)
+}
+
 func railsWith(p assist.Provider, l assist.LedgerStore, lim assist.LimitStore) *QuoteExtractRails {
-	return NewQuoteExtractRails(p, l, lim, nil).WithClock(func() time.Time { return fixedNow })
+	return NewQuoteExtractRails(p, l, lim, nil).WithClock(func() time.Time { return fixedNow }).WithCompleter(directCompleter{p})
 }
 
 // -- 1 · the budget gate ------------------------------------------------------------------------
