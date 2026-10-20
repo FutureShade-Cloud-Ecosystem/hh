@@ -122,3 +122,56 @@ func TestCostDoors_LedgerHoldsBasisOutOfCostBasisRowsForACallerOffTheList(t *tes
 		t.Fatalf("a caller on the list keeps the basis")
 	}
 }
+
+// - HH-419 round 2: THE RECOMPUTE PATH -
+//
+// On a percent of cost row, accrual_cents with a rate_note that states the percent gives the cost back
+// (accrual divided by the rate), and so does total_cents minus the other rows. For a caller off the cost
+// list the cost basis row carries no accrual and no rate note, and the ledger total counts only the rows
+// the caller sees. The vendor claim stays whole for a cost reader.
+func TestCostDoors_LedgerHoldsAccrualAndRateOutOfCostBasisRowsAndTheTotal(t *testing.T) {
+	rs := &fakeRebateStore{inserted: []RebateAccrual{
+		{ID: "a1", VendorID: doorVendor, ProductID: hProduct, SourceType: "ORDER", BasisCents: 70000, AccrualCents: 3500, RateNote: "5.00% of cost", Basis: RebatePctOfCost, AccruedAt: time.Now()},
+		{ID: "a2", VendorID: doorVendor, ProductID: hProduct, SourceType: "ORDER", BasisCents: 100000, AccrualCents: 2000, RateNote: "2.00% of sale", Basis: RebatePctOfSale, AccruedAt: time.Now()},
+	}}
+	h := NewHandler(rebateSvc(rs), nil).WithCostRoles(costList{"general_manager": true})
+	read := func(role string) (map[string]map[string]any, map[string]any) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/pricing/rebates/vendors/"+doorVendor+"/ledger", nil)
+		req.SetPathValue("vendorId", doorVendor)
+		rec := httptest.NewRecorder()
+		h.vendorLedger(rec, asRole(req, role), guards.StaffCaller{})
+		var got struct {
+			Rows []map[string]any `json:"rows"`
+		}
+		var whole map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Rows) != 2 {
+			t.Fatalf("%s: %v %s", role, err, rec.Body.String())
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &whole)
+		byID := map[string]map[string]any{}
+		for _, r := range got.Rows {
+			byID[r["id"].(string)] = r
+		}
+		return byID, whole
+	}
+
+	hr, whole := read("HR")
+	cost := hr["a1"]
+	if _, present := cost["accrual_cents"]; present {
+		t.Fatalf("a cost basis row must not carry accrual_cents for a caller off the list: %v", cost)
+	}
+	if note, present := cost["rate_note"]; present && strings.Contains(note.(string), "%") {
+		t.Fatalf("a cost basis row must not state the percent for a caller off the list: %v", cost)
+	}
+	if hr["a2"]["accrual_cents"] != float64(2000) || hr["a2"]["rate_note"] != "2.00% of sale" {
+		t.Fatalf("a sale basis row keeps its accrual and note: %v", hr["a2"])
+	}
+	if whole["total_cents"] != float64(2000) {
+		t.Fatalf("the total counts only the rows the caller sees (2000), got %v", whole["total_cents"])
+	}
+
+	gm, wholeGM := read("GENERAL_MANAGER")
+	if gm["a1"]["accrual_cents"] != float64(3500) || gm["a1"]["rate_note"] != "5.00% of cost" || wholeGM["total_cents"] != float64(5500) {
+		t.Fatalf("a cost reader keeps the whole claim: %v total=%v", gm["a1"], wholeGM["total_cents"])
+	}
+}
