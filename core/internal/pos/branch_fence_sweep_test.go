@@ -92,3 +92,33 @@ func TestBranchFence_QuickPickPricesStayHome(t *testing.T) {
 		t.Fatalf("the grid priced tiles at another branch for a named account: %+v", q.got)
 	}
 }
+
+func TestBranchFence_ReturnRequestsQueue(t *testing.T) {
+	h := newHarness()
+	h.store.returnRequests["rr-trt"] = ReturnRequest{ID: "rr-trt", RequestNo: "RR-1", BranchID: "branch-trt", Status: RequestPending}
+	h.store.returnRequests["rr-kgn"] = ReturnRequest{ID: "rr-kgn", RequestNo: "RR-2", BranchID: "branch-kgn", Status: RequestPending}
+	scopedAtTrenton(h)
+	ctx := context.Background()
+
+	list, err := h.svc.ListReturnRequests(ctx, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "rr-trt" {
+		t.Fatalf("the queue shows only the branches the caller reaches: %+v", list)
+	}
+	if _, err := h.svc.RejectReturnRequest(ctx, "rr-kgn", "no"); err == nil || statusOf(t, err) != http.StatusNotFound {
+		t.Fatalf("reject behind the wall: want what a missing request answers, got %v", err)
+	}
+	if _, err := h.svc.ApproveReturnRequest(ctx, "rr-kgn"); err == nil || statusOf(t, err) != http.StatusNotFound {
+		t.Fatalf("approve behind the wall: want what a missing request answers, got %v", err)
+	}
+	if h.store.returnRequests["rr-kgn"].Status != RequestPending {
+		t.Fatalf("a refused decision moved the request")
+	}
+	h.caller = identity.StaffContext{UserID: "u-global", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
+	all, err := h.svc.ListReturnRequests(ctx, "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("a global caller reaches every branch's queue: %v %+v", err, all)
+	}
+}
