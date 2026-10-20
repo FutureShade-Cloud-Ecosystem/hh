@@ -25,6 +25,7 @@ import {
   ageLabel,
   canAcknowledge,
   changeStatusWord,
+  claimedByWords,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -93,6 +94,12 @@ test("the unclaimed half of the board is the queue's own split", () => {
   assert.equal(isUnclaimed("ACCEPTED"), false);
   assert.equal(statusTone("STAGED"), "ready");
   assert.equal(statusTone("CANCELLED"), "stopped");
+  assert.equal(claimedByWords("", "d0200000-0000-4000-9000-000000000002"), "");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000002", "d0200000-0000-4000-9000-000000000002"), "Claimed by you");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000002", "d0200000-0000-4000-9000-000000000009"), "Claimed by a teammate");
+  assert.equal(claimedByWords("d0200000-0000-4000-9000-000000000009", "d0200000-0000-4000-9000-000000000002"), "Claimed by a teammate");
+  assert.equal(claimedByWords("demo-account-yard-manager", "d0200000-0000-4000-9000-000000000002"), "Claimed by a teammate");
+  assert.equal(claimedByWords("anything-at-all", ""), "Claimed by a teammate");
 });
 
 // ---- the board's order and its words ----
@@ -317,6 +324,10 @@ test("a skid count needs a whole number and a reason, and OTHER a note", () => {
 test("a refusal in the core's words is shown as it came, capped and stopped", () => {
   assert.equal(yardError("line 1 is short, give the reason (CONDENSED_SKIDS)", 400, "fallback"), "Line 1 is short, give the reason (CONDENSED_SKIDS).");
   assert.equal(yardError("tasks: branch out of scope", 403, "fallback"), "Branch out of scope.");
+  const taken = { taken: "Someone else already took this pick. Nothing was recorded from you." };
+  assert.equal(yardError("Task already in that status.", 409, "fallback", taken), taken.taken);
+  assert.equal(yardError("tasks: illegal task transition", 409, "fallback", taken), taken.taken);
+  assert.equal(yardError("Task already in that status.", 409, "fallback"), "Task already in that status.");
   assert.equal(yardError("anything", 500, "the fallback"), "the fallback");
   assert.equal(yardError("", undefined, "the fallback"), "the fallback");
   assert.equal(yardError("x", 401, "f"), "Your sign in has ended. Sign out and sign in again.");
@@ -443,4 +454,10 @@ test("a cached held card is released after the re-read: the server's ticket wins
   assert.equal(next[2].ticket.held_from_picking, true);
   assert.equal(next[3], cached[3], "offline the card still says held and the server's claim door decides");
   assert.equal(next.length, cached.length);
+});
+
+test("the core's holder refusal reads as one plain line on both doors (UX-76)", () => {
+  assert.equal(yardError("Someone else is on this pick.", 409, "fallback"), "Someone else is on this pick.");
+  assert.equal(yardError("tasks: someone else is on this pick", 409, "fallback"), "Someone else is on this pick.");
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: someone else is on this pick"), "Someone else is on this pick.");
 });

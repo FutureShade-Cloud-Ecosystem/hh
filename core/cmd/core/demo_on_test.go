@@ -3,10 +3,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
@@ -172,10 +176,6 @@ func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
 		"BISTRACK_API_KEY=x",
 		"TWILIO_AUTH_TOKEN=x",
 		"HOS_PAYMENT_API_KEY=x",
-		"HOS_ASSIST_ANTHROPIC_API_KEY=x",
-		"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1",
-		"HOS_ASSIST_GATEWAY_KEY=x",
-		"HOS_ASSIST_DEALER_TAG=x",
 	} {
 		env := serveEnv(t)
 		getenv, lookup, environ := envFuncs(env)
@@ -187,6 +187,121 @@ func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
 		if !strings.Contains(err.Error(), "outbound provider") {
 			t.Fatalf("%s: refusal %q is not the provider guard's", kv, err)
 		}
+	}
+}
+
+// Slice 3: the assistant is admitted on a demo box by two exact names and
+// nothing else. Every other HOS_ASSIST_ name (the gateway pair, the dealer
+// tag, a name a later slice adds, a near miss of an admitted name) still
+// refuses the boot with the provider guard's own message.
+func TestDemoServeStillRefusesEveryOtherAssistantName(t *testing.T) {
+	for _, kv := range []string{
+		"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1",
+		"HOS_ASSIST_GATEWAY_KEY=x",
+		"HOS_ASSIST_DEALER_TAG=x",
+		"HOS_ASSIST_SOMETHING_NEW=1",
+		"HOS_ASSIST_ANTHROPIC_API_KEY_2=x",
+		"HOS_ASSIST_DEALER_CAP_MICROCENTS_OLD=1",
+	} {
+		env := serveEnv(t)
+		env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-for-the-guard-test"
+		env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = "1000000"
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), kv)
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err == nil {
+			t.Fatalf("%s: accepted", kv)
+		}
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "outbound provider") {
+			t.Fatalf("%s: refusal %q is not the provider guard naming it", kv, err)
+		}
+	}
+}
+
+// Slice 3: the assistant's key and the dealer cap pass the provider gate.
+// The proof the gate was passed is the next guard's refusal (the made-up
+// database), never an outbound provider error naming either variable, and
+// no refusal ever carries the key's value. Written red first: on main the
+// key refused the boot.
+func TestDemoServeAdmitsTheAssistantKeyAndCap(t *testing.T) {
+	env := serveEnv(t)
+	env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-must-not-print"
+	env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = "1000000"
+	getenv, lookup, environ := envFuncs(env)
+	err := demoServe(getenv, lookup, environ)
+	if err == nil {
+		t.Fatal("the made-up database must still stop the serve")
+	}
+	for _, bad := range []string{"HOS_ASSIST_", "outbound provider", "fake-key-must-not-print"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Fatalf("the assistant's variables refused the boot (%q in %v)", bad, err)
+		}
+	}
+}
+
+// Slice 3, through the serve entry: the key without its cap refuses the boot
+// before the database is reached, naming the cap and never the key.
+func TestDemoServeRefusesTheAssistantKeyWithoutItsCap(t *testing.T) {
+	for _, cap := range []string{"", "0", "-1", "plenty"} {
+		env := serveEnv(t)
+		env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-must-not-print"
+		if cap != "" {
+			env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = cap
+		}
+		getenv, lookup, environ := envFuncs(env)
+		err := demoServe(getenv, lookup, environ)
+		if err == nil {
+			t.Fatalf("cap %q: accepted", cap)
+		}
+		if !strings.Contains(err.Error(), "HOS_ASSIST_DEALER_CAP_MICROCENTS") || strings.Contains(err.Error(), "must-not-print") {
+			t.Fatalf("cap %q: refusal %q", cap, err)
+		}
+	}
+}
+
+// Slice 3: the demo wiring must carry the assistant's per visitor, per
+// address and box wide limits, the tanyai-premium pin and the stub fallback
+// whenever the key is carried. The guard reads the service the wiring built
+// (like G7 reads the card rail), so a service built without any one of them
+// refuses, and one built the way the demo composition builds it passes.
+func TestDemoRefusesAnAssistantThatIsNotDemoWired(t *testing.T) {
+	bare := func() *assist.Service { return assist.NewService(nil, nil, nil, nil, nil, nil) }
+	only := func() *assist.Router {
+		return assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasPremium)
+	}
+	limits := func(s *assist.Service) *assist.Service {
+		return s.WithRateLimits(assist.NewRateLimits(assistDemoLimits(true), time.Now))
+	}
+	if err := demoRefuseAssistNotDemoWired(nil, true); err == nil {
+		t.Fatal("a keyed demo with no assistant was accepted")
+	}
+	if err := demoRefuseAssistNotDemoWired(bare(), false); err != nil {
+		t.Fatalf("a keyless demo needs nothing to be safe, got %v", err)
+	}
+	for name, svc := range map[string]*assist.Service{
+		"no limits":        bare().WithRouter(only()).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"limits only":      limits(bare()),
+		"no pin":           limits(bare()).WithRouter(only()).WithStubFallback(),
+		"pinned elsewhere": limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasMain).WithStubFallback(),
+		"no stub fallback": limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasPremium),
+		// The wired router must be restricted to the one alias (the review's surviving mutation).
+		"no router":           limits(bare()).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"unrestricted router": limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"router for main":     limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasMain)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"router for two":      limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasPremium, assist.AliasMain)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+	} {
+		if err := demoRefuseAssistNotDemoWired(svc, true); err == nil {
+			t.Fatalf("%s: a keyed demo was accepted", name)
+		}
+	}
+	whole := limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasPremium).WithStubFallback()
+	if err := demoRefuseAssistNotDemoWired(whole, true); err != nil {
+		t.Fatalf("the demo composition refused: %v", err)
+	}
+	// The composition root asks for the limits by the configuration's own demo flag.
+	if assistDemoLimits(true) == nil || assistDemoLimits(false) != nil {
+		t.Fatal("assistDemoLimits must be non-nil for a demo copy and nil elsewhere")
 	}
 }
 
@@ -338,5 +453,65 @@ func TestDemoRoleConfig_RefundApprovalLimitOffOnTheDemoLoadOnly(t *testing.T) {
 	}
 	if !prod.RefundRequiresApproval(25001) {
 		t.Fatal("the decided default must keep the limit on: a dealer who sets a number keeps the gate")
+	}
+}
+
+type priceTable map[string]assist.ModelPrice
+
+func (p priceTable) PriceFor(_ context.Context, alias, model string) (assist.ModelPrice, bool, error) {
+	pr, ok := p[alias+"/"+model]
+	return pr, ok, nil
+}
+
+// Slice 3 (sub item 6): a keyed demo whose model has no price row refuses with a plain message
+// naming the alias, the model and the runbook; a keyless demo needs no row.
+func TestDemoRefusesAKeyedAssistantWithoutAPriceRow(t *testing.T) {
+	ctx := context.Background()
+	aliases := assist.StaticAliases(assist.DefaultAliases())
+	err := demoRefuseAssistWithoutPrice(ctx, aliases, priceTable{}, true)
+	if err == nil {
+		t.Fatal("a keyed demo with no price row was accepted")
+	}
+	for _, want := range []string{"tanyai-premium", "claude-sonnet-5-5", "assist_model_prices", "demo-copies.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not say %q", err, want)
+		}
+	}
+	if err := demoRefuseAssistWithoutPrice(ctx, aliases, priceTable{}, false); err != nil {
+		t.Fatalf("a keyless demo needs no price row, got %v", err)
+	}
+	priced := priceTable{"tanyai-premium/claude-sonnet-5-5": {ID: "p", Alias: "tanyai-premium", Model: "claude-sonnet-5-5", Seq: 1}}
+	if err := demoRefuseAssistWithoutPrice(ctx, aliases, priced, true); err != nil {
+		t.Fatalf("a priced model refused: %v", err)
+	}
+}
+
+// The pin: demoServe ACTS ON the assistant's two wiring guards between the graph build and the
+// listener, returning their errors (the shape TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot
+// holds for G7), and on the cap guard before the graph build. Deleting a call, dropping its
+// return or moving it behind the listener fails here in every demo tagged run.
+func TestDemoServeRunsTheAssistantGuardsAtTheMarkedSpots(t *testing.T) {
+	src, err := os.ReadFile("demo_on.go")
+	if err != nil {
+		t.Fatalf("read demo_on.go: %v", err)
+	}
+	pos := func(s string) int { return bytes.Index(src, []byte(s)) }
+	serveStart := pos("func demoServe(")
+	capGuard := pos("if err := boot.RefuseAssistKeyWithoutCap(getenv); err != nil {\n\t\treturn err\n\t}")
+	routes := pos("graph, err := demoRegisterRoutes(")
+	wired := pos("if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, assistKeyed); err != nil {\n\t\treturn err\n\t}")
+	priced := pos("if err := demoRefuseAssistWithoutPrice(ctx, assistRepo, assistRepo, assistKeyed); err != nil {\n\t\treturn err\n\t}")
+	listen := pos("srv.ListenAndServe()")
+	if serveStart < 0 || routes < 0 || listen < 0 {
+		t.Fatal("demo_on.go no longer shows the serve shape this pin guards")
+	}
+	if capGuard < 0 || wired < 0 || priced < 0 {
+		t.Fatalf("demoServe no longer acts on an assistant guard (cap %d, wired %d, price %d): the demo build could carry a key unbounded", capGuard, wired, priced)
+	}
+	if !(serveStart < capGuard && capGuard < routes && routes < wired && wired < priced && priced < listen) {
+		t.Fatal("the assistant guards are out of order: cap before the graph, wiring and price after it, all before the listener")
+	}
+	if !strings.Contains(string(src), "assistKeyed := strings.TrimSpace(getenv(assist.EnvAPIKey)) != \"\"") {
+		t.Fatal("the guards no longer take their keyed flag from the same variable the wiring reads")
 	}
 }

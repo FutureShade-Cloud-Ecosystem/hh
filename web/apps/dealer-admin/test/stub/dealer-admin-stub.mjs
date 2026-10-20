@@ -1020,6 +1020,10 @@ async function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   const path = url.pathname;
   if (path === "/healthz") return json(res, { ok: true });
+  // The public tenant config route (no credential): the dealer the band and the tab name.
+  if (req.method === "GET" && path === "/api/v1/tenant/config") {
+    return json(res, { id: "demo-dealer", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "#3a7d56", support_email: "support@gablelandscape.invalid", support_phone: "" });
+  }
 
   // ---- the stub's own controls (never the core's) ----
   if (req.method === "POST" && path === "/_stub/reset") {

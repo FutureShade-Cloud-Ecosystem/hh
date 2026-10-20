@@ -120,7 +120,8 @@ test("a second role sees none of the first role's pins, and the first gets them 
   await page.frameLocator('[data-testid="door-frame"]').getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-phase", "desk");
   await expect(page.locator("hh-shell-rail button.row")).toHaveCount(2);
-  // a pin opens its app
+  // a pin opens its app; the unpinned rail waits as its toggle and shows its rows on hover (G1)
+  await page.locator("hh-shell-rail").hover();
   await page.locator('hh-shell-rail button.row[data-key="quote-desk"]').click();
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "quote-desk");
 });

@@ -38,7 +38,7 @@ export function liveWords(state: LiveState): string {
     case "reconnecting":
       return "Reconnecting. Messages are read again every 10 seconds until the stream is back.";
     case "polling":
-      return "Messages are read every 10 seconds.";
+      return "Updates while this page is open";
     case "offline":
       return "Offline. House Messages cannot reach the server, and nothing you send is saved until it can.";
   }

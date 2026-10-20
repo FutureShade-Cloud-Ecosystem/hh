@@ -52,6 +52,12 @@ export async function reassignTicket(request: APIRequestContext, taskId: string)
   if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
 }
 
+/** A second person takes the pick while this device still shows it queued: the row moves to ACCEPTED under another user. */
+export async function rivalClaim(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/rival-claim", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub rival claim failed: ${response.status()}`);
+}
+
 /** The desk changes an OPEN ticket: its seq moves and it stays open (a record based on the older seq is superseded). */
 export async function touchTicket(request: APIRequestContext, taskId: string): Promise<void> {
   const response = await request.post("/_stub/touch", { data: { task_id: taskId } });

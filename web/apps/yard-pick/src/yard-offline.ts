@@ -281,6 +281,18 @@ export class YardOffline {
     return "";
   }
 
+  /** Send the queue now and say whether the server refused this device's claim on the pick (a rival took it
+   * first): the card the refusal leaves is dismissed, since the picker is told in words and has nothing to review. */
+  async sendClaimNow(taskId: string): Promise<boolean> {
+    const before = new Set((await this.openCards()).map((card) => card.id));
+    await this.#drain();
+    const fresh = (await this.openCards()).filter(
+      (card) => !before.has(card.id) && card.scope === "pick_tasks" && card.clientPayload["id"] === taskId && "status" in card.clientPayload,
+    );
+    for (const card of fresh) await this.dismissCard(card.id);
+    return fresh.length > 0;
+  }
+
   /** True while a record of this pick waits in the outbox. */
   async pendingRecord(taskId: string): Promise<boolean> {
     return (await this.store.outbox.pending()).some((row) => row.scope === "pick_tasks" && row.entityId === taskId && "picked" in row.payload);

@@ -121,6 +121,15 @@ export function validateQty(raw: string): string | null {
   return null;
 }
 
+/** A calendar day ("2026-03-01") in the glossary's one date family ("Mar 1, 2026"); anything else as served. */
+function plainDay(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (m === null) return day;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) return day;
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
 /**
  * expiryLabel renders the validity window for display. The empty case is the
  * one that matters: a quote with no valid_until never expires, and it reads
@@ -130,7 +139,8 @@ export function expiryLabel(view: Pick<QuoteView, "valid_until" | "expired"> | n
   if (!view) return "not set";
   const vu = view.valid_until?.trim();
   if (!vu) return "No expiry";
-  return view.expired ? `Expired ${vu}` : `Valid until ${vu}`;
+  const day = plainDay(vu);
+  return view.expired ? `Expired ${day}` : `Valid until ${day}`;
 }
 
 /**

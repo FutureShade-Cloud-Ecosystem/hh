@@ -176,10 +176,10 @@ func TestShortageCreate_EffectEqualsTheDirectDoor(t *testing.T) {
 			t.Fatalf("the pulled task carries the moved shortage count: %+v", it.Data)
 		}
 	}
-	if len(d.notes.posts) != 2 {
-		t.Fatalf("the counter is told once per door, got %d posts", len(d.notes.posts))
+	if len(counterPosts(d.notes.posts)) != 2 {
+		t.Fatalf("the counter is told once per door, got %d posts", len(counterPosts(d.notes.posts)))
 	}
-	x, y := d.notes.posts[0], d.notes.posts[1]
+	x, y := counterPosts(d.notes.posts)[0], counterPosts(d.notes.posts)[1]
 	if x.Topic != y.Topic || x.Audience != y.Audience || !strings.Contains(y.Summary, "SHORTAGE") ||
 		!strings.Contains(y.Summary, "two bundles of pavers") || y.EventKey != "task:"+viaSync+":shortage:"+sid {
 		t.Fatalf("the notice differs:\ndirect %+v\nsync   %+v", x, y)
@@ -198,8 +198,8 @@ func TestShortageCreate_ReplayAppliesOnceAndNoticesOnce(t *testing.T) {
 	if r := d.push(op); r[0].Status != "applied" {
 		t.Fatalf("a replay answers applied: %+v", r[0])
 	}
-	if len(d.shortages(id)) != 1 || len(d.notes.posts) != 1 || d.taskSeq(id) != seq {
-		t.Fatalf("nothing runs twice: shortages %d, notices %d, seq %d then %d", len(d.shortages(id)), len(d.notes.posts), seq, d.taskSeq(id))
+	if len(d.shortages(id)) != 1 || len(counterPosts(d.notes.posts)) != 1 || d.taskSeq(id) != seq {
+		t.Fatalf("nothing runs twice: shortages %d, notices %d, seq %d then %d", len(d.shortages(id)), len(counterPosts(d.notes.posts)), seq, d.taskSeq(id))
 	}
 }
 
@@ -256,7 +256,19 @@ func TestShortageCreate_PartialRefusalOrdering(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint([]string{"applied", "rejected", "applied"}) {
 		t.Fatalf("results in push order: %v", got)
 	}
-	if len(d.shortages(id)) != 2 || len(d.notes.posts) != 2 {
-		t.Fatalf("only the accepted reports are stored and told: %d, %d", len(d.shortages(id)), len(d.notes.posts))
+	if len(d.shortages(id)) != 2 || len(counterPosts(d.notes.posts)) != 2 {
+		t.Fatalf("only the accepted reports are stored and told: %d, %d", len(d.shortages(id)), len(counterPosts(d.notes.posts)))
 	}
+}
+
+// counterPosts keeps the counter's notices: a shortage also tells the branch's yard channel (UX-76), and
+// these legs count what the counter is told.
+func counterPosts(all []TaskEventRef) []TaskEventRef {
+	var out []TaskEventRef
+	for _, p := range all {
+		if p.Audience == AudienceCounter {
+			out = append(out, p)
+		}
+	}
+	return out
 }

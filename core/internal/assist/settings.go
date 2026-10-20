@@ -10,6 +10,7 @@ package assist
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"strings"
 )
@@ -160,7 +161,7 @@ func NewProviderFromConfig(s Settings, apiKey, baseURL string, log *slog.Logger)
 	if len(route) == 0 {
 		return NewStubProvider()
 	}
-	r := NewRouter(nil, ModelConfig{AnthropicKey: Secret(apiKey), AnthropicBaseURL: baseURL}, NewStubProvider(), log)
+	r := NewRouter(nil, ModelConfig{AnthropicKey: redact.NewSecret(apiKey), AnthropicBaseURL: baseURL}, NewStubProvider(), log)
 	p, ok := r.Resolve(context.Background(), route[0])
 	if !ok {
 		if log != nil {
@@ -174,4 +175,13 @@ func NewProviderFromConfig(s Settings, apiKey, baseURL string, log *slog.Logger)
 		log.Info("assist: using a configured provider", "alias", route[0], "model", p.Model())
 	}
 	return p
+}
+
+// DemoSettings pins a resolved configuration to the demo's route: the native Anthropic provider
+// through the tanyai-premium alias, whatever the table said. The demo composition applies it to
+// the settings it builds providers from, and the service applies the same pin to every read
+// (Service.WithPinnedRoute), so neither a settings row nor a request moves the demo.
+func DemoSettings(s Settings) Settings {
+	s.Provider, s.Model, s.Route = ProviderAnthropic, AliasPremium, ""
+	return s
 }

@@ -5,6 +5,7 @@
 // the fix at the width the review shot, and holds the desktop shape beside it,
 // because a stack that never unstacks would be its own regression.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 /** Sign in through the entry card and land on the ported terminal. */
 async function signIn(page: Page): Promise<void> {
@@ -164,7 +165,9 @@ test("at 390 the page itself holds the viewport with a priced line: no sideways 
 test("at 390 the bar's controls, Feedback included, wrap and never widen the page", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
+  await openAccountMenu(page);
   await expect(page.getByTestId("feedback-button")).toBeVisible();
+  await closeAccountMenu(page);
   await expectDocumentHolds(page);
 });
 

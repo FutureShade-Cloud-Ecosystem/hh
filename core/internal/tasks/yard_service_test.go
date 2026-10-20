@@ -167,7 +167,7 @@ func TestFlagShortageTellsTheCounterAndLeavesTheStatusAlone(t *testing.T) {
 
 	post := lastPost(t, notifier)
 	if post.Audience != AudienceCounter {
-		t.Fatalf("shortage EVENT audience = %q, want COUNTER, the yard already knows it is short", post.Audience)
+		t.Fatalf("shortage EVENT audience = %q, want COUNTER as the last post", post.Audience)
 	}
 	if post.Topic != "task.shortage" {
 		t.Fatalf("shortage EVENT topic = %q", post.Topic)
@@ -179,6 +179,17 @@ func TestFlagShortageTellsTheCounterAndLeavesTheStatusAlone(t *testing.T) {
 	}
 	if post.EventKey != "task:"+task.ID+":shortage:"+sh.ID {
 		t.Fatalf("shortage EVENT key = %q, want one keyed on the shortage row (idempotent redelivery)", post.EventKey)
+	}
+
+	// UX-76: the branch's yard channel is told too, naming no one by name or id (the holder is in it).
+	var yard *TaskEventRef
+	for i := range notifier.posts {
+		if notifier.posts[i].Topic == "task.shortage_yard" {
+			yard = &notifier.posts[i]
+		}
+	}
+	if yard == nil || yard.Audience != AudienceYard || !strings.Contains(yard.Summary, "a teammate") || strings.Contains(yard.Summary, "picker") {
+		t.Fatalf("the yard channel is told of the shortage without a name: %+v", yard)
 	}
 
 	// A short line does not stop the rest of the pick.

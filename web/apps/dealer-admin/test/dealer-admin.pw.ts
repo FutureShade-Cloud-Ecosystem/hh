@@ -7,7 +7,9 @@ const YARD_TEAM_ROW = "da110000-0000-4000-9000-0000000000yt";
 
 test("demo mint and the staff register", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("hos-app-header")).toBeVisible();
+  // PR 503 round 1: the band is the ONE band; the app-local header is gone.
+  await expect(page.locator("hh-shell-header")).toBeVisible();
+  await expect(page.locator("hos-app-header")).toHaveCount(0);
   // The dealer admin's card is the first; inside sales is the refusal walk's.
   const cards = page.locator("[data-flow]");
   await expect(cards).toHaveCount(2);

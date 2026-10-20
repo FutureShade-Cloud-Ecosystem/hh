@@ -85,8 +85,9 @@ import {
   quotePanelTracks,
   quoteSplitFromPointer,
   sendCaption,
-  sendChannels,
-  sentConfirmation,
+  textAllowance,
+  sentByText,
+  notSentWords,
   spokenRefusal,
   validityDaysOf,
   validUntilFromDays,
@@ -192,8 +193,10 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private discDrafts: Record<number, string> = {};
   @state() private addonQty: Record<string, string> = {};
   @state() private helpOpen = false;
-  @state() private sendOpen = false;
-  @state() private sendPick: Record<string, boolean> = { EMAIL: true, SMS: true };
+  /** The customer's text permission as the core reported it, kept with the customer it was read for. */
+  @state() private textConsent: { customerId: string; value: { consent: boolean; phoneMasked: string } | "unknown" } | null = null;
+  /** A send that reached no one: the words and the way forward, shown in the error colour. */
+  @state() private notSent = "";
   @state() private columnsOpen = false;
   /** The product grid's view: cards or one dense row per product (tab memory, the grid's own presentation). */
   @state() private presentation: "CARDS" | "ROWS" = "CARDS";
@@ -1052,7 +1055,8 @@ export class QdQuoteWorkarea extends LitElement {
       position: relative;
       grid-column: 1 / -1;
       display: flex;
-      gap: var(--hos-s-8, 8px);
+      flex-direction: column;
+      gap: var(--hos-s-4, 4px);
     }
     .sendbtn {
       flex: 1;
@@ -1093,21 +1097,29 @@ export class QdQuoteWorkarea extends LitElement {
         display: none;
       }
     }
-    .sendpop {
-      position: absolute;
-      bottom: calc(100% + 6px);
-      left: 0;
-      z-index: 20;
-      border: 1px solid var(--hos-line, var(--hh-line));
-      border-radius: var(--hos-radius-card, 10px);
-      background: var(--hos-slate-warm, var(--hh-card));
-      box-shadow: var(--hos-elev-1, 0 4px 14px rgba(0, 0, 0, 0.25));
-      padding: var(--hos-s-8, 8px) var(--hos-s-12, 12px);
+    .sendhow {
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      text-align: center;
+    }
+    .notsent {
       display: flex;
       flex-direction: column;
-      gap: var(--hos-s-4, 4px);
-      font-size: var(--qb-body);
-      min-width: 220px;
+      gap: var(--hos-s-8, 8px);
+    }
+    .notsent-words {
+      margin: 0;
+      font-weight: 600;
+    }
+    .notsent-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--hos-s-8, 8px);
+    }
+    .notsent-add {
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      font-size: var(--qb-caption);
     }
     .colpop {
       position: absolute;
@@ -1316,7 +1328,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.floorSpoken = "";
     this.busyHolds = 0;
     this.busy = false;
-    this.sendOpen = false;
+    this.notSent = "";
     this.view = null;
     this.unreadable = "";
     this.terms = null;
@@ -1592,10 +1604,6 @@ export class QdQuoteWorkarea extends LitElement {
     if (images !== null && this.terms !== null && images.checked !== this.terms.includeImages) {
       images.checked = this.terms.includeImages;
     }
-    for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="channel"]')) {
-      const channel = input.getAttribute("data-channel") ?? "";
-      if (input.checked !== (this.sendPick[channel] === true)) input.checked = this.sendPick[channel] === true;
-    }
     for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="column"]')) {
       const column = input.getAttribute("data-column") ?? "";
       const row = this.resolvedColumns().find((c) => c.id === column);
@@ -1769,6 +1777,7 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.view = view.value;
+    if (this.textConsent === null || this.textConsent.customerId !== view.value.customer_id) void this.consentFor(ctx);
     this.unreadable = "";
     this.unreadableFocused = "";
     this.announceRead(ctx.id, view.value.quote_no, true);
@@ -2006,8 +2015,11 @@ export class QdQuoteWorkarea extends LitElement {
       case "send":
         void this.doSend();
         break;
-      case "send-channel":
-        this.sendOpen = !this.sendOpen;
+      case "copy-link-after-not-sent":
+        void this.doCopyLink();
+        break;
+      case "sent-myself":
+        void this.doSentMyself();
         break;
       case "convert":
         this.openConvert();
@@ -2046,10 +2058,6 @@ export class QdQuoteWorkarea extends LitElement {
       if (field === "disc") {
         const lineRow = this.view?.lines.find((row) => row.line_no === line);
         if (lineRow !== undefined) void this.saveDisc(lineRow, control.value);
-      }
-      if (field === "channel") {
-        const channel = control.getAttribute("data-channel") ?? "";
-        this.sendPick = { ...this.sendPick, [channel]: control.checked };
       }
       if (field === "delivery-fee") {
         const fee = parseDeliveryFee(control.value);
@@ -2099,11 +2107,10 @@ export class QdQuoteWorkarea extends LitElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-role"));
     if (control?.getAttribute("data-role") === "divider") this.onDividerKey(event);
-    // Escape closes an open popover (help, columns, send channels) and returns to the control that opened it.
-    if (event.key === "Escape" && (this.columnsOpen || this.sendOpen || this.helpOpen)) {
-      const opener = this.columnsOpen ? "qb-columns-btn" : this.sendOpen ? "qb-send-channel" : "qb-help";
+    // Escape closes an open popover (help, columns) and returns to the control that opened it.
+    if (event.key === "Escape" && (this.columnsOpen || this.helpOpen)) {
+      const opener = this.columnsOpen ? "qb-columns-btn" : "qb-help";
       this.columnsOpen = false;
-      this.sendOpen = false;
       this.helpOpen = false;
       event.stopPropagation();
       void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>(`[data-testid="${opener}"]`)?.focus());
@@ -2121,14 +2128,13 @@ export class QdQuoteWorkarea extends LitElement {
   };
 
   private readonly onOutsidePointerDown = (event: Event): void => {
-    if (!this.columnsOpen && !this.sendOpen && !this.helpOpen) return;
+    if (!this.columnsOpen && !this.helpOpen) return;
     const path = event.composedPath();
     const inside = (selector: string) => {
       const el = this.renderRoot.querySelector(selector);
       return el !== null && path.includes(el);
     };
     if (this.columnsOpen && !inside(".colwrap")) this.columnsOpen = false;
-    if (this.sendOpen && !inside(".sendwrap")) this.sendOpen = false;
     if (this.helpOpen && !inside(".helpwrap")) this.helpOpen = false;
   };
 
@@ -2853,9 +2859,12 @@ export class QdQuoteWorkarea extends LitElement {
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
       if (navigator.clipboard === undefined) throw new Error("The link was created but could not be copied from this page. Use Preview to open it and copy it from there.");
       await navigator.clipboard.writeText(this.shareUrl(token));
-      // Creating a link emails nothing: sending is a different button.
+      // A link is not a send: the quote keeps its status until a text goes or the dealer says they sent it.
       if (ctx.stale) return;
-      this.notice = "Link copied. Nothing was emailed. Paste the link, or use Send quote.";
+      this.notSent = "";
+      this.notice = this.view?.status === "DRAFT"
+        ? "Link copied. The quote is still a draft. Send the link yourself, then press I sent it myself."
+        : "Link copied. Nothing was emailed. Paste the link to the customer.";
       await this.loadAll();
       if (ctx.stale) return;
       this.quoteChanged();
@@ -2919,12 +2928,12 @@ export class QdQuoteWorkarea extends LitElement {
     if (client === null || this.busy) return;
     const ctx = this.ctx;
     const capture = this.captureFor(ctx);
-    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.
+    // One send at a time: a second press while the first is out would queue the text twice.
     const release = this.holdBusy(ctx);
-    this.sendOpen = false;
     this.error = "";
     this.notice = "";
-    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);
+    this.notSent = "";
+    const wasDraft = this.view?.status === "DRAFT";
     try {
       // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.
       if (this.termsPendingCount() > 0) {
@@ -2932,26 +2941,71 @@ export class QdQuoteWorkarea extends LitElement {
         if (ctx.stale) return;
         if (this.error !== "") return;
       }
-      await this.ensureLink(ctx, capture); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)
-      let smsOk = false;
-      let smsWhy = "";
-      const smsChosen = channels.includes("SMS");
-      if (smsChosen) {
-        const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, "send the text"));
-        if (sms === undefined || wasUnsent(sms)) return;
-        if (sms.ok) {
-          smsOk = true;
-        } else {
-          smsWhy = sms.error;
-        }
+      // The desk cannot email, so a send is a text, and only where the customer allows one. Nothing is called
+      // when it is not allowed: no link, no status change, no follow-ups.
+      const consent = await this.consentFor(ctx);
+      if (ctx.stale) return;
+      const text = textAllowance(this.#sendPolicy(), consent);
+      if (!text.allowed) {
+        this.notSent = notSentWords(text.why, wasDraft);
+        return;
       }
-      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);
+      // The core makes the text call and only a queued text moves the quote to Sent and starts the follow ups.
+      const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, "send the text"));
+      if (sms === undefined || wasUnsent(sms)) return;
+      if (!sms.ok) {
+        this.textConsent = null;
+        this.notSent = notSentWords(`the text could not be sent: ${spokenRefusal(sms.error || "refused")}`, wasDraft);
+        return;
+      }
+      this.notice = sentByText(text.phoneMasked, wasDraft);
       await this.loadAll();
       if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
       if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not send the quote.";
+    } finally {
+      release();
+    }
+  }
+
+  /** The customer's text permission for the open quote: kept per customer, read once, "unknown" when it cannot be read. */
+  private async consentFor(ctx: QuoteContext): Promise<{ consent: boolean; phoneMasked: string } | "unknown"> {
+    const customerId = this.view?.customer_id ?? "";
+    if (this.textConsent !== null && this.textConsent.customerId === customerId) return this.textConsent.value;
+    const client = this.client;
+    if (client === null || customerId === "") return "unknown";
+    const read = await ctx.guarded(client.smsConsent(customerId), () => undefined);
+    const value = read !== undefined && read.ok ? read.value : "unknown";
+    if (read !== undefined) this.textConsent = { customerId, value };
+    return value;
+  }
+
+  /** "I sent it myself": the dealer's word that the copied link went out. The core records it as theirs, not as a delivery. */
+  private async doSentMyself(): Promise<void> {
+    const client = this.client;
+    if (client === null || this.busy) return;
+    const ctx = this.ctx;
+    const capture = this.captureFor(ctx);
+    const release = this.holdBusy(ctx);
+    this.error = "";
+    this.notice = "";
+    try {
+      const result = await ctx.guarded(deferredSend(capture, () => client.markSent(ctx.id)), this.lateWrite(ctx, "record that you sent the quote"));
+      if (result === undefined || wasUnsent(result)) return;
+      if (!result.ok) {
+        this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "record that you sent the quote"));
+        return;
+      }
+      this.notSent = "";
+      this.notice = "Marked Sent on your word that you sent the link. Its follow-ups have started.";
+      await this.loadAll();
+      if (ctx.stale) return;
+      this.quoteChanged();
+    } catch (e) {
+      if (ctx.stale) return;
+      this.error = e instanceof Error ? e.message : "Could not record that you sent the quote.";
     } finally {
       release();
     }
@@ -3398,6 +3452,15 @@ export class QdQuoteWorkarea extends LitElement {
   /** The outcome pair: both regions always exist, empty when they have nothing to say. */
   private renderOutcomeLines() {
     return html`
+      ${this.notSent !== ""
+        ? html`<div class="err notsent" role="alert" data-testid="qb-not-sent">
+            <p class="notsent-words" data-testid="qb-not-sent-words">${this.notSent}</p>
+            <div class="notsent-actions">
+              <button type="button" class="abtn" data-action="copy-link-after-not-sent" data-testid="qb-not-sent-copy" ?disabled=${this.busy}>Copy the link</button>
+              <span class="notsent-add" data-testid="qb-not-sent-add">Or add the customer's phone or email to their record and send again.</span>
+            </div>
+          </div>`
+        : nothing}
       <p class="err" role="alert" data-testid="qb-error">${this.error}</p>
       <p class="err" role="alert" data-testid="qb-layout-error">${[this.layoutError, this.columnsError].filter((line) => line !== "").join(" ")}</p>
       <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid="qb-notice">${this.notice}</p>
@@ -3641,8 +3704,7 @@ export class QdQuoteWorkarea extends LitElement {
     const actions = visibleItems(effectiveItems("action", QB_ACTIONS, this.config?.roleItems, this.config?.userItems));
     const has = (id: string) => actions.some((a) => a.id === id);
     const shareable = (v.status === "DRAFT" || v.status === "SENT") && !v.expired;
-    const channels = sendChannels(this.#sendPolicy());
-    const chosen = channels.filter((c) => this.sendPick[c]);
+    const text = textAllowance(this.#sendPolicy(), this.textConsent !== null && this.textConsent.customerId === v.customer_id ? this.textConsent.value : null);
     return html`
       ${v.status === "DRAFT"
         ? html`<p class="drafthint" data-testid="qb-draft-hint">A draft is a quote you have not sent yet.</p>`
@@ -3668,10 +3730,10 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="print"
               data-testid="qb-print"
-              title="Creates the customer's link, marks a draft quote Sent, then opens it for paper."
+              title="Creates the customer's link, then opens it for paper. The quote's status does not change."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
-              Print${v.status === "DRAFT" ? " (marks Sent)" : ""}
+              Print
             </button>`
           : nothing}
         ${has("quote.copy_link")
@@ -3680,10 +3742,10 @@ export class QdQuoteWorkarea extends LitElement {
               class="abtn"
               data-action="copy-link"
               data-testid="qb-copy-link"
-              title="Creates the customer's link, and marks a draft quote Sent. Nothing is emailed."
+              title="Creates the customer's link and copies it. Nothing is sent and the quote's status does not change."
               ?disabled=${!shareable && this.mintedToken === ""}
             >
-              Copy Link${v.status === "DRAFT" ? " (marks Sent)" : ""}
+              Copy Link
             </button>`
           : nothing}
         ${has("quote.send")
@@ -3698,34 +3760,20 @@ export class QdQuoteWorkarea extends LitElement {
               >
                 <span aria-hidden="true">${drawIcon(iconForId("lucide:send"), 15)}</span> SEND QUOTE<span class="key" aria-hidden="true">Ctrl Enter</span>
               </button>
-              <button
-                type="button"
-                class="abtn"
-                data-action="send-channel"
-                data-testid="qb-send-channel"
-                aria-haspopup="true"
-                aria-expanded=${this.sendOpen ? "true" : "false"}
-                title="Choose channels"
-              >
-                ${sendCaption(chosen)}
-                <span aria-hidden="true">${drawIcon(iconForId("pencil:bottom"), 13)}</span>
-              </button>
-              ${this.sendOpen
-                ? html`<div class="sendpop" role="group" aria-label="Send channels">
-                    ${channels.map(
-                      (c) => html`<label class="check">
-                        <input
-                          type="checkbox"
-                          data-field="channel"
-                          data-channel=${c}
-                          data-testid="qb-channel-${c === "EMAIL" ? "email" : "sms"}"
-                        />
-                        ${c === "EMAIL" ? "Email" : "Text"}
-                      </label>`,
-                    )}
-                  </div>`
-                : nothing}
+              <span class="sendhow" data-testid="qb-send-how">${sendCaption(text)}</span>
             </span>`
+          : nothing}
+        ${v.status === "DRAFT" && this.mintedToken !== ""
+          ? html`<button
+              type="button"
+              class="abtn"
+              data-action="sent-myself"
+              data-testid="qb-sent-myself"
+              title="Press this once you have sent the copied link to the customer. The quote then reads Sent and its follow-ups start."
+              ?disabled=${this.busy}
+            >
+              I sent it myself
+            </button>`
           : nothing}
         ${has("quote.convert_order") && canConvert(v)
           ? html`<button

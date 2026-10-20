@@ -84,7 +84,7 @@ async function takeFirstStopEnRoute2(page: import("@playwright/test").Page): Pro
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill("Nobody on site");
+  await page.getByRole("radio", { name: "Nobody on site" }).check();
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
 }

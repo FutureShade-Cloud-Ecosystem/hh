@@ -29,7 +29,7 @@ func qd3fMinted(t *testing.T, pool *pgxpool.Pool, now time.Time) (svc *StaffServ
 	_, quoteID, _, _ = seedQuote(t, pool, "DRAFT", nil)
 	cleanupShares(t, pool, quoteID)
 	svc = shareSvc(t, pool, now)
-	m, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+	m, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

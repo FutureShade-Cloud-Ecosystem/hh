@@ -349,7 +349,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	shortageSync := tasks.NewShortageSyncStore(pool, link).WithStaffAuthority(syncStaff)
+	if pool != nil && !shortageSync.StaffAuthorityWired() {
+		panic("tasks: shortage sync branch fence not wired - a yard device could report on another branch's pick")
+	}
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -664,6 +667,15 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
 		WithLogger(log)
+	// The yard's shortage notice names its reporter by role label (UX-76); a nil pool (the wiring shape
+	// tests) leaves it saying "a teammate".
+	if pool != nil {
+		roleLabels, err := erpidentity.NewStaffAuthorityResolver(pool)
+		if err != nil {
+			panic("tasks: yard shortage notice role labels refused to boot: " + err.Error())
+		}
+		yardTasksSvc.WithRoleLabels(roleLabels)
+	}
 	yardTasksSvc.
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
