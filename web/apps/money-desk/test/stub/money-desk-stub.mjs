@@ -1204,7 +1204,6 @@ async function handle(req, res) {
     return send(res, 200, {
       items: filtered.slice(offset, offset + limit),
       counts: { open: count("OPEN"), due_soon: count("DUE_SOON"), overdue: count("OVERDUE"), disputed: 0, paid: 0, credits: 0 },
-      total: filtered.length,
       as_of: dayOffset(0),
     });
   }

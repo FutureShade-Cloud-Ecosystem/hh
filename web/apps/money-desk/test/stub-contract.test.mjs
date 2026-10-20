@@ -175,7 +175,7 @@ test("the landing, the aging and the register answer in the contract's shapes", 
   holds("BillingInvoiceDetail", one.json);
 });
 
-test("the register reads its chip as the core does: no chip is every invoice, PAID the paid ones only, unpaid first, with a total", async () => {
+test("the register reads its chip as the core does: no chip is every invoice, PAID the paid ones only, unpaid first, paged by limit and offset", async () => {
   await reset();
   const aging = await call("GET", "/api/v1/ar/aging");
   const customer = aging.json.items[0].customer_id;
@@ -185,19 +185,17 @@ test("the register reads its chip as the core does: no chip is every invoice, PA
   assert.ok(paid.json.items.length > 0 && paid.json.items.every((r) => r.stored_status === "PAID"));
   assert.ok(all.json.items.length > 0 && all.json.items.every((r) => r.stored_status !== "PAID"));
   assert.equal(every.json.items.length, paid.json.items.length + all.json.items.length);
-  assert.equal(every.json.total, every.json.items.length);
   const order = every.json.items.map((r) => r.stored_status === "PAID");
   assert.deepEqual(order, [...order].sort((a, b) => Number(a) - Number(b)), "unpaid documents come ahead of settled ones");
   const paged = await call("GET", `/api/v1/ar/register?customer_id=${customer}&limit=1&offset=1`);
   assert.equal(paged.json.items.length, 1);
   assert.equal(paged.json.items[0].id, every.json.items[1].id);
-  assert.equal(paged.json.total, every.json.total);
   assert.equal((await call("GET", "/api/v1/ar/register?chip=nonsense")).status, 400);
 });
 
 test("a payment applies to an invoice and the answer is the contract's receipt", async () => {
   await reset();
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const overdue = register.json.items.find((r) => r.status === "OVERDUE");
   const first = await call("POST", `/api/v1/ar/register/invoices/${overdue.id}/payments`, {
     method: "CHEQUE",
@@ -226,7 +224,7 @@ test("a payment applies to an invoice and the answer is the contract's receipt",
 
 test("the payment refusals are the core's sentences, in the core's order", async () => {
   await reset();
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const inv = register.json.items[0];
   const path = `/api/v1/ar/register/invoices/${inv.id}/payments`;
   refused(await call("POST", path, { method: "CASH", amount_cents: 100, reference: "", idempotency_key: "" }), 400, "recording a payment needs an idempotency key");
@@ -236,7 +234,7 @@ test("the payment refusals are the core's sentences, in the core's order", async
 
 test("a promise to pay, and the refusals the core words", async () => {
   await reset();
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const inv = register.json.items.find((r) => r.promised_date === undefined && !r.disputed);
   const path = `/api/v1/ar/register/invoices/${inv.id}/promise`;
   const good = { promised_cents: 5000, promised_date: later(7), promised_by: "Accounts payable", note: "Cheque in the mail", idempotency_key: "p-1" };
@@ -263,7 +261,7 @@ test("the bounced queue, marking a payment bounced, and its replay", async () =>
   holds("TillBouncedPaymentPage", queue.json);
   assert.equal(queue.json.items.length, 1);
 
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const inv = register.json.items.find((r) => r.status === "OVERDUE" && r.account_no !== "GE-100");
   const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "n-1" });
   const marked = await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Cheque returned NSF" });
@@ -298,7 +296,7 @@ test("a statement is run for an account and read back", async () => {
   const account = aging.json.items[0];
   const none = await call("GET", `/api/v1/ar/customers/${account.customer_id}/statement`);
   assert.equal(none.status, 404);
-  const register = await call("GET", `/api/v1/ar/register?customer_id=${account.customer_id}`);
+  const register = await call("GET", `/api/v1/ar/register?customer_id=${account.customer_id}&chip=all`);
   const run = await call("POST", "/api/v1/ar/register/statements", { invoice_ids: register.json.items.map((r) => r.id), idempotency_key: "s-1" });
   assert.equal(run.status, 200);
   holds("BillingStatementBatch", run.json);
@@ -342,7 +340,7 @@ test("branches, the register selection, reminders, statement runs, the export an
   const branches = await call("GET", "/api/v1/branches");
   assert.equal(branches.status, 200);
   holds("Branch", branches.json[0]);
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const ids = register.json.items.slice(0, 2).map((r) => r.id);
   const selection = await call("POST", "/api/v1/ar/register/selection", { invoice_ids: ids });
   holds("BillingRegisterSelectionResult", selection.json);
@@ -374,7 +372,7 @@ test("branches, the register selection, reminders, statement runs, the export an
 const APPLY = "/api/v1/ar/payments/apply";
 
 async function graniteInvoices() {
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const mine = register.json.items.filter((r) => r.account_no === "GE-100");
   return mine.sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
 }
@@ -445,7 +443,7 @@ test("apply route: the post is one payment, a retry with the same body answers t
 test("apply route: a replayed key is judged against its own body", async () => {
   await reset();
   const mine = await graniteInvoices();
-  const other = (await call("GET", "/api/v1/ar/register")).json.items.find((r) => r.account_no === "OB-200");
+  const other = (await call("GET", "/api/v1/ar/register?chip=all")).json.items.find((r) => r.account_no === "OB-200");
   const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 1000, reference: "c", invoice_ids: [mine[0].id], idempotency_key: "r-1", preview: false };
   assert.equal((await call("POST", APPLY, body)).status, 200);
   refused(await call("POST", APPLY, { ...body, amount_cents: 2000 }), 409, "that idempotency key already recorded a different payment; use a new key");
@@ -462,7 +460,7 @@ test("apply route: a replayed key is judged against its own body", async () => {
 
 test("apply route: the split and the ceiling subtract the retained holdback, as the core's walk does", async () => {
   await reset();
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const held = register.json.items.find((r) => r.invoice_no === "INV-1008");
   assert.equal(held.holdback_cents, 30000, "the world plants a retained holdback on this invoice");
   const detail = await call("GET", `/api/v1/ar/register/invoices/${held.id}`);
@@ -490,7 +488,7 @@ test("apply route: the split and the ceiling subtract the retained holdback, as 
 test("apply route: refusals are the core's words and leave nothing applied", async () => {
   await reset();
   const mine = await graniteInvoices();
-  const register = await call("GET", "/api/v1/ar/register");
+  const register = await call("GET", "/api/v1/ar/register?chip=all");
   const other = register.json.items.find((r) => r.account_no === "OB-200");
   const base = { customer_id: mine[0].customer_id, method: "CASH", reference: "c", idempotency_key: "x-1", preview: false, amount_cents: 1000, invoice_ids: [mine[0].id] };
   refused(await call("POST", APPLY, { ...base, idempotency_key: "" }), 422, "recording a payment needs an idempotency key");
