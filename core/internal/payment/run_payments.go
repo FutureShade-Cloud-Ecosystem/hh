@@ -26,9 +26,16 @@ type RunPaymentsClient struct {
 	httpc          *http.Client
 }
 
+// ProcessorClientTimeout bounds every HTTP call the live processor client
+// makes (the one bound a caller outside payment may reason about: nothing the
+// client started can still be running past it). Exported because the pos
+// card refund resolution fences its settle against this window plus a crash
+// margin; defined here, next the client it bounds, so the two never drift.
+const ProcessorClientTimeout = 30 * time.Second
+
 // NewRunPaymentsClient builds a live client with a default base URL (overridable per dealer via creds).
 func NewRunPaymentsClient(defaultBaseURL string) *RunPaymentsClient {
-	return &RunPaymentsClient{defaultBaseURL: defaultBaseURL, httpc: &http.Client{Timeout: 30 * time.Second}}
+	return &RunPaymentsClient{defaultBaseURL: defaultBaseURL, httpc: &http.Client{Timeout: ProcessorClientTimeout}}
 }
 
 // Name returns the processor name.

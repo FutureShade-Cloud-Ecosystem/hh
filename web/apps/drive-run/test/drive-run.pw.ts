@@ -11,12 +11,12 @@ test.beforeEach(async ({ request }) => {
 
 test("the driver's card is the one way in and signs in as the Driver", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("hos-app-header")).toBeVisible();
+  await expect(page.locator("hh-field-frame")).toBeVisible();
   const cards = page.locator("[data-flow]");
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toHaveAttribute("data-flow", "driver");
   await cards.first().click();
-  await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "");
+  await expect(page.locator("hh-field-frame")).toHaveAttribute("signed-in", "");
   await expect(page.getByTestId("header-word")).toHaveText("Driver");
 });
 
@@ -24,7 +24,7 @@ test("the front door's handoff lands signed in on the run sheet with no picker",
   await page.addInitScript(driverHandoff);
   await page.goto("/");
   await expect(page.locator("[data-flow]")).toHaveCount(0);
-  await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "");
+  await expect(page.locator("hh-field-frame")).toHaveAttribute("signed-in", "");
   await expect(page.getByRole("heading", { name: "My run" })).toBeVisible();
 });
 

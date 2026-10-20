@@ -1285,6 +1285,89 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  # ── POS: card refund attempt resolution (HH-767) ───────────────────────────
+  /api/v1/pos/card-refund-attempts:
+    get:
+      operationId: posListCardRefundAttempts
+      tags: [staff-pos]
+      summary: List the open card refund attempts the caller's branches reach
+      description: >-
+        The two-transaction card refund's reconciliation queue: attempts left
+        IN_FLIGHT or UNBOOKED by an unknown processor outcome or a crash
+        between the two transactions, branch fenced to the caller's reach,
+        newest attempted first. Manager only.
+      x-role: requireManager
+      x-access:
+        surfaces: [counter-till, manager-home]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [IN_FLIGHT, UNBOOKED] }
+      responses:
+        "200":
+          description: The open card refund attempts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCardRefundAttemptList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A status filter other than IN_FLIGHT or UNBOOKED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/card-refund-attempts/{id}/resolve:
+    post:
+      operationId: posResolveCardRefundAttempt
+      tags: [staff-pos]
+      summary: Resolve one open card refund attempt after checking the processor
+      description: >-
+        A manager at the sale's branch records the processor outcome: REFUNDED
+        with the processor's refund_ref stands the attempt UNBOOKED so the
+        return's same-key retry books without a second processor call,
+        NOT_REFUNDED closes it FAILED and releases the capture ceiling. The
+        person who started the refund is refused (separation of duties); the
+        resolution writes a sensitive-access audit row.
+      x-role: requireManager
+      x-access:
+        surfaces: [counter-till, manager-home]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosResolveCardRefundAttemptInput"
+      responses:
+        "200":
+          description: The attempt after the resolution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCardRefundAttempt"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: >-
+            A malformed attempt id, an outcome other than REFUNDED or
+            NOT_REFUNDED, or REFUNDED without the processor's refund_ref
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ── POS: parked tickets ────────────────────────────────────────────────────
   /api/v1/pos/parked:
     post:
@@ -3453,6 +3536,55 @@ components:
       required: [reason]
       properties:
         reason: { type: string, maxLength: 2000 }
+
+    # ── POS: card refund attempt resolution (HH-767) ────────────────────────
+    PosCardRefundAttempt:
+      type: object
+      description: >-
+        One row of the two-transaction card refund's attempt ledger as the
+        manager's list and resolve answer it: what the processor holds, who
+        started the refund, and who (if anybody yet) resolved its outcome.
+      required: [id, refund_key, order_id, order_no, branch_id, customer_id, customer_name, gateway_ref, refund_ref, amount_cents, status, last_error, initiated_by, attempted_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        refund_key: { type: string }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        gateway_ref: { type: string }
+        refund_ref: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        status: { type: string, enum: [IN_FLIGHT, UNBOOKED, BOOKED, FAILED] }
+        last_error: { type: string }
+        initiated_by: { type: string }
+        resolved_by: { type: string }
+        resolved_at: { type: string, format: date-time }
+        resolution_note: { type: string }
+        attempted_at: { type: string, format: date-time }
+        processor_at: { type: string, format: date-time }
+        booked_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PosCardRefundAttemptList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosCardRefundAttempt" }
+    PosResolveCardRefundAttemptInput:
+      type: object
+      description: >-
+        The manager's judgment of one open attempt: REFUNDED carries the
+        processor's refund_ref, NOT_REFUNDED closes the attempt FAILED and
+        releases the capture ceiling.
+      required: [outcome]
+      properties:
+        outcome: { type: string, enum: [REFUNDED, NOT_REFUNDED] }
+        refund_ref: { type: string, maxLength: 200 }
+        note: { type: string, maxLength: 300 }
 
     # ── POS: parked tickets ──────────────────────────────────────────────────
     PosParkedLineInput:

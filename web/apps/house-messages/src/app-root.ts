@@ -13,8 +13,8 @@
 import { html, css, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
+import { fieldTabsForRole, setFieldFrame, type ShellSyncState } from "@hardscapehouse/shell-chrome";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -101,6 +101,9 @@ export class HouseMessagesApp extends HHElement {
 
   #theme: "light" | "dark" = "light";
   #roleLabel = "";
+
+  // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
+  #org = "";
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
 
   readonly #feedbackSender: FeedbackSender = async (request) => {
@@ -150,6 +153,10 @@ export class HouseMessagesApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      this.#org = name;
+      this.requestUpdate();
+    });
     this.addEventListener("click", this.#onHostClick);
     this.renderRoot.addEventListener("input", this.#onHostInput);
     if (this.#custody.mode === "console") {
@@ -205,13 +212,31 @@ export class HouseMessagesApp extends HHElement {
     super.disconnectedCallback();
   }
 
+  // The sync chip's state from the live feed: a stream or poll that answers is synced; a feed still opening is
+  // pulling; a dropped one is reconnecting; a feed that cannot reach the server is offline.
+  #syncState(): ShellSyncState {
+    const live = this.#desk?.live ?? null;
+    if (live === "reconnecting") return "unreachable";
+    if (live === "offline") return "offline";
+    if (live === "connecting") return "pulling";
+    return "idle";
+  }
+
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
+    setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
+      org: this.#org,
+      appName: "House Messages",
+      surface: "Channels",
+      roleLabel: this.#roleLabel,
+      syncState: this.#syncState(),
+      theme: this.#theme,
+      signedIn: this.#sessions.current !== null,
+      demo: true,
+      feedback: this.#sessions.current !== null,
+      current: "messages",
+      tabs: fieldTabsForRole(this.#callerRole?.roleCode ?? ""),
+    });
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
     this.#desk?.seed();
@@ -252,6 +277,8 @@ export class HouseMessagesApp extends HHElement {
   }
 
   #onSignOut(): void {
+    // The frame's account chip names no role once the person is out.
+    this.#roleLabel = "";
     this.#desk?.dispose();
     this.#desk = null;
     this.#callerRole = null;
@@ -266,22 +293,17 @@ export class HouseMessagesApp extends HHElement {
     void this.loadFlows();
   }
 
-  private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
-    return html`<button slot="theme" type="button" data-action="feedback">Feedback</button><button slot="theme" type="button" data-action="theme">${label}</button>`;
-  }
-
   render(): TemplateResult {
     const session = this.#sessions.current;
     if (session !== null) {
       return html`
-        <hos-app-header signed-in demo compact product-name="House Messages">${this.renderThemeControl()}</hos-app-header>
+        <hh-field-frame></hh-field-frame>
         <main class="desk-host">${this.#desk?.render()}</main>
         <hh-feedback screen="House Messages" trigger="external"></hh-feedback>
       `;
     }
     return html`
-      <hos-app-header demo compact product-name="House Messages">${this.renderThemeControl()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       <main class="entry">
         <h1>House Messages</h1>
         <p>Read what the house is saying and acknowledge what needs you. Demo data only.</p>
