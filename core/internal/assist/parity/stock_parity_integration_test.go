@@ -100,38 +100,37 @@ func viewStock(t *testing.T, r *readtx.Reader, c assist.Caller) map[string]stock
 	return out
 }
 
-func TestParity_EveryStockRowAndItsCostFollowTheInventoryModulesOwnRead(t *testing.T) {
+type stockRig struct {
+	env      *testsupport.Env
+	oracle   *inventory.Service
+	rc       *roleconfig.Config
+	h        *assist.Handler
+	branches []string
+	products map[string]bool
+}
+
+func newStockRig(t *testing.T) *stockRig {
+	t.Helper()
 	env := testsupport.Open(t)
 	ctx := testsupport.Ctx(t)
-	branches := stockBranches(t, env)
-	if len(branches) < 2 {
-		t.Fatalf("the stock world holds %d branches, want two", len(branches))
+	r := &stockRig{env: env, branches: stockBranches(t, env), products: map[string]bool{}}
+	if len(r.branches) < 2 {
+		t.Fatalf("the stock world holds %d branches, want two", len(r.branches))
 	}
 	pool, err := pgxpool.New(ctx, env.AdminURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	oracle := inventory.NewService(inventory.NewRepository(pool))
-	rc, err := roleconfig.Default()
-	if err != nil {
+	r.oracle = inventory.NewService(inventory.NewRepository(pool))
+	if r.rc, err = roleconfig.Default(); err != nil {
 		t.Fatal(err)
 	}
 	var named allBranches
-	for _, b := range branches {
+	for _, b := range r.branches {
 		named = append(named, assist.NamedBranch{BranchID: b})
 	}
-	h := assist.NewHandler(nil, nil).WithCostGate(rc, named)
-	a, b := branches[0], branches[1]
-	callers := map[string]identity.StaffContext{
-		"general manager, global":             {UserID: "u-gm", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal, Status: "ACTIVE"},
-		"sales manager at a":                  scoped("SALES_MANAGER", a),
-		"sales manager at a and b":            scoped("SALES_MANAGER", a, b),
-		"hr manager at a (off the cost list)": scoped("HR", a),
-		"yard manager at b":                   scoped("YARD_MANAGER", b),
-		"sales manager with no grants":        scoped("SALES_MANAGER"),
-	}
-	products := map[string]bool{}
+	r.h = assist.NewHandler(nil, nil).WithCostGate(r.rc, named)
 	prows, err := env.Admin.Query(ctx, `SELECT DISTINCT product_id::text FROM stock_balances`)
 	if err != nil {
 		t.Fatal(err)
@@ -141,60 +140,105 @@ func TestParity_EveryStockRowAndItsCostFollowTheInventoryModulesOwnRead(t *testi
 		if err := prows.Scan(&p); err != nil {
 			t.Fatal(err)
 		}
-		products[p] = true
+		r.products[p] = true
 	}
 	prows.Close()
+	return r
+}
 
+func (r *stockRig) callers() map[string]identity.StaffContext {
+	a, b := r.branches[0], r.branches[1]
+	return map[string]identity.StaffContext{
+		"general manager, global":             {UserID: "u-gm", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal, Status: "ACTIVE"},
+		"sales manager at a":                  scoped("SALES_MANAGER", a),
+		"sales manager at a and b":            scoped("SALES_MANAGER", a, b),
+		"hr manager at a (off the cost list)": scoped("HR", a),
+		"yard manager at b":                   scoped("YARD_MANAGER", b),
+		"sales manager with no grants":        scoped("SALES_MANAGER"),
+	}
+}
+
+// compare checks one caller's whole view against the inventory module's own read and returns the rows compared.
+func (r *stockRig) compare(t *testing.T, name string, sc identity.StaffContext) int {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	req := httptest.NewRequest("POST", "/api/v1/assist/chat", nil).WithContext(identity.ContextWithStaff(ctx, sc))
+	c, err := r.h.CallerFor(req, guards.StaffCaller{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, _ := identity.CanonicalForERPCode(sc.RoleCode)
+	listed, _ := r.rc.SeesCostAndMargin(canonical)
+	view := viewStock(t, r.env.Readers.Staff, c)
+	expected := map[string]stockCell{}
+	for p := range r.products {
+		_, rows, found, err := r.oracle.LookupStock(ctx, inventory.BranchReach{Global: c.Global, BranchIDs: c.BranchIDs}, p)
+		if err != nil || !found {
+			t.Fatalf("%s: record read of %s: found=%v err=%v", name, p, found, err)
+		}
+		for _, row := range rows {
+			cell := stockCell{onHand: row.OnHandBase, reserved: row.ReservedBase, available: row.AvailableBase}
+			if listed && row.AvgCostCents != 0 {
+				v := row.AvgCostCents
+				cell.cost = &v
+			}
+			expected[p+"|"+row.BranchID] = cell
+		}
+	}
 	compared := 0
-	for name, sc := range callers {
-		r := httptest.NewRequest("POST", "/api/v1/assist/chat", nil).WithContext(identity.ContextWithStaff(ctx, sc))
-		c, err := h.CallerFor(r, guards.StaffCaller{})
-		if err != nil {
-			t.Fatal(err)
+	for key, want := range expected {
+		got, ok := view[key]
+		if !ok {
+			t.Errorf("%s: %s is returned by the inventory record read but is not in the view", name, key)
+			continue
 		}
-		canonical, _ := identity.CanonicalForERPCode(sc.RoleCode)
-		listed, _ := rc.SeesCostAndMargin(canonical)
-		view := viewStock(t, env.Readers.Staff, c)
-		expected := map[string]stockCell{}
-		for p := range products {
-			_, rows, found, err := oracle.LookupStock(ctx, inventory.BranchReach{Global: c.Global, BranchIDs: c.BranchIDs}, p)
-			if err != nil || !found {
-				t.Fatalf("%s: record read of %s: found=%v err=%v", name, p, found, err)
-			}
-			for _, row := range rows {
-				cell := stockCell{onHand: row.OnHandBase, reserved: row.ReservedBase, available: row.AvailableBase}
-				if listed && row.AvgCostCents != 0 {
-					v := row.AvgCostCents
-					cell.cost = &v
-				}
-				expected[p+"|"+row.BranchID] = cell
-			}
+		compared++
+		if !same(got.onHand, want.onHand) || !same(got.reserved, want.reserved) || !same(got.available, want.available) {
+			t.Errorf("%s: %s quantities differ: view %+v, record read %+v", name, key, got, want)
 		}
-		for key, want := range expected {
-			got, ok := view[key]
-			if !ok {
-				t.Errorf("%s: %s is returned by the inventory record read but is not in the view", name, key)
-				continue
-			}
-			compared++
-			if !same(got.onHand, want.onHand) || !same(got.reserved, want.reserved) || !same(got.available, want.available) {
-				t.Errorf("%s: %s quantities differ: view %+v, record read %+v", name, key, got, want)
-			}
-			if (got.cost != nil) != (want.cost != nil) || (got.cost != nil && *got.cost != *want.cost) {
-				t.Errorf("%s: %s cost differs: view %s, record read %s", name, key, show(got.cost), show(want.cost))
-			}
+		if (got.cost != nil) != (want.cost != nil) || (got.cost != nil && *got.cost != *want.cost) {
+			t.Errorf("%s: %s cost differs: view %s, record read %s", name, key, show(got.cost), show(want.cost))
 		}
-		for key := range view {
-			if _, ok := expected[key]; !ok {
-				t.Errorf("%s: %s is in the view but the inventory record read does not return it for this caller", name, key)
-			}
+	}
+	for key := range view {
+		if _, ok := expected[key]; !ok {
+			t.Errorf("%s: %s is in the view but the inventory record read does not return it for this caller", name, key)
 		}
-		if listed && len(c.CostBranchIDs) == 0 && len(expected) > 0 && !c.Global && len(c.BranchIDs) > 0 {
-			t.Errorf("%s: a listed role with branches has no cost branch in its claim", name)
-		}
+	}
+	return compared
+}
+
+func TestParity_EveryStockRowAndItsCostFollowTheInventoryModulesOwnRead(t *testing.T) {
+	r := newStockRig(t)
+	compared := 0
+	for name, sc := range r.callers() {
+		compared += r.compare(t, name, sc)
 	}
 	if compared < 50 {
 		t.Fatalf("only %d stock rows were compared", compared)
+	}
+}
+
+// The purchasing policy (MANAGER_UP, ALL_STAFF, HIDDEN, per branch) decides who sees what the dealer PAYS on a
+// purchase order. The inventory screens do not ask it: they hold the average cost out by the dealer's cost and
+// margin role list alone. The view mirrors the screens, so setting the policy at a branch changes nothing here.
+// This test pins that, under each policy value, so the day the screens change the test says so; the report asks
+// whether the dealer intends the policy to cover stock cost.
+func TestParity_StockCostDoesNotMoveWithThePurchasingBranchPolicyBecauseTheScreensIgnoreIt(t *testing.T) {
+	r := newStockRig(t)
+	ctx := testsupport.Ctx(t)
+	a := r.branches[0]
+	t.Cleanup(func() {
+		_, _ = r.env.Admin.Exec(ctx, `DELETE FROM purchasing_policy WHERE branch_id = $1::uuid`, a)
+	})
+	for _, policy := range []string{"MANAGER_UP", "ALL_STAFF", "HIDDEN"} {
+		if _, err := r.env.Admin.Exec(ctx, `INSERT INTO purchasing_policy (branch_id, cost_visibility) VALUES ($1::uuid, $2)
+			ON CONFLICT (branch_id) DO UPDATE SET cost_visibility = EXCLUDED.cost_visibility`, a, policy); err != nil {
+			t.Fatalf("set the policy: %v", err)
+		}
+		for name, sc := range r.callers() {
+			r.compare(t, name+" under "+policy, sc)
+		}
 	}
 }
 

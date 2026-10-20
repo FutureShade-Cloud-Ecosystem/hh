@@ -72,6 +72,9 @@ type ViewDef struct {
 	Large bool
 }
 
+// Column reports a column of the view by name (for tests and the registry's callers).
+func (v ViewDef) Column(name string) (ColumnDef, bool) { return v.col(name) }
+
 func (v ViewDef) col(name string) (ColumnDef, bool) {
 	for _, c := range v.Columns {
 		if c.Name == name {
