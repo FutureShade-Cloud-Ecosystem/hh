@@ -9,8 +9,14 @@
 // the dealer kit's: sentence case, the decision first, no exclamation marks,
 // no status codes, no dashes.
 import type { SignInFailureReason } from "@hardscapehouse/auth";
-import type { RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
+import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import { LIVE_ROLES, type LiveRole } from "./roles.js";
+
+/** The dealer's name and optional branch line from the tenant configuration. */
+export function dealerLine(dealer: DealerBrand): string {
+  const branch = typeof dealer.branch === "string" ? dealer.branch.trim() : "";
+  return branch === "" ? dealer.name : `${dealer.name} · ${branch}`;
+}
 
 /** The sentence under the form for each reason a sign in did not land. */
 export const SIGN_IN_WORDS: Readonly<Record<string, string>> = {

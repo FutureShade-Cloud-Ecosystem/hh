@@ -12,7 +12,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import type { ConsoleSession } from "./console.js";
-import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS } from "./signin.js";
+import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS, dealerLine } from "./signin.js";
 import type { LiveRole } from "./roles.js";
 
 /** The gable diamond over two bars in a ring: the tenant kit's mark, drawn in the ink the page is on and the house gold. */
@@ -31,6 +31,8 @@ export function dealerWords(name: string): { head: string; tail: string } {
   const space = trimmed.indexOf(" ");
   return space < 0 ? { head: trimmed, tail: "" } : { head: trimmed.slice(0, space), tail: trimmed.slice(space + 1) };
 }
+
+export { dealerLine };
 
 export function dealerLockup(dealer: DealerBrand): TemplateResult {
   const words = dealerWords(dealer.name);
@@ -149,8 +151,8 @@ export function signInScreen(session: ConsoleSession, personaBlock: TemplateResu
     <div class="signin-stage">
       <section class="signin-card" aria-labelledby="signin-title">
         ${dealerLockup(session.config.dealer)}
-        <h1 class="signin-title" id="signin-title">Sign in</h1>
-        <p class="signin-lead">Use your work account.</p>
+        <h1 class="signin-title" id="signin-title">Sign in to Work</h1>
+        <p class="signin-lead" data-testid="signin-dealer-line">${dealerLine(session.config.dealer)}</p>
         <p
           id="signin-status"
           class="status ${notice.tone === "error" ? "error" : ""}"

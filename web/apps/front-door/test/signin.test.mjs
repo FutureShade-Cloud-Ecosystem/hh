@@ -8,6 +8,7 @@ import {
   CONFIG_ERROR_WORDS,
   PERSONA_REFUSAL_WORDS,
   SIGN_IN_WORDS,
+  dealerLine,
   focusAfter,
   methodsFor,
   fetchMethods,
@@ -33,6 +34,14 @@ test("the words of each sign in state are the ones the brief names", () => {
 test("a cancelled or superseded sign in says nothing", () => {
   assert.equal(signInNotice("cancelled"), "");
   assert.equal(signInNotice("superseded"), "");
+});
+
+test("dealerLine shows dealer and branch when configured, or dealer name alone when branch is absent", () => {
+  assert.equal(dealerLine({ name: "Gable Landscape Supply", mark: "gable" }), "Gable Landscape Supply");
+  assert.equal(
+    dealerLine({ name: "Gable Landscape Supply", mark: "gable", branch: "Point Loma" }),
+    "Gable Landscape Supply · Point Loma",
+  );
 });
 
 test("every word is plain: no dash, no exclamation mark, no raw status or code", () => {
