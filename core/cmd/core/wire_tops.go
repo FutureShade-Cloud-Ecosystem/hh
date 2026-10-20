@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"os"
@@ -704,6 +705,25 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	assistDeps.Stock = assistadapt.NewStockReader(inventorySvc)
 	assistDeps.Customers = assistadapt.NewCustomerReader(customerSvc, w3bCreditSvc)
 	assistDeps.Now = time.Now
+	// TanyAI slice 5: the structured data tool, over the assist logins (never the app role). With no
+	// configuration, or a configuration the startup gate refuses (wrong login, no claims key, statement
+	// pooling), data.query stays unwired and answers 503 while everything else works. The error names
+	// the check and carries no URL or key.
+	if pool != nil {
+		if rcfg := readtx.ConfigFromEnv(os.Getenv); !rcfg.ReaderURL.IsEmpty() {
+			octx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			readers, rerr := readtx.Open(octx, rcfg)
+			cancel()
+			if rerr != nil {
+				log.Warn("assist: the data path is off", "reason", rerr.Error())
+			} else {
+				assistDeps.Query = &assist.ReadQuerier{
+					Reader: readers.Staff, Zone: newDealerZone(pool), Now: time.Now,
+					Log: assistRepo, Branches: assistDeps.Branches, Logger: log,
+				}
+			}
+		}
+	}
 	assistSvc := assist.NewService(
 		assist.NewRegistry(assistDeps, assistRepo),
 		assistProvider,
@@ -723,6 +743,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// buckets only on a demo copy.
 		WithRateLimits(assist.NewRateLimits(assistDemoLimits(cfg.DemoMode), time.Now)).
 		WithRouter(assistRouter).
+		WithQueryLog(assistQueryLog(pool, assistRepo)).
 		// Server kept conversations keyed by user and session (the jti), on the append only log.
 		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
@@ -855,4 +876,13 @@ func bindTileAccess(svc *dashboard.Service, trail billing.PaymentTrailReader) {
 		}
 		return trail.HoldsPaymentTrail(ctx, sc.PlatformUserID, sc.OrgID)
 	})
+}
+
+// assistQueryLog is the writer of the exchange summary row: the repository when there is a database,
+// nothing in the DB free registration proof.
+func assistQueryLog(pool *pgxpool.Pool, repo *assist.Repository) assist.QueryLog {
+	if pool == nil {
+		return nil
+	}
+	return repo
 }
