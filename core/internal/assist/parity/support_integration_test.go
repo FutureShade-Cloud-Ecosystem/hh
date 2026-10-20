@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx/testsupport"
 )
 
@@ -140,4 +141,47 @@ func plantStrayStock(t *testing.T, env *testsupport.Env) {
 		_, _ = c.Exec(context.Background(), `DELETE FROM stock_balances WHERE location_id = $1::uuid`, stray)
 		_, _ = c.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, stray)
 	})
+}
+
+// plantBranch adds one BRANCH location of the test's own, removed after. Tests plant their own branches and rows
+// and never assume a table holds only the seeded world (the lesson of the stock tests).
+func plantBranch(t *testing.T, env *testsupport.Env, tag, name string) string {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	var id string
+	// A branch is its own branch_id; one statement so the foreign key sees both.
+	if err := env.Admin.QueryRow(ctx, `WITH n AS (SELECT gen_random_uuid() AS id)
+		INSERT INTO locations (id, branch_id, loc_type, code, name) SELECT id, id, 'BRANCH', $1, $2 FROM n RETURNING id::text`, "S6B"+tag, name).Scan(&id); err != nil {
+		t.Fatalf("plant branch %s: %v", name, err)
+	}
+	dsn := env.AdminURL
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, id)
+	})
+	return id
+}
+
+// everyBranch is the dealer's branch directory as a global caller's cost resolution sees it: every BRANCH
+// location in the database, the seeded ones, the test's own and any stray one another package left.
+func everyBranch(t *testing.T, env *testsupport.Env) allBranches {
+	t.Helper()
+	rows, err := env.Admin.Query(testsupport.Ctx(t), `SELECT id::text, name FROM locations WHERE loc_type = 'BRANCH' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out allBranches
+	for rows.Next() {
+		var b assist.NamedBranch
+		if err := rows.Scan(&b.BranchID, &b.Name); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, b)
+	}
+	return out
 }
