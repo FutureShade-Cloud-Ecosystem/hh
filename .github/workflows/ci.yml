@@ -426,6 +426,21 @@ jobs:
           done
       - name: Build the demo image, no push
         run: docker build -f deploy/demo/Dockerfile -t hh-demo-ci-build .
+      # The denylist scan (check 5.1 of the image exit test) over the web
+      # bundles this very image carries, so no second build is added: the
+      # image's /srv/app is copied out of a created, never started, container
+      # and scanned as a bundle directory. Any first dealer word or planted
+      # person name in a built bundle fails the pull request here.
+      - name: Scan the demo image's web bundles for the denylist
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          cid="$(docker create hh-demo-ci-build)"
+          docker cp "$cid:/srv/app/." "$out"
+          docker rm "$cid" >/dev/null
+          ./deploy/demo/denylist-scan.sh --bundle-dir "$out"
+      - name: Denylist scan script test
+        run: sh deploy/demo/denylist-scan-test.sh
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with
