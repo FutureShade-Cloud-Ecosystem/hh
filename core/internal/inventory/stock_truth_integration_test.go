@@ -937,14 +937,24 @@ func stampBranchOrgs(t *testing.T, pool *pgxpool.Pool, byBranch map[string]strin
 		($1, 'ux88-org-a', 'UX88 Org A'), ($2, 'ux88-org-b', 'UX88 Org B') ON CONFLICT (id) DO NOTHING`, ux88OrgA, ux88OrgB); err != nil {
 		t.Fatalf("plant org anchors: %v", err)
 	}
+	prev := map[string]*string{}
+	for branch := range byBranch {
+		var org *string
+		if err := pool.QueryRow(ctx, `SELECT org_id::text FROM locations WHERE id = $1`, branch).Scan(&org); err != nil {
+			t.Fatalf("read branch org: %v", err)
+		}
+		prev[branch] = org
+	}
 	for branch, org := range byBranch {
 		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $2 WHERE id = $1`, branch, org); err != nil {
 			t.Fatalf("stamp branch org: %v", err)
 		}
 	}
+	// Each branch goes back to what it carried: a populate earlier in the run may have given the seeded
+	// branches an org, and a leg must leave the shared database as it found it.
 	t.Cleanup(func() {
-		for branch := range byBranch {
-			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1`, branch)
+		for branch, org := range prev {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, branch, org)
 		}
 	})
 }

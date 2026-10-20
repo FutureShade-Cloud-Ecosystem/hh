@@ -502,10 +502,28 @@ func w5aStampOrg(t *testing.T, pool *pgxpool.Pool) {
 	if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1, 'ux88-w5a-org', 'UX88 W5A Org') ON CONFLICT (id) DO NOTHING`, w5aOrgID); err != nil {
 		t.Fatalf("plant the org anchor: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH' AND org_id IS NULL`, w5aOrgID); err != nil {
+	// Every branch joins the leg's org whatever it carried (a populate earlier in the run may have given
+	// the seeded branches an org), and each goes back to what it carried.
+	prev := map[string]*string{}
+	rows, err := pool.Query(ctx, `SELECT id::text, org_id::text FROM locations WHERE loc_type = 'BRANCH'`)
+	if err != nil {
+		t.Fatalf("read the branches' orgs: %v", err)
+	}
+	for rows.Next() {
+		var id string
+		var org *string
+		if err := rows.Scan(&id, &org); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		prev[id] = org
+	}
+	rows.Close()
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, w5aOrgID); err != nil {
 		t.Fatalf("stamp the seeded branches: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE org_id = $1`, w5aOrgID)
+		for id, org := range prev {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, id, org)
+		}
 	})
 }

@@ -307,10 +307,26 @@ func TestIntegration_AFilterThatMatchesNothingStillDownloadsASheet(t *testing.T)
 func stampSeededBranches(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH' AND org_id IS NULL`, testkit.OrgNorthID); err != nil {
+	prev := map[string]*string{}
+	rows, err := pool.Query(ctx, `SELECT id::text, org_id::text FROM locations WHERE code IN ('TRT','KGN')`)
+	if err != nil {
+		t.Fatalf("read the seeded branches' orgs: %v", err)
+	}
+	for rows.Next() {
+		var id string
+		var org *string
+		if err := rows.Scan(&id, &org); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		prev[id] = org
+	}
+	rows.Close()
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE code IN ('TRT','KGN')`, testkit.OrgNorthID); err != nil {
 		t.Fatalf("stamp the seeded branches: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE code IN ('TRT','KGN')`)
+		for id, org := range prev {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, id, org)
+		}
 	})
 }
