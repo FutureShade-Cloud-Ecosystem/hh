@@ -263,7 +263,7 @@ func TestParity_EveryPurchaseOrderAndItsCostFollowThePurchasingModulesOwnRead(t 
 				t.Errorf("%s: %s header differs: view %+v, module %+v", name, p.no, head, d.PO)
 			}
 			if !eqP(head.subtotal, d.POCosts.Subtotal) {
-				t.Errorf("%s: %s subtotal view=%v module=%v (branch %s)", name, p.no, head.subtotal, d.POCosts.Subtotal, p.branch)
+				t.Errorf("%s: %s subtotal view=%s module=%s (branch %s)", name, p.no, show(head.subtotal), show(d.POCosts.Subtotal), p.branch)
 			}
 			if d.POCosts.Subtotal != nil {
 				costed++
@@ -281,7 +281,7 @@ func TestParity_EveryPurchaseOrderAndItsCostFollowThePurchasingModulesOwnRead(t 
 					t.Errorf("%s: %s line %d plain cells differ: view %+v, module %+v", name, p.no, l.LineNo, x, l)
 				}
 				if !eqP(x.unit, l.POCosts.UnitCost) || !eqP(x.total, l.POCosts.LineTotal) || !eqP(x.billedCents, l.POCosts.Billed) {
-					t.Errorf("%s: %s line %d cost cells differ: view %v/%v/%v, module %v/%v/%v", name, p.no, l.LineNo, x.unit, x.total, x.billedCents, l.POCosts.UnitCost, l.POCosts.LineTotal, l.POCosts.Billed)
+					t.Errorf("%s: %s line %d cost cells differ: view %s/%s/%s, module %s/%s/%s", name, p.no, l.LineNo, show(x.unit), show(x.total), show(x.billedCents), show(l.POCosts.UnitCost), show(l.POCosts.LineTotal), show(l.POCosts.Billed))
 				}
 			}
 		}
