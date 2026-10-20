@@ -15,7 +15,10 @@ import type {
   PurchasingPO,
   PurchasingPOPage,
 } from "@hardscapehouse/api-client";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { formatMoney } from "./po-money.js";
+
+export { houseDay };
 
 // ---- the shapes the core really writes ------------------------------------------------------------
 
@@ -181,17 +184,37 @@ export function shortOrderWords(row: Pick<InventoryShortfallRow, "short_order_no
 
 // ---- dates as the yard reads them -------------------------------------------------------------------------
 
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TIMESTAMP_PREFIX = /^\d{4}-\d{2}-\d{2}[T ]/;
+
+/**
+ * A date-only string is already a calendar day in the house zone and is never
+ * parsed as UTC midnight; a timestamp is converted to its calendar day in the
+ * house zone.
+ */
+export function stampDay(stamp: string | null | undefined): string {
+  if (stamp === null || stamp === undefined || stamp === "") return "";
+  const trimmed = stamp.trim();
+  if (DATE_ONLY.test(trimmed)) return trimmed;
+  if (TIMESTAMP_PREFIX.test(trimmed)) {
+    const ms = Date.parse(trimmed);
+    if (!Number.isNaN(ms)) return houseDay(new Date(ms));
+  }
+  return trimmed.slice(0, 10);
+}
+
 function dayNumber(date: string): number | null {
-  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const day = stampDay(date);
+  const m = day.match(DATE_ONLY);
   return m === null ? null : Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
 }
 
 /**
- * A promised day as words against today (both YYYY-MM-DD, today in the reader's own day): "in 2 days",
+ * A promised day as words against today (both in the house zone): "in 2 days",
  * "tomorrow", "today", "yesterday", "3 days ago". Further than sixty days either way it is left to the
  * date itself and this returns "".
  */
-export function relativeDay(date: string, today: string): string {
+export function relativeDay(date: string, today: string = houseDay()): string {
   const a = dayNumber(date);
   const b = dayNumber(today);
   if (a === null || b === null) return "";
@@ -210,9 +233,9 @@ export function relativeDay(date: string, today: string): string {
  * allows a bound value only on class, role, d and the data- and aria- attributes outside
  * the till's ported surface, so the words stand alone.
  */
-export function whenWords(stamp: string | null | undefined, today: string): string {
+export function whenWords(stamp: string | null | undefined, today: string = houseDay()): string {
   if (stamp === null || stamp === undefined || stamp === "") return "";
-  const date = stamp.slice(0, 10);
+  const date = stampDay(stamp);
   const rel = relativeDay(date, today);
   return rel === "" ? date : rel;
 }
@@ -229,8 +252,8 @@ export function landedWords(lines: readonly { qty_ordered_base: number; qty_rece
   return `${fmt(received)} of ${fmt(ordered)} ${unit} landed`;
 }
 
-/** A promised day as the field's words: "Tuesday, 4 March 2031 (in 5 days)", "" when it is not a real date. */
-export function dateWords(date: string, today: string): string {
+/** A promised day as the field's words, with its relative days in the house zone, or "" when it is not a real date. */
+export function dateWords(date: string, today: string = houseDay()): string {
   const check = validateExpectedDate(date);
   if (!check.ok) return "";
   const [y, m, d] = check.date.split("-").map(Number);
