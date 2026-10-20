@@ -323,11 +323,26 @@ func (r *Repository) AttachPODPhotos(ctx context.Context, stopID, sigRef string,
 		// The 0107 CHECK would refuse this anyway; refusing here names the bug instead of the constraint.
 		return 0, fmt.Errorf("dispatch: cannot attach photos to a blank attestation ref")
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
+	// A transaction, the photos first (PR 556 round 3d): the statement below draws the pod counter in a CTE,
+	// which runs BEFORE it locks the rows it updates, and a pod caption edit holds one photo between its own
+	// lock and its draw. The unattached photos of the stop are locked ascending, FOR NO KEY UPDATE, then the
+	// statement runs; the rows come before the counter.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_pod_photos WHERE stop_id = $1 AND pod_attached_at IS NULL ORDER BY id FOR NO KEY UPDATE`, stopID); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
 UPDATE delivery_pod_photos
    SET pod_attached_at = $3, pod_signature_ref = $2, seq = (SELECT next_value FROM seq)
  WHERE stop_id = $1 AND pod_attached_at IS NULL`, stopID, sigRef, at)
 	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil

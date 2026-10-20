@@ -188,6 +188,20 @@ func (r *Repository) LoadsForOrderTx(ctx context.Context, q runner, orderID stri
 	return r.loadsForOrderOn(ctx, q, orderID)
 }
 
+// LockLoadsForOrderTx takes the order's live load rows, ascending id, FOR NO KEY UPDATE, on the caller's
+// transaction (PR 556 round 3d). The raise apply mints loads (an INSERT whose stops counter draw the sync seq
+// trigger makes and the transaction holds to commit) BEFORE the split writes the stops: without these locks first
+// it would hold the counter while it waits for a stop row a single stop write holds between its own lock and its
+// draw. Rows first, then the counter. The loads it mints later are the transaction's own rows.
+func (r *Repository) LockLoadsForOrderTx(ctx context.Context, q runner, orderID string) error {
+	if _, err := q.Exec(ctx,
+		`SELECT 1 FROM delivery_stops WHERE order_id = $1 AND status NOT IN ('CANCELLED','FAILED') ORDER BY id FOR NO KEY UPDATE`,
+		orderID); err != nil {
+		return fmt.Errorf("lock the order's loads: %w", err)
+	}
+	return nil
+}
+
 // insertSplitLoadOn mints the Nth load on either connection, returning the new id. It is the same
 // statement InsertSplitLoad has always run; only the executor varies.
 func (r *Repository) insertSplitLoadOn(ctx context.Context, q runner, parentID, createdBy string, seq, count int) (string, error) {

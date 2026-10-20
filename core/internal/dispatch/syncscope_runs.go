@@ -494,6 +494,13 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 			// The stops draw their own scope's seq beside the move (the
 			// unassignment is a stop change a device's pull must see,
 			// same as the REST path's stamped AssignStop).
+			// The run's READY stops first, ascending, FOR NO KEY UPDATE (PR 556 round 3d): the statement below
+			// draws the stops counter in a CTE, which runs BEFORE it locks the rows it updates, and a single
+			// stop write holds one of those rows between its own lock and its draw. Rows first, then the
+			// counter. The run row is already held (the pre-image read).
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE run_id = $1::uuid AND status = 'READY' ORDER BY id FOR NO KEY UPDATE`, id); err != nil {
+				return sync.RowState{}, fmt.Errorf("dispatch: lock stops to unassign on sync cancel: %w", err)
+			}
 			if _, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 				UPDATE delivery_stops SET run_id = NULL, stop_no = 0, updated_at = now(),
 				       seq = (SELECT next_value FROM seq)
