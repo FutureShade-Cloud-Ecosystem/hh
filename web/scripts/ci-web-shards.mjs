@@ -54,14 +54,15 @@ export const WEIGHTS = {
   "work-offline": 0.1,
   [EVENING_GUARD]: 3.7,
 };
-// Playwright's --shard=k/m deals whole test files out, so the parts are not
-// equal: partWeights holds each part's measured minutes (the file set is
-// stable, so part k is the same files every run until the suite grows; rerun
-// the unit timing then). extras is the package's typecheck, node tests and
-// extra configs.
+// Playwright's --shard=k/m deals whole test files out, and a part's time
+// moves several minutes between runs with the files it holds (measured: the
+// same four Quote Desk parts ran 12.3, 4.6, 10.3, 7.0 and then 12.3, 8.1, 6.9,
+// 9.3 minutes). So the split is fine grained and the parts are weighted
+// equally at their mean, letting the packer average the noise out. extras is
+// the package's typecheck, node tests and extra configs.
 export const SPLITS = {
-  "quote-desk": { parts: 4, partWeights: [12.3, 4.6, 10.3, 7.0], extras: 2.5 },
-  "counter-till": { parts: 2, partWeights: [7.2, 7.4], extras: 1.2 },
+  "quote-desk": { parts: 8, partWeights: Array(8).fill(4.6), extras: 2.0 },
+  "counter-till": { parts: 3, partWeights: Array(3).fill(4.2), extras: 1.2 },
 };
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
