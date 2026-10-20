@@ -191,11 +191,28 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// The branch reach fence (UX-81): the caller's staff authority decides which branches' picks are in the
+	// page. It is part of the query, not a filter on the page, so the page fills with the rows the caller reaches
+	// and `seq > since` stays exact (a hidden row never shortens a page that has a follower).
+	branches, ok, err := s.pullReach(ctx, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return []sync.Entity{}, []sync.Tombstone{}, nil
+	}
+	reachSQL := ""
+	if branches != nil {
+		reachSQL = " AND (branch_id IS NULL OR branch_id = ANY($4::uuid[]))"
+	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks
-		WHERE %s AND seq IS NOT NULL AND seq > $2
+		WHERE %s AND seq IS NOT NULL AND seq > $2%s
 		ORDER BY seq ASC
-		LIMIT $3`, syncColumns, where)
+		LIMIT $3`, syncColumns, where, reachSQL)
 	args = append(args, since, limit)
+	if branches != nil {
+		args = append(args, branches)
+	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tasks: sync pull: %w", err)
@@ -714,4 +731,33 @@ func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sy
 		return refusedf("yard: branch out of scope")
 	}
 	return nil
+}
+
+// pullReach resolves the caller's branch reach for a pull (UX-81), the shape the REST board holds to
+// (yardBranchFence: a branch scoped caller reaches its granted branches, a GLOBAL caller every one) and the
+// writes hold to through syncBranchFence. It answers (nil, true) for a GLOBAL caller (no fence), the granted
+// branch ids and true for a scoped one (a pick with no branch is held by no one, so it stays in reach), and
+// false for an absent or inactive authority, which pulls nothing. An unwired seam fences nothing: the
+// composition root refuses to boot a pick door without it (PickDoorWired).
+func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string, bool, error) {
+	if s.staff == nil {
+		return nil, true, nil
+	}
+	sc, has, err := s.staff(ctx, f.Actor, f.OrgID)
+	if err != nil {
+		return nil, false, fmt.Errorf("tasks: sync pull authority: %w", err)
+	}
+	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return nil, false, nil
+	}
+	if sc.Scope == identity.ScopeGlobal {
+		return nil, true, nil
+	}
+	branches := make([]string, 0, len(sc.Branches))
+	for id, ok := range sc.Branches {
+		if ok && looksLikeUUID(id) {
+			branches = append(branches, id)
+		}
+	}
+	return branches, true, nil
 }
