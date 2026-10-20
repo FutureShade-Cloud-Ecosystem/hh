@@ -102,7 +102,7 @@ export async function takeFirstStopEnRoute(page: Page): Promise<void> {
 
 /** From the run sheet: take stop `n` (1 based) loaded, en route and delivered, and come back to the run sheet. */
 export async function deliverStop(page: Page, n: number): Promise<void> {
-  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.locator("[data-stop]").filter({ has: page.locator("[data-stop-no]", { hasText: String(n) }) }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
@@ -115,11 +115,17 @@ export async function deliverStop(page: Page, n: number): Promise<void> {
 
 /** From the run sheet: take stop `n` en route, then record it as not delivered with a reason. */
 export async function failStop(page: Page, n: number, reason: string): Promise<void> {
-  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.locator("[data-stop]").filter({ has: page.locator("[data-stop-no]", { hasText: String(n) }) }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();
-  await page.getByLabel("What stopped this delivery?").fill(reason);
+  const presetRadio = page.getByRole("radio", { name: reason, exact: true });
+  if ((await presetRadio.count()) > 0 && reason !== "Other, say what") {
+    await presetRadio.check();
+  } else {
+    await page.getByRole("radio", { name: "Other, say what" }).check();
+    await page.getByLabel("What stopped this delivery?").fill(reason);
+  }
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await page.locator("[data-stop-status]").filter({ hasText: "Not delivered" }).waitFor();
   await page.getByRole("button", { name: "Back to my run" }).click();
@@ -143,3 +149,31 @@ export const test = base.extend<{ pinned: void }>({
 });
 
 export { expect };
+
+/** Opens the Field frame's account menu and presses one item (Switch role, Sign out, Brand theme, Light theme). */
+export async function accountItem(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: /^Account/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
+/** Runs in the page before any script: the front door's record for a yard manager, who holds Pick, Drive and Messages. */
+export function managerHandoff(): void {
+  const part = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "d0200000-0000-4000-9000-000000000009", exp })}.c2ln`;
+  const record = {
+    token,
+    tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
+    flow: "yard-manager",
+    roleLabel: "Yard Manager",
+    user: { userId: "d0200000-0000-4000-9000-000000000009", email: "manager@hh-demo.invalid", name: "Yard manager (demo)" },
+    roleCode: "yard_manager",
+    roleName: "Yard Manager",
+    tier: 2,
+    scope: "BRANCH",
+  };
+  if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", JSON.stringify(record));
+  }
+}

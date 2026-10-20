@@ -44,7 +44,7 @@ func TestIntegration_ShareLink_MintViewAccept(t *testing.T) {
 	svc := shareSvc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
 
-	minted, err := svc.MintShareLink(ctx, quoteID, 0)
+	minted, err := mintAndSend(svc, ctx, quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestIntegration_ShareLink_AcceptanceSurvivesTheQuote(t *testing.T) {
 	cleanupShares(t, pool, quoteID)
 	svc := shareSvc(t, pool, now)
 
-	minted, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+	minted, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		_, quoteID, _, _ := seedQuote(t, pool, "SENT", nil)
 		cleanupShares(t, pool, quoteID)
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+		minted, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		cleanupShares(t, pool, quoteID)
 		svc := shareSvc(t, pool, now)
 		staffCtx := qCtxAs(intStaff(intTrenton))
-		minted, err := svc.MintShareLink(staffCtx, quoteID, 0)
+		minted, err := mintAndSend(svc, staffCtx, quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -259,7 +259,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		cleanupShares(t, pool, quoteB)
 		svc := shareSvc(t, pool, now)
 		staffCtx := qCtxAs(intStaff(intTrenton))
-		mintedA, err := svc.MintShareLink(staffCtx, quoteA, 0)
+		mintedA, err := mintAndSend(svc, staffCtx, quoteA, 0)
 		if err != nil {
 			t.Fatalf("mint A: %v", err)
 		}
@@ -295,7 +295,7 @@ func TestIntegration_ShareLink_Lifecycle(t *testing.T) {
 		_, quoteID, _, _ := seedQuote(t, pool, "SENT", "2026-06-01")
 		cleanupShares(t, pool, quoteID)
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+		minted, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 		if err == nil {
 			// Minting on a lapsed quote is itself refused; if that ever changes, the accept must still
 			// refuse, so assert that too.
@@ -325,7 +325,7 @@ func TestIntegration_Accept_RequiresNameAndAffirmative(t *testing.T) {
 	cleanupShares(t, pool, quoteID)
 	svc := shareSvc(t, pool, now)
 	ctx := context.Background()
-	minted, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+	minted, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestIntegration_Accept_IsAtomicWithItsTrail(t *testing.T) {
 
 	// Mint with a recorder that works, by using a clean service for the mint only.
 	minter := shareSvc(t, pool, now)
-	minted, err := minter.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+	minted, err := mintAndSend(minter, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -444,7 +444,7 @@ func mintedFor(t *testing.T, pool *pgxpool.Pool, now time.Time, validUntil any) 
 	_, quoteID, _, _ = seedQuote(t, pool, "DRAFT", validUntil)
 	cleanupShares(t, pool, quoteID)
 	svc = shareSvc(t, pool, now)
-	minted, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+	minted, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestIntegration_Mint_RefusedWhenQuoteHasNoLines(t *testing.T) {
 		}
 		svc := shareSvc(t, pool, now)
 
-		_, err := svc.MintShareLink(ctx, quoteID, 0)
+		_, err := mintAndSend(svc, ctx, quoteID, 0)
 		if !errors.Is(err, ErrEmptyQuote) {
 			t.Fatalf("minting an empty quote must return ErrEmptyQuote; got %v", err)
 		}
@@ -574,7 +574,7 @@ func TestIntegration_Mint_RefusedWhenQuoteHasNoLines(t *testing.T) {
 		_, quoteID, _, _ := seedQuote(t, pool, "DRAFT", nil)
 		cleanupShares(t, pool, quoteID)
 		svc := shareSvc(t, pool, now)
-		if _, err := svc.MintShareLink(ctx, quoteID, 0); err != nil {
+		if _, err := mintAndSend(svc, ctx, quoteID, 0); err != nil {
 			t.Fatalf("a one-line quote must still mint; got %v", err)
 		}
 	})
@@ -595,7 +595,7 @@ func TestIntegration_Mint_RefusedWhenQuoteHasNoLines(t *testing.T) {
 			t.Fatalf("zero the quote: %v", err)
 		}
 		svc := shareSvc(t, pool, now)
-		if _, err := svc.MintShareLink(ctx, quoteID, 0); err != nil {
+		if _, err := mintAndSend(svc, ctx, quoteID, 0); err != nil {
 			t.Fatalf("a $0 quote WITH lines must still mint; got %v", err)
 		}
 	})
@@ -623,7 +623,7 @@ func TestIntegration_PublicQuote_BlankDescriptionFallsBackToProductName(t *testi
 			t.Fatalf("read product name: %v", err)
 		}
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(ctx, quoteID, 0)
+		minted, err := mintAndSend(svc, ctx, quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -671,7 +671,7 @@ func TestIntegration_PublicQuote_CarriesStoredTax(t *testing.T) {
 			t.Fatalf("apply stored tax: %v", err)
 		}
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(ctx, quoteID, 0)
+		minted, err := mintAndSend(svc, ctx, quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -704,7 +704,7 @@ func TestIntegration_PublicQuote_CarriesStoredTax(t *testing.T) {
 			t.Fatalf("apply stored tax: %v", err)
 		}
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(ctx, quoteID, 0)
+		minted, err := mintAndSend(svc, ctx, quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -723,7 +723,7 @@ func TestIntegration_PublicQuote_CarriesStoredTax(t *testing.T) {
 		_, quoteID, _, _ := seedQuote(t, pool, "DRAFT", nil)
 		cleanupShares(t, pool, quoteID)
 		svc := shareSvc(t, pool, now)
-		minted, err := svc.MintShareLink(ctx, quoteID, 0)
+		minted, err := mintAndSend(svc, ctx, quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}

@@ -15,6 +15,7 @@ import {
   type CounterQuote,
 } from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js';
 import { AddOnce } from '@hardscapehouse/pos-kit/src/ported/_pos-add-dedupe.js';
+import { onHandStatus } from './_pos-stock.js';
 
 /**
  * hos-pos-search-drop: the counter's search RESULTS, as five rows under the field.
@@ -80,7 +81,7 @@ export class HosPosSearchDrop extends LitElement {
   commitTop(): boolean {
     const top = this.topHit();
     if (!top) return false;
-    this.add(top);
+    this.add(top, false);
     return true;
   }
 
@@ -148,6 +149,9 @@ export class HosPosSearchDrop extends LitElement {
       }
       .meta .sku {
         font-family: var(--hos-font-mono);
+      }
+      .meta .out {
+        color: var(--hos-safety-red);
       }
       /* The money column has a fixed floor and is right-aligned, so five prices form one edge
          instead of five (the DIB-512 finding, held here from the start). */
@@ -245,6 +249,22 @@ export class HosPosSearchDrop extends LitElement {
           grid-column: 2;
           grid-row: 2;
           align-self: center;
+          white-space: normal;
+        }
+        /* The stock words never truncate: at this width they take their own line under the SKU
+           (the SKU may still ellipsize on its own line). */
+        .meta .sku {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .meta .out {
+          display: block;
+          white-space: nowrap;
+        }
+        .meta .sep {
+          display: none;
         }
         .price {
           grid-column: 3;
@@ -346,8 +366,18 @@ export class HosPosSearchDrop extends LitElement {
     this.adder.ticketAt(this.ticketEpoch);
   }
 
-  private add(h: CounterHit): void {
-    this.adder.add(this, h.product_id, counterHitToProduct(h));
+  /**
+   * `announce` is true for a row the person picked: the terminal clears the field and returns the
+   * caret to it, so the next name does not append to this one. The field's own Enter commits the
+   * top row through commitTop and ends it there itself, so it passes false.
+   */
+  private add(h: CounterHit, announce = true): void {
+    const sent = this.adder.add(this, h.product_id, counterHitToProduct(h));
+    if (sent && announce) {
+      this.dispatchEvent(
+        new CustomEvent('pos-drop-added', { detail: { name: h.name, sku: h.sku }, bubbles: true, composed: true }),
+      );
+    }
   }
 
   private focusRow(i: number): void {
@@ -357,6 +387,14 @@ export class HosPosSearchDrop extends LitElement {
   }
 
   private onKeydown(e: KeyboardEvent, len: number): void {
+    // A printable key on a focused row belongs to the scan field: a gun's burst with a row holding
+    // focus must land in the field (and its Enter with it), never press the row. Space stays the
+    // row's own activation key. The terminal hands focus and the character to the box at once.
+    if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      this.dispatchEvent(new CustomEvent('pos-drop-type', { detail: { key: e.key }, bubbles: true, composed: true }));
+      return;
+    }
     const next = rowStep(this.roveIdx, e.key, len);
     if (next === null) return;
     e.preventDefault();
@@ -406,7 +444,7 @@ export class HosPosSearchDrop extends LitElement {
   }
 
   private renderRow(h: CounterHit, i: number) {
-    const onHand = h.on_hand_branch;
+    const stock = onHandStatus(h.on_hand_branch);
     return html`<button
       class="row"
       role="option"
@@ -421,7 +459,11 @@ export class HosPosSearchDrop extends LitElement {
       <span class="id">
         <span class="name">${h.name}</span>
         <span class="meta"
-          ><span class="sku">${h.sku}</span>${onHand === undefined ? nothing : html` · ${onHand} on hand`}</span
+          ><span class="sku">${h.sku}</span>${stock === null
+            ? nothing
+            : stock.tone === 'out'
+              ? html`<span class="sep"> · </span><span class="out">${stock.label}</span>`
+              : html`<span class="sep"> · </span>${stock.label}`}</span
         >
       </span>
       ${this.renderPrice(h)}

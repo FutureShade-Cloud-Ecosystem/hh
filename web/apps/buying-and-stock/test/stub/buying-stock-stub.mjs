@@ -87,34 +87,32 @@ function callerOf(req) {
   }
 }
 
+const DEFAULT_BUSINESS_ZONE = "America/Los_Angeles";
+let businessZone = DEFAULT_BUSINESS_ZONE;
+// The surface config route's reads so far and how long it stalls before answering (a test's knob).
+let configReads = 0;
+let configDelayMs = 0;
+let clockOffsetMs = 0;
+const nowMs = () => Date.now() + clockOffsetMs;
+
 function mintToken(sub) {
   const part = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const issuedAtSeconds = Math.floor(nowMs() / 1000);
   const payload = { iss: "hh-demo-stub", sub, aud: "staff", iat: issuedAtSeconds, exp: issuedAtSeconds + 3600 };
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-// One day source for every date the stub writes: the machine's local day,
-// the same day the app calls today in the browser on the same machine. The
-// contract tests read it in the same zone (they pass TZ through), so an offset
-// of N days never straddles a boundary between the stub and its readers.
-function localDay(at) {
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-}
-
-// A transfer's eta is the one date the core cuts in its house zone, not the machine's
-// (core/internal/inventory/transfer_eta.go etaZone), so the stub cuts it there too.
+// One source for every date the stub writes: the served business_zone,
+// the same zone the surface config route answers to the browser.
 function houseDayOffset(offset) {
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const at = new Date(`${day}T12:00:00Z`);
+  const cur = new Intl.DateTimeFormat("en-CA", { timeZone: businessZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(nowMs()));
+  const at = new Date(`${cur}T12:00:00Z`);
   at.setUTCDate(at.getUTCDate() + offset);
   return at.toISOString().slice(0, 10);
 }
 
 function dayOffset(offset) {
-  const at = new Date();
-  at.setDate(at.getDate() + offset);
-  return localDay(at);
+  return houseDayOffset(offset);
 }
 
 function uuid(kind, n) {
@@ -141,7 +139,7 @@ function isUuid(value) {
 // The ceiling the core states on every line door: numeric(19,4) overflows past 1e12.
 const MAX_LINE_QTY = 1e12;
 
-const NOW_ISO = () => new Date().toISOString();
+const NOW_ISO = () => new Date(nowMs()).toISOString();
 
 // ---- the world ---------------------------------------------------------------------------------
 
@@ -907,8 +905,17 @@ async function handle(req, res) {
   const method = req.method;
 
   if (path === "/healthz") return json(res, { ok: true });
+  // The public tenant config route (no credential): the dealer the band and the tab name.
+  if (req.method === "GET" && path === "/api/v1/tenant/config") {
+    return json(res, { id: "demo-dealer", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "#3a7d56", support_email: "support@gablelandscape.invalid", support_phone: "" });
+  }
   if (method === "POST" && path === "/_stub/reset") {
+    const body = await readBody(req);
+    clockOffsetMs = typeof body?.now === "number" && Number.isFinite(body.now) ? body.now - Date.now() : 0;
+    businessZone = typeof body?.business_zone === "string" && body.business_zone !== "" ? body.business_zone : DEFAULT_BUSINESS_ZONE;
     reset();
+    configReads = 0;
+    configDelayMs = 0;
     walled = false;
     fenced = false;
     roleMode = "procurement";
@@ -916,7 +923,18 @@ async function handle(req, res) {
     role = "procurement-manager";
     Object.assign(flags, { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false });
     purch.reset();
-    return json(res, { ok: true });
+    return json(res, { ok: true, business_zone: businessZone });
+  }
+  if (method === "POST" && path === "/_stub/clock") {
+    const body = await readBody(req);
+    clockOffsetMs = typeof body?.now === "number" && Number.isFinite(body.now) ? body.now - Date.now() : 0;
+    if (typeof body?.business_zone === "string" && body.business_zone !== "") businessZone = body.business_zone;
+    return json(res, { ok: true, business_zone: businessZone });
+  }
+  if (method === "POST" && path === "/_stub/config") {
+    const body = await readBody(req);
+    if (typeof body?.delay_ms === "number" && Number.isFinite(body.delay_ms)) configDelayMs = Math.max(0, body.delay_ms);
+    return json(res, { ok: true, reads: configReads, delay_ms: configDelayMs });
   }
   if (method === "POST" && path === "/_stub/flag") {
     const body = await readBody(req);
@@ -1032,6 +1050,26 @@ async function handle(req, res) {
   if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----
+  if (method === "GET" && path === "/api/v1/surfaces/buying-and-stock/config") {
+    configReads += 1;
+    if (configDelayMs > 0) await new Promise((r) => setTimeout(r, configDelayMs));
+    const profile = seat === "procurement" ? "manager" : seat === "yard" ? "yard" : "counter";
+    return json(res, {
+      surface_id: "buying-and-stock",
+      profile,
+      role_items: [],
+      user_items: [],
+      workspace: {
+        split_pct: 50,
+        arrangement: "PRIMARY_LEFT",
+        primary_collapsed: false,
+        secondary_collapsed: false,
+        cost_hidden: flags.costsHidden,
+        source: "dealer",
+      },
+      business_zone: businessZone,
+    });
+  }
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {
     if (outOfReach(url.searchParams.get("branch_id"))) return refuse(res, 403, "you do not have access to that branch");
     // The unnamed read answers the reach set (the caller's branches only), the core's rule.

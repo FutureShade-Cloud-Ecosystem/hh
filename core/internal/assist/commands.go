@@ -69,6 +69,10 @@ type Command struct {
 	// check lives. An exported func field would let a caller hold a command value and skip the gate,
 	// which is the one mistake this design must make impossible rather than discouraged.
 	run func(ctx context.Context, deps Deps, c Caller, a Args) (Result, error)
+
+	// describe, when set, rewrites Summary for the asker the command is listed to (data.query shows each
+	// asker only their own catalogue). Unexported, like run.
+	describe func(c Caller) string
 }
 
 // Deps is the set of read services the commands run through. A nil member is an unwired seam: the
@@ -99,6 +103,10 @@ type Deps struct {
 	// Same rule again: nil means unwired, and order.activity answers 503 while everything else works.
 	Activity OrderActivityReader
 
+	// -- TanyAI slice 5: the structured data tool (commands_data.go) ----------------------------
+	// Nil means unwired and data.query answers 503 while everything else works.
+	Query DataQuerier
+
 	// Now is the clock the date-shaped commands ask. Injected rather than read from time.Now at the
 	// call site so "payments today" is testable without waiting for tomorrow, and so ONE clock
 	// decides the day for every command in an exchange, two commands in one answer disagreeing
@@ -125,7 +133,7 @@ const maxItems = 10
 // the yard, appended rather than interleaved so the original five keep the order testers learned.
 // DIB-494's order-activity command is appended after those, by the same reasoning.
 func BuiltinCommands() []Command {
-	return append(append(coreCommands(), DomainCommands()...), ActivityCommands()...)
+	return append(append(append(coreCommands(), DomainCommands()...), ActivityCommands()...), DataCommands()...)
 }
 
 func coreCommands() []Command {

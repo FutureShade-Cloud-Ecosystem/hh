@@ -8,19 +8,25 @@ import {
   CONFIG_ERROR_WORDS,
   PERSONA_REFUSAL_WORDS,
   SIGN_IN_WORDS,
+  dayPeriodInZone,
+  dealerLine,
+  firstNameOf,
   focusAfter,
+  heldRolesFor,
   methodsFor,
   fetchMethods,
   landingFor,
+  pickerGreeting,
   signInNotice,
 } from "../src/signin.js";
-import { LIVE_ROLES } from "../src/roles.js";
+import { LIVE_ROLES, primaryTileFor } from "../src/roles.js";
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 const answer = (status, body) => async () => new Response(body === undefined ? null : JSON.stringify(body), { status });
 
 test("the words of each sign in state are the ones the brief names", () => {
   assert.equal(signInNotice("forbidden"), "This account is not set up for this site. Ask your administrator to add you.");
-  assert.equal(signInNotice("bad_credentials"), "That email and password do not match. Check them and try again.");
+  assert.equal(signInNotice("bad_credentials"), "That sign in did not work. Check the email and the password and try again.");
   assert.equal(signInNotice("rate_limited"), "Too many attempts. Wait a moment, then try again.");
   assert.equal(signInNotice("unavailable"), "Sign in is unavailable right now. Try again in a moment.");
   assert.equal(signInNotice("offline"), "You are offline. Connect to the internet, then try again.");
@@ -33,6 +39,14 @@ test("the words of each sign in state are the ones the brief names", () => {
 test("a cancelled or superseded sign in says nothing", () => {
   assert.equal(signInNotice("cancelled"), "");
   assert.equal(signInNotice("superseded"), "");
+});
+
+test("dealerLine shows dealer and branch when configured, or dealer name alone when branch is absent", () => {
+  assert.equal(dealerLine({ name: "Gable Landscape Supply", mark: "gable" }), "Gable Landscape Supply");
+  assert.equal(
+    dealerLine({ name: "Gable Landscape Supply", mark: "gable", branch: "Point Loma" }),
+    "Gable Landscape Supply · Point Loma",
+  );
 });
 
 test("every word is plain: no dash, no exclamation mark, no raw status or code", () => {
@@ -118,4 +132,45 @@ test("the micro apps' role table is the front door's role catalog: each live rol
     assert.deepEqual([...APP_ROLES[appId]].sort(), fromCatalog.sort(), appId);
   }
   for (const role of LIVE_ROLES) assert.equal(ROLE_FLOWS[role.id], role.flow, role.id);
+});
+
+test("firstNameOf and pickerGreeting greet by first name and period in houseZone", () => {
+  resetHouseZone();
+  assert.equal(firstNameOf("Partner One"), "Partner");
+  assert.equal(firstNameOf("Sales manager (demo)"), "Sales");
+  assert.equal(firstNameOf("   "), "");
+
+  // 02:30 UTC is 22:30 (evening) in America/Toronto and 19:30 (evening) in America/Los_Angeles.
+  const utcEarlyMorning = new Date(1_000_002_600_000);
+  assert.equal(dayPeriodInZone(utcEarlyMorning, "America/Toronto"), "evening");
+  assert.equal(
+    pickerGreeting("Partner One", utcEarlyMorning),
+    "Good evening, Partner. What are you working on today?",
+  );
+
+  // 17:30 UTC is 13:30 (afternoon) in America/Toronto, but 10:30 (morning) in America/Los_Angeles.
+  const utcNoonish = new Date(1_000_056_600_000);
+  assert.equal(dayPeriodInZone(utcNoonish, "America/Toronto"), "afternoon");
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  assert.equal(
+    pickerGreeting("Partner One", utcNoonish),
+    "Good morning, Partner. What are you working on today?",
+  );
+  resetHouseZone();
+});
+
+test("heldRolesFor returns only the live roles held, and primaryTileFor names the primary openable app", () => {
+  assert.deepEqual(
+    heldRolesFor("inside_sales").map((r) => r.id),
+    ["inside_sales"],
+  );
+  assert.deepEqual(
+    heldRolesFor("general_manager,sales_manager").map((r) => r.id),
+    ["general_manager", "sales_manager"],
+  );
+  assert.deepEqual(heldRolesFor("platform_admin"), []);
+  for (const role of LIVE_ROLES) {
+    const primary = primaryTileFor(role);
+    assert.ok(primary && primary.href !== null, role.id);
+  }
 });

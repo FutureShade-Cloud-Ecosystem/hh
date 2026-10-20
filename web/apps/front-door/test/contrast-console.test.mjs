@@ -38,6 +38,14 @@ const PAIRS = [
   { selector: ".dealer", ground: "var(--hh-page)" },
   { selector: ".apps-menu summary", ground: "var(--hh-page)" },
   { selector: ".apps-list button", ground: "var(--hh-card)" },
+  { selector: ".signin-footer", ground: "var(--hh-page)" },
+  { selector: ".quiet-control", ground: "var(--hh-page)" },
+  { selector: ".account-name", ground: "var(--hh-card)" },
+  { selector: ".not-you-btn", ground: "var(--hh-card)" },
+  { selector: ".picker-group-label", ground: "var(--hh-card)" },
+  { selector: ".picker-option-title", ground: "var(--hh-card)" },
+  { selector: ".picker-option-sub", ground: "var(--hh-card)" },
+  { selector: ".persona-walk-summary", ground: "var(--hh-card)" },
 ];
 
 for (const { selector, ground } of PAIRS) {

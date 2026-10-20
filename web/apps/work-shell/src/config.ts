@@ -3,9 +3,6 @@
 /** The organisation the Console exchange is asked for: the demo tenant's slug, the front door's own constant. */
 export const DEMO_ORG_SLUG = "hh-demo";
 
-/** The organisation word in the band: the demo tenant (GLS-TENANT), until a sign in answers a dealer name. */
-export const DEMO_ORG_NAME = "Gable Landscape Supply";
-
 /** Where the front door is served inside the Work profile (assemble-dist.sh builds it at this base). */
 export const DOOR_PATH = "/door/";
 

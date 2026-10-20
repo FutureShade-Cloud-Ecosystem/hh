@@ -24,28 +24,28 @@ export const consoleStyles = css`
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
     border-radius: var(--hh-radius-control);
-    font-weight: 800;
-    font-size: 18px;
+    font-weight: 700;
+    font-size: 16px;
   }
   .dealer-names {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--hh-s-2);
     min-width: 0;
   }
   .dealer-name {
-    font-family: Bitter, Georgia, serif;
-    font-weight: 800;
-    font-size: 18px;
+    font-family: var(--hh-font-ui);
+    font-weight: 700;
+    font-size: 16px;
     letter-spacing: 0.01em;
-    line-height: 1.05;
+    line-height: 1.2;
     text-transform: uppercase;
   }
   .dealer-sub {
-    font-family: Bitter, Georgia, serif;
-    font-weight: 500;
+    font-family: var(--hh-font-ui);
+    font-weight: 600;
     font-size: 10px;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.12em;
     line-height: 1.2;
     text-transform: uppercase;
     color: var(--hh-text-dim);
@@ -56,13 +56,13 @@ export const consoleStyles = css`
   .signin-stage {
     display: grid;
     justify-items: center;
-    gap: var(--hh-s-24);
-    padding: var(--hh-s-40) var(--hh-s-16) var(--hh-s-64);
+    gap: var(--hh-s-16);
+    padding: var(--hh-s-64) var(--hh-s-16);
   }
   .signin-card {
     width: 100%;
-    max-width: 420px;
-    padding: var(--hh-s-32) var(--hh-s-24);
+    max-width: 460px;
+    padding: var(--hh-s-28) var(--hh-s-40) var(--hh-s-32);
     background: var(--hh-card);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hh-radius-card);
@@ -70,25 +70,33 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-16);
   }
+  .signin-card .dealer {
+    justify-self: center;
+  }
   .signin-card .dealer-mark {
     width: 44px;
     height: 44px;
   }
   .signin-card .dealer-name {
-    font-size: 22px;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.25;
   }
   .signin-title {
-    margin: var(--hh-s-8) 0 0;
-    font-size: 26px;
-    line-height: 1.15;
+    margin: 0;
+    text-align: center;
+    font-size: 20px;
+    line-height: 1.25;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
   }
   .signin-lead {
-    margin: calc(var(--hh-s-8) * -1) 0 0;
+    margin: calc(var(--hh-s-12) * -1) 0 0;
+    text-align: center;
     color: var(--hh-text-dim);
-    font-size: 15px;
-    line-height: 1.45;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
   }
   .signin-form {
     display: grid;
@@ -99,13 +107,16 @@ export const consoleStyles = css`
     gap: var(--hh-s-4);
   }
   .field label {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
+    line-height: 1.3;
   }
   .field input {
     width: 100%;
     min-height: 44px;
-    font-size: 16px;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.4;
   }
   .field input[readonly] {
     cursor: progress;
@@ -115,8 +126,10 @@ export const consoleStyles = css`
   }
   .signin-card .btn-wide {
     width: 100%;
-    min-height: 48px;
+    min-height: 44px;
+    font-size: 14px;
     font-weight: 600;
+    line-height: 1.2;
   }
   .signin-card .btn-primary:disabled {
     cursor: progress;
@@ -145,7 +158,9 @@ export const consoleStyles = css`
     align-items: center;
     gap: var(--hh-s-12);
     color: var(--hh-text-dim);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
   }
   .or::before,
   .or::after {
@@ -158,32 +173,32 @@ export const consoleStyles = css`
     flex: none;
     width: 18px;
     height: 18px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    border: 1px solid var(--hh-control-line);
-    font-size: 11px;
-    font-weight: 700;
+    display: block;
   }
   /* The status line: always rendered, empty at rest. An error is ink, with
      the words doing the work and a mark beside them, never colour alone. */
   .status {
     margin: 0;
     min-height: 1.5em;
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
     color: var(--hh-text-dim);
   }
   /* Empty at rest it takes no room of its own: the card's row gap beside it is cancelled, so the
      live region stays in the tree without a blank band under the lead. */
   .status:empty {
     margin-top: calc(var(--hh-s-16) * -1);
+    min-height: 0;
+    padding: 0;
+    border: none;
   }
   .status.error {
     color: var(--hh-danger);
-    font-weight: 600;
-    padding-inline-start: var(--hh-s-12);
-    border-inline-start: 3px solid var(--hh-danger);
+    font-weight: 400;
+    padding: var(--hh-s-8) var(--hh-s-12);
+    border: 1px solid var(--hh-danger);
+    border-radius: var(--hh-radius-control);
   }
   .methods-note {
     margin: 0;
@@ -208,41 +223,294 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-12);
   }
+  .signin-footer {
+    display: grid;
+    justify-items: center;
+    gap: var(--hh-s-4);
+    text-align: center;
+    color: var(--hh-text-dim);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+  }
+  .signin-footer-copy {
+    margin: 0;
+  }
+  .signin-quiet-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+  }
+  .quiet-control {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    min-height: 32px;
+    font-family: var(--hh-font-ui);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--hh-text-dim);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+  }
+  .quiet-control:hover {
+    color: var(--hh-text);
+    text-decoration: underline;
+  }
+  .quiet-control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .quiet-sep {
+    color: var(--hh-text-dim);
+    font-size: 12px;
+    font-weight: 400;
+  }
 
   /* ── the role entry ───────────────────────────────────────────────────── */
-  .entry-card {
+  .picker-stage {
     display: grid;
-    gap: var(--hh-s-16);
-    padding: var(--hh-s-32) var(--hh-s-24);
+    justify-items: center;
+    gap: var(--hh-s-20);
+    padding: var(--hh-s-48) var(--hh-s-16) var(--hh-s-64);
+  }
+  .entry-card {
+    width: 100%;
+    max-width: 520px;
+    display: grid;
+    gap: var(--hh-s-20);
+    padding: var(--hh-s-28) var(--hh-s-32) var(--hh-s-32);
     background: var(--hh-card);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hh-radius-card);
     box-shadow: var(--hh-widget-shadow);
-    margin: 0 0 var(--hh-s-32);
+    margin: 0;
   }
+  .entry-card h1,
   .entry-card h2 {
     margin: 0;
-    font-size: 26px;
-    line-height: 1.15;
+    font-size: 20px;
+    line-height: 1.25;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
+    color: var(--hh-text);
   }
   .entry-card p {
     margin: 0;
     color: var(--hh-text-dim);
+    font-size: 14px;
+    font-weight: 400;
     line-height: 1.45;
   }
-  .entry-card .btn-wide {
-    justify-self: start;
-    min-width: min(100%, 360px);
-    min-height: 52px;
-    font-size: 17px;
+  .account-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-8) var(--hh-s-12);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    background: var(--hh-row);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+  }
+  .account-who {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
+  .account-avatar {
+    width: 24px;
+    height: 24px;
+    flex: none;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .account-name {
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.35;
+    color: var(--hh-text);
+  }
+  .not-you-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: var(--hh-s-8) var(--hh-s-8);
+    min-height: 44px;
+    font-family: var(--hh-font-ui);
+    font-size: 12px;
     font-weight: 600;
+    line-height: 1.2;
+    color: var(--hh-text-dim);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .not-you-btn:hover {
+    color: var(--hh-text);
+    text-decoration: underline;
+  }
+  .not-you-btn:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .picker-group {
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .picker-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+  }
+  .picker-radio-list {
+    display: grid;
+    gap: var(--hh-s-8);
+  }
+  .picker-branches {
+    display: grid;
+    gap: var(--hh-s-4);
+    margin: 0;
+  }
+  .picker-branches-names {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--hh-text);
+  }
+  .picker-option {
+    appearance: none;
+    width: 100%;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    text-align: start;
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .picker-option:hover {
+    border-color: var(--hh-accent);
+  }
+  .picker-option:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .picker-option.checked {
+    border-color: var(--hh-accent);
+    background: var(--hh-row);
+  }
+  .picker-radio-dot {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid var(--hh-control-line);
+    display: grid;
+    place-items: center;
+    background: var(--hh-card);
+    color: var(--hh-accent-ink);
+  }
+  .picker-option.checked .picker-radio-dot {
+    border-color: var(--hh-accent);
+    background: var(--hh-accent);
+  }
+  .picker-check-mark {
+    width: 12px;
+    height: 12px;
+    display: block;
+  }
+  .picker-option-words {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-2);
+    min-width: 0;
+  }
+  .picker-option-title {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--hh-text);
+  }
+  .picker-option-sub {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--hh-text-dim);
+  }
+  .entry-card .btn-wide,
+  .picker-submit {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    gap: var(--hh-s-8);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
   }
   .entry-subhead {
     margin: 0 0 var(--hh-s-12);
-    font-size: var(--hh-s-16);
+    font-size: 14px;
     font-weight: 600;
+  }
+  .persona-walk {
+    width: 100%;
+    max-width: 520px;
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-4) var(--hh-s-20);
+  }
+  .persona-walk[open] {
+    max-width: 960px;
+  }
+  .persona-walk-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    min-height: 44px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--hh-text-dim);
+  }
+  .persona-walk-summary::-webkit-details-marker {
+    display: none;
+  }
+  .persona-walk-summary:hover {
+    color: var(--hh-text);
+  }
+  .persona-walk-summary:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--hh-radius-control);
+  }
+  .persona-walk[open] .chev {
+    transform: rotate(0deg);
+  }
+  .persona-walk-body {
+    padding: var(--hh-s-12) 0 var(--hh-s-8);
+    display: grid;
+    gap: var(--hh-s-12);
   }
 
   /* ── the header: the selector zone, the person and Sign out ───────────── */
@@ -350,8 +618,16 @@ export const consoleStyles = css`
       min-width: 0;
     }
   }
+  @media (pointer: coarse), (max-width: 768px) {
+    .quiet-control {
+      min-height: 44px;
+      min-width: 44px;
+      padding: var(--hh-s-12) var(--hh-s-8);
+    }
+  }
   @media (max-width: 480px) {
-    .signin-stage {
+    .signin-stage,
+    .picker-stage {
       padding-top: var(--hh-s-24);
     }
     .signin-card {

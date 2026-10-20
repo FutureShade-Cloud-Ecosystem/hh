@@ -83,6 +83,57 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-rows")).toBeVisible();
   });
 
+  test("a slow session check and slow data call keep the signed in frame with the loading pattern, never the sign in page", async ({ page }) => {
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-", { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+  });
+
+  test("the section nav waits for the profile, so it never reshuffles under a tap", async ({ page }) => {
+    let releaseMe!: () => void;
+    const meHeld = new Promise<void>((resolve) => {
+      releaseMe = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "GET") await meHeld;
+      await route.continue();
+    });
+    await signIn(page, "owner");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.getByTestId("section-nav")).toHaveCount(0);
+    releaseMe();
+    await expect(page.getByTestId("section-nav").getByRole("button", { name: "Projects" })).toBeVisible();
+    await expect(page.getByTestId("section-nav").getByRole("button")).toHaveCount(4);
+  });
+
+  test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
+    let failMe = true;
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (failMe) return route.abort("failed");
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    failMe = false;
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-");
+  });
+
   test("an empty answer shows this app's own empty words", async ({ page, request }) => {
     await request.post("/_stub/control", { data: { empty: "orders" } });
     await signIn(page, "field");
@@ -139,6 +190,42 @@ test.describe("phone", () => {
     }
   });
 
+  test("when the orders list stops at 100 pages with a cursor left, the screen says the list is cut", async ({ page }) => {
+    let pageNo = 0;
+    await page.route("**/api/v1/tenant/orders*", async (route) => {
+      pageNo += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: `00000000-0000-4000-8000-${String(pageNo).padStart(12, "0")}`,
+              order_no: `SO-${40000 + pageNo}`,
+              customer_id: "00000000-0000-4000-8000-000000001001",
+              quote_id: null,
+              status: "CONFIRMED",
+              fulfillment: "DELIVERY",
+              requested_date: "2042-05-01",
+              subtotal_cents: 10000,
+              tax_cents: 800,
+              total_cents: 10800,
+              created_at: "2042-04-01T12:00:00Z",
+              has_backorder: false,
+            },
+          ],
+          next_cursor: `cursor-${pageNo}`,
+          limit: 1,
+        }),
+      });
+    });
+    await signIn(page, "field");
+    await expect(page.getByTestId("orders-truncated")).toHaveText(
+      "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.",
+    );
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-40001");
+  });
+
   test("a row opens the order with its journey and its asked-for day, and back returns to the list", async ({ page }) => {
     await signIn(page, "field");
     const firstRow = page.getByTestId("landing-rows").getByTestId("order-row").first();
@@ -146,7 +233,7 @@ test.describe("phone", () => {
     await firstRow.click();
     await expect(page.getByTestId("surface-title")).toHaveText("Order");
     await expect(page.getByTestId("order-head")).toContainText(orderNo);
-    await expect(page.getByTestId("order-head")).toContainText("Promised for");
+    await expect(page.getByTestId("order-head")).toContainText("Wanted by");
     const steps = page.getByTestId("order-timeline").locator(".tstep");
     await expect(steps).toHaveCount(5);
     await expect(page.getByTestId("order-lines")).toContainText("at $");
@@ -162,7 +249,12 @@ test.describe("phone", () => {
     await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
     const input = page.getByTestId("instructions-input");
     await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await expect(input).toHaveAttribute("maxlength", "2000");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
+    await input.fill("x".repeat(1850));
+    await expect(page.getByTestId("instructions-count")).toHaveText("1850 / 2000 characters");
     await input.fill("Call the site lead 30 minutes before arrival. Gate is on the north fence.");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
     await page.getByRole("button", { name: "Save notes" }).click();
     await expect(page.getByTestId("instructions-saved")).toHaveText("Delivery instructions saved.");
     await page.screenshot({ path: test.info().outputPath("instructions-phone.png") });
@@ -191,6 +283,19 @@ test.describe("phone", () => {
     await page.getByTestId("request-return").click();
     await expect(page.getByTestId("return-words")).toHaveText("This order cannot be returned through Pro. Ask the dealer to arrange it.");
     await expect(page.getByTestId("return-form")).toHaveCount(0);
+  });
+
+  test("a 403 on return eligibility reads as a role refusal naming who can request a return, with no retry", async ({ page }) => {
+    await page.route("**/return-eligibility", (route) =>
+      route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "insufficient permissions" }) }),
+    );
+    await signIn(page, "owner");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();
+    await page.getByTestId("request-return").click();
+    await expect(page.getByTestId("return-words")).toHaveText(
+      "Your role cannot request a return. Ask an Owner, Buyer, or Project manager on your account to request it.",
+    );
+    await expect(page.getByTestId("returns-card").getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
   test("a role that cannot commit a return sees no button and still sees the requests list", async ({ page }) => {
@@ -245,9 +350,41 @@ test.describe("phone", () => {
     await expect(page.getByTestId("invites-empty")).toBeVisible();
     const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
     await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(page.getByTestId("team-notice")).toHaveCount(0);
+    await expect(crewRow.getByTestId("role-confirm")).toContainText("Change Contractor field crew from Field crew to Buyer?");
+    await crewRow.getByTestId("confirm-role").click();
     await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
     await expect(crewRow.getByTestId("member-role")).toHaveValue("buyer");
     await page.screenshot({ path: test.info().outputPath("team-phone.png") });
+  });
+
+  test("a role change can be cancelled without asking the server, and an owner demoting themself is warned of losing Team access", async ({ page }) => {
+    const rolePuts: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PUT" && req.url().includes("/role")) rolePuts.push(req.url());
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const members = page.getByTestId("team-members").getByTestId("member-row");
+    const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
+    await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(crewRow.getByTestId("role-confirm")).toBeVisible();
+    await crewRow.getByTestId("cancel-role").click();
+    await expect(crewRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(crewRow.getByTestId("member-role")).toHaveValue("field_crew");
+    expect(rolePuts).toHaveLength(0);
+
+    await crewRow.getByTestId("member-role").selectOption({ label: "Owner" });
+    await crewRow.getByTestId("confirm-role").click();
+    await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
+
+    const ownerRow = members.filter({ hasText: "contractor.owner@hh-demo.invalid" });
+    await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(ownerRow.getByTestId("role-confirm")).toContainText(
+      "Change your role from Owner to Buyer? You will lose access to Team and user management as soon as this saves.",
+    );
+    await ownerRow.getByTestId("cancel-role").click();
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
   });
 
   test("deactivating a member asks the server, and the row says so and offers to reactivate", async ({ page }) => {
@@ -261,12 +398,39 @@ test.describe("phone", () => {
     await expect(crewRow).toContainText("Active");
   });
 
+  test("a pending member row shows Invited and is not offered Reactivate or Deactivate", async ({ page }) => {
+    await page.route("**/api/v1/tenant/users", async (route) => {
+      const response = await route.fetch();
+      const users = (await response.json()) as Record<string, unknown>[];
+      users.push({
+        id: "00000000-0000-4000-8000-000000009999",
+        customer_id: "00000000-0000-4000-8000-000000001001",
+        email: "contractor.pending@hh-demo.invalid",
+        name: "Pending crew",
+        role: "field_crew",
+        status: "pending",
+        notification_prefs: {},
+        created_at: "",
+        updated_at: "",
+      });
+      await route.fulfill({ response, json: users });
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const pendingRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.pending@hh-demo.invalid" });
+    await expect(pendingRow).toContainText("Invited");
+    await expect(pendingRow.getByTestId("member-reactivate")).toHaveCount(0);
+    await expect(pendingRow.getByTestId("member-deactivate")).toHaveCount(0);
+  });
+
   test("the last owner's refusal reads in plain words, for the role picker and for Deactivate", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
     const ownerRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.owner@hh-demo.invalid" });
     await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
+    await expect(ownerRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
     await ownerRow.getByTestId("member-deactivate").click();
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
     await expect(page.getByTestId("team-error")).not.toContainText("account_admin");
@@ -358,6 +522,104 @@ test.describe("phone", () => {
     expect(passwordCalls).toHaveLength(0);
   });
 
+  test("leaving a section during profile, password, or invite save does not leave the form stuck busy", async ({ page }) => {
+    await signIn(page, "owner");
+
+    let releaseProfile!: () => void;
+    const profileHeld = new Promise<void>((resolve) => {
+      releaseProfile = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await profileHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseProfile();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Summit Ridge owner");
+    await page.getByTestId("account-name").fill("Summit Ridge second");
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeEnabled();
+
+    let releasePassword!: () => void;
+    const passwordHeld = new Promise<void>((resolve) => {
+      releasePassword = resolve;
+    });
+    await page.route("**/api/v1/tenant/me/password", async (route) => {
+      await passwordHeld;
+      await route.continue();
+    });
+
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("another-password");
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releasePassword();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeEnabled();
+
+    let releaseInvite!: () => void;
+    const inviteHeld = new Promise<void>((resolve) => {
+      releaseInvite = resolve;
+    });
+    await page.route("**/api/v1/tenant/invites", async (route) => {
+      if (route.request().method() === "POST") {
+        await inviteHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await page.getByRole("button", { name: "Create invite" }).click();
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseInvite();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeEnabled();
+  });
+
+  test("an expired session on a write says so in dealer words with a sign in action, never raw server words", async ({ page, request }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
+    const input = page.getByTestId("instructions-input");
+    await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await page.route("**/delivery-instructions", async (route) => {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+    });
+    await input.fill("Gate is on the north fence.");
+    await page.getByRole("button", { name: "Save notes" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).not.toContainText("Missing or invalid credentials");
+
+    await request.post("/_stub/reset");
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  });
+
   test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
@@ -397,6 +659,72 @@ test.describe("phone", () => {
     await page.waitForURL(/\/pro-[a-z]+\/$/);
     expect(new URL(page.url()).pathname).toBe(`/pro-${target === "procurement" ? "procurement" : target}/`);
   });
+
+  test("Orders at 390x844 has zero serious contrast violations across the section segments", async ({ page }) => {
+    const contrastOffenders = (floor = 4.5) =>
+      page.evaluate((minRatio: number) => {
+        const parse = (v: string): [number, number, number, number] | null => {
+          const m = v.match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const p = m[1].split(",").map((s) => Number.parseFloat(s));
+          return p.length >= 3 && p.slice(0, 3).every((n) => !Number.isNaN(n))
+            ? [p[0], p[1], p[2], p.length > 3 && !Number.isNaN(p[3]) ? p[3] : 1]
+            : null;
+        };
+        const over = (t: [number, number, number, number], b: [number, number, number, number]): [number, number, number, number] => {
+          const a = t[3] + b[3] * (1 - t[3]);
+          if (a === 0) return [0, 0, 0, 1];
+          const mix = (x: number, y: number): number => (t[3] * x + b[3] * (1 - t[3]) * y) / a;
+          return [mix(t[0], b[0]), mix(t[1], b[1]), mix(t[2], b[2]), 1];
+        };
+        const parentOf = (n: Element): Element | null => {
+          if (n.parentElement) return n.parentElement;
+          const root = n.getRootNode();
+          return root instanceof ShadowRoot ? root.host : null;
+        };
+        const backdrop = (el: Element): [number, number, number, number] => {
+          let acc: [number, number, number, number] | null = null;
+          for (let cur: Element | null = el; cur !== null; cur = parentOf(cur)) {
+            const layer = parse(getComputedStyle(cur).backgroundColor);
+            if (layer && layer[3] > 0) {
+              acc = acc === null ? layer : over(acc, layer);
+              if (acc[3] >= 1) return acc;
+            }
+          }
+          return acc === null ? [255, 255, 255, 1] : over(acc, [255, 255, 255, 1]);
+        };
+        const ch = (v: number): number => {
+          const s = v / 255;
+          return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        const lum = (c: [number, number, number, number]): number => 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+        const ratio = (a: [number, number, number, number], b: [number, number, number, number]): number =>
+          (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        const out: { text: string; ratio: number }[] = [];
+        const walk = (root: Element | ShadowRoot | Document): void => {
+          for (const el of Array.from(root.querySelectorAll("*"))) {
+            if (el.shadowRoot) walk(el.shadowRoot);
+            const cs = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            if (cs.display === "none" || cs.visibility === "hidden" || rect.width < 1 || rect.height < 1) continue;
+            if (!Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "")) continue;
+            const ink = parse(cs.color);
+            if (!ink) continue;
+            const r = ratio(ink, backdrop(el));
+            if (r < minRatio) out.push({ text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40), ratio: Math.round(r * 100) / 100 });
+          }
+        };
+        walk(document);
+        return out;
+      }, floor);
+
+    await signIn(page, "owner");
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+  });
 });
 
 test.describe("desktop", () => {
@@ -417,3 +745,35 @@ test.describe("desktop", () => {
     await page.screenshot({ path: test.info().outputPath("order-desktop.png") });
   });
 });
+
+// UX-70 round 3: the dealer's served zone reaches the order page, whatever the machine's own zone is.
+// 05:30 UTC is the previous evening in Los Angeles; the page must read that day, never the UTC or Tokyo one.
+for (const machineZone of ["UTC", "Asia/Tokyo"]) {
+  test.describe(`the dealer's zone, machine in ${machineZone}`, () => {
+    test.use({ viewport: { width: 390, height: 844 }, timezoneId: machineZone });
+
+    test("an order's Submitted and Placed days read in the zone the dealer serves", async ({ page }) => {
+      const boundary = new Date();
+      boundary.setUTCHours(5, 30, 0, 0);
+      const dayIn = (timeZone: string): string => new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" }).format(boundary);
+      const pacificDay = dayIn("America/Los_Angeles");
+      expect(pacificDay).not.toBe(dayIn("UTC"));
+      expect(pacificDay).not.toBe(dayIn("Asia/Tokyo"));
+      await page.route("**/api/v1/tenant/config", async (route) => {
+        const response = await route.fetch();
+        const cfg = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...cfg, business_zone: "America/Los_Angeles" } });
+      });
+      await page.route("**/api/v1/tenant/orders/*", async (route) => {
+        const response = await route.fetch();
+        const detail = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...detail, created_at: boundary.toISOString() } });
+      });
+      await signIn(page, "field");
+      await page.getByTestId("landing-rows").getByTestId("order-row").first().click();
+      await expect(page.getByTestId("order-timeline")).toBeVisible();
+      await expect(page.getByTestId("order-placed")).toContainText(`Placed ${pacificDay}`);
+      await expect(page.getByTestId("order-timeline").locator(".tstep").first()).toContainText(pacificDay);
+    });
+  });
+}

@@ -49,6 +49,8 @@ roles' switchers loads its real bundle.
 
 ## For the fidelity pass
 
-A hosted app keeps its own header inside the frame (a second brand lockup and a
-second Switch role under the shell's band) until the apps grow a framed mode;
-the host cannot restyle a frame's document.
+The framed mode exists (GAPS-r2 row G1): a desk app standing alone renders the
+board's white band (the shell chrome's band variant) above its app-local
+header, and framed by this host it wears no band of its own, so the shell's
+band is the one band on screen. The fixture pages of the composed dist carry
+no band logic: the host keeps serving the compact band for them.

@@ -2,14 +2,15 @@
 // person reads off an order without the network. The timeline is derived from
 // the contract's state map (the kit's board.ts) and is silent where the
 // contract is silent, exactly as the kit is; these cases pin that silence.
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
+import { MAX_INSTRUCTIONS_LENGTH, flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsCountWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
-import { ROLE_OPTIONS, memberRowWords } from "../src/team.ts";
+import { ROLE_OPTIONS, memberRowWords, isLastActiveOwnerDemotion, roleChangeConfirmWords } from "../src/team.ts";
 import { addressKindWords, addressRowWords, passwordProblem } from "../src/account.ts";
 
 function order(status, fulfillment, extra = {}) {
@@ -55,9 +56,16 @@ test("a ready delivery holds at the yard: the road step is a stop's to say, so n
   assert.deepEqual(steps.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
 });
 
-test("a part delivered order has had a truck go out, and nothing is current about the rest", () => {
-  const steps = timelineSteps(order("PARTIALLY_FULFILLED", "DELIVERY"));
-  assert.deepEqual(steps.map((s) => s.state), ["done", "done", "done", "done", "upcoming"]);
+test("a part delivered order stops at picking and does not mark the road step done", () => {
+  const delivery = timelineSteps(order("PARTIALLY_FULFILLED", "DELIVERY"));
+  assert.deepEqual(delivery.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
+  const pickup = timelineSteps(order("PARTIALLY_FULFILLED", "WILL_CALL"));
+  assert.deepEqual(pickup.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
+});
+
+test("an unknown status leaves every step upcoming rather than marking four steps done", () => {
+  const unknown = timelineSteps(order("UNKNOWN_FUTURE_STATUS", "DELIVERY"));
+  assert.deepEqual(unknown.map((s) => s.state), ["upcoming", "upcoming", "upcoming", "upcoming", "upcoming"]);
 });
 
 test("a cancelled order stops rather than promising steps", () => {
@@ -66,9 +74,9 @@ test("a cancelled order stops rather than promising steps", () => {
 });
 
 test("the promised line reads the asked-for day, and says ready-by for a pickup", () => {
-  assert.deepEqual(promisedWords(order("PICKING", "DELIVERY")), { label: "Promised for", day: "May 1" });
-  assert.deepEqual(promisedWords(order("READY", "WILL_CALL")), { label: "Ready by", day: "May 1" });
-  assert.equal(promisedWords({ status: "PICKING", fulfillment: "DELIVERY", requested_date: "" }).day, "n/a");
+  assert.deepEqual(promisedWords(order("PICKING", "DELIVERY")), { label: "Wanted by", day: "May 1, 2042" });
+  assert.deepEqual(promisedWords(order("READY", "WILL_CALL")), { label: "Wanted by", day: "May 1, 2042" });
+  assert.equal(promisedWords({ status: "PICKING", fulfillment: "DELIVERY", requested_date: "" }).day, "Not set");
 });
 
 test("a live order past its asked-for day reads as late, a finished one does not", () => {
@@ -82,10 +90,18 @@ test("a live order past its asked-for day reads as late, a finished one does not
 });
 
 test("the dealer's today comes from the clock in the dealer's own zone, as a bare day", () => {
-  const today = houseToday(new Date("2042-05-09T02:30:00.000Z"));
-  assert.match(today, /^\d{4}-\d{2}-\d{2}$/);
-  // 02:30 UTC is the previous afternoon in San Diego, so the dealer's day is not the UTC day.
-  assert.notEqual(today, "2042-05-09");
+  // 05:00 UTC is 01:00 on the 9th in Toronto (the unserved default) and 22:00 on the 8th in Los Angeles.
+  const stamp = new Date("2042-05-09T05:00:00.000Z");
+  try {
+    resetHouseZone();
+    assert.equal(houseToday(stamp), "2042-05-09");
+    serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+    assert.equal(houseToday(stamp), "2042-05-08");
+    serveHouseZoneFrom({ business_zone: "Asia/Tokyo" });
+    assert.equal(houseToday(stamp), "2042-05-09");
+  } finally {
+    resetHouseZone();
+  }
 });
 
 test("the fulfillment reads as the words a person uses, never the stored string", () => {
@@ -130,6 +146,14 @@ test("a locked order says why its notes are read only, and says so differently f
   assert.equal(instructionsNote(order("FULFILLED", "DELIVERY"), true), "The truck already left with these notes.");
   assert.equal(instructionsNote(order("READY", "WILL_CALL"), true), "This order is not a delivery, so its notes are set by the dealer.");
   assert.equal(instructionsNote(order("PICKING", "DELIVERY"), false), "Your role reads these notes; changing them is another role's to do.");
+});
+
+test("delivery instructions character count stays silent until near the 2000 character bound", () => {
+  assert.equal(MAX_INSTRUCTIONS_LENGTH, 2000);
+  assert.equal(instructionsCountWords("short note"), "");
+  assert.equal(instructionsCountWords("x".repeat(1799)), "");
+  assert.equal(instructionsCountWords("x".repeat(1800)), "1800 / 2000 characters");
+  assert.equal(instructionsCountWords("x".repeat(2000)), "2000 / 2000 characters");
 });
 
 test("return statuses and reasons read as words, never stored strings", () => {
@@ -205,6 +229,19 @@ test("a member row reads the name, the email, the role label and the status word
   assert.ok(words.includes("Active"));
   assert.doesNotMatch(words, /field_crew|account_admin/);
   assert.doesNotMatch(words, /undefined|null|NaN/);
+});
+
+test("role change confirmation names the consequence, warns an owner demoting themself, and detects the last active owner", () => {
+  const owner = { id: "u-owner", name: "Contractor owner", role: "account_admin", status: "active" };
+  const crew = { id: "u-crew", name: "Contractor field crew", role: "field_crew", status: "active" };
+  assert.equal(roleChangeConfirmWords(crew, "buyer", "u-owner"), "Change Contractor field crew from Field crew to Buyer?");
+  assert.equal(
+    roleChangeConfirmWords(owner, "buyer", "u-owner"),
+    "Change your role from Owner to Buyer? You will lose access to Team and user management as soon as this saves.",
+  );
+  assert.equal(isLastActiveOwnerDemotion([owner, crew], "u-owner", "buyer"), true);
+  assert.equal(isLastActiveOwnerDemotion([owner, { ...crew, role: "account_admin" }], "u-owner", "buyer"), false);
+  assert.equal(isLastActiveOwnerDemotion([owner, crew], "u-crew", "buyer"), false);
 });
 
 test("an address kind reads as the words a person uses, and the row reads its facts", () => {

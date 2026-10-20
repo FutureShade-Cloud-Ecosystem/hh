@@ -14,8 +14,8 @@
 // truck route, so the journey's delivered step and the fulfillment word are
 // what the contract gives, and this file invents nothing past them.
 import type { TenantOrder } from "@hardscapehouse/api-client";
+import { houseDayInZone, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { TRACKING_WORDS, calendarDay, houseDay, trackingOf, type Tracking } from "@hardscapehouse/pro-kit";
-import { roadStep } from "./sections.js";
 
 export type StepState = "done" | "current" | "upcoming";
 
@@ -47,12 +47,12 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
     doneRank = currentIndex;
   } else if (tracking === "invoiced") {
     doneRank = flow.length;
-  } else if (order.status === "READY") {
-    // Ready at the yard on a delivery: picking is done, the road is a stop's word.
+  } else if (order.status === "READY" || order.status === "PARTIALLY_FULFILLED") {
+    // Ready at the yard on a delivery, or part delivered: picking is done, and
+    // the road step is a delivery stop's to speak for.
     doneRank = flow.indexOf("picking") + 1;
   } else {
-    // Part delivered: a truck went out; what is still to come is not known here.
-    doneRank = flow.indexOf(roadStep(order.fulfillment)) + 1;
+    doneRank = 0;
   }
   return flow.map((step, index) => ({
     tracking: step,
@@ -64,8 +64,7 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
 
 // The submitted step's day: created_at is an instant, so it reads as the dealer's own day.
 function houseDayOf(iso: string): string | undefined {
-  const words = houseDay(iso);
-  return words === "n/a" ? undefined : words;
+  return Number.isNaN(new Date(iso).getTime()) ? undefined : houseDay(iso);
 }
 
 const FULFILLMENT_WORDS: Readonly<Record<string, string>> = { PICKUP: "Pickup", DELIVERY: "Delivery", WILL_CALL: "Will call" };
@@ -80,11 +79,11 @@ export interface PromisedWords {
   day: string;
 }
 
-/** The asked-for day, the journey's headline answer: promised for a delivery, ready by for a pickup. */
+/** The day the customer asked for, the journey's headline answer. It is the customer's day, never a dealer promise. */
 export function promisedWords(order: Pick<TenantOrder, "fulfillment" | "requested_date">): PromisedWords {
   return {
-    label: order.fulfillment === "DELIVERY" ? "Promised for" : "Ready by",
-    day: calendarDay(order.requested_date),
+    label: "Wanted by",
+    day: /^\d{4}-\d{2}-\d{2}/.test(order.requested_date ?? "") ? calendarDay(order.requested_date) : "Not set",
   };
 }
 
@@ -103,12 +102,10 @@ export function lateWords(order: Pick<TenantOrder, "status" | "fulfillment" | "r
     : "Past the requested day and not collected yet. Ask the dealer where it stands.";
 }
 
-/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock, never written down anywhere.
-* The parts are picked out by hand: a locale tag that names a place has no business in the sources. */
+/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock in the zone the dealer serves
+* (the shared house zone, the one every date on these screens reads in), never written down anywhere. */
 export function houseToday(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
-  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+  return houseDayInZone(houseZone(), now);
 }
 
 // ---- the delivery instructions ------------------------------------------------------------------
@@ -131,4 +128,16 @@ export function instructionsNote(order: Pick<TenantOrder, "status" | "fulfillmen
   if (order.fulfillment !== "DELIVERY") return "This order is not a delivery, so its notes are set by the dealer.";
   if (DISPATCHED.includes(order.status)) return "The truck already left with these notes.";
   return "";
+}
+
+/** The core's delivery instructions bound (core/internal/portal/orders.go maxDeliveryInstructionsLen = 2000). */
+export const MAX_INSTRUCTIONS_LENGTH = 2000;
+
+/** The length at which the character count appears near the limit. */
+export const INSTRUCTIONS_COUNT_THRESHOLD = 1800;
+
+/** The character count line shown when the draft is near the 2000 character limit, or empty before then. */
+export function instructionsCountWords(draft: string): string {
+  if (draft.length < INSTRUCTIONS_COUNT_THRESHOLD) return "";
+  return `${draft.length} / ${MAX_INSTRUCTIONS_LENGTH} characters`;
 }

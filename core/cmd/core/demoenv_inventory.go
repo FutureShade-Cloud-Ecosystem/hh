@@ -13,8 +13,8 @@ package main
 // carry: the Plane feedback bridge, the BisTrack sync, the SMS provider,
 // the assist provider and the live payment gateway. Any variable under
 // one of them refuses the boot, except the five exact Plane bridge names
-// listed in demoEnvPlaneBridgeAllowNames below: the demo talks to nothing
-// else.
+// in demoEnvPlaneBridgeAllowNames and the two exact assistant names in
+// demoEnvAssistAllowNames below: the demo talks to nothing else.
 var demoEnvDenyPrefixes = []string{
 	"PLANE_",
 	"BISTRACK_",
@@ -35,6 +35,32 @@ var demoEnvPlaneBridgeAllowNames = []string{
 	"PLANE_PROJECT_ID",
 	"PLANE_WORKSPACE_SLUG",
 	"PLANE_FEEDBACK_MODULE",
+}
+
+// demoEnvAssistAllowNames is the second exception to the deny prefixes
+// (TanyAI slice 3, row 2496: the demo runs a real Claude model). The
+// assistant was refused on a demo box while it could only be stubbed; it is
+// admitted now because slices 1 and 2 are on main and make it safe to carry,
+// and only on these conditions, each held by a guard of its own: the two
+// exact names below and no other HOS_ASSIST_ name (the gateway pair and the
+// dealer tag stay refused, so the demo reaches the vendor directly through
+// the one native alias and no gateway); a key is never carried without a
+// positive dealer cap (boot.RefuseAssistKeyWithoutCap); the wired service
+// carries the demo's per visitor, per address and box wide limits; a paid
+// call with no price row is refused by the meter and the boot refuses a key
+// whose model has no row; with no key or the cap reached the demo answers
+// on the stub and says so. The values come only from FB Deploy's
+// environment sourced from FB Vault (prod /hh-demo): never this
+// repository, never the image, never a fixture.
+var demoEnvAssistAllowNames = []string{
+	"HOS_ASSIST_ANTHROPIC_API_KEY",
+	"HOS_ASSIST_DEALER_CAP_MICROCENTS",
+}
+
+// demoEnvPrefixExceptions is every exact name a deny prefix lifts: the
+// feedback bridge's five and the assistant's two.
+func demoEnvPrefixExceptions() []string {
+	return append(append([]string(nil), demoEnvPlaneBridgeAllowNames...), demoEnvAssistAllowNames...)
 }
 
 // demoEnvDenyNames are the single environment names refused outright on
@@ -75,6 +101,7 @@ var demoEnvAllowNames = []string{
 	"DEMO_MODE",
 	"ERP_BASE_URL",
 	"HH_CORE_TEST_DATABASE_URL",
+	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	// The HH_WEB_ names are the web runtime config's public facts, read by
 	// the image's entrypoint (deploy/demo/write-web-config.sh) and never by
@@ -198,12 +225,22 @@ var envInventoryFixture = []string{
 	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
+	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
+	"HOS_ASSIST_CLAIMS_KEY",
+	"HOS_ASSIST_PRO_READER_DATABASE_URL",
+	"HOS_ASSIST_PRO_READER_PASSWORD",
+	"HOS_ASSIST_READER_DATABASE_URL",
+	"HOS_ASSIST_READER_PASSWORD",
+	"HOS_ASSIST_DEALER_CAP_MICROCENTS",
+	"HOS_ASSIST_DEALER_TAG",
+	"HOS_ASSIST_GATEWAY_KEY",
+	"HOS_ASSIST_GATEWAY_URL",
 	"HOS_CARD_BASE_URL",
 	"HOS_CARD_PROCESSOR",
 	"HOS_PAYMENT_API_KEY",

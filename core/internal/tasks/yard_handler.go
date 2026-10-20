@@ -310,6 +310,9 @@ type stageRequest struct {
 }
 
 func (h *Handler) stage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req stageRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -339,6 +342,9 @@ type shortageRequest struct {
 }
 
 func (h *Handler) reportShortage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req shortageRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -366,6 +372,9 @@ type resolveShortageRequest struct {
 }
 
 func (h *Handler) resolveShortage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	var req resolveShortageRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -396,6 +405,8 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
 	case errors.Is(err, ErrAboveOrdered):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrNotHolder):
+		httpx.Error(w, http.StatusConflict, ErrNotHolderWords)
 	case errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):

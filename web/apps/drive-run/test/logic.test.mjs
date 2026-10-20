@@ -97,8 +97,9 @@ test("a server sentence loses its module prefix and a raw status word reads plai
   assert.equal(STOP_LABEL.EN_ROUTE, "En route");
 });
 
-test("a time reads in the dealer's zone, 24 hour, and an unreadable one is blank", () => {
-  assert.equal(formatTime("2000-01-01T15:30:00Z", "America/Toronto"), "10:30");
+test("a time reads in the dealer's zone using glossary 12-hour AM/PM form, and an unreadable one is blank", () => {
+  const janMorningUtc = new Date(Date.UTC(2000, 0, 1, 15, 30)).toISOString();
+  assert.equal(formatTime(janMorningUtc, "America/Toronto"), "10:30 AM");
   assert.equal(formatTime("not a time", "America/Toronto"), "");
   assert.equal(formatTime(null, "America/Toronto"), "");
 });
@@ -261,4 +262,87 @@ test("a name the door would refuse blocks the sign control, with the words", () 
   assert.match(signBlockedReason(long), /too long/);
   assert.equal(canSign({ receivedBy: "A\u202eB", affirmed: true, busy: false }), false);
   assert.doesNotMatch(PROOF_QUEUED_NOTICE, /delivered|told/);
+});
+
+// ---- UX-17b & UX-17c: stop groups, load order line, house-zone staleness, and preset failure reasons ----
+import * as driveLogic from "../src/drive-logic.ts";
+import { loadOrderLine, nextStopOf, routeStops } from "../src/drive-logic.ts";
+import { stalenessWords } from "../src/views.ts";
+
+test("preset failure reasons list the five board choices and resolveFailureReason requires free text only for Other, say what", () => {
+  assert.deepEqual(driveLogic.FAILURE_REASON_PRESETS, [
+    "Nobody on site",
+    "Gate locked",
+    "Site not ready",
+    "Customer refused",
+    "Other, say what",
+  ]);
+  assert.equal(driveLogic.resolveFailureReason?.("Nobody on site", ""), "Nobody on site");
+  assert.equal(driveLogic.resolveFailureReason?.("Gate locked", "ignored"), "Gate locked");
+  assert.equal(driveLogic.resolveFailureReason?.("Site not ready", ""), "Site not ready");
+  assert.equal(driveLogic.resolveFailureReason?.("Customer refused", ""), "Customer refused");
+  assert.equal(driveLogic.resolveFailureReason?.("Other, say what", ""), "");
+  assert.equal(canRecordFailure(driveLogic.resolveFailureReason?.("Other, say what", "   ") ?? ""), false);
+  assert.equal(driveLogic.resolveFailureReason?.("Other, say what", "Driveway washed out"), "Driveway washed out");
+  assert.equal(canRecordFailure(driveLogic.resolveFailureReason?.("Other, say what", "Driveway washed out") ?? ""), true);
+});
+
+test("loadOrderLine names the last stop in delivery order first (back of truck) and the first stop last", () => {
+  assert.equal(loadOrderLine([]), "");
+  assert.equal(loadOrderLine(null), "");
+  assert.equal(
+    loadOrderLine([{ stop_no: 1 }, { stop_no: 2 }, { stop_no: 3 }, { stop_no: 4 }]),
+    "Checked once for the whole run. Load order: stop 4 first, stop 1 last.",
+  );
+  assert.equal(
+    loadOrderLine([{ stop_no: 3 }, { stop_no: 1 }, { stop_no: 2 }]),
+    "Checked once for the whole run. Load order: stop 3 first, stop 1 last.",
+  );
+});
+
+test("routeStops keeps the run's order with one state chip per stop and the next stop marked", () => {
+  const rows = routeStops([
+    { id: "s4", stop_no: 4, status: "READY" },
+    { id: "s2", stop_no: 2, status: "EN_ROUTE" },
+    { id: "s3", stop_no: 3, status: "LOADED" },
+    { id: "s1", stop_no: 1, status: "DELIVERED" },
+    { id: "s6", stop_no: 6, status: "CANCELLED" },
+    { id: "s5", stop_no: 5, status: "FAILED" },
+  ]);
+  assert.deepEqual(
+    rows.map((r) => [r.stop.id, r.chip, r.next]),
+    [
+      ["s1", "Delivered", false],
+      ["s2", "Next stop", true],
+      ["s3", "Waiting", false],
+      ["s4", "Waiting", false],
+      ["s5", "Not delivered", false],
+      ["s6", "Cancelled", false],
+    ],
+  );
+});
+
+test("nextStopOf is the en route stop, else the first open stop, else none", () => {
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "READY" }, { id: "b", stop_no: 2, status: "EN_ROUTE" }]).id, "b");
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "DELIVERED" }, { id: "b", stop_no: 2, status: "LOADED" }]).id, "b");
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "CANCELLED" }, { id: "b", stop_no: 2, status: "FAILED" }]), null);
+  assert.equal(nextStopOf([]), null);
+});
+
+test("stalenessWords includes the last pull clock time in the dealer's house zone using glossary 12-hour AM/PM form with a plain space", () => {
+  const morningInstant = new Date(Date.UTC(2026, 6, 3, 15, 30)).toISOString();
+  const eveningInstantUtc = new Date(Date.UTC(2026, 6, 3, 0, 30)).toISOString();
+  assert.equal(
+    stalenessWords({ neverPulled: false, ageMs: 10_000, lastPullAt: morningInstant }, "America/Toronto"),
+    "Pulled just now · as of 11:30 AM",
+  );
+  assert.equal(
+    stalenessWords({ neverPulled: false, ageMs: 180_000, lastPullAt: morningInstant }, "America/Los_Angeles"),
+    "Pulled 3 min ago · as of 8:30 AM",
+  );
+  const eveningWords = stalenessWords({ neverPulled: false, ageMs: 5_000, lastPullAt: eveningInstantUtc }, "America/Toronto");
+  assert.equal(eveningWords, "Pulled just now · as of 8:30 PM");
+  assert.equal(eveningWords.includes("\u202f"), false);
+  assert.equal(eveningWords.includes("\u00a0"), false);
+  assert.equal(stalenessWords({ neverPulled: true, ageMs: null }), "Never pulled");
 });

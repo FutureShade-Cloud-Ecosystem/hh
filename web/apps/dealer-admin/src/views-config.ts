@@ -274,7 +274,7 @@ function renderCatalog(roles: readonly RoleRow[]): TemplateResult {
               })}
             </ul>
           `}
-      <p class="card-sub">The server resolves each staff member's own shape; a role the catalog does not name answers to the counter shape.</p>
+      <p class="card-sub">Each staff member gets their own shape; a role the catalog does not name answers to the counter shape.</p>
     </section>
   `;
 }

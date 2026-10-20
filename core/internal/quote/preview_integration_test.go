@@ -117,7 +117,7 @@ func TestIntegration_CustomerViewPreview_MatchesThePublicRead(t *testing.T) {
 	svc := shareSvc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
 
-	minted, err := svc.MintShareLink(ctx, quoteID, 0)
+	minted, err := mintAndSend(svc, ctx, quoteID, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

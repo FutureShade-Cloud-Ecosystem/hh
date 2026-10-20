@@ -3,7 +3,8 @@
 // delayed route (a gate the test opens), so the order of events is exact and does
 // not depend on the machine's speed.
 import { expect, test } from "@playwright/test";
-import { SALES, gate, open, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
+import { openAccountMenu } from "./account-menu";
+import { SALES, gate, hold, open, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -97,7 +98,7 @@ test("a slow read of the quote just left never lands over the quote now open", a
   expect(seen[0]).toContain('"qty_entered":"121"');
 });
 
-test("a send in flight when another quote opens texts and links the quote it began on, and leaves nothing on the next", async ({ page }) => {
+test("a send in flight when another quote opens texts the quote it began on, and leaves nothing on the next", async ({ page }) => {
   await page.addInitScript(() => {
     (window as unknown as { __copied: string[] }).__copied = [];
     Object.defineProperty(navigator, "clipboard", {
@@ -109,19 +110,13 @@ test("a send in flight when another quote opens texts and links the quote it beg
   await signIn(page);
   const seen = writes(page);
   await open(page, "Q-1004");
-  const held = gate();
-  await page.route(/\/api\/v1\/quotes\/q-1004\/share-links$/, async (route) => {
-    if (route.request().method() === "POST") await held.opened;
-    await route.continue();
-  });
+  const text = await hold(page, /\/api\/v1\/quotes\/q-1004\/sms-share$/, { method: "POST" });
   await page.getByTestId("qb-send").click();
-  await expect.poll(() => seen.filter((w) => w.includes("q-1004/share-links")).length).toBe(1);
+  await text.asked;
   await showList(page);
   await row(page, "Q-1001").click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
-  const minted = page.waitForResponse((r) => r.url().endsWith("/quotes/q-1004/share-links") && r.request().method() === "POST");
-  held.open();
-  await minted;
+  await text.release();
   await settle(page);
   await page.waitForTimeout(300);
   expect(seen.filter((w) => w.includes("/q-1001/share-links") || w.includes("/q-1001/sms-share"))).toHaveLength(0);
@@ -172,6 +167,7 @@ test("signing out sends the unsaved terms edit and the layout while the session 
   });
   await page.getByRole("button", { name: "Swap panels" }).click();
   await po.fill("PO-BEFORE-SIGN-OUT");
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", SALES)).toBeVisible();
   await settle(page);

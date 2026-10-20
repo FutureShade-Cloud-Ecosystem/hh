@@ -203,7 +203,7 @@ function entry(model: BillsModel): TemplateResult {
         </label>
         <label>Vendor's invoice number<input type="text" autocomplete="off" data-field="bill-no" data-bill-no-field /></label>
         <label>Bill date<input type="text" inputmode="numeric" autocomplete="off" data-field="bill-date" data-bill-date /><span class="dim">Year, month, day. Blank is today.</span></label>
-        <label>Due date<input type="text" inputmode="numeric" autocomplete="off" data-field="bill-due" data-bill-due /><span class="dim">Year, month, day. Blank leaves it to the core.</span></label>
+        <label>Due date<input type="text" inputmode="numeric" autocomplete="off" data-field="bill-due" data-bill-due /><span class="dim">Year, month, day. Leave it blank for no due date.</span></label>
         ${segs("Bill currency", "bill-currency", [{ id: "CAD", word: "Books currency" }, { id: "USD", word: "USD" }], model.entryCurrency)}
         ${usd ? html`<label>Vendor's exchange rate<input type="text" inputmode="decimal" autocomplete="off" data-field="bill-fx" data-bill-fx /><span class="dim">The rate on the invoice, not the order's.</span></label>` : nothing}
         <label>Tax on the invoice${usd ? " (USD)" : ""}<input type="text" inputmode="decimal" autocomplete="off" data-field="bill-tax" data-bill-tax /></label>
@@ -307,7 +307,7 @@ function detail(model: BillsModel, bill: PurchasingBillDetail): TemplateResult {
         ${bill.variance_accepted_by === undefined || bill.variance_accepted_by === "" ? nothing : html`<dt>Variance</dt><dd data-accepted>Accepted: ${bill.variance_accepted_note === undefined || bill.variance_accepted_note === "" ? "no note" : bill.variance_accepted_note}</dd>`}
       </dl>
       <h3 class="sub">Three way match</h3>
-      <p class="dim">Each line is compared with what was ordered and what has arrived, within the match tolerance. The core decides each result; posting runs it again against what has arrived by then.</p>
+      <p class="dim">Each line is compared with what was ordered and what has arrived, within the match tolerance. Each result is decided when the bill is entered, and run again when you post against what has arrived by then.</p>
       <div class="scroll">
         <table class="stack" data-match>
           <thead><tr><th>Line</th><th class="num">Billed</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Order price</th><th class="num">Billed price</th><th class="num">Line total</th><th>Result</th></tr></thead>

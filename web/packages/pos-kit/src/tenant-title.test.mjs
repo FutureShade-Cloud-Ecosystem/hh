@@ -3,6 +3,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyTenantTitle,
+  readDealerName,
   setNeutralTitle,
   __resetTenantTitleCache,
 } from "./tenant-title.js";
@@ -131,4 +132,31 @@ test("a failed config read is retried on the next call", async () => {
   await applyTenantTitle("Counter Till");
   assert.equal(calls, 2);
   assert.equal(globalThis.document.title, "Gable Landscape Supply · Counter Till");
+});
+
+test("readDealerName answers the dealer's name from the config, and an empty word when the read fails", async () => {
+  globalThis.fetch = okConfig("Gable Landscape Supply");
+  assert.equal(await readDealerName(), "Gable Landscape Supply");
+  __resetTenantTitleCache();
+  globalThis.fetch = failingConfig();
+  assert.equal(await readDealerName(), "");
+});
+
+test("readDealerName answers the served dealer and shares one read with the tab title", async () => {
+  let reads = 0;
+  globalThis.fetch = (...args) => {
+    reads += 1;
+    return okConfig("Coastal Stone Supply")(...args);
+  };
+  assert.equal(await readDealerName(), "Coastal Stone Supply");
+  assert.equal(await readDealerName(), "Coastal Stone Supply");
+  await applyTenantTitle("Counter Till");
+  assert.equal(reads, 1);
+});
+
+test("readDealerName answers an empty name when the read fails, and a later read retries", async () => {
+  globalThis.fetch = failingConfig();
+  assert.equal(await readDealerName(), "");
+  globalThis.fetch = okConfig("Coastal Stone Supply");
+  assert.equal(await readDealerName(), "Coastal Stone Supply");
 });

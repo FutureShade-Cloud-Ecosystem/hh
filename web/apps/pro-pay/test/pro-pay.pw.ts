@@ -36,7 +36,7 @@ async function signInAgain(page: Page, who: string): Promise<void> {
 
 /** The dealer's day (the house zone) a number of days from now, as YYYY-MM-DD: the day the app ages against. */
 function houseDayOffset(days: number): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
   const of = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
   const when = new Date(`${of("year")}-${of("month")}-${of("day")}T00:00:00Z`);
   when.setUTCDate(when.getUTCDate() + days);
@@ -126,6 +126,47 @@ test.describe("phone", () => {
     await page.getByRole("button", { name: "Clear" }).click();
     await expect(page.getByTestId("pay-open")).toBeDisabled();
     await shot(page, "pay-select-phone");
+  });
+
+  test("Select all and each payable invoice toggle are at least 44 high, and tapping the row text checks the invoice", async ({ page }) => {
+    await signIn(page, "ap");
+    const selectAll = page.getByRole("button", { name: "Select all 2" });
+    await expect(selectAll).toBeVisible();
+    await expect.poll(async () => (await selectAll.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+    for (const no of ["INV-20403", "INV-20402"]) {
+      const row = page.getByTestId("invoice-row").filter({ hasText: no });
+      const box = row.getByRole("checkbox");
+      await expect.poll(async () => (await box.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await expect.poll(async () => (await box.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(44);
+      await row.locator(".inv-sub").click();
+      await expect(box).toHaveAttribute("aria-checked", "true");
+    }
+    await expect(page.getByTestId("picked-count")).toHaveText("2 of 2 selected");
+  });
+
+  test("keyboard focus shows a ring on the invoice checkbox and on the invoice number", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByRole("button", { name: "Select all 2" }).focus();
+    await page.keyboard.press("Tab");
+    const hit = page.getByTestId("invoice-row").first().getByRole("checkbox");
+    await expect(hit).toBeFocused();
+    await expect.poll(() => hit.locator(".box").evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+    await page.keyboard.press("Tab");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect(open).toBeFocused();
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+  });
+
+  test("the invoice number is underlined so it reads as the way into the statement", async ({ page }) => {
+    await signIn(page, "ap");
+    const open = page.getByTestId("invoice-row").first().locator(".inv-open");
+    await expect.poll(() => open.evaluate((el) => getComputedStyle(el).textDecorationLine)).toContain("underline");
+  });
+
+  test("the statement button is named for what it does, and the selected count is a polite live region", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByRole("button", { name: "Open statement for INV-20403" })).toBeVisible();
+    await expect(page.getByTestId("picked-count")).toHaveAttribute("aria-live", "polite");
   });
 
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
@@ -443,6 +484,42 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-state").getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
+  test("a slow session check and slow data call keep the signed in frame with the loading pattern, never the sign in page", async ({ page }) => {
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await shot(page, "slow-390x844-light");
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-", { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+  });
+
+  test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
+    let failMe = true;
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (failMe) return route.abort("failed");
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    await shot(page, "unreachable-390x844-light");
+    failMe = false;
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
+  });
+
   test("an invoice opens to its statement: lines, the core's tax, the balance and the payments on it", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20403" }).getByRole("button", { name: /INV-20403/ }).click();
@@ -489,6 +566,83 @@ test.describe("phone", () => {
     await expect(page.getByTestId("payment-row")).toHaveCount(2);
     await expect(page.getByTestId("payment-row").first()).toContainText("Applied to INV-");
     await shot(page, "pay-statements-phone");
+  });
+
+  test("invoices, statement detail, the pay receipt and statements show the year on every date and glossary words for unknown figures", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20401" })).toContainText(/Issued [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20403" })).toContainText(/Due [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("invoice-detail")).toContainText(/Issued [A-Z][a-z]{2} \d{1,2}, \d{4} · Due [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await expect(page.getByTestId("detail-history")).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("invoice-back").click();
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("button", { name: /INV-20402/ }).click();
+    await page.getByTestId("pay-this").click();
+    await expect(page.getByTestId("method-option").first()).toBeVisible();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await page.getByTestId("receipt-done").click();
+    await page.getByTestId("frame-selector").click();
+    await page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" }).getByRole("button", { name: "Statements" }).click();
+    await expect(page.getByTestId("payment-row").first()).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+
+  test("unknown money, quantity and day values on the wire read Not priced, Not counted and Not set, never n/a or a zero", async ({ page }) => {
+    await page.route("**/api/v1/tenant/billing/summary", (route) => route.fulfill({ status: 503, json: { error: "unavailable" } }));
+    await page.route("**/api/v1/tenant/invoices/*", async (route) => {
+      const response = await route.fetch();
+      const detail = (await response.json()) as {
+        issue_date: string;
+        tax_cents: number | null;
+        lines: { qty_entered: string; line_total_cents: number | null }[];
+        payment_history: { received_at: string }[];
+      };
+      detail.issue_date = "";
+      detail.tax_cents = null;
+      if (detail.lines.length > 0) {
+        detail.lines[0]!.qty_entered = "";
+        detail.lines[0]!.line_total_cents = null;
+      }
+      if (detail.payment_history.length > 0) detail.payment_history[0]!.received_at = "";
+      await route.fulfill({ response, json: detail });
+    });
+    await signIn(page, "ap");
+    await expect(page.getByTestId("owed-total")).toHaveText("Not priced");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("invoice-detail")).toContainText("Issued Not set");
+    await expect(page.getByTestId("detail-lines").locator("li").first()).toContainText("Not counted");
+    await expect(page.getByTestId("detail-lines").locator("li").first()).toContainText("Not priced");
+    await expect(page.getByTestId("detail-sums")).toContainText("Not priced");
+    await expect(page.getByTestId("detail-history")).toContainText("Not set");
+    const text = await page.locator("hh-pro-frame").innerText();
+    expect(text).not.toMatch(/\bn\/a\b/i);
+  });
+
+  test("a moment on a Pro screen reads in the shared default zone when nothing is served, and in America/Los_Angeles when served on tenant config", async ({ page }) => {
+    const boundary = new Date();
+    boundary.setUTCHours(5, 30, 0, 0);
+    const defaultDay = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", month: "short", day: "numeric", year: "numeric" }).format(boundary);
+    const pacificDay = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "numeric" }).format(boundary);
+    expect(pacificDay).not.toBe(defaultDay);
+    await page.route("**/api/v1/tenant/invoices/*", async (route) => {
+      const response = await route.fetch();
+      const detail = (await response.json()) as { payment_history: { received_at: string }[] };
+      if (detail.payment_history.length > 0) detail.payment_history[0]!.received_at = boundary.toISOString();
+      await route.fulfill({ response, json: detail });
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("detail-history")).toContainText(defaultDay);
+    await page.route("**/api/v1/tenant/config", async (route) => {
+      const response = await route.fetch();
+      const cfg = (await response.json()) as Record<string, unknown>;
+      await route.fulfill({ response, json: { ...cfg, business_zone: "America/Los_Angeles" } });
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("detail-history")).toContainText(pacificDay);
+    // A payment is a moment, so it reads the day and the clock time ("Mar 1, 2026, 8:15 AM"), not the day alone.
+    await expect(page.getByTestId("detail-history")).toContainText(/\d{4}, \d{1,2}:\d{2} [AP]M/);
   });
 
   test("nothing a person typed, was given or paid with rests in web storage, the address bar or the console", async ({ page }) => {
@@ -551,5 +705,42 @@ test.describe("desktop", () => {
     await page.getByTestId("check-payment").click();
     await expect(page.getByTestId("receipt-amount")).toContainText("$");
     await shot(page, "pay-receipt-desktop");
+  });
+
+  test("a slow session check and network failure keep the signed in frame on a wide page", async ({ page }) => {
+    let mode: "slow" | "fail" | "ok" = "slow";
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      if (mode === "slow") {
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+        return route.continue();
+      }
+      if (mode === "fail" && route.request().url().endsWith("/tenant/me")) {
+        return route.abort("failed");
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await shot(page, "slow-1440x900-light");
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-", { timeout: 6000 });
+
+    await page.getByTestId("frame-sign-out").click();
+    await expect(page.locator("hh-pro-signin")).toBeVisible();
+    mode = "fail";
+    await signInAgain(page, "ap");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    await shot(page, "unreachable-1440x900-light");
+    mode = "ok";
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
   });
 });

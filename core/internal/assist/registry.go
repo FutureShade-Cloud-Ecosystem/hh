@@ -164,6 +164,9 @@ func (r *Registry) List(ctx context.Context, c Caller) []Command {
 		if err := visible(cmd, p, has, c); err != nil {
 			continue
 		}
+		if cmd.describe != nil {
+			cmd.Summary = cmd.describe(c)
+		}
 		out = append(out, cmd)
 	}
 	return out

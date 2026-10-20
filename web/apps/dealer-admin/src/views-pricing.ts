@@ -51,6 +51,10 @@ import {
   CUSTOMER_TYPES,
   customerTypeWord,
   marginEmptyWords,
+  costCellWords,
+  ledgerTotalWords,
+  WITHHELD_FIGURE_WORDS,
+  marginCellWords,
   moneyWords,
   overrideEmptyWords,
   overrideValueWords,
@@ -488,8 +492,8 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                         <td>${floorItemWords(item)}</td>
                         <td class="num">${moneyWords(item.previous_final_cents)}</td>
                         <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${pctWords(item.margin_bps)}</td>
-                        <td class="num">${pctWords(item.floor_bps)}</td>
+                        <td class="num">${marginCellWords(item.margin_bps)}</td>
+                        <td class="num">${marginCellWords(item.floor_bps)}</td>
                         <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,
@@ -1613,7 +1617,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       <div class="card-head">
         <h2 class="card-title">Accrual ledger</h2>
         ${m.phase === "ready"
-          ? html`<span class="count" data-test="pr-ledger-total">${moneyWords(m.totalCents)} over ${m.count} ${m.count === 1 ? "claim" : "claims"}</span>`
+          ? html`<span class="count" data-test="pr-ledger-total">${ledgerTotalWords(m.totalCents, m.rows)}</span>`
           : nothing}
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
@@ -1646,14 +1650,14 @@ function renderLedger(model: PricingModel): TemplateResult {
                 <tbody>
                   ${m.rows.map(
                     (row) => html`
-                      <tr data-accrual=${row.accrual_cents}>
+                      <tr data-accrual=${row.accrual_cents ?? ""}>
                         <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
                         <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
                         <td><span class="chip">${row.source_type}</span></td>
-                        <td class="num">${moneyWords(row.basis_cents)}</td>
-                        <td class="mono dim">${row.rate_note}</td>
-                        <td class="num">${moneyWords(row.accrual_cents)}</td>
+                        <td class="num">${costCellWords(row.basis_cents)}</td>
+                        <td class="mono dim">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
+                        <td class="num">${costCellWords(row.accrual_cents)}</td>
                       </tr>
                     `,
                   )}
@@ -1692,7 +1696,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
           <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
         </label>
         <label class="field">
-          <span class="field-label">When it happened (empty is the server clock)</span>
+          <span class="field-label">When it happened (empty means now)</span>
           <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
         </label>
         <label class="field">
@@ -2094,7 +2098,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                   <tr>
                     <th scope="col">SKU</th>
                     <th scope="col">Retail</th>
-                    <th scope="col">Derived</th>
+                    <th scope="col">Set automatically</th>
                     <th scope="col">Flag</th>
                   </tr>
                 </thead>
@@ -2262,7 +2266,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="card-head"><h2 class="card-title">Preview a price file</h2></div>
       <p class="pr-hint">
         The preview diffs the file against the retail anchor and writes nothing. The apply must echo the preview's
-        digest; the server refuses a file that changed under you.
+        digest; a file that changed under you is refused.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
@@ -2309,7 +2313,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
               <th scope="col">Outcome</th>
               <th scope="col">Retail now</th>
               <th scope="col">Retail in the file</th>
-              <th scope="col">Derived</th>
+              <th scope="col">Set automatically</th>
             </tr>
           </thead>
           <tbody>
@@ -2474,8 +2478,8 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
     <section class="card">
       <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
       <p class="pr-hint">
-        One line through the resolver, before it is quoted: the server grades it against the category's target and floor
-        and names the breach, if there is one.
+        One line through the resolver, before it is quoted: it is graded against the category's target and floor,
+        and the breach is named, if there is one.
       </p>
       <div class="form-grid">
         <label class="field"><span class="field-label">Customer id</span>

@@ -8,9 +8,41 @@
 // commit f8f4973db317b92296ae8ec7e62a3f54f5dc82ab); the refusal words follow the
 // role gate's shared body ("Forbidden") and ROLE-APP-OBLIGATIONS 1.
 import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
+import { stampDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type CardBucket = "CURRENT" | "WARN" | "LATE" | "ESCALATION";
 
+type CardDays = { bucket: string; from_days: number; to_days?: number | undefined };
+
+/**
+ * A card is titled by the days it covers, built from the tier days the core sends (the dealer's own
+ * past due settings), so a dealer who retunes the tiers sees their own ranges. Never a second
+ * vocabulary: the old tier words are gone from the screen.
+ */
+export function cardTitleFor(card: CardDays): string {
+  if (card.bucket === "CURRENT") return "Current";
+  if (card.to_days === undefined || card.to_days === 0) return `${card.from_days} days and over`;
+  if (card.from_days === card.to_days) return card.from_days === 1 ? "1 day" : `${card.from_days} days`;
+  return `${card.from_days} to ${card.to_days} days`;
+}
+
+/**
+ * Whether a card is drawn. A tier the dealer set so that it runs backwards (the escalation day one past
+ * the warning day gives a middle card of 61 to 60) covers no day and can hold nothing, so it is left out.
+ */
+export function cardShown(card: CardDays): boolean {
+  return card.bucket === "CURRENT" || card.to_days === undefined || card.to_days === 0 || card.from_days <= card.to_days;
+}
+
+/** The statement strip's bands, in the screen's one vocabulary. The last is over 60: the core sums 61 and up into one figure. */
+export const STATEMENT_STRIP_LABELS = ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"] as const;
+
+/** What a card's figure is: the status word for everything past its due date. */
+export function cardCovers(card: CardDays): string {
+  return card.bucket === "CURRENT" ? "Not yet due" : "Past due";
+}
+
+/** The old tier words stay for the Office reminder trail, which names the tier a reminder ran for. */
 export const CARD_TITLE: Record<CardBucket, string> = {
   ESCALATION: "Escalation",
   LATE: "Late",
@@ -22,17 +54,10 @@ export function cardTitle(bucket: string): string {
   return CARD_TITLE[bucket as CardBucket] ?? bucket;
 }
 
-/** The days a card spans, in the words the landing draws. */
-export function cardRange(card: { bucket: string; from_days: number; to_days?: number | undefined }): string {
-  if (card.bucket === "CURRENT") return "Not yet due";
-  if (card.to_days === undefined || card.to_days === 0) return `${card.from_days} days and over`;
-  return `${card.from_days} to ${card.to_days} days`;
-}
-
 const STATUS_WORD: Record<string, string> = {
   OPEN: "Open",
   DUE_SOON: "Due soon",
-  OVERDUE: "Overdue",
+  OVERDUE: "Past due",
   PARTIALLY_PAID: "Part paid",
   PAID: "Paid",
   DISPUTED: "Disputed",
@@ -197,11 +222,21 @@ export { centsToField };
 
 const DAY_MS = 86_400_000;
 
+// A date only value is already a calendar day; a timestamp is the day it falls on in the dealer's zone.
 function dayNumber(date: string): number {
-  return Math.floor(Date.parse(`${date.slice(0, 10)}T00:00:00Z`) / DAY_MS);
+  return Math.floor(Date.parse(`${stampDay(date)}T00:00:00Z`) / DAY_MS);
 }
 
 /** A calendar date as a count from the server's own day: "122 days ago", "in 12 days", "today". */
+/**
+ * Whether an invoice document still has to be collected: the core's own unpaid set (stored status
+ * FINALIZED or PARTIALLY_PAID). A draft and a void invoice are not owed, and a paid one is settled, so
+ * none of them is listed as open, picked, allocated to or put on a statement.
+ */
+export function isUnpaidInvoice(row: { stored_status: string; doc_type?: string | undefined }): boolean {
+  return (row.stored_status === "FINALIZED" || row.stored_status === "PARTIALLY_PAID") && (row.doc_type === undefined || row.doc_type === "INVOICE");
+}
+
 export function relativeDay(date: string, asOf: string): string {
   const gap = dayNumber(asOf) - dayNumber(date);
   if (gap === 0) return "today";
@@ -224,7 +259,7 @@ export interface Mark {
 export function rowMarks(row: { status: string; days_overdue: number; disputed: boolean; promised_date?: string | null | undefined }): Mark[] {
   const marks: Mark[] = [];
   const overdue = row.days_overdue > 0 && row.status !== "PAID";
-  if (overdue) marks.push({ word: `${row.days_overdue}d overdue`, tone: "stop", dashed: false });
+  if (overdue) marks.push({ word: `${row.days_overdue}d past due`, tone: "stop", dashed: false });
   else if (row.status === "DISPUTED") marks.push({ word: "disputed", tone: "info", dashed: false });
   else marks.push({ word: statusWord(row.status).toLowerCase(), tone: statusTone(row.status), dashed: false });
   if (typeof row.promised_date === "string" && row.promised_date !== "") marks.push({ word: "promise open", tone: "watch", dashed: true });
@@ -232,26 +267,46 @@ export function rowMarks(row: { status: string; days_overdue: number; disputed: 
   return marks;
 }
 
-/** C8 5-bucket human label and machine key for a given days-overdue count. Mirrors the server's
- * BucketLabelFor function in core/internal/billing/register_model.go. The two MUST agree at every
- * boundary, otherwise the per-row pill on the register and the per-customer aging band card
- * disagree about the same dollar, which is the failure mode this whole screen exists to prevent.
+const BUCKET_WORD: Record<string, string> = {
+  CURRENT: "Current",
+  "1_30": "1 to 30 days",
+  "31_60": "31 to 60 days",
+  "61_90": "61 to 90 days",
+  "90_PLUS": "Over 90 days",
+};
+
+/** The older labels the core still stamps, read back to the same one vocabulary. */
+const BUCKET_WORD_BY_LABEL: Record<string, string> = {
+  Current: "Current",
+  "1 to 30": "1 to 30 days",
+  "31 to 60": "31 to 60 days",
+  "61 to 90": "61 to 90 days",
+  "91 and over": "Over 90 days",
+};
+
+/**
+ * The band's words for the screen: from the core's bucket key when it sends one, else from its label.
+ * The core's own label ("91 and over") is not shown; the key names the band.
  */
-export function bucketLabelFor(daysOverdue: number): { label: string; key: string } {
-  if (daysOverdue <= 0) return { label: "Current", key: "CURRENT" };
-  if (daysOverdue <= 30) return { label: "1 to 30", key: "1_30" };
-  if (daysOverdue <= 60) return { label: "31 to 60", key: "31_60" };
-  if (daysOverdue <= 90) return { label: "61 to 90", key: "61_90" };
-  return { label: "91 and over", key: "90_PLUS" };
+export function bucketWord(key: string | undefined, label: string): string {
+  return (key === undefined ? undefined : BUCKET_WORD[key]) ?? BUCKET_WORD_BY_LABEL[label] ?? label;
 }
 
-/** "N days late" / "1 day late" phrasing for the due-column late line. "1" is a special case to
- * keep the singular/plural agreement honest.
+/** C8 5-bucket human label and machine key for a given days-past-due count. Mirrors the server's
+ * BucketLabelFor function in core/internal/billing/register_model.go at every boundary (inclusive at
+ * the top of each band, so day 90 is in 61 to 90 and day 91 in Over 90), in the screen's one vocabulary.
+ * The key is the core's; the label is the screen's words for it.
  */
+export function bucketLabelFor(daysOverdue: number): { label: string; key: string } {
+  const key = daysOverdue <= 0 ? "CURRENT" : daysOverdue <= 30 ? "1_30" : daysOverdue <= 60 ? "31_60" : daysOverdue <= 90 ? "61_90" : "90_PLUS";
+  return { label: BUCKET_WORD[key] ?? key, key };
+}
+
+/** "N days past due" / "1 day past due" phrasing for the due-column line. */
 export function daysLateWord(daysOverdue: number): string {
   const n = Math.max(0, Math.floor(daysOverdue));
   const unit = n === 1 ? "day" : "days";
-  return `${n} ${unit} late`;
+  return `${n} ${unit} past due`;
 }
 
 /** What the server's split says about one invoice, in the references' words. */

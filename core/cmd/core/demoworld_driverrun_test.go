@@ -54,6 +54,10 @@ const driverPersonaUserID = "d0200000-0000-4000-9000-000000000003"
 type driveWorld struct {
 	pool   *pgxpool.Pool
 	driver *tillClient
+	// as hands back a client for any staff login on the same served surface, and tenant for a
+	// contractor portal login (sub and the account it belongs to).
+	as     func(sub, who string) *tillClient
+	tenant func(sub, tenantID, who string) *tillClient
 }
 
 // bootDriveWorld builds the world in the order a demo box builds it (the frozen migrations, the
@@ -121,6 +125,14 @@ func bootDriveWorld(t *testing.T) *driveWorld {
 	return &driveWorld{
 		pool:   pool,
 		driver: &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, driverPersonaUserID), who: "Driver"},
+		as: func(sub, who string) *tillClient {
+			appwrite.setTeam(sub, "org-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, sub), who: who}
+		},
+		tenant: func(sub, tenantID, who string) *tillClient {
+			appwrite.setTeam(sub, "ten-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.TenantToken(t, sub, tenantID), who: who, tenant: true}
+		},
 	}
 }
 
@@ -214,8 +226,8 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		if run.DispatchedAt == nil || *run.DispatchedAt == "" {
 			t.Fatalf("%s: the dispatched run %s carries no departure stamp, the core's own dispatch always sets one", label, run.RunNo)
 		}
-		if len(run.Stops) < 2 {
-			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs one to deliver and one to hand back",
+		if len(run.Stops) != 3 {
+			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs three: two to deliver and one to hand back",
 				label, run.RunNo, len(run.Stops))
 		}
 
@@ -254,6 +266,16 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 			t.Fatalf("%s: the handback left stop %d %q with reason %q, want FAILED with %q",
 				label, second.StopNo, failed.Status, failed.FailureReason, reason)
 		}
+
+		// Stop three: loaded, en route, delivered with a typed proof of delivery.
+		third := run.Stops[2]
+		for _, move := range []string{"LOADED", "EN_ROUTE"} {
+			m := driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/status",
+				map[string]string{"status": move, "reason": ""})
+			m.ok(t, http.StatusOK)
+		}
+		driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/pod",
+			map[string]any{"received_by": receiver, "affirmed": true}).ok(t, http.StatusOK)
 
 		// The run closes, by the driver who drove it.
 		done := driver.call("POST", "/api/v1/dispatch/runs/"+run.ID+"/complete", nil)
@@ -380,6 +402,59 @@ func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
 	}
 }
 
+// TestDemoWorld_DriverStopsSyncCarriesTheLoadList proves, on the real served surface and the demo
+// world, that the Driver's stops pull carries each stop's load list (the product, the quantity and
+// its unit) and that the pull still passes the money key scan. The REST my-runs read carries the
+// same list as stop_lines; a synced or offline HH Drive reads this one.
+func TestDemoWorld_DriverStopsSyncCarriesTheLoadList(t *testing.T) {
+	world := bootDriveWorld(t)
+	// A seeded stop enters the sync stream when it first moves (the seq is drawn by the move), so
+	// the Driver loads the first stop of the day through the real route before pulling.
+	day := world.driver.call("GET", "/api/v1/dispatch/my-runs?date="+qwClock.In(seedLocation()).Format("2006-01-02"), nil)
+	day.ok(t, http.StatusOK)
+	var list struct {
+		Items []driveRun `json:"items"`
+	}
+	day.decode(t, &list)
+	if len(list.Items) == 0 || len(list.Items[0].Stops) == 0 {
+		t.Fatal("the Driver's day holds no run with a stop, the leg would pass vacuously")
+	}
+	world.driver.call("POST", "/api/v1/dispatch/stops/"+list.Items[0].Stops[0].ID+"/status",
+		map[string]string{"status": "LOADED", "reason": ""}).ok(t, http.StatusOK)
+	rsp := world.driver.call("GET", "/api/v1/sync/stops?since=0", nil)
+	rsp.ok(t, http.StatusOK)
+	var page struct {
+		Items []struct {
+			ID   string         `json:"id"`
+			Data map[string]any `json:"data"`
+		} `json:"items"`
+	}
+	rsp.decode(t, &page)
+	if len(page.Items) == 0 {
+		t.Fatalf("the Driver's stops pull answered no stop: %.400s", rsp.body)
+	}
+	withLines := 0
+	for _, it := range page.Items {
+		lines, _ := it.Data["lines"].([]any)
+		if len(lines) == 0 {
+			continue
+		}
+		withLines++
+		for _, raw := range lines {
+			l, _ := raw.(map[string]any)
+			for _, k := range []string{"line_no", "sku", "description", "qty", "uom"} {
+				if _, ok := l[k]; !ok {
+					t.Errorf("stop %s carries a load line without %q: %v", it.ID, k, l)
+				}
+			}
+		}
+	}
+	if withLines == 0 {
+		t.Fatalf("no stop on the Driver's stops pull carries a load list (%d stops)", len(page.Items))
+	}
+	driveScanPayloadKeys(t, "stops sync pull", rsp.body)
+}
+
 // firstStatus names the first run's status for the refusal above, or none.
 func firstStatus(runs []driveRun) string {
 	if len(runs) == 0 {
@@ -482,4 +557,119 @@ func driveScanPayloadKeys(t *testing.T, label string, body []byte) {
 		}
 	}
 	walk("$", v)
+}
+
+// -- the sync half (audit B3) ---------------------------------------------------------------------
+//
+// TestDemoWorld_DriverRunReachesTheSyncPull proves the run reaches HH Drive the way HH Drive reads it:
+// the runs and stops sync scopes pulled as the Driver persona, not the my-runs route. A seeded row
+// carries seq NULL (migration 0213 keeps carried rows unsequenced) and both scopes' pulls serve only
+// rows with a seq, so a run the seed wrote straight into delivery_runs was visible on the REST read
+// and absent from the device's feed: HH Drive opened on "No run assigned to you today."
+func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
+	world := bootDriveWorld(t)
+	driver := world.driver
+
+	pull := func(scope string) []map[string]any {
+		t.Helper()
+		rsp := driver.call("GET", "/api/v1/sync/"+scope+"?since=0", nil)
+		rsp.ok(t, http.StatusOK)
+		var page struct {
+			Items []struct {
+				ID   string         `json:"id"`
+				Data map[string]any `json:"data"`
+			} `json:"items"`
+		}
+		rsp.decode(t, &page)
+		out := make([]map[string]any, 0, len(page.Items))
+		for _, it := range page.Items {
+			out = append(out, it.Data)
+		}
+		return out
+	}
+
+	date := qwClock.In(seedLocation()).Format("2006-01-02")
+	// onDay is the Driver's runs OUT FOR DELIVERY on a day. The stable fleet's planned runs that
+	// belong to the same driver are sequenced too (every seeded row reaches the feeds), so the
+	// pull also carries them; the claim is that exactly one run is out, the day keyed one.
+	onDay := func(day string) []map[string]any {
+		var out []map[string]any
+		for _, r := range pull("runs") {
+			if d, _ := r["scheduled_date"].(string); strings.HasPrefix(d, day) {
+				if st, _ := r["status"].(string); st != "DISPATCHED" {
+					continue
+				}
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	today := onDay(date)
+	if len(today) != 1 {
+		t.Fatalf("the runs pull gives the Driver %d runs out for delivery for %s, want exactly 1", len(today), date)
+	}
+	// A reseed on the same day draws no new seq (the sequence is not a mutation per apply), and a
+	// reseed on a later day gives that day its own run in the feed.
+	var seqBefore int64
+	if err := world.pool.QueryRow(context.Background(),
+		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqBefore); err != nil {
+		t.Fatalf("reading the runs sequence: %v", err)
+	}
+	driveApplyAt(t, qwClock)
+	var seqAfter int64
+	if err := world.pool.QueryRow(context.Background(),
+		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqAfter); err != nil {
+		t.Fatalf("reading the runs sequence: %v", err)
+	}
+	if seqAfter != seqBefore {
+		t.Fatalf("a second apply moved the runs sequence from %d to %d", seqBefore, seqAfter)
+	}
+	nextDay := qwClock.AddDate(0, 0, 1)
+	driveApplyAt(t, nextDay)
+	if got := onDay(nextDay.In(seedLocation()).Format("2006-01-02")); len(got) != 1 {
+		t.Fatalf("after the next day's apply the runs pull gives %d runs for that day, want 1", len(got))
+	}
+	if st, _ := today[0]["status"].(string); st != "DISPATCHED" {
+		t.Fatalf("the Driver's run is %q, want DISPATCHED", st)
+	}
+	runID, _ := today[0]["id"].(string)
+
+	var mine []map[string]any
+	gate := 0
+	for _, s := range pull("stops") {
+		if rid, _ := s["run_id"].(string); rid != runID {
+			continue
+		}
+		mine = append(mine, s)
+		if g, _ := s["gate_code"].(string); g != "" {
+			gate++
+		}
+	}
+	if len(mine) != 3 {
+		t.Fatalf("the stops pull gives the Driver %d stops on the run, want 3", len(mine))
+	}
+	if gate != 1 {
+		t.Fatalf("%d stops on the run carry a gate code, want exactly 1", gate)
+	}
+
+	// The load list rides the driver's own read (stop_lines), one short list per stop.
+	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+date, nil)
+	rsp.ok(t, http.StatusOK)
+	var list struct {
+		Items []struct {
+			ID        string                      `json:"id"`
+			StopLines map[string][]map[string]any `json:"stop_lines"`
+		} `json:"items"`
+	}
+	rsp.decode(t, &list)
+	for _, it := range list.Items {
+		if it.ID != runID {
+			continue
+		}
+		for _, s := range mine {
+			if id, _ := s["id"].(string); len(it.StopLines[id]) == 0 {
+				t.Fatalf("stop %v carries no load list on the driver's read", s["stop_no"])
+			}
+		}
+	}
 }

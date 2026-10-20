@@ -8,7 +8,7 @@
 // receiving and manage routes refuse them); this only keeps the app from offering a sales seat a
 // buying surface at all.
 import { formatMoney, formatQty } from "../po/po-money.js";
-import { whenWords } from "../po/po-logic.js";
+import { houseDay, whenWords } from "../po/po-logic.js";
 
 export const SALES_SEATS = new Set(["inside_sales", "outside_sales"]);
 
@@ -107,7 +107,7 @@ export interface ComingInRow {
 }
 
 /** The detail's coming-in rows off the purchasing read, the branch's own name when the desk holds it. */
-export function comingInRows(lines: readonly IncomingLine[], branchNames: ReadonlyMap<string, string>, today: string): ComingInRow[] {
+export function comingInRows(lines: readonly IncomingLine[], branchNames: ReadonlyMap<string, string>, today: string = houseDay()): ComingInRow[] {
   return lines.map((l) => ({
     order: `${l.po_no} · ${l.vendor_name}`,
     branch: branchNames.get(l.branch_id) ?? l.branch_id,

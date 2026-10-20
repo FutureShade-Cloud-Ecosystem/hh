@@ -104,12 +104,16 @@ func (r *Repository) Stage(ctx context.Context, in StageInput) (Task, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, taskType string
-	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType); err != nil {
+	var from, taskType, claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrNotFound
 		}
 		return Task{}, fmt.Errorf("tasks: lock %q for stage: %w", in.TaskID, err)
+	}
+	// The holder's act: compared on the locked row, in this transaction (UX-76).
+	if notHolder(claimedBy, in.ActorID) {
+		return Task{}, ErrNotHolder
 	}
 	if from == StatusStaged {
 		return Task{}, ErrNoTransition
@@ -566,6 +570,10 @@ func (r *Repository) RecordPickLocked(ctx context.Context, taskID, actorID strin
 	if err := pickClosed(task.Status); err != nil {
 		return nil, err
 	}
+	// Save pick is the holder's act: compared on the locked row, before the order is told anything (UX-76).
+	if notHolder(task.ClaimedBy, actorID) {
+		return nil, ErrNotHolder
+	}
 	lines, err := apply(ctx, task)
 	if err != nil {
 		return nil, err
@@ -629,4 +637,50 @@ func (r *Repository) ListPickedLines(ctx context.Context, taskID string) ([]Pick
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// HolderLocked runs apply with the task row locked (FOR UPDATE) and the actor checked against the claim on
+// that locked row: ErrNotHolder when someone else holds the pick (the doors refuse a person's write with no
+// actor before they reach here). The skid count's
+// guard (UX-76b): the order call inside apply may need a pooled connection, so it takes a record slot as
+// RecordPickLocked does, and the lock is held across the call so a claim and a count cannot cross.
+func (r *Repository) HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if !looksLikeUUID(taskID) {
+		return ErrNotFound
+	}
+	if r.recordSlots == nil {
+		return ErrRecordPoolTooSmall
+	}
+	select {
+	case r.recordSlots <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-r.recordSlots }()
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("tasks: begin holder lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&claimedBy); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("tasks: lock %q for holder check: %w", taskID, err)
+	}
+	if notHolder(claimedBy, actorID) {
+		return ErrNotHolder
+	}
+	if err := apply(ctx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("tasks: commit holder lock: %w", err)
+	}
+	return nil
 }

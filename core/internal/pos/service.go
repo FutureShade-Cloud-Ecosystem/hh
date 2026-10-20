@@ -243,6 +243,26 @@ type posStore interface {
 	RecordCardRefundDispatched(ctx context.Context, f cardRefundFact) error
 	FailCardRefundAttempt(ctx context.Context, refundKey, reason string) error
 	HoldCardRefundAttemptInFlight(ctx context.Context, refundKey, reason string) error
+	// StampCardRefundCallStart stamps the start of one child's processor call on its own row just
+	// before the call, on that row (keys[0]) and every child still waiting; false means a manager
+	// already settled the row and the call must not go out.
+	// MarkCardRefundCallNotSent records on the row that its call was never sent.
+	MarkCardRefundCallNotSent(ctx context.Context, refundKey string) error
+	StampCardRefundCallStart(ctx context.Context, keys []string) (bool, error)
+	// ListOpenCardRefundAttempts, CardRefundAttemptForUpdateTx and
+	// ApplyCardRefundResolutionTx are the manager resolution of an open
+	// attempt (HH-767): the branch-fenced list of IN_FLIGHT and UNBOOKED
+	// rows, the locked read inside the resolution transaction, and the
+	// judgment's own write (REFUNDED stands the row UNBOOKED with the
+	// processor's refund_ref, NOT_REFUNDED closes it FAILED).
+	ListOpenCardRefundAttempts(ctx context.Context, statusFilter string, branches []string) ([]CardRefundAttempt, error)
+	CardRefundAttemptForUpdateTx(ctx context.Context, tx pgx.Tx, attemptID string) (CardRefundAttempt, bool, error)
+	ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error
+	// CardRefundRefUsedElsewhereTx is the duplicate-ref fence of the same
+	// settle (PR #501 round 1 P1-2): inside the resolution transaction it
+	// answers whether the named processor ref already rides another attempt
+	// row or an already booked payment.
+	CardRefundRefUsedElsewhereTx(ctx context.Context, tx pgx.Tx, refundRef, exceptRefundKey string) (onAttempt, onPayment bool, err error)
 	// the per-sale return sums and lock: the refund approval amount counts
 	// every return against the same sale together, so the gate reads the
 	// sale's earlier committed returns inside its transaction (the Tx read)

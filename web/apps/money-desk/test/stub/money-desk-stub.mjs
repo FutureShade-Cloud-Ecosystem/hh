@@ -15,6 +15,7 @@ import { createFinstmtWorld } from "./finstmt-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
+import { createAssistWorld } from "./assist-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -26,6 +27,8 @@ const bankrecWorld = createBankrecWorld();
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
 const lienWorld = createLienWorld();
+// The TanyAI panel's staff assist routes (PANEL-API r1), answered by its own module.
+const assistWorld = createAssistWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -160,6 +163,16 @@ const INVOICES = [
 ];
 
 const NSF_FEE = 3500;
+
+// Documents the register serves that are not collectible invoices (the core's no chip read returns every
+// INVOICE document whatever its stored status, and credit memos only with show_credits): a draft, a void
+// and a credit memo on the first account. They live outside world.invoices on purpose: they owe nothing,
+// so the aging, the payments and the statements never see them.
+const EXTRA_DOCS = [
+  { n: 201, stored: "DRAFT", doc_type: "INVOICE", total: 50_000 },
+  { n: 202, stored: "VOID", doc_type: "INVOICE", total: 70_000 },
+  { n: 203, stored: "FINALIZED", doc_type: "CREDIT_MEMO", total: 25_000 },
+];
 
 // The wide world's extra invoices: 99 open $10.00 invoices on the first account, so a Pick all open
 // names 101 invoices and the pick ceiling leg can draw the one body the app can build that the core's
@@ -939,6 +952,10 @@ async function handle(req, res) {
   const method = req.method;
 
   if (path === "/healthz") return send(res, 200, { ok: true });
+  // The public tenant config route (no credential): the dealer the band and the tab name.
+  if (method === "GET" && path === "/api/v1/tenant/config") {
+    return send(res, 200, { id: "demo-dealer", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "#3a7d56", support_email: "support@gablelandscape.invalid", support_phone: "" });
+  }
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     glWorld.reset();
@@ -946,6 +963,7 @@ async function handle(req, res) {
     bankrecWorld.reset();
     taxWorld.reset();
     lienWorld.reset();
+    assistWorld.reset();
     return send(res, 200, { ok: true });
   }
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
@@ -958,6 +976,13 @@ async function handle(req, res) {
     const body = await readBody(req);
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
+  }
+  if (path.startsWith("/api/v1/assist/") || path.startsWith("/_stub/assist")) {
+    if (path.startsWith("/api/v1/") && (req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" ? await readBody(req) : null;
+    if (body === null && method === "POST") return refuse(res, 400, "invalid_json");
+    const answer = await assistWorld.handle(req, url, body);
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (path === "/api/v1/demo/flows") return send(res, 200, { flows: FLOWS });
   if (method === "POST" && path === "/api/v1/demo/session") {
@@ -1177,15 +1202,39 @@ async function handle(req, res) {
 
   if (method === "GET" && path === "/api/v1/ar/register") {
     const customer = q.get("customer_id") ?? "";
-    const rows = world.invoices
-      .filter((i) => customer === "" || custId(i.acct) === customer)
-      .map(registerRow)
-      .filter((r) => r.balance_cents > 0 || q.get("chip") === "PAID");
-    const chip = q.get("chip") ?? "";
-    const shown = chip === "" || chip === "PAID" ? rows : rows.filter((r) => r.status === chip);
-    const count = (s) => rows.filter((r) => r.status === s).length;
+    // The core's reading (register_repository.go chipPredicates): no chip is every invoice document,
+    // paid ones too, unpaid ahead of settled; PAID is the paid ones only; "all" is every unpaid one;
+    // past_due, current and the legacy status names narrow the unpaid ones. The wire upper-cases the chip.
+    const chip = (q.get("chip") ?? "").toUpperCase();
+    const unpaid = (r) => r.stored_status === "FINALIZED" || r.stored_status === "PARTIALLY_PAID";
+    const chips = {
+      "": () => true,
+      PAID: (r) => r.stored_status === "PAID",
+      ALL: unpaid,
+      OPEN: unpaid,
+      PAST_DUE: (r) => unpaid(r) && r.days_overdue > 0,
+      OVERDUE: (r) => unpaid(r) && r.days_overdue > 0,
+      CURRENT: (r) => unpaid(r) && r.days_overdue <= 0,
+      DISPUTED: (r) => r.disputed,
+    };
+    // An unknown chip adds no predicate in the core (chipPredicates misses), so it reads like no chip.
+    const known = chips[chip] ?? chips[""];
+    const showCredits = q.get("show_credits") === "1" || q.get("show_credits") === "true";
+    const mine = world.invoices.filter((i) => customer === "" || custId(i.acct) === customer).map(registerRow);
+    const extra = world.empty || (customer !== "" && customer !== custId(1)) ? [] : EXTRA_DOCS.map((d) => {
+      const row = registerRow({ id: uuid("b", d.n), invoice_no: `${d.doc_type === "CREDIT_MEMO" ? "CM" : "INV"}-${1000 + d.n}`, acct: 1, late: 20, total_cents: d.total, balance_cents: d.total, holdback_cents: 0, promise: null, dispute: null });
+      return { ...row, doc_type: d.doc_type, stored_status: d.stored, status: d.doc_type === "CREDIT_MEMO" ? "CREDIT" : d.stored };
+    });
+    // Credit memos are left out unless asked for (registerWhere: doc_type = 'INVOICE' without show_credits).
+    const docs = [...mine, ...extra].filter((r) => showCredits || r.doc_type === "INVOICE");
+    const filtered = docs.filter(known);
+    filtered.sort((a, b) => Number(unpaid(b)) - Number(unpaid(a)) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
+    const asked = Number(q.get("limit") ?? "50");
+    const limit = !Number.isInteger(asked) || asked <= 0 || asked > 200 ? 50 : asked;
+    const offset = Math.max(0, Number(q.get("offset") ?? "0") || 0);
+    const count = (s) => mine.filter((r) => r.status === s).length;
     return send(res, 200, {
-      items: shown,
+      items: filtered.slice(offset, offset + limit),
       counts: { open: count("OPEN"), due_soon: count("DUE_SOON"), overdue: count("OVERDUE"), disputed: 0, paid: 0, credits: 0 },
       as_of: dayOffset(0),
     });

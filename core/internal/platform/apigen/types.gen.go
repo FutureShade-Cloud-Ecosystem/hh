@@ -1251,6 +1251,8 @@ type AssistField struct {
 type AssistItem struct {
 	Title  string        `json:"title"`
 	Fields []AssistField `json:"fields"`
+	Ref    *AssistRef    `json:"ref,omitempty"`
+	Cite   *int32        `json:"cite,omitempty"`
 }
 
 type AssistRef struct {
@@ -1260,12 +1262,48 @@ type AssistRef struct {
 }
 
 type AssistResult struct {
-	Command  string       `json:"command"`
-	Headline string       `json:"headline"`
-	Items    []AssistItem `json:"items"`
-	Empty    bool         `json:"empty"`
-	Note     *string      `json:"note,omitempty"`
-	Ref      *AssistRef   `json:"ref,omitempty"`
+	Command  string        `json:"command"`
+	Headline string        `json:"headline"`
+	Items    []AssistItem  `json:"items"`
+	Empty    bool          `json:"empty"`
+	Note     *string       `json:"note,omitempty"`
+	Ref      *AssistRef    `json:"ref,omitempty"`
+	Notice   *AssistNotice `json:"notice,omitempty"`
+	Scope    *AssistScope  `json:"scope,omitempty"`
+}
+
+type AssistNotice struct {
+	Code  string  `json:"code"`
+	Class *string `json:"class,omitempty"`
+}
+
+type AssistScopeBranch struct {
+	Id    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type AssistScopePeriod struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label"`
+}
+
+type AssistScopeAccount struct {
+	Label string `json:"label"`
+}
+
+type AssistScope struct {
+	Branches    *[]AssistScopeBranch `json:"branches,omitempty"`
+	AllBranches *bool                `json:"all_branches,omitempty"`
+	Account     *AssistScopeAccount  `json:"account,omitempty"`
+	Period      *AssistScopePeriod   `json:"period,omitempty"`
+	AsOf        string               `json:"as_of"`
+}
+
+type AssistCitation struct {
+	N     int32     `json:"n"`
+	Label string    `json:"label"`
+	Ref   AssistRef `json:"ref"`
 }
 
 type AssistInvocation struct {
@@ -1297,8 +1335,9 @@ type AssistMessage struct {
 }
 
 type AssistChatRequest struct {
-	Question string           `json:"question"`
-	History  *[]AssistMessage `json:"history,omitempty"`
+	Question       string           `json:"question"`
+	ConversationId *string          `json:"conversation_id,omitempty"`
+	History        *[]AssistMessage `json:"history,omitempty"`
 }
 
 type AssistUsage struct {
@@ -1309,14 +1348,19 @@ type AssistUsage struct {
 }
 
 type AssistAnswer struct {
-	Text         string             `json:"text"`
-	Results      []AssistResult     `json:"results"`
-	LimitReached bool               `json:"limit_reached"`
-	Usage        *AssistUsage       `json:"usage,omitempty"`
-	Ran          []AssistInvocation `json:"ran"`
-	Clarify      *AssistClarify     `json:"clarify,omitempty"`
-	Carried      *[]string          `json:"carried,omitempty"`
-	Suggest      *[]string          `json:"suggest,omitempty"`
+	Text           string             `json:"text"`
+	Results        []AssistResult     `json:"results"`
+	LimitReached   bool               `json:"limit_reached"`
+	Usage          *AssistUsage       `json:"usage,omitempty"`
+	Ran            []AssistInvocation `json:"ran"`
+	Clarify        *AssistClarify     `json:"clarify,omitempty"`
+	Carried        *[]string          `json:"carried,omitempty"`
+	Suggest        *[]string          `json:"suggest,omitempty"`
+	ConversationId *string            `json:"conversation_id,omitempty"`
+	Citations      *[]AssistCitation  `json:"citations,omitempty"`
+	Notice         *AssistNotice      `json:"notice,omitempty"`
+	Scope          *AssistScope       `json:"scope,omitempty"`
+	AnswerId       *string            `json:"answer_id,omitempty"`
 }
 
 type AssistBudget struct {
@@ -1383,10 +1427,11 @@ type AssistUserLimitResetResult struct {
 }
 
 type AssistSettings struct {
-	Provider               string `json:"provider"`
-	Model                  string `json:"model"`
-	ChatEnabled            bool   `json:"chat_enabled"`
-	SpendVisibleToNonAdmin bool   `json:"spend_visible_to_non_admin"`
+	Provider               string  `json:"provider"`
+	Model                  string  `json:"model"`
+	Route                  *string `json:"route,omitempty"`
+	ChatEnabled            bool    `json:"chat_enabled"`
+	SpendVisibleToNonAdmin bool    `json:"spend_visible_to_non_admin"`
 }
 
 type AssistSettingsResponse struct {
@@ -2208,47 +2253,48 @@ type DispatchDriverPage struct {
 }
 
 type DispatchStop struct {
-	Id                string     `json:"id"`
-	BranchId          string     `json:"branch_id"`
-	OrderId           string     `json:"order_id"`
-	OrderNo           *string    `json:"order_no,omitempty"`
-	CustomerName      *string    `json:"customer_name,omitempty"`
-	RunId             *string    `json:"run_id,omitempty"`
-	RunNo             *string    `json:"run_no,omitempty"`
-	StopNo            int32      `json:"stop_no"`
-	ScheduledDate     string     `json:"scheduled_date"`
-	Status            string     `json:"status"`
-	TimeWindow        *string    `json:"time_window,omitempty"`
-	ContactName       *string    `json:"contact_name,omitempty"`
-	ContactPhone      *string    `json:"contact_phone,omitempty"`
-	GateCode          *string    `json:"gate_code,omitempty"`
-	AddressLine       *string    `json:"address_line,omitempty"`
-	City              *string    `json:"city,omitempty"`
-	PostalCode        *string    `json:"postal_code,omitempty"`
-	Latitude          *float64   `json:"latitude,omitempty"`
-	Longitude         *float64   `json:"longitude,omitempty"`
-	Instructions      *string    `json:"instructions,omitempty"`
-	PodSignatureRef   *string    `json:"pod_signature_ref,omitempty"`
-	PodReceivedBy     *string    `json:"pod_received_by,omitempty"`
-	PodAt             *time.Time `json:"pod_at,omitempty"`
-	FailureReason     *string    `json:"failure_reason,omitempty"`
-	LoadedAt          *time.Time `json:"loaded_at,omitempty"`
-	EnRouteAt         *time.Time `json:"en_route_at,omitempty"`
-	DeliveredAt       *time.Time `json:"delivered_at,omitempty"`
-	HandoffAt         *time.Time `json:"handoff_at,omitempty"`
-	PhotoCount        int32      `json:"photo_count"`
-	CreatedAt         time.Time  `json:"created_at"`
-	WeightKg          *float64   `json:"weight_kg,omitempty"`
-	VolumeM3          *float64   `json:"volume_m3,omitempty"`
-	PalletPositions   *int32     `json:"pallet_positions,omitempty"`
-	FreightIsOverride *bool      `json:"freight_is_override,omitempty"`
-	LoadSeq           *int32     `json:"load_seq,omitempty"`
-	LoadCount         *int32     `json:"load_count,omitempty"`
-	RequestedDate     *string    `json:"requested_date,omitempty"`
-	CommitState       *string    `json:"commit_state,omitempty"`
-	CommittedAt       *time.Time `json:"committed_at,omitempty"`
-	ReopenedAt        *time.Time `json:"reopened_at,omitempty"`
-	ReopenReason      *string    `json:"reopen_reason,omitempty"`
+	Id                string                `json:"id"`
+	BranchId          string                `json:"branch_id"`
+	OrderId           string                `json:"order_id"`
+	OrderNo           *string               `json:"order_no,omitempty"`
+	CustomerName      *string               `json:"customer_name,omitempty"`
+	RunId             *string               `json:"run_id,omitempty"`
+	RunNo             *string               `json:"run_no,omitempty"`
+	StopNo            int32                 `json:"stop_no"`
+	ScheduledDate     string                `json:"scheduled_date"`
+	Status            string                `json:"status"`
+	TimeWindow        *string               `json:"time_window,omitempty"`
+	ContactName       *string               `json:"contact_name,omitempty"`
+	ContactPhone      *string               `json:"contact_phone,omitempty"`
+	GateCode          *string               `json:"gate_code,omitempty"`
+	AddressLine       *string               `json:"address_line,omitempty"`
+	City              *string               `json:"city,omitempty"`
+	PostalCode        *string               `json:"postal_code,omitempty"`
+	Latitude          *float64              `json:"latitude,omitempty"`
+	Longitude         *float64              `json:"longitude,omitempty"`
+	Instructions      *string               `json:"instructions,omitempty"`
+	PodSignatureRef   *string               `json:"pod_signature_ref,omitempty"`
+	PodReceivedBy     *string               `json:"pod_received_by,omitempty"`
+	PodAt             *time.Time            `json:"pod_at,omitempty"`
+	FailureReason     *string               `json:"failure_reason,omitempty"`
+	LoadedAt          *time.Time            `json:"loaded_at,omitempty"`
+	EnRouteAt         *time.Time            `json:"en_route_at,omitempty"`
+	DeliveredAt       *time.Time            `json:"delivered_at,omitempty"`
+	HandoffAt         *time.Time            `json:"handoff_at,omitempty"`
+	PhotoCount        int32                 `json:"photo_count"`
+	CreatedAt         time.Time             `json:"created_at"`
+	WeightKg          *float64              `json:"weight_kg,omitempty"`
+	VolumeM3          *float64              `json:"volume_m3,omitempty"`
+	PalletPositions   *int32                `json:"pallet_positions,omitempty"`
+	FreightIsOverride *bool                 `json:"freight_is_override,omitempty"`
+	LoadSeq           *int32                `json:"load_seq,omitempty"`
+	LoadCount         *int32                `json:"load_count,omitempty"`
+	RequestedDate     *string               `json:"requested_date,omitempty"`
+	CommitState       *string               `json:"commit_state,omitempty"`
+	CommittedAt       *time.Time            `json:"committed_at,omitempty"`
+	ReopenedAt        *time.Time            `json:"reopened_at,omitempty"`
+	ReopenReason      *string               `json:"reopen_reason,omitempty"`
+	Lines             *[]DispatchDriverLine `json:"lines,omitempty"`
 }
 
 type DispatchPhotoMeta struct {
@@ -5080,6 +5126,7 @@ type Task struct {
 	CreatedBy        *string    `json:"created_by,omitempty"`
 	AssignedTo       *string    `json:"assigned_to,omitempty"`
 	ClaimedBy        *string    `json:"claimed_by,omitempty"`
+	ClaimedByRole    *string    `json:"claimed_by_role,omitempty"`
 	ClaimedAt        *time.Time `json:"claimed_at,omitempty"`
 	PushedAt         *time.Time `json:"pushed_at,omitempty"`
 	AcceptDeadlineAt *time.Time `json:"accept_deadline_at,omitempty"`
@@ -6100,6 +6147,40 @@ type PosReturnRequestReject struct {
 	Reason string `json:"reason"`
 }
 
+type PosCardRefundAttempt struct {
+	Id             string     `json:"id"`
+	RefundKey      string     `json:"refund_key"`
+	OrderId        string     `json:"order_id"`
+	OrderNo        string     `json:"order_no"`
+	BranchId       string     `json:"branch_id"`
+	CustomerId     string     `json:"customer_id"`
+	CustomerName   string     `json:"customer_name"`
+	GatewayRef     string     `json:"gateway_ref"`
+	RefundRef      string     `json:"refund_ref"`
+	AmountCents    int64      `json:"amount_cents"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error"`
+	InitiatedBy    string     `json:"initiated_by"`
+	ResolvedBy     *string    `json:"resolved_by,omitempty"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+	ResolutionNote *string    `json:"resolution_note,omitempty"`
+	AttemptedAt    time.Time  `json:"attempted_at"`
+	ProcessorAt    *time.Time `json:"processor_at,omitempty"`
+	BookedAt       *time.Time `json:"booked_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type PosCardRefundAttemptList struct {
+	Items []PosCardRefundAttempt `json:"items"`
+}
+
+type PosResolveCardRefundAttemptInput struct {
+	Outcome   string  `json:"outcome"`
+	RefundRef *string `json:"refund_ref,omitempty"`
+	Note      *string `json:"note,omitempty"`
+}
+
 type PosParkedLineInput struct {
 	ProductId  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
@@ -6594,12 +6675,12 @@ type PricingFloorPreviewItem struct {
 	BranchCode         *string `json:"branch_code,omitempty"`
 	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
-	MarginBps          int64   `json:"margin_bps"`
-	FloorBps           int64   `json:"floor_bps"`
+	MarginBps          *int64  `json:"margin_bps,omitempty"`
+	FloorBps           *int64  `json:"floor_bps,omitempty"`
 	PriceUom           string  `json:"price_uom"`
 	Source             string  `json:"source"`
 	PreviousFinalCents int64   `json:"previous_final_cents"`
-	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	PreviousMarginBps  *int64  `json:"previous_margin_bps,omitempty"`
 	AlreadyUnderFloor  bool    `json:"already_under_floor"`
 }
 
@@ -7016,9 +7097,9 @@ type PricingRebateAccrual struct {
 	SourceType   string    `json:"source_type"`
 	SourceId     *string   `json:"source_id,omitempty"`
 	QtyBase      float64   `json:"qty_base"`
-	BasisCents   int64     `json:"basis_cents"`
-	AccrualCents int64     `json:"accrual_cents"`
-	RateNote     string    `json:"rate_note"`
+	BasisCents   *int64    `json:"basis_cents,omitempty"`
+	AccrualCents *int64    `json:"accrual_cents,omitempty"`
+	RateNote     *string   `json:"rate_note,omitempty"`
 	AccruedAt    time.Time `json:"accrued_at"`
 }
 

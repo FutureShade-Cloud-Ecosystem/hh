@@ -11,13 +11,11 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-async function theme(page: Page, word: "Light" | "Brand"): Promise<void> {
-  const control = page.getByTestId("theme-control");
-  for (let i = 0; i < 3; i += 1) {
-    if ((await control.textContent())?.includes(word)) return;
-    await control.click();
-  }
-  await expect(control).toContainText(word);
+async function setTheme(page: Page, mode: "Light" | "Brand"): Promise<void> {
+  const value = mode === "Light" ? "light" : "dark";
+  await page.addInitScript((v) => {
+    window.sessionStorage.setItem("hh-demo.theme.v1", JSON.stringify(v));
+  }, value);
 }
 
 /** The visible words of the review card that a line wrap cuts in two, and its widest overhang past the screen. */
@@ -62,10 +60,10 @@ for (const mode of ["Light", "Brand"] as const) {
         data: { status: "ACCEPTED", customer_id: "c-fenwick", lines: [{ p: "p-wall-std", q: 4 }, { p: "p-charcoal-60", q: 120 }] },
       });
       const id = ((await seeded.json()) as { id: string }).id;
+      await setTheme(page, mode);
       await page.goto("/");
       await page.getByRole("button", { name: "Sales", exact: true }).click();
       await expect(page.getByTestId("qb-list")).toBeVisible();
-      await theme(page, mode);
       await page.evaluate((quote) => {
         window.location.hash = `#/quotes/${quote}/convert`;
       }, id);

@@ -41,21 +41,11 @@ import (
 // composition root's staff paths, which this adapter never drives.
 type pickupsLinker = identity.UserIDLinker
 
-// pickupsSeqScope names the scope_sequences counter row the pickups
-// writes draw from.
-const pickupsSeqScope = "pickups"
-
 // allocatePickupsSeqTx draws the next pickups seq inside the caller's
-// transaction.
+// transaction. The table has one counter (willCallSyncScope), so the
+// contractor's writes draw from it like every staff write.
 func allocatePickupsSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
-	var next int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO scope_sequences (scope) VALUES ($1)
-		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		 RETURNING next_value`, pickupsSeqScope).Scan(&next); err != nil {
-		return 0, fmt.Errorf("dispatch: seq allocate for scope %s: %w", pickupsSeqScope, err)
-	}
-	return next, nil
+	return allocateSyncSeqTx(ctx, tx, willCallSyncScope)
 }
 
 // TenantOrderReader is the tenant half of the order seam: the order
@@ -329,6 +319,7 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups create: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A new row: nothing to lock first, so the draw goes first (see the lock order note at willCallSeqUpsert).
 	seq, err := allocatePickupsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
@@ -488,6 +479,16 @@ func (s *PickupsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, k
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The one lock order: the row lock, then the draw (as Write does).
+	var locked int
+	if err := tx.QueryRow(ctx, `
+		SELECT 1 FROM will_call_pickups
+		WHERE id = $1::uuid AND order_id = ANY($2::uuid[]) AND deleted_at IS NULL FOR UPDATE`,
+		id, ids).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	} else if err != nil {
+		return sync.RowState{}, fmt.Errorf("dispatch: lock pickup %q for sync delete: %w", id, err)
+	}
 	seq, err := allocatePickupsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err

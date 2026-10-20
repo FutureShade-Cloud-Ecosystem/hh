@@ -38,6 +38,8 @@ test("a double press of Sign and apply sends one request", async ({ page, reques
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await page.locator(".kind-tab", { hasText: "Change orders" }).click();
   await page.locator("[data-approval]").first().getByRole("button", { name: "Sign and apply" }).click({ clickCount: 2 });
+  // The card leaves the list when the request is answered; the stub's log is read after that, never at the click.
+  await expect(page.locator("[data-approval]")).toHaveCount(1);
   const log = await (await request.get("/_stub/log")).json();
   const signApply = log.filter((entry: { method: string; path: string }) => entry.method === "POST" && entry.path.includes("/sign-apply"));
   expect(signApply).toHaveLength(1);
@@ -57,16 +59,16 @@ test("an APPROVED card applies without a signature", async ({ page, request }) =
   expect(signApply).toBeTruthy();
 });
 
-test("Decline asks for a note and removes the card", async ({ page }) => {
+test("Reject asks for a note and removes the card", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='general-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await page.locator(".kind-tab", { hasText: "Change orders" }).click();
   const row = page.locator("[data-approval]").first();
-  await row.getByRole("button", { name: "Decline" }).click();
-  await expect(page.locator(".error-line")).toContainText("A note is needed to decline");
+  await row.getByRole("button", { name: "Reject" }).click();
+  await expect(page.locator(".error-line")).toContainText("A note is needed to reject");
   await page.locator("input[data-field='decline-reason']").fill("Customer cancelled the add-on");
-  await row.getByRole("button", { name: "Decline" }).click();
+  await row.getByRole("button", { name: "Reject" }).click();
   await expect(page.locator("[data-approval]")).toHaveCount(1);
 });
 

@@ -52,7 +52,19 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	sequenced, err := repairDriverDaySeq(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
 	tasks, err := repairDemoTaskSync(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	rq, ok := tx.(rowQuery)
+	if !ok {
+		return 0, fmt.Errorf("demoseed: the repair pass needs a transaction that can read the schema")
+	}
+	world, err := repairDemoSeq(ctx, tx, rq)
 	if err != nil {
 		return 0, err
 	}
@@ -60,8 +72,43 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	grants, err := repairYardPersonaBranchGrants(ctx, tx, branches)
+	if err != nil {
+		return 0, err
+	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + tasks + reps + n, err
+	return fixed + stamped + sequenced + tasks + world + reps + grants + n, err
+}
+
+// yardPersonaBranchGrantRepairSQL deletes every user_branch_grants row of the yard persona
+// other than its home branch. Migration 0200 plants a grant at every BRANCH location for the
+// three tour personas; the yard persona is a single-branch frontline login whose seeded picks
+// all sit at its home branch, and messaging.SyncMembership joins user_branch_grants by
+// existence, so a non-home row (even tombstoned) seats the yard persona in the other yard's
+// rooms. The persona is resolved by email (both the 0200 address and the reserved demo alias
+// the populate moves it to), and the home branch is decided from the seed's own resolved
+// branches (the yard branch repairNorthlineHome and repairDemoOrderReps use), never a literal
+// branch name.
+const yardPersonaBranchGrantRepairSQL = `DELETE FROM user_branch_grants
+	 WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::citext[]))
+	   AND branch_id <> $2::uuid`
+
+// repairYardPersonaBranchGrants narrows the yard persona's user_branch_grants rows to its home
+// branch at seed time so its inbox and branch reach agree on one yard.
+func repairYardPersonaBranchGrants(ctx context.Context, tx txExec, branches []branch) (int, error) {
+	if len(branches) <= 1 {
+		return 0, nil
+	}
+	home := branches[len(branches)-1].ID
+	emails := []string{personaYard}
+	if alias := personaEmailAliases()[personaYard]; alias != "" {
+		emails = append(emails, alias)
+	}
+	tag, err := tx.Exec(ctx, yardPersonaBranchGrantRepairSQL, emails, home)
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: narrowing the yard persona branch grants to its home branch: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // demoOpenOrderStatuses is what "an open order" means to the rep repair: the four statuses the
@@ -231,6 +278,43 @@ func repairDriverDayOrg(ctx context.Context, tx txExec, now time.Time) (int, err
 		tag, err := tx.Exec(ctx, driverStopOrgRepairSQL, demoOrgSlug, now, id)
 		if err != nil {
 			return 0, fmt.Errorf("demoseed: stamping the demo org on the Driver's stop: %w", err)
+		}
+		total += int(tag.RowsAffected())
+	}
+	return total, nil
+}
+
+// driverSeqRepairSQL gives one day-keyed Driver row its place in its sync scope's sequence. A row
+// the seed writes straight into the table carries seq NULL (migration 0213 leaves carried rows
+// unsequenced), and the runs and stops pulls serve only rows with a seq, so without this the REST
+// read answers the Driver's day and the device's feed answers nothing: HH Drive opens on "No run
+// assigned to you today". The draw is the module's own upsert (dispatch.allocateSyncSeqTx), made
+// only when the row still needs it (unsequenced and stamped with the org, which the org repair
+// above has just done on a fresh box's boot day), so a second apply draws nothing and bumps no
+// shared counter. %[1]s names the table, %[2]s the scope.
+const driverSeqRepairSQL = `WITH seq AS (
+	INSERT INTO scope_sequences (scope)
+	SELECT '%[2]s' WHERE EXISTS (SELECT 1 FROM %[1]s WHERE id = $1::uuid AND seq IS NULL AND org_id IS NOT NULL)
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+)
+UPDATE %[1]s SET seq = (SELECT next_value FROM seq)
+ WHERE id = $1::uuid AND seq IS NULL AND org_id IS NOT NULL`
+
+// repairDriverDaySeq sequences THIS day's Driver run and stops into the runs and stops sync scopes,
+// addressed by the same day-keyed ids the plan used. Earlier days' rows stay unsequenced: nothing
+// walks a past day, so no feed ever needed them.
+func repairDriverDaySeq(ctx context.Context, tx txExec, now time.Time) (int, error) {
+	stamp := now.In(seedLocation()).Format("20060102")
+	total := 0
+	legs := []struct{ table, scope, id string }{{"delivery_runs", "runs", demoID(dayKey(stamp, "driver-run"))}}
+	for _, id := range driverDayStopIDs(stamp) {
+		legs = append(legs, struct{ table, scope, id string }{"delivery_stops", "stops", id})
+	}
+	for _, l := range legs {
+		tag, err := tx.Exec(ctx, fmt.Sprintf(driverSeqRepairSQL, l.table, l.scope), l.id)
+		if err != nil {
+			return 0, fmt.Errorf("demoseed: sequencing the Driver's day into the %s sync scope: %w", l.scope, err)
 		}
 		total += int(tag.RowsAffected())
 	}

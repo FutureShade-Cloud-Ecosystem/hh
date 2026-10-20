@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -55,6 +55,8 @@ export interface AccountModel {
   readonly terms: number | null;
   readonly branchName: string;
   readonly invoices: readonly BillingRegisterRow[];
+  /** Whether the account's invoices have arrived: a failed read is said in words, never shown as an empty table. */
+  readonly invoicesState: "loading" | "ready" | "failed";
   readonly showAll: boolean;
   readonly sub: "invoices" | "statement" | "contacts";
   readonly right: RightMode;
@@ -182,7 +184,7 @@ function tabsBar(model: DeskModel): TemplateResult {
 function frame(body: TemplateResult): TemplateResult {
   return html`
     <div class="head">
-      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
+      <div><h1>Receivables</h1><p class="dim">The AR register with its aging, past due first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
       <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
@@ -207,25 +209,25 @@ export function renderLoadFailed(error: string): TemplateResult {
 // ---- receivables home --------------------------------------------------------------------------
 
 const TILE_ORDER = ["card.escalation", "card.late", "card.warn", "card.current"] as const;
-const TILE_WORD: Record<string, string> = { ESCALATION: "Escalation", LATE: "Late", WARN: "Overdue", CURRENT: "Current" };
 
 function tiles(model: DeskModel): TemplateResult {
   const cards = model.landing?.cards ?? [];
   return html`
     <section class="tiles" aria-label="Receivables by age">
       ${TILE_ORDER.map((id) => cards.find((c) => c.id === id)).map((card) =>
-        card === undefined
+        card === undefined || !cardShown(card)
           ? nothing
           : html`
               <article class="tile" data-card="${card.id}">
-                <h3 data-card-title>${cardTitle(card.bucket)}</h3>
+                <h3 data-card-title>${cardTitleFor(card)}</h3>
                 <p class="tile-figure tile-${card.bucket.toLowerCase()}">${formatMoney(card.total_cents)}</p>
-                <p class="dim">${card.accounts} ${card.accounts === 1 ? "account" : "accounts"} · ${cardRange(card)}</p>
+                <p class="dim">${card.accounts} ${card.accounts === 1 ? "account" : "accounts"} · ${cardCovers(card)}</p>
                 <button type="button" class="link" data-action="card" data-card-id="${card.id}" aria-pressed="${model.cardFilter === card.id ? "true" : "false"}">${model.cardFilter === card.id ? "Showing" : "Open"} ›</button>
               </article>
             `,
       )}
     </section>
+    <p class="dim small" data-card-note>As of ${relativeDay(model.asOf, model.asOf)} · Grouped by your past due settings</p>
   `;
 }
 
@@ -244,7 +246,7 @@ const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
 // "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
 // credit memos are excluded because they offset what is owed rather than what is due.
 function isOpenRow(r: BillingRegisterRow): boolean {
-  return r.status !== "PAID" && r.status !== "CREDIT";
+  return isUnpaidInvoice(r);
 }
 
 function shownRows(model: DeskModel): BillingRegisterRow[] {
@@ -314,8 +316,8 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
         <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
         ${overdue
           ? html`<div class="late-line" data-testid="overdue-line">
-              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} late</span>
-              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketLabel}</span>` : nothing}
+              <span class="late-age">${r.days_overdue} ${r.days_overdue === 1 ? "day" : "days"} past due</span>
+              ${bucketLabel !== "" ? html`<span class="bucket-pill" data-bucket-key="${r.bucket_key ?? ""}" data-testid="bucket-pill">${bucketWord(r.bucket_key, bucketLabel)}</span>` : nothing}
             </div>`
           : nothing}
       </td>
@@ -357,14 +359,14 @@ function register(model: DeskModel): TemplateResult {
             <div class="scroll">
               <table class="stack reg">
                 <thead>
-                  <tr><th>Invoice</th><th>Account</th><th>Branch</th><th>Due</th><th>Status</th><th class="num">Balance</th><th><span class="visually-hidden">Act</span></th></tr>
+                  <tr><th>Invoice</th><th>Account</th><th>Branch</th><th>Due</th><th>Status</th><th class="num">Balance due</th><th><span class="visually-hidden">Act</span></th></tr>
                 </thead>
                 <tbody>${rows.map((r) => registerRowView(model, r))}</tbody>
               </table>
             </div>
           `}
       <p class="dim small foot" data-register-foot>
-        ${model.selection === null ? "" : `${model.selection.count} ${model.selection.count === 1 ? "invoice" : "invoices"}, ${formatMoney(model.selection.cents)}. `}Overdue first, then by due date. A promise or a dispute rides the row as a second mark, never a colour alone.
+        ${model.selection === null ? "" : `${model.selection.count} ${model.selection.count === 1 ? "invoice" : "invoices"}, ${formatMoney(model.selection.cents)}. `}Past due first, then by due date. A promise or a dispute rides the row as a second mark, never a colour alone.
       </p>
     </section>
   `;
@@ -474,7 +476,7 @@ export function renderHome(model: DeskModel): TemplateResult {
     <div class="head">
       <div>
         <h1>Receivables</h1>
-        <p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p>
+        <p class="dim">The AR register with its aging, past due first. Bounced payments and accounts on hold wait in Needs you.</p>
       </div>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="open-picker">Record a payment</button>
@@ -717,11 +719,26 @@ export function renderHolds(model: DeskModel): TemplateResult {
 // ---- an account --------------------------------------------------------------------------------
 
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
-  const paid = account.invoices.filter((r) => r.status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
-  const rows = account.invoices.filter((r) => account.showAll || r.status !== "PAID").concat(account.showAll ? [] : paid.slice(0, 1));
+  // Drafts and voids are not owed and not settled: they are never listed here, so never picked.
+  const paid = account.invoices.filter((r) => r.stored_status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
+  const rows = account.invoices.filter((r) => (account.showAll ? isUnpaidInvoice(r) || r.stored_status === "PAID" : isUnpaidInvoice(r))).concat(account.showAll ? [] : paid.slice(0, 1));
   rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
+  if (account.invoicesState !== "ready") {
+    return html`
+      <section class="panel" aria-label="Open invoices">
+        <div class="panel-head"><h3>Open invoices</h3></div>
+        ${account.invoicesState === "loading"
+          ? html`<p class="dim" role="status" data-invoices-loading>Loading this account's invoices.</p>`
+          : html`
+              <p class="alert alert-error" role="alert" data-invoices-failed>We could not load this account's invoices. Try again.</p>
+              <div class="actions"><button type="button" class="btn btn-secondary" data-action="retry-account-invoices">Try again</button></div>
+            `}
+      </section>
+    `;
+  }
+  const balance = account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents;
   return html`
     <section class="panel" aria-label="Open invoices">
       <div class="panel-head">
@@ -731,7 +748,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
       <div class="scroll">
         <table class="stack inv">
           <thead>
-            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Balance</th><th class="num">Pick</th><th class="num">Applied</th></tr>
+            <tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Status</th><th class="num">Amount</th><th class="num">Balance due</th><th class="num">Pick</th><th class="num">Applied</th></tr>
           </thead>
           <tbody>
             ${rows.map((r) => {
@@ -753,7 +770,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
             })}
           </tbody>
           <tfoot>
-            <tr><td colspan="5"><b>Open balance</b></td><td class="num"><b data-open-balance>${formatMoney(account.invoices.find((r) => r.account !== undefined)?.account?.open_balance_cents)}</b></td><td></td><td></td></tr>
+            <tr><td colspan="5"><b>Balance</b> <span class="dim small">as of ${relativeDay(model.asOf, model.asOf)}</span></td><td class="num"><b data-open-balance>${balance === undefined ? html`<span class="dim small">Not shown for this account</span>` : formatMoney(balance)}</b></td><td></td><td></td></tr>
           </tfoot>
         </table>
       </div>
@@ -787,8 +804,8 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
-      <p class="label gap">Method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
-      ${segmented("Method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
+      <p class="label gap">Payment method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
+      ${segmented("Payment method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
       ${pol !== null && pol.surcharge_rate_bps > 0 && account.method === "CARD" && surchargeCents > 0
         ? html`<p class="alert alert-warn" role="status" data-card-surcharge>Card surcharge: ${formatMoney(surchargeCents)} at ${(pol.surcharge_rate_bps / 100).toFixed(2)}% (${pol.surcharge_rate_bps} bps).</p>`
         : nothing}
@@ -878,7 +895,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
 }
 
 function promisePanel(model: DeskModel, account: AccountModel): TemplateResult {
-  const open = account.invoices.filter((r) => r.status !== "PAID");
+  const open = account.invoices.filter(isUnpaidInvoice);
   return html`
     <section class="panel side" aria-label="Record a promise to pay" data-promise-form>
       <div class="panel-head"><h2>Record a promise</h2><button type="button" class="btn btn-secondary small-btn" data-action="back-to-receive">Back to payment</button></div>
@@ -921,11 +938,11 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 </table>
               </div>
               <dl class="strip">
-                <div><dt>Current</dt><dd>${formatMoney(s.current_cents)}</dd></div>
-                <div><dt>1 to 30</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
-                <div><dt>31 to 60</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
-                <div><dt>Over 60</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
-                <div><dt>Total due</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[0]}</dt><dd>${formatMoney(s.current_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[1]}</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[2]}</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[3]}</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
@@ -938,6 +955,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
   const hold = model.holds.find((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const promised = account.invoices.some((r) => typeof r.promised_date === "string" && r.promised_date !== "");
   const disputes = account.invoices.filter((r) => r.disputed).length;
+  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && isUnpaidInvoice(r));
   return html`
     <button type="button" class="link back" data-action="back">‹ Receivables</button>
     <div class="head">
@@ -949,7 +967,8 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
           ${disputes > 0 ? html`<span class="pill pill-info">${disputes} ${disputes === 1 ? "dispute" : "disputes"}</span>` : nothing}</p>
       </div>
       <div class="actions">
-        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}">Remind</button>
+        <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!overdueOnAccount}>Remind</button>
+        ${overdueOnAccount || account.invoicesState !== "ready" ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>

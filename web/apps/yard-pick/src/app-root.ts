@@ -23,8 +23,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header and hh-sheet: the shared design-system chrome elements.
-import "@hardscapehouse/design-system/src/header.js";
+// hh-sheet: the shared design-system chrome element.
 import "@hardscapehouse/design-system/src/sheet.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -33,17 +32,21 @@ import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } fro
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
-import "@hardscapehouse/shell-chrome";
+import { fieldTabsForRole, setFieldFrame } from "@hardscapehouse/shell-chrome";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import { YardOffline, bannerMode, openYardOfflineOpfs, type QueueAnswer } from "./yard-offline.js";
 import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
+import type { ShellSyncState } from "@hardscapehouse/shell-chrome";
 import {
   RESOLVE_WALL_NAMES,
   CHANGE_ACK_WALL,
   ackDoneWords,
   actionDone,
+  isLocalLine,
+  isUnclaimed,
   lineIsShort,
   pickSummary,
   pickQueuedWords,
@@ -58,6 +61,8 @@ import {
   shortageSentWords,
   validateShortage,
   yardError,
+  heldByOther,
+  PICK_TAKEN_WORDS,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
 import {
@@ -159,6 +164,9 @@ export class YardPickApp extends HHElement {
   #sheetFor: number | null = null;
   #resolveFor = "";
   #skids: number | null = null;
+  #skidSaved = false;
+  readonly #queuedPickTasks = new Set<string>();
+  readonly #sentPickTasks = new Set<string>();
 
   // The field mirrors: what the yard typed, keyed by field name (and line).
   #qtyMirror = new Map<number, string>();
@@ -179,8 +187,14 @@ export class YardPickApp extends HHElement {
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
 
-  // The role label the header shows; set from the handoff or the mint.
+  // The role label the frame shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // The role code the frame's tabs follow; set with the label from the handoff, the console entry or the mint.
+  #roleCode = "";
+
+  // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
+  #org = "";
 
   // The theme: light by default (the yard reads this in daylight), brand
   // (the dark half) one tap away. Held in memory only: nothing here persists.
@@ -248,8 +262,14 @@ export class YardPickApp extends HHElement {
       // Back re-reads the whole board: a pick that moved while it was open
       // must not ride beside its own stale row. The waiting changes' count
       // re-reads with it: a change answered elsewhere must not linger.
-      void this.#loadQueue(true);
-      void this.#loadChangesCount();
+      void (this.#takePromise ?? Promise.resolve()).then(() => {
+        void this.#loadQueue(true);
+        void this.#loadChangesCount();
+      });
+      return;
+    }
+    if (action === "take-pick") {
+      void this.#ensureClaimed();
       return;
     }
     if (action === "claim") {
@@ -262,6 +282,10 @@ export class YardPickApp extends HHElement {
     }
     if (action === "start") {
       void this.#start(control?.getAttribute("data-task-id") ?? "");
+      return;
+    }
+    if (action === "pull-line") {
+      this.#pullLine(Number(control?.getAttribute("data-line-no") ?? "0"));
       return;
     }
     if (action === "edit-line") {
@@ -425,6 +449,10 @@ export class YardPickApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      this.#org = name;
+      this.requestUpdate();
+    });
     this.addEventListener("click", this.#onHostClick);
     // input and change do not leave this element's own shadow root (change is
     // not composed), so the form listeners sit on the root itself.
@@ -452,6 +480,7 @@ export class YardPickApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#roleCode = handoff.session.roleCode;
         this.#me = handoff.session.user.userId;
         clearFrontDoorHandoff();
         void this.#loadWorld();
@@ -468,6 +497,7 @@ export class YardPickApp extends HHElement {
   #onRecovered(outcome: AppStart): void {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
+      this.#roleCode = outcome.entry.roleCode;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       this.#me = outcome.entry.userId;
       void this.#loadWorld();
@@ -521,11 +551,20 @@ export class YardPickApp extends HHElement {
   // the yard is typing into, so a re-render never eats a typed number.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
+    setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
+      org: this.#org,
+      appName: "Yard Pick",
+      surface: this.#surfaceWords(),
+      roleLabel: this.#roleLabel,
+      syncState: this.#syncState as ShellSyncState,
+      theme: this.#theme,
+      signedIn: this.#sessions.current !== null,
+      demo: true,
+      current: "pick",
+      bellAction: "open-changes",
+      bellCount: this.#changesWaiting !== null && /^\d+$/.test(this.#changesWaiting) ? Number(this.#changesWaiting) : 0,
+      tabs: fieldTabsForRole(this.#roleCode),
+    });
     // The offline strip and the card list take their state through properties
     // (the position gate refuses a bound value outside data- and aria-), the
     // same pass the header's label rides.
@@ -826,8 +865,20 @@ export class YardPickApp extends HHElement {
   // wins, and a failed re-read keeps what is on the glass.
   async #refreshPick(): Promise<void> {
     if (this.#view.kind !== "pick" || this.#pick === null) return;
-    const answer = await this.#door().pick(this.#view.id);
-    if (answer.ok) this.#pick = answer.value;
+    const taskId = this.#view.id;
+    const answer = await this.#door().pick(taskId);
+    if (answer.ok) {
+      this.#pick = answer.value;
+      if (this.#pick.picked.some(isLocalLine)) {
+        this.#queuedPickTasks.add(taskId);
+        this.#sentPickTasks.delete(taskId);
+      } else if (this.#queuedPickTasks.has(taskId)) {
+        this.#queuedPickTasks.delete(taskId);
+        if (this.#pick.task.status !== "CANCELLED") {
+          this.#sentPickTasks.add(taskId);
+        }
+      }
+    }
     if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
   }
 
@@ -845,8 +896,39 @@ export class YardPickApp extends HHElement {
     return draft;
   }
 
+  #pullLine(lineNo: number): void {
+    const line = this.#ticketLine(lineNo);
+    if (line === null) return;
+    if (this.#refuseIfTaken()) return;
+    if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
+      void this.#ensureClaimed();
+    }
+    const draft = this.#draftFor(lineNo);
+    const recorded = this.#pick?.picked.find((p) => p.order_line_no === lineNo);
+    const current = draft.qty !== "" ? draft.qty : (recorded !== undefined ? qtyText(recorded.qty_picked) : "");
+    const isFull = current !== "" && !lineIsShort(line.qty_ordered, current);
+    if (isFull) {
+      this.#qtyMirror.set(lineNo, "");
+      draft.qty = "";
+    } else {
+      const fullQty = qtyText(line.qty_ordered);
+      this.#qtyMirror.set(lineNo, fullQty);
+      draft.qty = fullQty;
+      this.#reasonMirror.set(lineNo, "");
+      this.#noteMirror.set(lineNo, "");
+      draft.reason = "";
+      draft.note = "";
+      if (this.#editing === lineNo) this.#editing = null;
+    }
+    this.requestUpdate();
+  }
+
   #openEditor(lineNo: number): void {
     if (lineNo <= 0 || this.#ticketLine(lineNo) === null) return;
+    if (this.#refuseIfTaken()) return;
+    if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
+      void this.#ensureClaimed();
+    }
     this.#editing = lineNo;
     const draft = this.#draftFor(lineNo);
     if (!this.#qtyMirror.has(lineNo)) {
@@ -878,6 +960,84 @@ export class YardPickApp extends HHElement {
     this.#setQty(lineNo, String(next));
   }
 
+  #takePromise: Promise<void> | null = null;
+
+  /** The pulled row says another person holds this pick: say so, and take nothing from this person. */
+  #refuseIfTaken(): boolean {
+    const pick = this.#pick;
+    if (pick === null || !heldByOther(pick.task.claimed_by, this.#me, pick.task.status)) return false;
+    this.#loseRace();
+    return true;
+  }
+
+  /** The second person in a race: the draft checks, the pending edit and the optimistic notice go, and the screen says who won. */
+  #loseRace(): void {
+    this.#drafts = new Map();
+    this.#qtyMirror = new Map();
+    this.#reasonMirror = new Map();
+    this.#noteMirror = new Map();
+    this.#editing = null;
+    this.#notice = "";
+    this.#error = PICK_TAKEN_WORDS;
+    this.requestUpdate();
+  }
+
+  async #ensureClaimed(): Promise<void> {
+    if (this.#takePromise !== null) return this.#takePromise;
+    if (this.#view.kind !== "pick" || this.#pick === null) return;
+    const taskId = this.#view.id;
+    const held = this.#pick.ticket?.held_from_picking === true;
+    if (held || !isUnclaimed(this.#pick.task.status)) return;
+    const run = (async () => {
+      const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
+      if (!claimed.ok) {
+        if (claimed.status === 409) {
+          const reread = await this.#door().pick(taskId);
+          if (reread.ok && this.#view.kind === "pick" && this.#view.id === taskId) this.#pick = reread.value;
+          this.#loseRace();
+          return;
+        }
+        this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
+          notFound: "That pick is no longer on the board.",
+          taken: PICK_TAKEN_WORDS,
+        });
+        this.requestUpdate();
+        return;
+      }
+      if (this.#yardOffline !== null) {
+        // Online, the server answers the claim now; a refusal or a row that shows someone else means the race was lost.
+        const refused = await this.#yardOffline.sendClaimNow(taskId);
+        const seen = await this.#door().pick(taskId);
+        const lost = refused || (seen.ok && heldByOther(seen.value.task.claimed_by, this.#me, seen.value.task.status));
+        if (lost) {
+          if (seen.ok && this.#view.kind === "pick" && this.#view.id === taskId) this.#pick = seen.value;
+          await this.#refreshOfflineChrome();
+          this.#loseRace();
+          return;
+        }
+      }
+      const started = await this.#door().start(taskId);
+      if (!started.ok) {
+        this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+        this.requestUpdate();
+        return;
+      }
+      const reread = await this.#door().pick(taskId);
+      if (reread.ok && this.#view.kind === "pick" && this.#view.id === taskId) {
+        this.#pick = reread.value;
+        this.#notice = actionDone("claim");
+      }
+      if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
+      this.requestUpdate();
+    })();
+    this.#takePromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.#takePromise === run) this.#takePromise = null;
+    }
+  }
+
   async #claim(taskId: string): Promise<void> {
     if (taskId === "" || this.#busy) return;
     await this.#openPick(taskId);
@@ -901,42 +1061,25 @@ export class YardPickApp extends HHElement {
     let current = first.value;
     let openNotice = "";
     const held = current.ticket?.held_from_picking === true;
-    if (!held) {
-      if (current.task.status === "QUEUED" || current.task.status === "PUSHED") {
-        const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
-        if (!claimed.ok) {
-          this.#busy = false;
-          this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
-            notFound: "That pick is no longer on the board.",
-          });
-          this.requestUpdate();
-          return;
-        }
-        const started = await this.#door().start(taskId);
-        if (!started.ok) {
-          this.#busy = false;
-          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
-          this.requestUpdate();
-          return;
-        }
-        const reread = await this.#door().pick(taskId);
-        if (reread.ok) current = reread.value;
-        openNotice = actionDone("claim");
-      } else if (current.task.status === "ACCEPTED") {
-        const started = await this.#door().start(taskId);
-        if (!started.ok) {
-          this.#busy = false;
-          this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
-          this.requestUpdate();
-          return;
-        }
-        const reread = await this.#door().pick(taskId);
-        if (reread.ok) current = reread.value;
-        openNotice = actionDone("start");
+    const mineOrUnclaimed = current.task.claimed_by === "" || current.task.claimed_by === this.#me;
+    if (!held && current.task.status === "ACCEPTED" && mineOrUnclaimed) {
+      const started = await this.#door().start(taskId);
+      if (!started.ok) {
+        this.#busy = false;
+        this.#error = yardError(started.error, started.status, "That did not go through. Check your signal and try again.");
+        this.requestUpdate();
+        return;
       }
+      const reread = await this.#door().pick(taskId);
+      if (reread.ok) current = reread.value;
+      openNotice = actionDone("start");
     }
     this.#busy = false;
     this.#pick = current;
+    if (current.picked.some(isLocalLine)) {
+      this.#queuedPickTasks.add(taskId);
+      this.#sentPickTasks.delete(taskId);
+    }
     this.#view = { kind: "pick", id: taskId };
     this.#notice = openNotice;
     this.#drafts = new Map();
@@ -947,6 +1090,7 @@ export class YardPickApp extends HHElement {
     this.#sheetFor = null;
     this.#resolveFor = "";
     this.#skids = null;
+    this.#skidSaved = false;
     this.#skidReason = "";
     this.#skidNote = "";
     this.#stageWhere = "";
@@ -994,6 +1138,7 @@ export class YardPickApp extends HHElement {
   }
 
   async #savePick(): Promise<void> {
+    if (this.#takePromise !== null) await this.#takePromise;
     if (this.#view.kind !== "pick" || this.#busy) return;
     const lines = this.#draftedLines();
     if (lines.length === 0) {
@@ -1025,11 +1170,17 @@ export class YardPickApp extends HHElement {
       const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
       if (layer !== null && (await layer.pendingRecord(taskId))) {
         // Not sent: no signal, or the server could not be reached. Nobody has been told yet.
+        this.#queuedPickTasks.add(taskId);
+        this.#sentPickTasks.delete(taskId);
         this.#notice = pickQueuedWords(answer.value);
       } else if (firstShort !== undefined) {
+        this.#queuedPickTasks.delete(taskId);
+        this.#sentPickTasks.delete(taskId);
         const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
         this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
       } else {
+        this.#queuedPickTasks.delete(taskId);
+        this.#sentPickTasks.delete(taskId);
         this.#notice = pickSummary(this.#pick?.picked ?? answer.value) || "The pick is recorded.";
       }
     } else {
@@ -1136,6 +1287,7 @@ export class YardPickApp extends HHElement {
   #stepSkids(step: number): void {
     const base = this.#skids ?? 0;
     this.#skids = Math.max(0, base + step);
+    this.#skidSaved = false;
     this.requestUpdate();
   }
 
@@ -1155,6 +1307,7 @@ export class YardPickApp extends HHElement {
     this.#busy = false;
     if (answer.ok) {
       this.#skids = answer.value.skid_count;
+      this.#skidSaved = true;
       this.#notice = skidWords(answer.value);
     } else {
       this.#error = yardError(answer.error, answer.status, "The skid count did not save. Check your signal and try again.");
@@ -1194,6 +1347,7 @@ export class YardPickApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#roleCode = result.value.roleCode;
         this.#me = result.value.user.userId;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadWorld();
@@ -1207,6 +1361,9 @@ export class YardPickApp extends HHElement {
   }
 
   #onSignOut(): void {
+    // The frame's account chip names no role once the person is out.
+    this.#roleLabel = "";
+    this.#roleCode = "";
     this.#worldGen++;
     this.#sessions.clear();
     this.#phase = "loading";
@@ -1237,23 +1394,21 @@ export class YardPickApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
-  // theme a tap moves to. It is a control like any other: the app's own
-  // 56 px floor applies.
-  private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary theme-button" data-action="theme">${label}</button>`;
+  // The surface the frame's chip names beside the app.
+  #surfaceWords(): string {
+    if (this.#view.kind === "pick") return "Pick";
+    if (this.#view.kind === "changes") return "Changes waiting";
+    if (this.#view.kind === "conflicts") return "Review";
+    return "Pick queue";
   }
 
-  // When signed in, the header slot carries the theme toggle, the "Changes
-  // waiting on the yard" door with its badge, the Review door, and Refresh.
+  // The doors the old header carried, now the first row of the board: the "Changes waiting on the yard" door with its
+  // badge, the Review door, and Refresh. Theme, Switch role and Sign out live in the frame's account menu.
   private renderHeaderControls(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
     const waiting = this.#changesWaiting;
     const conflicts = this.#openCards.length;
     return html`
-      <div slot="theme" class="header-extra">
-        <button type="button" class="btn btn-secondary theme-button" data-action="theme" data-tap>${label}</button>
+      <div class="header-extra">
         <button type="button" class="btn btn-secondary header-door" data-action="open-changes" data-changes-door data-tap>
           <span>Changes waiting on the yard</span>
           ${waiting !== null ? html`<span class="pill branch-pill" data-changes-count>${waiting}</span>` : nothing}
@@ -1282,6 +1437,7 @@ export class YardPickApp extends HHElement {
       }
       const detail: PickModel = {
         pick: this.#pick,
+        me: this.#me,
         drafts,
         editing: this.#editing,
         sheetFor: this.#sheetFor,
@@ -1293,6 +1449,8 @@ export class YardPickApp extends HHElement {
         notice: this.#notice,
         skids: this.#skids,
         skidReason: this.#skidReason,
+        skidSaved: this.#skidSaved,
+        recordSent: this.#sentPickTasks.has(this.#pick.task.id),
       };
       return renderPick(detail);
     }
@@ -1309,6 +1467,7 @@ export class YardPickApp extends HHElement {
         sheetError: this.#changeError,
       });
     }
+    const isOffline = this.#bannerModeNow() === "offline";
     const model: QueueModel = {
       phase: this.#phase,
       branchName: this.#branchName,
@@ -1318,7 +1477,10 @@ export class YardPickApp extends HHElement {
       notice: this.#notice,
       moreBehind: this.#moreBehind,
       changesWaiting: this.#changesWaiting,
-      staleness: this.#yardOffline !== null ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null }) : "",
+      staleness:
+        this.#yardOffline !== null
+          ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null, lastPullAt: null }, isOffline)
+          : "",
       conflicts: this.#openCards.length,
     };
     return renderQueue(model);
@@ -1338,10 +1500,11 @@ export class YardPickApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderHeaderControls()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
       <main>
+        ${this.renderHeaderControls()}
         ${this.renderWork()}
       </main>
     `;
@@ -1351,7 +1514,7 @@ export class YardPickApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       <main>
         ${renderEntry(this.#entryView)}
       </main>

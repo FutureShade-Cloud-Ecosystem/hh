@@ -1089,6 +1089,8 @@ export type AssistField = {
 export type AssistItem = {
   title: string;
   fields: AssistField[];
+  ref?: AssistRef;
+  cite?: number;
 };
 export type AssistRef = {
   kind: "product" | "order" | "customer" | "quote";
@@ -1102,6 +1104,36 @@ export type AssistResult = {
   empty: boolean;
   note?: string;
   ref?: AssistRef;
+  notice?: AssistNotice;
+  scope?: AssistScope;
+};
+export type AssistNotice = {
+  code: "model_unavailable" | "refused" | "too_broad";
+  class?: "cost" | "margin" | "payment_trail" | "pii" | "capability" | "disabled";
+};
+export type AssistScopeBranch = {
+  id: string;
+  label: string;
+};
+export type AssistScopePeriod = {
+  from: string;
+  to: string;
+  label: string;
+};
+export type AssistScopeAccount = {
+  label: string;
+};
+export type AssistScope = {
+  branches?: AssistScopeBranch[];
+  all_branches?: boolean;
+  account?: AssistScopeAccount;
+  period?: AssistScopePeriod;
+  as_of: string;
+};
+export type AssistCitation = {
+  n: number;
+  label: string;
+  ref: AssistRef;
 };
 export type AssistInvocation = {
   command: string;
@@ -1129,6 +1161,7 @@ export type AssistMessage = {
 };
 export type AssistChatRequest = {
   question: string;
+  conversation_id?: string;
   history?: AssistMessage[];
 };
 export type AssistUsage = {
@@ -1146,6 +1179,11 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
+  conversation_id?: string;
+  citations?: AssistCitation[];
+  notice?: AssistNotice;
+  scope?: AssistScope;
+  answer_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
@@ -1201,8 +1239,9 @@ export type AssistUserLimitResetResult = {
   source: "role";
 };
 export type AssistSettings = {
-  provider: "stub" | "anthropic";
+  provider: "stub" | "anthropic" | "routed";
   model: string;
+  route?: string;
   chat_enabled: boolean;
   spend_visible_to_non_admin: boolean;
 };
@@ -1888,6 +1927,7 @@ export type DispatchStop = {
   committed_at?: string | null;
   reopened_at?: string | null;
   reopen_reason?: string;
+  lines?: DispatchDriverLine[];
 };
 export type DispatchPhotoMeta = {
   id: string;
@@ -4328,6 +4368,7 @@ export type Task = {
   created_by?: string;
   assigned_to?: string;
   claimed_by?: string;
+  claimed_by_role?: string;
   claimed_at?: string | null;
   pushed_at?: string | null;
   accept_deadline_at?: string | null;
@@ -5241,6 +5282,37 @@ export type PosReturnRequestPage = {
 export type PosReturnRequestReject = {
   reason: string;
 };
+export type PosCardRefundAttempt = {
+  id: string;
+  refund_key: string;
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  customer_id: string;
+  customer_name: string;
+  gateway_ref: string;
+  refund_ref: string;
+  amount_cents: number;
+  status: "IN_FLIGHT" | "UNBOOKED" | "BOOKED" | "FAILED";
+  last_error: string;
+  initiated_by: string;
+  resolved_by?: string;
+  resolved_at?: string;
+  resolution_note?: string;
+  attempted_at: string;
+  processor_at?: string;
+  booked_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+export type PosCardRefundAttemptList = {
+  items: PosCardRefundAttempt[];
+};
+export type PosResolveCardRefundAttemptInput = {
+  outcome: "REFUNDED" | "NOT_REFUNDED";
+  refund_ref?: string;
+  note?: string;
+};
 export type PosParkedLineInput = {
   product_id: string;
   qty_entered: number;
@@ -5679,12 +5751,12 @@ export type PricingFloorPreviewItem = {
   branch_code?: string;
   branch_name?: string;
   final_cents: number;
-  margin_bps: number;
-  floor_bps: number;
+  margin_bps?: number;
+  floor_bps?: number;
   price_uom: string;
   source: "CUSTOMER_PRODUCT_RULE" | "QUANTITY_BREAK" | "CUSTOMER_CATEGORY_RULE" | "CUSTOMER_OVERRIDE" | "TIER_CATEGORY" | "TIER_DEFAULT" | "LIST" | "PROMOTION";
   previous_final_cents: number;
-  previous_margin_bps: number;
+  previous_margin_bps?: number;
   already_under_floor: boolean;
 };
 export type PricingFloorPreview = {
@@ -6066,9 +6138,9 @@ export type PricingRebateAccrual = {
   source_type: "POS_SALE" | "ORDER" | "ADJUSTMENT";
   source_id?: string;
   qty_base: number;
-  basis_cents: number;
-  accrual_cents: number;
-  rate_note: string;
+  basis_cents?: number;
+  accrual_cents?: number;
+  rate_note?: string;
   accrued_at: string;
 };
 export type PricingRebateAccrualResult = {

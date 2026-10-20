@@ -4,11 +4,12 @@ import { expect, test as base, type APIRequestContext, type Page } from "@playwr
 
 export { expect };
 
-export type Persona = "sales" | "yard-manager" | "payables-receivables" | "admin";
+export type Persona = "sales" | "yard-manager" | "yard-team" | "payables-receivables" | "admin";
 
 export const PERSONA = {
   sales: { id: "a0000000-0000-4000-9000-000000000001", email: "sales@hh-demo.invalid", name: "Inside Sales (demo)", roleCode: "inside_sales", roleName: "Inside Sales", label: "Sales", tier: 3 },
   "yard-manager": { id: "a0000000-0000-4000-9000-000000000002", email: "yard.manager@hh-demo.invalid", name: "Yard manager (demo)", roleCode: "yard_manager", roleName: "Yard Manager", label: "Yard manager", tier: 2 },
+  "yard-team": { id: "d0200000-0000-4000-9000-000000000002", email: "yard.demo@hh-demo.invalid", name: "Yard persona (demo)", roleCode: "yard_team", roleName: "Yard Team", label: "Yard Team", tier: 3 },
   "payables-receivables": { id: "a0000000-0000-4000-9000-000000000003", email: "payables@hh-demo.invalid", name: "Payables and Receivables (demo)", roleCode: "payables_receivables", roleName: "Payables and Receivables", label: "Payables and Receivables", tier: 3 },
   admin: { id: "a0000000-0000-4000-9000-000000000004", email: "admin@hh-demo.invalid", name: "General Manager (demo)", roleCode: "general_manager", roleName: "General Manager", label: "General manager", tier: 1 },
 } as const;
@@ -77,3 +78,9 @@ export const MIRROR = "b9000000-0000-4000-9000-000000000002";
 export const channel = (page: Page, id: string) => page.locator(`[data-action='open-channel'][data-id='${id}']`);
 
 export const test = base;
+
+/** Opens the Field frame's account menu and presses one item (Switch role, Sign out, Brand theme, Light theme). */
+export async function accountItem(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: /^Account/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}

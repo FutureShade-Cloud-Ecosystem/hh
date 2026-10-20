@@ -78,7 +78,7 @@ export interface LandingModel {
   readonly notice?: string;
 }
 
-const NOT_HERE = "not on this box yet";
+const NOT_HERE = "Not available yet";
 
 export function renderLanding(model: LandingModel): TemplateResult {
   if (model.phase === "loading") {
