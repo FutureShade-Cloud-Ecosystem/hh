@@ -63,6 +63,8 @@ export interface YardTask {
   readonly priority: string;
   readonly status: string;
   readonly claimed_by: string;
+  /** The claimer's role label as the core serves it ("" when it serves none): a label, never a name or an id. */
+  readonly claimed_by_role: string;
   readonly created_at: string;
   readonly updated_at: string;
   readonly stage_location: string;
@@ -220,6 +222,7 @@ export function toTask(raw: unknown): YardTask {
     priority: text(r.priority),
     status: text(r.status),
     claimed_by: text(r.claimed_by),
+    claimed_by_role: text(r.claimed_by_role),
     created_at: text(r.created_at),
     updated_at: text(r.updated_at),
     stage_location: text(r.stage_location),
