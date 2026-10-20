@@ -197,7 +197,7 @@ func TestParity_EveryPurchaseOrderAndItsCostFollowThePurchasingModulesOwnRead(t 
 			subtotal                              *int64
 		}
 		heads := map[string]hdr{}
-		err = env.Readers.Staff.Run(ctx, claims, `SELECT id::text, po_no, status, notes, currency, delivery_method, line_count, subtotal_cents::text FROM ai.purchase_orders`, nil, func(rs pgx.Rows) error {
+		err = env.Readers.Staff.Run(ctx, claims, `SELECT id::text, po_no, status, notes, document_currency, delivery_method, line_count, subtotal_cents::text FROM ai.purchase_orders`, nil, func(rs pgx.Rows) error {
 			for rs.Next() {
 				var id string
 				var x hdr

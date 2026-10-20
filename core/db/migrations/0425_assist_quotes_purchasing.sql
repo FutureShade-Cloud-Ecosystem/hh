@@ -189,7 +189,7 @@ BEGIN
            COALESCE(v.name, '') AS vendor_name,
            po.expected_at,
            po.ordered_at,
-           po.currency::text AS currency,
+           po.currency::text AS document_currency,
            po.delivery_method,
            po.notes,
            COALESCE(s.line_count, 0) AS line_count,

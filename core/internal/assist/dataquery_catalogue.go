@@ -308,7 +308,7 @@ func rawPurchaseOrdersView() ViewDef {
 			{Name: "vendor_name", Label: "Vendor", Type: typeText, Filter: true, Group: true, Search: true},
 			{Name: "expected_at", Label: "Expected", Type: typeDate, Filter: true, Group: true, Agg: true},
 			{Name: "ordered_at", Label: "Ordered", Type: typeTime, Filter: true, Agg: true},
-			{Name: "currency", Label: "Currency", Type: typeText, Filter: true, Group: true},
+			{Name: "document_currency", Label: "Document currency", Type: typeText, Filter: true, Group: true},
 			{Name: "delivery_method", Label: "Delivery method", Type: typeText, Filter: true, Group: true},
 			{Name: "notes", Label: "Notes", Type: typeText, Filter: true},
 			{Name: "line_count", Label: "Lines", Type: typeInt, Filter: true, Agg: true},
