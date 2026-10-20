@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // Usage is what one exchange cost, reported back for the surfaces that may see it.
@@ -121,6 +123,14 @@ type Service struct {
 	// Without one the service uses its single provider, which is what every test double wants.
 	router *Router
 
+	// Slice 2 metering (meter.go): the spend and price tables, the dealer wide cap, the rate
+	// limits and the dealer's zone.
+	spend     SpendStore
+	prices    PriceStore
+	dealerCap int64
+	rates     *RateLimits
+	zone      houseday.Source
+
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
 	// additive rather than load-bearing.
@@ -205,11 +215,20 @@ func (s *Service) Budget(ctx context.Context, c Caller) (Budget, error) {
 }
 
 // MonthSpend is the caller's usage so far this calendar month.
+//
+// With the spend table wired (meter.go) it is read from there, so an open reservation counts at its
+// estimate, in the dealer's month; the older token ledger is the fallback of a deployment without it.
 func (s *Service) MonthSpend(ctx context.Context, userID string) (Spend, error) {
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return Spend{}, err
+	}
+	if s.spend != nil {
+		return s.spend.UserMonth(ctx, userID, from, to)
+	}
 	if s.ledger == nil {
 		return Spend{}, nil
 	}
-	from, to := MonthWindow(s.now())
 	return s.ledger.SpendFor(ctx, userID, from, to)
 }
 
@@ -219,9 +238,17 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		// No assigned role: no commands, so no useful conversation. Refused before any spend.
 		return Answer{}, ErrRefused
 	}
+	// One exchange id for every provider call this question makes (retries and escalations included).
+	ctx = withExchange(ctx)
 	cfg := s.Settings(ctx)
 	if !cfg.ChatEnabled {
 		return Answer{Text: ChatDisabledMessage}, nil
+	}
+
+	// Slice 2: the rate limit, before the budget and before anything that can cost. A refused
+	// request charges nothing and is an ordinary answer.
+	if err := s.admit(ctx, c); err != nil {
+		return Answer{Text: RateLimitedMessage, Results: []Result{}}, nil
 	}
 
 	id := s.identityFor(ctx, cfg)
@@ -237,6 +264,12 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	}
 	spent, err := s.MonthSpend(ctx, c.UserID)
 	if err != nil {
+		if s.spend != nil {
+			// The spend table cannot be read, so nothing can be reserved: the plain unavailable
+			// answer, and no provider is reached.
+			s.warn("assist: cannot read month spend, the question is not sent", "err", err)
+			return Answer{Text: UnavailableMessage, Results: []Result{}}, nil
+		}
 		return Answer{}, err
 	}
 	if OverBudget(spent, budget) {
@@ -293,6 +326,10 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	// for runs through the gate; its next reply sees the results. Bounded, see maxToolRounds.
 	out, err := s.converse(ctx, c, cfg, tools, window, &res, run)
 	if err != nil {
+		// A refusal by the meter (budget, dealer cap, unrecordable spend) is an ordinary answer.
+		if ans, ok := refusalAnswer(err); ok {
+			return ans, nil
+		}
 		return Answer{}, err
 	}
 	if out.clarify != nil {
@@ -602,11 +639,28 @@ func (s *Service) escalationRoute(ctx context.Context, cfg Settings) []string {
 // complete is the ONE place a provider is called. Every attempt, retry and escalation goes through
 // it, so whatever wraps it (metering, caps) sees every provider call and nothing bypasses it. The
 // provider is resolved here, per call, from the current settings and alias table.
-func (s *Service) complete(ctx context.Context, _ Caller, req CompletionRequest) (Reply, error) {
+func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest) (Reply, error) {
 	p := s.providerFor(ctx, req.Alias)
-	reply, err := p.Complete(ctx, req)
+	reply, err := s.meteredComplete(ctx, c, p, s.priceAlias(ctx, req.Alias, p), req)
 	reply.Provider, reply.Model = p.Name(), p.Model()
 	return reply, err
+}
+
+// priceAlias is the alias row a call is priced and recorded under: the alias named by the request,
+// else the route's first entry; with no router, the single provider's own name. The stub is its own.
+func (s *Service) priceAlias(ctx context.Context, alias string, p Provider) string {
+	if p.Name() == "stub" {
+		return "stub"
+	}
+	if s.router == nil {
+		return p.Name()
+	}
+	if alias == "" {
+		if route := s.Settings(ctx).RouteAliases(); len(route) > 0 {
+			alias = route[0]
+		}
+	}
+	return alias
 }
 
 // providerFor resolves the provider for an alias; an empty alias means the route's first entry.
