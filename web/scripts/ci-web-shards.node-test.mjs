@@ -65,7 +65,9 @@ test("quote desk's typecheck, node tests and extra configs are a unit of their o
   assert.equal(extras.length, 1);
   const parts = units.filter((u) => u.pkg === "quote-desk" && u.part > 0);
   assert.ok(parts.length >= 4, "quote desk's playwright run is split into at least four parts");
-  assert.ok(Math.max(...parts.map((u) => u.weight)) <= 10, "no playwright part is planned over ten minutes");
+  const split = SPLITS["quote-desk"];
+  assert.equal(split.partWeights.length, split.parts, "each playwright part carries its own measured weight");
+  assert.deepEqual(parts.map((u) => u.weight).sort(), [...split.partWeights].sort(), "the plan uses the measured part weights");
 });
 
 test("an unknown package still lands in a shard", () => {
@@ -102,7 +104,7 @@ test("the packing is balanced: no shard far over the mean at six shards", () => 
   const loads = shards.map((s) => s.reduce((a, u) => a + u.weight, 0));
   const total = loads.reduce((a, b) => a + b, 0);
   assert.ok(Math.max(...loads) <= total / 6 + Math.max(...units.map((u) => u.weight)), JSON.stringify(loads));
-  assert.ok(Math.max(...loads) <= (total / 6) * 1.25, `the longest shard is far past the mean: ${JSON.stringify(loads)}`);
+  assert.ok(Math.max(...loads) <= (total / 6) * 1.15, `the longest shard is far past the mean: ${JSON.stringify(loads)}`);
 });
 
 test("the assignment is deterministic", () => {

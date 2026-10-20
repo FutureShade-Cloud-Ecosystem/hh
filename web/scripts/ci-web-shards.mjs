@@ -9,7 +9,7 @@
 // typecheck plus test per package; a package missing from it takes
 // DEFAULT_WEIGHT and still lands in a shard. SPLITS names the packages whose
 // bare `playwright test` run is divided with --shard=k/m across `parts`
-// units of weight `playwright / parts` each; the package's typecheck, node
+// units of the measured weights in `partWeights`; the package's typecheck, node
 // tests and extra Playwright configs are one more unit (part 0, weight
 // `extras`) so no part carries them on top of its share. The evening guard's two date sensitive
 // specs are one more unit, run under TZ=America/Toronto.
@@ -25,28 +25,43 @@ export const DEFAULT_WEIGHT = 0.8;
 export const EVENING_GUARD = "evening-guard-web";
 export const BROWSER_PACKAGE = "design-system";
 
-// Minutes, typecheck plus test, from main's last green ci log.
+// Minutes of runner time per unit, read from the per unit timestamps of the
+// first sharded run on a pull request (the unit's own typecheck plus test,
+// setup excluded). Packages not listed take DEFAULT_WEIGHT.
 export const WEIGHTS = {
-  "quote-desk": 24.8,
-  "counter-till": 9.6,
-  "money-desk": 5.0,
-  "buying-and-stock": 2.5,
-  "manager-home": 2.2,
-  "front-door": 2.0,
-  "drive-run": 1.8,
-  "dispatch-board": 1.7,
-  "house-messages": 1.5,
+  "money-desk": 7.8,
+  "manager-home": 2.8,
+  "front-door": 2.5,
+  "drive-run": 2.5,
+  "yard-pick": 2.5,
+  "buying-and-stock": 2.4,
+  "house-messages": 1.9,
+  "dispatch-board": 1.8,
+  "dealer-admin": 1.7,
+  "pro-procurement": 1.6,
   "public-desk": 1.5,
-  "dealer-admin": 1.2,
-  "pro-procurement": 1.1,
-  [EVENING_GUARD]: 2.0,
+  "pro-field": 1.0,
+  "pro-pay": 1.0,
+  "design-system": 0.8,
+  "work-shell": 0.6,
+  "_role-template": 0.2,
+  auth: 0.2,
+  "api-client": 0.1,
+  "offline-store": 0.1,
+  "pos-kit": 0.1,
+  "pro-kit": 0.1,
+  "shell-chrome": 0.1,
+  "work-offline": 0.1,
+  [EVENING_GUARD]: 3.7,
 };
-// Minutes of runner time measured on the first sharded run: Quote Desk's
-// bare Playwright run about 36 split four ways and its other legs about 6;
-// Counter Till's about 9 split two ways and its other legs about 4.
+// Playwright's --shard=k/m deals whole test files out, so the parts are not
+// equal: partWeights holds each part's measured minutes (the file set is
+// stable, so part k is the same files every run until the suite grows; rerun
+// the unit timing then). extras is the package's typecheck, node tests and
+// extra configs.
 export const SPLITS = {
-  "quote-desk": { parts: 4, playwright: 36, extras: 6 },
-  "counter-till": { parts: 2, playwright: 9, extras: 4 },
+  "quote-desk": { parts: 4, partWeights: [12.3, 4.6, 10.3, 7.0], extras: 2.5 },
+  "counter-till": { parts: 2, partWeights: [7.2, 7.4], extras: 1.2 },
 };
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,7 +117,7 @@ export function buildUnits(pkgs, weights, splits) {
     }
     units.push({ id: `${pkg.name}#extras`, pkg: pkg.name, part: 0, parts: split.parts, weight: split.extras });
     for (let part = 1; part <= split.parts; part += 1) {
-      units.push({ id: `${pkg.name}#${part}/${split.parts}`, pkg: pkg.name, part, parts: split.parts, weight: split.playwright / split.parts });
+      units.push({ id: `${pkg.name}#${part}/${split.parts}`, pkg: pkg.name, part, parts: split.parts, weight: split.partWeights[part - 1] });
     }
   }
   units.push({ id: EVENING_GUARD, pkg: EVENING_GUARD, part: 1, parts: 1, weight: weights[EVENING_GUARD] ?? DEFAULT_WEIGHT });
@@ -192,7 +207,7 @@ function main(argv) {
     for (const f of failures) console.error(f);
     process.exit(1);
   }
-  const unknown = pkgs.filter((p) => !(p.name in WEIGHTS)).map((p) => p.name);
+  const unknown = pkgs.filter((p) => !(p.name in WEIGHTS) && !(p.name in SPLITS)).map((p) => p.name);
   const units = buildUnits(pkgs, WEIGHTS, SPLITS);
   if (mode === "plan") {
     const shards = assign(units, Number(a));
