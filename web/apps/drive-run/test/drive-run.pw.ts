@@ -12,6 +12,7 @@ test.beforeEach(async ({ request }) => {
 test("the driver's card is the one way in and signs in as the Driver", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("hh-field-frame")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Drive", exact: true })).toBeVisible();
   const cards = page.locator("[data-flow]");
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toHaveAttribute("data-flow", "driver");

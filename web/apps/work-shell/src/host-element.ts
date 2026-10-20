@@ -254,7 +254,7 @@ export class WorkShellHost extends HHElement {
       if (read === null) throw new Error("the profile files are not usable");
       this.#apps = read.apps;
     } catch {
-      this.#fault = "HH Work could not read its profile, so it has no apps to offer. Close it and open it again.";
+      this.#fault = "Work could not read its profile, so it has no apps to offer. Close it and open it again.";
       this.requestUpdate();
       return;
     }
@@ -479,7 +479,7 @@ export class WorkShellHost extends HHElement {
   #faultView(): TemplateResult {
     return html`
       <div class="state" data-testid="profile-fault" role="alert">
-        <h2>HH Work cannot start</h2>
+        <h2>Work cannot start</h2>
         <p>${this.#fault}</p>
       </div>
     `;
@@ -518,7 +518,7 @@ export class WorkShellHost extends HHElement {
             ? html`
                 <div class="state" data-testid="no-apps">
                   <h2>No apps for this role</h2>
-                  <p>${state.session.roleLabel} has no desk apps in HH Work. Use Switch role to pick another role.</p>
+                  <p>${state.session.roleLabel} has no desk apps in Work. Use Switch role to pick another role.</p>
                   <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
                 </div>
               `
