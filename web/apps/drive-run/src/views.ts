@@ -492,7 +492,7 @@ export function renderEntry(view: EntryView): TemplateResult {
         : html`<button type="button" class="btn btn-primary big" data-action="choose" data-flow=${flow.flow} ?disabled=${view.busy} data-tap>${flow.label}</button>`;
   }
   return html`
-    <h1>HH Drive</h1>
+    <h1>Drive</h1>
     <p class="dim">Your run, your stops and proof of delivery, on your phone. Demo data only.</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
     ${body}
