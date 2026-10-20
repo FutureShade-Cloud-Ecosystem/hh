@@ -294,12 +294,25 @@ func (r *Repository) Update(ctx context.Context, id string, attrs map[string]any
 	args = append(args, id)
 
 	q := fmt.Sprintf("UPDATE products SET %s WHERE id = $%d", strings.Join(set, ", "), len(args))
-	tag, err := r.pool.Exec(ctx, q, args...)
+	// The products counter first, without advancing it, then the row: a load batch holds this counter before its
+	// item rows (LD-5), and this edit relies on the sync seq trigger, which would take the row first (round 3e).
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Product{}, fmt.Errorf("update product %q: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockProductsSeqTx(ctx, tx); err != nil {
+		return Product{}, err
+	}
+	tag, err := tx.Exec(ctx, q, args...)
 	if err != nil {
 		return Product{}, fmt.Errorf("update product %q: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return Product{}, fmt.Errorf("update product %q: %w", id, ErrNotFound)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Product{}, fmt.Errorf("update product %q: %w", id, err)
 	}
 	return r.Get(ctx, id)
 }

@@ -197,6 +197,11 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 		// place. A SKU another row already carries returns that row's id
 		// without a write, and the frame refuses the item as a conflict
 		// naming both legacy keys.
+		// The counter first (round 3e): the SKU move below relies on the sync seq trigger, which takes the row
+		// and then the counter; the batch's order is the counter, then the rows.
+		if err := LockProductsSeqTx(ctx, tx); err != nil {
+			return "", false, err
+		}
 		var other string
 		err := tx.QueryRow(ctx,
 			`SELECT id::text FROM products WHERE sku = $1 AND id <> $2::uuid`, sku, in.RowID).Scan(&other)
@@ -312,6 +317,22 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 	}
 	return id, false, nil
 }
+
+// LockProductsSeqTx takes the products counter row WITHOUT advancing it, on the caller's transaction: the upsert writes the
+// value it already holds. The load door's claim transaction holds this counter from an item's first draw to the
+// batch commit and then wants item rows (LD-5, which closes batch against batch), so the counter comes BEFORE the
+// rows for every writer of this table. A single row REST writer that relies on the sync seq trigger would take
+// the row first and the counter after, and cross a batch holding the counter while it waits for that row (PR 556
+// round 3e). Every trigger relying writer of this table takes this first; the catalogue's check (h) says so.
+func LockProductsSeqTx(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO scope_sequences (scope, next_value) VALUES ('products', 0)
+		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`); err != nil {
+		return fmt.Errorf("product: lock the products counter: %w", err)
+	}
+	return nil
+}
+
 
 // landedUnitSetRefusal refuses a product reload whose units would
 // leave the unit set already landed on the row: the set's one base row

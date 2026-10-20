@@ -88,7 +88,7 @@ func NewDrawPark(t *testing.T, base *pgxpool.Pool, scope string, key int64) *Dra
 // WaitParked blocks until a park pool session stands on the advisory lock.
 func (p *DrawPark) WaitParked(what string) {
 	p.t.Helper()
-	WaitCount(p.t, p.base, "parked: "+what, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)
+	WaitCount(p.t, p.base, "parked: "+what, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`)
 }
 
 // WaitBlocked blocks until a session waits on a row or counter lock (not the park).
@@ -116,8 +116,14 @@ func WaitCount(t *testing.T, pool *pgxpool.Pool, what, q string) {
 	}
 }
 
-// Answers releases the park and requires every writer to finish without a deadlock victim.
-func (p *DrawPark) Answers(chs map[string]chan error) {
+// Answers releases the park and requires every writer to finish with no error at all: a deadlock victim is named,
+// and any other error fails too, so a writer that stopped for some other reason (a check constraint, say) cannot
+// pass for one that landed.
+func (p *DrawPark) Answers(chs map[string]chan error) { p.t.Helper(); p.AnswersAllowing(chs, nil) }
+
+// AnswersAllowing is Answers for a leg whose writers legitimately answer an error: allowed maps a writer to a
+// substring its error must contain. A deadlock is never allowed.
+func (p *DrawPark) AnswersAllowing(chs map[string]chan error, allowed map[string]string) {
 	p.t.Helper()
 	p.release()
 	for who, ch := range chs {
@@ -127,11 +133,38 @@ func (p *DrawPark) Answers(chs map[string]chan error) {
 				p.t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
 			}
 			if err != nil {
-				p.t.Logf("%s answered: %v", who, err)
+				if want, ok := allowed[who]; ok && strings.Contains(err.Error(), want) {
+					continue
+				}
+				p.t.Fatalf("%s answered an error: %v", who, err)
 			}
 		case <-time.After(30 * time.Second):
 			p.t.Fatalf("%s never finished", who)
 		}
+	}
+}
+
+// WaitBlockedOr blocks until a session waits on a row or counter lock (not the park), or settled reports true:
+// a fixed writer may never wait at all, and then the leg goes straight to its answers.
+func (p *DrawPark) WaitBlockedOr(what string, settled func() bool) {
+	p.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if settled() {
+			return
+		}
+		var n int
+		if err := p.base.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event <> 'advisory'`).Scan(&n); err != nil {
+			p.t.Fatalf("blocked: %s: %v", what, err)
+		}
+		if n > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			p.t.Fatalf("never saw: blocked or settled: %s", what)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

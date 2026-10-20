@@ -1077,7 +1077,17 @@ func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID str
 		address = *email
 	}
 	var v VendorMaster
-	err := r.pool.QueryRow(ctx, `
+	// The vendors counter first, without advancing it, then the row (a load batch holds the counter before its
+	// item rows, LD-5; PR 556 round 3e).
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return VendorMaster{}, fmt.Errorf("purchasing: update vendor: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockVendorsSeqTx(ctx, tx); err != nil {
+		return VendorMaster{}, err
+	}
+	err = tx.QueryRow(ctx, `
 		UPDATE vendors SET
 			name = COALESCE($2, name),
 			payment_terms_days = COALESCE($3, payment_terms_days),
@@ -1096,6 +1106,9 @@ func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID str
 		return VendorMaster{}, ErrUnknownVendor
 	}
 	if err != nil {
+		return VendorMaster{}, fmt.Errorf("purchasing: update vendor: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return VendorMaster{}, fmt.Errorf("purchasing: update vendor: %w", err)
 	}
 	return v, nil
