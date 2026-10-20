@@ -94,16 +94,8 @@ function mintToken(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-// One day source for every date the stub writes: the machine's local day,
-// the same day the app calls today in the browser on the same machine. The
-// contract tests read it in the same zone (they pass TZ through), so an offset
-// of N days never straddles a boundary between the stub and its readers.
-function localDay(at) {
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-}
-
-// A transfer's eta is the one date the core cuts in its house zone, not the machine's
-// (core/internal/inventory/transfer_eta.go etaZone), so the stub cuts it there too.
+// One day source for every date the stub writes: the house zone,
+// the same day the app calls today in the browser.
 function houseDayOffset(offset) {
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const at = new Date(`${day}T12:00:00Z`);
@@ -112,9 +104,7 @@ function houseDayOffset(offset) {
 }
 
 function dayOffset(offset) {
-  const at = new Date();
-  at.setDate(at.getDate() + offset);
-  return localDay(at);
+  return houseDayOffset(offset);
 }
 
 function uuid(kind, n) {

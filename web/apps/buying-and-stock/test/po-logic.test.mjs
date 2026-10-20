@@ -7,6 +7,7 @@ import {
   deliveryWord,
   dateWords,
   draftOf,
+  houseDay,
   landedWords,
   relativeDay,
   incomingLines,
@@ -15,6 +16,7 @@ import {
   refusalWords,
   shortOrderWords,
   shortfallRows,
+  stampDay,
   statusTone,
   statusWord,
   validateExpectedDate,
@@ -154,6 +156,58 @@ test("a stamp on screen reads as words against today, and a far day falls back t
   assert.equal(whenWords("soon", "2031-03-02"), "soon");
   assert.equal(whenWords(undefined, "2031-03-02"), "");
   assert.equal(whenWords("", "2031-03-02"), "");
+});
+
+function ymd(y, m, d) {
+  return [String(y), String(m).padStart(2, "0"), String(d).padStart(2, "0")].join("-");
+}
+
+function withPinnedClock(now, run) {
+  const RealDate = globalThis.Date;
+  class PinnedDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(now.getTime());
+      else super(...args);
+    }
+    static now() {
+      return now.getTime();
+    }
+  }
+  globalThis.Date = PinnedDate;
+  try {
+    return run();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+}
+
+test("a receipt at the house evening reads today, never tomorrow", () => {
+  const y = 2000 + 31;
+  // 20:30 in the house zone on the second day of the third month, already the third in UTC and Tokyo.
+  const evening = new Date(Date.UTC(y, 2, 3, 1, 30));
+  withPinnedClock(evening, () => {
+    const receiptAt = new Date().toISOString();
+    assert.equal(houseDay(), ymd(y, 3, 2));
+    assert.equal(stampDay(receiptAt), ymd(y, 3, 2));
+    assert.equal(whenWords(receiptAt, ymd(y, 3, 2)), "today");
+    assert.equal(whenWords(receiptAt), "today");
+    assert.equal(relativeDay(receiptAt), "today");
+  });
+});
+
+test("an expected date of the house tomorrow reads tomorrow and a date-only value is never UTC midnight", () => {
+  const y = 2000 + 31;
+  const evening = new Date(Date.UTC(y, 2, 3, 1, 30));
+  withPinnedClock(evening, () => {
+    const houseTomorrow = ymd(y, 3, 3);
+    const houseToday = ymd(y, 3, 2);
+    assert.equal(stampDay(houseTomorrow), houseTomorrow);
+    assert.equal(whenWords(houseTomorrow), "tomorrow");
+    assert.equal(relativeDay(houseTomorrow), "tomorrow");
+    assert.equal(whenWords(houseToday), "today");
+    assert.equal(relativeDay(houseToday), "today");
+    assert.equal(dateWords(houseTomorrow).endsWith("(tomorrow)"), true);
+  });
 });
 
 test("what has landed reads as a count against what was ordered", () => {

@@ -131,9 +131,10 @@ function refused(res, status, fragment, inSource = fragment) {
 }
 
 const later = (days) => {
-  const at = new Date();
-  at.setDate(at.getDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const at = new Date(`${day}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + days);
+  return at.toISOString().slice(0, 10);
 };
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";

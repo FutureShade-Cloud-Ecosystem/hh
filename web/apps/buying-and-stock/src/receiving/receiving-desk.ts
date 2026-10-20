@@ -12,7 +12,7 @@
 import type { TemplateResult } from "lit";
 import type { Branch, PurchasingAttachLandedCostRequest, PurchasingPODetail, PurchasingPOSend, PurchasingReceipt, PurchasingReceiveRequest, PurchasingVendorContactResult, PurchasingWorklistItem, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
-import { refusalWords } from "../po/po-logic.js";
+import { houseDay, refusalWords } from "../po/po-logic.js";
 import { answerLost } from "../purch/purch-logic.js";
 import { ReceivingApi } from "./receiving-api.js";
 import { attachBody, attachConfirmWords, costsHidden, documentFileName, fallbackAsk, receiveBody, receiveConfirmWords, sendConfirmWords, sendOutcome, worklistRows, type ReceivedPick } from "./receiving-logic.js";
@@ -437,7 +437,7 @@ export class ReceivingDesk implements AreaDesk {
       errorAt: this.#errorAt,
       notice: this.#notice,
       sendResult: this.#sendResult,
-      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      today: houseDay(),
     });
   }
 }

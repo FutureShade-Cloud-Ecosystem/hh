@@ -11,11 +11,11 @@
 import type { TemplateResult } from "lit";
 import type { DeskHost } from "../purch/area.js";
 import type { InventoryAllocationPolicy, InventoryBranchStock, InventoryInTransitLine, InventoryOnHand, InventoryPendingFulfilment, InventoryReorderPoint, InventoryReservation, InventoryStockMove, InventoryTransitDaysPair, InventoryTransfer, Result } from "@hardscapehouse/api-client";
-import { formatMoney } from "../po/po-money.js";
+import { formatMoney, formatQty } from "../po/po-money.js";
+import { houseDay } from "../po/po-logic.js";
 import { InventoryApi, browseAnswer, branchRows, incomingRows, moveRows, onHandRows, pendingRows, pointRows, reservationRows, transitPairs, transferRows, type BrowseAnswer } from "./inventory-api.js";
 import { bootstrapConfirm, cancelTransferConfirm, defaultShipETA, expireConfirm, receiveTransferConfirm, refusalWords, releaseConfirm, reorderFieldsFromTyped, seatFor } from "./inventory-logic.js";
 import { renderInventory, type InvConfirm, type InvModel, type InvTab, type ReceiveOrder } from "./inventory-views.js";
-import { formatQty } from "../po/po-money.js";
 
 type Field = (name: string) => string;
 
@@ -34,7 +34,6 @@ export class InventoryDesk {
   #loaded = new Set<string>();
   #catalogue: readonly { id: string; sku: string; name: string }[] = [];
   #branchNames: ReadonlyMap<string, string> = new Map();
-  #today = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   // The lookup.
   #lookupPicked = "";
@@ -497,7 +496,7 @@ export class InventoryDesk {
     if (t === undefined) return;
     this.#confirm = null;
     this.#shipping = transferId;
-    this.#shipEta = defaultShipETA(this.#transit, t.from_branch_id, t.to_branch_id, this.#today);
+    this.#shipEta = defaultShipETA(this.#transit, t.from_branch_id, t.to_branch_id, houseDay());
     this.#clearMessages();
     this.#repaint();
   }
@@ -736,7 +735,7 @@ export class InventoryDesk {
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
-      today: this.#today,
+      today: houseDay(),
       catalogue: this.#catalogue,
       branchNames: this.#branchNames,
       lookupPicked: this.#lookupPicked,

@@ -12,7 +12,7 @@
 import type { TemplateResult } from "lit";
 import type { Branch, PurchasingBill, PurchasingBillDetail, PurchasingCreateBillRequest, PurchasingPO, PurchasingPODetail, PurchasingPolicy, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
-import { poRows, refusalWords } from "../po/po-logic.js";
+import { houseDay, poRows, refusalWords } from "../po/po-logic.js";
 import { answerLost } from "../purch/purch-logic.js";
 import { centsToField, formatMoney } from "../purch/purch-money.js";
 import { BillsApi } from "./bills-api.js";
@@ -513,7 +513,7 @@ export class BillsDesk implements AreaDesk {
       error: this.#phase === "error" || this.#error !== "" ? this.#error : "",
       errorAt: this.#errorAt,
       notice: this.#notice,
-      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      today: houseDay(),
     });
   }
 }
