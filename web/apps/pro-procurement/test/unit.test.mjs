@@ -64,3 +64,8 @@ test("no surface word carries an exclamation mark or a stored status string", ()
     assert.doesNotMatch(surface.label, /\b[A-Z]{2,}_[A-Z]{2,}\b/, `${id}`);
   }
 });
+
+// Throwaway red proof for the CI shard gate: fails on purpose.
+test("red proof: one failing assertion", () => {
+  assert.equal(1, 2);
+});
