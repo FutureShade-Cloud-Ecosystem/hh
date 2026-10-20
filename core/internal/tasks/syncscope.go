@@ -497,18 +497,26 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, claimedBy string
+	var from, branch, claimedBy string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &claimedBy); err != nil {
+		`SELECT status, COALESCE(branch_id::text, ''), COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&from, &branch, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
 	}
+	// Stage is held to the task's branch as the direct door is (UX-77), on the locked row, and the fence runs
+	// before the holder check so a holder refusal never tells another branch's caller that the pick exists.
+	stageOp := (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != ""
+	if s.staff != nil && stageOp {
+		if err := syncBranchFence(ctx, s.staff, f, branch); err != nil {
+			return sync.RowState{}, err
+		}
+	}
 	// Stage is the holder's act (UX-76): the move to STAGED and the stage legs are compared with the claim
 	// on the locked row. The claim itself, the start and the other moves keep their own rules.
-	if (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != "" {
+	if stageOp {
 		if notHolder(claimedBy, actor) {
 			return sync.RowState{}, refused(ErrNotHolder)
 		}
@@ -689,5 +697,21 @@ func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) boo
 		return err
 	}
 	data["ticket"] = v
+	return nil
+}
+
+// syncBranchFence is the direct doors' taskBranchFence for a sync write: the caller's staff authority must be
+// active in the org and reach the task's branch (GLOBAL reaches all). An empty task branch is held by no one.
+func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sync.ScopeFilter, branch string) error {
+	sc, has, err := staff(ctx, f.Actor, f.OrgID)
+	if err != nil {
+		return fmt.Errorf("tasks: branch fence authority: %w", err)
+	}
+	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return refusedf("no active staff authority in this org")
+	}
+	if branch != "" && !sc.CanAccessBranch(branch) {
+		return refusedf("yard: branch out of scope")
+	}
 	return nil
 }
