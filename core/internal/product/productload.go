@@ -333,7 +333,6 @@ func LockProductsSeqTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-
 // landedUnitSetRefusal refuses a product reload whose units would
 // leave the unit set already landed on the row: the set's one base row
 // keeps products.base_uom and the set carries price_uom, the same two

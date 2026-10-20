@@ -53,7 +53,6 @@ func LockVendorsSeqTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-
 // vendorNoInMintShape reports a vendor number the staff create route mints (next_vendor_no, 0386:
 // VM- and digits). The load keys vendors by their number with ON CONFLICT DO UPDATE, so a load item
 // in that shape could overwrite a staff made vendor; the shape is therefore refused at the door.

@@ -68,7 +68,6 @@ func LockCustomersSeqTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-
 // CustomerLoadWriter is the load doors' customer writer.
 type CustomerLoadWriter struct {
 	// Country is the dealer's country source; nil is the Canadian dealer.
