@@ -73,12 +73,23 @@ func NewAnthropicProvider(key, model, baseURL string) *AnthropicProvider {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		// A bounded timeout, because an assistant that hangs holds a request goroutine and a user's
 		// attention. 30s is long enough for a tool-using turn and short enough to fail visibly.
-		http: &http.Client{Timeout: 30 * time.Second},
+		//
+		// A redirect is refused: the key rides a custom header (x-api-key) that Go forwards to a
+		// redirect target on another host, and the Messages API has no reason to redirect a POST.
+		http: &http.Client{
+			Timeout:       30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 }
 
 func (p *AnthropicProvider) Name() string  { return "anthropic" }
 func (p *AnthropicProvider) Model() string { return p.model }
+
+// String and GoString keep the key out of any log line or error that formats the provider (%v,
+// %+v and %#v would otherwise print every field, unexported ones included).
+func (p *AnthropicProvider) String() string   { return "anthropic:" + p.model }
+func (p *AnthropicProvider) GoString() string { return p.String() }
 
 // Stream is declared and not implemented.
 func (*AnthropicProvider) Stream(context.Context, CompletionRequest) (<-chan StreamEvent, error) {

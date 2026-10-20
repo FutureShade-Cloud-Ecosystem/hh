@@ -54,7 +54,7 @@ func TestProviderShape_StubIgnoresASystemMessage(t *testing.T) {
 
 // Streaming is declared and not implemented: a named error, never a silent empty stream.
 func TestProviderShape_StreamingIsDeclaredAndRefusesByName(t *testing.T) {
-	for _, p := range []Provider{NewStubProvider(), NewAnthropicProvider("k", "m", "http://127.0.0.1:1")} {
+	for _, p := range []Provider{NewStubProvider(), NewAnthropicProvider("k", "m", "http://127.0.0.1:1"), NewOpenAICompatProvider(OpenAICompatConfig{BaseURL: "http://127.0.0.1:1", Model: "m"})} {
 		sp, ok := p.(StreamingProvider)
 		if !ok {
 			t.Fatalf("%T does not declare Stream", p)
