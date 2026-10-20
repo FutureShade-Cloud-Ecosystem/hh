@@ -39,8 +39,8 @@ test("the desk opens on the register: four tiles, the rows overdue first, Needs 
   await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();
   expect(await page.locator("[data-card] [data-card-title]").allTextContents()).toEqual(["90 days and over", "61 to 89 days", "1 to 60 days", "Current"]);
   await expect(page.locator("[data-card]").first()).toContainText("Past due");
-  await expect(page.locator("[data-card]").first()).toContainText("As of today");
-  await expect(page.locator("[data-card-note]")).toHaveText("Grouped by your past due settings");
+  await expect(page.locator("[data-card-asof]")).toHaveCount(0);
+  await expect(page.locator("[data-card-note]")).toHaveText("As of today · Grouped by your past due settings");
   await expect(page.locator("[data-register-row]")).toHaveCount(9);
   const first = page.locator("[data-register-row]").first();
   await expect(first).toContainText("INV-1001");
@@ -944,7 +944,7 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await page.getByRole("button", { name: "Run a statement" }).click();
   await expect(page.locator("[data-closing]")).toContainText("$623.00");
   await expect(page.locator("[data-statement]")).toContainText("As of today");
-  await expect(page.locator("[data-statement]")).toContainText("1 to 30");
+  expect(await page.locator("[data-statement] dl.strip dt").allTextContents()).toEqual(["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"]);
   await page.getByRole("button", { name: "Send to the AP contact" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Statement queued to the AP contact");
   await page.getByRole("button", { name: /Download PDF/ }).click({ force: true });

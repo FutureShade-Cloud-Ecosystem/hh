@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -265,4 +265,20 @@ test("an overpayment banner comes from the server preview, never browser money m
   assert.equal(overpaymentPreview({ unapplied_cents: 1 }, ""), true);
   assert.equal(overpaymentPreview({ unapplied_cents: 0 }, ""), false);
   assert.equal(overpaymentPreview(null, "The server could not be reached"), false);
+});
+
+test("a one day range says 1 day, and a card whose tier range runs backwards is not shown", () => {
+  // warn = 1: the first card covers one day.
+  assert.equal(cardTitleFor({ bucket: "WARN", from_days: 1, to_days: 1 }), "1 day");
+  assert.equal(cardTitleFor({ bucket: "LATE", from_days: 5, to_days: 5 }), "5 days");
+  // escalate = warn + 1: the middle card would read 61 to 60 and can hold nothing.
+  assert.equal(cardShown({ bucket: "LATE", from_days: 61, to_days: 60 }), false);
+  assert.equal(cardShown({ bucket: "LATE", from_days: 61, to_days: 89 }), true);
+  assert.equal(cardShown({ bucket: "ESCALATION", from_days: 61 }), true);
+  assert.equal(cardShown({ bucket: "CURRENT", from_days: 0 }), true);
+  assert.equal(cardShown({ bucket: "WARN", from_days: 1, to_days: 1 }), true);
+});
+
+test("the statement strip names its bands in the screen's one vocabulary; its last band is over 60, as the core sums it", () => {
+  assert.deepEqual(STATEMENT_STRIP_LABELS, ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"]);
 });

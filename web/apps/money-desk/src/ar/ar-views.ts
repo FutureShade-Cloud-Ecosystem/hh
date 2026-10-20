@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { bucketWord, cardCovers, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -215,20 +215,19 @@ function tiles(model: DeskModel): TemplateResult {
   return html`
     <section class="tiles" aria-label="Receivables by age">
       ${TILE_ORDER.map((id) => cards.find((c) => c.id === id)).map((card) =>
-        card === undefined
+        card === undefined || !cardShown(card)
           ? nothing
           : html`
               <article class="tile" data-card="${card.id}">
                 <h3 data-card-title>${cardTitleFor(card)}</h3>
                 <p class="tile-figure tile-${card.bucket.toLowerCase()}">${formatMoney(card.total_cents)}</p>
                 <p class="dim">${card.accounts} ${card.accounts === 1 ? "account" : "accounts"} · ${cardCovers(card)}</p>
-                <p class="dim small" data-card-asof>As of ${relativeDay(model.asOf, model.asOf)}</p>
                 <button type="button" class="link" data-action="card" data-card-id="${card.id}" aria-pressed="${model.cardFilter === card.id ? "true" : "false"}">${model.cardFilter === card.id ? "Showing" : "Open"} ›</button>
               </article>
             `,
       )}
     </section>
-    <p class="dim small" data-card-note>Grouped by your past due settings</p>
+    <p class="dim small" data-card-note>As of ${relativeDay(model.asOf, model.asOf)} · Grouped by your past due settings</p>
   `;
 }
 
@@ -939,11 +938,11 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 </table>
               </div>
               <dl class="strip">
-                <div><dt>Current</dt><dd>${formatMoney(s.current_cents)}</dd></div>
-                <div><dt>1 to 30</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
-                <div><dt>31 to 60 days</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
-                <div><dt>Over 60</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
-                <div><dt>Total due</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[0]}</dt><dd>${formatMoney(s.current_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[1]}</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[2]}</dt><dd>${formatMoney(s.days_60_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[3]}</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
+                <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>

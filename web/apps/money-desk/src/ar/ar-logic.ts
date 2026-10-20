@@ -21,8 +21,20 @@ type CardDays = { bucket: string; from_days: number; to_days?: number | undefine
 export function cardTitleFor(card: CardDays): string {
   if (card.bucket === "CURRENT") return "Current";
   if (card.to_days === undefined || card.to_days === 0) return `${card.from_days} days and over`;
+  if (card.from_days === card.to_days) return card.from_days === 1 ? "1 day" : `${card.from_days} days`;
   return `${card.from_days} to ${card.to_days} days`;
 }
+
+/**
+ * Whether a card is drawn. A tier the dealer set so that it runs backwards (the escalation day one past
+ * the warning day gives a middle card of 61 to 60) covers no day and can hold nothing, so it is left out.
+ */
+export function cardShown(card: CardDays): boolean {
+  return card.bucket === "CURRENT" || card.to_days === undefined || card.to_days === 0 || card.from_days <= card.to_days;
+}
+
+/** The statement strip's bands, in the screen's one vocabulary. The last is over 60: the core sums 61 and up into one figure. */
+export const STATEMENT_STRIP_LABELS = ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"] as const;
 
 /** What a card's figure is: the status word for everything past its due date. */
 export function cardCovers(card: CardDays): string {
