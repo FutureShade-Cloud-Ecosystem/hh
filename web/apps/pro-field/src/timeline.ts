@@ -15,7 +15,6 @@
 // what the contract gives, and this file invents nothing past them.
 import type { TenantOrder } from "@hardscapehouse/api-client";
 import { TRACKING_WORDS, calendarDay, houseDay, trackingOf, type Tracking } from "@hardscapehouse/pro-kit";
-import { roadStep } from "./sections.js";
 
 export type StepState = "done" | "current" | "upcoming";
 
@@ -47,12 +46,12 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
     doneRank = currentIndex;
   } else if (tracking === "invoiced") {
     doneRank = flow.length;
-  } else if (order.status === "READY") {
-    // Ready at the yard on a delivery: picking is done, the road is a stop's word.
+  } else if (order.status === "READY" || order.status === "PARTIALLY_FULFILLED") {
+    // Ready at the yard on a delivery, or part delivered: picking is done, and
+    // the road step is a delivery stop's to speak for.
     doneRank = flow.indexOf("picking") + 1;
   } else {
-    // Part delivered: a truck went out; what is still to come is not known here.
-    doneRank = flow.indexOf(roadStep(order.fulfillment)) + 1;
+    doneRank = 0;
   }
   return flow.map((step, index) => ({
     tracking: step,

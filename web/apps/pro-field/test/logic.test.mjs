@@ -55,9 +55,16 @@ test("a ready delivery holds at the yard: the road step is a stop's to say, so n
   assert.deepEqual(steps.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
 });
 
-test("a part delivered order has had a truck go out, and nothing is current about the rest", () => {
-  const steps = timelineSteps(order("PARTIALLY_FULFILLED", "DELIVERY"));
-  assert.deepEqual(steps.map((s) => s.state), ["done", "done", "done", "done", "upcoming"]);
+test("a part delivered order stops at picking and does not mark the road step done", () => {
+  const delivery = timelineSteps(order("PARTIALLY_FULFILLED", "DELIVERY"));
+  assert.deepEqual(delivery.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
+  const pickup = timelineSteps(order("PARTIALLY_FULFILLED", "WILL_CALL"));
+  assert.deepEqual(pickup.map((s) => s.state), ["done", "done", "done", "upcoming", "upcoming"]);
+});
+
+test("an unknown status leaves every step upcoming rather than marking four steps done", () => {
+  const unknown = timelineSteps(order("UNKNOWN_FUTURE_STATUS", "DELIVERY"));
+  assert.deepEqual(unknown.map((s) => s.state), ["upcoming", "upcoming", "upcoming", "upcoming", "upcoming"]);
 });
 
 test("a cancelled order stops rather than promising steps", () => {
