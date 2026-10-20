@@ -642,11 +642,20 @@ export class DriveRunApp extends HHElement {
     if (event.key !== "Tab") return;
     const dialog = this.renderRoot.querySelector<HTMLElement>('[role="dialog"]');
     if (dialog === null) return;
+    // A radio group is one tab stop (arrows move inside it): the checked
+    // radio stands for the group, or the first one when none is checked.
     const focusables = Array.from(
       dialog.querySelectorAll<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
       ),
-    );
+    ).filter((el) => {
+      if (!(el instanceof HTMLInputElement) || el.type !== "radio" || el.name === "") return true;
+      const group = Array.from(dialog.querySelectorAll<HTMLInputElement>('input[type="radio"]:not([disabled])')).filter(
+        (r) => r.name === el.name,
+      );
+      const stop = group.find((r) => r.checked) ?? group[0];
+      return el === stop;
+    });
     if (focusables.length === 0) return;
     const active = (this.renderRoot as ShadowRoot).activeElement as HTMLElement | null;
     const idx = active !== null ? focusables.indexOf(active) : -1;
