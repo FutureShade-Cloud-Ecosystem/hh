@@ -26,9 +26,23 @@ import (
 type SSEHub struct {
 	mu   sync.RWMutex
 	subs map[string]map[*subscriber]struct{} // userID -> set of that user's open connections
-	repo *Repository
-	log  *slog.Logger
+	repo memberChecker
+	// fence, when set, is asked after the membership filter: the money rooms follow the payment trail
+	// and the branch reach, not the seat alone (payment_access.go).
+	fence roomFence
+	log   *slog.Logger
 }
+
+// memberChecker is the one membership read the hub's publish filter needs.
+type memberChecker interface {
+	IsMember(ctx context.Context, channelID, userID string) (bool, error)
+}
+
+// roomFence says whether a seated user may hear a room. It is the service's RoomAdmits.
+type roomFence func(ctx context.Context, userID, channelID string) bool
+
+// WithRoomFence binds the money room fence to the publish filter. Unbound keeps the seat alone.
+func (h *SSEHub) WithRoomFence(f roomFence) *SSEHub { h.fence = f; return h }
 
 type subscriber struct {
 	ch chan sseEvent
@@ -66,6 +80,9 @@ func (h *SSEHub) PublishMessage(channelID string, m Message) {
 	for _, uid := range userIDs {
 		ok, err := h.repo.IsMember(ctx, channelID, uid)
 		if err != nil || !ok {
+			continue
+		}
+		if h.fence != nil && !h.fence(ctx, uid, channelID) {
 			continue
 		}
 		h.deliver(uid, sseEvent{Name: "message", Data: m})

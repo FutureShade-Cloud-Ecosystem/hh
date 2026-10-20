@@ -32,6 +32,7 @@ type fakeStore struct {
 	userBranches  map[string]map[string]bool // userID -> branchID -> granted
 	userGlobal    map[string]bool            // userID -> GLOBAL scope
 	syncErr       error
+	mentionPage   MessagePage     // what ListMentions answers (HH-424 round 1)
 	inserted      []Message       // messages posted via InsertMessage
 	events        []Message       // event messages posted
 	eventRefs     []EventRef      // refs captured parallel to events (Feature 2 ref assertions)
@@ -643,6 +644,9 @@ func (f *fakeStore) MessageSeenBy(_ context.Context, _, _ string, _ time.Time) (
 }
 
 func (f *fakeStore) ListMentions(_ context.Context, _, _ string, _ int) (MessagePage, error) {
+	if f.mentionPage.Messages != nil {
+		return f.mentionPage, nil
+	}
 	return MessagePage{Messages: []Message{}}, nil
 }
 
