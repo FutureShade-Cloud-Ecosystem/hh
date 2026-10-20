@@ -124,3 +124,40 @@ func TestRefuseProviderVarsRefusesAnUnknownNameUnderTheExplicitPrefix(t *testing
 		t.Fatalf("zero explicit prefix refused: %v", err)
 	}
 }
+
+// Slice 3: a demo box that carries the assistant's key must carry a
+// positive dealer cap, or the boot refuses with a message naming the cap and
+// never the key's value. No key means no requirement (the stub serves).
+func TestRefuseAssistKeyWithoutCap(t *testing.T) {
+	const keyValue = "fake-key-must-not-print"
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{"no key, no cap", map[string]string{}, false},
+		{"empty key, no cap", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": "  "}, false},
+		{"cap without key", map[string]string{"HOS_ASSIST_DEALER_CAP_MICROCENTS": "5"}, false},
+		{"key with a cap", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "5000000"}, false},
+		{"key, cap unset", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue}, true},
+		{"key, cap empty", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": ""}, true},
+		{"key, cap zero", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "0"}, true},
+		{"key, cap negative", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "-4"}, true},
+		{"key, cap not a number", map[string]string{"HOS_ASSIST_ANTHROPIC_API_KEY": keyValue, "HOS_ASSIST_DEALER_CAP_MICROCENTS": "lots"}, true},
+	}
+	for _, c := range cases {
+		err := RefuseAssistKeyWithoutCap(func(k string) string { return c.env[k] })
+		if (err != nil) != c.wantErr {
+			t.Fatalf("%s: err = %v, wantErr %v", c.name, err, c.wantErr)
+		}
+		if err == nil {
+			continue
+		}
+		if !strings.Contains(err.Error(), "HOS_ASSIST_DEALER_CAP_MICROCENTS") {
+			t.Fatalf("%s: refusal %q does not name the missing cap", c.name, err)
+		}
+		if strings.Contains(err.Error(), keyValue) {
+			t.Fatalf("%s: refusal carries the key's value", c.name)
+		}
+	}
+}

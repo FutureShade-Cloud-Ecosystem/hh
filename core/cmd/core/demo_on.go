@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
@@ -216,6 +217,12 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 		return err
 	}
 
+	// The assistant's cap condition: a key is never carried without the
+	// dealer cap that bounds its spend (TanyAI slice 3, row 2496).
+	if err := boot.RefuseAssistKeyWithoutCap(getenv); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -233,6 +240,13 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// the box declared is the independent first layer, this reads what the
 	// box actually wired (plan 4A: no guard relies on another).
 	if err := demoRefuseLiveCardRail(graph.tops.cardRail); err != nil {
+		return err
+	}
+
+	// The assistant's demo limits: when the key is carried, the wired service
+	// must enforce the per visitor, per address and box wide buckets. Like G7
+	// this reads what the wiring built, not the environment.
+	if err := demoRefuseAssistWithoutDemoLimits(graph.tops.assistSvc, strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""); err != nil {
 		return err
 	}
 
@@ -278,6 +292,22 @@ func demoRefuseLiveCardRail(paySvc *payment.Service) error {
 	}
 	if !paySvc.Simulated() {
 		return errors.New("G7: the wired card rail is not the simulator, the demo build refuses to serve on a live rail: a demo box takes no real card charges")
+	}
+	return nil
+}
+
+// demoRefuseAssistWithoutDemoLimits refuses a demo box that carries the
+// assistant's key while the wired assistant lacks the demo's per visitor, per
+// address and box wide limits. Demo personas are shared users, so the per
+// asker limit alone would let one visitor spend the box's allowance. A nil
+// service refuses too (fail closed); with no key the stub serves and nothing
+// is spent, so there is nothing to limit.
+func demoRefuseAssistWithoutDemoLimits(svc *assist.Service, keyed bool) error {
+	if !keyed {
+		return nil
+	}
+	if !svc.DemoLimitsInForce() {
+		return errors.New("the demo box carries the assistant's key but the wired assistant lacks the demo's per visitor, per address and box wide limits: the demo build refuses to spend without them")
 	}
 	return nil
 }

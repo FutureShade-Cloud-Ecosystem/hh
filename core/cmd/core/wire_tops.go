@@ -152,6 +152,8 @@ type topsSpine struct {
 	posHandler *pos.Handler
 	// posSvc is held so a wiring test can read the role configuration the till's service was built with.
 	posSvc *pos.Service
+	// assistSvc is held so the demo serve can read which limits the wiring gave it (demoRefuseAssistWithoutDemoLimits).
+	assistSvc *assist.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -795,6 +797,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRefunder:  cardRefunder,
 		posHandler:    posHandler,
 		posSvc:        posSvc,
+		assistSvc:     assistSvc,
 	}
 }
 

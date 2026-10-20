@@ -6,7 +6,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
@@ -233,6 +235,53 @@ func TestDemoServeAdmitsTheAssistantKeyAndCap(t *testing.T) {
 		if strings.Contains(err.Error(), bad) {
 			t.Fatalf("the assistant's variables refused the boot (%q in %v)", bad, err)
 		}
+	}
+}
+
+// Slice 3, through the serve entry: the key without its cap refuses the boot
+// before the database is reached, naming the cap and never the key.
+func TestDemoServeRefusesTheAssistantKeyWithoutItsCap(t *testing.T) {
+	for _, cap := range []string{"", "0", "-1", "plenty"} {
+		env := serveEnv(t)
+		env["HOS_ASSIST_ANTHROPIC_API_KEY"] = "fake-key-must-not-print"
+		if cap != "" {
+			env["HOS_ASSIST_DEALER_CAP_MICROCENTS"] = cap
+		}
+		getenv, lookup, environ := envFuncs(env)
+		err := demoServe(getenv, lookup, environ)
+		if err == nil {
+			t.Fatalf("cap %q: accepted", cap)
+		}
+		if !strings.Contains(err.Error(), "HOS_ASSIST_DEALER_CAP_MICROCENTS") || strings.Contains(err.Error(), "must-not-print") {
+			t.Fatalf("cap %q: refusal %q", cap, err)
+		}
+	}
+}
+
+// Slice 3: the demo wiring must carry the assistant's per visitor, per
+// address and box wide limits whenever the key is carried. The guard reads
+// the service the wiring built (like G7 reads the card rail), so a service
+// built without them refuses, and one built the way the demo composition
+// builds it passes.
+func TestDemoRefusesAnAssistantWithoutTheDemoLimits(t *testing.T) {
+	bare := assist.NewService(nil, nil, nil, nil, nil, nil)
+	if err := demoRefuseAssistWithoutDemoLimits(bare, true); err == nil {
+		t.Fatal("a keyed demo with an unlimited assistant was accepted")
+	}
+	if err := demoRefuseAssistWithoutDemoLimits(nil, true); err == nil {
+		t.Fatal("a keyed demo with no assistant was accepted")
+	}
+	if err := demoRefuseAssistWithoutDemoLimits(bare, false); err != nil {
+		t.Fatalf("a keyless demo needs no limits to be safe, got %v", err)
+	}
+	limited := assist.NewService(nil, nil, nil, nil, nil, nil).
+		WithRateLimits(assist.NewRateLimits(assistDemoLimits(true), time.Now))
+	if err := demoRefuseAssistWithoutDemoLimits(limited, true); err != nil {
+		t.Fatalf("the demo composition's limits refused: %v", err)
+	}
+	// The composition root asks for them by the configuration's own demo flag.
+	if assistDemoLimits(true) == nil || assistDemoLimits(false) != nil {
+		t.Fatal("assistDemoLimits must be non-nil for a demo copy and nil elsewhere")
 	}
 }
 
