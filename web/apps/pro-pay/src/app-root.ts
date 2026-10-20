@@ -23,7 +23,7 @@ import {
   type TenantPayment,
   type TenantPaymentMethod,
 } from "@hardscapehouse/api-client";
-import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, demoRoleFromAddress, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
+import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, demoRoleFromAddress, personaRoleHeld, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
@@ -218,7 +218,7 @@ export class ProPayApp extends HHElement {
     this.#busy = true;
     this.#message = "";
     this.#errorWords = "";
-    if (!("password" in input) && input.method === "persona") this.#personaRole = input.roleLabel ?? null;
+    this.#personaRole = personaRoleHeld(input, import.meta.env.MODE === "demo" || import.meta.env.DEV);
     this.#load = "loading";
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);

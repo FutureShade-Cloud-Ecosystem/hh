@@ -93,3 +93,12 @@ test("leaving for another Pro app in the demo build carries the role, so the per
   assert.equal(otherAppAddress("/pro-field/", undefined, true), "/pro-field/");
   assert.equal(otherAppAddress("/pro-field/", "inside_sales", true), "/pro-field/");
 });
+
+test("the persona flag holds the frame open only behind the demo or dev gate", async () => {
+  const { personaRoleHeld } = await import("../src/signin-methods.ts");
+  const persona = { method: "persona", roleLabel: "Owner" };
+  assert.equal(personaRoleHeld(persona, false), null, "production mode never holds the frame on a persona flag");
+  assert.equal(personaRoleHeld(persona, true), "Owner");
+  assert.equal(personaRoleHeld({ method: "futurebuild" }, true), null);
+  assert.equal(personaRoleHeld({ email: "a@b.invalid", password: "x" }, true), null);
+});

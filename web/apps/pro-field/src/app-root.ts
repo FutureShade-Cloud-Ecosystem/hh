@@ -29,7 +29,7 @@ import {
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,
-  demoRoleFromAddress,
+  demoRoleFromAddress, personaRoleHeld,
   otherAppAddress,
   roleLabel,
   stubAdapter,
@@ -480,7 +480,7 @@ export class ProFieldApp extends HHElement {
   async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#signinBusy = true;
     this.#signinMessage = "";
-    if (!("password" in input) && input.method === "persona") this.#personaRole = input.roleLabel ?? null;
+    this.#personaRole = personaRoleHeld(input, import.meta.env.MODE === "demo" || import.meta.env.DEV);
     this.#orders = { phase: "loading", items: [], truncated: false };
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);

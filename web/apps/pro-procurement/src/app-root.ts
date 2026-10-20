@@ -25,6 +25,7 @@ import {
   demoTenantAdapter,
   signInFromCard,
   demoRoleFromAddress,
+  personaRoleHeld,
   otherAppAddress,
   roleLabel,
   stubAdapter,
@@ -361,9 +362,7 @@ export class ProProcurementApp extends HHElement {
     this.#signinMessage = "";
     this.#errorWords = "";
     this.#view = { kind: "loading" };
-    if ("method" in input && input.method === "persona") {
-      this.#personaRole = input.roleLabel ?? null;
-    }
+    this.#personaRole = personaRoleHeld(input, import.meta.env.MODE === "demo" || import.meta.env.DEV);
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);
     this.#busy = false;
