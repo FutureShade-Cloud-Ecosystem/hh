@@ -992,3 +992,43 @@ func TestUX88_AllBranchReadsHeldToTheOrg(t *testing.T) {
 		t.Fatal("an empty org must be refused on the full read too")
 	}
 }
+
+// UX-88 round 2: the named branch reads hold to the org. Trenton is org A's, Kingston org B's; org A
+// naming Kingston, a missing branch or a value that is no uuid is not found with no figure, and an empty
+// org is refused on both the stock and the cost read.
+func TestUX88_NamedBranchReadsHeldToTheOrg(t *testing.T) {
+	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
+	svc := newIntSvc(pool)
+	ctx := context.Background()
+	p := mkProduct(t, pool, "UX88-NAMED")
+	seedBalance(t, pool, p, branch1, 50, 600)
+	seedBalance(t, pool, p, branch2, 70, 700)
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+
+	own, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch1)
+	if err != nil || own.OnHandBase != 50 || own.AvgCostCents != 600 {
+		t.Fatalf("own branch = %+v, %v, want 50 at cost 600", own, err)
+	}
+	for _, branch := range []string{branch2, "00000000-0000-4000-8000-0000000000ee", "not-a-uuid"} {
+		got, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch)
+		if err == nil || got.OnHandBase != 0 || got.AvgCostCents != 0 {
+			t.Fatalf("org A naming %q = %+v, %v, want not found with no figure", branch, got, err)
+		}
+		if _, _, err := svc.BranchCostInOrg(ctx, ux88OrgA, p, branch); err == nil {
+			t.Fatalf("org A cost at %q must be not found", branch)
+		}
+	}
+	if cost, found, err := svc.BranchCostInOrg(ctx, ux88OrgA, p, branch1); err != nil || !found || cost != 600 {
+		t.Fatalf("own branch cost = %d %v %v, want 600", cost, found, err)
+	}
+	if _, err := svc.AvailabilityAtBranchInOrg(ctx, "", p, branch1); err == nil {
+		t.Fatal("an empty org must be refused on the stock read")
+	}
+	if _, _, err := svc.BranchCostInOrg(ctx, "", p, branch1); err == nil {
+		t.Fatal("an empty org must be refused on the cost read")
+	}
+	if in, err := svc.BranchInOrg(ctx, ux88OrgA, branch2); err != nil || in {
+		t.Fatalf("Kingston in org A = %v, %v, want false", in, err)
+	}
+}

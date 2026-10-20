@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,5 +160,122 @@ func TestUX88_BranchList_HeldToTheCallersOrg(t *testing.T) {
 		if sub == testkit.SubGeneralMgr && len(rows) != 2 {
 			t.Fatalf("%s: a global caller sees %d branches, want North A and North B: %s", sub, len(rows), body)
 		}
+	}
+}
+
+// ux88NoOrgBranch is the migration planted Kingston branch, which carries no org.
+const ux88NoOrgBranch = "5d1b3f6e-0000-4000-9000-000000000002"
+
+// Round 2: the named branch form of the stock truth read. A scoped caller must hold the branch (403,
+// the yard and branch doors' own shape for a branch out of reach); a GLOBAL caller holds every branch
+// of its own org only, and another org's or a no org branch is not found (404), so the answer cannot
+// tell a missing branch from one that is not theirs. Neither form serves another org's stock or cost.
+func TestUX88_BranchStockNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
+	q := newQD1BFixture(t)
+	pid := ux88Plant(t, q)
+	get := func(sub, branch string) (int, string) {
+		return qd1bCall(t, q, http.MethodGet, "/api/v1/inventory/branch-stock?product_id="+pid+"&branch_id="+branch, sub, nil)
+	}
+	for _, c := range []struct {
+		sub      string
+		branch   string
+		want     int
+		leakWord string
+	}{
+		{testkit.SubInsideSales, testkit.BranchSouthAID, http.StatusForbidden, "3333"},
+		{testkit.SubInsideSales, ux88NoOrgBranch, http.StatusForbidden, ""},
+		{testkit.SubInsideSales, testkit.BranchNorthBID, http.StatusForbidden, "2222"},
+		{testkit.SubSalesManager, testkit.BranchSouthAID, http.StatusForbidden, "3333"},
+		{testkit.SubGeneralMgr, testkit.BranchSouthAID, http.StatusNotFound, "3333"},
+		{testkit.SubGeneralMgr, ux88NoOrgBranch, http.StatusNotFound, ""},
+	} {
+		code, body := get(c.sub, c.branch)
+		if code != c.want {
+			t.Errorf("%s naming %s: %d %s, want %d", c.sub, c.branch, code, body, c.want)
+		}
+		if c.leakWord != "" && strings.Contains(body, c.leakWord) {
+			t.Errorf("%s naming %s leaks another org's figure %s: %s", c.sub, c.branch, c.leakWord, body)
+		}
+	}
+	// The branches the caller does reach still answer.
+	if code, body := get(testkit.SubInsideSales, testkit.BranchNorthAID); code != http.StatusOK || !strings.Contains(body, `"on_hand_base":11`) {
+		t.Errorf("a granted branch = %d %s, want 200 with North A's 11", code, body)
+	}
+	if code, body := get(testkit.SubGeneralMgr, testkit.BranchNorthBID); code != http.StatusOK || !strings.Contains(body, `"on_hand_base":22`) {
+		t.Errorf("a global caller's own org branch = %d %s, want 200 with North B's 22", code, body)
+	}
+}
+
+// Round 2: the floor preview naming a branch. The preview grades margins against that branch's cost,
+// so the same fence and org hold apply. inside_sales is refused at the manager gate before the body
+// is read (403 either way); the scoped manager is refused at the branch fence, a GLOBAL manager gets a
+// not found for another org's or a no org branch.
+func TestUX88_FloorPreviewNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
+	q := newQD1BFixture(t)
+	post := func(sub, branch string) (int, string) {
+		return qd1bCall(t, q, http.MethodPost, "/api/v1/pricing/floor-preview", sub, map[string]any{
+			"kind": "category_policy", "category_id": "00000000-0000-4000-8000-0000000000c1", "branch_id": branch,
+			"policy": map[string]any{"margin_target_bps": 3000, "margin_floor_bps": 2000},
+		})
+	}
+	for _, c := range []struct {
+		sub    string
+		branch string
+		want   int
+	}{
+		{testkit.SubInsideSales, testkit.BranchSouthAID, http.StatusForbidden},
+		{testkit.SubSalesManager, testkit.BranchSouthAID, http.StatusForbidden},
+		{testkit.SubSalesManager, ux88NoOrgBranch, http.StatusForbidden},
+		{testkit.SubGeneralMgr, testkit.BranchSouthAID, http.StatusNotFound},
+		{testkit.SubGeneralMgr, ux88NoOrgBranch, http.StatusNotFound},
+	} {
+		if code, body := post(c.sub, c.branch); code != c.want {
+			t.Errorf("%s previewing at %s: %d %s, want %d", c.sub, c.branch, code, body, c.want)
+		}
+	}
+	// A branch of the caller's own org still previews.
+	if code, body := post(testkit.SubGeneralMgr, testkit.BranchNorthBID); code != http.StatusOK {
+		t.Errorf("a global manager's own org branch = %d %s, want 200", code, body)
+	}
+	if code, body := post(testkit.SubSalesManager, testkit.BranchNorthAID); code != http.StatusOK {
+		t.Errorf("a scoped manager's granted branch = %d %s, want 200", code, body)
+	}
+}
+
+// Round 2 (P3): the glance answer is keyed by branch. A data defect row whose branch is North A but
+// whose location is South A's must not put South A's location id in a North caller's answer.
+func TestUX88_StockGlance_KeyedByBranchNotLocation(t *testing.T) {
+	q := newQD1BFixture(t)
+	ctx := context.Background()
+	var pid string
+	if err := q.pool.QueryRow(ctx,
+		`INSERT INTO products (sku, name, base_uom, price_uom) VALUES ($1::text, $1::text, 'EA', 'EA') RETURNING id::text`,
+		fmt.Sprintf("ux88-defect-%d", time.Now().UnixNano())).Scan(&pid); err != nil {
+		t.Fatalf("plant product: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = q.pool.Exec(context.Background(), `DELETE FROM stock_balances WHERE product_id = $1`, pid)
+		_, _ = q.pool.Exec(context.Background(), `DELETE FROM products WHERE id = $1`, pid)
+	})
+	if _, err := q.pool.Exec(ctx,
+		`INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, org_id) VALUES ($1, $2, $3, 55, $4)`,
+		pid, testkit.BranchSouthAID, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant the defect row: %v", err)
+	}
+	code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/pos/stock-glance?product_id="+pid, testkit.SubInsideSales, nil)
+	if code != http.StatusOK {
+		t.Fatalf("glance = %d %s, want 200", code, body)
+	}
+	var g struct {
+		OnHand map[string]float64 `json:"on_hand"`
+	}
+	if err := json.Unmarshal([]byte(body), &g); err != nil {
+		t.Fatalf("decode %s: %v", body, err)
+	}
+	if _, leak := g.OnHand[testkit.BranchSouthAID]; leak {
+		t.Fatalf("the glance keys an answer by another org's location id: %s", body)
+	}
+	if g.OnHand[testkit.BranchNorthAID] != 55 || len(g.OnHand) != 1 {
+		t.Fatalf("glance on_hand = %v, want North A alone at 55 (keyed by branch)", g.OnHand)
 	}
 }

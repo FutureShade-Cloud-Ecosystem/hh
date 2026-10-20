@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -63,6 +64,16 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, caller gu
 	if !optionalBodyUUID(w, b.ID, "id") || !optionalBodyUUID(w, b.BranchID, "branch_id") ||
 		!optionalBodyUUID(w, b.CustomerID, "customer_id") || !optionalBodyUUID(w, b.CategoryID, "category_id") {
 		return
+	}
+	// A named branch is a branch the caller reaches (UX-88 round 2): a scoped manager naming one it does
+	// not hold is refused 403, the shape the yard and branch doors answer. The branch is then held to
+	// the caller's org by the candidate seam, so a GLOBAL manager cannot grade against another org's cost.
+	if b.BranchID != "" {
+		sc, ok := identity.StaffContextFromContext(r.Context())
+		if !ok || !sc.CanAccessBranch(b.BranchID) {
+			httpx.Error(w, http.StatusForbidden, "pricing: branch out of scope")
+			return
+		}
 	}
 	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID, OrgID: caller.OrgID}
 	switch b.Kind {

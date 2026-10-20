@@ -149,9 +149,10 @@ func (r *Repository) ReadStockOnHand(ctx context.Context, orgID, productID strin
 		return out, errNoPool
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT sb.location_id::text, sb.on_hand_base - sb.qty_reserved
+		`SELECT sb.branch_id::text, SUM(sb.on_hand_base - sb.qty_reserved)
 		   FROM stock_balances sb JOIN locations l ON l.id = sb.branch_id
-		  WHERE sb.product_id = $1 AND l.org_id = $2::uuid`, productID, orgID) // UX-88: the caller's org only, a branch of no org is in no caller's org. UNION-W4 (B E3): the POS glance shows AVAILABLE, a fully hard-reserved product must not read as sellable
+		  WHERE sb.product_id = $1 AND l.org_id = $2::uuid
+		  GROUP BY sb.branch_id`, productID, orgID) // UX-88: the caller's org only, a branch of no org is in no caller's org. UNION-W4 (B E3): the POS glance shows AVAILABLE, a fully hard-reserved product must not read as sellable
 	if err != nil {
 		return out, err
 	}

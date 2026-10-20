@@ -32,6 +32,8 @@ package inventory
 import (
 	"context"
 	"sort"
+
+	"github.com/google/uuid"
 )
 
 // BranchStock is the four-bucket view of one product at one branch.
@@ -119,6 +121,55 @@ func (s *Service) AvailabilityPeek(ctx context.Context, orgID, productID string)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].BranchCode < rows[j].BranchCode })
 	return rows, nil
+}
+
+// AvailabilityAtBranchInOrg is the single-branch form held to the caller's org: the branch must be a
+// branch of orgID, and a branch of another org, of no org, or that does not exist is not found, so the
+// answer cannot tell the three apart. An empty org is refused, never read as every org. It is the read
+// behind the HTTP stock truth door; the at-quote seam below reads a branch the quote already names.
+func (s *Service) AvailabilityAtBranchInOrg(ctx context.Context, orgID, productID, branchID string) (BranchStock, error) {
+	if productID == "" {
+		return BranchStock{}, badReq("inventory: product_id is required")
+	}
+	if branchID == "" {
+		return BranchStock{}, badReq("inventory: branch_id is required")
+	}
+	if orgID == "" {
+		return BranchStock{}, badReq("inventory: the caller's org is required")
+	}
+	if _, err := uuid.Parse(branchID); err != nil {
+		return BranchStock{}, errNotFound
+	}
+	rows, err := s.repo.BranchStock(ctx, productID, branchID, orgID)
+	if err != nil {
+		return BranchStock{}, err
+	}
+	if len(rows) == 0 {
+		return BranchStock{}, errNotFound
+	}
+	return rows[0], nil
+}
+
+// BranchInOrg reports whether branchID is a branch of orgID. An empty org is refused, never read as
+// every org.
+func (s *Service) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	if orgID == "" {
+		return false, badReq("inventory: the caller's org is required")
+	}
+	return s.repo.BranchInOrg(ctx, orgID, branchID)
+}
+
+// BranchCostInOrg is CurrentCostCents for a named branch, held to the caller's org the same way: a
+// branch outside the org is not found and no cost is read for it.
+func (s *Service) BranchCostInOrg(ctx context.Context, orgID, productID, branchID string) (int64, bool, error) {
+	in, err := s.BranchInOrg(ctx, orgID, branchID)
+	if err != nil {
+		return 0, false, err
+	}
+	if !in {
+		return 0, false, errNotFound
+	}
+	return s.db().BranchCostCents(ctx, productID, branchID)
 }
 
 // AvailabilityAtBranch is the single-branch form, the at-quote read. A branch with no stock record
@@ -249,4 +300,21 @@ func (r *Repository) BranchPeek(ctx context.Context, productID, orgID string) ([
 		out = append(out, b)
 	}
 	return out, rows.Err()
+}
+
+// BranchInOrg reports whether branchID names a branch whose locations row carries orgID. A branch of no
+// org is in no org, an empty org matches nothing, and a value that is not a uuid names no branch.
+func (r *Repository) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	if _, err := uuid.Parse(branchID); err != nil {
+		return false, nil
+	}
+	var in bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM locations
+		                WHERE id = $1::uuid AND loc_type = 'BRANCH' AND org_id = NULLIF($2, '')::uuid)`,
+		branchID, orgID).Scan(&in)
+	return in, err
 }

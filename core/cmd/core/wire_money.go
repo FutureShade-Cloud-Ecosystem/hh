@@ -537,6 +537,16 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, orgID, ca
 	if limit <= 0 {
 		limit = pricing.PreviewProductCap + 1
 	}
+	// A named branch must be a branch of the caller's org before any product is graded against its cost.
+	if branchID != "" {
+		in, err := a.inventory.BranchInOrg(ctx, orgID, branchID)
+		if err != nil {
+			return nil, err
+		}
+		if !in {
+			return nil, pricing.ErrFloorBranchNotFound
+		}
+	}
 	var rows []product.Product
 	if productID != "" {
 		p, err := a.products.Get(ctx, productID)
@@ -597,7 +607,7 @@ func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, orgID, ca
 // (it left-joins the branch cost, so a branch with no cost row reports 0).
 func (a pricingFloorCandidates) candidateCost(ctx context.Context, orgID, productID, branchID string) (int64, []pricing.CandidateBranchCost, error) {
 	if branchID != "" {
-		cost, _, err := a.inventory.CurrentCostCents(ctx, productID, branchID)
+		cost, _, err := a.inventory.BranchCostInOrg(ctx, orgID, productID, branchID)
 		return cost, nil, err
 	}
 	branches, err := a.inventory.AvailabilityAllBranches(ctx, orgID, productID)

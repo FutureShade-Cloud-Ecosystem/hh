@@ -117,6 +117,11 @@ type FloorCustomers interface {
 	CustomerType(ctx context.Context, customerID string) (string, error)
 }
 
+// ErrFloorBranchNotFound is the answer of a FloorCandidates seam for a named branch that is not a branch
+// of the caller's org (another org's, one with no org, or none at all): not found, so the preview cannot
+// tell those apart and reads no cost for it.
+var ErrFloorBranchNotFound = fmt.Errorf("floor preview branch: %w", errNotFound)
+
 // ErrFloorCustomerNotFound is the answer of a FloorCustomers seam for an unknown customer.
 var ErrFloorCustomerNotFound = fmt.Errorf("floor preview customer: %w", errNotFound)
 

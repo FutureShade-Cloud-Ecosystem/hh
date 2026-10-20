@@ -208,7 +208,16 @@ func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, caller gua
 	productID := r.URL.Query().Get("product_id")
 	branchID := r.URL.Query().Get("branch_id")
 	if branchID != "" {
-		row, err := h.svc.AvailabilityAtBranch(r.Context(), productID, branchID)
+		// The named branch form holds two fences (UX-88 round 2). A scoped caller must hold the branch:
+		// 403, the shape the yard and branch doors answer for a branch out of reach. Then the read
+		// itself holds to the caller's org, so a GLOBAL caller reaches its own org's branches only and
+		// another org's, or a branch with no org, is a 404.
+		sc, ok := identity.StaffContextFromContext(r.Context())
+		if !ok || !sc.CanAccessBranch(branchID) {
+			httpx.Error(w, http.StatusForbidden, "inventory: branch out of scope")
+			return
+		}
+		row, err := h.svc.AvailabilityAtBranchInOrg(r.Context(), caller.OrgID, productID, branchID)
 		if err != nil {
 			h.writeErr(w, r, err)
 			return
