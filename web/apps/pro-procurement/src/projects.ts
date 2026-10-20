@@ -8,7 +8,8 @@
 // board's plan cards, the same card the Board's Plan column carries.
 import { html, type TemplateResult } from "lit";
 import { tenantProcurement, type TenantProject } from "@hardscapehouse/api-client";
-import { money, statusChip } from "@hardscapehouse/pro-kit";
+import { statusChip } from "@hardscapehouse/pro-kit";
+import { planEstimate } from "./figures.js";
 import type { Page, SurfaceAnswer } from "./views.js";
 
 export const PROJECTS_EMPTY = "No projects yet. Start a plan from the catalog.";
@@ -26,11 +27,11 @@ export async function projectsLoad(page: Page): Promise<SurfaceAnswer> {
 }
 
 function projectCard(project: TenantProject): TemplateResult {
-  const priced = project.status !== "PLANNING";
+  const estimate = planEstimate(project);
   return html`<button type="button" class="card" data-action="open-scope" data-project="${project.id}" data-from="projects" data-testid="projects-row">
     <span class="rowline"><span class="name figure">${project.name}</span></span>
     <span class="rowline">${statusChip("project", project.status)}<span class="grow"></span><span class="mono">${project.line_count} lines</span></span>
-    <span class="rowline"><span class="dim">${priced ? "Indicative" : "Awaiting price"}</span><span class="grow"></span><span class="mono figure">${priced ? money(project.subtotal_cents) : money(null)}</span></span>
+    <span class="rowline"><span class="dim">${estimate.label}</span><span class="grow"></span><span class="mono figure">${estimate.figure}</span></span>
   </button>`;
 }
 
