@@ -56,8 +56,9 @@ test("approvals and follow-ups lists show plain recovery words on a 500, never s
     }
     await route.continue();
   });
+  let failFollowups = true;
   await page.route(/\/api\/v1\/quotes\/q-1001\/followups$/, async (route) => {
-    if (route.request().method() === "GET") {
+    if (route.request().method() === "GET" && failFollowups) {
       await route.fulfill({
         status: 500,
         contentType: "application/json",
@@ -79,10 +80,17 @@ test("approvals and follow-ups lists show plain recovery words on a 500, never s
   await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
   await page.getByText("Quote detail & admin").click();
   const followups = page.locator("qd-quote-followups");
-  await expect(followups.getByTestId("fu-error")).toHaveText("The follow-ups did not load. Check the connection and press Refresh.");
+  const fuError = followups.getByTestId("fu-error");
+  await expect(fuError).toContainText("The follow-ups did not load. Check the connection and try again.");
+  await expect(fuError.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
   await expect(followups.getByTestId("fu-empty")).toHaveCount(0);
   await expect(followups.getByTestId("fu-summary")).toHaveCount(0);
   await expect(page.getByText("Boom")).toHaveCount(0);
+
+  failFollowups = false;
+  await fuError.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(followups.getByTestId("fu-summary")).toContainText("No follow-up cadence on this quote yet");
+  await expect(followups.getByTestId("fu-error")).toHaveCount(0);
 });
 
 test("a 403 on quotes, approvals or follow-ups lists shows the refusal words with no Check the connection, no Refresh button and no raw server text", async ({ page }) => {
