@@ -136,6 +136,10 @@ type Service struct {
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The rollup's day,
 	// the day a routine event is filed under, is the dealer's own calendar day.
 	zone houseday.Source
+	// payAccess says who holds the payment trail; nil withholds every payment notice (payment_access.go).
+	payAccess PaymentAccess
+	// payRecipients says who a staffer is to the gate and which branches they reach; nil closes the fence.
+	payRecipients PaymentRecipients
 }
 
 // WithAttachmentChecker attaches the attachment checker seam.
@@ -203,10 +207,15 @@ func (s *Service) ListMyChannels(ctx context.Context, c Caller) ([]Channel, erro
 	if err != nil {
 		return nil, err
 	}
-	if chans == nil {
-		chans = []Channel{}
+	// A seat in a money room the caller no longer holds the trail for is not listed (HH-424).
+	admitted := map[string]bool{}
+	kept := make([]Channel, 0, len(chans))
+	for _, ch := range chans {
+		if s.admits(ctx, admitted, c.UserID, ch.ID) {
+			kept = append(kept, ch)
+		}
 	}
-	return chans, nil
+	return kept, nil
 }
 
 // GetMessages returns a channel's messages (cursor-paginated), enforcing channel-scoping: a caller
@@ -396,11 +405,18 @@ func (s *Service) ListMentions(ctx context.Context, c Caller, cursor string, lim
 	if err != nil {
 		return MessagePage{}, err
 	}
+	// A mention in a money room the caller's trail no longer admits is not listed (HH-424). The cursor
+	// stays the unfiltered page's, so paging does not skip rows.
+	admitted := map[string]bool{}
+	kept := make([]Message, 0, len(page.Messages))
+	for _, m := range page.Messages {
+		if s.admits(ctx, admitted, c.UserID, m.ChannelID) {
+			kept = append(kept, m)
+		}
+	}
+	page.Messages = kept
 	if err := s.stitchReactions(ctx, page.Messages, c.UserID); err != nil {
 		return MessagePage{}, err
-	}
-	if page.Messages == nil {
-		page.Messages = []Message{}
 	}
 	return page, nil
 }
@@ -480,10 +496,14 @@ func (s *Service) UnackedRequiresAck(ctx context.Context, c Caller) ([]Message, 
 	if err != nil {
 		return nil, err
 	}
-	if msgs == nil {
-		msgs = []Message{}
+	admitted := map[string]bool{}
+	kept := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if s.admits(ctx, admitted, c.UserID, m.ChannelID) {
+			kept = append(kept, m)
+		}
 	}
-	return msgs, nil
+	return kept, nil
 }
 
 // - Feature A: notification prefs + the shouldNotify predicate (0069) -
@@ -581,6 +601,10 @@ func (s *Service) assertMember(ctx context.Context, c Caller, channelID string) 
 		return err
 	}
 	if ok {
+		// A seat in a money room is not enough: the room follows the payment trail and the branch reach.
+		if !s.RoomAdmits(ctx, c.UserID, channelID) {
+			return ErrNotMember
+		}
 		return nil
 	}
 	exists, err := s.repo.channelExists(ctx, channelID)

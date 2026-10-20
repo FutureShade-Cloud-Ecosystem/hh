@@ -6628,12 +6628,12 @@ type PricingFloorPreviewItem struct {
 	BranchCode         *string `json:"branch_code,omitempty"`
 	BranchName         *string `json:"branch_name,omitempty"`
 	FinalCents         int64   `json:"final_cents"`
-	MarginBps          int64   `json:"margin_bps"`
-	FloorBps           int64   `json:"floor_bps"`
+	MarginBps          *int64  `json:"margin_bps,omitempty"`
+	FloorBps           *int64  `json:"floor_bps,omitempty"`
 	PriceUom           string  `json:"price_uom"`
 	Source             string  `json:"source"`
 	PreviousFinalCents int64   `json:"previous_final_cents"`
-	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	PreviousMarginBps  *int64  `json:"previous_margin_bps,omitempty"`
 	AlreadyUnderFloor  bool    `json:"already_under_floor"`
 }
 
@@ -7050,9 +7050,9 @@ type PricingRebateAccrual struct {
 	SourceType   string    `json:"source_type"`
 	SourceId     *string   `json:"source_id,omitempty"`
 	QtyBase      float64   `json:"qty_base"`
-	BasisCents   int64     `json:"basis_cents"`
-	AccrualCents int64     `json:"accrual_cents"`
-	RateNote     string    `json:"rate_note"`
+	BasisCents   *int64    `json:"basis_cents,omitempty"`
+	AccrualCents *int64    `json:"accrual_cents,omitempty"`
+	RateNote     *string   `json:"rate_note,omitempty"`
 	AccruedAt    time.Time `json:"accrued_at"`
 }
 

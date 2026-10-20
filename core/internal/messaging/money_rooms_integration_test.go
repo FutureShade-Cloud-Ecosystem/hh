@@ -188,6 +188,7 @@ func TestIntegration_MoneyRooms_AddMemberRefusesANonFinanceRole(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	svc := NewService(repo)
+	bindPaymentTrailFor(t, pool, svc, uAlexMorgan)
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
 
