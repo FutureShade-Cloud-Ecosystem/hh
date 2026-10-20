@@ -125,10 +125,13 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 
 	sp, err := ParseSpec(raw)
 	if err != nil {
+		// A spec that does not parse cannot be redacted term by term, so its text is not logged at all.
+		entry.Spec = json.RawMessage(`{"unparsed":true}`)
 		entry.Refusal = "invalid"
 		return finish(Result{}, specToBadArg(err))
 	}
 	entry.View = sp.View
+	entry.Spec = loggedSpec(sp)
 	zone, err := houseday.Resolve(ctx, q.Zone)
 	if err != nil {
 		entry.Refusal = "unavailable"
@@ -406,4 +409,27 @@ func exchangeIDFrom(ctx context.Context) string {
 		return st.id
 	}
 	return ""
+}
+
+// personalMarker replaces a value filtered on a personal column in the query log (PII-CLASSES-r2).
+const personalMarker = "(personal)"
+
+// loggedSpec is the spec as the query log keeps it: every where term on a column the registry tags personal has
+// its value replaced by the marker, whatever the operator (in and between included), and keeps its column and
+// operator. The model writes the spec, often from an earlier answer's rows, so the log cannot know whether the
+// asker typed a value. Values on plain columns are logged as before.
+func loggedSpec(sp Spec) json.RawMessage {
+	out := sp
+	out.Where = make([]Filter, len(sp.Where))
+	for i, f := range sp.Where {
+		if personalColumns[sp.View+"."+f.Col] {
+			f.Value = json.RawMessage(`"` + personalMarker + `"`)
+		}
+		out.Where[i] = f
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return json.RawMessage(`{"unparsed":true}`)
+	}
+	return b
 }
