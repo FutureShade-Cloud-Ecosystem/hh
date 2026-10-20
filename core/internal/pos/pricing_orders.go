@@ -31,6 +31,16 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 		}
 	}
 
+	// THE BRANCH WALL on a write too: the document is priced at, and filed under, the branch it names, so the
+	// caller must reach that branch first (the words create sale gives).
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return PricingOrder{}, err
+	}
+	if !caller.CanAccessBranch(in.BranchID) {
+		return PricingOrder{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
+	}
+
 	// Customer type drives the engine tier; a walk-in/prospect prices RETAIL.
 	customerType := "RETAIL"
 	if in.CustomerID != "" {
@@ -101,6 +111,14 @@ func (s *Service) GetPricingOrder(ctx context.Context, id string) (PricingOrder,
 	if !found {
 		return PricingOrder{}, errPricingNotFound
 	}
+	// Behind the wall answers what a missing document answers: a foreign branch's document is not found.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return PricingOrder{}, err
+	}
+	if !caller.CanAccessBranch(po.BranchID) {
+		return PricingOrder{}, errPricingNotFound
+	}
 	return po, nil
 }
 
@@ -108,6 +126,13 @@ func (s *Service) GetPricingOrder(ctx context.Context, id string) (PricingOrder,
 func (s *Service) ListPricingOrders(ctx context.Context, branchID string) ([]PricingOrder, error) {
 	if branchID == "" {
 		return nil, clientErr(http.StatusBadRequest, "pos: branch_id is required")
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return nil, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branchID)
 	}
 	return s.store.ListPricingOrders(ctx, branchID, 50)
 }

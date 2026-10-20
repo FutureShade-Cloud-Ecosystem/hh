@@ -499,7 +499,7 @@ test("the public copy lists no admin persona card and refuses to enter one; the 
   assert.ok(partner.session.personaRoles.some((role) => role.flow === "financial-controller"));
 });
 
-test("role picker state on ConsoleSession: heldRoles and chooseRole, with the granted branches held as information only", async () => {
+test("role picker state on ConsoleSession: heldRoles and chooseRole, granted branches held for the role switch", async () => {
   const account = new FakeAccountSurface();
   const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
   account.script(ownAnswer("general_manager,sales_manager", "General Manager")(1, w.clock.now() + 900_000));
@@ -517,10 +517,65 @@ test("role picker state on ConsoleSession: heldRoles and chooseRole, with the gr
     { id: "b-east", code: "EST", name: "East Yard" },
   ]);
   assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"]);
-  // No choice machinery is left on the session: the branches are shown, not picked.
-  for (const gone of ["chooseBranch", "focusBranchOption", "chosenBranchIds", "chosenBranches", "isMultiBranchRole", "allBranchesChosen"]) {
-    assert.equal(gone in w.session, false, `${gone} is gone`);
-  }
   w.session.chooseRole("general_manager");
   assert.deepEqual(w.session.branches.map((b) => b.name), ["West Yard", "East Yard"], "a role switch leaves the list as it was");
+});
+
+test("branch choice on ConsoleSession: several granted branches are a choice, at least one stays chosen, one granted is information", async () => {
+  const account = new FakeAccountSurface();
+  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+  account.script(ownAnswer("general_manager", "General Manager")(1, w.clock.now() + 900_000));
+  await w.session.submit(EMAIL, FAKE_PASSWORD);
+  const west = { id: "b-west", code: "WST", name: "West Yard" };
+  const east = { id: "b-east", code: "EST", name: "East Yard" };
+  w.session.setBranches([west, east]);
+  assert.equal(w.session.branchIsChoice, true);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"], "every granted branch starts chosen");
+  w.session.toggleBranch("b-west");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-east"]);
+  w.session.toggleBranch("b-east");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-east"], "the last chosen branch cannot be turned off");
+  w.session.toggleBranch("b-west");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"], "kept in the core's order");
+  w.session.toggleBranch("not-granted");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"], "an id the core did not grant is ignored");
+  w.session.focusBranchOption("b-east");
+  assert.equal(w.session.activeBranchOptionId, "b-east");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"], "focus alone changes no choice");
+
+  w.session.setBranches([west]);
+  assert.equal(w.session.branchIsChoice, false);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"]);
+  w.session.toggleBranch("b-west");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "a one branch person has nothing to toggle");
+
+  w.session.setBranches([]);
+  assert.deepEqual(w.session.chosenBranchIds, []);
+});
+
+test("All branches on ConsoleSession: one toggle selects every granted branch and reads pressed only when all are chosen", async () => {
+  const account = new FakeAccountSurface();
+  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+  account.script(ownAnswer("general_manager", "General Manager")(1, w.clock.now() + 900_000));
+  await w.session.submit(EMAIL, FAKE_PASSWORD);
+  w.session.setBranches([
+    { id: "b-west", code: "WST", name: "West Yard" },
+    { id: "b-east", code: "EST", name: "East Yard" },
+    { id: "b-north", code: "NTH", name: "North Yard" },
+  ]);
+  assert.equal(w.session.allBranchesChosen, true);
+  w.session.toggleBranch("b-west");
+  w.session.toggleBranch("b-east");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-north"]);
+  assert.equal(w.session.allBranchesChosen, false);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east", "b-north"], "pressed once selects every granted branch");
+  assert.equal(w.session.allBranchesChosen, true);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "pressed with all chosen it narrows to the first, never to none");
+  w.session.focusBranchOption("__all__");
+  assert.equal(w.session.activeBranchOptionId, "__all__");
+  w.session.setBranches([{ id: "b-west", code: "WST", name: "West Yard" }]);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "a one branch person has no All branches");
 });

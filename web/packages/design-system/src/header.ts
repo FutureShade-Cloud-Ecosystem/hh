@@ -1,7 +1,7 @@
 // The shared app header: the chrome every micro-app wears, extracted from the
 // front door's inline bar (HH-RD2 polish round 2 item 5, decision log row
 // 938; the shape is the one recorded in hh-demo-1/STATUS.md, "Front door
-// header component - location and API"). One bar, three zones: the brand
+// header component - location and API"). One bar, three zones: the dealer's
 // lockup and the demo badge left, the word of the moment centred (truly
 // centred: the side columns are equal fr tracks, so an empty right side
 // cannot pull the word off centre), the signed-in controls right. Under the
@@ -58,16 +58,12 @@ import { baseStyles } from './primitives.js';
 /** The word the centre zone carries when nobody is signed in. */
 const DEFAULT_WORD = 'Pick a role';
 
-/** The lockup's defaults: today's words, so an app that names nothing is unchanged. */
-const DEFAULT_PRODUCT = 'Yard';
-const DEFAULT_SUB = 'a Hardscape House product';
-
 const styles = css`
   header {
     display: grid;
-    /* The left cell takes the room its brand and the Demo pill need on one row (a longer role word in the middle
-       must not push the pill under the logo); where the screen is too narrow for that, the pill wraps as before. */
-    grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
+    /* The left cell shares the row with the role word and the controls: it may not outgrow its track, so a long
+       dealer name truncates inside the lockup (below) rather than push into them. */
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
     box-sizing: border-box;
@@ -80,18 +76,19 @@ const styles = css`
     flex-wrap: wrap;
     align-items: center;
     gap: var(--hh-s-12);
+    min-width: 0;
   }
-  /* The brand lockup, the front door's own: the Hardscape House badge at
-     the left, the product name with the house line under it. The badge is
-     the yellow square ground (the badge yellow IS --hh-accent), square
-     cornered as the source colourways are, carrying mark.svg's measured H
-     inlined in the ink a gold fill carries (--hh-accent-ink, through
-     currentColor), in both themes (decision log rows 953 and 968). */
+  /* The dealer's lockup (decision log row 1858): the dealer's initial on the
+     yellow square ground (the badge yellow IS --hh-accent), square cornered,
+     in the ink a gold fill carries (--hh-accent-ink), in both themes, with the
+     dealer's name and the app's plain surface label under it. Our own mark and
+     house line are never drawn on a dealer's screen. */
   .brand {
     display: flex;
     align-items: center;
     gap: 10px;
     min-width: 0;
+    max-width: min(100%, 32ch);
   }
   .brand-mark {
     width: 30px;
@@ -100,10 +97,12 @@ const styles = css`
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
   }
-  .brand-mark svg {
-    width: 100%;
-    height: 100%;
-    display: block;
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    font-size: var(--hh-s-16);
+    font-weight: 700;
+    line-height: 1;
   }
   .brand-names {
     display: flex;
@@ -111,22 +110,24 @@ const styles = css`
     gap: 1px;
     min-width: 0;
   }
+  .brand-product,
+  .brand-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .brand-product {
     font-size: var(--hh-s-16);
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.05;
   }
-  .brand-product .accent {
-    color: var(--hh-accent-text);
-  }
-  .brand-sub {
+    .brand-sub {
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.055em;
     line-height: 1.2;
     color: var(--hh-text-dim);
-    white-space: nowrap;
   }
   .who {
     margin: 0;
@@ -170,8 +171,8 @@ const styles = css`
     .demo-banner-cell {
       justify-self: center;
     }
-    /* The band needs the room more than the house line does; the mark and
-       the product name stay, the part that identifies the app. */
+    /* The band needs the room more than the surface label does; the mark and
+       the dealer's name stay, the part that identifies the dealer. */
     .brand-sub {
       display: none;
     }
@@ -284,8 +285,8 @@ export class HosAppHeader extends HHElement {
     signedIn: { type: Boolean, attribute: 'signed-in' },
     demo: { type: Boolean },
     theme: {},
+    dealerName: { attribute: 'dealer-name' },
     productName: { attribute: 'product-name' },
-    productSub: { attribute: 'product-sub' },
     compact: { type: Boolean, reflect: true },
     framed: { type: Boolean },
   };
@@ -298,10 +299,10 @@ export class HosAppHeader extends HHElement {
   declare demo: boolean;
   /** 'light' or 'dark'; applied to the document root, '' leaves it alone. */
   declare theme: string;
-  /** The accent word of the lockup, after "HH"; empty keeps today's "Yard". */
+  /** The dealer's name from the served tenant config; empty until it is known, and then no lockup is drawn. */
+  declare dealerName: string;
+  /** The app's own plain surface label ("Money Desk"), shown under the dealer's name; never a product lockup. */
   declare productName: string;
-  /** The line under it; empty keeps today's house line. */
-  declare productSub: string;
   /** The compact narrow layout, opt in. */
   declare compact: boolean;
   /** Framed by the Work shell: the band renders nothing. Read once at boot, from the frame's address. */
@@ -313,8 +314,8 @@ export class HosAppHeader extends HHElement {
     this.signedIn = false;
     this.demo = false;
     this.theme = '';
+    this.dealerName = '';
     this.productName = '';
-    this.productSub = '';
     this.compact = false;
     this.framed = framedByShell();
   }
@@ -387,12 +388,21 @@ export class HosAppHeader extends HHElement {
     else if (this.theme === 'dark') root.removeAttribute('data-theme');
   }
 
+  /** The full dealer name rides the lockup's title (the position gate refuses a bound title attribute, so it is set here). */
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    const lockup = this.renderRoot.querySelector('[data-testid="dealer-lockup"]');
+    const name = this.dealerName.trim();
+    if (lockup === null) return;
+    if (lockup.getAttribute('title') !== name) lockup.setAttribute('title', name);
+  }
+
   render(): Template {
     if (this.framed) return html``;
     const signedIn = this.signedIn === true;
     const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
-    const product = this.productName !== '' ? this.productName : DEFAULT_PRODUCT;
-    const sub = this.productSub !== '' ? this.productSub : DEFAULT_SUB;
+    const dealer = this.dealerName.trim();
+    const surface = this.productName.trim();
     // The separator sits BETWEEN the buttons and the slotted controls: with
     // no buttons (unsigned) there is nothing to separate, with no slotted
     // content there is nothing to divide; it renders only when both halves
@@ -405,20 +415,17 @@ export class HosAppHeader extends HHElement {
     return html`
       <header>
         <div class="demo-banner-cell">
-          <div class="brand" role="img" aria-label=${`HH ${product}, ${sub}`}>
-            <span class="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 3000 3000">
-                <path
-                  fill="currentColor"
-                  d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
-                />
-              </svg>
-            </span>
-            <span class="brand-names">
-              <span class="brand-product">HH <span class="accent">${product}</span></span>
-              <span class="brand-sub">${sub}</span>
-            </span>
-          </div>
+          ${dealer === ''
+            ? nothing
+            : html`
+                <div class="brand" data-testid="dealer-lockup" role="img" aria-label=${surface === '' ? dealer : `${dealer}, ${surface}`}>
+                  <span class="brand-mark" aria-hidden="true">${dealer.slice(0, 1).toUpperCase()}</span>
+                  <span class="brand-names">
+                    <span class="brand-product">${dealer}</span>
+                    ${surface === '' ? nothing : html`<span class="brand-sub">${surface}</span>`}
+                  </span>
+                </div>
+              `}
           ${this.demo
             ? html`
                 <div class="demo-banner" role="note">

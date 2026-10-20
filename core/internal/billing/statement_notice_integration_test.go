@@ -124,7 +124,11 @@ func TestIntegration_StatementNotices_EnqueuedRowsAndZeroSends(t *testing.T) {
 	}
 	// The ref names the dealer's day of the run's as-of clock, never the UTC day and never the test
 	// process's own zone.
-	wantRef := StatementRef(houseday.Today(func() time.Time { return asOf }))
+	day, err := time.Parse("2006-01-02", houseday.Today(func() time.Time { return asOf }))
+	if err != nil {
+		t.Fatalf("house day: %v", err)
+	}
+	wantRef := StatementRef(day.Format("Jan 2, 2006"))
 	if got["invoice_no"] != wantRef {
 		t.Fatalf("payload invoice_no = %v, want %q", got["invoice_no"], wantRef)
 	}

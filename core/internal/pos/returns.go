@@ -1891,6 +1891,13 @@ func (s *Service) ListReturnPickups(ctx context.Context, branchID string) ([]Ret
 	if branchID == "" {
 		return nil, clientErr(http.StatusBadRequest, "pos: branch_id is required")
 	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return nil, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branchID)
+	}
 	return s.store.ListReturnPickups(ctx, branchID)
 }
 
@@ -1905,6 +1912,14 @@ func (s *Service) AdvancePickup(ctx context.Context, returnID, to string) (Retur
 		return ReturnPickup{}, err
 	}
 	if !found {
+		return ReturnPickup{}, clientErr(http.StatusNotFound, "pos: return not found")
+	}
+	// Behind the wall answers what a missing return answers.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnPickup{}, err
+	}
+	if !caller.CanAccessBranch(cur.BranchID) {
 		return ReturnPickup{}, clientErr(http.StatusNotFound, "pos: return not found")
 	}
 	valid := (cur.PickupStatus == PickupRequested && to == PickupScheduled) ||

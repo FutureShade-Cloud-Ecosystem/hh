@@ -56,12 +56,17 @@ const BASE = {
 
 // ── the band: mark, org, selector, chip, notifications, pin, account ─────────────────────────────
 
-test('the band renders the mark geometry and the org beside it', () => {
+test('the compact band leads with the dealer: its initial as the mark chip, its name beside it, none of our mark', () => {
   const markup = visible(renderKit(ShellHeader, BASE));
-  assert.ok(markup.includes('class="mark"'), 'the mark chip is present');
-  assert.ok(markup.includes('viewBox="0 0 3000 3000"'), 'the mark carries the badge viewBox');
-  assert.ok(markup.includes('fill="currentColor"'), 'the mark path carries currentColor');
+  assert.ok(markup.includes('<span class="mark" aria-hidden="true">G</span>'), 'the mark chip is the dealer initial');
+  assert.ok(!markup.includes('viewBox="0 0 3000 3000"'), 'no HH mark on a dealer screen');
   assert.ok(markup.includes('Gable Landscape Supply'), 'the org word is present');
+});
+
+test('the compact band with no dealer known draws no mark chip at all', () => {
+  const markup = visible(renderKit(ShellHeader, { ...BASE, org: '' }));
+  assert.ok(!markup.includes('class="mark"'), 'no chip before the dealer is known');
+  assert.ok(!markup.includes('viewBox="0 0 3000 3000"'), 'no HH mark either');
 });
 
 test('the selector shows where the person is, and the quiet default when it knows nothing', () => {

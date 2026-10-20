@@ -105,7 +105,7 @@ test('framed, the shared header band renders nothing: no brand lockup, no Demo b
 });
 
 test('standalone (not framed, the default), the same inputs render the whole band', () => {
-  const markup = visible(renderKit(HosAppHeader, { signedIn: true, demo: true, roleLabel: 'Sales' }));
+  const markup = visible(renderKit(HosAppHeader, { signedIn: true, demo: true, roleLabel: 'Sales', dealerName: 'Gable Landscape Supply' }));
   assert.ok(markup.includes('<header'));
   assert.ok(markup.includes('class="brand"'));
   assert.ok(markup.includes('Demo'));

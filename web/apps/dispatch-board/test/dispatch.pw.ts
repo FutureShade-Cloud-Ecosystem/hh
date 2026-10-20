@@ -510,6 +510,73 @@ test("a reopen the role gate refuses with a bare Forbidden reads as who may do i
   await expect(page.locator("[data-sheet-error]")).not.toHaveText("Forbidden");
 });
 
+// Decision log row 1858: once a dealer is known its lockup leads and no mark or name of ours is drawn.
+test("the header leads with the served dealer and draws nothing of ours, in both themes", async ({ page, request }) => {
+  await page.route("**/api/v1/tenant/config", (route) =>
+    route.fulfill({ json: { id: "t1", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "", support_email: "", support_phone: "" } }),
+  );
+  await openBoard(page, request);
+  const header = page.locator("dispatch-board-app hos-app-header");
+  await expect(header.locator("[data-testid='dealer-lockup']")).toContainText("Gable Landscape Supply");
+  await expect(header.locator("[data-testid='dealer-lockup']")).toContainText("Dispatch");
+  for (let pass = 0; pass < 2; pass += 1) {
+    const drawn = await header.evaluate((el) => (el.shadowRoot?.innerHTML ?? "") + (el.shadowRoot?.textContent ?? ""));
+    expect(drawn).not.toContain("Hardscape House");
+    expect(drawn).not.toContain("HH ");
+    expect(drawn).not.toContain('viewBox="0 0 3000 3000"');
+    if (pass === 0) await page.locator("dispatch-board-app [data-action='theme']").first().click();
+  }
+});
+
+// A long dealer name truncates inside its own cell: the lockup never overprints the role word or the controls (bar section 4, very long data).
+const LONG_NAMES = [
+  "Tri-County Landscape and Hardscape Supply Company Incorporated",
+  "Tri-County Landscape and Hardscape Supply Company Incorporated of the Greater Metropolitan Region",
+].map((name, i) => (i === 0 ? name.slice(0, 59).trim() : name.slice(0, 82).trim()));
+
+for (const name of LONG_NAMES) {
+  for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    test(`a ${name.length} character dealer name truncates and overlaps nothing at ${size.width}, both themes`, async ({ page, request }) => {
+      await page.setViewportSize(size);
+      await page.route("**/api/v1/tenant/config", (route) =>
+        route.fulfill({ json: { id: "t1", dealer_name: name, logo_url: "", primary_color: "", support_email: "", support_phone: "" } }),
+      );
+      await openBoard(page, request);
+      const header = page.locator("dispatch-board-app hos-app-header");
+      await expect(header.locator("[data-testid='dealer-lockup']")).toBeVisible();
+      for (let pass = 0; pass < 2; pass += 1) {
+        const facts = await header.evaluate((el) => {
+          const root = el.shadowRoot as ShadowRoot;
+          const box = (sel: string) => root.querySelector(sel)?.getBoundingClientRect() ?? null;
+          const product = root.querySelector(".brand-product") as HTMLElement;
+          const lockup = root.querySelector("[data-testid='dealer-lockup']") as HTMLElement;
+          const r = (b: DOMRect | null) => (b === null ? null : { l: b.left, r: b.right, t: b.top, b: b.bottom });
+          return {
+            lockup: r(box("[data-testid='dealer-lockup']")),
+            who: r(box(".who")),
+            controls: r(box(".controls")),
+            productHeight: product.getBoundingClientRect().height,
+            lineHeight: parseFloat(getComputedStyle(product).lineHeight) || parseFloat(getComputedStyle(product).fontSize) * 1.05,
+            title: lockup.getAttribute("title"),
+            truncated: product.scrollWidth > product.clientWidth,
+            overflowX: el.scrollWidth > el.clientWidth + 1,
+          };
+        });
+        type Box = { l: number; r: number; t: number; b: number };
+        const apart = (a: Box, b: Box) => a.r <= b.l + 0.5 || b.r <= a.l + 0.5 || a.b <= b.t + 0.5 || b.b <= a.t + 0.5;
+        expect(facts.title).toBe(name);
+        expect(facts.truncated).toBe(true);
+        expect(facts.productHeight).toBeLessThanOrEqual(facts.lineHeight + 1);
+        expect(facts.overflowX).toBe(false);
+        expect(apart(facts.lockup as Box, facts.who as Box), "lockup clear of the role word").toBe(true);
+        expect(apart(facts.lockup as Box, facts.controls as Box), "lockup clear of the controls").toBe(true);
+        if (size.width === 1440) expect((facts.lockup as Box).r).toBeLessThanOrEqual((facts.controls as Box).l + 0.5);
+        if (pass === 0) await page.locator("dispatch-board-app [data-action='theme']:visible").first().click();
+      }
+    });
+  }
+}
+
 test("UX-37d B29: a permanent refusal on load shows who can and offers no Try again button", async ({ page, request }) => {
   await resetStub(request);
   await stubPost(request, "refuse", { status: 403, error: "Forbidden", path: "/loadboard", reads: true });

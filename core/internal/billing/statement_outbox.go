@@ -26,7 +26,7 @@ package billing
 // is evaluated". A statement is an accounts-receivable notice. It is not a new kind of thing.
 //
 // The cost is the rendered wording: the AR template says "invoice <ref> for <amount> is outstanding",
-// so a statement reads as an invoice with a statement-shaped reference (STMT 2026-07-31). That is a
+// so a statement reads as an invoice with a statement-shaped reference (STMT Jul 31, 2026). That is a
 // template change in a package outside this fence, and it is named in the report rather than hacked
 // around from here.
 //
@@ -65,7 +65,7 @@ type StatementNoticeQueue interface {
 // fill in, and the consent rule is that delivery resolves the recipient itself, every time.
 type statementNoticePayload struct {
 	InvoiceID   string `json:"invoice_id"`   // always empty: a statement is not an invoice
-	InvoiceNo   string `json:"invoice_no"`   // the human reference, e.g. "STMT 2026-07-31"
+	InvoiceNo   string `json:"invoice_no"`   // the human reference, e.g. "STMT Jul 31, 2026"
 	CustomerID  string `json:"customer_id"`  // what the consent resolver looks the number up by
 	AmountCents int64  `json:"amount_cents"` // the closing balance the statement claims
 	DueDate     string `json:"due_date"`     // empty: a statement is a position, not a due date
