@@ -141,6 +141,7 @@ import {
   txbarSegments,
   resolveCuratedChips,
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
+  burstMayCommit, // a scanner speed label commits a row only when its name begins with it
   type LineWeightFacts,
 } from '@hardscapehouse/pos-kit/src/ported/_pos-rev8.js';
 // P3-10 (the comprehensive train review): the margin surface follows the policy
@@ -2177,6 +2178,11 @@ export class HosPosTerminal extends LitElement {
       gap: 8px;
       margin-top: 10px;
     }
+    .paytiles-hint {
+      margin: 6px 0 0;
+      font-size: 11px; /* the small-chrome role (see the type-scale note) */
+      color: var(--hos-text-dim);
+    }
     .paytiles button {
       display: flex;
       align-items: center;
@@ -4179,13 +4185,20 @@ export class HosPosTerminal extends LitElement {
    * No hit means no commit: the term stays in the field and the browse path is one press away.
    * Enter must never invent a product.
    */
-  private commitTopHit(): void {
+  private commitTopHit(detail?: { term?: string; burst?: boolean }): void {
     const drop = this.renderRoot.querySelector<HTMLElement & { commitTop?: () => boolean; topHit?: () => { name: string; sku: string } | null }>(
       'hos-pos-search-drop',
     );
     const top = drop?.topHit?.() ?? null;
+    const box = this.renderRoot.querySelector<HTMLElement & { commitDone?: (m: string) => void; unknownCode?: (c: string) => void }>(
+      'hos-pos-scan-box',
+    );
+    // A scanner speed entry commits only a row that begins with it (burstMayCommit); else loud.
+    if (detail?.burst && !burstMayCommit(detail.term ?? '', top?.name)) {
+      box?.unknownCode?.(detail.term ?? '');
+      return;
+    }
     if (!drop || !top || !drop.commitTop?.()) return;
-    const box = this.renderRoot.querySelector<HTMLElement & { commitDone?: (m: string) => void }>('hos-pos-scan-box');
     box?.commitDone?.(`Added ${top.name} · ${top.sku}`);
   }
 
@@ -4193,6 +4206,13 @@ export class HosPosTerminal extends LitElement {
   private enterResultList(): void {
     const drop = this.renderRoot.querySelector<HTMLElement & { focusFirstRow?: () => boolean }>('hos-pos-search-drop');
     drop?.focusFirstRow?.();
+  }
+
+  /** A result row was added (click or Enter on the row): the field behaves as after a scan, cleared and focused. */
+  private dropAdded(hit: { name: string; sku: string }): void {
+    this.renderRoot
+      .querySelector<HTMLElement & { commitDone?: (m: string) => void }>('hos-pos-scan-box')
+      ?.commitDone?.(`Added ${hit.name} · ${hit.sku}`);
   }
 
   private focusScanBox(): void {
@@ -5735,6 +5755,9 @@ export class HosPosTerminal extends LitElement {
       case HK_SEARCH:
         if (s.rungDone) return false;
         this.openAccordion('items');
+        // openAccordion leaves the caret alone when focus is already inside Items (a result row,
+        // a line control): the search key always means the search, so ask the box directly.
+        this.focusScanBox();
         return true;
       default:
         return false;
@@ -6457,7 +6480,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         ?autofocus-scan=${true}
         ?unified=${true}
         @pos-term-changed=${(e: CustomEvent<{ term: string }>) => (this.lookupTerm = e.detail.term)}
-        @pos-term-commit-top=${() => this.commitTopHit()}
+        @pos-term-commit-top=${(e: CustomEvent) => this.commitTopHit(e.detail)}
         @pos-term-enter-list=${() => this.enterResultList()}
         @pos-scan-resolved=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
       ></hos-pos-scan-box>
@@ -6473,6 +6496,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         .term=${this.lookupTerm}
         .ticketEpoch=${this.ticketEpoch}
         @pos-drop-exit=${() => this.focusScanBox()}
+        @pos-drop-added=${(e: CustomEvent) => this.dropAdded(e.detail)}
         @pos-add-product=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
         @pos-add-echo=${(e: CustomEvent<{ id: string }>) => this.onAddEcho(e.detail.id)}
       ></hos-pos-search-drop>
@@ -7195,6 +7219,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 Card
               </button>
             </div>
+            <p class="paytiles-hint" data-testid="pos-paytiles-hint">Left and Right choose the payment method</p>
             ${this.renderAccountCheck()}
             ${this.renderCashTendered()}
             ${this.renderSupplierDeposit()}

@@ -4,7 +4,7 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { focusRing } from './styles/focus-ring.js';
 import { resolveScan, counterHitToProduct, type CounterHit } from './pos-api.js';
-import { enterMissOutcome } from './_pos-rev8.js'; // rev 8: the scanner-vs-typist question, pure
+import { enterMissOutcome, isScannerBurst } from './_pos-rev8.js'; // rev 8: the scanner-vs-typist question, pure
 
 /**
  * hos-pos-scan-box: the pos-barcode ticket. The scan input that turns a barcode into a priced line.
@@ -85,6 +85,18 @@ export class HosPosScanBox extends LitElement {
     this.code = '';
     this.msg = msg;
     this.msgKind = 'ok';
+    this.emitTerm('');
+    void this.updateComplete.then(() => this.focusInput());
+  }
+
+  /**
+   * unknownCode: the host declined to commit a row for a scanner speed label. The loud answer, as
+   * for any miss: the code stays visible in the message, the box clears and keeps focus.
+   */
+  unknownCode(code: string): void {
+    this.msg = `No product for ${code}: check the label or search by name.`;
+    this.msgKind = 'warn';
+    this.code = '';
     this.emitTerm('');
     void this.updateComplete.then(() => this.focusInput());
   }
@@ -268,14 +280,16 @@ export class HosPosScanBox extends LitElement {
  // scan box's LOUD contract below. A typed entry falls through QUIETLY: the live search
         // results (already on screen from the forwarded term) are the answer, and shouting
         // "no product" over them would call a working search broken.
-        if (this.unified && enterMissOutcome(gaps, code.length) === 'fall-through-to-search') {
+        if (this.unified && enterMissOutcome(gaps, code.length, code) === 'fall-through-to-search') {
           // THE CLIENT'S ASK: "Enter takes the top hit." The box does not know what the top hit is
  //: the results list does: so it hands the moment to the host and the host commits.
           // A host that has no hit to give simply leaves the term standing, which is the pre-
           // existing quiet fall-through and still the right answer for a term nothing matches.
           this.dispatchEvent(
             new CustomEvent('pos-term-commit-top', {
-              detail: { term: code },
+              // burst: the entry arrived at scanner speed, so the host commits a row only when its
+              // name begins with the term (burstMayCommit) and otherwise calls back unknownCode().
+              detail: { term: code, burst: isScannerBurst(gaps, code.length) },
               bubbles: true,
               composed: true,
             }),
