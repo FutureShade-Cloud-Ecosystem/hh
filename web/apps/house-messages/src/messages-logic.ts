@@ -216,7 +216,7 @@ function dealerLabelForSlug(rawSlug: string): string | null {
   return null;
 }
 
-export function channelTitle(channel: Channel): string {
+export function channelTitle(channel: Pick<Channel, "name"> & Partial<Pick<Channel, "kind" | "slug">>): string {
   const rawName = channel.name.trim();
   const rawSlug = (channel.slug ?? "").trim();
   if (rawName.startsWith("#")) {

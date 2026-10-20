@@ -1200,7 +1200,7 @@ function renderSettingsView(m: Model): TemplateResult {
                 ${(s?.membershipRules ?? []).map(
                   (r) => html`
                     <tr>
-                      <td><strong>${channelTitle({ id: r.channel_id, kind: "TEAM", name: r.channel_name, topic: "", tier: "STANDARD", unread_count: 0, mentioned: false })}</strong></td>
+                      <td><strong>${channelTitle({ name: r.channel_name })}</strong></td>
                       <td>${r.joins_automatically}</td>
                       <td>${r.leaves_automatically}</td>
                       <td><span class="tag tag-plain">${r.visibility}</span></td>
@@ -1393,7 +1393,7 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
               ${directory.map(
                 (dc) => html`
                   <tr>
-                    <td><strong>${channelTitle({ id: dc.id, kind: "TEAM", slug: dc.slug, name: dc.name, topic: dc.topic, tier: "STANDARD", unread_count: 0, mentioned: false })}</strong></td>
+                    <td><strong>${channelTitle({ name: dc.name })}</strong></td>
                     <td>${dc.member_count} member${dc.member_count === 1 ? "" : "s"}</td>
                     <td>
                       ${dc.membership_source === "DERIVED"
