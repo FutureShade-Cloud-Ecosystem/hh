@@ -13,9 +13,11 @@ test("could not deliver asks what stopped the delivery and says what happens to 
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await expect(page.getByRole("heading", { name: "Could not deliver" })).toBeVisible();
-  await expect(page.getByLabel("What stopped this delivery?")).toBeVisible();
   await expect(page.locator("[data-handback-words]")).toContainText("Bring the load back to the yard");
   const confirm = page.getByRole("button", { name: "Could not deliver" });
+  await expect(confirm).toBeDisabled();
+  await page.getByRole("radio", { name: "Other, say what" }).check();
+  await expect(page.getByLabel("What stopped this delivery?")).toBeVisible();
   await expect(confirm).toBeDisabled();
   await page.getByLabel("What stopped this delivery?").fill("   ");
   await expect(confirm).toBeDisabled();
@@ -26,6 +28,7 @@ test("could not deliver asks what stopped the delivery and says what happens to 
 test("recording it sends the status and the reason, and closes the stop with the handback sentence", async ({ page, request }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Could not deliver" }).click();
+  await page.getByRole("radio", { name: "Other, say what" }).check();
   await page.getByLabel("What stopped this delivery?").fill("  Nobody on site  ");
   await page.getByRole("button", { name: "Could not deliver" }).click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");

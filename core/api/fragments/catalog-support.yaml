@@ -1431,12 +1431,13 @@ components:
       description: >-
         The one structured notice of an answer. The core sends the code (and the
         class of a refusal); the panel words it. A refusal names the class the
-        asker lacks and never a record.
+        asker lacks and never a record. model_unavailable is set on a demo copy
+        when the answer was given on the stub because the model could not be used.
       required: [code]
       properties:
         code:
           type: string
-          enum: [refused, too_broad]
+          enum: [model_unavailable, refused, too_broad]
         class:
           type: string
           enum: [cost, margin, payment_trail, pii, capability, disabled]

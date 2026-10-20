@@ -8,17 +8,11 @@ import (
 	"encoding/hex"
 )
 
-// Notice is the one structured notice of an answer. The core sends the code (and the class, for a
-// refusal); the panel words it. The core sends no notice words of its own.
+// The notice type itself, Notice{Code, Class}, is declared once, in service.go (slice 3 introduced it for
+// model_unavailable). The codes this slice sends are below.
 //
-// Codes in this slice: "refused" (Class names the class the asker lacks and never a record) and
-// "too_broad" (the question's plan was too large). "partial" and "stale" are refused by design: they
-// would tell an asker that rows were hidden from them.
-type Notice struct {
-	Code  string `json:"code"`
-	Class string `json:"class,omitempty"`
-}
-
+// "refused": Class names the class the asker lacks and never a record. "too_broad": the question's plan was
+// too large. "partial" and "stale" are refused by design: they would tell an asker that rows were hidden.
 const (
 	NoticeRefused  = "refused"
 	NoticeTooBroad = "too_broad"

@@ -44,7 +44,8 @@ import {
   houseDay,
   type BranchRef,
 } from "./till-client.js";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
@@ -591,8 +592,17 @@ export class CounterTillApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
@@ -1329,7 +1339,7 @@ export class CounterTillApp extends HHElement {
         });
         this.#bandWatch.observe(band);
       }
-      band.org = FRAMED_BAND_ORG;
+      band.org = this.#dealerName;
       // The DEMO marker keeps the old banner's rule: only once the flows route has answered with cards, or on the till itself.
       const demoFlows = this.#entryFlowsState();
       band.demo = this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0);

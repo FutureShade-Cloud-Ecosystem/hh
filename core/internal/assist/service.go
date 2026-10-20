@@ -87,20 +87,34 @@ type Answer struct {
 	// numbers in it does not need a menu under it.
 	Suggest []string `json:"suggest,omitempty"`
 
+	// Notice is the one quiet note an answer may carry, `{code, class}`. This slice sends one code,
+	// model_unavailable: a demo copy answered on the stub because the model could not be used (no
+	// key, or a cap reached). The panel words it; the core sends no words of its own.
+	Notice *Notice `json:"notice,omitempty"`
+
 	// ConversationID is the opaque, server issued id of the conversation this exchange belongs to.
 	// The client sends it back on the next turn instead of its own history. Absent when the bearer
 	// has no session id or no store is wired.
 	ConversationID string `json:"conversation_id,omitempty"`
 
 	// -- TanyAI slice 5 (PANEL-API.md 8.2) -------------------------------------------------------
-	// Citations are the verified citations of the text, Notice the one structured notice, Scope what
+	// Citations are the verified citations of the text (Notice, above, also carries refused and too_broad), Scope what
 	// the figures cover, AnswerID an opaque id for the feedback route. All present only on an answer
 	// that ran data.query.
 	Citations []Citation `json:"citations,omitempty"`
-	Notice    *Notice    `json:"notice,omitempty"`
 	Scope     *Scope     `json:"scope,omitempty"`
 	AnswerID  string     `json:"answer_id,omitempty"`
 }
+
+// Notice is an answer's notice: a code, and a class where the code has classes.
+type Notice struct {
+	Code  string `json:"code"`
+	Class string `json:"class,omitempty"`
+}
+
+// NoticeModelUnavailable is the notice of an answer given on the stub because the model could not
+// be used (PANEL-API: "fell back to the stub or to commands only").
+const NoticeModelUnavailable = "model_unavailable"
 
 // LimitReachedMessage is the exact sentence an over-budget user sees. It is a constant so the test,
 // the frontend fixture and the screenshot in walkthrough-431/ are provably the same words.
@@ -148,6 +162,15 @@ type Service struct {
 	// additive rather than load-bearing.
 	resolver *Resolver
 
+	// pinned, when set, is the alias the service always routes to, whatever the settings row says
+	// (the demo's tanyai-premium).
+	pinned string
+
+	// stubFallback is the demo copy's rule: when the model cannot be used (no key, no dealer cap, a
+	// cap reached, no price row) the question is answered on the stub and the answer says so,
+	// instead of the plain unavailable or over limit answer other builds give.
+	stubFallback bool
+
 	// keyPresent is set at boot from the environment, see WithKeyPresent. It is never the key.
 	keyPresent bool
 
@@ -183,6 +206,32 @@ func (s *Service) WithRouter(r *Router) *Service { s.router = r; return s }
 // answered as a fresh one.
 func (s *Service) WithResolver(r *Resolver) *Service { s.resolver = r; return s }
 
+// WithPinnedRoute fixes the route to one alias: every settings read reports the native provider
+// through that alias, so the settings table cannot send the service anywhere else. The demo
+// composition pins tanyai-premium; the pin is the composition's and no request carries it.
+func (s *Service) WithPinnedRoute(alias string) *Service { s.pinned = alias; return s }
+
+// PinnedRoute is the alias the route is pinned to, or empty when it is not.
+func (s *Service) PinnedRoute() string { return s.pinned }
+
+// RouterOnlyAlias is the single alias the wired router is restricted to, or empty when there is
+// no router or it is not restricted to exactly one.
+func (s *Service) RouterOnlyAlias() string {
+	if s == nil {
+		return ""
+	}
+	return s.router.OnlyAlias()
+}
+
+// StubFallbackOn reports whether the demo's stub fallback is switched on.
+func (s *Service) StubFallbackOn() bool { return s != nil && s.stubFallback }
+
+// WithStubFallback switches on the demo copy's rule: a paid call refused by the meter for a cap,
+// a missing cap or a missing price row is answered on the stub with the model_unavailable notice,
+// and so is any exchange the stub answered because no key or route was usable. A user's own
+// allowance running out is still the plain limit answer. Set on a demo copy only.
+func (s *Service) WithStubFallback() *Service { s.stubFallback = true; return s }
+
 // WithKeyPresent records whether the provider API key was found in the environment at boot.
 //
 // A BOOLEAN, AND ONLY A BOOLEAN. This is the entire extent to which any layer above the provider
@@ -206,8 +255,17 @@ func (s *Service) RunCommand(ctx context.Context, c Caller, code string, a Args)
 	return s.reg.Run(ctx, c, code, a)
 }
 
-// Settings resolves the config, defaulting on any failure.
+// Settings resolves the config, defaulting on any failure. A pinned route (the demo's) overrides
+// the provider, model and route the table holds.
 func (s *Service) Settings(ctx context.Context) Settings {
+	set := s.readSettings(ctx)
+	if s.pinned != "" {
+		set.Provider, set.Model, set.Route = ProviderAnthropic, s.pinned, ""
+	}
+	return set
+}
+
+func (s *Service) readSettings(ctx context.Context) Settings {
 	if s.settings == nil {
 		return DefaultSettings()
 	}
@@ -338,6 +396,10 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	// Steps 4 to 6: the model rounds. The provider is offered the caller's tools; whatever it asks
 	// for runs through the gate; its next reply sees the results. Bounded, see maxToolRounds.
 	out, err := s.converse(ctx, c, cfg, tools, window, &res, run)
+	if err != nil && s.stubFallback && paidCallRefused(err) {
+		// The demo's rule: the model cannot be used, so the stub answers and the answer says so.
+		out, err = s.stubOutcome(ctx, c, tools, window, &res, run)
+	}
 	if err != nil {
 		// A refusal by the meter (budget, dealer cap, unrecordable spend) is an ordinary answer.
 		if ans, ok := refusalAnswer(err); ok {
@@ -358,6 +420,7 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 			Results: []Result{},
 			Suggest: out.suggest,
 			Usage:   usageOf(run.ident(id), run.in, run.out),
+			Notice:  s.fallbackNotice(run.ident(id)),
 		}, nil
 	}
 
@@ -370,15 +433,34 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		Ran:     run.ran,
 		Carried: res.Carried,
 		Usage:   usageOf(run.ident(id), run.in, run.out),
+		Notice:  s.fallbackNotice(run.ident(id)),
 	}
 	if run.queried > 0 {
 		// The citations are the ones the text uses and the exchange's own results hold; the label and
 		// ref come from those results, never from the text.
 		ans.Citations = citationsIn(run, out.text)
-		ans.Notice, ans.Scope = run.notice, run.scope
+		// A refusal or a too broad query is the more specific notice; otherwise the stub fallback stands.
+		if run.notice != nil {
+			ans.Notice = run.notice
+		}
+		ans.Scope = run.scope
 		ans.AnswerID = newAnswerID()
 	}
 	return ans, nil
+}
+
+// paidCallRefused reports a metering refusal that stops a paid call and is not the asker's own
+// allowance: the dealer cap, or a call that could not be priced or recorded.
+func paidCallRefused(err error) bool {
+	return errors.Is(err, ErrDealerCap) || errors.Is(err, ErrMeterUnavailable)
+}
+
+// fallbackNotice is the model_unavailable notice for an exchange the stub answered on a demo copy.
+func (s *Service) fallbackNotice(who ident) *Notice {
+	if s.stubFallback && who.provider == "stub" {
+		return &Notice{Code: NoticeModelUnavailable}
+	}
+	return nil
 }
 
 // newExchangeTag is the random tag of one exchange's data envelope: 64 bits from the system's
@@ -637,8 +719,13 @@ func (s *Service) converse(ctx context.Context, c Caller, cfg Settings, tools []
 			}
 		}
 	}
-	// Every alias failed: the stub's plain results. The commands that already ran are good, so they
-	// stand; the stub answers the question itself when nothing ran yet.
+	// Every alias failed: the stub's plain results.
+	return s.stubOutcome(ctx, c, tools, window, res, run)
+}
+
+// stubOutcome is the last step of every route: the deterministic stub answers. The commands that
+// already ran are good, so they stand; the stub answers the question itself when nothing ran yet.
+func (s *Service) stubOutcome(ctx context.Context, c Caller, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
 	run.alias, run.note = aliasStubFallback, ""
 	out, err := s.drive(ctx, c, tools, window, res, run)
 	if err != nil || out.fail != "" {

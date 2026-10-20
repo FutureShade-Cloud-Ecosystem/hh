@@ -108,6 +108,9 @@ type Service struct {
 	// holdCheck is the pick hold seam (yard_hold.go, item 9 Opus P2-1). Nil = the yard doors do not
 	// refuse a held order (the additive lane; the composition root asserts the wiring at boot).
 	holdCheck PickHoldCheck
+	// roleLabels names a shortage's reporter by role for the yard's notice (UX-76), never by name or id.
+	// Nil = the notice says "a teammate".
+	roleLabels RoleLabeler
 }
 
 // NewService wires the store. Inject the order + chat seams with WithOrderReader / WithChatNotifier.
@@ -117,6 +120,14 @@ func NewService(store taskStore) *Service {
 
 // WithOrderReader injects the order-validation seam (create-from-order rejects an unknown order).
 func (s *Service) WithOrderReader(r OrderReader) *Service { s.orders = r; return s }
+
+// RoleLabeler answers the role label each given user holds. The identity resolver satisfies it.
+type RoleLabeler interface {
+	RoleLabelsForUsers(ctx context.Context, userIDs []string) (map[string]string, error)
+}
+
+// WithRoleLabels injects the role label seam the yard shortage notice names its reporter with.
+func (s *Service) WithRoleLabels(r RoleLabeler) *Service { s.roleLabels = r; return s }
 
 // WithChatNotifier injects the messaging event-post seam (create + done post a system EVENT into chat).
 func (s *Service) WithChatNotifier(n ChatNotifier) *Service { s.notifier = n; return s }

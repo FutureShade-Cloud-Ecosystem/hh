@@ -147,7 +147,7 @@ export const SCHEMA_DESCRIPTORS = {
   "AssistItem": {"k":"object","req":["title","fields"],"props":{"title":{"k":"string"},"fields":{"k":"array","of":{"k":"ref","name":"AssistField"}},"ref":{"k":"ref","name":"AssistRef"},"cite":{"k":"integer"}}},
   "AssistRef": {"k":"object","req":["kind","id"],"props":{"kind":{"k":"lit","v":["product","order","customer","quote"]},"id":{"k":"string"},"label":{"k":"string"}}},
   "AssistResult": {"k":"object","req":["command","headline","items","empty"],"props":{"command":{"k":"string"},"headline":{"k":"string"},"items":{"k":"array","of":{"k":"ref","name":"AssistItem"}},"empty":{"k":"boolean"},"note":{"k":"string"},"ref":{"k":"ref","name":"AssistRef"},"notice":{"k":"ref","name":"AssistNotice"},"scope":{"k":"ref","name":"AssistScope"}}},
-  "AssistNotice": {"k":"object","req":["code"],"props":{"code":{"k":"lit","v":["refused","too_broad"]},"class":{"k":"lit","v":["cost","margin","payment_trail","pii","capability","disabled"]}}},
+  "AssistNotice": {"k":"object","req":["code"],"props":{"code":{"k":"lit","v":["model_unavailable","refused","too_broad"]},"class":{"k":"lit","v":["cost","margin","payment_trail","pii","capability","disabled"]}}},
   "AssistScopeBranch": {"k":"object","req":["id","label"],"props":{"id":{"k":"string"},"label":{"k":"string"}}},
   "AssistScopePeriod": {"k":"object","req":["from","to","label"],"props":{"from":{"k":"string"},"to":{"k":"string"},"label":{"k":"string"}}},
   "AssistScopeAccount": {"k":"object","req":["label"],"props":{"label":{"k":"string"}}},

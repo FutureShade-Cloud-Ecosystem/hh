@@ -1108,7 +1108,7 @@ export type AssistResult = {
   scope?: AssistScope;
 };
 export type AssistNotice = {
-  code: "refused" | "too_broad";
+  code: "model_unavailable" | "refused" | "too_broad";
   class?: "cost" | "margin" | "payment_trail" | "pii" | "capability" | "disabled";
 };
 export type AssistScopeBranch = {

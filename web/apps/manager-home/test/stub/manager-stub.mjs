@@ -593,6 +593,18 @@ function buildWorld() {
         amount_cents: 0,
         status: "PENDING",
       },
+      // A second margin request whose id is NOT a board item's id, the way every request on the real core is. Shown
+      // only in the scenario "margin-pair" (seededApprovals).
+      {
+        id: "0e000000-0000-4000-9000-0000000000a5",
+        requested_by: "de110000-0000-4000-9000-000000000001",
+        branch_id: BRANCH_ID,
+        policy_type: "MARGIN_BELOW_MINIMUM",
+        detail: "Quote Q-2002 line 1 at 10% margin, floor is 15%",
+        subject_ref: "quote:0f000000-0000-4000-9000-0000000000q2",
+        amount_cents: 3559,
+        status: "PENDING",
+      },
       // The two freight raises the demo seeds, filed by the logistics role and decided by leadership.
       {
         id: "0e000000-0000-4000-9000-0000000000a2",
@@ -1349,6 +1361,11 @@ function decidesMargin(flow) {
 // The demo seeds only the two freight raises; the scenario "freight-only" is
 // that world, without the stub's own margin approval.
 function seededApprovals() {
+  if (scenario !== "margin-pair") return seededApprovalsBase().filter((a) => !a.id.endsWith("a5"));
+  return seededApprovalsBase();
+}
+
+function seededApprovalsBase() {
   return scenario === "freight-only" ? world.approvals.filter((a) => a.policy_type === "FREIGHT_ABOVE_QUOTE") : world.approvals;
 }
 
@@ -1557,6 +1574,10 @@ async function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   const path = url.pathname;
   if (path === "/healthz") return json(res, { ok: true });
+  // The public tenant config route (no credential): the dealer the band and the tab name.
+  if (req.method === "GET" && path === "/api/v1/tenant/config") {
+    return json(res, { id: "demo-dealer", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "#3a7d56", support_email: "support@gablelandscape.invalid", support_phone: "" });
+  }
 
   // ---- the stub's own controls (never the core's) ----
   if (req.method === "POST" && path === "/_stub/reset") {

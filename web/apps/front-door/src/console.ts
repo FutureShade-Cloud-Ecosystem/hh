@@ -31,9 +31,17 @@ import {
   SIGN_IN_WORDS,
   fetchMethods,
   focusAfter,
+  heldRolesFor,
   signInNotice,
   type SignInMethod,
 } from "./signin.js";
+
+/** One branch granted to the signed-in person by the core's branches route. */
+export interface GrantedBranch {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+}
 
 export type ConsolePhase = "starting" | "signed-out" | "signing-in" | "signed-in";
 
@@ -99,6 +107,8 @@ export class ConsoleSession {
   #persona: ExchangeUser | null = null;
   #personaBusy: string | null = null;
   #refusals = new Map<string, string>();
+  #chosenRoleId: string | null = null;
+  #branches: readonly GrantedBranch[] = [];
 
   constructor(deps: ConsoleDeps) {
     this.#deps = deps;
@@ -177,6 +187,43 @@ export class ConsoleSession {
   /** The refusal standing in one persona card, or the empty string. */
   personaRefusal(id: string): string {
     return this.#refusals.get(id) ?? "";
+  }
+
+  /** Only the live roles the signed-in person holds. */
+  get heldRoles(): readonly LiveRole[] {
+    const who = this.who;
+    return who === null ? [] : heldRolesFor(who.roleCode);
+  }
+
+  /** The currently chosen role from the person's held roles, or null when they hold none. */
+  get chosenRole(): LiveRole | null {
+    const roles = this.heldRoles;
+    if (roles.length === 0) return null;
+    if (this.#chosenRoleId !== null) {
+      const found = roles.find((role) => role.id === this.#chosenRoleId);
+      if (found !== undefined) return found;
+    }
+    return roles[0] ?? null;
+  }
+
+  /** Choose one of the person's held roles on the role picker. */
+  chooseRole(roleId: string): void {
+    const roles = this.heldRoles;
+    const found = roles.find((role) => role.id === roleId);
+    if (found === undefined) return;
+    this.#chosenRoleId = found.id;
+    this.#changed();
+  }
+
+  /** The person's granted branches from the core: information the picker and the home show, never a choice. */
+  get branches(): readonly GrantedBranch[] {
+    return this.#branches;
+  }
+
+  /** Record the person's granted branches from the core. */
+  setBranches(branches: readonly GrantedBranch[]): void {
+    this.#branches = [...branches];
+    this.#changed();
   }
 
   // ── transitions ─────────────────────────────────────────────────────────
@@ -394,6 +441,8 @@ export class ConsoleSession {
     this.#tap.forget();
     this.#refusals = new Map();
     this.#personaBusy = null;
+    this.#chosenRoleId = null;
+    this.#branches = [];
   }
 
   async #loadMethods(): Promise<void> {
