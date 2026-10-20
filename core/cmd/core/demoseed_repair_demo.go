@@ -60,6 +60,14 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	rq, ok := tx.(rowQuery)
+	if !ok {
+		return 0, fmt.Errorf("demoseed: the repair pass needs a transaction that can read the schema")
+	}
+	world, err := repairDemoSeq(ctx, tx, rq)
+	if err != nil {
+		return 0, err
+	}
 	reps, err := repairDemoOrderReps(ctx, tx, now, branches)
 	if err != nil {
 		return 0, err
@@ -69,7 +77,7 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 		return 0, err
 	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + sequenced + tasks + reps + grants + n, err
+	return fixed + stamped + sequenced + tasks + world + reps + grants + n, err
 }
 
 // yardPersonaBranchGrantRepairSQL deletes every user_branch_grants row of the yard persona

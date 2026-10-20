@@ -1,0 +1,41 @@
+package assist
+
+import (
+	"errors"
+	"regexp"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx"
+)
+
+// The assistant reads data only through the assist logins (package readtx), as the
+// database role that holds nothing but the ai and ai_pro objects. ReadClaims is
+// the one place a resolved Caller becomes the claims the database verifies: the
+// scope the Caller already holds, copied, and nothing from the request.
+
+var uuidShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// ReadClaims builds the staff claims of c. Cost, margin, PII class and channel
+// fields stay empty here; the classification registry (slice 6) and the messaging
+// slice fill them from the policy the Caller already passed through.
+func (c Caller) ReadClaims() (readtx.Claims, error) {
+	if !c.HasRole() {
+		return readtx.Claims{}, errors.New("assist: no role, no read claims")
+	}
+	if c.UserID == "" {
+		return readtx.Claims{}, errors.New("assist: no user, no read claims")
+	}
+	branches := make([]string, 0, len(c.BranchIDs))
+	for _, id := range c.BranchIDs {
+		if !uuidShape.MatchString(id) {
+			return readtx.Claims{}, errors.New("assist: a branch id is not a uuid")
+		}
+		branches = append(branches, id)
+	}
+	return readtx.Claims{
+		Audience:     readtx.AudienceStaff,
+		AskerID:      c.UserID,
+		Global:       c.Global,
+		BranchIDs:    branches,
+		PaymentTrail: c.PaymentTrail,
+	}, nil
+}

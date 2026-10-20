@@ -44,7 +44,10 @@ import {
   houseDay,
   type BranchRef,
 } from "./till-client.js";
-import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
@@ -92,7 +95,6 @@ const TILL_FLOWS: ReadonlySet<string> = new Set(["sales", "sales-manager"]);
 export class CounterTillApp extends HHElement {
   static styles = [
     baseStyles,
-    demoBannerStyles,
     entryStyles,
     returnsStyles,
     payBalanceStyles,
@@ -148,7 +150,7 @@ export class CounterTillApp extends HHElement {
            What follows the screen (a notice, the returns desk) flows on below the fold. */
         display: flex;
         flex-direction: column;
-        height: 100dvh;
+        height: calc(100dvh - var(--band-h, 61px));
         box-sizing: border-box;
       }
       /* The screen is the window, so the main's own foot padding would push the page 20px past it:
@@ -221,11 +223,14 @@ export class CounterTillApp extends HHElement {
          is for the entry page; this bar's controls take the till's chrome role. */
       main.on-till {
         padding-top: 0;
+        /* The one band takes 56px above the bar, so the stepper's tallest state at 1440x900 gives
+           the page's foot breathing room back (the counter PC's window is the target). */
+        padding-bottom: var(--hh-s-8);
       }
       .surfacebar {
-        min-height: 48px;
-        padding: var(--hh-s-8) var(--hh-s-20);
-        margin-bottom: var(--hh-s-8);
+        min-height: 36px;
+        padding: var(--hh-s-4) var(--hh-s-20);
+        margin-bottom: var(--hh-s-4);
         gap: var(--hh-s-12);
       }
       /* The entry page's header takes the same compact scale (visual NOTE 2): one row of about 48px,
@@ -591,6 +596,8 @@ export class CounterTillApp extends HHElement {
     this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
+    // Framed by the Work shell the till wears no band: the screen is the whole window.
+    if (this.#framed) this.style.setProperty("--band-h", "0px");
     if (this.#framed) {
       window.addEventListener("message", this.#onChromeAction);
       announceChromeControls(window, ["theme", "feedback"]);
@@ -763,6 +770,8 @@ export class CounterTillApp extends HHElement {
     if (import.meta.env.BASE_URL !== "/") window.location.assign("/");
   }
 
+  #bandWatch: ResizeObserver | null = null;
+
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
@@ -773,6 +782,8 @@ export class CounterTillApp extends HHElement {
     window.removeEventListener("hashchange", this.#onHashChange);
     window.removeEventListener("message", this.#onChromeAction);
     this.#theme.stop();
+    this.#bandWatch?.disconnect();
+    this.#bandWatch = null;
     super.disconnectedCallback();
   }
 
@@ -1141,26 +1152,6 @@ export class CounterTillApp extends HHElement {
     this.requestUpdate();
   }
 
-  /** The brand lockup for the till header: the same mark and size as the front door. */
-  #brandLockup(): TemplateResult {
-    return html`
-      <div class="brand" data-testid="till-header-badge">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 3000 3000">
-            <path
-              fill="currentColor"
-              d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
-            />
-          </svg>
-        </span>
-        <span class="brand-names">
-          <span class="brand-product">HH <span class="accent">Yard</span></span>
-          <span class="brand-sub">Counter Till</span>
-        </span>
-      </div>
-    `;
-  }
-
   /** Row 976: the Swap panes icon button, shown only while the till is in its two-pane view. */
   #swapControl(): TemplateResult | typeof nothing {
     if (this.#counterLayout !== "PANELS") return nothing;
@@ -1215,57 +1206,28 @@ export class CounterTillApp extends HHElement {
   }
 
   render(): TemplateResult {
-    // The banner's rule is "only once the flows route has answered with
-    // cards": an error answer and an empty answer alike are not the demo
-    // showing itself, so neither gets to look like one. The cards are the
+    // The flows route's answer drives the entry cards: an error answer and an
+    // empty answer alike are not the demo showing itself. The cards are the
     // till's own pair, not the box's whole table.
     const entryFlows = this.#entryFlowsState();
-    const demoPresent =
-      this.#surface === "terminal" || (entryFlows.kind === "ready" && entryFlows.flows.length > 0);
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
-      ${this.#surface === "terminal"
+      ${this.#framed
         ? nothing
-        : this.#framed
-          ? html`<h1 class="visually-hidden">Counter Till</h1>`
-          : html`
-            <header>
-              ${this.#brandLockup()}
-              ${demoPresent ? demoBanner() : nothing}
-              <div class="title-row">
-                <h1>Counter Till</h1>
-                ${this.#till === null
-                  ? html`<p class="signed-in">${this.#themeControl()}${this.#feedbackControl()}</p>`
-                  : html`
-                      <p class="signed-in">
-                        <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                        ${this.#themeControl()}
-                        ${this.#feedbackControl()}
-                        <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                          Sign out
-                        </button>
-                      </p>
-                    `}
-              </div>
-            </header>
-          `}
+        : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
+      ${this.#surface === "terminal" ? nothing : html`<h1 class="visually-hidden">Counter Till</h1>`}
       <main class="${this.#surface === "terminal" ? "on-till" : ""}">
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
               <div class="till-screen">
               <div class="surfacebar">
-                ${this.#framed ? nothing : this.#brandLockup()}
-                ${demoPresent && !this.#framed ? demoBanner() : nothing}
                 <p class="signed-in">
-                  ${this.#framed ? nothing : html`<span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>`}
                   ${this.#route !== "sale"
                     ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
                     : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>
                         <a class="btn-secondary nav-link" href="#/pay-balance" data-testid="till-pay-balance-entry">Pay balance</a>`}
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
-                  ${this.#framed ? nothing : this.#themeControl()}
-                  ${this.#framed ? nothing : this.#feedbackControl()}
                   ${this.#isPopout
                     ? nothing
                     : html`<button
@@ -1276,11 +1238,6 @@ export class CounterTillApp extends HHElement {
                         title="Open the till on a second window"
                       >
                         Pop out
-                      </button>`}
-                  ${this.#framed
-                    ? nothing
-                    : html`<button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                        Sign out
                       </button>`}
                 </p>
               </div>
@@ -1356,6 +1313,43 @@ export class CounterTillApp extends HHElement {
     }
     this.#syncReturnsFields();
     this.renderRoot.querySelector<CtOfflineStrip>("ct-offline-strip")?.attach(this.#offline);
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when the till stands alone; framed by the Work shell, the host's band
+    // is the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header
+    // used to (theme, feedback, sign out): the actions ride the band's
+    // accountMenu template and their clicks bubble back to #onHostClick.
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      // The Panels screen is the window below the band: the band's real height (it wraps at phone
+      // width) rides --band-h, so the screen never pushes the page past the fold.
+      if (this.#bandWatch === null && typeof ResizeObserver !== "undefined") {
+        this.#bandWatch = new ResizeObserver(() => {
+          this.style.setProperty("--band-h", `${Math.round(band.getBoundingClientRect().height)}px`);
+        });
+        this.#bandWatch.observe(band);
+      }
+      band.org = FRAMED_BAND_ORG;
+      // The DEMO marker keeps the old banner's rule: only once the flows route has answered with cards, or on the till itself.
+      const demoFlows = this.#entryFlowsState();
+      band.demo = this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0);
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.accountMenu = html`
+        ${this.#till !== null
+          ? html`<p>Signed in as <strong data-testid="signed-in-role">${this.#signedInRoleLabel()}</strong></p>`
+          : nothing}
+        ${this.#themeControl()}
+        ${this.#feedbackControl()}
+        ${this.#till !== null
+          ? html`<button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>Sign out</button>`
+          : nothing}
+      `;
+    }
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

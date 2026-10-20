@@ -15,6 +15,11 @@ import { shot } from "./shot";
 const pay = (page: Page) => page.locator("qd-order-payment");
 const docs = (page: Page) => page.locator("qd-related-docs");
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 async function openQuote(page: Page, quoteNo: string): Promise<void> {
   await showList(page);
   await page.getByTestId("qb-list-row").filter({ hasText: quoteNo }).first().click();
@@ -93,7 +98,9 @@ test("a credit customer's deposit is taken and the balance the server answered i
   // The figures line names the invoice the server raised, from the family read, never a computed figure.
   await expect(pay(page).getByTestId("op-figures")).toContainText(/Invoice INV-\d+ is Part paid at \$37\.06/);
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit");
-  // The brand theme, cycled from Auto through Light to Brand.
+  // The brand theme, cycled from Auto through Light to Brand from the band's account menu.
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
   await page.getByTestId("theme-control").click();
   await page.getByTestId("theme-control").click();
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit-dark");
@@ -745,6 +752,7 @@ test("a payment still out at sign out is kept as a known attempt for the next si
   await held.asked;
   // The person signs out while the payment is out: the sign out waits a bound for it, goes on
   // without the answer, and the entry page says the payment is kept, not dropped.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.locator("p.notice")).toContainText("kept as a known attempt");
@@ -786,6 +794,7 @@ test("sign out waits for a payment that lands inside the bound and says on the e
   const held = await hold(page, /\/api\/v1\/quotes\/q-2101\/order-payment$/, { method: "POST" });
   await take(page, "10.00", "AUTH 9", "CARD");
   await held.asked;
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   // The flush is waiting on the payment: a release inside the bound is heard before the session
   // ends, and the person who is leaving is told the payment was taken, with its figures.

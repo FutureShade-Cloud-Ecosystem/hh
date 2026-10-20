@@ -31,7 +31,10 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       await openBank(page, request);
-      if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+      if (theme === "brand") {
+        await page.locator("hh-shell-header button.account").click();
+        await page.getByRole("button", { name: "Theme: Light" }).click();
+      }
       await take("01", "accounts");
 
       await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);

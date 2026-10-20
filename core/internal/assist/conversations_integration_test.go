@@ -17,6 +17,7 @@ package assist
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 )
@@ -53,7 +54,7 @@ func TestIntegration_Aliases_TheRouterReadsTheTableLive(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	repo := NewRepository(pool)
-	router := NewRouter(repo, ModelConfig{AnthropicKey: "k", AnthropicBaseURL: "http://127.0.0.1:1"}, NewStubProvider(), nil)
+	router := NewRouter(repo, ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: "http://127.0.0.1:1"}, NewStubProvider(), nil)
 	p, ok := router.Resolve(ctx, AliasPremium)
 	if !ok || p.Model() != "claude-sonnet-5-5" {
 		t.Fatalf("premium resolves to %s ok=%v", p.Model(), ok)

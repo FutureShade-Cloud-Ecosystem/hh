@@ -14,10 +14,8 @@ const J2_REQUEST = "2f6a1c00-0000-4000-9000-0000000000a2";
 test("the demo way in offers the controller's card and lands on the approvals queue", async ({ page, request }) => {
   await request.post("/_stub/reset");
   await page.goto("/");
-  await expect(page.locator("hos-app-header")).toBeVisible();
   await expect(page.locator("[data-flow]")).toHaveCount(2);
   await page.locator("[data-flow='financial-controller']").click();
-  await expect(page.locator("hos-app-header")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Approvals");
   // The controller also holds the receivables desk: one tap, and the other slice is whole.
   await page.getByRole("button", { name: "Receivables", exact: true }).click();
