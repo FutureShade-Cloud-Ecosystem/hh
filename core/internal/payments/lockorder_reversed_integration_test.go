@@ -31,12 +31,17 @@ import (
 )
 
 // isReversedRefusal: the bank claim's refusal of a reversed payment carries the claim sentence (it names the
-// reversal among its three causes) AND the id of the payment that did not move, so a refusal of some other
-// payment does not satisfy it. The state checks of the legs say which cause it was.
-func isReversedRefusal(err error, paymentID string) bool {
-	return err != nil &&
-		strings.Contains(err.Error(), "payment already claimed, reversed or not RECEIVED: ") &&
-		strings.Contains(strings.ToLower(err.Error()), strings.ToLower(paymentID))
+// reversal among its three causes) AND the payment NUMBER of the payment that did not move, so a refusal of some
+// other payment does not satisfy it, and never its id: a dealer reads a number, not a uuid. The state checks of
+// the legs say which cause it was.
+func isReversedRefusal(err error, p payments.Payment) bool {
+	if err == nil || p.PaymentNo == "" {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(err.Error(), "payment already claimed, reversed or not RECEIVED: ") &&
+		strings.Contains(msg, strings.ToLower(p.PaymentNo)) &&
+		!strings.Contains(msg, strings.ToLower(p.ID))
 }
 
 func (r *loRig) reverse(paymentID string) error {
@@ -87,7 +92,7 @@ func TestIntegration_LockOrder_ReversalBesideBankMatchOfTheSamePayment(t *testin
 			if loIsDeadlock(mat) {
 				t.Fatalf("the match deadlocked: %v", mat)
 			}
-			if !isReversedRefusal(mat, p.ID) {
+			if !isReversedRefusal(mat, p) {
 				t.Errorf("the match of a reversed payment answered %v, want the claim sentence naming payment %s", mat, p.ID)
 			}
 			if st, n := r.lineState(line); st != "UNMATCHED" || n != 0 {
@@ -132,6 +137,9 @@ func TestIntegration_MarkDepositedRefusesAReversedPaymentAndKeepsTheReplayNoOp(t
 		t.Fatalf("reverse: %v", err)
 	}
 	err := repo.MarkDeposited(ctx, []string{reversed.ID}, "lo-line")
+	if err != nil && (!strings.Contains(err.Error(), reversed.PaymentNo) || strings.Contains(strings.ToLower(err.Error()), strings.ToLower(reversed.ID))) {
+		t.Errorf("MarkDeposited's refusal reads %q, want the payment number %s and never the id", err, reversed.PaymentNo)
+	}
 	if !errors.Is(err, till.ErrPaymentReversed) {
 		t.Errorf("MarkDeposited of a reversed payment answered %v, want till.ErrPaymentReversed", err)
 	}
@@ -176,7 +184,7 @@ func TestIntegration_AReversedPaymentCannotBeMatchedOrDeposited(t *testing.T) {
 	cursor, _ := f.pull(t, f.payInfo, f.tenant, 0)
 	st0, _, seq0 := r.paymentState(p.ID)
 
-	if err := r.match(line, p.ID, 10_000); !isReversedRefusal(err, p.ID) {
+	if err := r.match(line, p.ID, 10_000); !isReversedRefusal(err, p) {
 		t.Errorf("matching a reversed payment answered %v, want the claim sentence naming payment %s", err, p.ID)
 	}
 	if err := till.NewRepository(r.pool).MarkDeposited(context.Background(), []string{p.ID}, "lo-line"); !errors.Is(err, till.ErrPaymentReversed) {
@@ -250,11 +258,12 @@ func TestIntegration_ClaimRefusalNamesOnlyThePaymentsThatDidNotMove(t *testing.T
 	_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
 		StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: live.ID,
 		Method: bankrec.MethodManual, AmountCents: 20_000}, []string{live.ID, gone.ID})
-	if !isReversedRefusal(err, gone.ID) {
-		t.Fatalf("the batch answered %v, want the claim sentence naming payment %s", err, gone.ID)
+	if !isReversedRefusal(err, gone) {
+		t.Fatalf("the batch answered %v, want the claim sentence naming payment %s", err, gone.PaymentNo)
 	}
-	if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(live.ID)) {
-		t.Errorf("the refusal names the live payment %s too: %v", live.ID, err)
+	if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(live.ID)) ||
+		strings.Contains(strings.ToLower(err.Error()), strings.ToLower(live.PaymentNo)) {
+		t.Errorf("the refusal names the live payment %s too: %v", live.PaymentNo, err)
 	}
 	if !strings.Contains(err.Error(), "(claimed 1 of 2)") {
 		t.Errorf("the refusal's count is wrong: %v", err)

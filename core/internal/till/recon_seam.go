@@ -124,7 +124,15 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 			return fmt.Errorf("till: mark deposited: %w", err)
 		}
 		if len(reversed) > 0 {
-			return fmt.Errorf("%w: %s", ErrPaymentReversed, strings.Join(reversed, ", "))
+			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, reversed)
+			if nerr != nil {
+				return fmt.Errorf("till: mark deposited: read the payment numbers: %w", nerr)
+			}
+			labels := make([]string, 0, len(reversed))
+			for _, id := range reversed {
+				labels = append(labels, payments.PaymentLabel(numbers, id))
+			}
+			return fmt.Errorf("%w: %s", ErrPaymentReversed, strings.Join(labels, ", "))
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

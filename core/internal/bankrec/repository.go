@@ -352,12 +352,21 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 			// commit (a reversal stamps reversed_at and leaves the status RECEIVED), refused these rows,
 			// and RETURNING says which moved. No read of the payments table follows to say which of the
 			// three causes it was (a second read of another module's table would be a new cross-module
-			// access), so the sentence names all three and lists the payments that did not move, by the
-			// id this module holds for them (the match input's target, the proposal's payment ids: the id
-			// the desk also asks the dealer to paste). The sentence's first words are the desk's stable
+			// access), so the sentence names all three and lists the payments that did not move, by
+			// payment number (read through the payments module). The sentence's first words are the desk's stable
 			// match (money-desk bankrec-logic.ts).
+			// The numbers come through the payments module, which owns the table (no read here). The
+			// dealer reads a payment number, never an id.
+			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, unmoved)
+			if nerr != nil {
+				return "", fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
+			}
+			labels := make([]string, 0, len(unmoved))
+			for _, pid := range unmoved {
+				labels = append(labels, payments.PaymentLabel(numbers, pid))
+			}
 			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
-				strings.Join(unmoved, ", "), len(moved), len(claimPaymentIDs))
+				strings.Join(labels, ", "), len(moved), len(claimPaymentIDs))
 		}
 	}
 	var id string
