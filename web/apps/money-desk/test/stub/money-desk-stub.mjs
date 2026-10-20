@@ -161,6 +161,16 @@ const INVOICES = [
 
 const NSF_FEE = 3500;
 
+// Documents the register serves that are not collectible invoices (the core's no chip read returns every
+// INVOICE document whatever its stored status, and credit memos only with show_credits): a draft, a void
+// and a credit memo on the first account. They live outside world.invoices on purpose: they owe nothing,
+// so the aging, the payments and the statements never see them.
+const EXTRA_DOCS = [
+  { n: 201, stored: "DRAFT", doc_type: "INVOICE", total: 50_000 },
+  { n: 202, stored: "VOID", doc_type: "INVOICE", total: 70_000 },
+  { n: 203, stored: "FINALIZED", doc_type: "CREDIT_MEMO", total: 25_000 },
+];
+
 // The wide world's extra invoices: 99 open $10.00 invoices on the first account, so a Pick all open
 // names 101 invoices and the pick ceiling leg can draw the one body the app can build that the core's
 // validateApply refuses ahead of its replay judgement ("a received payment may name at most 100
@@ -1192,10 +1202,17 @@ async function handle(req, res) {
       CURRENT: (r) => unpaid(r) && r.days_overdue <= 0,
       DISPUTED: (r) => r.disputed,
     };
-    const known = chips[chip];
-    if (known === undefined) return refuse(res, 400, `billing: unknown register filter "${chip}"`);
+    // An unknown chip adds no predicate in the core (chipPredicates misses), so it reads like no chip.
+    const known = chips[chip] ?? chips[""];
+    const showCredits = q.get("show_credits") === "1" || q.get("show_credits") === "true";
     const mine = world.invoices.filter((i) => customer === "" || custId(i.acct) === customer).map(registerRow);
-    const filtered = mine.filter(known);
+    const extra = world.empty || (customer !== "" && customer !== custId(1)) ? [] : EXTRA_DOCS.map((d) => {
+      const row = registerRow({ id: uuid("b", d.n), invoice_no: `${d.doc_type === "CREDIT_MEMO" ? "CM" : "INV"}-${1000 + d.n}`, acct: 1, late: 20, total_cents: d.total, balance_cents: d.total, holdback_cents: 0, promise: null, dispute: null });
+      return { ...row, doc_type: d.doc_type, stored_status: d.stored, status: d.doc_type === "CREDIT_MEMO" ? "CREDIT" : d.stored };
+    });
+    // Credit memos are left out unless asked for (registerWhere: doc_type = 'INVOICE' without show_credits).
+    const docs = [...mine, ...extra].filter((r) => showCredits || r.doc_type === "INVOICE");
+    const filtered = docs.filter(known);
     filtered.sort((a, b) => Number(unpaid(b)) - Number(unpaid(a)) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
     const asked = Number(q.get("limit") ?? "50");
     const limit = !Number.isInteger(asked) || asked <= 0 || asked > 200 ? 50 : asked;

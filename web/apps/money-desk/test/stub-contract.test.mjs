@@ -175,7 +175,7 @@ test("the landing, the aging and the register answer in the contract's shapes", 
   holds("BillingInvoiceDetail", one.json);
 });
 
-test("the register reads its chip as the core does: no chip is every invoice, PAID the paid ones only, unpaid first, paged by limit and offset", async () => {
+test("the register reads its chip as the core does: no chip is every invoice document (drafts and voids too), PAID the paid ones only, unpaid first, an unknown chip reads as none", async () => {
   await reset();
   const aging = await call("GET", "/api/v1/ar/aging");
   const customer = aging.json.items[0].customer_id;
@@ -183,14 +183,24 @@ test("the register reads its chip as the core does: no chip is every invoice, PA
   const paid = await call("GET", `/api/v1/ar/register?customer_id=${customer}&chip=PAID`);
   const all = await call("GET", `/api/v1/ar/register?customer_id=${customer}&chip=all`);
   assert.ok(paid.json.items.length > 0 && paid.json.items.every((r) => r.stored_status === "PAID"));
-  assert.ok(all.json.items.length > 0 && all.json.items.every((r) => r.stored_status !== "PAID"));
-  assert.equal(every.json.items.length, paid.json.items.length + all.json.items.length);
-  const order = every.json.items.map((r) => r.stored_status === "PAID");
-  assert.deepEqual(order, [...order].sort((a, b) => Number(a) - Number(b)), "unpaid documents come ahead of settled ones");
+  assert.ok(all.json.items.length > 0 && all.json.items.every((r) => r.stored_status === "FINALIZED" || r.stored_status === "PARTIALLY_PAID"));
+  const drafts = every.json.items.filter((r) => r.stored_status === "DRAFT");
+  const voids = every.json.items.filter((r) => r.stored_status === "VOID");
+  assert.equal(drafts.length, 1, "the no chip read carries a draft, as the core's does");
+  assert.equal(voids.length, 1, "the no chip read carries a void, as the core's does");
+  assert.equal(every.json.items.length, paid.json.items.length + all.json.items.length + 2);
+  assert.ok(every.json.items.every((r) => r.doc_type === "INVOICE"), "credit memos are left out without show_credits");
+  const withCredits = await call("GET", `/api/v1/ar/register?customer_id=${customer}&show_credits=1`);
+  assert.equal(withCredits.json.items.filter((r) => r.doc_type === "CREDIT_MEMO").length, 1);
+  const rank = (r) => (r.stored_status === "FINALIZED" || r.stored_status === "PARTIALLY_PAID" ? 0 : 1);
+  const order = every.json.items.map(rank);
+  assert.deepEqual(order, [...order].sort((x, y) => x - y), "unpaid documents come ahead of the rest");
   const paged = await call("GET", `/api/v1/ar/register?customer_id=${customer}&limit=1&offset=1`);
   assert.equal(paged.json.items.length, 1);
   assert.equal(paged.json.items[0].id, every.json.items[1].id);
-  assert.equal((await call("GET", "/api/v1/ar/register?chip=nonsense")).status, 400);
+  const unknown = await call("GET", `/api/v1/ar/register?customer_id=${customer}&chip=nonsense`);
+  assert.equal(unknown.status, 200);
+  assert.deepEqual(unknown.json.items.map((r) => r.id), every.json.items.map((r) => r.id));
 });
 
 test("a payment applies to an invoice and the answer is the contract's receipt", async () => {
