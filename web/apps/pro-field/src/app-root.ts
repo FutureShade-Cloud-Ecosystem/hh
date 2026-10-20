@@ -43,15 +43,17 @@ import type { HHProSignIn, SignInMethodChoice, SignInSubmit } from "@hardscapeho
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
-import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
+import { MAX_INSTRUCTIONS_LENGTH, houseToday, instructionsCountWords, instructionsEditable, instructionsNote } from "./timeline.js";
 import { returnRequestLines } from "./returns.js";
 import { instructionsCard, accountView, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { passwordProblem } from "./account.js";
+import { isLastActiveOwnerDemotion } from "./team.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
   phase: Phase;
   items: TenantOrder[];
+  truncated: boolean;
 }
 
 interface InstructionsState {
@@ -93,6 +95,7 @@ interface TeamState {
   phase: Phase;
   users: TenantUser[];
   invites: TenantInvite[];
+  roleDraft: { userId: string; role: string } | null;
   inviteEmail: string;
   inviteRole: string;
   inviteBusy: boolean;
@@ -120,6 +123,7 @@ interface AccountState {
 }
 
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
+const RETURN_REFUSAL_WORDS = "Your role cannot request a return. Ask an Owner, Buyer, or Project manager on your account to request it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
 // The core's last owner refusal (409) in the words a person reads; the core's
 // stored words stay the core's.
@@ -148,11 +152,11 @@ export class ProFieldApp extends HHElement {
   #signinBusy = false;
   #section: Section = "orders";
   #surface = "tracking";
-  #orders: OrdersState = { phase: "idle", items: [] };
+  #orders: OrdersState = { phase: "idle", items: [], truncated: false };
   #order: OrderState | null = null;
   #projects: ProjectsState = { phase: "idle", items: [] };
   #project: ProjectState | null = null;
-  #team: TeamState = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+  #team: TeamState = { phase: "idle", users: [], invites: [], roleDraft: null, inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
   #account: AccountState = freshAccount();
   #ordersSeq = 0;
   #orderSeq = 0;
@@ -234,6 +238,20 @@ export class ProFieldApp extends HHElement {
       void this.#setUserStatus(control?.getAttribute("data-user-id") ?? "", control?.getAttribute("data-status") ?? "");
       return;
     }
+    if (action === "confirm-role") {
+      const draft = this.#team.roleDraft;
+      const userId = control?.getAttribute("data-user-id") ?? "";
+      if (draft !== null && draft.userId === userId) {
+        this.#team.roleDraft = null;
+        void this.#setUserRole(draft.userId, draft.role);
+      }
+      return;
+    }
+    if (action === "cancel-role") {
+      this.#team.roleDraft = null;
+      this.requestUpdate();
+      return;
+    }
     if (action === "save-profile") {
       void this.#saveProfile();
       return;
@@ -274,7 +292,7 @@ export class ProFieldApp extends HHElement {
       return;
     }
     if (field === "member-role" && target instanceof HTMLSelectElement) {
-      void this.#setUserRole(target.getAttribute("data-user-id") ?? "", target.value);
+      this.#stageUserRole(target.getAttribute("data-user-id") ?? "", target.value);
       return;
     }
     if (field === "name" && target instanceof HTMLInputElement) {
@@ -360,11 +378,11 @@ export class ProFieldApp extends HHElement {
       if (this.#session.profile() === null) {
         this.#section = "orders";
         this.#surface = "tracking";
-        this.#orders = { phase: "idle", items: [] };
+        this.#orders = { phase: "idle", items: [], truncated: false };
         this.#order = null;
         this.#projects = { phase: "idle", items: [] };
         this.#project = null;
-        this.#team = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+        this.#team = { phase: "idle", users: [], invites: [], roleDraft: null, inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
         this.#account = freshAccount();
       }
       this.requestUpdate();
@@ -421,7 +439,9 @@ export class ProFieldApp extends HHElement {
     if (this.#section === "team" && this.#team.phase === "ready") {
       for (const select of Array.from(this.renderRoot.querySelectorAll<HTMLSelectElement>("select[data-field=member-role]"))) {
         const user = this.#team.users.find((candidate) => candidate.id === select.getAttribute("data-user-id"));
-        if (user !== undefined) select.value = user.role;
+        if (user !== undefined) {
+          select.value = this.#team.roleDraft !== null && this.#team.roleDraft.userId === user.id ? this.#team.roleDraft.role : user.role;
+        }
       }
       const inviteRole = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=invite-role]");
       if (inviteRole !== null) inviteRole.value = this.#team.inviteRole;
@@ -462,23 +482,23 @@ export class ProFieldApp extends HHElement {
 
   async #loadOrders(): Promise<void> {
     const sequence = (this.#ordersSeq += 1);
-    this.#orders = { phase: "loading", items: this.#orders.items };
+    this.#orders = { phase: "loading", items: this.#orders.items, truncated: this.#orders.truncated };
     this.requestUpdate();
     const answer = await this.#port.listOrders();
     if (sequence !== this.#ordersSeq || this.#session.profile() === null) return;
     if (answer.ok) {
       const filter = ordersSurfaceOf(this.#surface)?.fulfillments ?? null;
       const items = filter === null ? answer.value : answer.value.filter((order) => filter.includes(order.fulfillment));
-      this.#orders = { phase: items.length === 0 ? "empty" : "ready", items };
+      this.#orders = { phase: items.length === 0 ? "empty" : "ready", items, truncated: answer.truncated === true };
     } else if (answer.status === 401) {
       // The session is gone (expired, or the person was deactivated): sign out and say so, never blame the role.
       this.#signinMessage = "You are signed out. Sign in again.";
       await this.#session.signOut();
       return;
     } else if (answer.status === 403) {
-      this.#orders = { phase: "refusal", items: [] };
+      this.#orders = { phase: "refusal", items: [], truncated: false };
     } else {
-      this.#orders = { phase: "error", items: [] };
+      this.#orders = { phase: "error", items: [], truncated: false };
     }
     this.requestUpdate();
   }
@@ -530,15 +550,29 @@ export class ProFieldApp extends HHElement {
     this.requestUpdate();
   }
 
+  async #signOutOnWriteExpiry(): Promise<void> {
+    this.#signinMessage = "You were signed out, so this was not saved. Sign in again and make the change again.";
+    await this.#session.signOut();
+  }
+
   async #saveInstructions(): Promise<void> {
     const order = this.#order;
     if (order === null || order.detail === null || order.instructions.busy) return;
+    if (order.instructions.draft.length > MAX_INSTRUCTIONS_LENGTH) {
+      order.instructions.error = `Keep delivery instructions to ${MAX_INSTRUCTIONS_LENGTH} characters or fewer.`;
+      this.requestUpdate();
+      return;
+    }
     order.instructions.busy = true;
     order.instructions.error = "";
     this.requestUpdate();
     const answer = await this.#port.setDeliveryInstructions(order.id, order.instructions.draft);
-    if (this.#order !== order) return;
     order.instructions.busy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#order !== order) return;
     if (answer.ok) {
       order.detail.delivery_instructions = order.instructions.draft;
       order.instructions.saved = true;
@@ -556,6 +590,10 @@ export class ProFieldApp extends HHElement {
     order.returns.notice = "";
     this.requestUpdate();
     const answer = await this.#port.getReturnEligibility(order.id);
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#order !== order || this.#session.profile() === null) return;
     if (answer.ok) {
       order.returns.eligibility = { phase: "done", data: answer.value, words: "", canRetry: false };
@@ -563,6 +601,8 @@ export class ProFieldApp extends HHElement {
       // The core answers not found for anything that was not a counter sale, on purpose
       // (IDOR safe), so this is a plain no, not a fault to retry.
       order.returns.eligibility = { phase: "error", data: null, words: CANNOT_RETURN_WORDS, canRetry: false };
+    } else if (answer.status === 403) {
+      order.returns.eligibility = { phase: "error", data: null, words: RETURN_REFUSAL_WORDS, canRetry: false };
     } else {
       order.returns.eligibility = { phase: "error", data: null, words: RETURN_FAULT_WORDS, canRetry: true };
     }
@@ -594,14 +634,18 @@ export class ProFieldApp extends HHElement {
       note: order.returns.form.note,
       lines: built.lines,
     });
-    if (this.#order !== order) return;
     order.returns.form.busy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#order !== order) return;
     if (answer.ok) {
       this.#closeReturnFlow();
       order.returns.notice = `Return request ${answer.value.request_no} sent. The dealer decides it.`;
       void this.#loadReturns();
     } else {
-      order.returns.form.error = answer.error;
+      order.returns.form.error = answer.status === 403 ? RETURN_REFUSAL_WORDS : answer.error;
     }
     this.requestUpdate();
   }
@@ -619,6 +663,12 @@ export class ProFieldApp extends HHElement {
       this.#account.pwConfirm = "";
       this.#account.name = "";
       this.#account.nameDirty = false;
+      this.#account.profileBusy = false;
+      this.#account.passwordBusy = false;
+    }
+    if (this.#section === "team") {
+      this.#team.inviteBusy = false;
+      this.#team.roleDraft = null;
     }
     this.#section = to;
     this.#order = null;
@@ -628,6 +678,7 @@ export class ProFieldApp extends HHElement {
     if (to === "team") {
       this.#team.notice = "";
       this.#team.error = "";
+      this.#team.roleDraft = null;
       void this.#loadTeam();
     }
     if (to === "account") {
@@ -679,8 +730,13 @@ export class ProFieldApp extends HHElement {
     account.profileError = "";
     this.requestUpdate();
     const answer = await tenantAuth.tenantUpdateMe(this.#client, { name: account.name.trim() });
-    if (this.#section !== "account" || this.#session.profile() === null) return;
     account.profileBusy = false;
+    this.#account.profileBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.me = answer.value as typeof account.me;
       account.nameDirty = false;
@@ -704,8 +760,13 @@ export class ProFieldApp extends HHElement {
     account.passwordError = "";
     this.requestUpdate();
     const answer = await tenantAuth.tenantChangePassword(this.#client, { current_password: account.pwCurrent, new_password: account.pwNew });
-    if (this.#section !== "account" || this.#session.profile() === null) return;
     account.passwordBusy = false;
+    this.#account.passwordBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.pwCurrent = "";
       account.pwNew = "";
@@ -761,12 +822,37 @@ export class ProFieldApp extends HHElement {
     this.requestUpdate();
   }
 
+  #stageUserRole(id: string, role: string): void {
+    if (id === "" || role === "") return;
+    const target = this.#team.users.find((user) => user.id === id);
+    if (target === undefined) return;
+    this.#team.notice = "";
+    this.#team.error = "";
+    if (role === target.role) {
+      this.#team.roleDraft = null;
+      this.requestUpdate();
+      return;
+    }
+    if (isLastActiveOwnerDemotion(this.#team.users, id, role)) {
+      this.#team.roleDraft = null;
+      this.#team.error = LAST_OWNER_WORDS;
+      this.requestUpdate();
+      return;
+    }
+    this.#team.roleDraft = { userId: id, role };
+    this.requestUpdate();
+  }
+
   async #setUserRole(id: string, role: string): Promise<void> {
     if (id === "" || role === "") return;
     this.#team.notice = "";
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantUpdateUserRole(this.#client, id, { role: role as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.notice = "Role saved.";
@@ -778,10 +864,16 @@ export class ProFieldApp extends HHElement {
 
   async #setUserStatus(id: string, status: string): Promise<void> {
     if (id === "" || (status !== "active" && status !== "inactive")) return;
+    const target = this.#team.users.find((u) => u.id === id);
+    if (target !== undefined && target.status === "pending") return;
     this.#team.notice = "";
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantUpdateUserStatus(this.#client, id, { status });
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
     if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.notice = status === "inactive" ? "The member is deactivated. They cannot sign in until reactivated." : "The member is active again.";
@@ -799,8 +891,12 @@ export class ProFieldApp extends HHElement {
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantCreateInvite(this.#client, { email, role: this.#team.inviteRole as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
-    if (this.#section !== "team" || this.#session.profile() === null) return;
     this.#team.inviteBusy = false;
+    if (!answer.ok && answer.status === 401) {
+      await this.#signOutOnWriteExpiry();
+      return;
+    }
+    if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.inviteEmail = "";
       const field = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=invite-email]");
@@ -889,6 +985,7 @@ export class ProFieldApp extends HHElement {
                   detail: order.detail,
                   editable: instructionsEditable(order.detail, mayEdit),
                   note: instructionsNote(order.detail, mayEdit),
+                  countWords: instructionsCountWords(order.instructions.draft),
                   dirty: order.instructions.draft !== order.detail.delivery_instructions,
                   busy: order.instructions.busy,
                   saved: order.instructions.saved,
@@ -911,6 +1008,7 @@ export class ProFieldApp extends HHElement {
         phase: this.#orders.phase,
         orders: this.#orders.items,
         emptyWords: ordersSurfaceOf(this.#surface)?.emptyWords ?? "",
+        truncated: this.#orders.truncated,
       });
     }
     if (this.#section === "projects") {
@@ -926,6 +1024,8 @@ export class ProFieldApp extends HHElement {
         phase: this.#team.phase,
         users: this.#team.users,
         invites: this.#team.invites,
+        currentUserId: this.#session.profile()?.userId ?? "",
+        roleDraft: this.#team.roleDraft,
         inviteBusy: this.#team.inviteBusy,
         inviteEmail: this.#team.inviteEmail,
         notice: this.#team.notice,

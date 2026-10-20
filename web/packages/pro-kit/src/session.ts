@@ -50,6 +50,8 @@ export interface TenantAnswer {
   token: string;
   expiresAtMs: number;
   user: AccountUser;
+  /** Words when an adapter signs the person in directly in place of sending a link. */
+  notice?: string;
 }
 
 /**
@@ -90,6 +92,8 @@ export interface TenantProfile {
   name: string;
   role: TenantRole;
   capabilities: TenantCapabilities;
+  /** Words when an adapter signed the person in directly in place of sending a link. */
+  notice?: string;
 }
 
 export interface TenantSession {
@@ -204,6 +208,7 @@ export class InMemoryTenantSession implements TenantSession {
       name: me.name,
       role: me.role,
       capabilities: { ...me.capabilities },
+      ...(held.notice === undefined ? {} : { notice: held.notice }),
     };
     this.#notify();
     return { ok: true, value: this.#copy(this.#profile) };
