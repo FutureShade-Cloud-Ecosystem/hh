@@ -143,7 +143,11 @@ function emailForm(session: ConsoleSession, busy: boolean, invalid: boolean): Te
 }
 
 /** The sign in screen: the dealer, the methods the dealer allows, one status line. */
-export function signInScreen(session: ConsoleSession, personaBlock: TemplateResult | typeof nothing): TemplateResult {
+export function signInScreen(
+  session: ConsoleSession,
+  personaBlock: TemplateResult | typeof nothing,
+  footControls: TemplateResult | typeof nothing = nothing,
+): TemplateResult {
   const busy = session.phase === "signing-in";
   const notice = session.notice;
   const invalid = notice.tone === "error" && notice.text === SIGN_IN_WORDS["bad_credentials"];
@@ -163,6 +167,9 @@ export function signInScreen(session: ConsoleSession, personaBlock: TemplateResu
         >${notice.text}</p>
         ${methodsBlock(session, busy, invalid)}
       </section>
+      <footer class="signin-footer" data-testid="signin-footer">
+        ${footControls}
+      </footer>
       ${personaBlock}
     </div>
   `;

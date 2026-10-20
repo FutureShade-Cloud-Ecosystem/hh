@@ -208,6 +208,48 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-12);
   }
+  .signin-footer {
+    display: grid;
+    justify-items: center;
+    gap: var(--hh-s-8);
+    text-align: center;
+    color: var(--hh-text-dim);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+  }
+  .signin-quiet-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+  }
+  .quiet-control {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    min-height: 32px;
+    font-family: var(--hh-font-ui);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--hh-text-dim);
+    border-radius: var(--hh-radius-control);
+    cursor: pointer;
+  }
+  .quiet-control:hover {
+    color: var(--hh-text);
+    text-decoration: underline;
+  }
+  .quiet-control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .quiet-sep {
+    color: var(--hh-text-dim);
+    font-size: 12px;
+    font-weight: 400;
+  }
 
   /* ── the role entry ───────────────────────────────────────────────────── */
   .entry-card {
