@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   AMBER_FROM,
+  asOfLabel,
   assignTargets,
   askDiffers,
   barPct,
@@ -20,6 +21,7 @@ import {
   filterBoard,
   fmtNum,
   fmtWeight,
+  formatTime,
   shortDay,
   toCuYd,
   toWeight,
@@ -168,7 +170,7 @@ test("the worst band folds pessimistically and a bar never draws past its track"
 test("numbers read at arm's length and an absent one says so in words", () => {
   assert.equal(fmtNum(1234.56), "1,235");
   assert.equal(fmtNum(12.34), "12.3");
-  assert.equal(fmtNum(null), "n/a");
+  assert.equal(fmtNum(null), "Not counted");
 });
 
 test("a requested date reads as an ask and the ask rides beside a different promise", () => {
@@ -228,11 +230,46 @@ test("each card's filter agrees with its meaning, and the pickups card matches n
   assert.equal(cardMatches("card.pickups", stop(), false), false);
 });
 
-test("a card's scope is named: the day, the working window or the branch", () => {
+test("a card's scope is named: the day, the working window or open now", () => {
   const v = view();
   assert.equal(cardScopeLabel(v, "card.ready"), "this day");
   assert.equal(cardScopeLabel(v, "card.unassigned"), "next 14 days");
-  assert.equal(cardScopeLabel(v, "card.pickups"), "this branch");
+  assert.equal(cardScopeLabel(v, "card.pickups"), "open now");
+  const stamp = new Date(Date.UTC(2026, 0, 15, 15, 4, 0)).toISOString();
+  assert.equal(formatTime(stamp, "America/Los_Angeles"), "7:04 AM");
+  assert.equal(formatTime(stamp, "America/Los_Angeles").includes("\u202f"), false);
+  assert.equal(asOfLabel(stamp, "America/Los_Angeles", "2026-01-15"), "As of 7:04 AM");
+  assert.equal(asOfLabel(stamp, "America/New_York", "2026-01-15"), "As of 10:04 AM");
+  assert.equal(asOfLabel("2026-03-02T03:15:00Z", "America/Los_Angeles", "2026-03-02"), "As of Mar 1, 2026, 7:15 PM");
+  assert.equal(asOfLabel("2026-03-02T16:15:00Z", "America/Los_Angeles", "2026-03-02"), "As of 8:15 AM");
+  assert.equal(asOfLabel(""), "");
+});
+
+test("asOfLabel compares against the dealer's today in houseDayInZone(zone), not the machine's local TZ", () => {
+  const prevTz = process.env.TZ;
+  const RealDate = globalThis.Date;
+  const fixedNow = new RealDate("2026-03-02T16:15:00Z");
+  class FixedDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fixedNow.getTime());
+      } else {
+        super(...args);
+      }
+    }
+    static now() {
+      return fixedNow.getTime();
+    }
+  }
+  process.env.TZ = "Asia/Tokyo";
+  globalThis.Date = FixedDate;
+  try {
+    assert.equal(asOfLabel("2026-03-02T16:15:00Z", "America/Los_Angeles"), "As of 8:15 AM");
+  } finally {
+    globalThis.Date = RealDate;
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  }
 });
 
 test("a day card holds its drill down to the board's day, and an absent date stays", () => {
@@ -390,9 +427,9 @@ test("a server sentence keeps its words and loses only its module prefix", () =>
   assert.equal(plainSentence(null), "");
 });
 
-test("a refusal reads in words by status, and a transport error says the board could not reach the server", () => {
-  assert.match(refusalWords("The reopen", "", null), /could not reach the server/);
-  assert.match(refusalWords("The reopen", "", 401), /session ended/);
+test("a refusal reads in words by status, and a transport error says the board could not reach the desk", () => {
+  assert.match(refusalWords("The reopen", "", null), /could not reach the desk/);
+  assert.match(refusalWords("The reopen", "", 401), /sign-in ended/);
   assert.equal(refusalWords("The reopen", "dispatch: only a dispatch manager can reopen a committed load", 403), "only a dispatch manager can reopen a committed load");
   assert.equal(refusalWords("Auto assign", "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime", 501), "automatic load assignment is part of the Pro module, build the loads here in the meantime");
   assert.match(refusalWords("The reopen", "", 403), /Logistics Manager or a Branch Manager can/);
@@ -410,7 +447,7 @@ test("weights show in pounds and short tons for the San Diego yard, converted at
   assert.equal(fmtWeight(1500), "3,307 lb");
   assert.equal(fmtWeight(1100), "2,425 lb");
   assert.equal(fmtWeight(9000), "9.9 tons");
-  assert.equal(fmtWeight(null), "n/a");
+  assert.equal(fmtWeight(null), "Not weighed");
   assert.equal(weightUnit(1100, 900), "lb");
   assert.equal(weightUnit(1100, 5000), "tons", "one unit for both figures of a gauge, chosen by the larger");
   assert.equal(weightUnit(null, undefined), "lb");
@@ -540,15 +577,15 @@ test("a driver wants a name, and a login link that is a user id or nothing", () 
   const df = (over = {}) => ({ name: "Driver D (demo)", phone: "", licence: "", login: "", ...over });
   assert.equal(validateDriver(df()), "");
   assert.match(validateDriver(df({ name: " " })), /A driver needs a name/);
-  assert.match(validateDriver(df({ login: "not-an-id" })), /A staff login id is a long id with dashes/);
+  assert.match(validateDriver(df({ login: "not-an-id" })), /A driver's sign in account is a long id with dashes/);
   assert.equal(validateDriver(df({ login: "d0200000-0000-4000-9000-000000000001" })), "");
   const body = driverBody(df({ name: " Driver D ", phone: " 619-555-0144 ", licence: "B" }), undefined, "b1");
   assert.deepEqual(body, { id: "", branch_id: "b1", name: "Driver D", phone: "619-555-0144", licence_class: "B", user_id: "", is_active: true });
   const kept = driverBody(df({ name: "Driver A" }), { id: "d1", branch_id: "b1", name: "x", is_active: false }, "b1", true);
   assert.equal(kept.id, "d1");
   assert.equal(kept.is_active, true);
-  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true, licence_class: "A", phone: "619-555-0141", user_id: "u" }).join(" | "), "Licence A | 619-555-0141 | Has a staff login");
-  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true }).join(" | "), "No licence on file | No phone | No staff login");
+  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true, licence_class: "A", phone: "619-555-0141", user_id: "u" }).join(" | "), "Licence A | 619-555-0141 | Has a sign in account");
+  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true }).join(" | "), "No licence on file | No phone | No sign in account");
 });
 
 // ---- will call (part B, sub item 3) ---------------------------------------------------------------------
@@ -598,6 +635,7 @@ test("the rules read as sentences a dispatcher would say, each with its unit", (
   assert.equal(byKey.freight_split_mode.word, "Evenly across the loads");
   assert.equal(byKey.driver_session_hours.word, "12 hours");
   assert.equal(byKey.working_view_days.label, "How far the daily view reaches");
+  assert.equal(byKey.load_value_visibility.note, "Managers see the load value; others do not.");
   assert.match(byKey.commit_horizon_weeks.note, /how far ahead a delivery may be promised/i, "the two reaches are never left to be confused");
   assert.match(byKey.working_view_days.note, /not how far ahead a delivery may be promised/i);
   assert.equal(policyRows(policy({ reopen_policy: "NOBODY" })).find((r) => r.key === "reopen_policy").word, "Nobody, a commitment is final");
@@ -650,7 +688,7 @@ test("the history's fault is the core's sentence, and a refusal for a non manage
 test("the manifest's refusals say what the dispatcher can do, and the notice says it was recorded", () => {
   assert.match(manifestRefusal("Forbidden", 403), /belongs to another yard/);
   assert.equal(manifestRefusal("dispatch: not found", 404), "There is no such run.");
-  assert.match(manifestRefusal("", 401), /Your session ended/);
+  assert.match(manifestRefusal("", 401), /Your sign-in ended/);
   assert.match(manifestRefusal("", 500), /nothing changed/);
   assert.equal(manifestNotice("RUN-PLM-1"), "Manifest for RUN-PLM-1 sent to the printer window, and the print is recorded.");
 });
@@ -738,7 +776,7 @@ test("a parked raise reads by state, and its figures show only when the core sen
 test("a refused split keeps the core's sentence; a lost reply says asking again is safe", () => {
   assert.equal(splitRefusal("dispatch: a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for", 409), "a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
   assert.match(splitRefusal("dispatch: forbidden", 403), /not yours to do/);
-  assert.match(splitRefusal("", null), /could not reach the server.*asking again is safe/s);
+  assert.match(splitRefusal("", null), /could not reach the desk.*asking again is safe/s);
   assert.match(splitRefusal("", 500), /nothing changed/);
 });
 
