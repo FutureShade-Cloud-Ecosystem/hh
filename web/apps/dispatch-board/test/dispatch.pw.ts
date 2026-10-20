@@ -1,7 +1,7 @@
 // The dispatch board's browser legs, on the stub: the way in, the load board's moves (put a load on a
 // truck, crew, dispatch, load many, reopen, move a date, cancel, commit, the gaps, auto assign), the
 // day board's lifecycle, the refusals in the core's words, the money rule, and both widths.
-import { test, expect, openBoard, resetStub, stubPost, stubToday } from "./helpers.js";
+import { test, expect, dispatchHandoff, openBoard, resetStub, stubPost, stubToday } from "./helpers.js";
 import type { Page } from "@playwright/test";
 
 const load = (page: Page, order: string) => page.locator("li.load", { hasText: order });
@@ -299,7 +299,7 @@ test("a failed read says so in words and offers to try again", async ({ page, re
   await page.addInitScript((await import("./helpers.js")).dispatchHandoff);
   await stubPost(request, "refuse", { status: 500, error: "internal error", path: "/api/v1/dispatch/loadboard", exact: true, reads: true });
   await page.goto("/");
-  await expect(page.locator("[data-error]")).toContainText("The server could not finish");
+  await expect(page.locator("[data-error]")).toContainText("The desk could not finish");
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.locator("[data-card]").first()).toBeVisible();
 });
@@ -508,4 +508,52 @@ test("a reopen the role gate refuses with a bare Forbidden reads as who may do i
   await truck(page, "RUN-PLM-1").getByRole("button", { name: "Reopen it" }).click();
   await expect(page.locator("[data-sheet-error]")).toHaveText("That is not yours to do. The Logistics Manager or a Branch Manager can.");
   await expect(page.locator("[data-sheet-error]")).not.toHaveText("Forbidden");
+});
+
+test("UX-37d B29: a permanent refusal on load shows who can and offers no Try again button", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "refuse", { status: 403, error: "Forbidden", path: "/loadboard", reads: true });
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-error]")).toHaveText("That is not yours to do. The Logistics Manager or a Branch Manager can.");
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+});
+
+test("UX-37d B29: the problems strip labels its action Dismiss, including on an empty day with no trucks", async ({ page, request }) => {
+  await openBoard(page, request);
+  const strip = page.locator("[data-problems]");
+  await expect(strip).toBeVisible();
+  await expect(strip).not.toContainText("Mark applied");
+  await expect(strip.locator("button[data-action='apply-fix']").first()).toHaveText("Dismiss");
+  await page.getByRole("button", { name: "Next day" }).click();
+  await expect(strip.locator("[data-problem-kind='no-runs']")).toContainText("No trucks on the board yet. Open one to start the day.");
+  await expect(strip.locator("[data-problem-kind='no-runs'] button[data-action='apply-fix']")).toHaveText("Dismiss");
+});
+
+test("UX-37d B29: dealer words replace Staff login id, paste the order id, Latitude/Longitude, and core note across tabs", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("li.load", { hasText: "ORD-0029" }).getByRole("button", { name: "Split across trucks" }).click();
+  await expect(page.locator("[data-sheet='split-freight']")).toContainText("Left empty, the freight is divided evenly across the stops.");
+  await expect(page.locator("[data-sheet='split-freight']")).not.toContainText("the core divides");
+
+  await page.locator("[data-tab-id='schedule']").first().click();
+  await expect(page.locator("[data-schedule]")).toBeVisible();
+  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.");
+  await expect(page.locator("[data-schedule]")).not.toContainText("paste the order id");
+  await expect(page.locator("[data-schedule]")).toContainText("Map pin (optional)");
+  await expect(page.locator("[data-schedule]")).not.toContainText("Latitude, optional");
+  await expect(page.locator("[data-schedule]")).not.toContainText("Longitude, optional");
+
+  await page.locator("[data-tab-id='willcall']").first().click();
+  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.");
+  await expect(page.locator("[data-willcall]")).not.toContainText("paste the order id");
+
+  await page.locator("[data-tab-id='fleet']").first().click();
+  await page.locator("[data-drivers]").getByRole("button", { name: "Add driver" }).click();
+  await expect(page.locator("[data-sheet='add-driver']")).toContainText("Driver's sign in account");
+  await expect(page.locator("[data-sheet='add-driver']")).not.toContainText("Staff login id");
+
+  await page.locator("[data-tab-id='settings']").first().click();
+  await expect(page.locator("[data-rule='load_value_visibility']")).toContainText("Managers see the load value; others do not.");
+  await expect(page.locator("[data-rule='load_value_visibility']")).not.toContainText("A figure the core is told not to send");
 });

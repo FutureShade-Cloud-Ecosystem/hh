@@ -130,6 +130,7 @@ export interface BoardModel {
   readonly branchId: string;
   readonly busy: boolean;
   readonly error: string;
+  readonly canRetry?: boolean;
   readonly notice: string;
   /** A neutral sentence from the core that is neither a success nor a failure (the auto assign seam). */
   readonly info: string;
@@ -302,7 +303,7 @@ function splitSheet(sheet: Sheet, model: BoardModel): TemplateResult {
         <label>The order's freight after the split, dollars, optional; empty keeps it as it is<input class="control" type="text" inputmode="decimal" data-field="freight" autocomplete="off" /></label>
         <label class="wide">Each truck's share by hand, dollars, separated by commas, optional<input class="control" type="text" data-field="amounts" autocomplete="off" /></label>
       </div>
-      <p class="small dim">Left empty, the core divides the freight evenly. Freight above what the customer was quoted waits for an approver and changes nothing until it is approved. Asking the same thing twice is safe.</p>
+      <p class="small dim">Left empty, the freight is divided evenly across the stops. Freight above what the customer was quoted waits for an approver and changes nothing until it is approved. Asking the same thing twice is safe.</p>
       ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Split it</button>
@@ -377,9 +378,9 @@ function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
               <label>Name<input class="control" type="text" data-field="name" data-initial=${initial(driver?.name)} maxlength="120" autocomplete="off" /></label>
               <label>Phone<input class="control" type="tel" data-field="phone" data-initial=${initial(driver?.phone)} autocomplete="off" /></label>
               <label>Licence class<input class="control" type="text" data-field="licence" data-initial=${initial(driver?.licence_class)} maxlength="20" autocomplete="off" /></label>
-              <label>Staff login id, optional<input class="control" type="text" data-field="login" data-initial=${initial(driver?.user_id)} autocomplete="off" /></label>
+              <label>Driver's sign in account<input class="control" type="text" data-field="login" data-initial=${initial(driver?.user_id)} aria-describedby="driver-login-hint" autocomplete="off" /></label>
             </div>
-            <p class="small dim">A driver with a staff login signs in to HH Drive and sees their own runs. Leave it empty for a casual or contract driver.</p>
+            <p class="small dim" id="driver-login-hint">Optional. A driver with a sign in account opens HH Drive and sees their own runs. Leave it empty for a casual or contract driver.</p>
           `}
       ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
       <div class="actions">
@@ -821,7 +822,7 @@ function fixLine(model: BoardModel, p: BoardProblem): TemplateResult {
   return html`
     <li class="problem ${applied ? "applied" : ""}" data-problem-kind=${p.kind}>
       <span class="problem-line" data-problem-line>${boardProblemLine(p)}</span>
-      <button type="button" class="link" data-action="apply-fix" data-fix-runno=${p.runNo} data-fix-kind=${p.kind} aria-pressed=${applied ? "true" : "false"}>${applied ? "Undo" : "Mark applied"}</button>
+      <button type="button" class="link" data-action="apply-fix" data-fix-runno=${p.runNo} data-fix-kind=${p.kind} aria-pressed=${applied ? "true" : "false"}>${applied ? "Undo" : "Dismiss"}</button>
     </li>
   `;
 }
@@ -1188,7 +1189,7 @@ function scheduleForm(model: BoardModel): TemplateResult {
       <form class="sched-form" data-schedule novalidate>
         <label class="wide">Order number
           <input class="control" type="text" data-field="order" autocomplete="off" maxlength="64" aria-describedby="order-hint" />
-          <span class="small dim" id="order-hint">The number on the paperwork, like #SO-TRT-1041, or paste the order id.</span>
+          <span class="small dim" id="order-hint">Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.</span>
         </label>
         <label>Delivery day<input class="control" type="date" data-field="day" /></label>
         ${text("window", "Time window")}
@@ -1197,8 +1198,14 @@ function scheduleForm(model: BoardModel): TemplateResult {
         <label class="wide">Delivery address<input class="control" type="text" data-field="address" autocomplete="off" /></label>
         ${text("city", "City")}
         ${text("postal", "Postal code")}
-        <label>Latitude, optional<input class="control" type="text" inputmode="decimal" data-field="lat" autocomplete="off" /></label>
-        <label>Longitude, optional<input class="control" type="text" inputmode="decimal" data-field="lon" autocomplete="off" /></label>
+        <div class="wide map-pin" role="group" aria-labelledby="map-pin-label" aria-describedby="map-pin-hint">
+          <span class="map-pin-label" id="map-pin-label">Map pin (optional)</span>
+          <div class="map-pin-pair">
+            <input class="control" type="text" inputmode="decimal" data-field="lat" placeholder="32.7157" aria-label="Map pin latitude" aria-describedby="map-pin-hint" autocomplete="off" />
+            <input class="control" type="text" inputmode="decimal" data-field="lon" placeholder="-117.1611" aria-label="Map pin longitude" aria-describedby="map-pin-hint" autocomplete="off" />
+          </div>
+          <span class="small dim" id="map-pin-hint">For a job site without a street address, enter both coordinates or leave both blank.</span>
+        </div>
         <label class="wide">Instructions for the driver<input class="control" type="text" data-field="instructions" maxlength="400" autocomplete="off" /></label>
         <p class="small dim wide">A date scheduled here is a request. ${PUT_ON_TRUCK_COMMIT_NOTE}</p>
         ${model.scheduleError !== "" ? html`<p class="alert alert-error wide" role="alert" data-schedule-error>${model.scheduleError}</p>` : nothing}
@@ -1392,7 +1399,7 @@ export function renderWillCall(model: BoardModel): TemplateResult {
       <div class="wc-form">
         <label class="wc-order">Order number
           <input class="control" type="text" data-field="wc-order" autocomplete="off" maxlength="64" aria-describedby="wc-hint" />
-          <span class="small dim" id="wc-hint">The number on the paperwork, like #SO-TRT-1041, or paste the order id.</span>
+          <span class="small dim" id="wc-hint">Order number on the paperwork, like ORD-0012 or #SO-TRT-1041.</span>
         </label>
         <div class="actions">
           <button type="button" class="btn btn-secondary" data-action="wc-lookup" ?disabled=${model.busy}>Look up</button>
@@ -1460,7 +1467,7 @@ export function renderDesk(model: BoardModel): TemplateResult {
   if (model.phase === "error") {
     return html`
       ${renderMessages(model)}
-      <button type="button" class="btn btn-primary" data-action="reload">Try again</button>
+      ${model.canRetry !== false ? html`<button type="button" class="btn btn-primary" data-action="reload">Try again</button>` : nothing}
     `;
   }
   return html`

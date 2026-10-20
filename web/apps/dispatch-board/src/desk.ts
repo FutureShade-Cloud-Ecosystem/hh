@@ -98,6 +98,7 @@ export class DispatchDesk {
   #branchId = "";
   #busy = false;
   #error = "";
+  #canRetry = true;
   #info = "";
   #notice = "";
   #refusals: readonly string[] = [];
@@ -161,7 +162,8 @@ export class DispatchDesk {
     const first = this.#branches[0];
     if (first === undefined) {
       this.#phase = "error";
-      this.#error = "No yard is open to this login, so there is no board to read.";
+      this.#canRetry = false;
+      this.#error = "No yard is open to this sign-in, so there is no board to read. A Branch Manager or the Logistics Manager can open a yard for your account.";
       this.#host.repaint();
       return;
     }
@@ -174,7 +176,9 @@ export class DispatchDesk {
 
   #loadFailed(what: string, result: Failure): void {
     this.#phase = "error";
-    this.#error = refusalWords(what, result.error, result.status ?? null);
+    const status = result.status ?? null;
+    this.#canRetry = status === null || status === 0 || status >= 500;
+    this.#error = refusalWords(what, result.error, status);
     this.#host.repaint();
   }
 
@@ -286,6 +290,7 @@ export class DispatchDesk {
       branchId: this.#branchId,
       busy: this.#busy,
       error: this.#error,
+      canRetry: this.#canRetry,
       info: this.#info,
       notice: this.#notice,
       refusals: this.#refusals,

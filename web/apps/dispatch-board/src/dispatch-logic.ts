@@ -211,14 +211,14 @@ export function toCuYd(m3: number): number {
 
 /** One weight with its unit: "7,496 lb" or "5.6 tons". An absent weight is words, never zero. */
 export function fmtWeight(kg: number | null | undefined, unit?: "lb" | "tons"): string {
-  if (typeof kg !== "number" || !Number.isFinite(kg)) return "n/a";
+  if (typeof kg !== "number" || !Number.isFinite(kg)) return "Not weighed";
   const u = unit ?? weightUnit(kg);
   return `${fmtNum(toWeight(kg, u))} ${u}`;
 }
 
 /** Numbers are read at arm's length: no decimals unless they are the whole story. */
 export function fmtNum(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  if (typeof value !== "number" || !Number.isFinite(value)) return "Not counted";
   const rounded = Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
   return rounded.toLocaleString("en-US");
 }
@@ -743,10 +743,10 @@ export function plainSentence(message: string | null | undefined): string {
  * prefix comes off. A transport error has no status and says the board could not be reached.
  */
 export function refusalWords(what: string, error: string, status: number | null): string {
-  if (status === null || status === 0) return `The board could not reach the server. ${what} did not go through.`;
-  if (status === 401) return "Your session ended. Sign in again from the front door.";
+  if (status === null || status === 0) return `The board could not reach the desk. ${what} did not go through.`;
+  if (status === 401) return "Your sign-in ended. Sign in again from the front door.";
   if (status === 501) return plainSentence(error);
-  if (status >= 500) return `The server could not finish. ${what} did not go through, and nothing changed.`;
+  if (status >= 500) return `The desk could not finish. ${what} did not go through, and nothing changed.`;
   // The role gate answers a bare "Forbidden" where the service would have named who may do it, so a bare
   // one is no sentence at all: say who may (the core's capability flag and its gate can disagree).
   const sentence = status === 403 && /^forbidden\.?$/i.test(plainSentence(error)) ? "" : plainSentence(error);
@@ -779,7 +779,7 @@ export interface ScheduleFields {
  * scheduled is the core's to say, and its sentence is shown as it comes.
  */
 export function validateSchedule(f: Pick<ScheduleFields, "order" | "date" | "lat" | "lon">, today: string): string {
-  if (f.order.trim() === "") return "Enter an order number, like the one on the paperwork, or paste the order id.";
+  if (f.order.trim() === "") return "Enter an order number, like the one on the paperwork.";
   const date = f.date.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "Pick a delivery date.";
   if (date < today) return "That date has passed. A delivery cannot be promised for a day that has gone.";
@@ -930,7 +930,7 @@ const USER_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 export function validateDriver(f: DriverFields): string {
   if (f.name.trim() === "") return "A driver needs a name.";
   const login = f.login.trim();
-  if (login !== "" && !USER_ID_SHAPE.test(login)) return "A staff login id is a long id with dashes. Leave it empty for a driver with no login.";
+  if (login !== "" && !USER_ID_SHAPE.test(login)) return "A driver's sign in account is a long id with dashes. Leave it empty for a driver with no sign in account.";
   return "";
 }
 
@@ -950,7 +950,7 @@ export function driverLine(d: Pick<DispatchDriver, "licence_class" | "phone" | "
   return [
     d.licence_class ? `Licence ${d.licence_class}` : "No licence on file",
     d.phone ? d.phone : "No phone",
-    d.user_id ? "Has a staff login" : "No staff login",
+    d.user_id ? "Has a sign in account" : "No sign in account",
   ];
 }
 
@@ -983,7 +983,7 @@ export function willCallLine(w: { status: string; expires_at: string; collected_
 }
 
 export function validateOrderRef(order: string): string {
-  return order.trim() === "" ? "Enter an order number, like the one on the paperwork, or paste the order id." : "";
+  return order.trim() === "" ? "Enter an order number, like the one on the paperwork." : "";
 }
 
 /** A refused pickup code in words. The same answer comes for a number that never existed and one at another yard. */
@@ -1058,7 +1058,7 @@ export function policyRows(p: DispatchPolicy): PolicyRow[] {
   return [
     { key: "commit_prompt_hours", label: "Prompt to commit", word: count(p.commit_prompt_hours, "hour", "hours"), note: "How far ahead of a delivery the board asks for the date to be committed." },
     { key: "reopen_policy", label: "Who may reopen a committed load", word: valueWord("reopen_policy", p.reopen_policy), note: "A committed load is a promise. This says who may take it back." },
-    { key: "load_value_visibility", label: "Who sees a load's dollar value", word: valueWord("load_value_visibility", p.load_value_visibility), note: "A figure the core is told not to send is not on the board at all." },
+    { key: "load_value_visibility", label: "Who sees a load's dollar value", word: valueWord("load_value_visibility", p.load_value_visibility), note: "Managers see the load value; others do not." },
     { key: "commit_horizon_weeks", label: "How far the board plans", word: count(p.commit_horizon_weeks, "week", "weeks"), note: "How far ahead a delivery may be promised." },
     { key: "working_view_days", label: "How far the daily view reaches", word: count(p.working_view_days, "day", "days"), note: "How many days the daily board shows from its date. It is not how far ahead a delivery may be promised." },
     { key: "freight_split_mode", label: "How freight is split across loads", word: valueWord("freight_split_mode", p.freight_split_mode), note: "Set with the freight split, not here." },
@@ -1132,7 +1132,7 @@ export function historyRow(c: DispatchPolicyChange): HistoryRow {
 
 /** Why the trail is not on screen. The trail is a manager's; every other fault is the core's own sentence. */
 export function historyFaultWords(error: string, status: number | null): string {
-  if (status === 403) return "Managers read the change history. It is not shown to this login.";
+  if (status === 403) return "Managers read the change history. It is not shown to this sign-in.";
   return refusalWords("The change history", error, status);
 }
 
@@ -1271,7 +1271,7 @@ export function raiseLine(v: DispatchFreightRaiseView): string[] {
 /** A refused split in the core's own words. A lost reply is not a refusal: asking the same again is safe, because the core converges. */
 export function splitRefusal(error: string, status: number | null): string {
   if (status === null || status === 0) {
-    return "The board could not reach the server, so it may or may not have gone through. Read the load again, then ask again: asking again is safe.";
+    return "The board could not reach the desk, so it may or may not have gone through. Read the load again, then ask again: asking again is safe.";
   }
   return refusalWords("The split", error, status);
 }
