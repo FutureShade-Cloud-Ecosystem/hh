@@ -125,3 +125,22 @@ test("board columns delegate order stages to stageOfOrder without a private stat
   assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"order"/, "Order column must filter by stageOfOrder === order");
   assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"invoice"/, "Invoice column must filter by stageOfOrder === invoice");
 });
+
+test("boardLoad walks cursor pages for quotes and orders so older cards are not lost", async () => {
+  const page = await pageFor("buyer");
+  page.client = tenantClient(page.session, {
+    baseUrl: base,
+    fetch: (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      if (url.pathname === "/api/v1/tenant/quotes" || url.pathname === "/api/v1/tenant/orders") {
+        url.searchParams.set("limit", "2");
+      }
+      return fetch(url, init);
+    },
+  });
+  const answer = await boardLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  assert.equal(answer.data.quotes.length, 4, "all quote pages must be read");
+  assert.equal(answer.data.orders.length, 6, "all order pages must be read");
+});

@@ -174,3 +174,21 @@ test("reject moves a sent quote to lost, in the core's words", async () => {
   const text = words(quotesView(after.data, page)).replace(/<[^>]*>/g, " ");
   assert.ok(text.includes("Lost"), text);
 });
+
+test("quotesLoad walks cursor pages so older quotes beyond the first page are kept", async () => {
+  const page = await makePage("buyer", { surface: "quotes" });
+  page.client = tenantClient(page.session, {
+    baseUrl: base,
+    fetch: (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      if (url.pathname === "/api/v1/tenant/quotes") {
+        url.searchParams.set("limit", "2");
+      }
+      return fetch(url, init);
+    },
+  });
+  const answer = await quotesLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  assert.equal(answer.data.quotes.length, 4, "all quote pages must be read");
+});

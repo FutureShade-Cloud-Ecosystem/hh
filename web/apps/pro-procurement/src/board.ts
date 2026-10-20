@@ -9,8 +9,8 @@
 // BoardPage (the stage board, New plan) and the original portal's procurement
 // lanes (portal-procurement.ts); the stage chips are the kit's.
 import { html, nothing, type TemplateResult } from "lit";
-import { tenantOrders, tenantProcurement, tenantQuotes, type TenantOrderPage } from "@hardscapehouse/api-client";
-import type { TenantOrder, TenantProject, TenantProjectBoard, TenantQuote, TenantQuotePage } from "@hardscapehouse/api-client";
+import { tenantOrders, tenantProcurement, tenantQuotes } from "@hardscapehouse/api-client";
+import type { TenantOrder, TenantProject, TenantProjectBoard, TenantQuote } from "@hardscapehouse/api-client";
 import {
   money,
   stageChip,
@@ -22,7 +22,7 @@ import {
   trackingOf,
   calendarDay,
 } from "@hardscapehouse/pro-kit";
-import { confirmModal, metaLine, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
+import { confirmModal, metaLine, actionFailure, readCursorPages, LIST_CUT_WORDS, type Page, type SurfaceAnswer } from "./views.js";
 import { openReorder, reorderCommand } from "./reorder.js";
 
 export const BOARD_EMPTY = "Nothing is in motion. Start a plan from the catalog.";
@@ -31,6 +31,7 @@ export interface BoardData {
   projects: TenantProject[];
   quotes: TenantQuote[];
   orders: TenantOrder[];
+  cut?: boolean;
 }
 
 export async function boardLoad(page: Page): Promise<SurfaceAnswer> {
@@ -38,18 +39,21 @@ export async function boardLoad(page: Page): Promise<SurfaceAnswer> {
   if (!page.session.can("submit_rfq")) return { kind: "refusal" };
   const [projects, quotes, orders] = await Promise.all([
     tenantProcurement.tenantListProcurementProjects(page.client),
-    tenantQuotes.tenantListQuotes(page.client),
-    tenantOrders.tenantListOrders(page.client),
+    readCursorPages((cursor) => tenantQuotes.tenantListQuotes(page.client, cursor === undefined ? undefined : { cursor })),
+    readCursorPages((cursor) => tenantOrders.tenantListOrders(page.client, cursor === undefined ? undefined : { cursor })),
   ]);
   for (const answer of [projects, quotes, orders]) {
     if (answer.ok) continue;
     if (answer.status === 403) return { kind: "refusal" };
     return { kind: "error", status: answer.status };
   }
+  const quotesOk = quotes as { ok: true; items: TenantQuote[]; cut: boolean };
+  const ordersOk = orders as { ok: true; items: TenantOrder[]; cut: boolean };
   const data: BoardData = {
     projects: (projects as { ok: true; value: TenantProjectBoard }).value.projects,
-    quotes: (quotes as { ok: true; value: TenantQuotePage }).value.items,
-    orders: (orders as { ok: true; value: TenantOrderPage }).value.items,
+    quotes: quotesOk.items,
+    orders: ordersOk.items,
+    cut: quotesOk.cut || ordersOk.cut,
   };
   if (data.projects.length === 0 && data.quotes.length === 0 && data.orders.length === 0) return { kind: "empty" };
   return { kind: "ready", data };
@@ -116,7 +120,8 @@ export function boardView(dataRaw: unknown, page: Page): TemplateResult {
       ${column("quote", quoteCards.map((q) => quoteCard(q)))}
       ${column("order", orderCards.map((o) => orderCard(o, page)))}
       ${column("invoice", invoiceCards.map((o) => orderCard(o, page)))}
-    </div>`;
+    </div>
+    ${data.cut === true ? html`<p class="emptyline" data-testid="board-cut">${LIST_CUT_WORDS}</p>` : nothing}`;
 }
 
 // ---- the New plan modal -------------------------------------------------------------------------

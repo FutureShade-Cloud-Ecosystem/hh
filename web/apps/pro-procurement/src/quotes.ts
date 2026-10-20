@@ -10,7 +10,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantQuotes, type TenantQuote, type TenantQuoteDetail } from "@hardscapehouse/api-client";
 import { calendarDay, houseDay, money, qtyWithUnit, statusChip, totalsLine } from "@hardscapehouse/pro-kit";
-import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
+import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, readCursorPages, LIST_CUT_WORDS, type Page, type SurfaceAnswer } from "./views.js";
 
 export const QUOTES_EMPTY = "No quotes yet. Submit an RFQ and the dealer's quotes land here.";
 export const ACCEPT_ON_LINK_WORDS =
@@ -20,6 +20,7 @@ const NO_QUOTE_WORDS = "That quote is not here anymore.";
 export interface QuoteListData {
   view: "list";
   quotes: TenantQuote[];
+  cut?: boolean;
 }
 
 export interface QuoteDetailData {
@@ -38,10 +39,10 @@ export async function quotesLoad(page: Page): Promise<SurfaceAnswer> {
     if (answer.status === 403) return { kind: "refusal" };
     return { kind: "error", status: answer.status };
   }
-  const answer = await tenantQuotes.tenantListQuotes(page.client);
+  const answer = await readCursorPages((cursor) => tenantQuotes.tenantListQuotes(page.client, cursor === undefined ? undefined : { cursor }));
   if (answer.ok) {
-    if (answer.value.items.length === 0) return { kind: "empty" };
-    return { kind: "ready", data: { view: "list", quotes: answer.value.items } };
+    if (answer.items.length === 0) return { kind: "empty" };
+    return { kind: "ready", data: { view: "list", quotes: answer.items, cut: answer.cut } };
   }
   if (answer.status === 403) return { kind: "refusal" };
   return { kind: "error", status: answer.status };
@@ -94,15 +95,16 @@ export function quotesView(dataRaw: unknown, page: Page): TemplateResult {
   const data = dataRaw as QuotesData;
   if (data.view === "list") {
     return html`<ul class="cards" data-testid="quotes-rows">
-      ${data.quotes.map(
-        (quote) => html`<li>
-          <button type="button" class="card" data-action="open-quote" data-quote="${quote.id}" data-testid="quotes-row">
-            <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${money(quote.total_cents)}</span></span>
-            <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${calendarDay(quote.valid_until)}</span></span>
-          </button>
-        </li>`,
-      )}
-    </ul>`;
+        ${data.quotes.map(
+          (quote) => html`<li>
+            <button type="button" class="card" data-action="open-quote" data-quote="${quote.id}" data-testid="quotes-row">
+              <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${money(quote.total_cents)}</span></span>
+              <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${calendarDay(quote.valid_until)}</span></span>
+            </button>
+          </li>`,
+        )}
+      </ul>
+      ${data.cut === true ? html`<p class="emptyline" data-testid="quotes-cut">${LIST_CUT_WORDS}</p>` : nothing}`;
   }
   return html`${backHeader("Quotes", "open-quotes")}${quoteBody(data.quote)}`;
 }
