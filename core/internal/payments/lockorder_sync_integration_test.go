@@ -334,8 +334,11 @@ func TestIntegration_LockOrder_BankMatchBesideReversalOfTheSamePaymentReachesThe
 					// A reversed payment is never matched (SF-2b): the reversal commits, the match is
 					// refused by the claim's own UPDATE, and nothing deadlocks.
 					t.Logf("%s: %v | %s: %v", aName, aRes, bName, bRes)
-					if aRes != nil || !isReversedRefusal(bRes) {
+					if aRes != nil || !isReversedRefusal(bRes, p.ID) {
 						t.Fatalf("reversal first: reversal %v, match %v; want the reversal done and the match refused naming the reversal", aRes, bRes)
+					}
+					if st, _, _ := r.paymentState(p.ID); st == "DEPOSITED" {
+						t.Errorf("reversal first: the refused match left the payment %s, want it not DEPOSITED", st)
 					}
 				} else {
 					loBothAnswered(t, aName, aRes, bName, bRes)

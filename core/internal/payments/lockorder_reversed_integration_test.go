@@ -25,13 +25,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
-// isReversedRefusal: the writers' refusal of a reversed payment names the reversal.
-func isReversedRefusal(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "reversed")
+// isReversedRefusal: the bank claim's refusal of a reversed payment carries the claim sentence (it names the
+// reversal among its three causes) AND the id of the payment that did not move, so a refusal of some other
+// payment does not satisfy it. The state checks of the legs say which cause it was.
+func isReversedRefusal(err error, paymentID string) bool {
+	return err != nil &&
+		strings.Contains(err.Error(), "payment already claimed, reversed or not RECEIVED: ") &&
+		strings.Contains(strings.ToLower(err.Error()), strings.ToLower(paymentID))
 }
 
 func (r *loRig) reverse(paymentID string) error {
@@ -82,8 +87,8 @@ func TestIntegration_LockOrder_ReversalBesideBankMatchOfTheSamePayment(t *testin
 			if loIsDeadlock(mat) {
 				t.Fatalf("the match deadlocked: %v", mat)
 			}
-			if !isReversedRefusal(mat) {
-				t.Errorf("the match of a reversed payment answered %v, want a refusal naming the reversal", mat)
+			if !isReversedRefusal(mat, p.ID) {
+				t.Errorf("the match of a reversed payment answered %v, want the claim sentence naming payment %s", mat, p.ID)
 			}
 			if st, n := r.lineState(line); st != "UNMATCHED" || n != 0 {
 				t.Errorf("the statement line is %s with %d matches after a refused match, want UNMATCHED with none", st, n)
@@ -171,8 +176,8 @@ func TestIntegration_AReversedPaymentCannotBeMatchedOrDeposited(t *testing.T) {
 	cursor, _ := f.pull(t, f.payInfo, f.tenant, 0)
 	st0, _, seq0 := r.paymentState(p.ID)
 
-	if err := r.match(line, p.ID, 10_000); !isReversedRefusal(err) {
-		t.Errorf("matching a reversed payment answered %v, want a refusal naming the reversal", err)
+	if err := r.match(line, p.ID, 10_000); !isReversedRefusal(err, p.ID) {
+		t.Errorf("matching a reversed payment answered %v, want the claim sentence naming payment %s", err, p.ID)
 	}
 	if err := till.NewRepository(r.pool).MarkDeposited(context.Background(), []string{p.ID}, "lo-line"); !errors.Is(err, till.ErrPaymentReversed) {
 		t.Errorf("depositing a reversed payment answered %v, want till.ErrPaymentReversed", err)
@@ -189,5 +194,75 @@ func TestIntegration_AReversedPaymentCannotBeMatchedOrDeposited(t *testing.T) {
 	_, got := f.pull(t, f.payInfo, f.tenant, cursor)
 	if len(got) != 0 {
 		t.Errorf("the payments feed re-served %d rows after refused writes, want none", len(got))
+	}
+}
+
+// The ruled edge (FROM-PRINCIPAL 19): a payment that was deposited, then reversed (legal: reversal.go refuses only
+// an already reversed payment, a reversing entry or VOID), and then sent to MarkDeposited AGAIN as a replay is
+// REFUSED with till.ErrPaymentReversed, not answered as the idempotent no op an already DEPOSITED payment gets:
+// a success would tell the caller the money sits in a deposit when it went back. The row must not move. Pinned
+// so a later "idempotence" change cannot turn the refusal into a silent success.
+func TestIntegration_MarkDepositedReplayAfterDepositAndReversalIsRefused(t *testing.T) {
+	for _, deposit := range []string{"MarkDeposited", "bank match"} {
+		t.Run("deposited by "+deposit, func(t *testing.T) {
+			r := newLORig(t, 4)
+			ctx := context.Background()
+			repo := till.NewRepository(r.pool)
+			p := r.payOnce(r.invoice("ED", 1_000_000), 10_000)
+			switch deposit {
+			case "MarkDeposited":
+				if err := repo.MarkDeposited(ctx, []string{p.ID}, "lo-edge"); err != nil {
+					t.Fatalf("deposit: %v", err)
+				}
+			default:
+				if err := r.match(r.statementLine(10_000), p.ID, 10_000); err != nil {
+					t.Fatalf("match: %v", err)
+				}
+			}
+			if err := r.reverse(p.ID); err != nil {
+				t.Fatalf("reversing a DEPOSITED payment is legal, and answered: %v", err)
+			}
+			st0, rev0, seq0 := r.paymentState(p.ID)
+			if st0 != "DEPOSITED" || !rev0 {
+				t.Fatalf("precondition: the payment is %s (reversed %v), want DEPOSITED and reversed", st0, rev0)
+			}
+			err := repo.MarkDeposited(ctx, []string{p.ID}, "lo-edge")
+			if !errors.Is(err, till.ErrPaymentReversed) {
+				t.Errorf("the replay on a deposited then reversed payment answered %v, want till.ErrPaymentReversed", err)
+			}
+			if st1, _, seq1 := r.paymentState(p.ID); st1 != st0 || seq1 != seq0 {
+				t.Errorf("the refused replay moved the payment: status %s -> %s, seq %d -> %d", st0, st1, seq0, seq1)
+			}
+		})
+	}
+}
+
+// The claim's refusal names the payments that did not move (and only them): a batch of a live and a reversed
+// payment answers with the reversed one's id, not the live one's, and moves neither (the claim rolls back whole).
+func TestIntegration_ClaimRefusalNamesOnlyThePaymentsThatDidNotMove(t *testing.T) {
+	r := newLORig(t, 4)
+	live := r.payOnce(r.invoice("NM1", 1_000_000), 10_000)
+	gone := r.payOnce(r.invoice("NM2", 1_000_000), 10_000)
+	if err := r.reverse(gone.ID); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	line := r.statementLine(20_000)
+	_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
+		StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: live.ID,
+		Method: bankrec.MethodManual, AmountCents: 20_000}, []string{live.ID, gone.ID})
+	if !isReversedRefusal(err, gone.ID) {
+		t.Fatalf("the batch answered %v, want the claim sentence naming payment %s", err, gone.ID)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(live.ID)) {
+		t.Errorf("the refusal names the live payment %s too: %v", live.ID, err)
+	}
+	if !strings.Contains(err.Error(), "(claimed 1 of 2)") {
+		t.Errorf("the refusal's count is wrong: %v", err)
+	}
+	if st, _, _ := r.paymentState(live.ID); st != "RECEIVED" {
+		t.Errorf("the live payment of a refused batch reads %s, want RECEIVED (the claim rolls back whole)", st)
+	}
+	if st, n := r.lineState(line); st != "UNMATCHED" || n != 0 {
+		t.Errorf("the statement line is %s with %d matches, want UNMATCHED with none", st, n)
 	}
 }
