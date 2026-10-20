@@ -350,7 +350,7 @@ func TestIntegration_QD3d_KeyScopedToQuoteAndLink(t *testing.T) {
 
 	t.Run("another link on the same quote", func(t *testing.T) {
 		svc, quoteID, token1 := mintedFor(t, pool, now, nil)
-		m2, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0)
+		m2, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0)
 		if err != nil {
 			t.Fatalf("mint second link: %v", err)
 		}

@@ -1,7 +1,7 @@
 // The shared header element's API (HH-RD2 polish round 2 item 5, decision log
 // row 938): the front door's chrome as one custom element. What is asserted
 // here is the element's own contract, over the server render the kit tests
-// use: the brand lockup is always there, the right cluster rides the
+// use: the dealer lockup rides the dealer name, the right cluster rides the
 // signed-in flag, the demo badge rides the demo flag, and the centred word
 // defaults to the unsigned word the moment either input says nobody is
 // signed in. The click contract (data-action names, no handlers of the
@@ -30,22 +30,24 @@ const actionButton = (markup, action) => {
   return m === null ? null : m[0];
 };
 
-test('the header renders the brand lockup: the measured badge H, the product name with its accent word, the house line', () => {
-  const markup = visible(renderKit(HosAppHeader));
-  assert.ok(markup.includes('class="brand"'), 'the lockup div is present');
-  assert.ok(markup.includes('role="img"'), 'the lockup is one image');
-  assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'), 'the lockup names itself');
-  assert.ok(markup.includes('aria-hidden="true"'), 'the mark is hidden from assistive tech');
-  // The mark is the badge's own geometry (decision log rows 953 and 968):
-  // mark.svg inlined, one path carrying currentColor, at the badge's
-  // measured viewBox; the plain text letter pair is gone.
-  assert.ok(markup.includes('viewBox="0 0 3000 3000"'), 'the mark svg carries the badge viewBox');
-  assert.ok(markup.includes('fill="currentColor"'), 'the mark path carries currentColor');
-  assert.ok(markup.includes('M644.94 465.17 H1386.06'), 'the mark path is the measured H geometry');
-  assert.ok(!markup.includes('>HH<'), 'the plain text HH is gone from the mark');
-  assert.ok(markup.includes('HH Yard'), 'the product name reads HH Yard');
-  assert.ok(markup.includes('a Hardscape House product'), 'the house line is present');
-  assert.ok(markup.includes('class="accent"'), 'the accent word carries the gold-as-ink class');
+const HH_LEAKS = ['Hardscape House', 'HH ', '>HH<', 'viewBox="0 0 3000 3000"', 'M644.94 465.17'];
+
+test('a header with a dealer known leads with the dealer lockup: initial, name, surface label, and none of our mark', () => {
+  const markup = visible(renderKit(HosAppHeader, { dealerName: 'Gable Landscape Supply', productName: 'Dispatch' }));
+  assert.ok(markup.includes('data-testid="dealer-lockup"'), 'the dealer lockup is present');
+  assert.ok(markup.includes('aria-label="Gable Landscape Supply, Dispatch"'), 'the lockup names the dealer and the surface');
+  assert.ok(markup.includes('<span class="brand-mark" aria-hidden="true">G</span>'), 'the mark is the dealer initial');
+  assert.ok(markup.includes('<span class="brand-product">Gable Landscape Supply</span>'), 'the dealer name leads');
+  assert.ok(markup.includes('<span class="brand-sub">Dispatch</span>'), 'the plain surface label sits beside it');
+  for (const leak of HH_LEAKS) assert.ok(!markup.includes(leak), `no ${leak} on a dealer's screen`);
+});
+
+test('a header with no dealer known draws no product lockup at all, and says nothing of ours', () => {
+  const markup = visible(renderKit(HosAppHeader, { productName: 'Dispatch', demo: true }));
+  assert.ok(!markup.includes('class="brand"'), 'no lockup before the dealer is known');
+  assert.ok(!markup.includes('Dispatch'), 'not even the surface label stands alone');
+  for (const leak of HH_LEAKS) assert.ok(!markup.includes(leak), `no ${leak} before the dealer is known`);
+  assert.ok(markup.includes('data-testid="header-word"'), 'the rest of the bar still draws');
 });
 
 test('unsigned (the default) the right cluster is gone: no Switch role, no Sign out', () => {
@@ -103,27 +105,27 @@ test('the centred word defaults to Pick a role and takes the role label only whe
   );
 });
 
-// ---- the product name input (HH Drive's review fix) ----
+// ---- the dealer and surface inputs ----
 
-test('a header given no product words says what it always said: HH Yard, a Hardscape House product', () => {
-  const markup = visible(renderKit(HosAppHeader, { signedIn: true, roleLabel: 'Sales', demo: true }));
-  assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'));
-  assert.ok(markup.includes('<span class="brand-product">HH <span class="accent">Yard</span></span>'.replace(/\s+/g, ' ')) || markup.includes('HH <span class="accent">Yard</span>'));
-  assert.ok(markup.includes('<span class="brand-sub">a Hardscape House product</span>'));
+test('a blank or spaces only dealer name draws no lockup rather than a blank one', () => {
+  const markup = visible(renderKit(HosAppHeader, { dealerName: '   ', productName: 'Dispatch' }));
+  assert.ok(!markup.includes('class="brand"'));
   assert.equal(new HosAppHeader().compact, false, 'compact is off unless an app asks');
 });
 
-test('a header given a product name and a sub line wears them, accent word and all', () => {
-  const markup = visible(renderKit(HosAppHeader, { productName: 'Drive', productSub: 'HH Drive · HH Field shell' }));
-  assert.ok(markup.includes('aria-label="HH Drive, HH Drive · HH Field shell"'));
-  assert.ok(markup.includes('HH <span class="accent">Drive</span>'));
-  assert.ok(markup.includes('<span class="brand-sub">HH Drive · HH Field shell</span>'));
-  assert.ok(!markup.includes('Yard'), 'no trace of the default words');
+test('the lockup carries the full dealer name as its title, and the name truncates in its own cell', () => {
+  const markup = visible(renderKit(HosAppHeader, { dealerName: 'Gable Landscape Supply', productName: 'Dispatch' }));
+  assert.ok(markup.includes('aria-label="Gable Landscape Supply, Dispatch"'), 'the full name is in the accessible name');
+  assert.ok(/setAttribute\('title', name\)/.test(readPkg('src/header.ts')), 'the full name is set as the lockup title once rendered');
+  const css = HosAppHeader.styles.map((s) => s.cssText ?? String(s)).join('\n');
+  assert.ok(/grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/.test(css), 'the first track may shrink');
+  assert.ok(/\.brand-product,\s*\.brand-sub \{[^}]*text-overflow:\s*ellipsis/.test(css), 'the name ellipsis truncates');
 });
 
-test('an empty product input falls back to the default words rather than draw a blank lockup', () => {
-  const markup = visible(renderKit(HosAppHeader, { productName: '', productSub: '' }));
-  assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'));
+test('a dealer with no surface label shows the name alone', () => {
+  const markup = visible(renderKit(HosAppHeader, { dealerName: 'Gable Landscape Supply' }));
+  assert.ok(markup.includes('aria-label="Gable Landscape Supply"'));
+  assert.ok(!markup.includes('brand-sub'));
 });
 
 test('the compact layout is opt in, narrow only, and its controls are at least 44 px tall', () => {

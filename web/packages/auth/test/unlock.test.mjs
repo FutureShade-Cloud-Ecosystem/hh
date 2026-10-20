@@ -972,3 +972,130 @@ test("a session switch during isAvailable asks the platform for no credential: e
   assert.equal(lock.state, "absent");
   assert.equal(new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded).read(), undefined, "nothing was mirrored");
 });
+
+// PRR-517, PRR-518, PRR-519: the tenant config read must never sit inside the
+// enrolment tap. The read starts when the provider is built (so create() only
+// awaits what already ran), it is bounded by an abort signal so a hanging
+// endpoint cannot block enrolment, its URL can be pointed elsewhere, and the
+// name it feeds the prompt is clamped to the ceremony's own limit.
+const TENANT_URL = "/api/v1/tenant/config";
+
+test("building the provider starts the tenant config read; create() awaits it and starts nothing new", async () => {
+  const platform = stubPlatform();
+  const fetchCalls = [];
+  const realFetch = globalThis.fetch;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = async (input, init) => {
+    fetchCalls.push(String(input));
+    await gate;
+    return { ok: true, json: async () => ({ dealer_name: "Gable Landscape Supply" }) };
+  };
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test" });
+    await Promise.resolve(); // let the constructor's eager read reach fetch
+    assert.equal(fetchCalls.length, 1, "the tenant config read starts at provider construction, not inside create()");
+    let settled = false;
+    const ceremony = provider.create().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    assert.equal(settled, false, "create() awaits the in-flight read, it does not start a second one");
+    release();
+    await ceremony;
+    await provider.create(); // cached, no further read
+    assert.equal(fetchCalls.length, 1, "still exactly one tenant config read per provider");
+    assert.equal(platform.calls[0][1].publicKey.rp.name, "Gable Landscape Supply");
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});
+
+test("an explicit rpName builds no tenant config read at all", async () => {
+  const platform = stubPlatform();
+  const fetchCalls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    fetchCalls.push(String(input));
+    return { ok: true, json: async () => ({ dealer_name: "Gable Landscape Supply" }) };
+  };
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test", rpName: "Named explicitly" });
+    await provider.create();
+    assert.deepEqual(fetchCalls, [], "an explicit rpName never reads the tenant config, eagerly or otherwise");
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});
+
+test("the tenant config read is bounded by an abort signal, so a hanging endpoint cannot block enrolment", async () => {
+  const platform = stubPlatform();
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    seen.push(init);
+    return new Promise((_, reject) => {
+      init.signal.addEventListener("abort", () => reject(new TypeError("aborted")));
+    });
+  };
+  // AbortSignal.timeout's timer does not keep the loop alive on its own, so
+  // the test holds the loop open for the bound's duration itself.
+  const keepAlive = setInterval(() => {}, 5);
+  try {
+    const { webAuthnCredentialProvider, DEFAULT_RP_NAME } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test", tenantConfigTimeoutMs: 25 });
+    await provider.create();
+    assert.ok(seen[0]?.signal instanceof AbortSignal, "the config fetch is handed an abort signal");
+    assert.equal(platform.calls[0][1].publicKey.rp.name, DEFAULT_RP_NAME, "a bounded-out read falls back to the neutral name");
+  } finally {
+    clearInterval(keepAlive);
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});
+
+test("the tenant config read can be pointed at another URL", async () => {
+  const platform = stubPlatform();
+  const fetchCalls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    fetchCalls.push(String(input));
+    return { ok: true, json: async () => ({ dealer_name: "Gable Landscape Supply" }) };
+  };
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test", tenantConfigUrl: "https://core.futurebuild.ai/api/v1/tenant/config" });
+    await provider.create();
+    assert.deepEqual(fetchCalls, ["https://core.futurebuild.ai/api/v1/tenant/config"]);
+    assert.equal(platform.calls[0][1].publicKey.rp.name, "Gable Landscape Supply");
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});
+
+test("the prompt's rp name is stripped of control characters and clamped to 64 bytes", async () => {
+  const platform = stubPlatform();
+  const realFetch = globalThis.fetch;
+  const longAscii = "A".repeat(80);
+  const withControls = "Bad\x07Name\x1fHere";
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ dealer_name: longAscii }) });
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    await webAuthnCredentialProvider({ rpId: "edge.example.test" }).create();
+    await webAuthnCredentialProvider({ rpId: "edge.example.test", rpName: withControls }).create();
+    const names = platform.calls.map(([, options]) => options.publicKey.rp.name);
+    assert.equal(names[0], "A".repeat(64), "an over-long dealer name is clamped to 64 bytes");
+    assert.equal(new TextEncoder().encode(names[0]).byteLength, 64);
+    assert.equal(names[1], "BadNameHere", "control characters never reach the platform prompt");
+  } finally {
+    globalThis.fetch = realFetch;
+    platform.restore();
+  }
+});

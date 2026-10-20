@@ -24,8 +24,9 @@ import {
   quoteFlowSteps,
   quotePanelTracks,
   sendCaption,
-  sendChannels,
-  sentConfirmation,
+  textAllowance,
+  sentByText,
+  notSentWords,
   spokenRefusal,
   validityDaysOf,
   validUntilFromDays,
@@ -172,25 +173,28 @@ test("collapsing the last open panel restores the other in the same act", () => 
 
 // ── send channels ──────────────────────────────────────────────────────────────
 
-test("the send channels follow the policy, email leads, and a policy that disables both still offers email", () => {
-  assert.deepEqual(sendChannels(null), ["EMAIL"]);
-  assert.deepEqual(sendChannels({ send_email_enabled: true, send_sms_enabled: true }), ["EMAIL", "SMS"]);
-  assert.deepEqual(sendChannels({ send_email_enabled: false, send_sms_enabled: true }), ["SMS"]);
-  assert.deepEqual(sendChannels({ send_email_enabled: true, send_sms_enabled: false }), ["EMAIL"]);
-  assert.deepEqual(sendChannels({ send_email_enabled: false, send_sms_enabled: false }), ["EMAIL"]);
-  assert.equal(sendCaption(["EMAIL", "SMS"]), "Email + Text");
-  assert.equal(sendCaption(["EMAIL"]), "Email");
+test("the desk texts only where the customer allows it, and never offers email", () => {
+  const ok = { consent: true, phoneMasked: "(***) ***-**34" };
+  assert.deepEqual(textAllowance(null, ok), { allowed: true, phoneMasked: "(***) ***-**34", why: "" });
+  assert.equal(textAllowance({ send_sms_enabled: true }, { consent: false, phoneMasked: "" }).allowed, false);
+  assert.match(textAllowance(null, { consent: false, phoneMasked: "" }).why, /texts are not allowed for this customer/);
+  assert.equal(textAllowance({ send_sms_enabled: false }, ok).allowed, false);
+  assert.equal(textAllowance(null, "unknown").allowed, false);
+  assert.equal(textAllowance(null, null).allowed, false);
+  assert.equal(sendCaption(textAllowance(null, ok)), "Sends by text");
+  assert.equal(sendCaption(textAllowance(null, null)), "Gives you the link to copy");
 });
 
-test("the send outcome names only what is true: a link, the Sent state, the cadence, never an email", () => {
-  const base = "Quote sent: a link was created, the quote is now Sent and its follow-ups have started.";
-  assert.equal(sentConfirmation(false, false, ""), `${base} Nothing was emailed: copy the link to the customer.`);
-  assert.equal(sentConfirmation(true, true, ""), `${base} The link was texted to the customer. Nothing was emailed.`);
+test("a send that reached no one leads with that, and success is claimed only for a queued text", () => {
   assert.equal(
-    sentConfirmation(true, false, "quote: the customer has not opted in to text messages"),
-    `${base} Nothing was emailed, and the text could not be sent: The customer has not opted in to text messages.`,
+    notSentWords("texts are not allowed for this customer", true),
+    "Not sent yet. Texts are not allowed for this customer, and the desk cannot email a quote. The quote is still a draft and no follow-ups have started.",
   );
-  for (const text of [sentConfirmation(false, false, ""), sentConfirmation(true, false, "x")]) assert.doesNotMatch(text, /texted/);
+  assert.equal(notSentWords("the text could not be sent: The line is busy.", false), "Not sent yet. The text could not be sent: The line is busy, and the desk cannot email a quote.");
+  assert.doesNotMatch(notSentWords("x", true), /Quote sent|is now Sent/);
+  assert.equal(sentByText("(***) ***-**34"), "Sent by text to the customer's number on file ((***) ***-**34). The quote is now Sent and its follow-ups have started.");
+  assert.match(sentByText(""), /^Sent by text to the customer's number on file\./);
+  assert.equal(sentByText("(***) ***-**34", false), "Sent by text to the customer's number on file ((***) ***-**34).");
 });
 
 // ── the spoken refusal ─────────────────────────────────────────────────────────

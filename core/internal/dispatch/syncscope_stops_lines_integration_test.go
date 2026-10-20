@@ -12,7 +12,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -75,12 +74,7 @@ func TestIntegration_StopsPull_DriverCarriesTheStopsLoadList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal stop data: %v", err)
 	}
-	lower := strings.ToLower(string(body))
-	for _, forbidden := range []string{"cents", "price", "cost", "margin", "amount", "value", "location", "a-12", "yard-3"} {
-		if strings.Contains(lower, forbidden) {
-			t.Errorf("a driver's synced stop carries %q: %s", forbidden, body)
-		}
-	}
+	assertDriverPayloadJSON(t, body)
 }
 
 func TestIntegration_StopsPull_LoadListFollowsTheStopFence(t *testing.T) {

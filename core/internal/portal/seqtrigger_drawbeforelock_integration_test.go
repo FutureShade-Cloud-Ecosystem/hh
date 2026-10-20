@@ -55,7 +55,7 @@ func TestIntegration_DrawBeforeLock_TeamMemberWritersBesideAUserWrite(t *testing
 		user  string
 		write func() error
 	}{
-		{"plain role change", 55010005, users[2], func() error { return repo.UpdateRole(ctx, users[2], "viewer", false) }},
+		{"plain role change", 55010005, users[2], func() error { return repo.UpdateRole(ctx, users[2], "field_crew", false) }},
 		{"guarded status change", 55010006, users[0], func() error { return repo.UpdateStatus(ctx, users[0], "inactive", true) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {

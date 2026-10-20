@@ -204,7 +204,7 @@ test("guard busy release: a send that finishes on the quote just left does not f
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
-  const mint = await hold(page, /\/quotes\/q-1004\/share-links$/, { method: "POST" });
+  const mint = await hold(page, /\/quotes\/q-1004\/sms-share$/, { method: "POST" });
   await page.getByTestId("qb-send").click();
   await mint.asked;
   await open(page, "Q-1001");
@@ -459,7 +459,7 @@ test("guard send error: a send that could not be made for the quote left leaves 
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
-  const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/share-links$/, { method: "POST" });
+  const mint = await hold(page, /\/api\/v1\/quotes\/q-1004\/sms-share$/, { method: "POST" });
   await page.getByTestId("qb-send").click();
   await mint.asked;
   await open(page, "Q-1001");

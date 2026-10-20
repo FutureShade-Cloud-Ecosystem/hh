@@ -2,6 +2,7 @@ mod auth;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+use hh_shell_core::console::{AuthCode, CoreToken};
 use hh_shell_core::profiles;
 use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
@@ -50,6 +51,25 @@ async fn run_atomic(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     blocking(move || store.atomic(statements)).await
+}
+
+// The webview's sign out revocation, run on the Rust side exactly like sign
+// in (the recorded design behind the CSP pin below): the page holds only the
+// core's short token, and this command is the one network leg, so the webview
+// needs no connect-src network origin. The core URL is the profile's fixed
+// build time value (validated the same way sign in's client is, the
+// `clean_base_url` predicate through `ConsoleClient::new`), never a webview
+// value; the token is validated, carried in the console module's zeroizing
+// `CoreToken`, and consumed by the one attempt. The answer is a code only:
+// never the token, the body or the URL.
+#[tauri::command]
+async fn cmd_sign_out_revoke(
+    jwt: String,
+    state: tauri::State<'_, auth::AuthState>,
+) -> Result<(), AuthCode> {
+    let token = CoreToken::new(jwt).ok_or(AuthCode::BadRequest)?;
+    let service = state.service()?;
+    service.revoke_core_session(token).await
 }
 
 // The built shell's role leg proof (feature `shell-proof`, off by default,
@@ -135,6 +155,7 @@ pub fn run() {
         proof_report,
         run_statement,
         run_atomic,
+        cmd_sign_out_revoke,
         auth::auth_sign_in,
         auth::auth_resume,
         auth::auth_exchange,
@@ -144,6 +165,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         run_statement,
         run_atomic,
+        cmd_sign_out_revoke,
         auth::auth_sign_in,
         auth::auth_resume,
         auth::auth_exchange,
@@ -237,6 +259,7 @@ mod tests {
                 "allow-auth-resume",
                 "allow-auth-sign-in",
                 "allow-auth-sign-out",
+                "allow-cmd-sign-out-revoke",
                 "allow-run-atomic",
                 "allow-run-statement",
                 "core:default",
@@ -723,6 +746,45 @@ mod tests {
                 "an unconfigured build must hold no auth service and answer unavailable"
             );
         }
+    }
+
+    #[test]
+    fn the_sign_out_revocation_runs_on_the_rust_side_like_sign_in() {
+        // PR #495 round 1 part B (the P2-1 fix): the revocation post is a Rust
+        // command against the profile's fixed core URL, so the webview holds
+        // no network origin in connect-src (the pin below). The command is
+        // declared in build.rs, allowed by name in the default capability and
+        // in the built ACL, and never granted to the proof feature.
+        let perms = capability_permissions();
+        assert!(
+            perms.iter().any(|p| p == "allow-cmd-sign-out-revoke"),
+            "the revocation command is allowed by name"
+        );
+        let build = crate_file("build.rs");
+        for list in [
+            "#[cfg(feature = \"shell-proof\")]",
+            "#[cfg(not(feature = \"shell-proof\"))]",
+        ] {
+            let at = build.find(list).expect("build.rs gates its command lists");
+            let chunk = &build[at..];
+            assert!(
+                chunk.contains("\"cmd_sign_out_revoke\""),
+                "build.rs declares the command beside {list}"
+            );
+        }
+        assert!(
+            BUILT_ACL_MANIFEST.contains("cmd_sign_out_revoke"),
+            "the command is declared in the ACL manifest"
+        );
+        assert!(
+            BUILT_CAPABILITIES.contains("allow-cmd-sign-out-revoke"),
+            "the command is granted in the merged capabilities"
+        );
+        let proof = crate_file("capabilities-proof/proof.json");
+        assert!(
+            !proof.contains("cmd_sign_out_revoke"),
+            "the proof capability grants no revocation command"
+        );
     }
 
     #[test]

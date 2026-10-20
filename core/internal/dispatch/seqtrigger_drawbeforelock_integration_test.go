@@ -81,6 +81,53 @@ func TestIntegration_DrawBeforeLock_AttachPODPhotosBesideAPhotoWrite(t *testing.
 	p.Answers(map[string]chan error{"photo write": errPhoto, "AttachPODPhotos": errAttach})
 }
 
+// The POD photo tombstone (PODSyncStore.Delete) used to allocate the pod counter before its UPDATE with no earlier
+// lock, so it crossed the caption edit and AttachPODPhotos (S3's r3c P2-1). It relies on the trigger now and reads
+// the seq back with RETURNING; a device pulling from the cursor it held receives the tombstone.
+func TestIntegration_DrawBeforeLock_PODTombstoneBesideAPhotoWrite(t *testing.T) {
+	f := newSyncFixture(t)
+	ctx := context.Background()
+	run := syncOpenRun(t, f)
+	stop := syncEnRouteStop(t, f, run)
+	tiny := "ZklYIFNZTkMgUEhPVE8="
+	pkey := syncFreshKey()
+	syncApplied(t, f, "pod", f.north, "create", pkey, map[string]any{
+		"stop_id": stop.ID, "content_type": "image/png", "image_bytes_b64": tiny, "caption": "at the gate"}, nil)
+	photoID := syncRowOf(t, f, "pod", f.north, pkey).ID
+	info, _ := sync.Lookup("pod")
+	before, err := f.engine.Pull(ctx, info, f.north, 0, 200)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	p := testkit.NewDrawPark(t, f.pool, "pod", 4242015)
+	errPhoto := p.TouchRow("delivery_pod_photos", "caption = 'checked at the gate'", photoID)
+	p.WaitParked("the photo write between its row lock and its draw")
+
+	errDel := make(chan error, 1)
+	go func() {
+		res, err := f.engine.Push(ctx, info, f.north, []apigen.SyncPushOperation{
+			syncOp("delete", syncFreshKey(), map[string]any{"id": photoID}, nil)})
+		if err == nil && len(res.Results) == 1 && res.Results[0].Status != "applied" {
+			err = fmt.Errorf("the pod tombstone answered %+v", res.Results[0])
+		}
+		errDel <- err
+	}()
+	p.WaitBlocked("the tombstone waiting for the photo row")
+	p.Answers(map[string]chan error{"photo write": errPhoto, "pod tombstone": errDel})
+
+	pulled, err := f.engine.Pull(ctx, info, f.north, before.LastSeq, 200)
+	if err != nil {
+		t.Fatalf("pull after: %v", err)
+	}
+	for _, tb := range pulled.Tombstones {
+		if tb.Id == photoID && tb.Seq > before.LastSeq {
+			return
+		}
+	}
+	t.Fatalf("the device did not receive the tombstone from cursor %d: %+v", before.LastSeq, pulled.Tombstones)
+}
+
 // cancelRun pushes the sync cancel of a run through the engine on the fixture's pool.
 func (f *syncFixture) cancelRun(runID string) error {
 	info, _ := sync.Lookup("runs")

@@ -6,26 +6,33 @@
 // The browser is the system Chrome through the chrome channel: no browser
 // download rides the npm install.
 //
-// The port slot is hashed per worktree so the same tree always lands on the
-// same ports and different trees hash elsewhere, letting the web servers and
-// the tests agree on one port without collision.
+// The stub and app ports are free ones taken once at config load (never a
+// fixed pair or worktree hash, which an overlapping suite can hold),
+// overridable inline with DISPATCH_APP_PORT and DISPATCH_STUB_PORT.
 import { defineConfig } from "@playwright/test";
+import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 
-const appDir = fileURLToPath(new URL(".", import.meta.url));
-
-function portSlot(text: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) % 2048;
+// Two distinct free ports: both listeners stay open until both are known.
+async function freePorts(count: number): Promise<string[]> {
+  const servers = await Promise.all(
+    Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((resolve, reject) => {
+      const s = createServer();
+      s.once("error", reject);
+      s.listen(0, "127.0.0.1", () => resolve(s));
+    })),
+  );
+  const ports = servers.map((s) => String((s.address() as { port: number }).port));
+  await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+  return ports;
 }
 
-const slot = portSlot(appDir);
-const appPort = process.env.DISPATCH_APP_PORT ?? String(20000 + slot);
-const stubPort = process.env.DISPATCH_STUB_PORT ?? String(20000 + slot + 1);
+const appDir = fileURLToPath(new URL(".", import.meta.url));
+const [freeApp, freeStub] = await freePorts(2);
+process.env.DISPATCH_APP_PORT ??= freeApp;
+process.env.DISPATCH_STUB_PORT ??= freeStub;
+const appPort = process.env.DISPATCH_APP_PORT;
+const stubPort = process.env.DISPATCH_STUB_PORT;
 
 export default defineConfig({
   testDir: "./test",

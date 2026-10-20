@@ -70,6 +70,31 @@ async function expectBranchesAsInformation(page: Page, label: string, names: str
   await expect(page.getByRole("group", { name: /your branch/i })).toHaveCount(0);
 }
 
+/** Several granted branches are a choice: toggle buttons in a labelled group, one tab stop, every branch chosen to start. */
+async function expectBranchChoice(page: Page, names: string[]): Promise<void> {
+  const group = page.getByRole("group", { name: /your branches/i });
+  await expect(group).toBeVisible();
+  const toggles = group.getByRole("button");
+  // The board's All branches row leads, then one toggle per granted branch; every one starts pressed.
+  await expect(toggles).toHaveCount(names.length + 1);
+  await expect(toggles.nth(0)).toContainText("All branches");
+  await expect(toggles.nth(0)).toHaveAttribute("aria-pressed", "true");
+  for (const [index, name] of names.entries()) {
+    await expect(toggles.nth(index + 1)).toContainText(name);
+    await expect(toggles.nth(index + 1)).toHaveAttribute("aria-pressed", "true");
+  }
+  await expect(group.locator('[tabindex="0"], button:not([tabindex])')).toHaveCount(1);
+  await expect(page.getByRole("radiogroup", { name: /your branch/i })).toHaveCount(0);
+}
+
+/** What the front door wrote into this tab's branch key. */
+async function branchKey(page: Page): Promise<string[] | null> {
+  return page.evaluate(() => {
+    const raw = window.sessionStorage.getItem("hh.session.branches.v1");
+    return raw === null ? null : (JSON.parse(raw) as { ids: string[] }).ids;
+  });
+}
+
 const status = (page: Page) => page.getByTestId("signin-status");
 
 test.describe("configuration", () => {
@@ -341,9 +366,11 @@ test.describe("after sign in", () => {
     await page.getByTestId("continue-own").click();
     await expect(page.getByTestId("home-title")).toHaveText("Sales");
     await expect(page.getByTestId("header-word")).toContainText("North Yard");
+    // A one branch role writes that one id and showed it as information.
+    expect(await branchKey(page)).toEqual(["branch-north-yard"]);
   });
 
-  test("role and branch picker: a General Manager with two branches, keyboard arrow keys move within the role group with one tab stop, the branches are information only, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
+  test("role and branch picker: a General Manager with two branches, keyboard arrow keys move within the role group with one tab stop, the branches are a choice with one tab stop, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
     await page.clock.install({ time: new Date(1_000_040_400_000) }); // 09:00 EDT morning in America/Toronto
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({
@@ -383,8 +410,37 @@ test.describe("after sign in", () => {
     await page.keyboard.press("ArrowUp");
     await expect(roleRadios.nth(0)).toHaveAttribute("aria-checked", "true");
 
-    // The granted branches are information: named from the core, with no control of any kind.
-    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
+    // Several granted branches are a choice again: toggles, every branch chosen to start, one tab stop.
+    await expectBranchChoice(page, ["West Yard", "East Yard"]);
+    const branchToggles = page.getByRole("group", { name: /your branches/i }).getByRole("button");
+    // index 0 is All branches, 1 and 2 are the branches
+    await branchToggles.nth(1).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(branchToggles.nth(2)).toBeFocused();
+    await expect(branchToggles.nth(2)).toHaveAttribute("tabindex", "0");
+    await expect(branchToggles.nth(1)).toHaveAttribute("tabindex", "-1");
+    await expect(branchToggles.nth(1)).toHaveAttribute("aria-pressed", "true"); // arrows only move focus
+    await page.keyboard.press("Space");
+    await expect(branchToggles.nth(2)).toHaveAttribute("aria-pressed", "false");
+    await expect(branchToggles.nth(0)).toHaveAttribute("aria-pressed", "false"); // not all chosen any more
+    await page.keyboard.press("Enter");
+    await expect(branchToggles.nth(2)).toHaveAttribute("aria-pressed", "true");
+    await expect(branchToggles.nth(0)).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await expect(branchToggles.nth(0)).toBeFocused();
+    await page.keyboard.press("Space"); // all chosen: narrows to the first branch
+    await expect(branchToggles.nth(1)).toHaveAttribute("aria-pressed", "true");
+    await expect(branchToggles.nth(2)).toHaveAttribute("aria-pressed", "false");
+    await page.keyboard.press("Space"); // selects every granted branch
+    await expect(branchToggles.nth(2)).toHaveAttribute("aria-pressed", "true");
+    await expect(branchToggles.nth(0)).toHaveAttribute("aria-pressed", "true");
+    await branchToggles.nth(1).click();
+    await expect(branchToggles.nth(1)).toHaveAttribute("aria-pressed", "false");
+    await branchToggles.nth(2).click(); // the last chosen branch stays chosen
+    await expect(branchToggles.nth(2)).toHaveAttribute("aria-pressed", "true");
+    await branchToggles.nth(1).click();
+    await expect(branchToggles.nth(1)).toHaveAttribute("aria-pressed", "true");
 
     // Demo walk section below the card is collapsed by default.
     const walkDetails = page.getByTestId("persona-walk");
@@ -399,6 +455,10 @@ test.describe("after sign in", () => {
         await setTheme(page, theme);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(overflow).toBeLessThanOrEqual(0);
+        const shots = process.env.UX79_SHOTS;
+        if (shots !== undefined && shots !== "" && width !== 1024) {
+          await page.screenshot({ path: `${shots}/front-door-picker-${theme === "brand" ? "charcoal" : theme}-${width}.png` });
+        }
       }
     }
     // At 390x844 on a phone, targets on the picker card are at least 44 px tall.
@@ -406,6 +466,9 @@ test.describe("after sign in", () => {
     for (const locator of [
       page.getByRole("button", { name: "Not you? Sign out" }),
       roleRadios.nth(0),
+      branchToggles.nth(0),
+      branchToggles.nth(1),
+      branchToggles.nth(2),
       page.getByTestId("continue-own"),
     ]) {
       const box = await locator.boundingBox();
@@ -413,7 +476,7 @@ test.describe("after sign in", () => {
     }
   });
 
-  test("role and branch picker: the branch list is information for a single branch person and a multi branch person, and the foot reads Powered by HardscapeOS", async ({ page, baseURL }) => {
+  test("role and branch picker: Open writes only the chosen branch ids to the tab's branch key, for one branch and for both, and the foot reads Powered by HardscapeOS", async ({ page, baseURL }) => {
     await page.route("**/api/v1/branches", (route) =>
       route.fulfill({
         status: 200,
@@ -429,11 +492,111 @@ test.describe("after sign in", () => {
     await signInAsPartner(page);
     await expect(page.getByTestId("role-entry")).toBeVisible();
     await expect(page.getByTestId("entry-footer")).toContainText("Powered by HardscapeOS");
-    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
-    // Switching to the other held role changes nothing about the branch list: still information, still both names.
+    await expectBranchChoice(page, ["West Yard", "East Yard"]);
+    // Switching to the other held role changes nothing about the choice.
     await page.getByTestId("role-radiogroup").getByRole("radio").filter({ hasText: "Opens Counter Till" }).click();
-    await expectBranchesAsInformation(page, "Your branches", ["West Yard", "East Yard"]);
+    await expectBranchChoice(page, ["West Yard", "East Yard"]);
     await expect(page.getByRole("radiogroup", { name: /your role/i }).getByRole("radio")).toHaveCount(2);
+    // Both chosen: both ids written on Open.
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).toEqual(["branch-west", "branch-east"]);
+  });
+
+  test("role and branch picker: narrowing to one branch writes only that id on Open", async ({ page, baseURL }) => {
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, {}, { role: { role_code: "general_manager", role_name: "General Manager", scope: "GLOBAL" } });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expectBranchChoice(page, ["West Yard", "East Yard"]);
+    await page.getByRole("group", { name: /your branches/i }).getByRole("button", { name: /West Yard/ }).click();
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).toEqual(["branch-east"]);
+    await expect(page.getByTestId("header-word")).toContainText("East Yard");
+    await expect(page.getByTestId("header-word")).not.toContainText("West Yard");
+  });
+
+  test("the branch key is the next person's problem: Sign out, Switch role, a new sign in and the demo persona walk all clear it", async ({ page, baseURL }) => {
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, { personas: true }, { role: { role_code: "general_manager", role_name: "General Manager", scope: "GLOBAL" } });
+    const seeded = () => page.evaluate(() => window.sessionStorage.setItem("hh.session.branches.v1", JSON.stringify({ ids: ["branch-east"] })));
+    await page.goto("/");
+    await seeded(); // the last person's choice, left in a shared counter tab
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // a new sign in cleared it
+
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).toEqual(["branch-west", "branch-east"]);
+    await page.getByRole("button", { name: "Switch role" }).click();
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // Switch role cleared it
+
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).not.toBeNull();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByTestId("signin-submit")).toBeVisible();
+    expect(await branchKey(page)).toBeNull(); // Sign out cleared it
+
+    // The demo persona walk signs in as another person: the last person's choice goes with it.
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    await seeded();
+    await page.getByTestId("persona-walk").locator("summary").click();
+    await page.getByTestId("persona-walk").locator('[data-action="persona"]').first().click();
+    await expect.poll(() => branchKey(page)).toBeNull();
+  });
+
+  test("role and branch picker: All branches selects every granted branch and Open writes all of their ids", async ({ page, baseURL }) => {
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+          { id: "branch-north", code: "NTH", name: "North Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, {}, { role: { role_code: "general_manager", role_name: "General Manager", scope: "GLOBAL" } });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expectBranchChoice(page, ["West Yard", "East Yard", "North Yard"]);
+    const group = page.getByRole("group", { name: /your branches/i });
+    const all = group.getByRole("button", { name: "All branches" });
+    await group.getByRole("button", { name: /West Yard/ }).click();
+    await group.getByRole("button", { name: /East Yard/ }).click();
+    await expect(all).toHaveAttribute("aria-pressed", "false");
+    await all.click();
+    await expect(all).toHaveAttribute("aria-pressed", "true");
+    for (const name of ["West Yard", "East Yard", "North Yard"]) {
+      await expect(group.getByRole("button", { name: new RegExp(name) })).toHaveAttribute("aria-pressed", "true");
+    }
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toBeVisible();
+    expect(await branchKey(page)).toEqual(["branch-west", "branch-east", "branch-north"]);
   });
 
   test("the role entry names the person's own role, continuing lands them, and the header carries them", async ({ page, baseURL }) => {

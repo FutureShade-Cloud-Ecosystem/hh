@@ -202,6 +202,9 @@ func renderResult(r Result) string {
 	b.WriteString(r.Headline)
 	for _, it := range r.Items {
 		b.WriteString("\n- ")
+		if it.Cite > 0 {
+			b.WriteString("[" + itoa(it.Cite) + "] ")
+		}
 		b.WriteString(it.Title)
 		for i, f := range it.Fields {
 			if i == 0 {

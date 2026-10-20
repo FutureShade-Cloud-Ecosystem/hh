@@ -2,6 +2,7 @@ mod auth;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+use hh_shell_core::console::{AuthCode, CoreToken};
 #[cfg(feature = "probe")]
 use hh_shell_core::keychain::{self, Slot};
 use hh_shell_core::profiles;
@@ -75,6 +76,25 @@ async fn run_atomic(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     blocking(move || store.atomic(statements)).await
+}
+
+// The webview's sign out revocation, run on the Rust side exactly like sign
+// in (the recorded design behind the CSP pin in tauri.conf.json): the page
+// holds only the core's short token, and this command is the one network leg,
+// so the webview needs no connect-src network origin. The core URL is the
+// profile's fixed build time value (validated the same way sign in's client
+// is, the `clean_base_url` predicate through `ConsoleClient::new`), never a
+// webview value; the token is validated, carried in the console module's
+// zeroizing `CoreToken`, and consumed by the one attempt. The answer is a
+// code only: never the token, the body or the URL.
+#[tauri::command]
+async fn cmd_sign_out_revoke(
+    jwt: String,
+    state: tauri::State<'_, auth::AuthState>,
+) -> Result<(), AuthCode> {
+    let token = CoreToken::new(jwt).ok_or(AuthCode::BadRequest)?;
+    let service = state.service()?;
+    service.revoke_core_session(token).await
 }
 
 // PROBE SCAFFOLDING: lets the probe delete its own keychain item. Not part of
@@ -169,6 +189,7 @@ pub fn run() {
             probe_report,
             run_statement,
             run_atomic,
+            cmd_sign_out_revoke,
             auth::auth_sign_in,
             auth::auth_resume,
             auth::auth_exchange,
@@ -178,6 +199,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         run_statement,
         run_atomic,
+        cmd_sign_out_revoke,
         auth::auth_sign_in,
         auth::auth_resume,
         auth::auth_exchange,
@@ -449,6 +471,36 @@ mod tests {
                 "{name} is granted in the merged capabilities"
             );
         }
+    }
+
+    #[test]
+    fn the_sign_out_revocation_runs_on_the_rust_side_like_sign_in() {
+        // PR #495 round 1 part B: the revocation post is a Rust command
+        // against the profile's fixed core URL, so the webview holds no
+        // network origin in connect-src. The command is allowed by name here
+        // and declared in build.rs; the probe capability grants nothing new.
+        let cap: serde_json::Value =
+            serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+        assert!(
+            perms.contains(&"allow-cmd-sign-out-revoke"),
+            "the revocation command is allowed by name"
+        );
+        let build = include_str!("../build.rs");
+        assert!(
+            build.matches("\"cmd_sign_out_revoke\"").count() == 2,
+            "build.rs declares the command in both feature lists"
+        );
+        const PROBE_CAPABILITY: &str = include_str!("../capabilities-probe/probe.json");
+        assert!(
+            !PROBE_CAPABILITY.contains("cmd_sign_out_revoke"),
+            "the probe capability grants no revocation command"
+        );
     }
 
     #[test]

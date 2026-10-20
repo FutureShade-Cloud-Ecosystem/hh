@@ -464,6 +464,22 @@ export async function quoteMarginGlance(
   });
 }
 
+export async function quoteMarkSent(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<unknown>> {
+  return client.request<unknown>({
+    method: "POST",
+    path: "/api/v1/quotes/{id}/mark-sent",
+    pathParams: { id },
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteMarkSent",
+  });
+}
+
 export async function quoteTakeOrderPayment(
   client: ApiClient,
   id: string | number,

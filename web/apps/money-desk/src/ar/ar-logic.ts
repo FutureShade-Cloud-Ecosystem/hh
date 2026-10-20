@@ -37,6 +37,9 @@ export function cardShown(card: CardDays): boolean {
 /** The statement strip's bands, in the screen's one vocabulary. The last is over 60: the core sums 61 and up into one figure. */
 export const STATEMENT_STRIP_LABELS = ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"] as const;
 
+/** What follows the over 60 figure in the statement notice, in the strip's own words. */
+export const STATEMENT_OVERDUE_NOTE = "of this balance is over 60 days past due. Please contact our office to arrange payment.";
+
 /** What a card's figure is: the status word for everything past its due date. */
 export function cardCovers(card: CardDays): string {
   return card.bucket === "CURRENT" ? "Not yet due" : "Past due";

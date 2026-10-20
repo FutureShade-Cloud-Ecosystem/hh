@@ -40,7 +40,7 @@ const SHEET_SCOPE_WORD: Record<string, string> = {
 };
 
 /** CATEGORY:<id> has no word to put in a cell: it degrades raw, which is the honest answer. */
-export function sheetScopeWord(scope: string): string {
+export function sheetTypeWord(scope: string): string {
   return SHEET_SCOPE_WORD[scope] ?? scope.toLowerCase().replace(/_/g, " ");
 }
 

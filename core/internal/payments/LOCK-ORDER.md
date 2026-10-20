@@ -239,12 +239,13 @@ prove it where a statement returns it). INSERTs keep their explicit draws (a new
 | delivery_runs | `AssignRunCrew`, `UpdateRunStatus`, the sync `Delete` | `..._AssignRunCrewBesideARunWrite` |
 | count_sheets | freeze, save counts, approve, cancel, mark posted | `..._CancelSheetBesideASheetWrite` (invcount) |
 | purchasing_pos | `bumpPOHeaderSeq`, `ApplyWarrantyCredit`, `SetPOStatus`, `UpdateExpectedAt`, `UpdateDeliveryMethod` | `..._PurchasingPOWriterBesideAPOWrite` |
-| vendors | `UpdateVendorMaster` | `..._VendorMasterWriterBesideAVendorWrite` |
+| vendors | `UpdateVendorMaster` (round 3c dropped its draw; round 3e made vendors a counter first table, so it now takes the counter first and the 3c leg is replaced by `..._CounterFirst_VendorEditBesideALoadBatch`) | see "Counter first tables" |
 | permission_approval_requests | `SaveDecision`, `SaveDecisionTx`, `ConsumeApprovedFloorTx` | `..._ApprovalDecideBesideARequestWrite` (sync package) |
 | portal_users | `UpdateRole`, `UpdateStatus`, plain and under the last admin guard | `..._TeamMemberWritersBesideAUserWrite` |
 | quotes | the customer side `transition` (Reject, Accept paths) | `..._QuoteTransitionBesideAQuoteWrite` (also proves the quote's seq moved) |
 | customer_quote | `UpdateDraftQuote`, the sync `Delete` | `..._DraftEditBesideAQuoteWrite` (also proves the seq moved) |
 | attachment, plan, plan_line, task_shortages | the sync `Delete` of each; `tasks.ResolveShortage` | `..._AttachmentTombstoneBesideAWrite`, `..._PlanTombstonesBesideAWrite` (both tables), `..._ShortageTombstoneBesideAWrite` |
+| delivery_pod_photos | the sync `PODSyncStore.Delete` (round 3e, S3's r3c P2-1: it allocated the pod counter before its UPDATE with no earlier lock, so it crossed the caption edit and `AttachPODPhotos`) | `..._PODTombstoneBesideAPhotoWrite`: red at 55593fff (`pod tombstone was killed as a deadlock victim: ... 40P01`), green after; a device pulling from its earlier cursor receives the tombstone |
 
 Kept explicit, each with its reason in the catalogue's accepted list (`drawBeforeLockAccepted`, which refuses a
 new site until it names one):
@@ -263,14 +264,7 @@ new site until it names one):
 No writer needed its seq value before the UPDATE, so none took the lock-first path; the lock-first path is what the
 accepted entries above already are.
 
-**OPEN, reported to the lead: loader batches.** `product.ApplyAttached` and `customer.Apply` run inside the load
-door's claim transaction, one savepoint per item. The batch takes the table's scope row (the counter) before any row
-of an item (LD-5, `landedUnitSetRefusal` for products) and holds it to the batch's commit. A trigger relying single
-row writer of the same product or customer (the REST edit) holds the row and wants the counter, while the batch
-holds the counter and wants that row: a cycle, rare (the same product edited while a load that names it runs) and
-detected by Postgres, which aborts one side. Dropping the loader's explicit draw changes nothing about this order,
-and putting the row first would reopen the batch against batch deadlock LD-5 closes. It needs a ruling and is left
-as it was; the catalogue lists both sites in `drawBeforeLockAccepted` marked OPEN.
+**Loader batches: counter first tables (round 3e).** See "Counter first tables" below.
 
 **The method.** A leg that parks a writer through an AFTER trigger on `scope_sequences` cannot stand a CTE statement
 in its draw before lock window: a data modifying CTE's AFTER triggers fire at the end of the whole statement, after
@@ -296,6 +290,52 @@ are AFTER triggers queued after the counter's); it is invalid only for a CTE UPD
 | credit memo beside an order or invoice holder | `lockorder_creditmemo_integration_test.go`, memo parked through AFTER | yes (INSERT: foreign key checks fire after) | unchanged, green | none |
 | last admin guard beside a team insert | `AdminGuardBesideATeamInsertOnTheSameCustomer`, insert parked through AFTER | yes (INSERT) | unchanged, green | none |
 | POS return legs (internal/order, cmd/core) | return parked through AFTER on the invoices counter | yes (the account credit locks the invoice row in its first CTE term, so the AFTER trigger fires with the row held, the order the writer really takes) | unchanged, green | none |
+
+### Counter first tables (PR 556, round 3e)
+
+Three kinds of table are written by a load door batch, and the rule for them is the reverse of the rest of this
+file: **the counter comes BEFORE the rows, for every writer of the table.**
+
+**Why.** The load door runs each item as a savepoint on the batch's claim transaction. The first draw for a table
+takes its counter row, and the row lock lives until the batch commits. The batch then goes on to other items, and
+so to other rows, with the counter held. LD-5 made the batch take the counter before any item row on purpose: two
+batches loading the same names then queue on the counter instead of deadlocking on rows, and LD-5 is unchanged. A
+single row writer that relies on the sync seq trigger takes the row, then the counter (the BEFORE trigger fires
+after the row lock). Beside a batch holding the counter and wanting that row, that is a cycle. The cure is not to
+reorder the batch (that would reopen batch against batch) but to give every other writer the batch's own order.
+
+**The loader tables, read from the load door's writers at source** (`load.Writer` implementations):
+
+| Table | Loader | Trigger table? | Trigger relying single row writers, now counter first |
+|---|---|---|---|
+| products | `product.ApplyAttached` (`productload.go`) | yes, stream `products` | `product.Repository.Update` (REST edit), the loader's own SKU move; helper `LockProductsSeqTx` |
+| customers | `customer.Apply` (`loadwriter.go`) | yes, stream `customers` | `customer.Repository.UpdateBillingAddress`, the loader's own account number move; `LockCustomersSeqTx` |
+| vendors | `purchasing` vendor loader (`vendorload.go`) | yes, stream `vendors` | `purchasing.Repository.UpdateVendorMaster`; `LockVendorsSeqTx` |
+| product_categories, uoms, product_uoms, purchasing_vendor_skus, projects (portal job loader) | their loaders | **no**: not in the trigger | none, nothing to cross: their writers draw explicitly or not at all |
+| invoices (`billing/load_receivables.go`, the receivables door) | the same claim transaction | yes, stream `invoices` | **OPEN, reported to the lead:** the same batch shape beside the money writers of an invoice (they take the invoice rows, then the invoices counter). It is the money lock order, so it is not changed here; see the report |
+
+The helper in each owning module takes the counter row without advancing it, in the `LockPaymentsSequenceTx` shape
+(`INSERT ... ON CONFLICT DO UPDATE SET next_value = scope_sequences.next_value`), and every trigger relying
+writer of the table calls it before its row. The cost is that a REST edit of one of these rows waits behind a
+running load batch, which it effectively did on the row before.
+
+**Legs** (`testkit.DrawPark`, red at 55593fff with 40P01 on the batch, green after): the REST writer is the parked
+session (at the old code holding the row at its draw, at the new code at its counter take holding nothing); the
+batch is a transaction that takes the counter with the load door's statement and then wants the row.
+`TestIntegration_CounterFirst_ProductEditBesideALoadBatch`, `..._CustomerEditBesideALoadBatch`,
+`..._VendorEditBesideALoadBatch`.
+
+**`pricing_list_prices`** (S3 P3-3) is a counter first table for a different reason: every one of its writers (the
+sync `Write` and `Delete`, and `ApplyBatch` through `applyMatrixPrice`) draws the counter first, so the table is
+consistently counter then row and has no trigger relying writer to cross. It is named here so a future one is
+caught: the catalogue's check (h) reports a trigger relying `UPDATE` of any counter first table that takes no counter
+first.
+
+**The catalogue.** Check (g) (`drawBeforeLock`) now sees an aliased table, any term order in the WHERE, a seq taken
+from a joined CTE, and refuses a `FOR UPDATE OF <other alias>` as a lock of this table's row (each planted in
+`TestSeqCatalogue_BiteDrawBeforeLock`). Check (h) (`counterFirstWriters`, with `counterFirstTables`) is the rule
+above: a trigger relying `UPDATE` of products, customers, vendors or pricing_list_prices must take the table's
+counter, by literal or by a `Lock...Seq` helper named for it, earlier in the same function.
 
 ## The legs
 
