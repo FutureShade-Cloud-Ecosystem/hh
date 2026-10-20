@@ -275,21 +275,13 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 
 	// Steps 4 to 6: the model rounds. The provider is offered the caller's tools; whatever it asks
 	// for runs through the gate; its next reply sees the results. Bounded, see maxToolRounds.
-	out, err := s.drive(ctx, c, tools, window, &res, run)
+	out, err := s.converse(ctx, c, cfg, tools, window, &res, run)
 	if err != nil {
 		return Answer{}, err
 	}
 	if out.clarify != nil {
 		s.record(ctx, c, run.ident(id), run.in, run.out)
 		return Answer{Text: out.clarify.Question, Clarify: out.clarify, Results: []Result{}, Usage: usageOf(run.ident(id), run.in, run.out)}, nil
-	}
-	if out.fail != "" {
-		// The bound was reached with tool calls still pending. The commands that ran are good;
-		// the headlines stand in for the prose, degraded, honest, and still useful.
-		if s.log != nil {
-			s.log.Warn("assist: tool loop reached its bound, answering from command results")
-		}
-		out.text = speak(run.results)
 	}
 	if run.executed == 0 {
 		// Prose with no lookups: the capability answer, the "I can't answer that one yet", the
@@ -327,6 +319,11 @@ type askRun struct {
 	executed int // tool calls dispatched through the registry, failed ones included
 	nextID   int
 	filled   bool
+	// alias is the route entry the next provider call is for; note is OUR text naming the check the
+	// last reply failed, sent once with the retry.
+	alias     string
+	note      string
+	answerNow bool
 	// provider and model are who answered last, for the ledger row and the usage report.
 	provider, model string
 }
@@ -424,8 +421,15 @@ func (s *Service) exec(ctx context.Context, c Caller, run *askRun, text string, 
 
 // drive is the bounded multi round loop: ask, run what was asked, ask again with the results.
 func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
-	for round := 0; round < maxToolRounds; round++ {
-		reply, err := s.complete(ctx, c, CompletionRequest{Messages: run.msgs, Tools: tools})
+	limit := maxToolRounds
+	if run.answerNow {
+		// The bound was already reached once and the results are in hand: an attempt after that is
+		// one call to answer in words, not another loop.
+		limit = 1
+	}
+	for round := 0; round < limit; round++ {
+		reply, err := s.complete(ctx, c, CompletionRequest{Alias: run.alias, Messages: run.request(), Tools: tools})
+		run.note = ""
 		run.calls++
 		run.in += reply.TokensIn
 		run.out += reply.TokensOut
@@ -454,6 +458,9 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 			}
 			return o, nil
 		}
+		if fail := checkCalls(tools, reply.ToolCalls); fail != "" {
+			return outcome{fail: fail}, nil
+		}
 		calls, cl := s.preflight(ctx, c, tools, window, res, reply.ToolCalls, !run.filled && len(res.Calls) == 0)
 		run.filled = true
 		if cl != nil {
@@ -461,7 +468,100 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 		}
 		s.exec(ctx, c, run, reply.Text, calls)
 	}
-	return outcome{fail: "the lookup loop reached its bound"}, nil
+	return outcome{fail: failBound}, nil
+}
+
+// The validator's texts. They are OURS: fixed sentences that name the check, never a model's words
+// and never a record's, because they go back to a model and anything of a record's in them would be
+// a way to carry an instruction.
+const (
+	failUnknownCommand = "Your last reply was rejected: it called a command that is not in your tool list. Call only the tools you were given, or answer in words."
+	failBadArguments   = "Your last reply was rejected: a tool call's arguments were not one valid JSON object. Send the arguments as a single JSON object."
+	failBound          = "The lookup loop reached its limit. Do not call more tools: answer now in words from the results you already have."
+)
+
+// checkCalls is the check available in this slice: every call names a command in the asker's own
+// list, and every call's arguments were valid JSON. "" means the calls stand.
+func checkCalls(tools []ToolSpec, calls []ToolCall) string {
+	for _, call := range calls {
+		if !offered(tools, call.Command) {
+			return failUnknownCommand
+		}
+		if call.ArgsErr != "" {
+			return failBadArguments
+		}
+	}
+	return ""
+}
+
+// request is the conversation as the next provider call sees it: the messages, plus the validator's
+// note when the last reply failed a check.
+func (r *askRun) request() []Message {
+	if r.note == "" {
+		return r.msgs
+	}
+	return append(append([]Message(nil), r.msgs...), Message{Role: RoleUser, Text: r.note})
+}
+
+// maxProviderCalls bounds the provider calls of ONE Ask across every retry and every alias, so a
+// chain of failed checks is a bounded bill.
+const maxProviderCalls = 12
+
+// aliasStubFallback is the pseudo alias of the last step of escalation: the deterministic stub.
+const aliasStubFallback = "stub-fallback"
+
+// converse runs the rounds with escalation on a failed check: one retry on the same alias with the
+// validator's text, then the next alias of the route that is really configured, then the stub's
+// plain results. Every attempt is a Service.complete call, so it is metered like any other, and the
+// Caller is the asker's on every one of them: escalation changes who is asked, never who is asking.
+func (s *Service) converse(ctx context.Context, c Caller, cfg Settings, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
+	for _, alias := range s.escalationRoute(ctx, cfg) {
+		for attempt := 0; attempt < 2; attempt++ {
+			if run.calls >= maxProviderCalls {
+				break
+			}
+			run.alias = alias
+			out, err := s.drive(ctx, c, tools, window, res, run)
+			if err != nil || out.fail == "" {
+				return out, err
+			}
+			run.note = out.fail
+			run.answerNow = run.answerNow || out.fail == failBound
+			if s.log != nil {
+				s.log.Warn("assist: a reply failed a check, escalating", "alias", alias, "attempt", attempt+1)
+			}
+		}
+	}
+	// Every alias failed: the stub's plain results. The commands that already ran are good, so they
+	// stand; the stub answers the question itself when nothing ran yet.
+	run.alias, run.note = aliasStubFallback, ""
+	out, err := s.drive(ctx, c, tools, window, res, run)
+	if err != nil || out.fail != "" {
+		if len(run.results) == 0 && err != nil {
+			return outcome{}, err
+		}
+		return outcome{text: speak(run.results)}, nil
+	}
+	return out, nil
+}
+
+// escalationRoute is the aliases to try, in order: those of the current route that resolve to a
+// real provider. With no router, or nothing configured, it is the single default entry (the base
+// provider, or the stub), which still gets its one retry.
+func (s *Service) escalationRoute(ctx context.Context, cfg Settings) []string {
+	if s.router == nil {
+		return []string{""}
+	}
+	var out []string
+	for _, a := range cfg.RouteAliases() {
+		if _, ok := s.router.Resolve(ctx, a); ok {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 // complete is the ONE place a provider is called. Every attempt, retry and escalation goes through
@@ -476,6 +576,13 @@ func (s *Service) complete(ctx context.Context, _ Caller, req CompletionRequest)
 
 // providerFor resolves the provider for an alias; an empty alias means the route's first entry.
 func (s *Service) providerFor(ctx context.Context, alias string) Provider {
+	if alias == aliasStubFallback {
+		if s.router != nil {
+			p, _ := s.router.Resolve(ctx, aliasStubFallback)
+			return p
+		}
+		return NewStubProvider()
+	}
 	if s.router == nil {
 		return s.provider
 	}

@@ -160,3 +160,31 @@ func oaiToolCallJSON(id, name, arguments string) string {
 	a, _ := json.Marshal(arguments)
 	return `{"id":"` + id + `","type":"function","function":{"name":"` + name + `","arguments":` + string(a) + `}}`
 }
+
+type oaiTestMessage struct {
+	Role    string
+	Content string
+}
+
+// decodeOAIMessages reads the role and text content of a captured chat request.
+func decodeOAIMessages(t *testing.T, body []byte) []oaiTestMessage {
+	t.Helper()
+	var req struct {
+		Messages []struct {
+			Role    string  `json:"role"`
+			Content *string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	var out []oaiTestMessage
+	for _, m := range req.Messages {
+		c := ""
+		if m.Content != nil {
+			c = *m.Content
+		}
+		out = append(out, oaiTestMessage{m.Role, c})
+	}
+	return out
+}

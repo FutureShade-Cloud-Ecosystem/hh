@@ -85,16 +85,16 @@ func TestAnthropicRoundTrip_MoreThanOneToolRound(t *testing.T) {
 	}
 }
 
-// A model that never stops asking for tools is stopped at the bound and the answer is built from
-// the results already in hand.
+// A model that never stops asking for tools is stopped at the bound, gets one more call on the same
+// alias to answer in words, and is then replaced by the stub's plain results.
 func TestAnthropicRoundTrip_LoopIsBounded(t *testing.T) {
 	srv := newStrictAnthropic(t, antToolReply(antToolUse("toolu_x", "order.lookup", `{"order_no":"SO-4"}`)))
 	ans, err := askAgainstAnthropic(t, srv, "where is SO-4?", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(srv.Requests()); got != maxToolRounds {
-		t.Fatalf("provider called %d times, want exactly the bound %d", got, maxToolRounds)
+	if got := len(srv.Requests()); got != maxToolRounds+1 {
+		t.Fatalf("provider called %d times, want the bound %d plus one answer-now retry", got, maxToolRounds)
 	}
 	if len(ans.Results) == 0 || strings.TrimSpace(ans.Text) == "" {
 		t.Fatalf("over the bound the answer must come from the results, got %+v", ans)
