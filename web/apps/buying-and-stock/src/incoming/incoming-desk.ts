@@ -41,7 +41,11 @@ export class IncomingDesk implements AreaDesk {
     const orders = await this.#api.orders();
     if (!orders.ok) return this.#fail(orders);
     const placed = poRows(orders.value).filter((o) => isPlaced(o.status));
-    const details = await Promise.all(placed.map((o) => this.#api.order(o.id)));
+    // Bound the per-PO reads: a branch with many open POs would otherwise fire one
+    // request per order at once. The helper keeps the answer order, runs at most
+    // INCOMING_DETAIL_CONCURRENCY at a time, and never fires a request for an empty
+    // input list.
+    const details = await bounded(INCOMING_DETAIL_CONCURRENCY, placed, (o) => this.#api.order(o.id));
     const rows: ArrivalRow[] = [];
     for (let i = 0; i < placed.length; i += 1) {
       const po = placed[i]!;
@@ -89,6 +93,35 @@ export class IncomingDesk implements AreaDesk {
       today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
     });
   }
+}
+
+/**
+ * The cap on per-PO detail reads fired at once from the Incoming desk's load. A branch with many
+ * open orders would otherwise dial one request per order at once; six keeps the desk below the
+ * page's own bound (the staff client's one-flight write limit) and the server's own hover cap.
+ */
+const INCOMING_DETAIL_CONCURRENCY = 6;
+
+/**
+ * Runs `work` over `items` with at most `limit` calls in flight at a time. Results are returned in
+ * the source order. A limit greater than the input length caps at the input length; an empty input
+ * answers an empty array without firing any work. Used by IncomingDesk.#read to keep the placed
+ * orders' detail reads bounded.
+ */
+export async function bounded<T, R>(limit: number, items: readonly T[], work: (item: T) => Promise<R>): Promise<R[]> {
+  if (items.length === 0) return [];
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const cap = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: cap }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await work(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 // The sales seat's Incoming area (change 5, board bs-stock-lookup-sales-search-a-product's second

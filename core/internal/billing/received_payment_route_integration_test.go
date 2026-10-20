@@ -334,8 +334,8 @@ func TestApplyRoute_TheSameKeyWithADifferentBodyIsRefusedInWords(t *testing.T) {
 		"customer_id": w.customerID, "method": "CASH", "amount_cents": 9000,
 		"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag,
 	}))
-	if code != http.StatusUnprocessableEntity {
-		t.Fatalf("a different body under a spent key is refused, got %d body %v", code, body)
+	if code != http.StatusConflict {
+		t.Fatalf("a different body under a spent key answers the conflict, got %d body %v", code, body)
 	}
 	words, _ := body["error"].(string)
 	if !strings.Contains(words, "that idempotency key already recorded a different payment") {
@@ -419,5 +419,60 @@ func TestApplyRoute_AClosedInvoiceSettlesItsPromise(t *testing.T) {
 	}
 	if settled == nil || status != "KEPT" {
 		t.Fatalf("a closed invoice settles its promise KEPT, got settled %v status %s", settled, status)
+	}
+}
+
+// The route answers the replay before its service level guards and the body validation: a spent key
+// retried with a zero amount or an empty invoice list hears the replay verdict, not "the payment was
+// not recorded" validation words that would end the desk's held key as a refusal (FP 186 and 187).
+func TestApplyRoute_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) {
+	w := newApplyRouteWorld(t)
+	inv := w.invoice(t, w.customerID, "RBV", 90, 60, 12000, "")
+	first := w.post(t, applyGlobalCaller(), map[string]any{
+		"customer_id": w.customerID, "method": "CASH", "amount_cents": 12000,
+		"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag,
+	})
+	if code, _ := decodeApply(t, first); code != http.StatusOK {
+		t.Fatalf("the first apply must land, got %d", code)
+	}
+
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+	}{
+		{"a zero amount", map[string]any{
+			"customer_id": w.customerID, "method": "CASH", "amount_cents": 0,
+			"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag}},
+		{"an empty invoice list", map[string]any{
+			"customer_id": w.customerID, "method": "CASH", "amount_cents": 12000,
+			"reference": "CHQ 500", "invoice_ids": []string{}, "idempotency_key": w.tag}},
+		{"an unknown tender", map[string]any{
+			"customer_id": w.customerID, "method": "BOGUS", "amount_cents": 12000,
+			"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := decodeApply(t, w.post(t, applyGlobalCaller(), tc.body))
+			if code != http.StatusConflict {
+				t.Fatalf("a spent key with %s answers the conflict, got %d body %v", tc.name, code, body)
+			}
+			words, _ := body["error"].(string)
+			if !strings.Contains(words, "that idempotency key already recorded a different payment") {
+				t.Fatalf("the spent key answers the replay verdict, got %q", words)
+			}
+		})
+	}
+
+	// A body mangled in flight cannot carry a key at all, so it is the route's own 400 for a body
+	// it could not read, never a 422 the desk would read as the route refusing a body it checked
+	// against the replay table.
+	mangled := httptest.NewRequest(http.MethodPost, "/api/v1/ar/payments/apply", strings.NewReader("{not json"))
+	mangled = mangled.WithContext(identity.ContextWithStaff(mangled.Context(), applyGlobalCaller()))
+	mrec := httptest.NewRecorder()
+	w.h.applyReceived(mrec, mangled, guards.StaffCaller{})
+	if mrec.Code != http.StatusBadRequest {
+		t.Fatalf("an unreadable body answers 400, got %d body %q", mrec.Code, mrec.Body.String())
+	}
+	if !strings.Contains(mrec.Body.String(), "the request body must be JSON") {
+		t.Fatalf("the unreadable body refusal says what happened: %q", mrec.Body.String())
 	}
 }

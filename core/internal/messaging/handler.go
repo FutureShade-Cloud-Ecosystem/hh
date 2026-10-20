@@ -1408,6 +1408,10 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, "channel is already archived")
 	case errors.Is(err, ErrBadVisibility):
 		httpx.Error(w, http.StatusBadRequest, "visibility must be PUBLIC or PRIVATE")
+	case errors.Is(err, ErrBadAutoScope):
+		httpx.Error(w, http.StatusBadRequest, "auto_scope must be empty, BRANCH or GLOBAL")
+	case errors.Is(err, ErrTooManyGroupMembers):
+		httpx.Error(w, http.StatusBadRequest, "a group may name at most 50 founding members")
 	case errors.Is(err, ErrPrivateRoom):
 		httpx.Error(w, http.StatusForbidden, "a private channel is hand-add only")
 	case errors.Is(err, ErrCannotJoin):

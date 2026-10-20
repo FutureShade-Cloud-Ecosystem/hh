@@ -5,6 +5,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -115,6 +116,55 @@ func TestNotifyOrderRep_TheFallbackChannelGetsTheFigurelessBody(t *testing.T) {
 	}
 	if strings.Contains(last.Body, "$4,250.00") {
 		t.Fatalf("no figure may reach the fallback channel: %q", last.Body)
+	}
+}
+
+// The fallback copy never carries the event's money as a structured figure either: AmountCents is
+// the rollup's folded fact for the rep's own DM thread, and the fallback channel's readers are not
+// the figure predicate's audience, so the fallback ref clears it beside the summary.
+func TestNotifyOrderRep_TheFallbackCopyCarriesNoAmountCents(t *testing.T) {
+	svc, f := routingFixture(t)
+	f.slugs["sales-trenton"] = "ch-sales-trt"
+	in := orderRepNotice("")
+	in.FallbackSlugs = []string{"sales-trenton"}
+	in.Ref = EventRef{Topic: "yard.skid_change", AmountCents: 125000}
+	if _, err := svc.NotifyOrderRep(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	last := f.eventRefs[len(f.eventRefs)-1]
+	if last.AmountCents != 0 {
+		t.Fatalf("the fallback ref must clear amount_cents, got %d", last.AmountCents)
+	}
+}
+
+// A body that names a currency figure with no figureless twin is refused on the fallback rather
+// than posted: an empty twin names no figure only when the body itself names none.
+func TestNotifyOrderRep_AFiguredBodyWithNoTwinIsRefusedOnTheFallback(t *testing.T) {
+	svc, f := routingFixture(t)
+	f.slugs["sales-trenton"] = "ch-sales-trt"
+	in := orderRepNotice("")
+	in.Body = "Order O-100 balance $4,250.00 is past due"
+	in.FallbackSlugs = []string{"sales-trenton"}
+	if _, err := svc.NotifyOrderRep(context.Background(), in); !errors.Is(err, ErrFallbackFigure) {
+		t.Fatalf("a figured body with no twin must be refused, got %v", err)
+	}
+	if len(f.events) != 0 {
+		t.Fatalf("nothing may be posted to the fallback channel: %+v", f.events)
+	}
+}
+
+func TestContainsCurrencyFigure(t *testing.T) {
+	yes := []string{"$100.00", "now $5", "was $0", "( $9 )"}
+	for _, s := range yes {
+		if !ContainsCurrencyFigure(s) {
+			t.Errorf("%q names a currency figure", s)
+		}
+	}
+	no := []string{"", "Order O-100 short", "$ alone", "$x1", "cost 100 dollars", "STAGED at bay 3"}
+	for _, s := range no {
+		if ContainsCurrencyFigure(s) {
+			t.Errorf("%q names no currency figure", s)
+		}
 	}
 }
 
