@@ -1888,6 +1888,7 @@ export type DispatchStop = {
   committed_at?: string | null;
   reopened_at?: string | null;
   reopen_reason?: string;
+  lines?: DispatchDriverLine[];
 };
 export type DispatchPhotoMeta = {
   id: string;

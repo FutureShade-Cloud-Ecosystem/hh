@@ -389,7 +389,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// an unwired boot from serving the drive-run scopes unfenced, the
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
-	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
+	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole).
+		WithOrderLines(orderPickLineAdapter{repo: orderRepo})
 	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
