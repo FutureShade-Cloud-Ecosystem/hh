@@ -82,6 +82,7 @@ func TestUX88_StockGlance_HeldToTheCallersOrg(t *testing.T) {
 func TestUX88_AvailabilityPeek_HeldToTheCallersOrgAndServesNoCost(t *testing.T) {
 	q := newQD1BFixture(t)
 	pid := ux88Plant(t, q)
+	ux88PlantNoOrgBranch(t, q)
 	for _, sub := range []string{testkit.SubInsideSales, testkit.SubSalesManager, testkit.SubGeneralMgr} {
 		code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/quote-availability/"+pid+"/branches", sub, nil)
 		if code != http.StatusOK {
@@ -141,6 +142,7 @@ func TestUX88_StockBrowse_HeldToTheCallersOrg(t *testing.T) {
 
 func TestUX88_BranchList_HeldToTheCallersOrg(t *testing.T) {
 	q := newQD1BFixture(t)
+	ux88PlantNoOrgBranch(t, q)
 	for _, sub := range []string{testkit.SubInsideSales, testkit.SubSalesManager, testkit.SubGeneralMgr} {
 		code, body := qd1bCall(t, q, http.MethodGet, "/api/v1/branches", sub, nil)
 		if code != http.StatusOK {
@@ -163,8 +165,26 @@ func TestUX88_BranchList_HeldToTheCallersOrg(t *testing.T) {
 	}
 }
 
-// ux88NoOrgBranch is the migration planted Kingston branch, which carries no org.
-const ux88NoOrgBranch = "5d1b3f6e-0000-4000-9000-000000000002"
+// ux88NoOrgBranchID is the id of the dedicated branch these legs plant with no org. The migration planted
+// branches are not used for it: a demo or populated box stamps them with its org, and a refusal leg built
+// on them would lose its teeth the day they carry one.
+const ux88NoOrgBranchID = "88a00000-0000-4000-8000-0000000000b1"
+
+// ux88PlantNoOrgBranch plants a branch whose locations row carries no org and returns its id; the row
+// leaves with the leg.
+func ux88PlantNoOrgBranch(t *testing.T, q *qd1bFixture) string {
+	t.Helper()
+	if _, err := q.pool.Exec(context.Background(), `
+		INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address)
+		VALUES ($1, $1, NULL, 'BRANCH', 'UX88NO', 'UX88 branch with no org', '{}')
+		ON CONFLICT (id) DO NOTHING`, ux88NoOrgBranchID); err != nil {
+		t.Fatalf("plant the no org branch: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = q.pool.Exec(context.Background(), `DELETE FROM locations WHERE id = $1`, ux88NoOrgBranchID)
+	})
+	return ux88NoOrgBranchID
+}
 
 // Round 2: the named branch form of the stock truth read. A scoped caller must hold the branch (403,
 // the yard and branch doors' own shape for a branch out of reach); a GLOBAL caller holds every branch
@@ -173,6 +193,7 @@ const ux88NoOrgBranch = "5d1b3f6e-0000-4000-9000-000000000002"
 func TestUX88_BranchStockNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
 	q := newQD1BFixture(t)
 	pid := ux88Plant(t, q)
+	noOrg := ux88PlantNoOrgBranch(t, q)
 	get := func(sub, branch string) (int, string) {
 		return qd1bCall(t, q, http.MethodGet, "/api/v1/inventory/branch-stock?product_id="+pid+"&branch_id="+branch, sub, nil)
 	}
@@ -183,11 +204,11 @@ func TestUX88_BranchStockNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
 		leakWord string
 	}{
 		{testkit.SubInsideSales, testkit.BranchSouthAID, http.StatusForbidden, "3333"},
-		{testkit.SubInsideSales, ux88NoOrgBranch, http.StatusForbidden, ""},
+		{testkit.SubInsideSales, noOrg, http.StatusForbidden, ""},
 		{testkit.SubInsideSales, testkit.BranchNorthBID, http.StatusForbidden, "2222"},
 		{testkit.SubSalesManager, testkit.BranchSouthAID, http.StatusForbidden, "3333"},
 		{testkit.SubGeneralMgr, testkit.BranchSouthAID, http.StatusNotFound, "3333"},
-		{testkit.SubGeneralMgr, ux88NoOrgBranch, http.StatusNotFound, ""},
+		{testkit.SubGeneralMgr, noOrg, http.StatusNotFound, ""},
 	} {
 		code, body := get(c.sub, c.branch)
 		if code != c.want {
@@ -212,6 +233,7 @@ func TestUX88_BranchStockNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
 // not found for another org's or a no org branch.
 func TestUX88_FloorPreviewNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) {
 	q := newQD1BFixture(t)
+	noOrg := ux88PlantNoOrgBranch(t, q)
 	post := func(sub, branch string) (int, string) {
 		return qd1bCall(t, q, http.MethodPost, "/api/v1/pricing/floor-preview", sub, map[string]any{
 			"kind": "category_policy", "category_id": "00000000-0000-4000-8000-0000000000c1", "branch_id": branch,
@@ -225,9 +247,9 @@ func TestUX88_FloorPreviewNamedBranch_HeldToTheCallersReachAndOrg(t *testing.T) 
 	}{
 		{testkit.SubInsideSales, testkit.BranchSouthAID, http.StatusForbidden},
 		{testkit.SubSalesManager, testkit.BranchSouthAID, http.StatusForbidden},
-		{testkit.SubSalesManager, ux88NoOrgBranch, http.StatusForbidden},
+		{testkit.SubSalesManager, noOrg, http.StatusForbidden},
 		{testkit.SubGeneralMgr, testkit.BranchSouthAID, http.StatusNotFound},
-		{testkit.SubGeneralMgr, ux88NoOrgBranch, http.StatusNotFound},
+		{testkit.SubGeneralMgr, noOrg, http.StatusNotFound},
 	} {
 		if code, body := post(c.sub, c.branch); code != c.want {
 			t.Errorf("%s previewing at %s: %d %s, want %d", c.sub, c.branch, code, body, c.want)

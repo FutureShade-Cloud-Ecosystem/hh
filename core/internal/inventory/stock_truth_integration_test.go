@@ -961,6 +961,7 @@ func TestUX88_AllBranchReadsHeldToTheOrg(t *testing.T) {
 	seedBalance(t, pool, p, branch1, 50, 600)
 	seedBalance(t, pool, p, branch2, 70, 700)
 	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+	plantNoOrgBranch(t, pool) // a branch with no org is in no org: neither peek may name it
 
 	codes := func(rows []BranchPeek) []string {
 		var out []string
@@ -1005,12 +1006,13 @@ func TestUX88_NamedBranchReadsHeldToTheOrg(t *testing.T) {
 	seedBalance(t, pool, p, branch1, 50, 600)
 	seedBalance(t, pool, p, branch2, 70, 700)
 	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+	noOrg := plantNoOrgBranch(t, pool)
 
 	own, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch1)
 	if err != nil || own.OnHandBase != 50 || own.AvgCostCents != 600 {
 		t.Fatalf("own branch = %+v, %v, want 50 at cost 600", own, err)
 	}
-	for _, branch := range []string{branch2, "00000000-0000-4000-8000-0000000000ee", "not-a-uuid"} {
+	for _, branch := range []string{branch2, noOrg, "00000000-0000-4000-8000-0000000000ee", "not-a-uuid"} {
 		got, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch)
 		if err == nil || got.OnHandBase != 0 || got.AvgCostCents != 0 {
 			t.Fatalf("org A naming %q = %+v, %v, want not found with no figure", branch, got, err)
@@ -1031,4 +1033,23 @@ func TestUX88_NamedBranchReadsHeldToTheOrg(t *testing.T) {
 	if in, err := svc.BranchInOrg(ctx, ux88OrgA, branch2); err != nil || in {
 		t.Fatalf("Kingston in org A = %v, %v, want false", in, err)
 	}
+	if in, err := svc.BranchInOrg(ctx, ux88OrgA, noOrg); err != nil || in {
+		t.Fatalf("a branch with no org in org A = %v, %v, want false", in, err)
+	}
+}
+
+// plantNoOrgBranch plants a branch whose locations row carries no org and returns its id; it leaves with
+// the leg. The migration planted branches are not used for the no org legs because a populated box stamps
+// them with its org.
+func plantNoOrgBranch(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	const id = "88a00000-0000-4000-8000-0000000000b2"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address)
+		VALUES ($1, $1, NULL, 'BRANCH', 'UX88NOINV', 'UX88 branch with no org', '{}')
+		ON CONFLICT (id) DO NOTHING`, id); err != nil {
+		t.Fatalf("plant the no org branch: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM locations WHERE id = $1`, id) })
+	return id
 }

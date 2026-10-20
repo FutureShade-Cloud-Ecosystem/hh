@@ -879,6 +879,14 @@ func TestDemoPopulate_NoSeededLocationHasNoOrg(t *testing.T) {
 		t.Fatalf("the demo org holds %d branches (%v), want at least Trenton and Kingston", branches, err)
 	}
 
+	// The two branches the migrations plant, Trenton and Kingston, are the demo dealer's own.
+	for _, id := range []string{"5d1b3f6e-0000-4000-9000-000000000001", "5d1b3f6e-0000-4000-9000-000000000002"} {
+		var slug string
+		if err := pool.QueryRow(ctx, `SELECT o.slug::text FROM locations l JOIN org o ON o.id = l.org_id WHERE l.id = $1::uuid`, id).Scan(&slug); err != nil || slug != "hh-demo" {
+			t.Fatalf("migration planted branch %s carries org %q (%v), want hh-demo", id, slug, err)
+		}
+	}
+
 	// An existing box with org-less branches is mended by its next seed apply (the repair map).
 	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = NULL`); err != nil {
 		t.Fatalf("clear the locations' org: %v", err)
