@@ -2098,7 +2098,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                   <tr>
                     <th scope="col">SKU</th>
                     <th scope="col">Retail</th>
-                    <th scope="col">Derived</th>
+                    <th scope="col">Set automatically</th>
                     <th scope="col">Flag</th>
                   </tr>
                 </thead>
@@ -2313,7 +2313,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
               <th scope="col">Outcome</th>
               <th scope="col">Retail now</th>
               <th scope="col">Retail in the file</th>
-              <th scope="col">Derived</th>
+              <th scope="col">Set automatically</th>
             </tr>
           </thead>
           <tbody>
