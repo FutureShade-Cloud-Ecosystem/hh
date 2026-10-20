@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -149,10 +150,17 @@ func (i *Issuer) sign(subject, audience, tenantID string, at time.Time) (string,
 	if err != nil {
 		return "", err
 	}
+	// Every demo token carries a fresh jti (16 random bytes, hex), the id a
+	// sign out revokes (HH-678), so no two demo sessions share one.
+	jtiRaw := make([]byte, 16)
+	if _, err := rand.Read(jtiRaw); err != nil {
+		return "", fmt.Errorf("demoissuer: sign: %w", err)
+	}
 	payload := map[string]any{
 		"iss": ClaimIssuer,
 		"sub": subject,
 		"aud": audience,
+		"jti": hex.EncodeToString(jtiRaw),
 		"iat": at.Unix(),
 		"exp": at.Add(i.ttl).Unix(),
 	}

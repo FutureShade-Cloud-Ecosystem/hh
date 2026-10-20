@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityAuthMethodsResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPersonaRequest, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
+import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityAuthMethodsResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPersonaRequest, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentitySignOutRequest, IdentitySignOutResponse, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -141,6 +141,21 @@ export async function identityPersona(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "identityPersona",
+  });
+}
+
+export async function identitySignOut(
+  client: ApiClient,
+  body: IdentitySignOutRequest,
+  call?: ApiCallOptions
+): Promise<Result<IdentitySignOutResponse>> {
+  return client.request<IdentitySignOutResponse>({
+    method: "POST",
+    path: "/api/v1/auth/sign-out",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "identitySignOut",
   });
 }
 
