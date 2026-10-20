@@ -16,6 +16,9 @@ package assist
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -336,4 +339,129 @@ func (r *Repository) Staff(ctx context.Context) ([]StaffRow, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// -- assist_model_aliases and the conversation log (0416) ---------------------------------------
+
+var (
+	_ AliasStore        = (*Repository)(nil)
+	_ ConversationStore = (*Repository)(nil)
+)
+
+// Aliases reads the alias table. It is read on every provider call, so a changed row applies to the
+// next request.
+func (r *Repository) Aliases(ctx context.Context) ([]AliasRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT alias, adapter_kind, base_url, model, enabled, licence, region
+		  FROM assist_model_aliases ORDER BY alias`)
+	if err != nil {
+		return nil, fmt.Errorf("assist: read aliases: %w", err)
+	}
+	defer rows.Close()
+	var out []AliasRow
+	for rows.Next() {
+		var a AliasRow
+		if err := rows.Scan(&a.Alias, &a.AdapterKind, &a.BaseURL, &a.Model, &a.Enabled, &a.Licence, &a.Region); err != nil {
+			return nil, fmt.Errorf("assist: scan aliases: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// NewConversation issues an opaque id bound to the user and the session.
+func (r *Repository) NewConversation(ctx context.Context, userID, sessionKey string) (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	id := "cv_" + hex.EncodeToString(raw[:])
+	if _, err := r.pool.Exec(ctx, `
+		INSERT INTO assist_conversations (id, user_id, session_key) VALUES ($1, $2::uuid, $3)`,
+		id, userID, sessionKey); err != nil {
+		return "", fmt.Errorf("assist: open conversation: %w", err)
+	}
+	return id, nil
+}
+
+// Exchanges returns the logged exchanges when the conversation exists and BOTH the user and the
+// session match, in the query itself. Any other case is a plain miss with no error: an id that is
+// unknown, malformed, someone else's, or from another sign in of the same user cannot be told apart.
+func (r *Repository) Exchanges(ctx context.Context, id, userID, sessionKey string) ([]Exchange, bool, error) {
+	if !validConversationID(id) || userID == "" || sessionKey == "" {
+		return nil, false, nil
+	}
+	var one int
+	err := r.pool.QueryRow(ctx, `
+		SELECT 1 FROM assist_conversations
+		 WHERE id = $1 AND user_id = $2::uuid AND session_key = $3`, id, userID, sessionKey).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("assist: read conversation: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT question, answer, ran, clarify
+		  FROM assist_conversation_exchanges
+		 WHERE conversation_id = $1 ORDER BY seq`, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("assist: read exchanges: %w", err)
+	}
+	defer rows.Close()
+	var out []Exchange
+	for rows.Next() {
+		var e Exchange
+		var ran, clarify []byte
+		if err := rows.Scan(&e.Question, &e.Answer, &ran, &clarify); err != nil {
+			return nil, false, fmt.Errorf("assist: scan exchange: %w", err)
+		}
+		if len(ran) > 0 {
+			_ = json.Unmarshal(ran, &e.Ran)
+		}
+		if len(clarify) > 0 && string(clarify) != "null" {
+			e.Clarify = &Clarify{}
+			if err := json.Unmarshal(clarify, e.Clarify); err != nil {
+				e.Clarify = nil
+			}
+		}
+		out = append(out, e)
+	}
+	return out, true, rows.Err()
+}
+
+// AppendExchange logs one exchange. The insert selects through the same user and session match, so
+// an append for a conversation that does not match writes nothing.
+func (r *Repository) AppendExchange(ctx context.Context, id, userID, sessionKey string, e Exchange) error {
+	if !validConversationID(id) || userID == "" || sessionKey == "" {
+		return nil
+	}
+	ran, err := json.Marshal(e.Ran)
+	if err != nil || string(ran) == "null" {
+		ran = []byte("[]")
+	}
+	var clarify any
+	if e.Clarify != nil {
+		if b, err := json.Marshal(e.Clarify); err == nil {
+			clarify = string(b)
+		}
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO assist_conversation_exchanges (conversation_id, question, answer, ran, clarify)
+		SELECT c.id, $4, $5, $6::jsonb, $7::jsonb
+		  FROM assist_conversations c
+		 WHERE c.id = $1 AND c.user_id = $2::uuid AND c.session_key = $3`,
+		id, userID, sessionKey, e.Question, e.Answer, string(ran), clarify)
+	if err != nil {
+		return fmt.Errorf("assist: log exchange: %w", err)
+	}
+	return nil
+}
+
+func validConversationID(id string) bool {
+	if len(id) != 35 || id[:3] != "cv_" {
+		return false
+	}
+	_, err := hex.DecodeString(id[3:])
+	return err == nil
 }
