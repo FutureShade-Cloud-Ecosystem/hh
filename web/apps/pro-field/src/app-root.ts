@@ -619,6 +619,11 @@ export class ProFieldApp extends HHElement {
       this.#account.pwConfirm = "";
       this.#account.name = "";
       this.#account.nameDirty = false;
+      this.#account.profileBusy = false;
+      this.#account.passwordBusy = false;
+    }
+    if (this.#section === "team") {
+      this.#team.inviteBusy = false;
     }
     this.#section = to;
     this.#order = null;
@@ -679,8 +684,9 @@ export class ProFieldApp extends HHElement {
     account.profileError = "";
     this.requestUpdate();
     const answer = await tenantAuth.tenantUpdateMe(this.#client, { name: account.name.trim() });
-    if (this.#section !== "account" || this.#session.profile() === null) return;
     account.profileBusy = false;
+    this.#account.profileBusy = false;
+    if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.me = answer.value as typeof account.me;
       account.nameDirty = false;
@@ -704,8 +710,9 @@ export class ProFieldApp extends HHElement {
     account.passwordError = "";
     this.requestUpdate();
     const answer = await tenantAuth.tenantChangePassword(this.#client, { current_password: account.pwCurrent, new_password: account.pwNew });
-    if (this.#section !== "account" || this.#session.profile() === null) return;
     account.passwordBusy = false;
+    this.#account.passwordBusy = false;
+    if (this.#section !== "account" || this.#session.profile() === null) return;
     if (answer.ok) {
       account.pwCurrent = "";
       account.pwNew = "";
@@ -799,8 +806,8 @@ export class ProFieldApp extends HHElement {
     this.#team.error = "";
     this.requestUpdate();
     const answer = await tenantTeam.tenantCreateInvite(this.#client, { email, role: this.#team.inviteRole as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
-    if (this.#section !== "team" || this.#session.profile() === null) return;
     this.#team.inviteBusy = false;
+    if (this.#section !== "team" || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#team.inviteEmail = "";
       const field = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=invite-email]");

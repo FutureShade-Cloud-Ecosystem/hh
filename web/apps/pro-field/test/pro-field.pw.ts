@@ -358,6 +358,73 @@ test.describe("phone", () => {
     expect(passwordCalls).toHaveLength(0);
   });
 
+  test("leaving a section during profile, password, or invite save does not leave the form stuck busy", async ({ page }) => {
+    await signIn(page, "owner");
+
+    let releaseProfile!: () => void;
+    const profileHeld = new Promise<void>((resolve) => {
+      releaseProfile = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await profileHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseProfile();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Summit Ridge owner");
+    await page.getByTestId("account-name").fill("Summit Ridge second");
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeEnabled();
+
+    let releasePassword!: () => void;
+    const passwordHeld = new Promise<void>((resolve) => {
+      releasePassword = resolve;
+    });
+    await page.route("**/api/v1/tenant/me/password", async (route) => {
+      await passwordHeld;
+      await route.continue();
+    });
+
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("another-password");
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releasePassword();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeEnabled();
+
+    let releaseInvite!: () => void;
+    const inviteHeld = new Promise<void>((resolve) => {
+      releaseInvite = resolve;
+    });
+    await page.route("**/api/v1/tenant/invites", async (route) => {
+      if (route.request().method() === "POST") {
+        await inviteHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await page.getByRole("button", { name: "Create invite" }).click();
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseInvite();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeEnabled();
+  });
+
   test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
