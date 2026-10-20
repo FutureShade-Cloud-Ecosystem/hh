@@ -544,12 +544,26 @@ func TestApply_AnAuditAnchorIsABoundLookup(t *testing.T) {
 // quote carries is its customer notes, which the public page prints, so a seeded note is written to the
 // customer, never a dealer's own remark about the quote's state or about how staff handle it.
 func TestDemoQuoteNotesAreForTheCustomer(t *testing.T) {
-	staffVoice := []string{"draft", "sent for review", "accepted by the customer", "ready to become", "at the till", "cod sale"}
+	staffVoice := []string{"draft", "sent for review", "accepted by the customer", "ready to become", "at the till", "cod sale", "convert it"}
+	// A note that opens with the quote's own state is a dealer's status remark, not a word to the customer.
+	staffOpeners := []string{"declined", "accepted."}
+	notes := map[string]string{}
 	for _, q := range demoQuotes {
-		low := strings.ToLower(q.Notes)
+		notes[q.Key] = q.Notes
+	}
+	for _, q := range contractorQuotes {
+		notes[q.Key] = q.Notes
+	}
+	for key, note := range notes {
+		low := strings.ToLower(note)
 		for _, w := range staffVoice {
 			if strings.Contains(low, w) {
-				t.Errorf("quote %s: customer note %q reads as a dealer's internal remark (%q)", q.Key, q.Notes, w)
+				t.Errorf("quote %s: customer note %q reads as a dealer's internal remark (%q)", key, note, w)
+			}
+		}
+		for _, w := range staffOpeners {
+			if strings.HasPrefix(low, w) {
+				t.Errorf("quote %s: customer note %q opens with the quote's state (%q)", key, note, w)
 			}
 		}
 	}
