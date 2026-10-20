@@ -102,7 +102,7 @@ export async function takeFirstStopEnRoute(page: Page): Promise<void> {
 
 /** From the run sheet: take stop `n` (1 based) loaded, en route and delivered, and come back to the run sheet. */
 export async function deliverStop(page: Page, n: number): Promise<void> {
-  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.locator("[data-stop]").filter({ has: page.locator("[data-stop-no]", { hasText: String(n) }) }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
@@ -115,7 +115,7 @@ export async function deliverStop(page: Page, n: number): Promise<void> {
 
 /** From the run sheet: take stop `n` en route, then record it as not delivered with a reason. */
 export async function failStop(page: Page, n: number, reason: string): Promise<void> {
-  await page.locator("[data-stop]").nth(n - 1).click();
+  await page.locator("[data-stop]").filter({ has: page.locator("[data-stop-no]", { hasText: String(n) }) }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await page.getByRole("button", { name: "Mark en route" }).click();
   await page.getByRole("button", { name: "Could not deliver" }).click();

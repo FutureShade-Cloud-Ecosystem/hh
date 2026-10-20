@@ -280,7 +280,7 @@ test("loadOrderLine names the last stop in delivery order first (back of truck) 
   );
 });
 
-test("groupStops partitions stops into LOADED AT THE YARD, DELIVERED, NEXT STOP, and WAITING in stop order", () => {
+test("groupStops partitions stops into NEXT STOP, LOADED AT THE YARD, WAITING, and DELIVERED in board order", () => {
   const grouped = groupStops([
     { id: "s4", stop_no: 4, status: "READY" },
     { id: "s2", stop_no: 2, status: "EN_ROUTE" },
@@ -291,23 +291,28 @@ test("groupStops partitions stops into LOADED AT THE YARD, DELIVERED, NEXT STOP,
   assert.deepEqual(
     grouped.map((g) => [g.heading, g.stops.map((s) => s.id)]),
     [
-      ["LOADED AT THE YARD", ["s3"]],
-      ["DELIVERED", ["s1", "s5"]],
       ["NEXT STOP", ["s2"]],
+      ["LOADED AT THE YARD", ["s3"]],
       ["WAITING", ["s4"]],
+      ["DELIVERED", ["s1", "s5"]],
     ],
   );
 });
 
-test("stalenessWords includes the last pull clock time in the dealer's house zone", () => {
-  const pullInstant = new Date(Date.UTC(2026, 6, 3, 15, 30)).toISOString();
+test("stalenessWords includes the last pull clock time in the dealer's house zone using glossary 12-hour AM/PM form with a plain space", () => {
+  const morningInstant = new Date(Date.UTC(2026, 6, 3, 15, 30)).toISOString();
+  const eveningInstantUtc = new Date(Date.UTC(2026, 6, 3, 0, 30)).toISOString();
   assert.equal(
-    stalenessWords({ neverPulled: false, ageMs: 10_000, lastPullAt: pullInstant }, "America/Toronto"),
-    "Pulled just now · as of 11:30",
+    stalenessWords({ neverPulled: false, ageMs: 10_000, lastPullAt: morningInstant }, "America/Toronto"),
+    "Pulled just now · as of 11:30 AM",
   );
   assert.equal(
-    stalenessWords({ neverPulled: false, ageMs: 180_000, lastPullAt: pullInstant }, "America/Los_Angeles"),
-    "Pulled 3 min ago · as of 08:30",
+    stalenessWords({ neverPulled: false, ageMs: 180_000, lastPullAt: morningInstant }, "America/Los_Angeles"),
+    "Pulled 3 min ago · as of 8:30 AM",
   );
+  const eveningWords = stalenessWords({ neverPulled: false, ageMs: 5_000, lastPullAt: eveningInstantUtc }, "America/Toronto");
+  assert.equal(eveningWords, "Pulled just now · as of 8:30 PM");
+  assert.equal(eveningWords.includes("\u202f"), false);
+  assert.equal(eveningWords.includes("\u00a0"), false);
   assert.equal(stalenessWords({ neverPulled: true, ageMs: null }), "Never pulled");
 });

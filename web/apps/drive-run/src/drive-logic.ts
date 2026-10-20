@@ -119,13 +119,13 @@ export function stopsInOrder<T extends { stop_no?: number; created_at?: string }
   });
 }
 
-export type StopGroupHeading = "LOADED AT THE YARD" | "DELIVERED" | "NEXT STOP" | "WAITING";
+export type StopGroupHeading = "NEXT STOP" | "LOADED AT THE YARD" | "WAITING" | "DELIVERED";
 
 export const STOP_GROUP_ORDER: readonly StopGroupHeading[] = [
-  "LOADED AT THE YARD",
-  "DELIVERED",
   "NEXT STOP",
+  "LOADED AT THE YARD",
   "WAITING",
+  "DELIVERED",
 ];
 
 export interface StopGroup<T> {
@@ -208,6 +208,21 @@ export function formatTime(ts: string | null | undefined, zone: string): string 
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-CA", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+}
+
+/** A glossary clock time in the dealer's zone ("8:30 PM"), with a plain space before AM or PM. */
+export function formatGlossaryTime(ts: string | null | undefined, zone: string): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hour: "numeric",
+    minute: "2-digit",
+  })
+    .format(d)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

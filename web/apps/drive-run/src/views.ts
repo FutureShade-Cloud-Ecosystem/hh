@@ -23,6 +23,7 @@ import {
   canRecordFailure,
   closeLine,
   driverActions,
+  formatGlossaryTime,
   formatTime,
   groupStops,
   loadOrderLine,
@@ -78,7 +79,7 @@ export function stalenessWords(
   if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
   const minutes = Math.floor(staleness.ageMs / 60_000);
   const relative = minutes < 1 ? "Pulled just now" : `Pulled ${minutes} min ago`;
-  const clock = formatTime(staleness.lastPullAt, zone);
+  const clock = formatGlossaryTime(staleness.lastPullAt, zone);
   return clock !== "" ? `${relative} · as of ${clock}` : relative;
 }
 

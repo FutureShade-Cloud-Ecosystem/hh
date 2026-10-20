@@ -276,10 +276,12 @@ test("UX-17b: my run shows NEXT STOP, LOADED AT THE YARD, WAITING and DELIVERED 
     const nextStopGroup = card.locator('[data-stop-group="NEXT STOP"]');
     const waitingGroup = card.locator('[data-stop-group="WAITING"]');
 
-    await expect(loadedGroup.locator("[data-group-head]")).toHaveText("LOADED AT THE YARD");
-    await expect(deliveredGroup.locator("[data-group-head]")).toHaveText("DELIVERED");
-    await expect(nextStopGroup.locator("[data-group-head]")).toHaveText("NEXT STOP");
-    await expect(waitingGroup.locator("[data-group-head]")).toHaveText("WAITING");
+    await expect(card.locator("[data-group-head]")).toHaveText([
+      "NEXT STOP",
+      "LOADED AT THE YARD",
+      "WAITING",
+      "DELIVERED",
+    ]);
 
     await expect(deliveredGroup.locator("[data-stop]")).toHaveCount(1);
     await expect(deliveredGroup.locator("[data-stop]")).toContainText("Coastline Hardscape (demo)");
@@ -293,7 +295,7 @@ test("UX-17b: my run shows NEXT STOP, LOADED AT THE YARD, WAITING and DELIVERED 
     await expect(waitingGroup.locator("[data-stop]")).toHaveCount(1);
     await expect(waitingGroup.locator("[data-stop]")).toContainText("Valley Municipal Works (demo)");
 
-    await expect(page.locator("[data-staleness]")).toContainText(/as of \d{2}:\d{2}/);
+    await expect(page.locator("[data-staleness]")).toContainText("as of 8:30 PM");
   }
 });
 
