@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,7 +70,7 @@ func TestAliases_StubSeedModelNeverReachesAVendor(t *testing.T) {
 
 func TestAliases_ResolveRules(t *testing.T) {
 	vendor := newModelCapture(t)
-	withKey := ModelConfig{AnthropicKey: "k", AnthropicBaseURL: vendor.srv.URL, GatewayURL: vendor.srv.URL + "/v1", GatewayKey: "gk", DealerTag: "tag"}
+	withKey := ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: vendor.srv.URL, GatewayURL: vendor.srv.URL + "/v1", GatewayKey: redact.NewSecret("gk"), DealerTag: "tag"}
 	noKey := ModelConfig{AnthropicBaseURL: vendor.srv.URL}
 
 	cases := []struct {
@@ -111,7 +112,7 @@ func TestAliases_ResolveRules(t *testing.T) {
 // settings row that names a vendor model.
 func TestAliases_ServiceNeverSendsAnUnknownModel(t *testing.T) {
 	vendor := newModelCapture(t)
-	router := NewRouter(StaticAliases(DefaultAliases()), ModelConfig{AnthropicKey: "k", AnthropicBaseURL: vendor.srv.URL}, NewStubProvider(), nil)
+	router := NewRouter(StaticAliases(DefaultAliases()), ModelConfig{AnthropicKey: redact.NewSecret("k"), AnthropicBaseURL: vendor.srv.URL}, NewStubProvider(), nil)
 	for _, model := range []string{"hos-stub-1", "claude-sonnet-4-5", "gpt-anything", "tanyai-nonesuch"} {
 		set := StaticSettings{KeyProvider: ProviderAnthropic, KeyModel: model}
 		svc := chatService(NewStubProvider(), &fakeLedger{}, newFakeLimits(), set, seededReaders()).WithRouter(router)
@@ -132,7 +133,7 @@ func TestAliases_ServiceNeverSendsAnUnknownModel(t *testing.T) {
 func TestAliases_GatewayAliasCarriesConfiguredKeyAndTag(t *testing.T) {
 	srv := newStrictOpenAI(t, "gateway-key", "dealer-7", oaiTextReply("from the gateway"))
 	rows := []AliasRow{{Alias: AliasMain, AdapterKind: AdapterOpenAICompatible, Model: "open-1", Enabled: true}}
-	router := NewRouter(StaticAliases(rows), ModelConfig{GatewayURL: srv.URL(), GatewayKey: "gateway-key", DealerTag: "dealer-7"}, NewStubProvider(), nil)
+	router := NewRouter(StaticAliases(rows), ModelConfig{GatewayURL: srv.URL(), GatewayKey: redact.NewSecret("gateway-key"), DealerTag: "dealer-7"}, NewStubProvider(), nil)
 	set := StaticSettings{KeyProvider: ProviderRouted, KeyRoute: AliasMain}
 	svc := chatService(NewStubProvider(), &fakeLedger{}, newFakeLimits(), set, seededReaders()).WithRouter(router)
 	ans, err := svc.Ask(context.Background(), manager(), "hello there", nil)
@@ -168,7 +169,7 @@ func TestAliases_AdminSettingsAreAliasesOnly(t *testing.T) {
 }
 
 func TestAliases_ConfigNeverPrintsACredential(t *testing.T) {
-	cfg := ModelConfig{AnthropicKey: "sk-secret-a", GatewayKey: "sk-secret-b", GatewayURL: "http://gw", DealerTag: "t"}
+	cfg := ModelConfig{AnthropicKey: redact.NewSecret("sk-secret-a"), GatewayKey: redact.NewSecret("sk-secret-b"), GatewayURL: "http://gw", DealerTag: "t"}
 	for _, s := range []string{cfg.String(), strings.TrimSpace(fmtAll(cfg))} {
 		if strings.Contains(s, "sk-secret") {
 			t.Fatalf("config formats with a credential: %q", s)

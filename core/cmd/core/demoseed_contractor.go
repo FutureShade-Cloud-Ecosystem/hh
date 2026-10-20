@@ -174,9 +174,9 @@ var contractorInvoices = []cInvoice{
 var contractorQuotes = []cQuote{
 	{"CQ1", 2, "SENT", 5, 30, "Pricing holds for the quote's validity.",
 		[]cLine{{"P02", 500}, {"P06", 14}, {"P07", 9}}},
-	{"CQ2", 0, "ACCEPTED", 12, 30, "Accepted. Convert it to an order when the site is ready.",
+	{"CQ2", 0, "ACCEPTED", 12, 30, "Thank you for accepting. We will turn this into an order when your site is ready.",
 		[]cLine{{"P01", 900}, {"P10", 30}}},
-	{"CQ3", 1, "LOST", 20, 0, "Declined. The pour dates moved.",
+	{"CQ3", 1, "LOST", 20, 0, "Thank you for asking. We are glad to requote once your pour dates are set.",
 		[]cLine{{"P03", 400}}},
 }
 

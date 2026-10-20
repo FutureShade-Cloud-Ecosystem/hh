@@ -336,6 +336,8 @@ test('the breadcrumb reads App, then surface, the band\u2019s own words', () => 
 test('initials come from the role label words, never a person name', () => {
   assert.equal(initialsOf('Yard Team'), 'YT');
   assert.equal(initialsOf('driver'), 'D');
+  assert.equal(initialsOf('Sales (demo), Sales'), 'S', 'the name before the comma, no parenthetical');
+  assert.equal(initialsOf('Dana Reyes, General Manager'), 'DR');
   assert.equal(initialsOf(''), '');
   assert.equal(initialsOf('   '), '');
 });

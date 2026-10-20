@@ -8,6 +8,7 @@
 // home bento (repository hardscapeos_dibbits, read only; see PROVENANCE.md),
 // narrowed to the read-only landing this first slice builds.
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { stampDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { needsLink } from "./landing-links.js";
 import { sinceWords } from "./drivers-logic.js";
 import type { NeedsRow, ReceivingRow, Shortage, WidgetDatum, WidgetView } from "./manager-api.js";
@@ -282,9 +283,10 @@ export function taskStatusWord(status: string): string {
 /** Month words for an expected day the server sends as YYYY-MM-DD. */
 const MONTH_WORD = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
-/** An ISO day as words ("2026-10-14" becomes "Oct 14"); unparsable answers "". */
+/** An ISO day or timestamp as words ("2026-10-14" becomes "Oct 14"); unparsable answers "". */
 export function dateWords(day: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day.trim());
+  // A date only value is already a calendar day; a timestamp is the day it falls on in the dealer's zone.
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(stampDay(day));
   if (m === null) return "";
   const month = Number.parseInt(m[2], 10);
   const date = Number.parseInt(m[3], 10);

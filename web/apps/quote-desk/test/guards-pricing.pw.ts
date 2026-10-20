@@ -4,6 +4,7 @@
 // the dead panel, no confirmation write under a session that has ended, no late list over a newer one.
 // Take the guard away (test/mutants.json names the exact edit) and the test goes red.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { countRequests, hold, quiet, settle } from "./switch-helpers.js";
 import { openPricing, openTab, pricingState, setMode, signIn } from "./pricing-helpers";
 
@@ -37,6 +38,7 @@ async function closePricing(page: Page): Promise<void> {
 }
 
 async function signOutAway(page: Page): Promise<void> {
+  await openAccountMenu(page, "dispatch");
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
 }
@@ -300,6 +302,7 @@ test("P2-2 sign out waits for a confirmed pricing save still out and its confirm
   await held.asked;
   // Sign out starts while the confirmed save is still out: it waits, so the save and the confirmation
   // its answer owes both land while the session stands.
+  await openAccountMenu(page, "dispatch");
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await held.release();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible({ timeout: 10000 });
@@ -317,6 +320,7 @@ test("P2-2 sign out sends a floor confirmation the log write refused", async ({ 
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-retry-log")).toBeVisible();
   // The first sign out press warns and holds; the second goes, and the wait sends the owed row.
+  await openAccountMenu(page, "dispatch");
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page.getByTestId("pricing-leave-warning")).toBeVisible();
   await signOutAway(page);

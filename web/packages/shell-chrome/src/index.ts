@@ -10,6 +10,7 @@
 // its own (PinStorage) so the browser copy and the Tauri shells carry their
 // own persistence, and the package never reaches for a platform global.
 export * from './shell-state.js';
+export * from './framed-band.js';
 export * from './shell-banner.js';
 export * from './shell-cards.js';
 export * from './shell-header.js';

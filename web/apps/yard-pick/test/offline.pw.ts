@@ -87,18 +87,18 @@ function payloadOf(op: unknown): Record<string, unknown> {
 /** Claims SO-1039 offline, starts it and records the pick with a short line: all three wait in the outbox. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
-  // Tapping the card claims and starts the pick in one step: both wait in the outbox.
+  // Opening the card is read-only; taking the pick claims and starts it in the outbox.
   await page.locator("[data-pick-card]", { hasText: "SO-1039" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
+  await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+  await page.getByRole("button", { name: "Take this pick" }).click();
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   for (const what of ["Retaining wall block", "HPB bedding sand"]) {
     await page.locator("[data-line]", { hasText: what }).locator(".line-row").click();
-    await page.getByRole("button", { name: /^All \d+/ }).click();
-    await page.getByRole("button", { name: "Done" }).click();
   }
   // The short line: one of twelve off the shelf, with its reason.
-  await page.locator("[data-line]", { hasText: "Paver edge restraint" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Paver edge restraint" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
@@ -201,7 +201,7 @@ test("offline, the pick record and a shortage report drain in order and land cle
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await platformWord(page, false, "You're offline");
   // The short line: two of forty six flagstone, with its reason.
-  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Flagstone" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
@@ -259,7 +259,7 @@ test("offline, a shortage reported before the record does not make the record co
   await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   // Then records the pick.
-  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Flagstone" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
@@ -274,3 +274,41 @@ test("offline, a shortage reported before the record does not make the record co
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
+
+for (const vp of [
+  { width: 390, height: 844 },
+  { width: 1024, height: 768 },
+]) {
+  test(`offline queue says Offline. Showing what you pulled at <time>, and Sent to the counter replaces Waiting to send after reconnect at ${vp.width}x${vp.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(vp);
+    await loadBoard(page);
+    await platformWord(page, false, "You're offline");
+    await expect(page.locator("[data-staleness]")).toContainText(
+      "Offline. Showing what you pulled at ",
+    );
+    await expect(page.locator("[data-staleness]")).toHaveText(
+      /^Offline\. Showing what you pulled at \d{1,2}:\d{2} (AM|PM)$/,
+    );
+
+    await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+    await page
+      .locator("[data-line]", { hasText: "Flagstone" })
+      .locator(".line-row")
+      .click();
+    await page.getByRole("button", { name: "Save pick" }).click();
+    await expect(page.locator("[data-pick-pending]")).toContainText(
+      "Waiting to send",
+    );
+    await expect(page.locator("[data-pick-sent]")).toHaveCount(0);
+
+    await platformWord(page, true);
+    await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
+    await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+    await expect(page.locator("[data-pick-sent]")).toContainText(
+      "Sent to the counter",
+    );
+  });
+}

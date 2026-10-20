@@ -5,6 +5,7 @@
 // restart) is dead, the till is nobody's, and a fresh sign in works. This is
 // the proof behind the testers' page's "a restart signs everyone out".
 import { POINT_LOMA_ID, apiPicture, expect, shotParts, signIn, staffGet, test } from "./helpers.js";
+import { closeAccountMenu, openAccountMenu } from "../account-menu";
 
 test("the pre restart bearer is refused, and a fresh sign in works", async ({ page }, testInfo) => {
   const prior = process.env.CT_PRIOR_TOKEN ?? "";
@@ -23,7 +24,9 @@ test("the pre restart bearer is refused, and a fresh sign in works", async ({ pa
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await signIn(page, "Sales");
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   // The picture holds both halves of the claim: the core's refusal of the
   // pre restart bearer, as the browser shows it, and the till signed back in,
   // loaded, as a fresh sign in leaves it.

@@ -58,14 +58,13 @@ test("a quote is viewed by its token: header, lines, totals", async ({ page }) =
   const rows = page.locator("tbody tr");
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0)).toContainText("Bluff Natural Step");
-  await expect(rows.nth(0)).toContainText("1.0000");
-  await expect(rows.nth(0)).toContainText("PC");
+  await expect(rows.nth(0)).toContainText("1 pc");
   await expect(rows.nth(0)).toContainText("$20.57");
   await expect(rows.nth(1)).toContainText("Tidewater Polymeric Sand");
-  await expect(rows.nth(1)).toContainText("BAG");
+  await expect(rows.nth(1)).toContainText("1 bag");
   await expect(rows.nth(1)).toContainText("$22.08");
   await expect(rows.nth(2)).toContainText("Black Mulch");
-  await expect(rows.nth(2)).toContainText("CYD");
+  await expect(rows.nth(2)).toContainText("1 cu yd");
   await expect(rows.nth(2)).toContainText("$54.00");
 
   await expect(page.getByText("Subtotal $96.65")).toBeVisible();
@@ -1613,7 +1612,7 @@ test("the title shows the quote number once, and the time is plain words", async
   await expect(page.getByText("##Q-6")).toHaveCount(0);
   const sub = page.locator(".sub").first();
   await expect(sub).toContainText("Prepared for Fenwick Builders Ltd");
-  await expect(sub).toContainText(/last updated [A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+/);
+  await expect(sub).toContainText(/last updated [A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M/);
   await expect(sub).not.toContainText("as of");
   await expect(sub).not.toContainText(/\d{4}-\d{2}-\d{2}/);
   await expect(sub).not.toContainText(/\d:\d{2}:\d{2}/);
@@ -1922,10 +1921,11 @@ test("a quote without rep info renders no rep card", async ({ page }) => {
 
 test("the payment selector offers ACH first, with card only when the dealer configured a surcharge", async ({ page }) => {
   await page.goto("/?t=q-terms-28");
-  const radios = page.locator(".paymentrow input[type=\"radio\"][name=\"payment\"]");
-  // No surcharge configured: the card radio is absent, only ACH is offered.
-  await expect(radios).toHaveCount(1);
-  await expect(radios.first()).toHaveValue("ach");
+  // No surcharge configured: ACH is the only method, said as one line, not a radio group of one.
+  await expect(page.locator(".paymentrow")).toBeVisible();
+  await expect(page.locator(".paymentrow input[type=\"radio\"]")).toHaveCount(0);
+  await expect(page.locator(".paymentrow")).not.toHaveAttribute("role", "radiogroup");
+  await expect(page.locator(".paymentrow")).toContainText("ACH transfer");
 
   await page.goto("/?t=q-card-91");
   await expect(page.locator(".paymentrow input[type=\"radio\"][name=\"payment\"]")).toHaveCount(2);
@@ -2087,4 +2087,34 @@ test("the new surface elements ride the design system's tokens: no raw px, no li
     if (value === null) continue;
     expect(value.borderTopLeftRadius, `${name} radius must come from a token`).toMatch(/^(0px|\d+(\.\d+)?(px|rem))$/);
   }
+});
+
+test("the customer page: quantities carry their unit with no trailing zeros, dates in the one family", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText("1 pc");
+  await expect(rows.nth(1)).toContainText("1 bag");
+  await expect(rows.nth(2)).toContainText("1 cu yd");
+  await expect(page.locator("tbody")).not.toContainText(".0000");
+  const sub = page.getByText(/valid until /);
+  await expect(sub).toContainText(/valid until [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  await expect(sub).toContainText(/last updated [A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M/);
+});
+
+test("at phone width the reason Accept is disabled sits right by the button, inside the screen with it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?t=q-demo-25-hint");
+  const accept = page.getByRole("button", { name: "Accept quote" });
+  await expect(accept).toBeDisabled();
+  await accept.evaluate((el) => el.scrollIntoView({ block: "end" }));
+  const hint = page.locator("#accept-hint");
+  await expect(hint).toBeVisible();
+  const [h, b] = await Promise.all([hint.boundingBox(), accept.boundingBox()]);
+  expect(h).not.toBeNull();
+  expect(b).not.toBeNull();
+  const vh = 844;
+  expect((h as { y: number; height: number }).y + (h as { y: number; height: number }).height).toBeLessThanOrEqual(vh);
+  expect(Math.abs((h as { y: number }).y - (b as { y: number; height: number }).y - (b as { height: number }).height) < 80 ||
+    Math.abs((b as { y: number }).y - (h as { y: number; height: number }).y - (h as { height: number }).height) < 80).toBe(true);
 });
