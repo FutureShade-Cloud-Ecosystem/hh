@@ -308,3 +308,30 @@ func TestIntegration_ReversalGL_ADeadRowPostsOnceAfterBootAndOnceWhenRequeuedTwi
 		t.Fatalf("after requeueing again the reversal has %d journals, want still 1", n)
 	}
 }
+
+// A multi invoice original reverses its full amount against AR in one journal, as the subledger's contra rows
+// (one per allocation) sum to the same figure.
+func TestIntegration_ReversalGL_AMultiInvoicePaymentReversesItsFullAmount(t *testing.T) {
+	w := newReversalGLWorld(t)
+	a, b := w.r.invoice("RGMA", 1_000_000), w.r.invoice("RGMB", 1_000_000)
+	p, err := w.r.repo.Pay(context.Background(), w.r.custID, "CARD", fmt.Sprintf("gw-rg-%d", time.Now().UnixNano()),
+		[]payments.Allocation{{InvoiceID: a, AmountCents: 6_000}, {InvoiceID: b, AmountCents: 4_000}})
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	w.drain()
+	rev := w.reverse(p.ID)
+	keys := caseKeys(p.ID, rev)
+	w.cleanupJournals(keys, nil)
+	w.drain()
+	w.verdict(t, "multi invoice card", p.ID, keys, nil)
+	var amt int64
+	if err := w.r.obs.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(l.debit_cents), 0) FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+		  WHERE j.idempotency_key = 'payment.reversed:'||$1`, rev).Scan(&amt); err != nil {
+		t.Fatalf("read the reversal: %v", err)
+	}
+	if amt != 10_000 {
+		t.Errorf("the reversal journal debits AR %d, want the full 10000", amt)
+	}
+}
