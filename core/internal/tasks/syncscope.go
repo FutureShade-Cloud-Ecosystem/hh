@@ -736,6 +736,12 @@ func yardWriteRule(hasStatus bool, status string, photo, stageLegs bool, claimed
 				return ErrCancelNotAllowed
 			}
 			return nil
+		default:
+			// PUSHED and QUEUED (and any status this switch does not name): a move on a held pick that is not
+			// the holder's takes work away from them, so it is the holder's too (UX-76b, item 67). The state
+			// machine offers no way back to QUEUED or PUSHED from a claimed pick, but it is the lock-time
+			// holder check, not the matrix, that must answer, so a stranger gets the holder words.
+			holders = true
 		}
 	}
 	if !holders {
