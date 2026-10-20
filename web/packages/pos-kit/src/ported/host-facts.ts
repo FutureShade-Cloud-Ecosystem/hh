@@ -67,6 +67,7 @@ export function houseDayInZone(zone: string, now: Date = new Date()): string {
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIMESTAMP_PREFIX = /^\d{4}-\d{2}-\d{2}[T ]/;
+const ZONE_DESIGNATOR = /(Z|[+-]\d{2}(:?\d{2})?)$/i;
 
 /**
  * The calendar day a wire value names, in the dealer's served zone. A date only value ("2026-01-31")
@@ -79,7 +80,8 @@ export function stampDay(stamp: string | null | undefined): string {
   const trimmed = stamp.trim();
   if (DATE_ONLY.test(trimmed)) return trimmed;
   if (TIMESTAMP_PREFIX.test(trimmed)) {
-    const ms = Date.parse(trimmed);
+    // A stamp with no zone designator is the core's UTC clock, never the machine's.
+    const ms = Date.parse(ZONE_DESIGNATOR.test(trimmed) ? trimmed : `${trimmed.replace(" ", "T")}Z`);
     if (!Number.isNaN(ms)) return houseDay(new Date(ms));
   }
   return trimmed.slice(0, 10);

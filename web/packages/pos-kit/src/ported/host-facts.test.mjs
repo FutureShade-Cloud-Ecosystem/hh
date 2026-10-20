@@ -55,6 +55,7 @@ test('a date only value stays its calendar day; a timestamp reads as its day in 
   serveHouseZoneFrom({ business_zone: 'America/Los_Angeles' });
   assert.equal(stampDay('2026-07-03'), '2026-07-03');
   assert.equal(stampDay(PACIFIC_EVENING.toISOString()), '2026-07-02');
+  assert.equal(stampDay('2026-07-03T04:30:00'), '2026-07-02');
   assert.equal(stampDay(''), '');
   assert.equal(stampDay(null), '');
   assert.equal(stampDay(undefined), '');
