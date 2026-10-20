@@ -211,3 +211,18 @@ test("a stop the test moved first comes back superseded, and the server row is w
   await page.getByRole("button", { name: "Back to the run" }).click();
   await expect(page.getByRole("button", { name: "Review", exact: true })).toBeVisible();
 });
+
+// UX-61: the load list comes from the pulled stop row (the core's stops pull
+// carries each stop's lines), so a stop opened with no signal still lists what
+// comes off the truck, product and quantity with its unit.
+test("offline, a stop lists its load from the pulled row", async ({ page }) => {
+  await loadRunSheet(page);
+  await platformWord(page, false, "You're offline");
+  await page.locator("[data-stop]", { hasText: "Bluffside Builders" }).click();
+  const cargo = page.locator("[data-cargo]");
+  await expect(cargo.locator("[data-line]")).toHaveCount(2);
+  await expect(cargo.locator("[data-line]").first()).toContainText("Natural stone pavers, grey");
+  await expect(cargo.locator("[data-line]").first()).toContainText("120");
+  await expect(cargo.locator("[data-line]").nth(1)).toContainText("Polymeric sand, 50 lb bag");
+  await expect(cargo).not.toContainText("did not come through");
+});

@@ -13,7 +13,7 @@
 import type { TemplateResult } from "lit";
 import type { Branch, LandedCost, LandedCostBasis, LandedCostStatus, PurchasingPO, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
-import { poRows, refusalWords } from "../po/po-logic.js";
+import { houseDay, poRows, refusalWords } from "../po/po-logic.js";
 import { answerLost } from "../purch/purch-logic.js";
 import { LandedApi } from "./landed-api.js";
 import { BASES, buildCreate, landedRows, receivedOrders, retroCandidates, settleWords, statusWord, type Action } from "./landed-logic.js";
@@ -45,6 +45,7 @@ export class LandedDesk implements AreaDesk {
   constructor(api: LandedApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   // ---- loads ----------------------------------------------------------------------------------
@@ -382,9 +383,9 @@ export class LandedDesk implements AreaDesk {
     });
   }
 
-  /** Today, YYYY-MM-DD in the reader's own day: the stamps on screen read against it. */
+  /** Today in the house zone: the stamps on screen read against it. */
   #today(): string {
-    return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    return houseDay();
   }
 }
 

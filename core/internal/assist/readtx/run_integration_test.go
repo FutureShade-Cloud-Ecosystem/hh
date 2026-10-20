@@ -4,6 +4,7 @@ package readtx
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestRunCarriesASignedClaimToTheVerifier(t *testing.T) {
 	_, secret := testKey(t, admin)
 	staffURL, proURL := loginPasswords(t, admin)
 	rs, err := Open(ctxT(t), Config{
-		ReaderURL: NewSecret(staffURL), ProReaderURL: NewSecret(proURL), ClaimsKey: NewSecret(secret),
+		ReaderURL: redact.NewSecret(staffURL), ProReaderURL: redact.NewSecret(proURL), ClaimsKey: redact.NewSecret(secret),
 	})
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -64,7 +65,7 @@ func TestRunWritesNothingAndLeavesNoClaimBehind(t *testing.T) {
 	admin := connect(t, gateURL(t))
 	_, secret := testKey(t, admin)
 	staffURL, _ := loginPasswords(t, admin)
-	rs, err := Open(ctxT(t), Config{ReaderURL: NewSecret(staffURL), ClaimsKey: NewSecret(secret)})
+	rs, err := Open(ctxT(t), Config{ReaderURL: redact.NewSecret(staffURL), ClaimsKey: redact.NewSecret(secret)})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestOpenErrorsNeverCarryTheURLOrTheKey(t *testing.T) {
 	_, secret := testKey(t, admin)
 	roles := RolesFor(currentDatabase(t, admin))
 	bad := withUser(t, gateURL(t), roles.Login, "CANARYPASSWORD")
-	_, err := Open(ctxT(t), Config{ReaderURL: NewSecret(bad), ClaimsKey: NewSecret(secret)})
+	_, err := Open(ctxT(t), Config{ReaderURL: redact.NewSecret(bad), ClaimsKey: redact.NewSecret(secret)})
 	if err == nil {
 		t.Fatal("a wrong password opened")
 	}
@@ -100,7 +101,7 @@ func TestOpenErrorsNeverCarryTheURLOrTheKey(t *testing.T) {
 			t.Errorf("open error carries %q", s[:6])
 		}
 	}
-	_, err = Open(ctxT(t), Config{ReaderURL: NewSecret("postgres://u:CANARYPASSWORD@:::bad"), ClaimsKey: NewSecret(secret)})
+	_, err = Open(ctxT(t), Config{ReaderURL: redact.NewSecret("postgres://u:CANARYPASSWORD@:::bad"), ClaimsKey: redact.NewSecret(secret)})
 	if err == nil || strings.Contains(err.Error(), "CANARYPASSWORD") {
 		t.Errorf("unparseable URL error: %v", err)
 	}

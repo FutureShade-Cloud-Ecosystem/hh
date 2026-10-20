@@ -108,10 +108,10 @@ test('drop: the rows are a listbox with ONE tab stop, and the exit is wired to t
 // ── Enter takes the top hit; a SCAN never consults the list ────────────────────────────────────
 
 test('drop: a TYPED Enter that misses the exact resolve commits the top row', () => {
-  assert.match(scanSrc, /enterMissOutcome\(gaps, code\.length\) === 'fall-through-to-search'/);
+  assert.match(scanSrc, /enterMissOutcome\(gaps, code\.length, code\) === 'fall-through-to-search'/);
   assert.match(scanSrc, /new CustomEvent\('pos-term-commit-top'/,
     'the box hands the moment to the host: it does not own the list, so it may not pick from it');
-  assert.match(terminalSrc, /@pos-term-commit-top=\$\{\(\) => this\.commitTopHit\(\)\}/);
+  assert.match(terminalSrc, /@pos-term-commit-top=\$\{\(e: CustomEvent\) => this\.commitTopHit\(e\.detail\)\}/);
   assert.match(terminalSrc, /if \(!drop \|\| !top \|\| !drop\.commitTop\?\.\(\)\) return;/,
     'no hit means no commit: Enter never invents a product');
   assert.match(scanSrc, /commitDone\(msg: string\): void/, 'and the field ends exactly as it does after a scan');
@@ -220,3 +220,11 @@ test('drop: browsing is the EXCEPTION path: one disclosure, and the results flip
   assert.match(browse.slice(0, 2600), /<hos-pos-product-grid/, 'and the full catalogue keeps every capability it had');
   assert.match(terminalSrc, /\.externalTerm=\$\{this\.lookupTerm\}/, 'still ONE field feeding both surfaces');
 });
+
+test('drop: a search row with zero or negative branch stock reads Out of stock here in red, never a negative count', () => {
+  assert.match(dropSrc, /onHandStatus\(h\.on_hand_branch\)/, 'the row formats branch stock through onHandStatus');
+  assert.match(dropSrc, /\.meta \.out \{\s*\n\s*color: var\(--hos-safety-red\);/, 'out-of-stock label wears the red token');
+  assert.match(dropSrc, /stock\.tone === 'out'[\s\S]*?<span class="out">\$\{stock\.label\}<\/span>/, 'zero or negative stock renders the out-of-stock span');
+  assert.ok(!/\$\{onHand\} on hand/.test(dropSrc), 'no raw onHand interpolation that could print a negative count');
+});
+

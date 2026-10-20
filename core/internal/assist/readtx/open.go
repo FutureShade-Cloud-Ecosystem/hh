@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -60,7 +61,7 @@ type opened struct {
 	pool   *pgxpool.Pool
 }
 
-func openOne(ctx context.Context, url Secret, audience string, signer *Signer, label string) (opened, error) {
+func openOne(ctx context.Context, url redact.Secret, audience string, signer *Signer, label string) (opened, error) {
 	pc, err := pgxpool.ParseConfig(url.Reveal())
 	if err != nil {
 		return opened{}, fmt.Errorf("readtx: the %s reader URL does not parse", label)

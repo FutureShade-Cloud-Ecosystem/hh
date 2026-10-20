@@ -1,4 +1,4 @@
-package readtx
+package redact
 
 import (
 	"encoding/json"
@@ -55,45 +55,5 @@ func TestSecretRevealReturnsTheValueAndEmptyIsEmpty(t *testing.T) {
 	var zero Secret
 	if !zero.IsEmpty() || NewSecret("").IsEmpty() == false || NewSecret("x").IsEmpty() {
 		t.Fatal("IsEmpty wrong")
-	}
-}
-
-// Every type in this package that holds a Secret, by value and by pointer, in
-// every verb: the table fails on a new holder that prints the value.
-func TestEveryHolderInThepackageFormatsWithoutTheSecret(t *testing.T) {
-	s := NewSecret(canary)
-	sg, err := NewSigner(NewSecret(canary + "-padding-to-length"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	holders := map[string]any{
-		"Secret":  s,
-		"Config":  Config{ReaderURL: s, ProReaderURL: s, ClaimsKey: s},
-		"Signer":  *sg,
-		"Reader":  Reader{audience: AudienceStaff, role: "r", signer: sg},
-		"Readers": Readers{Staff: &Reader{signer: sg}},
-		"anon unexported": struct {
-			k Secret
-			p *Secret
-		}{s, &s},
-		"slice": []Secret{s},
-		"map":   map[string]Secret{"k": s},
-	}
-	for name, h := range holders {
-		ptr := &h
-		for _, v := range []any{h, ptr, &holders} {
-			for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
-				out := fmt.Sprintf(verb, v)
-				if strings.Contains(out, "CANARY") || strings.Contains(out, "-padding-to-length") {
-					t.Errorf("%s under %s leaked: %q", name, verb, out)
-				}
-			}
-		}
-		if b, err := json.Marshal(h); err == nil && strings.Contains(string(b), "CANARY") {
-			t.Errorf("%s JSON leaked", name)
-		}
-	}
-	if NewSecret("").String() != "[secret unset]" || s.String() != "[secret set]" {
-		t.Error("String must say only set or unset")
 	}
 }

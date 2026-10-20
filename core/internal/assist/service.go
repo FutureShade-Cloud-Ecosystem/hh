@@ -9,7 +9,7 @@ package assist
 //	3. has THIS caller money left               → spend >= budget, refused as a plain sentence
 //	4. ask the provider, offering only (2)
 //	5. run any tool calls THROUGH THE REGISTRY, as the same caller
-//	6. ask the provider again for the sentence
+//	6. ask the provider again, with the results, until it answers in words (bounded)
 //	7. write the ledger row, always
 //
 // Step 5 is the one that matters. The provider's tool calls are UNTRUSTED INPUT, a model can name
@@ -20,18 +20,22 @@ package assist
 // for a command above the caller's tier gets ErrRefused; and either way the user gets a sentence,
 // not a stack trace.
 //
-// THE LOOP IS BOUNDED AT ONE TOOL ROUND. Not because a second round would be wrong, but because an
-// unbounded tool loop is an unbounded bill, and the first thing a pilot with a token budget must
-// not do is make its own budget unpredictable. One round answers all five commands. If a future
-// question genuinely needs two, that is a decision with a cost attached, and it should be made by
-// someone looking at the ledger.
+// THE LOOP IS BOUNDED, AT maxToolRounds. A question that needs a second lookup after the first
+// one's result gets it; a model that keeps asking is stopped at the bound and the answer is built
+// from the results already in hand. An unbounded tool loop is an unbounded bill, and the first
+// thing a pilot with a token budget must not do is make its own budget unpredictable.
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // Usage is what one exchange cost, reported back for the surfaces that may see it.
@@ -82,6 +86,11 @@ type Answer struct {
 	// that could not answer. `omitempty`, and nil on every answer that DID answer, an answer with
 	// numbers in it does not need a menu under it.
 	Suggest []string `json:"suggest,omitempty"`
+
+	// ConversationID is the opaque, server issued id of the conversation this exchange belongs to.
+	// The client sends it back on the next turn instead of its own history. Absent when the bearer
+	// has no session id or no store is wired.
+	ConversationID string `json:"conversation_id,omitempty"`
 }
 
 // LimitReachedMessage is the exact sentence an over-budget user sees. It is a constant so the test,
@@ -106,6 +115,22 @@ type Service struct {
 	staff    StaffLister
 	log      *slog.Logger
 
+	// convs is the append only exchange log behind conversation_id. Nil means no server kept
+	// conversations: every question is stateless.
+	convs ConversationStore
+
+	// router, when attached, chooses the provider PER REQUEST from the settings and the alias table.
+	// Without one the service uses its single provider, which is what every test double wants.
+	router *Router
+
+	// Slice 2 metering (meter.go): the spend and price tables, the dealer wide cap, the rate
+	// limits and the dealer's zone.
+	spend     SpendStore
+	prices    PriceStore
+	dealerCap int64
+	rates     *RateLimits
+	zone      houseday.Source
+
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
 	// additive rather than load-bearing.
@@ -129,6 +154,14 @@ func NewService(reg *Registry, p Provider, ledger LedgerStore, limits LimitStore
 
 // WithClock replaces the clock (tests only).
 func (s *Service) WithClock(f func() time.Time) *Service { s.now = f; return s }
+
+// WithConversations attaches the exchange log that makes conversation_id work.
+func (s *Service) WithConversations(c ConversationStore) *Service { s.convs = c; return s }
+
+// WithRouter attaches the alias router. From then on the provider is resolved on every provider
+// call from the current settings, so a changed route or alias applies to the next request with no
+// restart.
+func (s *Service) WithRouter(r *Router) *Service { s.router = r; return s }
 
 // WithResolver attaches DIB-478's conversational resolver.
 //
@@ -182,11 +215,20 @@ func (s *Service) Budget(ctx context.Context, c Caller) (Budget, error) {
 }
 
 // MonthSpend is the caller's usage so far this calendar month.
+//
+// With the spend table wired (meter.go) it is read from there, so an open reservation counts at its
+// estimate, in the dealer's month; the older token ledger is the fallback of a deployment without it.
 func (s *Service) MonthSpend(ctx context.Context, userID string) (Spend, error) {
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return Spend{}, err
+	}
+	if s.spend != nil {
+		return s.spend.UserMonth(ctx, userID, from, to)
+	}
 	if s.ledger == nil {
 		return Spend{}, nil
 	}
-	from, to := MonthWindow(s.now())
 	return s.ledger.SpendFor(ctx, userID, from, to)
 }
 
@@ -196,10 +238,20 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		// No assigned role: no commands, so no useful conversation. Refused before any spend.
 		return Answer{}, ErrRefused
 	}
+	// One exchange id for every provider call this question makes (retries and escalations included).
+	ctx = withExchange(ctx)
 	cfg := s.Settings(ctx)
 	if !cfg.ChatEnabled {
 		return Answer{Text: ChatDisabledMessage}, nil
 	}
+
+	// Slice 2: the rate limit, before the budget and before anything that can cost. A refused
+	// request charges nothing and is an ordinary answer.
+	if err := s.admit(ctx, c); err != nil {
+		return Answer{Text: RateLimitedMessage, Results: []Result{}}, nil
+	}
+
+	id := s.identityFor(ctx, cfg)
 
 	// Step 2: the caller's own commands, and nothing else, become the tool set.
 	tools := toolSpecsFor(s.reg.List(ctx, c))
@@ -212,6 +264,12 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	}
 	spent, err := s.MonthSpend(ctx, c.UserID)
 	if err != nil {
+		if s.spend != nil {
+			// The spend table cannot be read, so nothing can be reserved: the plain unavailable
+			// answer, and no provider is reached.
+			s.warn("assist: cannot read month spend, the question is not sent", "err", err)
+			return Answer{Text: UnavailableMessage, Results: []Result{}}, nil
+		}
 		return Answer{}, err
 	}
 	if OverBudget(spent, budget) {
@@ -237,90 +295,179 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	case ResolveClarify:
 		// AN HONEST QUESTION IS AN ANSWER. No command ran, nothing was spent beyond the exchange
 		// itself, and the surface renders pickable options that feed the next turn.
-		s.record(ctx, c, 0, 0)
-		return Answer{Text: res.Clarify.Question, Clarify: res.Clarify, Results: []Result{}, Ran: nil, Usage: s.usage(0, 0)}, nil
+		s.record(ctx, c, id, 0, 0)
+		return Answer{Text: res.Clarify.Question, Clarify: res.Clarify, Results: []Result{}, Ran: nil, Usage: usageOf(id, 0, 0)}, nil
 	case ResolveNoReferent:
 		// NEVER FABRICATE. The window holds no referent, so the assistant says so plainly instead of
 		// picking the most recent plausible thing and sounding certain about it.
-		s.record(ctx, c, 0, 0)
-		return Answer{Text: res.Refusal, Results: []Result{}, Usage: s.usage(0, 0)}, nil
+		s.record(ctx, c, id, 0, 0)
+		return Answer{Text: res.Refusal, Results: []Result{}, Usage: usageOf(id, 0, 0)}, nil
 	}
 
-	msgs := append(trimHistory(history), Message{Role: RoleUser, Text: question})
-	var tokensIn, tokensOut int
-	var calls []ToolCall
+	tag := newExchangeTag()
+	msgs := append([]Message{{Role: RoleSystem, Text: systemPromptFor(tag)}}, sanitizeHistory(history)...)
+	run := &askRun{tag: tag, msgs: append(msgs, Message{Role: RoleUser, Text: question})}
 
 	if len(res.Calls) > 0 {
 		// A RESOLVED FOLLOW-UP SKIPS THE PROVIDER'S FIRST ROUND. The resolver already decided which
 		// command and which arguments; asking a model to decide it again would be paying for a second
 		// opinion about a question that has a deterministic answer, and taking that opinion would put
-		// the referent back in the model's hands.
-		calls = res.Calls
-	} else {
-		// Step 4: the ordinary path, a self-contained question, put to the provider.
-		reply, err := s.provider.Complete(ctx, CompletionRequest{Messages: msgs, Tools: tools})
-		if err != nil {
-			return Answer{}, err
+		// the referent back in the model's hands. The calls are written into the conversation as an
+		// assistant turn with ids the service issued, so the provider sees a legal round trip.
+		calls, cl := s.preflight(ctx, c, tools, window, &res, res.Calls, false)
+		if cl != nil {
+			s.record(ctx, c, id, 0, 0)
+			return Answer{Text: cl.Question, Clarify: cl, Results: []Result{}, Usage: usageOf(id, 0, 0)}, nil
 		}
-		tokensIn, tokensOut = reply.TokensIn, reply.TokensOut
-		if len(reply.ToolCalls) == 0 {
-			// Prose with no lookups: the capability answer, the "I can't answer that one yet", the
-			// menu. Nothing ran, so nothing is recorded as having run.
-			s.record(ctx, c, tokensIn, tokensOut)
-			// Suggest rides along UNCHANGED from the provider. The service does not decide what to
-			// offer, the provider knows which tools it was handed, and this path is the only one
-			// that can produce a menu-shaped reply.
-			return Answer{
-				Text:    reply.Text,
-				Results: []Result{},
-				Suggest: reply.Suggest,
-				Usage:   s.usage(tokensIn, tokensOut),
-			}, nil
-		}
-		if strings.TrimSpace(reply.Text) != "" {
-			msgs = append(msgs, Message{Role: RoleAssistant, Text: reply.Text})
-		}
-		calls = reply.ToolCalls
+		s.exec(ctx, c, run, "", calls)
 	}
 
-	// Step 4.4 (DIB-478): A COMPLETE SENTENCE MAY STILL BE PART OF A CONVERSATION.
-	//
-	// The provider fills the slots the sentence contains. It cannot fill the ones the sentence left
-	// out because the previous turn already established them, "what's coming in at Kingston?" two
-	// lines under an answer about TB-BLU60 is still about TB-BLU60. Only REQUIRED slots, only EMPTY
-	// ones, and every fill is declared in Carried. See Resolver.FillMissingFromWindow.
-	//
-	// Skipped entirely on the resolved-follow-up path: res.Calls is already complete BY resolution,
-	// and re-filling it would let a stale entity overwrite a freshly resolved one.
-	if s.resolver != nil && len(res.Calls) == 0 {
+	// Steps 4 to 6: the model rounds. The provider is offered the caller's tools; whatever it asks
+	// for runs through the gate; its next reply sees the results. Bounded, see maxToolRounds.
+	out, err := s.converse(ctx, c, cfg, tools, window, &res, run)
+	if err != nil {
+		// A refusal by the meter (budget, dealer cap, unrecordable spend) is an ordinary answer.
+		if ans, ok := refusalAnswer(err); ok {
+			return ans, nil
+		}
+		return Answer{}, err
+	}
+	if out.clarify != nil {
+		s.record(ctx, c, run.ident(id), run.in, run.out)
+		return Answer{Text: out.clarify.Question, Clarify: out.clarify, Results: []Result{}, Usage: usageOf(run.ident(id), run.in, run.out)}, nil
+	}
+	if run.executed == 0 {
+		// Prose with no lookups: the capability answer, the "I can't answer that one yet", the
+		// menu. Nothing ran, so nothing is recorded as having run.
+		s.record(ctx, c, run.ident(id), run.in, run.out)
+		return Answer{
+			Text:    out.text,
+			Results: []Result{},
+			Suggest: out.suggest,
+			Usage:   usageOf(run.ident(id), run.in, run.out),
+		}, nil
+	}
+
+	// Step 7: the ledger row, always, including the stub's zeros.
+	s.record(ctx, c, run.ident(id), run.in, run.out)
+
+	return Answer{
+		Text:    out.text,
+		Results: run.results,
+		Ran:     run.ran,
+		Carried: res.Carried,
+		Usage:   usageOf(run.ident(id), run.in, run.out),
+	}, nil
+}
+
+// newExchangeTag is the random tag of one exchange's data envelope: 64 bits from the system's
+// random source, so a record written before the exchange cannot contain the closing marker.
+func newExchangeTag() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// The system source failing is not survivable for a boundary that depends on it.
+		panic("assist: no randomness for the data envelope tag: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// envelope wraps a tool result for the model: a labelled data block with the exchange's tag. See
+// systemPromptFor for the rule the model is given about what is inside.
+func envelope(tag, command, body string) string {
+	return "[[DATA " + tag + " " + command + "]]\n" + body + "\n[[END DATA " + tag + "]]"
+}
+
+// askRun is the state of one Ask across its rounds: the conversation as it will be sent, what the
+// commands returned, and what the provider calls cost.
+type askRun struct {
+	msgs     []Message
+	results  []Result
+	ran      []Invocation
+	in, out  int
+	cached   int
+	calls    int // provider calls made so far
+	executed int // tool calls dispatched through the registry, failed ones included
+	nextID   int
+	filled   bool
+	// alias is the route entry the next provider call is for; note is OUR text naming the check the
+	// last reply failed, sent once with the retry.
+	// tag is this exchange's random envelope tag.
+	tag       string
+	alias     string
+	note      string
+	answerNow bool
+	// provider and model are who answered last, for the ledger row and the usage report.
+	provider, model string
+}
+
+// ident is the provider identity an exchange is recorded under.
+type ident struct{ provider, model string }
+
+func (r *askRun) ident(fallback ident) ident {
+	if r.provider == "" {
+		return fallback
+	}
+	return ident{provider: r.provider, model: r.model}
+}
+
+// outcome is what one pass over the rounds produced.
+type outcome struct {
+	text    string
+	suggest []string
+	clarify *Clarify
+	// fail is set when the pass stopped on a failed check; it holds OUR text naming the check.
+	fail string
+}
+
+// issueID makes an id for a call the service decided itself.
+func (r *askRun) issueID() string {
+	r.nextID++
+	return "call_" + strconv.Itoa(r.nextID)
+}
+
+// preflight applies the two checks that sit between a set of calls and the registry: slots the
+// sentence left empty are filled from the window (model calls only), and an ambiguous product is
+// asked about rather than guessed at.
+func (s *Service) preflight(ctx context.Context, c Caller, tools []ToolSpec, window Window, res *Resolution, calls []ToolCall, fill bool) ([]ToolCall, *Clarify) {
+	calls = append([]ToolCall(nil), calls...)
+	if s.resolver == nil {
+		return calls, nil
+	}
+	if fill {
+		// Only REQUIRED slots, only EMPTY ones, and every fill is declared in Carried. See
+		// Resolver.FillMissingFromWindow.
 		for i, call := range calls {
 			filled, carried := s.resolver.FillMissingFromWindow(tools, window, call)
 			calls[i] = filled
 			res.Carried = append(res.Carried, carried...)
 		}
 	}
-
-	// Step 4.5 (DIB-478): AMBIGUITY IS ASKED ABOUT, NOT GUESSED AT, on BOTH paths.
-	//
-	// "How much Blu have we got?" is a fresh question and is exactly as ambiguous as the same word
-	// in a follow-up. Running it would hand back whichever product the catalogue's resolver happened
-	// to rank first, with nothing on the screen saying a choice had been made. So the same check
-	// runs here, once, for every call about to reach the registry.
-	if s.resolver != nil {
-		for _, call := range calls {
-			if cl := s.resolver.CheckAmbiguousProduct(ctx, c, call); cl != nil {
-				s.record(ctx, c, tokensIn, tokensOut)
-				return Answer{Text: cl.Question, Clarify: cl, Results: []Result{}, Usage: s.usage(tokensIn, tokensOut)}, nil
-			}
+	// "How much Blu have we got?" is a fresh question and is exactly as ambiguous as the same word in
+	// a follow-up. Running it would hand back whichever product the catalogue's resolver happened to
+	// rank first, with nothing on the screen saying a choice had been made.
+	for _, call := range calls {
+		if cl := s.resolver.CheckAmbiguousProduct(ctx, c, call); cl != nil {
+			return calls, cl
 		}
 	}
+	return calls, nil
+}
 
-	// Step 5: run the calls, AS THE CALLER, THROUGH THE GATE. This is the unchanged security
-	// argument: a resolved follow-up and a model's tool call arrive at the same Registry.Run with
-	// the same Caller, so resolution can change what is asked and can never change what is allowed.
-	var results []Result
-	var ran []Invocation
-	for _, call := range calls {
+// exec runs calls AS THE CALLER, THROUGH THE GATE, and writes the assistant turn and the tool turns
+// into the conversation with matching ids. This is the unchanged security argument: a resolved
+// follow-up and a model's tool call arrive at the same Registry.Run with the same Caller, so
+// resolution can change what is asked and can never change what is allowed.
+func (s *Service) exec(ctx context.Context, c Caller, run *askRun, text string, calls []ToolCall) {
+	issued := make([]ToolCall, len(calls))
+	for i, call := range calls {
+		if call.ID == "" {
+			call.ID = run.issueID()
+		}
+		issued[i] = call
+	}
+	run.msgs = append(run.msgs, Message{Role: RoleAssistant, Text: text, ToolCalls: issued})
+	for _, call := range issued {
+		run.executed++
 		out, runErr := s.reg.Run(ctx, c, call.Command, call.Args)
 		if runErr != nil {
 			// A failed call is TOLD TO THE PROVIDER as a tool message rather than aborting the
@@ -328,67 +475,246 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 			// The user's argument mistakes are the common case here and they are not faults, and a
 			// REFUSAL travels this path too, which is how an RBAC refusal survives a conversation as
 			// a plain sentence instead of a red box.
-			msgs = append(msgs, Message{
-				Role:     RoleTool,
-				ToolName: call.Command,
-				Text:     toolFailureText(runErr),
-				Result:   &Result{Command: call.Command, Headline: toolFailureText(runErr), Empty: true},
+			msg := toolFailureText(runErr)
+			run.msgs = append(run.msgs, Message{
+				Role:       RoleTool,
+				ToolCallID: call.ID,
+				ToolName:   call.Command,
+				Text:       envelope(run.tag, call.Command, msg),
+				Result:     &Result{Command: call.Command, Headline: msg, Empty: true},
 			})
 			continue
 		}
-		results = append(results, out)
-		ran = append(ran, Invocation{Command: call.Command, Args: call.Args})
-		msgs = append(msgs, Message{Role: RoleTool, ToolName: call.Command, Text: renderResult(out), Result: &out})
+		run.results = append(run.results, out)
+		run.ran = append(run.ran, Invocation{Command: call.Command, Args: call.Args})
+		run.msgs = append(run.msgs, Message{Role: RoleTool, ToolCallID: call.ID, ToolName: call.Command, Text: envelope(run.tag, call.Command, renderResult(out)), Result: &out})
 	}
+}
 
-	// Step 6: one round for the sentence. Bounded, see the file header. This is the ONLY place a
-	// provider is offered the structured context, and it is offered it for PHRASING: the results are
-	// already decided, already authorised, already formatted.
-	text := ""
-	final, err2 := s.provider.Complete(ctx, CompletionRequest{Messages: msgs, Tools: tools})
-	if err2 != nil {
-		// The commands already ran and the results are good. Losing the prose is not worth losing
-		// the answer, so the headlines stand in for it, degraded, honest, and still useful.
-		if s.log != nil {
-			s.log.Warn("assist: provider failed on the summarising turn, answering from command results", "err", err2)
+// drive is the bounded multi round loop: ask, run what was asked, ask again with the results.
+func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
+	limit := maxToolRounds
+	if run.answerNow {
+		// The bound was already reached once and the results are in hand: an attempt after that is
+		// one call to answer in words, not another loop.
+		limit = 1
+	}
+	for round := 0; round < limit; round++ {
+		reply, err := s.complete(ctx, c, CompletionRequest{Alias: run.alias, Messages: run.request(), Tools: tools})
+		run.note = ""
+		run.calls++
+		run.in += reply.TokensIn
+		run.out += reply.TokensOut
+		run.cached += reply.TokensCached
+		if reply.Provider != "" {
+			run.provider, run.model = reply.Provider, reply.Model
 		}
-		text = speak(results)
-	} else {
-		text = final.Text
-		tokensIn += final.TokensIn
-		tokensOut += final.TokensOut
+		if err != nil {
+			if run.executed == 0 {
+				return outcome{}, err
+			}
+			// The commands already ran and the results are good. Losing the prose is not worth
+			// losing the answer, so the headlines stand in for it.
+			if s.log != nil {
+				s.log.Warn("assist: provider failed on a later turn, answering from command results", "err", err)
+			}
+			return outcome{text: speak(run.results)}, nil
+		}
+		if len(reply.ToolCalls) == 0 {
+			o := outcome{text: reply.Text}
+			if run.executed == 0 {
+				// Suggest rides along UNCHANGED from the provider. The service does not decide what
+				// to offer, the provider knows which tools it was handed, and this path is the only
+				// one that can produce a menu-shaped reply.
+				o.suggest = reply.Suggest
+			}
+			return o, nil
+		}
+		if fail := checkCalls(tools, reply.ToolCalls); fail != "" {
+			return outcome{fail: fail}, nil
+		}
+		calls, cl := s.preflight(ctx, c, tools, window, res, reply.ToolCalls, !run.filled && len(res.Calls) == 0)
+		run.filled = true
+		if cl != nil {
+			return outcome{clarify: cl}, nil
+		}
+		s.exec(ctx, c, run, reply.Text, calls)
 	}
+	return outcome{fail: failBound}, nil
+}
 
-	// Step 7: the ledger row, always, including the stub's zeros.
-	s.record(ctx, c, tokensIn, tokensOut)
+// The validator's texts. They are OURS: fixed sentences that name the check, never a model's words
+// and never a record's, because they go back to a model and anything of a record's in them would be
+// a way to carry an instruction.
+const (
+	failUnknownCommand = "Your last reply was rejected: it called a command that is not in your tool list. Call only the tools you were given, or answer in words."
+	failBadArguments   = "Your last reply was rejected: a tool call's arguments were not one valid JSON object. Send the arguments as a single JSON object."
+	failBound          = "The lookup loop reached its limit. Do not call more tools: answer now in words from the results you already have."
+)
 
-	return Answer{
-		Text:    text,
-		Results: results,
-		Ran:     ran,
-		Carried: res.Carried,
-		Usage:   s.usage(tokensIn, tokensOut),
-	}, nil
+// checkCalls is the check available in this slice: every call names a command in the asker's own
+// list, and every call's arguments were valid JSON. "" means the calls stand.
+func checkCalls(tools []ToolSpec, calls []ToolCall) string {
+	for _, call := range calls {
+		if !offered(tools, call.Command) {
+			return failUnknownCommand
+		}
+		if call.ArgsErr != "" {
+			return failBadArguments
+		}
+	}
+	return ""
+}
+
+// request is the conversation as the next provider call sees it: the messages, plus the validator's
+// note when the last reply failed a check.
+func (r *askRun) request() []Message {
+	if r.note == "" {
+		return r.msgs
+	}
+	return append(append([]Message(nil), r.msgs...), Message{Role: RoleUser, Text: r.note})
+}
+
+// maxProviderCalls bounds the provider calls of ONE Ask across every retry and every alias, so a
+// chain of failed checks is a bounded bill.
+const maxProviderCalls = 12
+
+// aliasStubFallback is the pseudo alias of the last step of escalation: the deterministic stub.
+const aliasStubFallback = "stub-fallback"
+
+// converse runs the rounds with escalation on a failed check: one retry on the same alias with the
+// validator's text, then the next alias of the route that is really configured, then the stub's
+// plain results. Every attempt is a Service.complete call, so it is metered like any other, and the
+// Caller is the asker's on every one of them: escalation changes who is asked, never who is asking.
+func (s *Service) converse(ctx context.Context, c Caller, cfg Settings, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
+	for _, alias := range s.escalationRoute(ctx, cfg) {
+		for attempt := 0; attempt < 2; attempt++ {
+			if run.calls >= maxProviderCalls {
+				break
+			}
+			run.alias = alias
+			out, err := s.drive(ctx, c, tools, window, res, run)
+			if err != nil || out.fail == "" {
+				return out, err
+			}
+			run.note = out.fail
+			run.answerNow = run.answerNow || out.fail == failBound
+			if s.log != nil {
+				s.log.Warn("assist: a reply failed a check, escalating", "alias", alias, "attempt", attempt+1)
+			}
+		}
+	}
+	// Every alias failed: the stub's plain results. The commands that already ran are good, so they
+	// stand; the stub answers the question itself when nothing ran yet.
+	run.alias, run.note = aliasStubFallback, ""
+	out, err := s.drive(ctx, c, tools, window, res, run)
+	if err != nil || out.fail != "" {
+		if len(run.results) == 0 && err != nil {
+			return outcome{}, err
+		}
+		return outcome{text: speak(run.results)}, nil
+	}
+	return out, nil
+}
+
+// escalationRoute is the aliases to try, in order: those of the current route that resolve to a
+// real provider. With no router, or nothing configured, it is the single default entry (the base
+// provider, or the stub), which still gets its one retry.
+func (s *Service) escalationRoute(ctx context.Context, cfg Settings) []string {
+	if s.router == nil {
+		return []string{""}
+	}
+	var out []string
+	for _, a := range cfg.RouteAliases() {
+		if _, ok := s.router.Resolve(ctx, a); ok {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+// complete is the ONE place a provider is called. Every attempt, retry and escalation goes through
+// it, so whatever wraps it (metering, caps) sees every provider call and nothing bypasses it. The
+// provider is resolved here, per call, from the current settings and alias table.
+func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest) (Reply, error) {
+	p := s.providerFor(ctx, req.Alias)
+	reply, err := s.meteredComplete(ctx, c, p, s.priceAlias(ctx, req.Alias, p), req)
+	reply.Provider, reply.Model = p.Name(), p.Model()
+	return reply, err
+}
+
+// priceAlias is the alias row a call is priced and recorded under: the alias named by the request,
+// else the route's first entry; with no router, the single provider's own name. The stub is its own.
+func (s *Service) priceAlias(ctx context.Context, alias string, p Provider) string {
+	if p.Name() == "stub" {
+		return "stub"
+	}
+	if s.router == nil {
+		return p.Name()
+	}
+	if alias == "" {
+		if route := s.Settings(ctx).RouteAliases(); len(route) > 0 {
+			alias = route[0]
+		}
+	}
+	return alias
+}
+
+// providerFor resolves the provider for an alias; an empty alias means the route's first entry.
+func (s *Service) providerFor(ctx context.Context, alias string) Provider {
+	if alias == aliasStubFallback {
+		if s.router != nil {
+			p, _ := s.router.Resolve(ctx, aliasStubFallback)
+			return p
+		}
+		return NewStubProvider()
+	}
+	if s.router == nil {
+		return s.provider
+	}
+	if alias == "" {
+		if route := s.Settings(ctx).RouteAliases(); len(route) > 0 {
+			alias = route[0]
+		}
+	}
+	p, _ := s.router.Resolve(ctx, alias)
+	return p
+}
+
+// identityFor is the provider identity an exchange that never reaches a provider is recorded under.
+func (s *Service) identityFor(ctx context.Context, cfg Settings) ident {
+	if s.router == nil {
+		return ident{s.provider.Name(), s.provider.Model()}
+	}
+	alias := ""
+	if route := cfg.RouteAliases(); len(route) > 0 {
+		alias = route[0]
+	}
+	p, _ := s.router.Resolve(ctx, alias)
+	return ident{p.Name(), p.Model()}
 }
 
 // usage is the per-exchange cost report, built in one place so every early return in Ask carries the
 // same shape. The handler decides who may READ it (the spend-visibility toggle); the service always
 // computes it, because the ledger needs it either way.
-func (s *Service) usage(in, out int) *Usage {
-	return &Usage{Provider: s.provider.Name(), Model: s.provider.Model(), TokensIn: in, TokensOut: out}
+func usageOf(id ident, in, out int) *Usage {
+	return &Usage{Provider: id.provider, Model: id.model, TokensIn: in, TokensOut: out}
 }
 
 // record appends the ledger row. A failure is logged and swallowed, see ledger.go for why the
 // answer is not held hostage to the accounting.
-func (s *Service) record(ctx context.Context, c Caller, in, out int) {
+func (s *Service) record(ctx context.Context, c Caller, id ident, in, out int) {
 	if s.ledger == nil {
 		return
 	}
 	err := s.ledger.Append(ctx, Entry{
 		UserID:    c.UserID,
 		RoleCode:  c.RoleCode,
-		Provider:  s.provider.Name(),
-		Model:     s.provider.Model(),
+		Provider:  id.provider,
+		Model:     id.model,
 		TokensIn:  in,
 		TokensOut: out,
 		Kind:      KindChat,
@@ -430,3 +756,21 @@ func trimHistory(h []Message) []Message {
 	}
 	return append([]Message(nil), h[len(h)-maxHistory:]...)
 }
+
+// sanitizeHistory is what of a history reaches a provider: the last maxHistory turns, user and
+// assistant text only. System and tool turns are the service's to write, never a client's, and a
+// turn with no words says nothing a provider could use.
+func sanitizeHistory(h []Message) []Message {
+	var out []Message
+	for _, m := range trimHistory(h) {
+		if (m.Role != RoleUser && m.Role != RoleAssistant) || strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		out = append(out, Message{Role: m.Role, Text: m.Text})
+	}
+	return out
+}
+
+// maxToolRounds bounds the provider round trips of one attempt: a call that asks for tools is one
+// round. Over the bound the loop stops and the answer is built from the results already in hand.
+const maxToolRounds = 4

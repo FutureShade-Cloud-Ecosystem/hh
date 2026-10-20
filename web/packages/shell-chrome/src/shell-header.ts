@@ -18,6 +18,7 @@
 //   hh-shell-surface-open  { appId, surfaceId, key }   a row of the panel was picked
 //   hh-shell-pin           { key, pinned }             the pin control was pressed
 //   hh-shell-notifications                             the bell was pressed
+//   hh-shell-assist                                    the TanyAI button was pressed (the shell opens its hh-tanyai-panel)
 //   hh-shell-account                                   the account chip was pressed
 //
 // The panel's keyboard is the original launcher's, one keyboard for every
@@ -507,6 +508,10 @@ export class ShellHeader extends HHElement {
       this.#emit('hh-shell-notifications');
       return;
     }
+    if (action === 'assist') {
+      this.#emit('hh-shell-assist');
+      return;
+    }
     if (action === 'account') {
       this.#emit('hh-shell-account');
     }
@@ -634,6 +639,11 @@ export class ShellHeader extends HHElement {
             <span class="word">${chip.label}</span>
             ${chip.note !== '' ? html`<span class="note">${chip.note}</span>` : nothing}
           </span>
+          <button class="icon-btn" type="button" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </button>
           <button class="icon-btn" type="button" data-action="notifications" aria-label=${bellName}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>

@@ -12,6 +12,7 @@ package readtx
 import (
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestRawSQLAsTheAssistLoginsReachesNothing(t *testing.T) {
 
 func TestRawSQLForgedClaimsVerifyToNull(t *testing.T) {
 	admin, roles, _, key, cases, urls := setupRedTeam(t)
-	kid := int(KeyID(NewSecret(key)))
+	kid := int(KeyID(redact.NewSecret(key)))
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {

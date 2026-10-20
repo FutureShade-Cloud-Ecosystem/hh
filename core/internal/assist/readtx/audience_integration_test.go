@@ -3,6 +3,7 @@
 package readtx
 
 import (
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -13,7 +14,7 @@ import (
 func TestAudienceMustMatchTheLoginAtTheDatabase(t *testing.T) {
 	admin, _, _, key, cases, urls := setupRedTeam(t)
 	_ = admin
-	kid := int(KeyID(NewSecret(key)))
+	kid := int(KeyID(redact.NewSecret(key)))
 	for _, c := range cases {
 		conn := connect(t, urls[c.login])
 		pid := backendPID(t, conn)

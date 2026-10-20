@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 func testKey(t *testing.T, conn *pgx.Conn) (id int, secret string) {
 	t.Helper()
 	secret = randomHex(t, 24)
-	id = int(KeyID(NewSecret(secret)))
+	id = int(KeyID(redact.NewSecret(secret)))
 	if _, err := conn.Exec(ctxT(t), `INSERT INTO ai.claims_key (key_id, key) VALUES ($1, $2)`, id, secret); err != nil {
 		t.Fatalf("insert test key: %v", err)
 	}

@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"io"
 	"os"
 
@@ -25,8 +26,8 @@ import (
 )
 
 func assistLoginsRole(getenv func(string) string, out io.Writer) error {
-	staff := readtx.NewSecret(getenv(readtx.EnvReaderPassword))
-	pro := readtx.NewSecret(getenv(readtx.EnvProReaderPassword))
+	staff := redact.NewSecret(getenv(readtx.EnvReaderPassword))
+	pro := redact.NewSecret(getenv(readtx.EnvProReaderPassword))
 	if staff.IsEmpty() {
 		return fmt.Errorf("assist-logins: %s is not set", readtx.EnvReaderPassword)
 	}
@@ -46,7 +47,7 @@ func assistLoginsRole(getenv func(string) string, out io.Writer) error {
 }
 
 func assistClaimsKeyRole(getenv func(string) string, out io.Writer) error {
-	key := readtx.NewSecret(getenv(readtx.EnvClaimsKey))
+	key := redact.NewSecret(getenv(readtx.EnvClaimsKey))
 	if key.IsEmpty() {
 		return fmt.Errorf("assist-claims-key: %s is not set", readtx.EnvClaimsKey)
 	}

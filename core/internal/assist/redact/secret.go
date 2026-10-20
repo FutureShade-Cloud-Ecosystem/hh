@@ -1,4 +1,8 @@
-package readtx
+// Package redact holds the one credential type of the assistant: a Secret prints as
+// whether it is set and nothing else, under every fmt verb, as JSON or text and as a
+// slog value. Every key, database URL, password and signed claim in package assist and
+// package readtx lives in one.
+package redact
 
 import (
 	"fmt"
@@ -38,6 +42,9 @@ func (s Secret) Reveal() string {
 }
 
 func (s Secret) IsEmpty() bool { return s.v == nil }
+
+// Set reports whether a value is present.
+func (s Secret) Set() bool { return s.v != nil }
 
 func (s Secret) String() string {
 	if s.v == nil {

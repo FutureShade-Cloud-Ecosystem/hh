@@ -1,5 +1,7 @@
 package readtx
 
+import "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
+
 // The environment names of the assist read path. All three sit under the
 // HOS_ASSIST_ prefix, which a demo copy refuses (core/cmd/core/demoenv_inventory.go):
 // the read path is not on any demo box yet.
@@ -14,19 +16,19 @@ const (
 	EnvClaimsKey = "HOS_ASSIST_CLAIMS_KEY"
 )
 
-// Config is the read path's deployment configuration. Every field is a Secret:
+// Config is the read path's deployment configuration. Every field is a redact.Secret:
 // a database URL carries its password.
 type Config struct {
-	ReaderURL    Secret
-	ProReaderURL Secret
-	ClaimsKey    Secret
+	ReaderURL    redact.Secret
+	ProReaderURL redact.Secret
+	ClaimsKey    redact.Secret
 }
 
 // ConfigFromEnv reads the three names through getenv.
 func ConfigFromEnv(getenv func(string) string) Config {
 	return Config{
-		ReaderURL:    NewSecret(getenv(EnvReaderURL)),
-		ProReaderURL: NewSecret(getenv(EnvProReaderURL)),
-		ClaimsKey:    NewSecret(getenv(EnvClaimsKey)),
+		ReaderURL:    redact.NewSecret(getenv(EnvReaderURL)),
+		ProReaderURL: redact.NewSecret(getenv(EnvProReaderURL)),
+		ClaimsKey:    redact.NewSecret(getenv(EnvClaimsKey)),
 	}
 }

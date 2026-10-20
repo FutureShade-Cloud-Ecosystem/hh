@@ -11,7 +11,7 @@ test("L-card: Sales signs in from its card on the front door and opens House Mes
   await tile.click();
   await page.waitForURL("**/messages/");
   await expect(page.locator("[data-channel-list]")).toBeVisible();
-  await expect(page.locator("hos-app-header[signed-in]")).toBeVisible();
+  await expect(page.locator("hh-field-frame[signed-in]")).toBeVisible();
   await shot(page, "01-card-to-messages", testInfo);
 });
 

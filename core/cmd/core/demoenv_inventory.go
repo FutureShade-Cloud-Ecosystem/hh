@@ -75,6 +75,7 @@ var demoEnvAllowNames = []string{
 	"DEMO_MODE",
 	"ERP_BASE_URL",
 	"HH_CORE_TEST_DATABASE_URL",
+	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	// The HH_WEB_ names are the web runtime config's public facts, read by
 	// the image's entrypoint (deploy/demo/write-web-config.sh) and never by
@@ -198,6 +199,7 @@ var envInventoryFixture = []string{
 	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
+	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
@@ -209,6 +211,10 @@ var envInventoryFixture = []string{
 	"HOS_ASSIST_PRO_READER_PASSWORD",
 	"HOS_ASSIST_READER_DATABASE_URL",
 	"HOS_ASSIST_READER_PASSWORD",
+	"HOS_ASSIST_DEALER_CAP_MICROCENTS",
+	"HOS_ASSIST_DEALER_TAG",
+	"HOS_ASSIST_GATEWAY_KEY",
+	"HOS_ASSIST_GATEWAY_URL",
 	"HOS_CARD_BASE_URL",
 	"HOS_CARD_PROCESSOR",
 	"HOS_PAYMENT_API_KEY",

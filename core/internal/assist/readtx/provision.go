@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"io"
 
 	"github.com/jackc/pgx/v5"
@@ -30,7 +31,7 @@ const (
 // password, the way psql's \password does, so the password itself never crosses
 // the wire or appears in any statement or log. Passwords are printable ASCII,
 // for which SASLprep is the identity.
-func scramVerifier(pw Secret, salt []byte) (string, error) {
+func scramVerifier(pw redact.Secret, salt []byte) (string, error) {
 	p := pw.Reveal()
 	if len(p) < minPasswordLen {
 		return "", errors.New("readtx: a login password is missing or shorter than 16 characters")
@@ -93,7 +94,7 @@ func warnLogging(warn io.Writer, quiet bool) {
 // The role names come from the connected database. Nothing is printed; the
 // returned names are role names only. warn receives one line where the role may
 // not silence statement logging (see quietStatementLogging).
-func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret, warn io.Writer) ([]string, error) {
+func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro redact.Secret, warn io.Writer) ([]string, error) {
 	if staff.IsEmpty() {
 		return nil, errors.New("readtx: " + EnvReaderPassword + " is not set")
 	}
@@ -104,7 +105,7 @@ func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret, war
 	roles := RolesFor(db)
 	type job struct {
 		role string
-		pw   Secret
+		pw   redact.Secret
 	}
 	jobs := []job{{roles.Login, staff}}
 	if !pro.IsEmpty() {
@@ -153,7 +154,7 @@ func ProvisionLogins(ctx context.Context, conn *pgx.Conn, staff, pro Secret, war
 // key, and keeps only the two most recent keys. Writing the key that is already
 // current changes nothing. It returns the key id, which is not a secret: it is in
 // every signed claim.
-func ProvisionClaimsKey(ctx context.Context, conn *pgx.Conn, key Secret, warn io.Writer) (int32, error) {
+func ProvisionClaimsKey(ctx context.Context, conn *pgx.Conn, key redact.Secret, warn io.Writer) (int32, error) {
 	if len(key.Reveal()) < minKeyLen {
 		return 0, errors.New("readtx: the claims signing key is missing or shorter than 32 characters")
 	}

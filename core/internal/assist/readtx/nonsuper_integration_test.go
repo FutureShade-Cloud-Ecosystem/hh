@@ -4,6 +4,7 @@ package readtx
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,15 +110,15 @@ func TestMigrationAsANonSuperuserOwnerAndTheExtensionRevokeOneshot(t *testing.T)
 		t.Errorf("closed state catalogue after the oneshot: %s", v)
 	}
 	// The verifier still reaches hmac: the claims owner was given it back.
-	if _, err := ProvisionClaimsKey(ctxT(t), appConn, NewSecret("hardened-box-key-"+randomHex(t, 16)), nil); err != nil {
+	if _, err := ProvisionClaimsKey(ctxT(t), appConn, redact.NewSecret("hardened-box-key-"+randomHex(t, 16)), nil); err != nil {
 		t.Fatalf("claims key as the app role: %v", err)
 	}
 	key := "hardened-box-key-" + randomHex(t, 16)
-	if _, err := ProvisionClaimsKey(ctxT(t), appConn, NewSecret(key), nil); err != nil {
+	if _, err := ProvisionClaimsKey(ctxT(t), appConn, redact.NewSecret(key), nil); err != nil {
 		t.Fatal(err)
 	}
 	pid := backendPID(t, dbRoot)
-	if ok, _ := verified(t, dbRoot, rawSigned(int(KeyID(NewSecret(key))), key, goodPayload(pid))); !ok {
+	if ok, _ := verified(t, dbRoot, rawSigned(int(KeyID(redact.NewSecret(key))), key, goodPayload(pid))); !ok {
 		t.Error("the verifier no longer works after the revoke oneshot")
 	}
 }

@@ -3,6 +3,7 @@
 package readtx
 
 import (
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestProvisionLoginsSetsWorkingPasswords(t *testing.T) {
 		c.Close(ctxT(t))
 		t.Fatal("the login signed in before it had a password")
 	}
-	names, err := ProvisionLogins(ctxT(t), admin, NewSecret(staffPW), NewSecret(proPW), nil)
+	names, err := ProvisionLogins(ctxT(t), admin, redact.NewSecret(staffPW), redact.NewSecret(proPW), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestProvisionLoginsSetsWorkingPasswords(t *testing.T) {
 	if !strings.HasPrefix(stored, "SCRAM-SHA-256$") || strings.Contains(stored, staffPW) {
 		t.Errorf("stored form is not a SCRAM verifier: %.20s", stored)
 	}
-	if _, err := ProvisionLogins(ctxT(t), admin, NewSecret("short"), Secret{}, nil); err == nil {
+	if _, err := ProvisionLogins(ctxT(t), admin, redact.NewSecret("short"), redact.Secret{}, nil); err == nil {
 		t.Error("a short password was accepted")
 	}
 }
@@ -82,16 +83,16 @@ func TestProvisionClaimsKeyIsIdempotentRotatesAndKeepsTwo(t *testing.T) {
 		return n
 	}
 	for i, k := range keys {
-		id, err := ProvisionClaimsKey(ctxT(t), admin, NewSecret(k), nil)
+		id, err := ProvisionClaimsKey(ctxT(t), admin, redact.NewSecret(k), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id != KeyID(NewSecret(k)) {
+		if id != KeyID(redact.NewSecret(k)) {
 			t.Errorf("returned id %d is not the derived id", id)
 		}
 		if i == 1 {
 			// Rerunning the current key changes nothing.
-			if _, err := ProvisionClaimsKey(ctxT(t), admin, NewSecret(k), nil); err != nil || count() != 2 {
+			if _, err := ProvisionClaimsKey(ctxT(t), admin, redact.NewSecret(k), nil); err != nil || count() != 2 {
 				t.Fatalf("rerun: count=%d err=%v", count(), err)
 			}
 		}
@@ -101,20 +102,20 @@ func TestProvisionClaimsKeyIsIdempotentRotatesAndKeepsTwo(t *testing.T) {
 	}
 	pid := backendPID(t, admin)
 	for i, want := range []bool{false, true, true} {
-		ok, _ := verified(t, admin, rawSigned(int(KeyID(NewSecret(keys[i]))), keys[i], goodPayload(pid)))
+		ok, _ := verified(t, admin, rawSigned(int(KeyID(redact.NewSecret(keys[i]))), keys[i], goodPayload(pid)))
 		if ok != want {
 			t.Errorf("key %d verifies = %v, want %v", i, ok, want)
 		}
 	}
 	// Rotating back to the middle key makes it current again and drops the oldest.
-	if _, err := ProvisionClaimsKey(ctxT(t), admin, NewSecret(keys[1]), nil); err != nil {
+	if _, err := ProvisionClaimsKey(ctxT(t), admin, redact.NewSecret(keys[1]), nil); err != nil {
 		t.Fatal(err)
 	}
 	var newest int
-	if err := admin.QueryRow(ctxT(t), `SELECT key_id FROM ai.claims_key ORDER BY created_at DESC, key_id DESC LIMIT 1`).Scan(&newest); err != nil || newest != int(KeyID(NewSecret(keys[1]))) {
+	if err := admin.QueryRow(ctxT(t), `SELECT key_id FROM ai.claims_key ORDER BY created_at DESC, key_id DESC LIMIT 1`).Scan(&newest); err != nil || newest != int(KeyID(redact.NewSecret(keys[1]))) {
 		t.Errorf("newest = %d err %v", newest, err)
 	}
-	if _, err := ProvisionClaimsKey(ctxT(t), admin, NewSecret("short"), nil); err == nil {
+	if _, err := ProvisionClaimsKey(ctxT(t), admin, redact.NewSecret("short"), nil); err == nil {
 		t.Error("a short key was accepted")
 	}
 }

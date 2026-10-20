@@ -1,13 +1,14 @@
 package readtx
 
 import (
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strings"
 	"testing"
 )
 
 func TestScramVerifierShapeAndSecrecy(t *testing.T) {
 	pw := "correct horse battery staple 01"
-	v, err := scramVerifier(NewSecret(pw), []byte("0123456789abcdef"))
+	v, err := scramVerifier(redact.NewSecret(pw), []byte("0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +18,7 @@ func TestScramVerifierShapeAndSecrecy(t *testing.T) {
 	if strings.Contains(v, pw) {
 		t.Error("the verifier contains the password")
 	}
-	v2, _ := scramVerifier(NewSecret(pw), []byte("0123456789abcdef"))
+	v2, _ := scramVerifier(redact.NewSecret(pw), []byte("0123456789abcdef"))
 	if v != v2 {
 		t.Error("same password and salt must give the same verifier")
 	}
@@ -30,7 +31,7 @@ func TestPasswordRules(t *testing.T) {
 		"non ascii": "passwörd-passwörd-passwörd",
 		"control":   "abcdefghijklmnop\nqrst",
 	} {
-		if _, err := scramVerifier(NewSecret(pw), []byte("0123456789abcdef")); err == nil {
+		if _, err := scramVerifier(redact.NewSecret(pw), []byte("0123456789abcdef")); err == nil {
 			t.Errorf("%s password accepted", name)
 		}
 	}

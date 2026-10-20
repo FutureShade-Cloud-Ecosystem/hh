@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ const testKeyMaterial = "0123456789abcdef0123456789abcdef-test-only"
 
 func fixedSigner(t *testing.T) *Signer {
 	t.Helper()
-	s, err := NewSigner(NewSecret(testKeyMaterial))
+	s, err := NewSigner(redact.NewSecret(testKeyMaterial))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestSignProducesTheWireFormatTheVerifierReads(t *testing.T) {
 	if len(parts) != 4 || parts[0] != "v1" {
 		t.Fatalf("want v1.<id>.<payload>.<mac>, got %d parts", len(parts))
 	}
-	if parts[1] != strconv.Itoa(int(KeyID(NewSecret(testKeyMaterial)))) {
+	if parts[1] != strconv.Itoa(int(KeyID(redact.NewSecret(testKeyMaterial)))) {
 		t.Errorf("key id %s is not the derived id", parts[1])
 	}
 	m := hmac.New(sha256.New, []byte(testKeyMaterial))
@@ -83,7 +84,7 @@ func TestSignRefusesWhatTheVerifierWouldRefuse(t *testing.T) {
 
 func TestNewSignerRefusesAShortOrEmptyKey(t *testing.T) {
 	for _, k := range []string{"", "short"} {
-		if _, err := NewSigner(NewSecret(k)); err == nil {
+		if _, err := NewSigner(redact.NewSecret(k)); err == nil {
 			t.Errorf("key %q accepted", k)
 		}
 	}
@@ -97,8 +98,8 @@ func TestSignedClaimsNeverPrint(t *testing.T) {
 }
 
 func TestKeyIDIsStableAndDependsOnTheKey(t *testing.T) {
-	a, b := KeyID(NewSecret(testKeyMaterial)), KeyID(NewSecret(testKeyMaterial+"x"))
-	if a == b || a < 0 || a != KeyID(NewSecret(testKeyMaterial)) {
+	a, b := KeyID(redact.NewSecret(testKeyMaterial)), KeyID(redact.NewSecret(testKeyMaterial+"x"))
+	if a == b || a < 0 || a != KeyID(redact.NewSecret(testKeyMaterial)) {
 		t.Fatalf("ids %d %d", a, b)
 	}
 }
