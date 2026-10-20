@@ -153,7 +153,7 @@ const USERS = {
   "general-manager": {
     user_id: "demo-account-general-manager",
     email: "general-manager@demo.invalid",
-    display_name: "General manager (demo)",
+    display_name: "General Manager (demo)",
     role_code: "general_manager",
     role_name: "General Manager",
     tier: 1,

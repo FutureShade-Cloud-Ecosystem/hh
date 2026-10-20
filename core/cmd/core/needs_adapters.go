@@ -77,9 +77,14 @@ func w6bParseStamp(s string) time.Time {
 // w6bApprovalsWaiting is re-pointed at the bridge's Approvals rail (the
 // sanctioned class: decide-time authority stays the guard's resolution).
 
+// -- identity · approvals filed by THIS PERSON ---------------------------------------------------
 // w6bApprovalsFiledPending counts approvals the caller filed that are still pending, scoped to the
 // branches the caller reaches. It returns only a count and the oldest filing time, never another
 // person's request or its content, so a filer who may not decide still sees the count of their own.
+// It sits beside w6bApprovalsWaiting under the same approvals rail, but its own section makes it
+// clear at a glance which "you" the card counts: w6bApprovalsWaiting reads what's waiting for the
+// caller to decide, w6bApprovalsFiledPending reads what the caller already filed and the system is
+// still chewing on.
 func w6bApprovalsFiledPending(svc *identity.Approvals) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		caller, ok := identity.StaffContextFromContext(ctx)
