@@ -581,7 +581,7 @@ func TestIntegration_SpendReportIncludesPeopleWhoNeverUsedIt(t *testing.T) {
 
 	if err := repo.Append(ctx, Entry{
 		UserID: user, RoleCode: "INSIDE_SALES", Provider: "stub", Model: "hos-stub-1",
-		TokensIn: 40, TokensOut: 12, At: from.Add(time.Hour),
+		TokensIn: 40, TokensOut: 12, At: from.Add(12 * time.Hour), // midday UTC, inside the house month
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}

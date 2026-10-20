@@ -32,9 +32,13 @@ func deepService(rd *fakeReaders, d *fakeDeep, p Provider, led *fakeLedger, lim 
 		lim = newFakeLimits()
 	}
 	deps := deepDeps(rd, d)
-	return NewService(NewRegistry(deps, nil), p, led, lim, StaticSettings{}, nil).
+	svc := NewService(NewRegistry(deps, nil), p, led, lim, StaticSettings{}, nil).
 		WithClock(func() time.Time { return testNow }).
 		WithResolver(deepResolver(d))
+	if p.Name() != "stub" {
+		svc.withTestMeter()
+	}
+	return svc
 }
 
 // convo replays a scripted conversation, threading each answer's structured turn back into the next

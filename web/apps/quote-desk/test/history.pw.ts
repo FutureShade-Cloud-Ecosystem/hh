@@ -79,6 +79,10 @@ test("each action is one entry, in order, with its consequences beneath and the 
 test("the expiry change and a removal are entries too", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Draft");
+  // The history is read after the quote opens; a count taken before it lands is zero and the next count is off by
+  // all of it. The read has landed when the panel shows an entry or says there is none (the earlier specs in this
+  // file leave entries on this quote, a run of this spec alone finds none).
+  await expect(history(page).getByTestId("qh-group").first().or(history(page).getByText("No changes yet."))).toBeVisible();
   const before = await history(page).getByTestId("qh-group").count();
   const later = new Date(Date.now() + 25 * 86400000).toISOString().slice(0, 10);
   await edit(page).locator('[data-field="expiry"]').fill(later);
