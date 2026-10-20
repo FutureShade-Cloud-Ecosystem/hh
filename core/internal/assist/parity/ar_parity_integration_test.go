@@ -33,6 +33,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
@@ -41,6 +43,18 @@ type trailBy map[string]bool
 
 func (m trailBy) HoldsPaymentTrail(_ context.Context, platformUserID, _ string) (bool, error) {
 	return m[platformUserID], nil
+}
+
+// dealerZone is the houseday source production binds (cmd/core dealerZoneAdapter), over the settings module's
+// dealer configuration, read live at each decision.
+type dealerZone struct{ r *settings.DealerConfigReader }
+
+func (d dealerZone) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	c, err := d.r.DealerConfig(ctx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
 }
 
 type arCaller struct {
@@ -104,7 +118,9 @@ func newARRig(t *testing.T) *arRig {
 	}
 	t.Cleanup(pool.Close)
 	cs := arCallers(w)
-	bill := billing.NewRepository(pool)
+	// The billing repository is wired over the settings module's dealer configuration, as production wires it
+	// (cmd/core holdBillingRepo): the screens age against the dealer's zone, not the Ontario default.
+	bill := billing.NewRepository(pool).WithZone(dealerZone{settings.NewDealerConfigReader(pool)})
 	return &arRig{
 		env: env, w: w, pool: pool, cs: cs,
 		h:    assist.NewHandler(nil, nil).WithPaymentTrail(trailMap(cs)),
@@ -644,5 +660,102 @@ func TestQuery_TheAgingViewAnswersItsDefaultReadAndItsAllBandsRead(t *testing.T)
 				t.Errorf("%s, %s: the planted accounts are not in the answer", name, label)
 			}
 		}
+	}
+}
+
+// Band edges in two zones: an account with an invoice due exactly 0, 1, 30, 31, 60, 61, 90 and 91 days before the
+// dealer's day (one distinct amount per edge) ages the same in the view and on the screen, in a zone a whole day
+// ahead of the database and in one a whole day behind, and each edge lands in the band the screen's boundaries
+// say: 0 current, 1 and 30 in 1 to 30, 31 and 60 in 31 to 60, 61 and 90 in 61 to 90, 91 over 90. The screens
+// are wired over the dealer's zone as production wires them.
+func TestParity_AgingBandEdgesInTwoZones(t *testing.T) {
+	r := newARRig(t)
+	ctx := testsupport.Ctx(t)
+	var prior *string
+	if err := r.env.Admin.QueryRow(ctx, `SELECT value::text FROM system_settings WHERE key = 'business_zone'`).Scan(&prior); err != nil && err != pgx.ErrNoRows {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, cerr := pgx.Connect(context.Background(), r.env.AdminURL)
+		if cerr != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		if prior == nil {
+			_, _ = c.Exec(context.Background(), `DELETE FROM system_settings WHERE key = 'business_zone'`)
+		} else {
+			_, _ = c.Exec(context.Background(), `UPDATE system_settings SET value = $1::jsonb WHERE key = 'business_zone'`, *prior)
+		}
+	})
+	var edgeCustomer string
+	if err := r.env.Admin.QueryRow(ctx, `INSERT INTO customers (account_no, name) VALUES ($1, $2) RETURNING id::text`, "S7A-"+r.w.tag+"E", "Planted Edge Customer "+r.w.tag).Scan(&edgeCustomer); err != nil {
+		t.Fatal(err)
+	}
+	edges := []struct {
+		daysBefore int
+		amount     int64
+		band       int // 0 current, 1 to 30, 31 to 60, 61 to 90, 91 over
+	}{{0, 1, 0}, {1, 10, 1}, {30, 100, 1}, {31, 1000, 2}, {60, 10000, 2}, {61, 100000, 3}, {90, 1000000, 3}, {91, 10000000, 4}}
+	ids := make([]string, len(edges))
+	for i, e := range edges {
+		if err := r.env.Admin.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, total_cents, balance_cents)
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 200, CURRENT_DATE, $4, $4, $4) RETURNING id::text`,
+			fmt.Sprintf("INV-S7A-%s-edge-%d", r.w.tag, e.daysBefore), edgeCustomer, r.w.a, e.amount).Scan(&ids[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var gm arCaller
+	for _, c := range r.cs {
+		if c.name == "global with trail" {
+			gm = c
+		}
+	}
+	_, claims := r.claimsFor(t, gm)
+	seen := map[string]bool{}
+	for _, zone := range []string{"Pacific/Kiritimati", "Pacific/Pago_Pago"} {
+		if _, err := r.env.Admin.Exec(ctx, `INSERT INTO system_settings (key, value) VALUES ('business_zone', to_jsonb($1::text)) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, zone); err != nil {
+			t.Fatal(err)
+		}
+		var day string
+		if err := r.env.Admin.QueryRow(ctx, `SELECT (now() AT TIME ZONE $1)::date::text`, zone).Scan(&day); err != nil {
+			t.Fatal(err)
+		}
+		seen[day] = true
+		for i, e := range edges {
+			if _, err := r.env.Admin.Exec(ctx, `UPDATE invoices SET due_date = $2::date - $3::int WHERE id = $1::uuid`, ids[i], day, e.daysBefore); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var cur, d30, d60, d90, d90p, open int64
+		r.run(t, claims, `SELECT current_cents, days_1_30_cents, days_31_60_cents, days_61_90_cents, days_90_plus_cents, open_cents FROM ai.ar_aging WHERE customer_id = '`+edgeCustomer+`'`, func(rs pgx.Rows) error {
+			return rs.Scan(&cur, &d30, &d60, &d90, &d90p, &open)
+		})
+		want := [5]int64{}
+		for _, e := range edges {
+			want[e.band] += e.amount
+		}
+		if got := [5]int64{cur, d30, d60, d90, d90p}; got != want {
+			t.Errorf("zone %s (day %s): the view's bands %v, the edges say %v", zone, day, got, want)
+		}
+		rows, err := r.cred.Aging(identity.ContextWithStaff(ctx, gm.sc), time.Now(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, a := range rows {
+			if a.CustomerID != edgeCustomer {
+				continue
+			}
+			found = true
+			if got := [5]int64{a.CurrentCents, a.Days30Cents, a.Days60Cents, a.Days60To90Cents, a.Days90PlusCents}; got != want {
+				t.Errorf("zone %s (day %s): the aging screen's bands %v, the edges say %v", zone, day, got, want)
+			}
+		}
+		if !found {
+			t.Errorf("zone %s: the aging screen has no row for the edge account", zone)
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("the two zones gave the same dealer's day: %v", seen)
 	}
 }
