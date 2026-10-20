@@ -143,6 +143,8 @@ test("the shell's band carries the Demo badge and the tenant, never another bran
   await expect(page.locator("hh-shell-header")).toContainText("Gable Landscape Supply");
   await expect(page.locator("hh-shell-header")).toContainText("Demo");
   await expect(page.locator("hh-shell-header")).not.toContainText("HH Yard");
+  // The host mounts no TanyAI panel of its own, so its band carries no Ask TanyAI button (PR 503 round).
+  await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
 });
 
 test("the rail's first control is a visible, named toggle at desktop and tablet widths", async ({ page, shellUrl }) => {

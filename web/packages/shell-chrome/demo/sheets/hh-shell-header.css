@@ -283,8 +283,12 @@
     }
     .band[data-variant='band'] .brand {
       min-width: 0;
+      /* A nowrap word's min-content is its whole width, so the box is clamped to its track here: the lockup
+       * gives way (ellipsis) before the run of chips and icons ever overlaps it. */
+      max-width: 100%;
     }
     .band[data-variant='band'] .lockup {
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -297,6 +301,22 @@
     }
     .band[data-variant='band'] .account-word {
       display: none;
+    }
+  }
+  /* Small phones (390): the first row keeps the board's lockup and the run of icons, so the DEMO marker drops to the
+   * right end of the selector's row (the last row, so it is anchored to the band's bottom) and the selector yields
+   * its width. One DEMO marker still; it never sits over the lockup. */
+  @media (max-width: 440px) {
+    .band[data-variant='band'] {
+      position: relative;
+    }
+    .band[data-variant='band'] .demo {
+      position: absolute;
+      right: var(--hh-s-12);
+      bottom: 16px;
+    }
+    .band[data-variant='band'] .selector {
+      margin-right: 72px;
     }
   }
   /* The account chip's menu: the actions the app-local header used to carry

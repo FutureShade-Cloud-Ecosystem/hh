@@ -42,11 +42,8 @@ function readTenantConfig(): Promise<TenantTitleConfig | TenantTitleFailure> {
   return readOnce;
 }
 
-/**
- * The dealer's name from the public tenant config, for a band or a header that names the dealer. It
- * shares the one cached read the tab title makes (one request per session, never one per screen) and
- * answers an empty string when the read fails, so a screen shows no name rather than a wrong one.
- */
+/** The dealer's name from the public tenant config, or an empty string when the read fails: the Field frame's lockup
+ *  shows what the config said and nothing it had to guess. */
 export async function readDealerName(): Promise<string> {
   const config = await readTenantConfig();
   return config.ok ? config.dealerName : "";

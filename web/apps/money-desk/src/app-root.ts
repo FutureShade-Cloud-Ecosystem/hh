@@ -24,6 +24,10 @@ import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
+// hh-tanyai-panel: the one TanyAI panel (PANEL-API r1); the host opens it and resolves the records it names.
+import "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import type { ShellTanyai } from "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import { generatedTransport } from "@hardscapehouse/shell-chrome/src/tanyai-transport.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
@@ -415,6 +419,10 @@ export class MoneyDeskApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "assist") {
+      this.#tanyai()?.show();
+      return;
+    }
     if (action === "theme") {
       this.#pressTheme();
       return;
@@ -566,6 +574,7 @@ export class MoneyDeskApp extends HHElement {
     if (this.#area === "tax") this.#tax.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
+    this.#wireTanyai();
     // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
     // when the desk stands alone; framed by the Work shell, the host's band is
     // the one band. The bell stands quiet: wiring its unread count is a
@@ -579,6 +588,8 @@ export class MoneyDeskApp extends HHElement {
     if (band !== null) {
       band.org = this.#dealerName;
       band.demo = true;
+      // This desk mounts the TanyAI panel and answers the press, so its band carries the Ask TanyAI button.
+      band.assist = true;
       band.user = framedBandAccount(this.#userName, this.#roleLabel);
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
       band.groups = [];
@@ -600,6 +611,37 @@ export class MoneyDeskApp extends HHElement {
       `;
     }
   }
+
+  #tanyai(): ShellTanyai | null {
+    return this.renderRoot.querySelector<ShellTanyai>("hh-tanyai-panel");
+  }
+
+  // The panel gets its transport (the generated client, the staff routes) and the one record kind this desk can
+  // open, a customer's account. It is set once; the panel keeps its own state across renders.
+  #wireTanyai(): void {
+    const panel = this.#tanyai();
+    if (panel === null || panel.transport !== null) return;
+    panel.transport = generatedTransport(this.#staffClient);
+    panel.openableKinds = this.#holdsReceivables() ? ["customer"] : [];
+    panel.addEventListener("hh-tanyai-open-ref", this.#onOpenRef as EventListener);
+  }
+
+  // A record the panel names opens on this desk's own route: a customer is the receivables account screen.
+  readonly #onOpenRef = (event: CustomEvent<{ ref: { kind: string; id: string } }>): void => {
+    const ref = event.detail.ref;
+    if (ref.kind !== "customer" || !this.#holdsReceivables()) return;
+    this.#tanyai()?.hide();
+    if (this.#area !== "receivables") {
+      this.#area = "receivables";
+      this.#openArea();
+    }
+    const open = document.createElement("button");
+    open.setAttribute("data-action", "open-account");
+    open.setAttribute("data-customer-id", ref.id);
+    open.setAttribute("data-right", "receive");
+    this.#ar.press(open);
+    this.requestUpdate();
+  };
 
   private async loadFlows(): Promise<void> {
     this.#entryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -721,7 +763,8 @@ export class MoneyDeskApp extends HHElement {
   }
 
   private renderSignedIn(): TemplateResult {
-    return html`${this.renderAreas()} ${this.renderArea()}`;
+    return html`${this.renderAreas()} ${this.renderArea()}
+      <hh-tanyai-panel></hh-tanyai-panel>`;
   }
 
   render(): TemplateResult {

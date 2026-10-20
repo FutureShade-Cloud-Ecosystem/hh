@@ -1297,8 +1297,9 @@ type AssistMessage struct {
 }
 
 type AssistChatRequest struct {
-	Question string           `json:"question"`
-	History  *[]AssistMessage `json:"history,omitempty"`
+	Question       string           `json:"question"`
+	ConversationId *string          `json:"conversation_id,omitempty"`
+	History        *[]AssistMessage `json:"history,omitempty"`
 }
 
 type AssistUsage struct {
@@ -1309,14 +1310,15 @@ type AssistUsage struct {
 }
 
 type AssistAnswer struct {
-	Text         string             `json:"text"`
-	Results      []AssistResult     `json:"results"`
-	LimitReached bool               `json:"limit_reached"`
-	Usage        *AssistUsage       `json:"usage,omitempty"`
-	Ran          []AssistInvocation `json:"ran"`
-	Clarify      *AssistClarify     `json:"clarify,omitempty"`
-	Carried      *[]string          `json:"carried,omitempty"`
-	Suggest      *[]string          `json:"suggest,omitempty"`
+	Text           string             `json:"text"`
+	Results        []AssistResult     `json:"results"`
+	LimitReached   bool               `json:"limit_reached"`
+	Usage          *AssistUsage       `json:"usage,omitempty"`
+	Ran            []AssistInvocation `json:"ran"`
+	Clarify        *AssistClarify     `json:"clarify,omitempty"`
+	Carried        *[]string          `json:"carried,omitempty"`
+	Suggest        *[]string          `json:"suggest,omitempty"`
+	ConversationId *string            `json:"conversation_id,omitempty"`
 }
 
 type AssistBudget struct {
@@ -1383,10 +1385,11 @@ type AssistUserLimitResetResult struct {
 }
 
 type AssistSettings struct {
-	Provider               string `json:"provider"`
-	Model                  string `json:"model"`
-	ChatEnabled            bool   `json:"chat_enabled"`
-	SpendVisibleToNonAdmin bool   `json:"spend_visible_to_non_admin"`
+	Provider               string  `json:"provider"`
+	Model                  string  `json:"model"`
+	Route                  *string `json:"route,omitempty"`
+	ChatEnabled            bool    `json:"chat_enabled"`
+	SpendVisibleToNonAdmin bool    `json:"spend_visible_to_non_admin"`
 }
 
 type AssistSettingsResponse struct {
@@ -2208,47 +2211,48 @@ type DispatchDriverPage struct {
 }
 
 type DispatchStop struct {
-	Id                string     `json:"id"`
-	BranchId          string     `json:"branch_id"`
-	OrderId           string     `json:"order_id"`
-	OrderNo           *string    `json:"order_no,omitempty"`
-	CustomerName      *string    `json:"customer_name,omitempty"`
-	RunId             *string    `json:"run_id,omitempty"`
-	RunNo             *string    `json:"run_no,omitempty"`
-	StopNo            int32      `json:"stop_no"`
-	ScheduledDate     string     `json:"scheduled_date"`
-	Status            string     `json:"status"`
-	TimeWindow        *string    `json:"time_window,omitempty"`
-	ContactName       *string    `json:"contact_name,omitempty"`
-	ContactPhone      *string    `json:"contact_phone,omitempty"`
-	GateCode          *string    `json:"gate_code,omitempty"`
-	AddressLine       *string    `json:"address_line,omitempty"`
-	City              *string    `json:"city,omitempty"`
-	PostalCode        *string    `json:"postal_code,omitempty"`
-	Latitude          *float64   `json:"latitude,omitempty"`
-	Longitude         *float64   `json:"longitude,omitempty"`
-	Instructions      *string    `json:"instructions,omitempty"`
-	PodSignatureRef   *string    `json:"pod_signature_ref,omitempty"`
-	PodReceivedBy     *string    `json:"pod_received_by,omitempty"`
-	PodAt             *time.Time `json:"pod_at,omitempty"`
-	FailureReason     *string    `json:"failure_reason,omitempty"`
-	LoadedAt          *time.Time `json:"loaded_at,omitempty"`
-	EnRouteAt         *time.Time `json:"en_route_at,omitempty"`
-	DeliveredAt       *time.Time `json:"delivered_at,omitempty"`
-	HandoffAt         *time.Time `json:"handoff_at,omitempty"`
-	PhotoCount        int32      `json:"photo_count"`
-	CreatedAt         time.Time  `json:"created_at"`
-	WeightKg          *float64   `json:"weight_kg,omitempty"`
-	VolumeM3          *float64   `json:"volume_m3,omitempty"`
-	PalletPositions   *int32     `json:"pallet_positions,omitempty"`
-	FreightIsOverride *bool      `json:"freight_is_override,omitempty"`
-	LoadSeq           *int32     `json:"load_seq,omitempty"`
-	LoadCount         *int32     `json:"load_count,omitempty"`
-	RequestedDate     *string    `json:"requested_date,omitempty"`
-	CommitState       *string    `json:"commit_state,omitempty"`
-	CommittedAt       *time.Time `json:"committed_at,omitempty"`
-	ReopenedAt        *time.Time `json:"reopened_at,omitempty"`
-	ReopenReason      *string    `json:"reopen_reason,omitempty"`
+	Id                string                `json:"id"`
+	BranchId          string                `json:"branch_id"`
+	OrderId           string                `json:"order_id"`
+	OrderNo           *string               `json:"order_no,omitempty"`
+	CustomerName      *string               `json:"customer_name,omitempty"`
+	RunId             *string               `json:"run_id,omitempty"`
+	RunNo             *string               `json:"run_no,omitempty"`
+	StopNo            int32                 `json:"stop_no"`
+	ScheduledDate     string                `json:"scheduled_date"`
+	Status            string                `json:"status"`
+	TimeWindow        *string               `json:"time_window,omitempty"`
+	ContactName       *string               `json:"contact_name,omitempty"`
+	ContactPhone      *string               `json:"contact_phone,omitempty"`
+	GateCode          *string               `json:"gate_code,omitempty"`
+	AddressLine       *string               `json:"address_line,omitempty"`
+	City              *string               `json:"city,omitempty"`
+	PostalCode        *string               `json:"postal_code,omitempty"`
+	Latitude          *float64              `json:"latitude,omitempty"`
+	Longitude         *float64              `json:"longitude,omitempty"`
+	Instructions      *string               `json:"instructions,omitempty"`
+	PodSignatureRef   *string               `json:"pod_signature_ref,omitempty"`
+	PodReceivedBy     *string               `json:"pod_received_by,omitempty"`
+	PodAt             *time.Time            `json:"pod_at,omitempty"`
+	FailureReason     *string               `json:"failure_reason,omitempty"`
+	LoadedAt          *time.Time            `json:"loaded_at,omitempty"`
+	EnRouteAt         *time.Time            `json:"en_route_at,omitempty"`
+	DeliveredAt       *time.Time            `json:"delivered_at,omitempty"`
+	HandoffAt         *time.Time            `json:"handoff_at,omitempty"`
+	PhotoCount        int32                 `json:"photo_count"`
+	CreatedAt         time.Time             `json:"created_at"`
+	WeightKg          *float64              `json:"weight_kg,omitempty"`
+	VolumeM3          *float64              `json:"volume_m3,omitempty"`
+	PalletPositions   *int32                `json:"pallet_positions,omitempty"`
+	FreightIsOverride *bool                 `json:"freight_is_override,omitempty"`
+	LoadSeq           *int32                `json:"load_seq,omitempty"`
+	LoadCount         *int32                `json:"load_count,omitempty"`
+	RequestedDate     *string               `json:"requested_date,omitempty"`
+	CommitState       *string               `json:"commit_state,omitempty"`
+	CommittedAt       *time.Time            `json:"committed_at,omitempty"`
+	ReopenedAt        *time.Time            `json:"reopened_at,omitempty"`
+	ReopenReason      *string               `json:"reopen_reason,omitempty"`
+	Lines             *[]DispatchDriverLine `json:"lines,omitempty"`
 }
 
 type DispatchPhotoMeta struct {

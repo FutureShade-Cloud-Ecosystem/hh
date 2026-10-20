@@ -86,6 +86,12 @@ for (const [width, height] of [
   });
 }
 
+test("this desk mounts no TanyAI panel, so its band carries no Ask TanyAI button", async ({ page }) => {
+  await boot(page, 1440, 900);
+  await expect(page.locator("hh-shell-header")).toBeVisible();
+  await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
+});
+
 // A second dealer, invented, served as the tenant config: the band names whoever the config names.
 const SECOND_DEALER = { id: "coastal", dealer_name: "Coastal Stone Supply", logo_url: "", primary_color: "#3a7d56", support_email: "help@coastal.invalid", support_phone: "" };
 

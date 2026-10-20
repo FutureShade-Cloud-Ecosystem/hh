@@ -4,7 +4,7 @@
 // functions of plain values; no state, no events (a control carries a data-action name and the
 // root's click listener acts on it).
 import { html, nothing, type TemplateResult } from "lit";
-import type { Tone } from "../po/po-logic.js";
+import { stampDay, type Tone } from "../po/po-logic.js";
 
 export function areaHead(title: string, lead: string): TemplateResult {
   return html`
@@ -49,7 +49,7 @@ export function emptyState(lead: string, rest: string): TemplateResult {
 }
 
 export function dateOnly(stamp: string | null | undefined): string {
-  return stamp === undefined || stamp === null || stamp === "" ? "" : stamp.slice(0, 10);
+  return stampDay(stamp);
 }
 
 /**

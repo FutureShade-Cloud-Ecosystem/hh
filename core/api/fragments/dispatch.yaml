@@ -1846,6 +1846,14 @@ components:
         committed_at: { type: [string, "null"], format: date-time }
         reopened_at: { type: [string, "null"], format: date-time }
         reopen_reason: { type: string }
+        lines:
+          type: array
+          description: >-
+            What comes off the truck at this stop. Present only on the stops
+            sync pull of a driver login, for that driver's own stops; absent
+            when the lines are not recorded. Carries no money field of any
+            kind.
+          items: { $ref: "#/components/schemas/DispatchDriverLine" }
     DispatchPhotoMeta:
       type: object
       description: A POD photo without its bytes (the list read); bytes come only from the per-photo route
