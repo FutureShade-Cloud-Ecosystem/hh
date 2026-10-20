@@ -94,10 +94,10 @@ func (r *Repository) ReopenStop(ctx context.Context, stopID, reason, actorID str
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	_, err = pool.Exec(ctx, `
 UPDATE delivery_stops
    SET commit_state = 'REQUESTED', reopened_by = NULLIF($2,'')::uuid, reopened_at = $3,
-       reopen_reason = $4, updated_at = now(), seq = (SELECT next_value FROM seq)
+       reopen_reason = $4, updated_at = now()
  WHERE id = $1`, stopID, actorID, at, reason)
 	return err
 }
@@ -185,12 +185,12 @@ func (r *Repository) CommitStopDate(ctx context.Context, stopID, toDate, actorID
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	_, err = pool.Exec(ctx, `
 UPDATE delivery_stops
    SET requested_date = COALESCE(requested_date, scheduled_date),
        scheduled_date = COALESCE(NULLIF($2,'')::date, scheduled_date),
        commit_state = 'COMMITTED', committed_at = $3, committed_by = NULLIF($4,'')::uuid,
-       updated_at = now(), seq = (SELECT next_value FROM seq)
+       updated_at = now()
  WHERE id = $1`, stopID, toDate, at, actorID)
 	return err
 }
@@ -349,13 +349,12 @@ func (r *Repository) UpdateLoadFacts(ctx context.Context, stopID string, in Load
 	// scopes' design note in syncscope_board.go): what a load weighs is
 	// a load fact, and a device's pull must see it the moment the yard
 	// records it.
-	_, err = pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	_, err = pool.Exec(ctx, `
 UPDATE delivery_stops SET
     weight_kg        = CASE WHEN $5 THEN NULL WHEN $2::numeric IS NULL THEN weight_kg        ELSE $2 END,
     volume_m3        = CASE WHEN $6 THEN NULL WHEN $3::numeric IS NULL THEN volume_m3        ELSE $3 END,
     pallet_positions = CASE WHEN $7 THEN NULL WHEN $4::int     IS NULL THEN pallet_positions ELSE $4 END,
-    updated_at = now(),
-    seq = (SELECT next_value FROM seq)
+    updated_at = now()
  WHERE id = $1`, stopID, in.WeightKg, in.VolumeM3, in.PalletPositions,
 		clear["weight_kg"], clear["volume_m3"], clear["pallet_positions"])
 	return err

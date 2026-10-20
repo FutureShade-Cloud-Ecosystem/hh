@@ -267,3 +267,52 @@ func TestIntegration_DrawBeforeLock_FreightRaiseApplyWithAMintBesideAStopWrite(t
 	p.waitBlocked("the apply waiting after its mint")
 	p.answers(map[string]chan error{"stop write": errStop, "ApplyFreightRaiseTx": errApply})
 }
+
+// - Part A: the single row writers that drew in a CTE before locking their row -
+
+// AssignStop (delivery_stops) drew the stops counter in a CTE, then locked the stop. A writer that relies on the
+// trigger (the touch here; the sync stop write and the freight and board writers are the real ones) holds the
+// row between its lock and its draw. AssignStop now relies on the trigger too, so both take the row first.
+func TestIntegration_DrawBeforeLock_AssignStopBesideAStopWrite(t *testing.T) {
+	f := newSyncFixture(t)
+	run := syncOpenRun(t, f)
+	orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+	key := syncFreshKey()
+	syncApplied(t, f, "stops", f.north, "create", key, map[string]any{
+		"order_id": orderID, "scheduled_date": syncToday(),
+		"address_line": "Fixture address", "city": "Fixture City"}, nil)
+	stopID := syncRowOf(t, f, "stops", f.north, key).ID
+
+	p := newDrawPark(t, f.pool, "stops", 4242013)
+	errTouch := p.touchRow("delivery_stops", "updated_at = now()", stopID)
+	p.waitParked("the stop write between its row lock and its draw")
+	errAssign := make(chan error, 1)
+	go func() {
+		ok, err := NewRepository(f.pool).AssignStop(context.Background(), stopID, run.ID, 1)
+		if err == nil && !ok {
+			err = fmt.Errorf("AssignStop moved no row")
+		}
+		errAssign <- err
+	}()
+	p.waitBlocked("AssignStop waiting for the stop row")
+	p.answers(map[string]chan error{"stop write": errTouch, "AssignStop": errAssign})
+}
+
+// AssignRunCrew (delivery_runs): the same shape on the run row.
+func TestIntegration_DrawBeforeLock_AssignRunCrewBesideARunWrite(t *testing.T) {
+	f := newSyncFixture(t)
+	run := syncOpenRun(t, f)
+	p := newDrawPark(t, f.pool, "runs", 4242014)
+	errTouch := p.touchRow("delivery_runs", "updated_at = now()", run.ID)
+	p.waitParked("the run write between its row lock and its draw")
+	errCrew := make(chan error, 1)
+	go func() {
+		ok, err := NewRepository(f.pool).AssignRunCrew(context.Background(), run.ID, f.truck, f.driver)
+		if err == nil && !ok {
+			err = fmt.Errorf("AssignRunCrew moved no row")
+		}
+		errCrew <- err
+	}()
+	p.waitBlocked("AssignRunCrew waiting for the run row")
+	p.answers(map[string]chan error{"run write": errTouch, "AssignRunCrew": errCrew})
+}

@@ -392,9 +392,9 @@ func (r *Repository) MoveStopDate(ctx context.Context, stopID, fromDate, toDate 
 	// The stops stream's seq rides the move (the shared delivery_stops
 	// feed, syncscope.go's design note), so a desk reschedule is
 	// visible to a device's pull the moment it lands.
-	tag, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := tx.Exec(ctx, `
 UPDATE delivery_stops
-   SET scheduled_date = $3::date, updated_at = now(), seq = (SELECT next_value FROM seq)
+   SET scheduled_date = $3::date, updated_at = now()
  WHERE id = $1 AND scheduled_date = $2::date AND status = 'READY'`, stopID, fromDate, toDate)
 	if err != nil {
 		return "", false, err

@@ -375,10 +375,9 @@ func (r *Repository) AssignRunCrew(ctx context.Context, runID, truckID, driverID
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_runs
-   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now()
  WHERE id = $1 AND status = 'PLANNED'`, runID, truckID, driverID)
 	if err != nil {
 		return false, err
@@ -393,13 +392,12 @@ func (r *Repository) UpdateRunStatus(ctx context.Context, runID, from, to string
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_runs
    SET status = $3,
        dispatched_at = CASE WHEN $3 = 'DISPATCHED' THEN $4 ELSE dispatched_at END,
        completed_at  = CASE WHEN $3 IN ('COMPLETED','CANCELLED') THEN $4 ELSE completed_at END,
-       updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+       updated_at = now()
  WHERE id = $1 AND status = $2`, runID, from, to, at)
 	if err != nil {
 		return false, err
@@ -598,10 +596,9 @@ func (r *Repository) AssignStop(ctx context.Context, stopID, runID string, stopN
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
-   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now()
  WHERE id = $1 AND status = 'READY'`, stopID, runID, stopNo)
 	if err != nil {
 		return false, err
@@ -628,15 +625,14 @@ func (r *Repository) UpdateStopStatus(ctx context.Context, stopID, from, to, fai
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
    SET status = $3,
        loaded_at    = CASE WHEN $3 = 'LOADED'    THEN $5 ELSE loaded_at END,
        en_route_at  = CASE WHEN $3 = 'EN_ROUTE'  THEN $5 ELSE en_route_at END,
        delivered_at = CASE WHEN $3 = 'DELIVERED' THEN $5 ELSE delivered_at END,
        failure_reason = CASE WHEN $3 = 'FAILED' THEN $4 ELSE failure_reason END,
-       updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+       updated_at = now()
  WHERE id = $1 AND status = $2`, stopID, from, to, failureReason, at)
 	if err != nil {
 		return false, err
@@ -655,12 +651,11 @@ func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedB
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
    SET pod_signature_ref = $3, pod_received_by = $4, pod_at = $6, pod_by = NULLIF($5,'')::uuid,
        status = 'DELIVERED', delivered_at = $6, updated_at = now(),
-       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key),
-       seq = (SELECT next_value FROM seq)
+       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key)
  WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at, idemKey)
 	if err != nil {
 		return false, err
@@ -677,8 +672,7 @@ func (r *Repository) MarkHandoff(ctx context.Context, stopID string, at time.Tim
 		return err
 	}
 	_, err = pool.Exec(ctx,
-		fmt.Sprintf(syncSeqCTE, stopsSyncScope)+
-			`UPDATE delivery_stops SET handoff_at = $2, updated_at = now(), seq = (SELECT next_value FROM seq)
+		`UPDATE delivery_stops SET handoff_at = $2, updated_at = now()
 			 WHERE id = $1 AND handoff_at IS NULL`,
 		stopID, at)
 	return err
