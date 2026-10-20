@@ -56,7 +56,7 @@ func newHolderGuard(t *testing.T) *holderGuard {
 		_, _ = d.pool.Exec(bg, `DELETE FROM task_events WHERE actor_id = $1::uuid`, g.b)
 		_, _ = d.pool.Exec(bg, `DELETE FROM users WHERE id = $1::uuid`, g.b)
 	})
-	d.svc.WithChatNotifier(g.notes)
+	d.svc.WithChatNotifier(g.notes).WithRoleLabels(fixedRoleLabels{})
 	g.h = NewHandler(d.svc, nil)
 	link := func(_ context.Context, _ string) (string, bool) { return d.user, true }
 	g.shorts = hhsync.NewEngine()
@@ -229,15 +229,38 @@ func TestYardHolderGuard_AShortageFromAnyoneInTheBranchIsAcceptedAndStamped(t *t
 	if n != 2 || byB != 2 {
 		t.Errorf("both shortages are stored with B stamped as reporter: %d stored, %d by B", n, byB)
 	}
-	told := 0
+	// The counter is told of each shortage, and so is the branch's yard channel (the holder is in it): the
+	// notice names the pick and the reporter's role label, never a name or an id.
+	counter, yard := 0, 0
 	for _, p := range g.notes.posts {
-		if strings.HasPrefix(p.Topic, "task.shortage") {
-			told++
+		switch {
+		case p.Topic == "task.shortage" && p.Audience == AudienceCounter:
+			counter++
+		case p.Topic == "task.shortage_yard" && p.Audience == AudienceYard:
+			yard++
+			if !strings.Contains(p.Summary, "A shortage was reported on a pick on this branch by the Yard Team") {
+				t.Errorf("the yard notice names the reporter by role label: %q", p.Summary)
+			}
+			if strings.Contains(p.Summary, g.b) || strings.Contains(p.Summary, g.a) || strings.Contains(p.Summary, g.task) {
+				t.Errorf("the yard notice carries no id: %q", p.Summary)
+			}
+			if p.BranchID != g.branchA {
+				t.Errorf("the yard notice goes to the pick's branch: %q", p.BranchID)
+			}
 		}
 	}
-	if told < 2 {
-		t.Errorf("the counter is told of each shortage: %d notices", told)
+	if counter != 2 || yard != 2 {
+		t.Errorf("each of the two shortages tells the counter and the yard: counter %d, yard %d", counter, yard)
 	}
-	// The holder told: see the UX-76 report. No notice path in this module addresses a person; it routes by
-	// audience (YARD, COUNTER, ORDER_REP), so the holder's notice is not asserted here.
+}
+
+// fixedRoleLabels answers the yard team label for every user, as the identity resolver does for a yard login.
+type fixedRoleLabels struct{}
+
+func (fixedRoleLabels) RoleLabelsForUsers(_ context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range ids {
+		out[id] = "Yard Team"
+	}
+	return out, nil
 }
