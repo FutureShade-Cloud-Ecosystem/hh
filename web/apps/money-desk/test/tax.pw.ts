@@ -452,6 +452,8 @@ test("the recompute asks first, adds once, and a second run says nothing new; a 
   await expect(confirm).toContainText("Running it again adds nothing new.");
   expect(posts).toEqual([]);
   await confirm.getByRole("button", { name: "Not yet" }).click();
+  // The ask is closed before nothing-sent is read: asserted at the click, it would pass whatever the button did next.
+  await expect(confirm).toHaveCount(0);
   expect(posts).toEqual([]);
   await go.click();
   await page.locator("[data-confirm='recompute']").getByRole("button", { name: "Recompute" }).click();

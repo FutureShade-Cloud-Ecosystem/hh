@@ -415,6 +415,8 @@ type tillClient struct {
 	mux   *http.ServeMux
 	token string
 	who   string
+	// tenant marks a contractor portal login: its routes refuse the staff org header.
+	tenant bool
 }
 
 // call issues one request through the registered surface with this client's credential and the
@@ -431,7 +433,9 @@ func (c *tillClient) call(method, path string, body any) demoResponse {
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("X-Org", demoOrgSlug)
+	if !c.tenant {
+		req.Header.Set("X-Org", demoOrgSlug)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

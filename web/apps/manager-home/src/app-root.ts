@@ -20,12 +20,14 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its controls ride data-action
 // names and the host's click listener below acts on them.
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -170,6 +172,10 @@ export class ManagerHomeApp extends HHElement {
     index: (name) => this.renderRoot.querySelector<HTMLSelectElement>(`select[data-field="${name}"]`)?.selectedIndex ?? -1,
   });
 
+  // Framed by the Work shell: the host's band is the one band; standalone, this
+  // app renders its own white band above the app-local header (GAPS-r2 row G1).
+  readonly #framed = framedByShell();
+
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
@@ -235,6 +241,13 @@ export class ManagerHomeApp extends HHElement {
 
   // The entry cards and every control ride data-action names; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -245,8 +258,7 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "reload") {
@@ -440,8 +452,18 @@ export class ManagerHomeApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the form
@@ -496,6 +518,7 @@ export class ManagerHomeApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
     super.disconnectedCallback();
@@ -513,11 +536,6 @@ export class ManagerHomeApp extends HHElement {
   // address are set on their elements after the render that drew them, never bound.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
     this.#restoreFocus();
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
@@ -533,6 +551,27 @@ export class ManagerHomeApp extends HHElement {
       if (url !== undefined && img.getAttribute("src") !== url) img.setAttribute("src", url);
       const alt = this.#warranty.photoAlt(id);
       if (img.getAttribute("alt") !== alt) img.setAttribute("alt", alt);
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when Manager Home stands alone; framed by the Work shell, the host's band
+    // is the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header used
+    // to (theme, switch role, sign out): the actions ride the band's
+    // accountMenu template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#view));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.theme = this.#theme;
+      band.accountMenu = this.#accountMenu();
     }
   }
 
@@ -1897,11 +1936,28 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
-  // The theme control rides the header's named slot; its word names the
+  // The theme control now rides the band's account menu; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    return html`<button type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+  }
+
+  /** The account chip's menu: the actions the app-local header used to carry. */
+  #accountMenu(): TemplateResult {
+    const signedIn = this.#sessions.current !== null;
+    return html`
+      ${signedIn
+        ? html`<p>Signed in as <strong data-testid="header-word">${this.#roleLabel}</strong></p>`
+        : nothing}
+      ${this.renderThemeControl()}
+      ${signedIn
+        ? html`
+          <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
+          <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
+        `
+        : nothing}
+    `;
   }
 
   private renderWork(): TemplateResult {
@@ -1917,21 +1973,12 @@ export class ManagerHomeApp extends HHElement {
     return renderLanding(this.#landing);
   }
 
-  private renderSignedIn(): TemplateResult {
-    return html`
-      <hos-app-header signed-in demo product-name="Home" product-sub="Manager Home · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-      <main>${this.renderWork()}</main>
-    `;
-  }
-
   render(): TemplateResult {
     const session = this.#sessions.current;
-    if (session !== null) return this.renderSignedIn();
+    const band = this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`;
     return html`
-      <hos-app-header demo product-name="Home" product-sub="Manager Home · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-      <main>
-        ${renderEntry(this.#entryView)}
-      </main>
+      ${band}
+      <main>${session !== null ? this.renderWork() : renderEntry(this.#entryView)}</main>
     `;
   }
 }

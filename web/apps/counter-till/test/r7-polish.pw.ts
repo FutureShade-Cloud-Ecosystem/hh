@@ -1,6 +1,7 @@
 // Round 7 polish, the till's own legs: the Feedback control covers no working control in any
 // layout, and the Panels screen is the window with no page scroll. Geometry is read through the shadow chain, the way a person sees it: boxes on screen.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 const SIZES: Array<[number, number]> = [
   [1440, 900],
@@ -52,33 +53,16 @@ test.afterEach(async ({ page }) => {
  * Feedback control itself, plus the Feedback control's own box: the control must meet none of them.
  */
 async function feedbackMeets(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const walk = (root: ParentNode, out: Element[]): Element[] => {
-      for (const el of root.querySelectorAll("*")) {
-        out.push(el);
-        if (el.shadowRoot) walk(el.shadowRoot, out);
-      }
-      return out;
-    };
-    const all = walk(document, []);
-    // The bar's Feedback button; a floating pill is what the till carried before, and its box counts too.
-    const feedback = all.find((el) => (el as HTMLElement).dataset?.testid === "feedback-button")
-      ?? all.find((el) => (el as HTMLElement).dataset?.testid === "feedback-pill");
-    if (feedback === undefined) return ["no Feedback control is on screen"];
-    const f = feedback.getBoundingClientRect();
-    const out: string[] = [];
-    for (const el of all) {
-      if (el === feedback || feedback.contains(el) || el.contains(feedback)) continue;
-      if (!el.matches("button, a[href], input, select, textarea, [role='button'], [role='tab']")) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) continue;
-      const style = getComputedStyle(el);
-      if (style.visibility === "hidden" || style.display === "none") continue;
-      const meets = r.left < f.right && r.right > f.left && r.top < f.bottom && r.bottom > f.top;
-      if (meets) out.push(`${el.tagName.toLowerCase()} ${(el.textContent ?? "").trim().slice(0, 20)} at ${Math.round(r.left)},${Math.round(r.top)}`);
-    }
-    return out;
-  });
+  // Feedback is no longer a floating control: it is a button in the band's account menu, so it
+  // covers nothing while closed and the menu is a popover under the band while open.
+  const out: string[] = [];
+  if (await page.getByTestId("feedback-pill").isVisible()) out.push("a floating Feedback pill is on screen");
+  await openAccountMenu(page);
+  const button = (await page.getByTestId("feedback-button").boundingBox())!;
+  const band = (await page.locator("hh-shell-header").boundingBox())!;
+  if (button.y < band.y + band.height - 1) out.push("the Feedback button is not under the band");
+  await closeAccountMenu(page);
+  return out;
 }
 
 for (const [width, height] of SIZES) {
@@ -97,7 +81,9 @@ for (const [width, height] of SIZES) {
     await pickLayout(page, "stepper");
     expect(await feedbackMeets(page)).toEqual([]);
     // The panel it opens leaves the page's controls where they were.
+    await openAccountMenu(page);
     await page.getByTestId("feedback-button").click();
+    await closeAccountMenu(page);
     await expect(page.getByTestId("feedback-panel")).toBeVisible();
   });
 
@@ -149,11 +135,13 @@ test("the Paid card of a split sale says each leg with its amount", async ({ pag
 /** Choose the theme through the bar's cycling control until its label says it. */
 async function pickTheme(page: Page, word: "Light" | "Brand"): Promise<void> {
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let turn = 0; turn < 3; turn += 1) {
     if (((await control.innerText()) ?? "").includes(word)) break;
     await control.click();
   }
   await expect(control).toContainText(word);
+  await closeAccountMenu(page);
 }
 
 test("light theme: panes and cards have an edge that reads, and every input shares one white fill", async ({ page }) => {
@@ -243,7 +231,9 @@ for (const layout of ["panels", "stepper"] as const) {
       await expect(popped.getByTestId("swap-panes")).toHaveCount(0);
     }
     await expect(popped.getByRole("button", { name: "Pop out" })).toHaveCount(0);
+    await openAccountMenu(popped);
     await expect(popped.getByRole("button", { name: "Sign out" })).toBeVisible();
+    await closeAccountMenu(popped);
     // The opener keeps its own Pop out.
     await expect(page.getByRole("button", { name: "Pop out" })).toBeVisible();
     if (layout === "panels") await page.getByTestId("swap-panes").click();

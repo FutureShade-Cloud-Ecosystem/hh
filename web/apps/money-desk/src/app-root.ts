@@ -7,20 +7,26 @@
 // provider refuses to send a request without X-Org, so no call ever leaves
 // this app unresolved.
 //
-// The header is fed through plain attributes (signed-in, demo) and, for the
-// role label, an assignment in updated(): the design system's position gate
-// refuses every "." and "@" binding and every bound value outside the data-
-// and aria- attributes in a dependent package. Its two buttons ride data-action names
-// and the host's click listener below acts on them.
-import { html, css, type TemplateResult } from "lit";
+// The one band (hh-shell-header) is wired in updated(): org, demo flag,
+// account user, breadcrumb, groups, current key, sync state, variant "band",
+// theme, and the account menu. The band applies the theme to the document
+// root and renders the actions (theme, switch role, sign out) inside its
+// account chip menu; clicks bubble back to the host click listener below.
+import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
+// hh-tanyai-panel: the one TanyAI panel (PANEL-API r1); the host opens it and resolves the records it names.
+import "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import type { ShellTanyai } from "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import { generatedTransport } from "@hardscapehouse/shell-chrome/src/tanyai-transport.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
@@ -86,7 +92,7 @@ const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-
 
 export class MoneyDeskApp extends HHElement {
   static styles = [baseStyles, entryStyles, arStyles, glStyles, finstmtStyles, bankrecStyles, taxStyles, lienStyles, css`
-    :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
+    :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); overflow-x: hidden; }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
     .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
@@ -391,8 +397,18 @@ export class MoneyDeskApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // Framed by the Work shell: the desk renders no band of its own.
+  readonly #framed = framedByShell();
+
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -402,9 +418,12 @@ export class MoneyDeskApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "assist") {
+      this.#tanyai()?.show();
+      return;
+    }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "area") {
@@ -454,8 +473,18 @@ export class MoneyDeskApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the listener sits on the root itself.
@@ -516,6 +545,7 @@ export class MoneyDeskApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onInput);
     this.renderRoot.removeEventListener("change", this.#onChange);
@@ -534,12 +564,74 @@ export class MoneyDeskApp extends HHElement {
     if (this.#area === "tax") this.#tax.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
+    this.#wireTanyai();
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when the desk stands alone; framed by the Work shell, the host's band is
+    // the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header
+    // used to (theme, sign out): the actions ride the band's accountMenu
+    // template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    const signedIn = this.#sessions.current !== null;
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      // This desk mounts the TanyAI panel and answers the press, so its band carries the Ask TanyAI button.
+      band.assist = true;
+      band.user = framedBandAccount(this.#userName, this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.theme = this.#theme;
+      band.accountMenu = html`
+        ${signedIn
+          ? html`<p>Signed in as <strong data-testid="header-word">${this.#roleLabel}</strong></p>`
+          : nothing}
+        ${this.renderThemeControl()}
+        ${signedIn
+          ? html`
+              <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
+              <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
+            `
+          : nothing}
+      `;
     }
   }
+
+  #tanyai(): ShellTanyai | null {
+    return this.renderRoot.querySelector<ShellTanyai>("hh-tanyai-panel");
+  }
+
+  // The panel gets its transport (the generated client, the staff routes) and the one record kind this desk can
+  // open, a customer's account. It is set once; the panel keeps its own state across renders.
+  #wireTanyai(): void {
+    const panel = this.#tanyai();
+    if (panel === null || panel.transport !== null) return;
+    panel.transport = generatedTransport(this.#staffClient);
+    panel.openableKinds = this.#holdsReceivables() ? ["customer"] : [];
+    panel.addEventListener("hh-tanyai-open-ref", this.#onOpenRef as EventListener);
+  }
+
+  // A record the panel names opens on this desk's own route: a customer is the receivables account screen.
+  readonly #onOpenRef = (event: CustomEvent<{ ref: { kind: string; id: string } }>): void => {
+    const ref = event.detail.ref;
+    if (ref.kind !== "customer" || !this.#holdsReceivables()) return;
+    this.#tanyai()?.hide();
+    if (this.#area !== "receivables") {
+      this.#area = "receivables";
+      this.#openArea();
+    }
+    const open = document.createElement("button");
+    open.setAttribute("data-action", "open-account");
+    open.setAttribute("data-customer-id", ref.id);
+    open.setAttribute("data-right", "receive");
+    this.#ar.press(open);
+    this.requestUpdate();
+  };
 
   private async loadFlows(): Promise<void> {
     this.#entryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -624,11 +716,11 @@ export class MoneyDeskApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
+  // The theme control now rides the band's account menu; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    return html`<button type="button" class="btn btn-secondary" data-action="theme" data-testid="theme-control">${label}</button>`;
   }
 
   // The desks the role holds, as the area switch: the controller's five, Payables and Receivables' four and the General
@@ -661,26 +753,21 @@ export class MoneyDeskApp extends HHElement {
   }
 
   private renderSignedIn(): TemplateResult {
-    return html`
-      ${this.#isController()
-        ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
-        : this.#holdsLedger()
-          ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Receivables and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
-          : html`<hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>`}
-      ${this.renderAreas()} ${this.renderArea()}
-    `;
+    return html`${this.renderAreas()} ${this.renderArea()}
+      <hh-tanyai-panel></hh-tanyai-panel>`;
   }
 
   render(): TemplateResult {
     const session = this.#sessions.current;
-    if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
-      <main class="desk">
-        <h1>Money Desk</h1>
-        <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue. Demo data only.</p>
-        ${renderEntry(this.#entryView)}
-      </main>
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
+      ${session !== null ? this.renderSignedIn() : html`
+        <main class="desk">
+          <h1>Money Desk</h1>
+          <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue. Demo data only.</p>
+          ${renderEntry(this.#entryView)}
+        </main>
+      `}
     `;
   }
 }
