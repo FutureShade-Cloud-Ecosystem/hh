@@ -6488,7 +6488,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         .term=${this.lookupTerm}
         .ticketEpoch=${this.ticketEpoch}
         @pos-drop-exit=${() => this.focusScanBox()}
-        @pos-drop-added=${(e: CustomEvent<{ name: string; sku: string }>) => this.dropAdded(e.detail)}
+        @pos-drop-added=${(e: CustomEvent) => this.dropAdded(e.detail)}
         @pos-add-product=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
         @pos-add-echo=${(e: CustomEvent<{ id: string }>) => this.onAddEcho(e.detail.id)}
       ></hos-pos-search-drop>
