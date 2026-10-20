@@ -63,7 +63,7 @@ import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { WeightsApi } from "./weights-api.js";
 import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
-import { keyForSignApply, waitingKinds } from "./approvals-logic.js";
+import { decisionSubject, itemsForKind, keyForSignApply, pendingCounts, waitingKinds } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
@@ -375,7 +375,7 @@ export class ManagerHomeApp extends HHElement {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
         this.#approvalsOpening += 1;
-        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "" };
+        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "", confirming: undefined, notice: "" };
         this.requestUpdate();
         void this.#loadApprovals();
       }
@@ -384,7 +384,8 @@ export class ManagerHomeApp extends HHElement {
     if (action === "select-approval") {
       const id = control?.getAttribute("data-approval-id") ?? "";
       if (id !== "" && id !== this.#approvals.selectedId) {
-        this.#approvals = { ...this.#approvals, selectedId: id };
+        const confirming = this.#approvals.confirming?.id === id ? this.#approvals.confirming : undefined;
+        this.#approvals = { ...this.#approvals, selectedId: id, confirming };
         this.requestUpdate();
       }
       return;
@@ -402,9 +403,21 @@ export class ManagerHomeApp extends HHElement {
       const isApprove = control?.getAttribute("data-decision") === "approve";
       if (this.#approvals.kind === "CHANGE_ORDER" && !isApprove) {
         void this.#changeOrderReject(id);
-      } else {
-        void this.#decide(id, isApprove);
+      } else if (id !== "" && this.#approvals.busyId === "") {
+        // A press only asks: the confirm names the request and the amount, and nothing is sent until the yes.
+        this.#approvals = { ...this.#approvals, selectedId: id, confirming: { id, decision: isApprove ? "approve" : "reject" }, notice: "", error: "" };
+        this.#decisionFocus = { kind: "confirm" };
+        this.requestUpdate();
       }
+      return;
+    }
+    if (action === "decide-confirm") {
+      const id = control?.getAttribute("data-approval-id") ?? "";
+      if (this.#approvals.confirming?.id === id) void this.#decide(id, this.#approvals.confirming.decision === "approve");
+      return;
+    }
+    if (action === "decide-cancel") {
+      this.#cancelDecision();
       return;
     }
     if (action === "sign-apply") {
@@ -434,6 +447,8 @@ export class ManagerHomeApp extends HHElement {
     }
     if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "decline-reason") {
       this.#approvals = { ...this.#approvals, declineReason: target.value };
+      // The reject confirm waits for a reason, so it must hear each keystroke.
+      if (this.#approvals.confirming?.decision === "reject") this.requestUpdate();
       return;
     }
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -469,6 +484,7 @@ export class ManagerHomeApp extends HHElement {
     // input does not leave this element's own shadow root, so the form
     // listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
+    this.renderRoot.addEventListener("keydown", this.#onDecisionKey as EventListener);
     if (this.#custody.mode === "console") {
       this.#custody.begin("manager-home", (outcome) => this.#onRecovered(outcome));
       return;
@@ -521,6 +537,7 @@ export class ManagerHomeApp extends HHElement {
     window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
+    this.renderRoot.removeEventListener("keydown", this.#onDecisionKey as EventListener);
     super.disconnectedCallback();
   }
 
@@ -537,6 +554,7 @@ export class ManagerHomeApp extends HHElement {
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
     this.#restoreFocus();
+    this.#applyDecisionFocus();
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
     this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
@@ -589,6 +607,68 @@ export class ManagerHomeApp extends HHElement {
     const op = control.getAttribute("data-op");
     this.#focusTarget = op !== null && (key !== null || entry !== null) ? { op, key: key ?? "", entry: entry ?? "" } : null;
   }
+
+  // Where focus goes in the approvals decision, set with the state that needs it and used by the render that draws it:
+  // into the confirm when it opens, back to the asking button after a cancel, to the next waiting row (or the notice)
+  // after a decision. The confirm and the result are also scrolled into view, for the phone.
+  #decisionFocus: { kind: "confirm" } | { kind: "row"; id: string; decision: string } | { kind: "next"; id: string } | { kind: "error" } | null = null;
+
+  #cancelDecision(): void {
+    const asked = this.#approvals.confirming;
+    this.#approvals = { ...this.#approvals, confirming: undefined };
+    if (asked !== undefined) this.#decisionFocus = { kind: "row", id: asked.id, decision: asked.decision };
+    this.requestUpdate();
+  }
+
+  #applyDecisionFocus(): void {
+    const want = this.#decisionFocus;
+    if (want === null) return;
+    this.#decisionFocus = null;
+    const root = this.renderRoot;
+    const ask = (id: string): string => `.approval-card[data-approval-id='${CSS.escape(id)}']`;
+    if (want.kind === "confirm") {
+      const confirm = root.querySelector<HTMLElement>("[data-test='decision-confirm']");
+      if (confirm === null) return;
+      const reason = root.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      const first = this.#approvals.confirming?.decision === "reject" && reason !== null ? reason : confirm.querySelector<HTMLButtonElement>("button");
+      first?.focus({ preventScroll: true });
+      confirm.scrollIntoView({ block: "nearest" });
+    } else if (want.kind === "row") {
+      const button = root.querySelector<HTMLButtonElement>(`${ask(want.id)} button[data-decision='${CSS.escape(want.decision)}']`);
+      button?.focus();
+    } else if (want.kind === "next") {
+      const notice = root.querySelector<HTMLElement>("[data-test='decision-notice']");
+      notice?.scrollIntoView({ block: "nearest" });
+      const card = want.id !== "" ? root.querySelector<HTMLElement>(ask(want.id)) : null;
+      (card ?? notice)?.focus({ preventScroll: true });
+    } else {
+      root.querySelector<HTMLElement>(".error-line")?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // Escape cancels the confirm, and Tab stays inside the decision block while it is open.
+  readonly #onDecisionKey = (event: KeyboardEvent): void => {
+    if (this.#approvals.confirming === undefined) return;
+    const section = this.renderRoot.querySelector<HTMLElement>(".decision-section");
+    if (section === null) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.#cancelDecision();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = Array.from(section.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
+    if (items.length === 0) return;
+    const active = (this.renderRoot as ShadowRoot).activeElement;
+    const at = active === null ? -1 : items.indexOf(active as HTMLElement);
+    if (!event.shiftKey && (at === items.length - 1 || at === -1)) {
+      event.preventDefault();
+      items[0].focus();
+    } else if (event.shiftKey && at <= 0) {
+      event.preventDefault();
+      items[items.length - 1].focus();
+    }
+  };
 
   #restoreFocus(): void {
     const target = this.#focusTarget;
@@ -1761,6 +1841,7 @@ export class ManagerHomeApp extends HHElement {
     // The view opens on the first waiting approvals kind the core does not refuse, as it always has; the change
     // orders tab shows its count but is never the opening tab, so a person lands where the approvals board puts them.
     const candidates = all.ok ? waitingKinds(all.value) : [];
+    if (all.ok) this.#approvals = { ...this.#approvals, counts: pendingCounts(all.value) };
     for (const kind of candidates) {
       if (opening !== this.#approvalsOpening) return;
       if (kind === "CHANGE_ORDER") {
@@ -1853,30 +1934,41 @@ export class ManagerHomeApp extends HHElement {
 
   async #decide(id: string, approve: boolean): Promise<void> {
     if (id === "" || this.#approvals.busyId !== "") return;
-    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
+    // The words of the decision are taken before the list moves under them.
+    const before = itemsForKind(this.#approvals.kind, this.#approvals.rows).find((i) => i.id === id);
+    const subject = before ? decisionSubject(before) : "the request";
+    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "", notice: "" };
     this.requestUpdate();
-    const reason = this.#approvals.declineReason ?? "";
+    // A typed reason belongs to a reject: an approve sends none.
+    const reason = approve ? "" : (this.#approvals.declineReason ?? "");
     const result = await this.#api.decideApproval(id, approve, reason);
     if (result.ok) {
+      this.#approvals = { ...this.#approvals, confirming: undefined, declineReason: "" };
       await this.#loadApprovals();
+      // The tab counts are the core's own, read again; the next waiting request opens so the queue keeps moving.
+      const all = await this.#api.approvals("", true);
+      const next = itemsForKind(this.#approvals.kind, this.#approvals.rows).find((i) => i.status === "PENDING");
+      this.#approvals = {
+        ...this.#approvals,
+        ...(all.ok ? { counts: pendingCounts(all.value) } : {}),
+        selectedId: next?.id,
+        notice: `${approve ? "Approved" : "Rejected"} ${subject}.${
+          itemsForKind(this.#approvals.kind, this.#approvals.rows).some((i) => i.id === id && i.status !== "PENDING") ? " It is under Decided." : ""
+        }`,
+      };
+      this.#decisionFocus = { kind: "next", id: next?.id ?? "" };
+      // The reason belonged to the decision just made; the box is not bound, so it is emptied here.
+      await this.updateComplete;
+      const box = this.renderRoot.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      if (box) box.value = "";
       await this.#refreshLanding();
-    } else if (result.status === 404) {
-      const existing = this.#approvals.rows.find((r) => r.id === id);
-      const updatedRow = existing
-        ? { ...existing, status: approve ? "APPROVED" : "REJECTED" }
-        : {
-            id,
-            branch_id: "",
-            policy_type: this.#approvals.kind,
-            detail: "",
-            subject_ref: "",
-            amount_cents: 0,
-            status: approve ? "APPROVED" : "REJECTED",
-          };
-      const rows = existing
-        ? this.#approvals.rows.map((r) => (r.id === id ? updatedRow : r))
-        : [...this.#approvals.rows, updatedRow];
-      this.#approvals = { ...this.#approvals, rows };
+    } else if (result.status === 404 || result.status === 409) {
+      // Gone or already decided by someone else: say so and read the list again. A status is never written here.
+      this.#approvals = { ...this.#approvals, confirming: undefined, error: "That request is no longer waiting." };
+      const kept = this.#approvals.error;
+      await this.#loadApprovals();
+      const all = await this.#api.approvals("", true);
+      this.#approvals = { ...this.#approvals, ...(all.ok ? { counts: pendingCounts(all.value) } : {}), error: kept };
     } else {
       this.#approvals = {
         ...this.#approvals,
@@ -1888,6 +1980,7 @@ export class ManagerHomeApp extends HHElement {
       };
     }
     this.#approvals = { ...this.#approvals, busyId: "" };
+    if (this.#approvals.error !== "") this.#decisionFocus = { kind: "error" };
     this.requestUpdate();
   }
 
@@ -1916,7 +2009,7 @@ export class ManagerHomeApp extends HHElement {
     if (id === "" || this.#approvals.busyId !== "") return;
     const note = this.#approvals.declineReason ?? "";
     if (note.trim() === "") {
-      this.#approvals = { ...this.#approvals, error: "A note is needed to decline." };
+      this.#approvals = { ...this.#approvals, error: "A note is needed to reject." };
       this.requestUpdate();
       return;
     }
