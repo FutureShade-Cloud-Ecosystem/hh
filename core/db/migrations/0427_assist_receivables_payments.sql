@@ -6,10 +6,10 @@
 -- (ruling 87). The claim type already carries payment_trail (0418), so this file changes no type.
 --
 -- Rows follow the receivables screens: an invoice is visible where the register returns it (branch reach, the
--- assistant's tier floor on top); a payment where the customer workspace's payment list or the payment history
--- returns it (the workspace leaves out VOID, NSF and BOUNCED payments, so an asker without the trail does not get
--- those rows); an allocation only where a trail route returns it (the payment history by the payment's branch, the
--- invoice's payments by the invoice's branch), so only for an asker who holds the trail.
+-- assistant's tier floor on top); a payment and an allocation only where a trail route returns it (the payment
+-- history by the payment's branch, the invoice's payments by the invoice's branch), so only for an asker who holds
+-- the trail: the money desk's routes are the rule (ruling 87), and a payment's presence would otherwise tell its
+-- status.
 --
 -- The aging view restates the aging screen's projection (credit_repository.go agingSelect) over the invoices the
 -- row policy lets the asker reach, because v_ar_aging runs as its owner and would bypass row security. The aging
@@ -69,15 +69,16 @@ BEGIN
       AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
       AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
     )$p$, v_view);
-  -- A payment is a row of the workspace's payment list (every status but VOID, NSF and BOUNCED) for any asker, and
-  -- of the payment history (every status) for an asker who holds the trail.
+  -- A payment is a row of the payment history (every status, by the payment's branch) for an asker who holds the
+  -- trail, and of nothing for anyone else: the customer workspace's wider list is a separate finding for the UX
+  -- lane and is not a reason to relax (item 46).
   EXECUTE format($p$
     CREATE POLICY assist_staff_payments ON public.payments TO %I
     USING (
       (SELECT ai.claims()).audience = 'staff'
       AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
       AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
-      AND ((SELECT ai.claims()).payment_trail IS TRUE OR status NOT IN ('VOID', 'NSF', 'BOUNCED'))
+      AND (SELECT ai.claims()).payment_trail IS TRUE
     )$p$, v_view);
   EXECUTE format($p$
     CREATE POLICY assist_staff_payment_allocations ON public.payment_allocations TO %I

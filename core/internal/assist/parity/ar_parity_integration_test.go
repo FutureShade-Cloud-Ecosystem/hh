@@ -8,9 +8,9 @@ package parity
 // root's and has its own tests). The oracles are the modules' own scoped reads:
 //   - invoices: the register (billing.RegisterService.Register, branch reach from the caller's context);
 //   - aging: the aging screen's service read (billing.CreditService.Aging, same reach);
-//   - payments: for a caller who holds the trail the payment history (till.Service.PaymentHistory), for one who
-//     does not the customer workspace's payment list (billing.Repository.WorkspacePayments), the only screen that
-//     shows a payment without the trail;
+//   - payments: the payment history (till.Service.PaymentHistory), a trail route, so only for a caller who holds
+//     the trail; a caller without it gets no payment row at all (the customer workspace's wider list is a separate
+//     finding for the UX lane, and TanyAI does not relax to it: ruling 87, item 46);
 //   - allocations: the payment history's allocations and the invoice's payments (till.Service.InvoicePayments),
 //     both trail routes, so only for a caller who holds the trail.
 // The assistant's tier floor sits on top of every screen: a tier 3 caller reads each of these screens (the
@@ -278,7 +278,7 @@ func TestParity_EveryAgingRowFollowsTheAgingScreensOwnRead(t *testing.T) {
 
 // -- payments -------------------------------------------------------------------------------------------
 
-func TestParity_EveryPaymentFollowsTheTrailOrTheWorkspacesRead(t *testing.T) {
+func TestParity_EveryPaymentFollowsThePaymentTrailRoutes(t *testing.T) {
 	r := newARRig(t)
 	ctx := testsupport.Ctx(t)
 	type pay struct{ id, no, customer, branch string }
@@ -298,23 +298,9 @@ func TestParity_EveryPaymentFollowsTheTrailOrTheWorkspacesRead(t *testing.T) {
 	if len(all) < 7 {
 		t.Fatalf("the payment world holds %d payments", len(all))
 	}
-	workspace := map[string]map[string]billing.CustomerWorkspacePayment{} // customer -> payment id -> row
-	for _, p := range all {
-		if p.customer == "" || workspace[p.customer] != nil {
-			continue
-		}
-		list, err := r.bill.WorkspacePayments(ctx, p.customer)
-		if err != nil {
-			t.Fatal(err)
-		}
-		workspace[p.customer] = map[string]billing.CustomerWorkspacePayment{}
-		for _, wp := range list {
-			workspace[p.customer][wp.ID] = wp
-		}
-	}
 	compared, withCells, withoutCells := 0, 0, 0
 	for _, c := range r.cs {
-		caller, claims := r.claimsFor(t, c)
+		_, claims := r.claimsFor(t, c)
 		type row struct {
 			no, label, cust   string
 			received          int64
@@ -333,17 +319,23 @@ func TestParity_EveryPaymentFollowsTheTrailOrTheWorkspacesRead(t *testing.T) {
 			got[id] = x
 			return nil
 		})
+		if !c.trail {
+			withoutCells++
+			if len(got) != 0 {
+				t.Errorf("%s: a caller without the trail reads %d payment rows, want none", c.name, len(got))
+			}
+		}
 		octx := identity.ContextWithStaff(ctx, c.sc)
 		for _, p := range all {
+			// A payment is a row for a caller who holds the trail and for nobody else: the money desk's routes are
+			// the rule (ruling 87), and the status of a payment is trail knowledge, so even the presence of a row
+			// would tell it.
 			var hist till.PaymentHistory
-			var herr error
 			expect := false
 			if c.trail {
+				var herr error
 				hist, herr = r.till.PaymentHistory(octx, p.id)
 				expect = herr == nil
-			} else {
-				_, inWorkspace := workspace[p.customer][p.id]
-				expect = inWorkspace && reaches(caller, p.branch)
 			}
 			expect = expect && r.floor(c)
 			g, in := got[p.id]
@@ -374,20 +366,11 @@ func TestParity_EveryPaymentFollowsTheTrailOrTheWorkspacesRead(t *testing.T) {
 					g.unapplied == nil || *g.unapplied != un || g.received != hist.ReceivedAt.Unix() {
 					t.Errorf("%s: payment %s differs from the history: view %+v, history %+v (unapplied %d)", c.name, p.no, g, hist, un)
 				}
-			} else {
-				withoutCells++
-				wp := workspace[p.customer][p.id]
-				if g.method != nil || g.status != nil || g.amount != nil || g.unapplied != nil {
-					t.Errorf("%s: a payment cell is present for a caller without the trail: %+v", c.name, g)
-				}
-				if g.received != wp.ReceivedAt.Unix() || g.no != wp.PaymentNo {
-					t.Errorf("%s: payment %s differs from the workspace: view %+v, workspace %+v", c.name, p.no, g, wp)
-				}
 			}
 		}
 	}
-	if compared < 25 || withCells < 8 || withoutCells < 8 {
-		t.Fatalf("too little was compared: %d payments, %d with the trail, %d without", compared, withCells, withoutCells)
+	if compared < 12 || withCells != compared || withoutCells < 4 {
+		t.Fatalf("too little was compared: %d payments, %d with the trail, %d callers without the trail checked", compared, withCells, withoutCells)
 	}
 }
 
@@ -572,5 +555,51 @@ func TestParity_AgingUsesTheDealersDay(t *testing.T) {
 	}
 	if days["Pacific/Kiritimati"] == days["Pacific/Pago_Pago"] {
 		t.Errorf("the two zones gave the same day %s: the view ignores the dealer's zone", days["Pacific/Kiritimati"])
+	}
+}
+
+// A payment's status is trail knowledge, so a payment's presence must not tell it. For a caller without the trail
+// the answer is the same, no rows and a count of nothing, before and after payments are voided, bounced or
+// restored; and for a caller with the trail the rows are there in every status.
+func TestParity_APaymentStatusChangeDoesNotChangeTheAnswerOfACallerWithoutTheTrail(t *testing.T) {
+	r := newARRig(t)
+	ctx := testsupport.Ctx(t)
+	var without, with arCaller
+	for _, c := range r.cs {
+		switch c.name {
+		case "manager at both without trail":
+			without = c
+		case "global with trail":
+			with = c
+		}
+	}
+	_, offClaims := r.claimsFor(t, without)
+	_, onClaims := r.claimsFor(t, with)
+	read := func(claims readtx.Claims) (n int, countStar int64) {
+		r.run(t, claims, `SELECT count(*) FROM ai.payments WHERE payment_no LIKE 'PAY-S7A-`+r.w.tag+`-%'`, func(rs pgx.Rows) error { return rs.Scan(&countStar) })
+		r.run(t, claims, `SELECT id::text FROM ai.payments WHERE payment_no LIKE 'PAY-S7A-`+r.w.tag+`-%'`, func(rs pgx.Rows) error { n++; return nil })
+		return n, countStar
+	}
+	offN, offCount := read(offClaims)
+	onN, onCount := read(onClaims)
+	if offN != 0 || offCount != 0 {
+		t.Fatalf("a caller without the trail reads %d rows and counts %d payments, want nothing", offN, offCount)
+	}
+	if onN != 7 || onCount != 7 {
+		t.Fatalf("a caller with the trail reads %d rows and counts %d of the 7 planted payments", onN, onCount)
+	}
+	for _, change := range []struct{ payment, status string }{
+		{"a-cash", "BOUNCED"}, {"a-unapplied", "VOID"}, {"a-cross", "REFUNDED"}, {"b-void", "RECEIVED"}, {"a-cheque-bounced", "DEPOSITED"},
+	} {
+		if _, err := r.env.Admin.Exec(ctx, `UPDATE payments SET status = $2 WHERE id = $1::uuid`, r.w.payments[change.payment], change.status); err != nil {
+			t.Fatal(err)
+		}
+		n, c := read(offClaims)
+		if n != offN || c != offCount {
+			t.Errorf("setting %s to %s changed the answer of a caller without the trail: %d rows (was %d), count %d (was %d)", change.payment, change.status, n, offN, c, offCount)
+		}
+		if n, c := read(onClaims); n != onN || c != onCount {
+			t.Errorf("setting %s to %s changed the rows a caller with the trail reads: %d rows, count %d", change.payment, change.status, n, c)
+		}
 	}
 }

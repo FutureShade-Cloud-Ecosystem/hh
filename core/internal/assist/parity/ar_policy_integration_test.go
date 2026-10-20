@@ -60,34 +60,31 @@ func TestPolicy_InvoiceRowsFollowTheClaimsBranchesAudienceAndTier(t *testing.T) 
 	}
 }
 
-// A payment is a row of the workspace's list (every status but VOID, NSF and BOUNCED) for any asker, and of the
-// payment history (every status) for one who holds the trail.
-func TestPolicy_PaymentRowsFollowTheTrailBranchesAudienceAndTier(t *testing.T) {
+// A payment is a row of the payment trail routes only (the history by the payment's branch): a caller without the
+// trail reads no payment row, in any status, so the presence of a row never tells a status.
+func TestPolicy_PaymentRowsAreTheTrailRoutesOnlyByBranchAudienceAndTier(t *testing.T) {
 	env := testsupport.Open(t)
 	w := plantARWorld(t, env)
 	const pay = "public.payments"
 	total := countWhere(t, env, `SELECT count(*) FROM payments`)
-	hidden := countWhere(t, env, `SELECT count(*) FROM payments WHERE status IN ('VOID', 'NSF', 'BOUNCED')`)
-	if hidden == 0 {
-		t.Fatal("the world holds no payment the workspace leaves out")
-	}
 	if got := countAsViewOwner(t, env, trailClaim(nil, true), pay); got != total {
 		t.Errorf("a global claim with the trail reads %d payments, want %d (positive control)", got, total)
 	}
-	if got := countAsViewOwner(t, env, staffClaim(nil, true), pay); got != total-hidden {
-		t.Errorf("a global claim without the trail reads %d payments, want %d (every status but VOID, NSF, BOUNCED)", got, total-hidden)
+	for _, c := range []readtx.Claims{staffClaim(nil, true), staffClaim(w.branches(), false)} {
+		if got := countAsViewOwner(t, env, c, pay); got != 0 {
+			t.Errorf("a claim without the trail reads %d payments, want 0", got)
+		}
 	}
 	for _, br := range w.branches() {
 		all := countWhere(t, env, `SELECT count(*) FROM payments WHERE branch_id = $1::uuid`, br)
-		shown := countWhere(t, env, `SELECT count(*) FROM payments WHERE branch_id = $1::uuid AND status NOT IN ('VOID', 'NSF', 'BOUNCED')`, br)
-		if all == shown || shown == 0 {
-			t.Fatalf("the policy world is wrong at %s: %d payments, %d shown", br, all, shown)
+		if all == 0 || all == total {
+			t.Fatalf("the policy world is wrong at %s: %d of %d payments", br, all, total)
 		}
 		if got := countAsViewOwner(t, env, trailClaim([]string{br}, false), pay); got != all {
 			t.Errorf("branch %s with the trail reads %d payments, want %d", br, got, all)
 		}
-		if got := countAsViewOwner(t, env, staffClaim([]string{br}, false), pay); got != shown {
-			t.Errorf("branch %s without the trail reads %d payments, want %d", br, got, shown)
+		if got := countAsViewOwner(t, env, staffClaim([]string{br}, false), pay); got != 0 {
+			t.Errorf("branch %s without the trail reads %d payments, want 0", br, got)
 		}
 	}
 	for _, c := range []readtx.Claims{trailClaim(nil, false), trailClaim(noReach, false), staffClaim(noReach, false)} {

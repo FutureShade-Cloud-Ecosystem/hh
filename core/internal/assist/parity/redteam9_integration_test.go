@@ -6,9 +6,8 @@ package parity
 // asks for a payment's history (the allocations), a payment method, a payment amount by name, by aggregate, by
 // filter, by order, by group and by null test; each is refused with notice.code = refused and the payment_trail
 // class word, or answers with no row at all, and none returns a value. The same manager with the trail gets the
-// figures. Case 9 as the plan words it assumed every payment column is trail only; the customer workspace shows a
-// payment's amount and method to any staff, so the view follows the trail routes (the stricter reading) and the
-// report asks which screen is the rule.
+// figures. A caller without the trail gets no payment row at all (the money desk's routes are the rule, ruling 87):
+// the customer workspace's wider payment list is a separate finding for the UX lane, not a reason to relax.
 
 import (
 	"fmt"
@@ -84,21 +83,32 @@ func TestRedTeam9_AManagerWithoutThePaymentTrailCannotGetAPaymentByAnySpec(t *te
 	if err != nil || len(hist.Items) != 0 {
 		t.Errorf("a payment's history for a caller without the trail: %v, %d rows", err, len(hist.Items))
 	}
-	// The plain read of the payments answers, with the identifying cells and none of the payment class.
+	// The plain read of the payments answers with no row at all: the money desk's routes are the rule (ruling 87),
+	// and even a payment's presence would tell its status. A count over them is a count of nothing, before and
+	// after one of them is bounced.
 	list := `{"view":"ai.payments","where":[{"col":"payment_no","op":"contains","value":"S7A-` + r.w.tag + `"}],"limit":100}`
-	res, err := q.Query(ctx, off, list)
-	if err != nil || len(res.Items) == 0 {
-		t.Fatalf("a plain payment list without the trail: %v, %d rows, %+v", err, len(res.Items), res.Notice)
-	}
-	for _, it := range res.Items {
-		for _, label := range []string{"Method", "Payment status", "Amount", "Unapplied"} {
-			if _, has := fieldValue(it, label); has {
-				t.Fatalf("a payment carries %q for a caller without the trail: %+v", label, it)
+	for _, step := range []string{"before", "after a status change"} {
+		res, err := q.Query(ctx, off, list)
+		if err != nil || len(res.Items) != 0 || res.Notice != nil && res.Notice.Code == assist.NoticeRefused {
+			t.Fatalf("a plain payment list without the trail %s: %v, %d rows, %+v", step, err, len(res.Items), res.Notice)
+		}
+		cnt, err := q.Query(ctx, off, `{"view":"ai.payments","aggregate":[{"fn":"count"}],"where":[{"col":"payment_no","op":"contains","value":"S7A-`+r.w.tag+`"}]}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cnt.Items) == 1 {
+			if v, _ := fieldValue(cnt.Items[0], "Count"); v != "0" {
+				t.Errorf("a count of payments without the trail %s is %q, want 0", step, v)
 			}
+		} else if len(cnt.Items) != 0 {
+			t.Errorf("a count of payments without the trail %s: %+v", step, cnt.Items)
+		}
+		if _, err := r.env.Admin.Exec(ctx, `UPDATE payments SET status = 'BOUNCED' WHERE id = $1::uuid`, r.w.payments["a-cash"]); err != nil {
+			t.Fatal(err)
 		}
 	}
 	// The same asker with the trail: the figures, the aggregate, the filter, the order, the group and the history.
-	res, err = q.Query(ctx, on, `{"view":"ai.payments","select":["payment_no","method","amount_cents"],"where":[{"col":"payment_no","op":"contains","value":"S7A-`+r.w.tag+`"}],"order_by":[{"col":"amount_cents","dir":"desc"}],"limit":100}`)
+	res, err := q.Query(ctx, on, `{"view":"ai.payments","select":["payment_no","method","amount_cents"],"where":[{"col":"payment_no","op":"contains","value":"S7A-`+r.w.tag+`"}],"order_by":[{"col":"amount_cents","dir":"desc"}],"limit":100}`)
 	if err != nil || res.Notice != nil && res.Notice.Code == assist.NoticeRefused || len(res.Items) < 7 {
 		t.Fatalf("a caller with the trail: %v %d rows %+v", err, len(res.Items), res.Notice)
 	}
