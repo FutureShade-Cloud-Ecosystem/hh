@@ -16,6 +16,7 @@ import {
   isScannerBurst,
   enterMissOutcome,
   looksLikeProductName,
+  burstMayCommit,
   clockLabel,
   lineWeightLbs,
   formatLbs,
@@ -49,6 +50,14 @@ test('isScannerBurst: a machine-fast burst is a scan; human typing is not', () =
 test('isScannerBurst: the MEDIAN decides: one slow wake-up gap must not disqualify a gun', () => {
   assert.equal(isScannerBurst([400, 6, 7, 6, 7, 6, 7, 6], 9), true, 'the gun woke slowly, then burst');
   assert.equal(isScannerBurst([6, 300, 280, 320, 300, 310, 290, 300], 9), false, 'one fast key-roll pair does not promote a typist');
+});
+
+test('burstMayCommit: a scanner speed label commits a row only when the row name begins with it', () => {
+  assert.equal(burstMayCommit('polymer', 'Polymeric Locking Sand'), true);
+  assert.equal(burstMayCommit(' POLYMER ', 'Polymeric Locking Sand'), true);
+  assert.equal(burstMayCommit('sand', 'Polymeric Locking Sand'), false);
+  assert.equal(burstMayCommit('gift card', null), false);
+  assert.equal(burstMayCommit('', 'Polymeric Locking Sand'), false);
 });
 
 test('enterMissOutcome: a plain name typed at gun speed is still a typed entry; a digit code stays a scan', () => {

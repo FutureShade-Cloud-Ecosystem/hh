@@ -88,3 +88,22 @@ test("a scanner's sequence still resolves a code on Enter, and an unknown code i
   await expect(page.getByTestId("pos-scan-msg")).toContainText("No product for 0099887766");
   await expect(lines(page)).toHaveCount(1);
 });
+
+test("a letters only label at scanner speed commits only a row that begins with it", async ({ page }) => {
+  await signIn(page);
+  await toSearch(page);
+  // keyboard.type has no pause between keys: scanner speed. "sand" is inside Polymeric Locking Sand but
+  // does not begin it, so it reads as an unknown label and stays loud; nothing is added.
+  await page.keyboard.type("sand");
+  await expect(page.getByTestId("drop-row").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("pos-scan-msg")).toContainText("No product for sand");
+  await expect(lines(page)).toHaveCount(0);
+  await expect(page.getByTestId("pos-scan-input")).toHaveValue("");
+
+  // A name that begins with the typed text is still added at the same speed.
+  await page.keyboard.type("polymer");
+  await expect(page.getByTestId("drop-row").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(lines(page).filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(1);
+});

@@ -52,6 +52,17 @@ export function looksLikeProductName(code: string): boolean {
 }
 
 /**
+ * burstMayCommit: a letters only entry that arrived at scanner speed (a gift card or vendor label
+ * reads like this) may commit the top search row only when that row's name begins with the typed
+ * text, case blind; any other row is a guess, and the loud unknown code answer stands instead.
+ */
+export function burstMayCommit(term: string, topName: string | null | undefined): boolean {
+  const typed = term.trim().toLowerCase();
+  if (typed === '' || !topName) return false;
+  return topName.trim().toLowerCase().startsWith(typed);
+}
+
+/**
  * enterMissOutcome: the one decision the unified field adds over the two boxes it replaces.
  * A scanner burst keeps the scan box's LOUD unknown-code contract; a typed entry falls through to
  * the live search that is already showing (its own no-match state answers there). A fast typist

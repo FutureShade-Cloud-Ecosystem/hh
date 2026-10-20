@@ -141,6 +141,7 @@ import {
   txbarSegments,
   resolveCuratedChips,
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
+  burstMayCommit, // a scanner speed label commits a row only when its name begins with it
   type LineWeightFacts,
 } from '@hardscapehouse/pos-kit/src/ported/_pos-rev8.js';
 // P3-10 (the comprehensive train review): the margin surface follows the policy
@@ -4184,13 +4185,20 @@ export class HosPosTerminal extends LitElement {
    * No hit means no commit: the term stays in the field and the browse path is one press away.
    * Enter must never invent a product.
    */
-  private commitTopHit(): void {
+  private commitTopHit(detail?: { term?: string; burst?: boolean }): void {
     const drop = this.renderRoot.querySelector<HTMLElement & { commitTop?: () => boolean; topHit?: () => { name: string; sku: string } | null }>(
       'hos-pos-search-drop',
     );
     const top = drop?.topHit?.() ?? null;
+    const box = this.renderRoot.querySelector<HTMLElement & { commitDone?: (m: string) => void; unknownCode?: (c: string) => void }>(
+      'hos-pos-scan-box',
+    );
+    // A scanner speed entry commits only a row that begins with it (burstMayCommit); else loud.
+    if (detail?.burst && !burstMayCommit(detail.term ?? '', top?.name)) {
+      box?.unknownCode?.(detail.term ?? '');
+      return;
+    }
     if (!drop || !top || !drop.commitTop?.()) return;
-    const box = this.renderRoot.querySelector<HTMLElement & { commitDone?: (m: string) => void }>('hos-pos-scan-box');
     box?.commitDone?.(`Added ${top.name} · ${top.sku}`);
   }
 
@@ -6472,7 +6480,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         ?autofocus-scan=${true}
         ?unified=${true}
         @pos-term-changed=${(e: CustomEvent<{ term: string }>) => (this.lookupTerm = e.detail.term)}
-        @pos-term-commit-top=${() => this.commitTopHit()}
+        @pos-term-commit-top=${(e: CustomEvent) => this.commitTopHit(e.detail)}
         @pos-term-enter-list=${() => this.enterResultList()}
         @pos-scan-resolved=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
       ></hos-pos-scan-box>
