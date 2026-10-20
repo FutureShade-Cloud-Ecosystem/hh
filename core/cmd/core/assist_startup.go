@@ -20,7 +20,7 @@ import (
 )
 
 // assistPolicedTables are the tables the assist migrations put row security on. Each data slice adds its own.
-var assistPolicedTables = []string{"public.orders", "public.order_lines", "public.stock_balances", "public.product_branch_costs", "public.quotes", "public.quote_lines", "public.purchasing_pos", "public.purchasing_po_lines", "public.invoices", "public.payments", "public.payment_allocations", "public.delivery_runs", "public.delivery_stops", "public.customer_contacts"}
+var assistPolicedTables = []string{"public.orders", "public.order_lines", "public.stock_balances", "public.product_branch_costs", "public.quotes", "public.quote_lines", "public.purchasing_pos", "public.purchasing_po_lines", "public.invoices", "public.payments", "public.payment_allocations", "public.delivery_runs", "public.delivery_stops", "public.customer_contacts", "public.msg_channels", "public.msg_members", "public.msg_messages", "public.msg_notification_prefs"}
 
 type startupRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row

@@ -770,7 +770,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// screen asks (inventory, quote, pricing, tasks, dispatch); a global caller on the list gets every branch.
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).
 		WithCostGate(spine.roleCfg, assistDeps.Branches).
-		WithPurchaseCostPolicy(assistadapt.NewPurchaseCostPolicy(ops.purchasingSvc)).RegisterRoutes(r, g)
+		WithPurchaseCostPolicy(assistadapt.NewPurchaseCostPolicy(ops.purchasingSvc)).
+		WithChannelMembership(assistadapt.NewChannelMembership(ops.messagingSvc)).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
 	// consumers (order's multi-ship invoicer, warranty's customer credit,

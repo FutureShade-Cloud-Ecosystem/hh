@@ -219,6 +219,16 @@ var columnRegistry = map[string]string{
 	"ai.customer_contacts.contact_name":  ClassPlain,
 	"ai.customer_contacts.contact_email": ClassPlain,
 	"ai.customer_contacts.contact_phone": ClassPlain,
+	// ai.message_channels: House Messages metadata for the asker's own channels. No body, no member list.
+	"ai.message_channels.id":               ClassPlain,
+	"ai.message_channels.kind":             ClassPlain,
+	"ai.message_channels.name":             ClassPlain,
+	"ai.message_channels.branch_id":        ClassPlain,
+	"ai.message_channels.branch_label":     ClassPlain,
+	"ai.message_channels.member_count":     ClassPlain,
+	"ai.message_channels.notify_mode":      ClassPlain,
+	"ai.message_channels.unread_count":     ClassPlain,
+	"ai.message_channels.latest_unread_at": ClassPlain,
 }
 
 // personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
@@ -251,6 +261,7 @@ var personalColumns = map[string]bool{
 	"ai.customer_contacts.contact_name":  true, // PII-CLASSES-r2: customer_contacts.name
 	"ai.customer_contacts.contact_email": true, // PII-CLASSES-r2: customer_contacts.email
 	"ai.customer_contacts.contact_phone": true, // PII-CLASSES-r2: customer_contacts.phone
+	"ai.message_channels.name":           true, // a direct message is named for the people in it
 }
 
 // columnGates names the vocabulary that gates a cost column when it is not the role list.
@@ -311,7 +322,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView(), rawInvoicesView(), rawARAgingView(), rawPaymentsView(), rawPaymentAllocationsView(), rawDeliveryRunsView(), rawDeliveryStopsView(), rawCustomersView(), rawCustomerContactsView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView(), rawInvoicesView(), rawARAgingView(), rawPaymentsView(), rawPaymentAllocationsView(), rawDeliveryRunsView(), rawDeliveryStopsView(), rawCustomersView(), rawCustomerContactsView(), rawMessageChannelsView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}

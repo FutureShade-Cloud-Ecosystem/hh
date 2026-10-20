@@ -186,5 +186,98 @@ BEGIN
       LEFT JOIN public.customers c ON c.id = x.customer_id;
   EXECUTE format('GRANT SELECT ON ai.customers, ai.customer_contacts TO %I', v_reader);
   RESET ROLE;
+  -- 4. House Messages metadata: ai.message_channels.
+  --
+  -- Only the channels the asker is a member of right now: the claim's channel_ids are the messaging module's own
+  -- membership read (materialised membership, archived rooms left out, the money room fence applied), resolved by
+  -- the handler at request time, and the policies admit a row of any of these tables only if its channel is in that
+  -- list. NEVER a message body (no column of msg_messages that holds text is granted), never a member list (the
+  -- view counts members and names none), never a member's name. The unread count and the time of the latest unread
+  -- message are the asker's own, computed here from the asker's own member row by the rule the messaging module's
+  -- unread projection (msg_unread_effective) applies, which the view cannot read itself: it compares a citext role
+  -- code, a function no assist role may run, and a function in a view is checked against the caller. The rule: a
+  -- channel is ALL, MENTIONS or MUTED for the asker (the asker's preference, else the channel's default; an
+  -- ESCALATION channel is always ALL); ALL counts the messages from others newer than the asker's read cursor,
+  -- MUTED counts none. MENTIONS counts the messages that mention the asker or the asker's role, which needs the
+  -- role tables; this view does not read them, so for a MENTIONS channel the count is NULL (not known), never a
+  -- number that could be wrong, and notify_mode says why.
+  FOREACH t IN ARRAY ARRAY['msg_channels', 'msg_members', 'msg_messages', 'msg_notification_prefs'] LOOP
+    SELECT tableowner INTO owner_name FROM pg_tables WHERE schemaname = 'public' AND tablename = t;
+    IF owner_name IS DISTINCT FROM current_user THEN
+      RAISE EXCEPTION 'table % is owned by %, not by the migrating role %: refusing to enable row security on it',
+        t, coalesce(owner_name, '(missing)'), current_user;
+    END IF;
+  END LOOP;
+  EXECUTE format('GRANT SELECT (id, kind, branch_id, name, is_archived, tier, default_mode) ON public.msg_channels TO %I', v_view);
+  EXECUTE format('GRANT SELECT (channel_id, user_id, last_read_at) ON public.msg_members TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, channel_id, author_id, created_at, deleted_at) ON public.msg_messages TO %I', v_view);
+  EXECUTE format('GRANT SELECT (channel_id, user_id, mode) ON public.msg_notification_prefs TO %I', v_view);
+  ALTER TABLE public.msg_channels ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.msg_members ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.msg_messages ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.msg_notification_prefs ENABLE ROW LEVEL SECURITY;
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_msg_channels ON public.msg_channels TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND NOT is_archived
+      AND id = ANY ((SELECT ai.claims()).channel_ids)
+    )$p$, v_view);
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_msg_members ON public.msg_members TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND channel_id = ANY ((SELECT ai.claims()).channel_ids)
+    )$p$, v_view);
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_msg_messages ON public.msg_messages TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND channel_id = ANY ((SELECT ai.claims()).channel_ids)
+    )$p$, v_view);
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_msg_notification_prefs ON public.msg_notification_prefs TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND channel_id = ANY ((SELECT ai.claims()).channel_ids)
+    )$p$, v_view);
+
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  CREATE VIEW ai.message_channels AS
+    SELECT ch.id,
+           ch.kind,
+           ch.name,
+           ch.branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           (SELECT count(*) FROM public.msg_members m WHERE m.channel_id = ch.id)::int AS member_count,
+           COALESCE(u.mode, '') AS notify_mode,
+           CASE u.mode
+             WHEN 'MUTED' THEN 0::bigint
+             WHEN 'MENTIONS' THEN NULL::bigint
+             ELSE COALESCE(u.raw_count, 0)::bigint
+           END AS unread_count,
+           u.latest_at AS latest_unread_at
+      FROM public.msg_channels ch
+      LEFT JOIN public.locations l ON l.id = ch.branch_id
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN ch.tier = 'ESCALATION' THEN 'ALL' ELSE COALESCE(p.mode, ch.default_mode, 'ALL') END AS mode,
+               count(msg.id) AS raw_count,
+               max(msg.created_at) AS latest_at
+          FROM public.msg_members mem
+          LEFT JOIN public.msg_notification_prefs p ON p.channel_id = mem.channel_id AND p.user_id = mem.user_id
+          LEFT JOIN public.msg_messages msg
+            ON msg.channel_id = mem.channel_id
+           AND msg.created_at > mem.last_read_at
+           AND msg.deleted_at IS NULL
+           AND (msg.author_id IS NULL OR msg.author_id <> mem.user_id)
+         WHERE mem.channel_id = ch.id AND mem.user_id::text = (SELECT ai.claims()).asker_id
+         GROUP BY p.mode
+      ) u ON TRUE;
+  EXECUTE format('GRANT SELECT ON ai.message_channels TO %I', v_reader);
+  RESET ROLE;
 END
 $s7b$;

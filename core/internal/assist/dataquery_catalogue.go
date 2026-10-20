@@ -127,7 +127,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView(), deliveryRunsView(), deliveryStopsView(), customersView(), customerContactsView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView(), deliveryRunsView(), deliveryStopsView(), customersView(), customerContactsView(), messageChannelsView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -554,5 +554,29 @@ func rawCustomerContactsView() ViewDef {
 		Default:      []string{"account_no", "customer_name", "contact_name", "contact_phone"},
 		DefaultOrder: []OrderBy{{Col: "customer_name", Dir: "asc"}, {Col: "account_no", Dir: "asc"}},
 		CiteKind:     RefCustomer, CiteIDCol: "customer_id", CiteLabelCol: "account_no", CiteLabelPrefix: "Account ",
+	}
+}
+
+func messageChannelsView() ViewDef { return classify(rawMessageChannelsView()) }
+
+// The message channel view has no citation: a channel has no routable reference kind in the app, and the answer
+// names the channel, never a message.
+func rawMessageChannelsView() ViewDef {
+	return ViewDef{
+		Name: "ai.message_channels", Schema: "ai", Table: "message_channels", Title: "Message channels", MinTier: 2,
+		About: "One row per House Messages channel you are in: name, kind, branch, how many members, your notification mode, how many messages are unread for you (blank when the mode is mentions only) and when the latest unread one arrived. Never a message or a member.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Channel id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "kind", Label: "Kind", Type: typeText, Filter: true, Group: true},
+			{Name: "name", Label: "Channel", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "member_count", Label: "Members", Type: typeInt, Filter: true, Agg: true},
+			{Name: "notify_mode", Label: "Notifications", Type: typeText, Filter: true, Group: true},
+			{Name: "unread_count", Label: "Unread", Type: typeInt, Filter: true, Agg: true},
+			{Name: "latest_unread_at", Label: "Latest unread", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"name", "kind", "branch_label", "member_count", "notify_mode", "unread_count", "latest_unread_at"},
+		DefaultOrder: []OrderBy{{Col: "name", Dir: "asc"}},
 	}
 }

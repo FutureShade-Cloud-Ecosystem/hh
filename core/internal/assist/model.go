@@ -81,6 +81,10 @@ type Caller struct {
 	// POCostBranchIDs are the branches where the per branch purchasing policy lets this caller see what the
 	// dealer pays on a purchase order (MANAGER_UP, ALL_STAFF, HIDDEN; the vocabulary the purchasing screens use).
 	POCostBranchIDs []string
+	// ChannelIDs are the House Messages channels this caller is a member of right now, read live from the
+	// messaging module's own membership read by the handler and signed into the claim; the metadata view admits
+	// a channel only if its id is in this list. Empty means no channel.
+	ChannelIDs []string
 	// Address is the connection's trusted address (the demo mint's rule); it keys the demo rate
 	// limits and never grants anything.
 	Address string
