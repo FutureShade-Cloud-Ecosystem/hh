@@ -134,6 +134,28 @@ test("submitting the RFQ on an empty plan carries the server's refusal in plain 
   assert.match(last.words, /no lines to quote/);
 });
 
+test("submitting the RFQ when any line comes back unpriced says lines without a price wait for the dealer", async () => {
+  const page = await makePage("owner", { surface: "scope", projectId: PLANNING_ID });
+  page.client = tenantClient(page.session, {
+    baseUrl: base,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      const body = await res.json();
+      body.lines = body.lines.map((l, i) =>
+        i === 0 ? { ...l, priced: false, indicative_unit_price_cents: 0, indicative_line_total_cents: 0 } : l,
+      );
+      return new Response(JSON.stringify(body), { status: res.status, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  await scopeSubmitRfq(page);
+  const last = page.notices.at(-1);
+  assert.ok(last, "no notice was given");
+  assert.equal(last.kind, "ok");
+  assert.match(last.words, /Lines without a price wait for the dealer/, last.words);
+  assert.doesNotMatch(last.words, /Lines priced indicatively/, last.words);
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+});
+
 test("a quoting project is read only: recall is offered, submit and the edit moves are not", async () => {
   const page = await makePage("buyer", { surface: "scope", projectId: QUOTING_ID });
   const answer = await scopeLoad(page);
