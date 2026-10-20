@@ -20,7 +20,7 @@ test("hover the rail, cross to Pin wide, click: the rail's pin state (data-pin a
   const wide = rail.getByRole("button", { name: "Pin wide" });
   const menuBox = (await menu.boundingBox())!;
   expect(menuBox.x).toBeGreaterThanOrEqual(railBox.x + railBox.width);
-  if (SHOTS !== "") await page.screenshot({ path: `${SHOTS}/rail-pin-menu-1440-light.png` });
+  if (SHOTS !== "") await page.screenshot({ path: `${SHOTS}/rail-pin-menu-1440-charcoal.png` });
 
   // Cross the gap in 3px steps toward the Pin wide button: the menu stays.
   const target = (await wide.boundingBox())!;
