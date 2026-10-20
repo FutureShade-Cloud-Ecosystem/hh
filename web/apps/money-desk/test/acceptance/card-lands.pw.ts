@@ -24,7 +24,7 @@ test("the front door's Payables and Receivables card opens the Money Desk on the
   await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();
   await expect(page.locator("[data-card]")).toHaveCount(4);
   await expect(page.locator("[data-flow]")).toHaveCount(0);
-  await expect(page.locator("hos-app-header")).toBeVisible();
+  await expect(page.locator("hos-app-header")).toHaveCount(0);
   await expect(page.locator("[data-register-row]").first()).toBeVisible();
 });
 
@@ -41,8 +41,8 @@ test("the front door's Financial Controller card opens the same Money Desk tile 
   await tile.click();
 
   await expect(page).toHaveURL(/\/money-desk\/$/);
-  await expect(page.locator("hos-app-header")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approvals and ledger" })).toBeVisible();
+  await expect(page.locator("hos-app-header")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Approvals and ledger", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Receivables", exact: true })).toBeVisible();
   await expect(page.locator("[data-card]")).toHaveCount(0);
   await page.getByRole("button", { name: "Receivables", exact: true }).click();

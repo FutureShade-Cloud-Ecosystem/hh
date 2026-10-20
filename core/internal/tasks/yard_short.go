@@ -48,6 +48,22 @@ var ErrOrderRefused = errors.New("tasks: the order cannot take that pick")
 // rejection.
 var ErrPickClosed = errors.New("tasks: this pick is closed, its record cannot change")
 
+// ErrNotHolder is a Stage or a pick record (Save pick) from a user who does not hold the pick: the claim is
+// the holder's, and only the holder moves the pick on or changes what was pulled (UX-76, FROM-PRINCIPAL item
+// 47). A shortage report is not guarded: a shortage seen is a fact anyone in the branch may report. The check
+// runs inside the transaction that locks the task row, so a claim and a write cannot cross. → 409 with
+// ErrNotHolderWords, and through sync that op's rejection.
+var ErrNotHolder = errors.New("tasks: someone else is on this pick")
+
+// ErrNotHolderWords is what the REST door answers and the screen shows.
+const ErrNotHolderWords = "Someone else is on this pick."
+
+// notHolder reports whether the pick is held by a person other than the actor. An unclaimed pick has no
+// holder to protect, so anyone may write it; a held pick answers only to its holder.
+func notHolder(claimedBy, actorID string) bool {
+	return claimedBy != "" && claimedBy != actorID
+}
+
 // ErrNotPickTask is a pick record or skid count submitted against a task that is not a PICK task (for
 // example a NEED_WEIGHT, DISPATCH, or OTHER task). The yard handlers, syncpick, and the fake store all
 // refuse it before the order is told, because a pick record or a skid count on a non-PICK row would

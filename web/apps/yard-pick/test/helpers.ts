@@ -52,6 +52,12 @@ export async function reassignTicket(request: APIRequestContext, taskId: string)
   if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
 }
 
+/** A second person takes the pick while this device still shows it queued: the row moves to ACCEPTED under another user. */
+export async function rivalClaim(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/rival-claim", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub rival claim failed: ${response.status()}`);
+}
+
 /** The desk changes an OPEN ticket: its seq moves and it stays open (a record based on the older seq is superseded). */
 export async function touchTicket(request: APIRequestContext, taskId: string): Promise<void> {
   const response = await request.post("/_stub/touch", { data: { task_id: taskId } });
@@ -107,4 +113,32 @@ export async function chooseReason(page: Page, scope: keyof typeof REASON_FIELD,
     return;
   }
   await page.locator(`select[data-field="${REASON_FIELD[scope]}"]`).selectOption(code);
+}
+
+/** Opens the Field frame's account menu and presses one item (Switch role, Sign out, Brand theme, Light theme). */
+export async function accountItem(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: /^Account/ }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
+/** Runs in the page before any script: the front door's record for a yard manager, who holds Pick, Drive and Messages. */
+export function managerHandoff(): void {
+  const part = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "d0200000-0000-4000-9000-000000000009", exp })}.c2ln`;
+  const record = {
+    token,
+    tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
+    flow: "yard-manager",
+    roleLabel: "Yard Manager",
+    user: { userId: "d0200000-0000-4000-9000-000000000009", email: "manager@hh-demo.invalid", name: "Yard manager (demo)" },
+    roleCode: "yard_manager",
+    roleName: "Yard Manager",
+    tier: 2,
+    scope: "BRANCH",
+  };
+  if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", JSON.stringify(record));
+  }
 }

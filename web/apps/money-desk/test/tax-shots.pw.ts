@@ -27,7 +27,10 @@ for (const size of SIZES) {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
       await openTax(page, request);
-      if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+      if (theme === "brand") {
+        await page.locator("hh-shell-header button.account").click();
+        await page.getByRole("button", { name: "Theme: Light" }).click();
+      }
       const take = (name: string) => shot(page, theme, size.width, name);
       await take("rates");
       await page.getByRole("textbox", { name: "Rate, percent" }).fill("8.25");

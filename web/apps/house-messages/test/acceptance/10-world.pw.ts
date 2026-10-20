@@ -1,6 +1,7 @@
 // The common role legs for House Messages on the demo image (ROLE-GOES-LIVE, section 6): the card, the
 // wall, the branch and the money. Then what the screen shows against what the core answers.
 import { test, expect, arriveFromFrontDoor, bare, channelsOf, mint, shot, staff } from "./helpers.js";
+import { channelTitle } from "../../src/messages-logic.js";
 
 test("L-card: Sales signs in from its card on the front door and opens House Messages from the tile", async ({ page }, testInfo) => {
   await page.goto("/");
@@ -11,7 +12,7 @@ test("L-card: Sales signs in from its card on the front door and opens House Mes
   await tile.click();
   await page.waitForURL("**/messages/");
   await expect(page.locator("[data-channel-list]")).toBeVisible();
-  await expect(page.locator("hos-app-header[signed-in]")).toBeVisible();
+  await expect(page.locator("hh-field-frame[signed-in]")).toBeVisible();
   await shot(page, "01-card-to-messages", testInfo);
 });
 
@@ -27,7 +28,7 @@ test("L-wall: no credential is refused, and one person's own rooms are not anoth
 });
 
 test("L-branch: every room that names a branch names the persona's own", async ({ page }) => {
-  for (const flow of ["sales", "yard-manager"] as const) {
+  for (const flow of ["sales", "yard-manager", "yard-team"] as const) {
     const branches = await staff(page, flow, "GET", "/api/v1/branches");
     expect(branches.status).toBe(200);
     const rows = (Array.isArray(branches.body) ? branches.body : branches.body.items) as Array<{ id: string }>;
@@ -42,7 +43,7 @@ test("L-cost and the money rule: the screen shows the core's rooms and words, an
   await arriveFromFrontDoor(page, "sales");
   const core = await channelsOf(page, "sales");
   const shown = await page.locator("[data-channel-list] .ch-name").allInnerTexts();
-  expect([...shown].sort()).toEqual(core.map((c) => c.name.trim() === "" ? (c.kind === "DM" ? "Direct message" : "Untitled room") : c.name).sort());
+  expect([...shown].sort()).toEqual(core.map((c) => channelTitle(c as any)).sort());
   // A dollar figure may appear only inside a message body the core sent; the chrome carries none.
   const chrome = await page.evaluate(() => {
     const root = document.querySelector("house-messages-app")?.shadowRoot;
@@ -76,7 +77,7 @@ test("the demo image issues no stream tickets, so the screen says it reads every
   testInfo_note(ticket.status());
   await arriveFromFrontDoor(page, "sales");
   if (ticket.status() === 501) {
-    await expect(page.locator("[data-live]")).toContainText("Messages are read every 10 seconds");
+    await expect(page.locator("[data-live]")).toContainText("Updates while this page is open");
   } else {
     await expect(page.locator("[data-live]")).toContainText("Live");
   }

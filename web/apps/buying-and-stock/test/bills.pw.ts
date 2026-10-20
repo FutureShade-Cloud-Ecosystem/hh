@@ -215,7 +215,10 @@ test("every text is 4.5 to 1 or better in both themes: the list, a bill, the ent
   await page.setViewportSize({ width: 1440, height: 900 });
   await openAreaAs(page, request, AP, "Vendor bills");
   for (const theme of ["Theme: Light", "Theme: Brand"]) {
-    if (theme === "Theme: Brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+    if (theme === "Theme: Brand") {
+      await page.locator("hh-shell-header button.account").click();
+      await page.getByRole("button", { name: "Theme: Light" }).click();
+    }
     expect(await lowContrast(page), `${theme}, list`).toEqual([]);
     await open(page, "INV-7790");
     expect(await lowContrast(page), `${theme}, bill`).toEqual([]);

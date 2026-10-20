@@ -8,7 +8,7 @@
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
 import { test, expect, type Page } from "@playwright/test";
-import { chooseReason, resetStub, useScenario, yardHandoff } from "./helpers.js";
+import { accountItem, chooseReason, resetStub, useScenario, yardHandoff } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.YARD_SHOT_DIR ?? "";
@@ -35,13 +35,9 @@ for (const size of SIZES) {
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
         if (theme !== "brand") return;
-        // Idempotent: the control names the theme a tap moves TO, so after one
-        // tap inside a load it reads "Light theme" and nothing needs doing; a
-        // reload boots light again and the tap lands.
-        const toBrand = page.getByRole("button", { name: "Brand theme" });
-        const toLight = page.getByRole("button", { name: "Light theme" });
-        await expect(toBrand.or(toLight)).toBeVisible();
-        if ((await toBrand.count()) === 1) await toBrand.click();
+        // Idempotent: the account menu's item names the theme a tap moves TO, so after one tap inside a load it
+        // reads "Light theme" and nothing needs doing; a reload boots light again and the tap lands.
+        if ((await page.locator("html").getAttribute("data-theme")) === "light") await accountItem(page, "Brand theme");
       };
 
       // The way in, with no handoff: the Yard Team's own card.
@@ -69,7 +65,7 @@ for (const size of SIZES) {
       await take("04", "pick-started");
 
       // The quantity editor on a line, with the reason rows a short line needs.
-      await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
+      await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).getByRole("button", { name: "Short" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();

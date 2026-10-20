@@ -1,6 +1,7 @@
 // UX-64a: the quote's customer_notes field is labeled "Note to the customer" with the quiet hint
 // "The customer sees this on their quote." directly under the field, linked via aria-describedby.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { open, signIn } from "./switch-helpers.js";
 import { shot } from "./shot.js";
 
@@ -21,11 +22,16 @@ const MODES = ["light", "charcoal"] as const;
 async function setTheme(page: Page, mode: (typeof MODES)[number]): Promise<void> {
   const want = mode === "charcoal" ? "Brand" : "Light";
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let i = 0; i < 3; i += 1) {
-    if ((await control.textContent())?.includes(want)) return;
+    if ((await control.textContent())?.includes(want)) {
+      await page.keyboard.press("Escape");
+      return;
+    }
     await control.click();
   }
   await expect(control).toContainText(want);
+  await page.keyboard.press("Escape");
 }
 
 for (const size of SIZES) {

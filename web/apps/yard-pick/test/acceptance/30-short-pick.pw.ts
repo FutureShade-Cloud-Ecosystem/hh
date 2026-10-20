@@ -96,7 +96,7 @@ test("the screen tells the yard the same story in the server's words", async ({ 
   await page.reload();
   await page.locator("[data-pick-card]", { hasText: detail.body.ticket.order_no }).first().click();
   await page.locator("[data-line]").first().waitFor();
-  await page.locator("[data-line]").first().locator(".line-row").click();
+  await page.locator("[data-line]").first().getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Take one off" }).click();
   await page.locator('[data-reason-group="line"] [data-reason="NOT_IN_YARD"]').click();

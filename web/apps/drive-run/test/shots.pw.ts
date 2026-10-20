@@ -8,7 +8,7 @@
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
 import type { Page } from "@playwright/test";
-import { test, expect, TINY_PNG, driverHandoff, resetStub, useScenario } from "./helpers.js";
+import { test, expect, TINY_PNG, accountItem, driverHandoff, resetStub, useScenario } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.DRIVE_SHOT_DIR ?? "";
@@ -33,7 +33,7 @@ for (const size of SIZES) {
       await resetStub(request);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+        if (theme === "brand") await accountItem(page, "Brand theme");
       };
 
       // The way in, with no handoff: the driver's own card.
@@ -75,6 +75,7 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Mark loaded" }).click();
       await page.getByRole("button", { name: "Mark en route" }).click();
       await page.getByRole("button", { name: "Could not deliver" }).click();
+      await page.getByRole("radio", { name: "Other, say what" }).check();
       await page.getByLabel("What stopped this delivery?").fill("Nobody on site and the gate is locked");
       await take("08", "could-not-deliver");
       await page.getByRole("button", { name: "Could not deliver" }).click();

@@ -5,7 +5,7 @@
 // against the composited background behind it, and fails naming every offender
 // with its words and colours.
 import { test, expect, type Page } from "@playwright/test";
-import { chooseReason, resetStub, yardHandoff } from "./helpers.js";
+import { accountItem, chooseReason, resetStub, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -116,7 +116,7 @@ test("every word on the walked screens reads at 4.5 to 1 or more, in both themes
     await resetStub(request);
     await page.goto("/");
     await expect(page.locator("[data-pick-card]")).toHaveCount(5);
-    if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+    if (theme === "brand") await accountItem(page, "Brand theme");
     await expectReadable(page, `${theme}: the queue`);
 
     await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
@@ -124,7 +124,7 @@ test("every word on the walked screens reads at 4.5 to 1 or more, in both themes
     await expect(page.locator("[data-task-status]")).toHaveText("Picking");
     await expectReadable(page, `${theme}: the pick started`);
 
-    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
+    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).getByRole("button", { name: "Short" }).click();
     for (let i = 0; i < 4; i += 1) await page.getByRole("button", { name: "Add one on" }).click();
     await chooseReason(page, "line", "NOT_IN_YARD");
     await expectReadable(page, `${theme}: the line editor with the reason chosen`);

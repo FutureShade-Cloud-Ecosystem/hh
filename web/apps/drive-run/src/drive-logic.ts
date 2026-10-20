@@ -119,6 +119,62 @@ export function stopsInOrder<T extends { stop_no?: number; created_at?: string }
   });
 }
 
+/** The chip a stop card carries on my run, in the board's words (the style sets the capitals). */
+export type StopChip = "Delivered" | "Next stop" | "Waiting" | "Not delivered" | "Cancelled";
+
+export interface RouteStop<T> {
+  readonly stop: T;
+  readonly chip: StopChip;
+  /** True for the one stop the run goes to next: its card is highlighted. */
+  readonly next: boolean;
+}
+
+const DONE_STATUSES: ReadonlySet<string> = new Set(["DELIVERED", "FAILED", "CANCELLED"]);
+
+/**
+ * The stop the run goes to next: the one already en route, else the first stop
+ * in route order that is not yet delivered, not delivered or cancelled.
+ */
+export function nextStopOf<T extends { status: string; stop_no?: number; created_at?: string }>(
+  stops: readonly T[] | null | undefined,
+): T | null {
+  const ordered = stopsInOrder(stops);
+  return (
+    ordered.find((s) => s.status === "EN_ROUTE") ?? ordered.find((s) => !DONE_STATUSES.has(s.status)) ?? null
+  );
+}
+
+/** A run's stops in route order, each with its state chip from the core's state; no grouping. */
+export function routeStops<T extends { status: string; stop_no?: number; created_at?: string }>(
+  stops: readonly T[] | null | undefined,
+): RouteStop<T>[] {
+  const ordered = stopsInOrder(stops);
+  const next = nextStopOf(ordered);
+  return ordered.map((stop) => {
+    let chip: StopChip = "Waiting";
+    if (stop === next) chip = "Next stop";
+    else if (stop.status === "DELIVERED") chip = "Delivered";
+    else if (stop.status === "FAILED") chip = "Not delivered";
+    else if (stop.status === "CANCELLED") chip = "Cancelled";
+    return { stop, chip, next: stop === next };
+  });
+}
+
+/**
+ * The yard's load order sentence for a run: the last stop in delivery order
+ * goes on the back of the truck first, and the first stop goes on last so it
+ * comes off first. Empty when the run has no stops.
+ */
+export function loadOrderLine(
+  stops: ReadonlyArray<{ stop_no?: number; created_at?: string }> | null | undefined,
+): string {
+  const ordered = stopsInOrder(stops);
+  if (ordered.length === 0) return "";
+  const first = ordered[ordered.length - 1]?.stop_no ?? ordered.length;
+  const last = ordered[0]?.stop_no ?? 1;
+  return `Checked once for the whole run. Load order: stop ${first} first, stop ${last} last.`;
+}
+
 /** The address as one line, blanks dropped; empty when nothing is known. */
 export function addressLine(parts: { address_line?: string; city?: string; postal_code?: string }): string {
   return [parts.address_line, parts.city, parts.postal_code]
@@ -149,12 +205,24 @@ export function plainSentence(msg: string | null | undefined): string {
   return m ? (m[2] ?? "").trim() : s;
 }
 
-/** A clock time in the dealer's zone, 24 hour; blank when the instant cannot be read. */
+/** A clock time in the dealer's zone, in the glossary 12-hour AM/PM form; blank when the instant cannot be read. */
 export function formatTime(ts: string | null | undefined, zone: string): string {
+  return formatGlossaryTime(ts, zone);
+}
+
+/** A glossary clock time in the dealer's zone ("8:30 PM"), with a plain space before AM or PM. */
+export function formatGlossaryTime(ts: string | null | undefined, zone: string): string {
   if (!ts) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hour: "numeric",
+    minute: "2-digit",
+  })
+    .format(d)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -271,6 +339,24 @@ export const HANDBACK_TITLE = "Recorded. This stop is closed.";
 export const HANDBACK_BODY =
   "Bring the load back to the yard: the order is free to be booked again, and a dispatcher will set a new date.";
 export const HANDBACK_PROMPT = "What stopped this delivery?";
+export const FAILURE_REASON_SHEET_PROMPT = "Why could it not be delivered?";
+export const FAILURE_REASON_OTHER = "Other, say what";
+
+/** The board's five preset failure reasons on the could not deliver sheet, in board order. */
+export const FAILURE_REASON_PRESETS: readonly string[] = [
+  "Nobody on site",
+  "Gate locked",
+  "Site not ready",
+  "Customer refused",
+  FAILURE_REASON_OTHER,
+];
+
+/** Resolves the free-text failure_reason string to record for a chosen preset and optional Other note. */
+export function resolveFailureReason(preset: string, otherText: string = ""): string {
+  if (preset === FAILURE_REASON_OTHER) return otherText;
+  if (FAILURE_REASON_PRESETS.includes(preset)) return preset;
+  return "";
+}
 
 /** The core refuses a failed stop with no reason (400), so the control stays grey until there is one. */
 export function canRecordFailure(reason: string): boolean {

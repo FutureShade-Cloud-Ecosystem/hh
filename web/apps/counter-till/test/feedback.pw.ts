@@ -3,6 +3,7 @@
 // floats over the till's own surface, and the open panel leaves the hotkey legend's dismiss
 // control reachable. The no-overlap rule across layouts lives in r7-polish.pw.ts.
 import { expect, test, type Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
 
 /** Sign in through the entry cards and land on the ported terminal. */
 async function signIn(page: Page): Promise<void> {
@@ -11,17 +12,19 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
 }
 
-test("the bar's Feedback button opens the panel and no pill floats over the till", async ({ page }) => {
+test("the account menu's Feedback button opens the panel and no pill floats over the till", async ({ page }) => {
   await signIn(page);
   await expect(page.getByTestId("feedback-pill")).toBeHidden();
   const button = page.getByTestId("feedback-button");
+  await openAccountMenu(page);
   await expect(button).toBeVisible();
 
-  // It sits in the bar, above the till's own screen.
-  const bar = (await page.locator(".surfacebar").boundingBox())!;
+  // It sits in the band's account menu, above the till's own screen.
+  const menu = (await page.locator("hh-shell-header .account-menu").boundingBox())!;
+  const band = (await page.locator("hh-shell-header").boundingBox())!;
   const box = (await button.boundingBox())!;
-  expect(box.y).toBeGreaterThanOrEqual(bar.y - 1);
-  expect(box.y + box.height).toBeLessThanOrEqual(bar.y + bar.height + 1);
+  expect(box.y).toBeGreaterThanOrEqual(band.y + band.height - 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(menu.y + menu.height + 1);
 
   await button.click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
@@ -31,7 +34,9 @@ test("the bar's Feedback button opens the panel and no pill floats over the till
 
 test("the open panel leaves the legend's dismiss control reachable", async ({ page }) => {
   await signIn(page);
+  await openAccountMenu(page);
   await page.getByTestId("feedback-button").click();
+  await closeAccountMenu(page);
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
 
   const legend = page.locator("hos-pos-hotkey-legend");
@@ -56,6 +61,7 @@ for (const size of [
     await page.setViewportSize(size);
     await signIn(page);
     const button = page.getByTestId("feedback-button");
+    await openAccountMenu(page);
     await expect(button).toBeVisible();
     const bad = await button.evaluate((el) => {
       const deepHit = (x: number, y: number): Element | null => {

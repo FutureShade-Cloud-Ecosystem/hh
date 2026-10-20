@@ -405,5 +405,6 @@ func (g *Gate) staffScopeFor(w http.ResponseWriter, r *http.Request) (StaffScope
 		OrgID:          orgID,
 		IssuedAt:       token.IssuedAt,
 		ExpiresAt:      token.ExpiresAt,
+		SessionID:      token.JTI,
 	}, true
 }

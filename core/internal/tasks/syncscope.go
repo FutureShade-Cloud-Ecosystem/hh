@@ -497,14 +497,21 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from string
+	var from, claimedBy string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from); err != nil {
+		`SELECT status, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&from, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
+	}
+	// Stage is the holder's act (UX-76): the move to STAGED and the stage legs are compared with the claim
+	// on the locked row. The claim itself, the start and the other moves keep their own rules.
+	if (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != "" {
+		if notHolder(claimedBy, actor) {
+			return sync.RowState{}, refused(ErrNotHolder)
+		}
 	}
 	to := from
 	if hasStatus {

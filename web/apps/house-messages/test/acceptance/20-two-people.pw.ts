@@ -7,6 +7,7 @@
 // and a person's own post can never require one. The acknowledgement legs run on the stub
 // (test/ack.pw.ts). This file asserts the honest state: nothing waiting, so no bubble.
 import { test, expect, arriveFromFrontDoor, channelBySlug, channelsOf, secondPerson, shot, staff } from "./helpers.js";
+import { channelTitle } from "../../src/messages-logic.js";
 
 const stamp = `acc-${Date.now()}`;
 
@@ -16,7 +17,7 @@ test("one person posts to a room and sees their own message", async ({ page }, t
   await arriveFromFrontDoor(page, "sales");
   const office = await channelBySlug(page, "sales", "office");
   await page.locator(`[data-action='open-channel'][data-id='${office.id}']`).click();
-  await expect(page.locator("[data-conversation] h2")).toHaveText(office.name);
+  await expect(page.locator("[data-conversation] h2")).toHaveText(channelTitle(office as any));
   await page.locator("textarea[data-field='draft']").fill(`Pallets staged at door 2 ${stamp}`);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   const last = page.locator("[data-conversation] li[data-msg]").last();

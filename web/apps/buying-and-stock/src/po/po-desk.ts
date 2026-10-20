@@ -12,7 +12,7 @@ import type { TemplateResult } from "lit";
 import type { InventoryShortfallRow, Product, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk } from "../purch/area.js";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
-import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
+import { draftOf, houseDay, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { costCentsFromTyped, formatMoney, formatQty } from "./po-money.js";
 import { renderDesk, type DeskModel, type DraftModel } from "./po-views.js";
 
@@ -59,6 +59,7 @@ export class PoDesk implements AreaDesk {
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   // ---- loads ----------------------------------------------------------------------------------
@@ -544,7 +545,7 @@ export class PoDesk implements AreaDesk {
       editing: this.#editing,
       adding: this.#adding,
       editorError: this.#error !== "" && this.#errorAt === "editor" && this.#editing !== null ? this.#error : "",
-      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      today: houseDay(),
     });
   }
 }

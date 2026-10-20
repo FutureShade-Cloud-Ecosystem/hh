@@ -3,6 +3,7 @@
 // delayed route (a gate the test opens), so the order of events is exact and does
 // not depend on the machine's speed.
 import { expect, test } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { SALES, gate, hold, open, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
@@ -166,6 +167,7 @@ test("signing out sends the unsaved terms edit and the layout while the session 
   });
   await page.getByRole("button", { name: "Swap panels" }).click();
   await po.fill("PO-BEFORE-SIGN-OUT");
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", SALES)).toBeVisible();
   await settle(page);
