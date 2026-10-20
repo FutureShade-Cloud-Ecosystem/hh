@@ -1251,6 +1251,8 @@ type AssistField struct {
 type AssistItem struct {
 	Title  string        `json:"title"`
 	Fields []AssistField `json:"fields"`
+	Ref    *AssistRef    `json:"ref,omitempty"`
+	Cite   *int32        `json:"cite,omitempty"`
 }
 
 type AssistRef struct {
@@ -1260,12 +1262,43 @@ type AssistRef struct {
 }
 
 type AssistResult struct {
-	Command  string       `json:"command"`
-	Headline string       `json:"headline"`
-	Items    []AssistItem `json:"items"`
-	Empty    bool         `json:"empty"`
-	Note     *string      `json:"note,omitempty"`
-	Ref      *AssistRef   `json:"ref,omitempty"`
+	Command  string        `json:"command"`
+	Headline string        `json:"headline"`
+	Items    []AssistItem  `json:"items"`
+	Empty    bool          `json:"empty"`
+	Note     *string       `json:"note,omitempty"`
+	Ref      *AssistRef    `json:"ref,omitempty"`
+	Notice   *AssistNotice `json:"notice,omitempty"`
+	Scope    *AssistScope  `json:"scope,omitempty"`
+}
+
+type AssistNotice struct {
+	Code  string  `json:"code"`
+	Class *string `json:"class,omitempty"`
+}
+
+type AssistScopeBranch struct {
+	Id    string  `json:"id"`
+	Label *string `json:"label,omitempty"`
+}
+
+type AssistScopePeriod struct {
+	From  *string `json:"from,omitempty"`
+	To    *string `json:"to,omitempty"`
+	Label *string `json:"label,omitempty"`
+}
+
+type AssistScope struct {
+	Branches    *[]AssistScopeBranch `json:"branches,omitempty"`
+	AllBranches *bool                `json:"all_branches,omitempty"`
+	Period      *AssistScopePeriod   `json:"period,omitempty"`
+	AsOf        *string              `json:"as_of,omitempty"`
+}
+
+type AssistCitation struct {
+	N     int32     `json:"n"`
+	Label string    `json:"label"`
+	Ref   AssistRef `json:"ref"`
 }
 
 type AssistInvocation struct {
@@ -1319,6 +1352,10 @@ type AssistAnswer struct {
 	Carried        *[]string          `json:"carried,omitempty"`
 	Suggest        *[]string          `json:"suggest,omitempty"`
 	ConversationId *string            `json:"conversation_id,omitempty"`
+	Citations      *[]AssistCitation  `json:"citations,omitempty"`
+	Notice         *AssistNotice      `json:"notice,omitempty"`
+	Scope          *AssistScope       `json:"scope,omitempty"`
+	AnswerId       *string            `json:"answer_id,omitempty"`
 }
 
 type AssistBudget struct {

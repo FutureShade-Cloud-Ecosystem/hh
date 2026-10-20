@@ -1380,6 +1380,14 @@ components:
         fields:
           type: array
           items: { $ref: "#/components/schemas/AssistField" }
+        ref:
+          $ref: "#/components/schemas/AssistRef"
+        cite:
+          type: integer
+          format: int32
+          description: >-
+            The number the model may write as [n] to cite this row; assigned by
+            the server per exchange, present on data.query rows that have a record.
 
     AssistRef:
       type: object
@@ -1414,6 +1422,61 @@ components:
         note:
           type: string
           description: An honest caveat when there is one (a truncated list, a narrowed scope)
+        ref: { $ref: "#/components/schemas/AssistRef" }
+        notice: { $ref: "#/components/schemas/AssistNotice" }
+        scope: { $ref: "#/components/schemas/AssistScope" }
+
+    AssistNotice:
+      type: object
+      description: >-
+        The one structured notice of an answer. The core sends the code (and the
+        class of a refusal); the panel words it. A refusal names the class the
+        asker lacks and never a record.
+      required: [code]
+      properties:
+        code:
+          type: string
+          enum: [refused, too_broad]
+        class:
+          type: string
+          enum: [cost, margin, payment, pii_contact, pii_location, capability, disabled]
+
+    AssistScopeBranch:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        label: { type: string }
+
+    AssistScopePeriod:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        label: { type: string }
+
+    AssistScope:
+      type: object
+      description: >-
+        What an answer's figures cover, built by the core from the asker's claims
+        and the query, in the dealer's time zone. It never counts what is withheld.
+      properties:
+        branches:
+          type: array
+          items: { $ref: "#/components/schemas/AssistScopeBranch" }
+        all_branches: { type: boolean }
+        period: { $ref: "#/components/schemas/AssistScopePeriod" }
+        as_of: { type: string }
+
+    AssistCitation:
+      type: object
+      description: >-
+        A verified citation: n is the number written as [n] in the text; label and
+        ref are built by the server from this exchange's own results.
+      required: [n, label, ref]
+      properties:
+        n: { type: integer, format: int32 }
+        label: { type: string }
         ref: { $ref: "#/components/schemas/AssistRef" }
 
     AssistInvocation:
@@ -1528,6 +1591,14 @@ components:
             The opaque, server issued id of the conversation this exchange
             belongs to; send it on the next turn instead of history. Absent when
             the bearer carries no session id.
+        citations:
+          type: array
+          items: { $ref: "#/components/schemas/AssistCitation" }
+        notice: { $ref: "#/components/schemas/AssistNotice" }
+        scope: { $ref: "#/components/schemas/AssistScope" }
+        answer_id:
+          type: string
+          description: Opaque id of this answer, for the feedback route
 
     AssistBudget:
       type: object

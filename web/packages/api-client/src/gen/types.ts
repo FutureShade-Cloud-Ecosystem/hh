@@ -1089,6 +1089,8 @@ export type AssistField = {
 export type AssistItem = {
   title: string;
   fields: AssistField[];
+  ref?: AssistRef;
+  cite?: number;
 };
 export type AssistRef = {
   kind: "product" | "order" | "customer" | "quote";
@@ -1102,6 +1104,32 @@ export type AssistResult = {
   empty: boolean;
   note?: string;
   ref?: AssistRef;
+  notice?: AssistNotice;
+  scope?: AssistScope;
+};
+export type AssistNotice = {
+  code: "refused" | "too_broad";
+  class?: "cost" | "margin" | "payment" | "pii_contact" | "pii_location" | "capability" | "disabled";
+};
+export type AssistScopeBranch = {
+  id: string;
+  label?: string;
+};
+export type AssistScopePeriod = {
+  from?: string;
+  to?: string;
+  label?: string;
+};
+export type AssistScope = {
+  branches?: AssistScopeBranch[];
+  all_branches?: boolean;
+  period?: AssistScopePeriod;
+  as_of?: string;
+};
+export type AssistCitation = {
+  n: number;
+  label: string;
+  ref: AssistRef;
 };
 export type AssistInvocation = {
   command: string;
@@ -1148,6 +1176,10 @@ export type AssistAnswer = {
   carried?: string[];
   suggest?: string[];
   conversation_id?: string;
+  citations?: AssistCitation[];
+  notice?: AssistNotice;
+  scope?: AssistScope;
+  answer_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
