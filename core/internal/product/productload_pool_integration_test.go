@@ -285,10 +285,14 @@ func TestProductLoadCreateArmDeadlockAnswersTheContentionSentinel(t *testing.T) 
 		t.Fatalf("outside timeout: %v", err)
 	}
 	// The outside plants the item's sku uncommitted: the unique index
-	// entry is the lock the batch's insert waits on.
+	// entry is the lock the batch's insert waits on. The outside writer
+	// carries its own seq, as every drawing writer does: an insert with no
+	// seq would draw the products counter at once (the sync seq trigger,
+	// 0422), take the scope row first and turn this cycle into a plain
+	// wait on the counter, which is not the shape under test.
 	if _, err := outside.Exec(ctx,
-		`INSERT INTO products (sku, name, base_uom, price_uom)
-		 VALUES ('FXPR-9201', 'Fixture Create Deadlock', 'EA', 'EA')`); err != nil {
+		`INSERT INTO products (sku, name, base_uom, price_uom, seq)
+		 VALUES ('FXPR-9201', 'Fixture Create Deadlock', 'EA', 'EA', 999999999)`); err != nil {
 		t.Fatalf("outside sku hold: %v", err)
 	}
 	done := make(chan error, 1)

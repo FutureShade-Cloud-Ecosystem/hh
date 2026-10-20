@@ -148,12 +148,15 @@ var demoSeqNotScoped = map[string]string{
 
 // seqRepairSQL sequences one table's unsequenced rows. %[1]s is the table, %[2]s the scope, %[3]s the
 // extra row guard (empty, or the org row exists), %[4]s the extra column the update sets (empty, or the
-// org stamp). ctid addresses the rows because not every seq table has
+// org stamp), %[5]s the extra way a row is picked (empty, or a row with no org stamp: since migration
+// 0422 the sync seq trigger gives a seeded row its seq as it is inserted, so seq NULL no longer marks
+// every row that still needs the org stamp the pulls read; the pass re-draws such a row with the stamp).
+// ctid addresses the rows because not every seq table has
 // an id column, and it is stable inside the apply's one transaction.
 const seqRepairSQL = `WITH todo AS (
 	SELECT ctid AS row_ctid, row_number() OVER (ORDER BY ctid) AS n
 	  FROM %[1]s
-	 WHERE seq IS NULL%[3]s
+	 WHERE (seq IS NULL%[5]s)%[3]s
 ), bump AS (
 	INSERT INTO scope_sequences (scope, next_value)
 	SELECT '%[2]s', count(*) FROM todo HAVING count(*) > 0
@@ -210,13 +213,14 @@ func repairDemoSeq(ctx context.Context, tx txExec, rows rowQuery) (int, error) {
 		if !ok {
 			continue
 		}
-		guard, stamp, args := "", "", []any{}
+		guard, stamp, orgNull, args := "", "", "", []any{}
 		if cols.org {
 			guard = " AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)"
 			stamp = ",\n       org_id = COALESCE(t.org_id, (SELECT id FROM org WHERE slug = $1::citext))"
+			orgNull = " OR org_id IS NULL"
 			args = append(args, demoOrgSlug)
 		}
-		tag, err := tx.Exec(ctx, fmt.Sprintf(seqRepairSQL, s.table, s.scopeName(), guard, stamp), args...)
+		tag, err := tx.Exec(ctx, fmt.Sprintf(seqRepairSQL, s.table, s.scopeName(), guard, stamp, orgNull), args...)
 		if err != nil {
 			return 0, fmt.Errorf("demoseed: sequencing %s into the %s sync scope: %w", s.table, s.scopeName(), err)
 		}

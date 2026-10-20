@@ -738,10 +738,9 @@ func (r *ApprovalRepository) SaveDecision(ctx context.Context, id, decidedBy str
 	if r.pool == nil {
 		return false, errNoDB
 	}
-	ct, err := r.pool.Exec(ctx, approvalsSeqCTE+`
+	ct, err := r.pool.Exec(ctx, `
 		UPDATE permission_approval_requests
-		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
-		    seq = (SELECT next_value FROM aseq)
+		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4
 		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
@@ -764,10 +763,9 @@ func (r *ApprovalRepository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 // decide on the same request blocks until this tx commits/rolls back and then sees the new status,
 // serializing deciders and preventing the "one approves + posts while another rejects" divergence.
 func (r *ApprovalRepository) SaveDecisionTx(ctx context.Context, tx pgx.Tx, id, decidedBy string, status ApprovalStatus, reason string) (bool, error) {
-	ct, err := tx.Exec(ctx, approvalsSeqCTE+`
+	ct, err := tx.Exec(ctx, `
 		UPDATE permission_approval_requests
-		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
-		    seq = (SELECT next_value FROM aseq)
+		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4
 		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
@@ -900,10 +898,9 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error) {
 	var rec FloorRequestRecord
 	var status, decidedBy string
-	err := tx.QueryRow(ctx, approvalsSeqCTE+`
+	err := tx.QueryRow(ctx, `
 		UPDATE permission_approval_requests
-		SET data = data || jsonb_build_object('used', true, 'used_by_disc_pct', $6::text),
-		    seq = (SELECT next_value FROM aseq)
+		SET data = data || jsonb_build_object('used', true, 'used_by_disc_pct', $6::text)
 		WHERE id = (
 			SELECT id FROM permission_approval_requests
 			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'

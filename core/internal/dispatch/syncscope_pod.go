@@ -497,19 +497,18 @@ func (s *PODSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key s
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pod sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocateSyncSeqTx(ctx, tx, podSyncScope)
-	if err != nil {
-		return sync.RowState{}, err
-	}
-	delArm, delArg := d.leg(podDriverCol, 4)
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross the caption edit and
+	// AttachPODPhotos (PR 556 round 3e); RETURNING answers the seq the trigger drew.
+	delArm, delArg := d.leg(podDriverCol, 3)
 	var deleted bool
+	var seq int64
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_pod_photos p SET
-			deleted_at = now(),
-			seq        = $3
+			deleted_at = now()
 		WHERE p.id = $1::uuid AND p.deleted_at IS NULL
 		  AND EXISTS (SELECT 1 FROM delivery_stops s WHERE s.id = p.stop_id AND s.org_id = $2::uuid)`+delArm+`
-		RETURNING (p.deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
+		RETURNING (p.deleted_at IS NOT NULL), p.seq`, id, f.OrgID, delArg).Scan(&deleted, &seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
