@@ -349,7 +349,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	shortageSync := tasks.NewShortageSyncStore(pool, link).WithStaffAuthority(syncStaff)
+	if pool != nil && !shortageSync.StaffAuthorityWired() {
+		panic("tasks: shortage sync branch fence not wired - a yard device could report on another branch's pick")
+	}
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -401,7 +404,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// an unwired boot from serving the drive-run scopes unfenced, the
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
-	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
+	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole).
+		WithOrderLines(orderPickLineAdapter{repo: orderRepo})
 	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
@@ -663,6 +667,15 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
 		WithLogger(log)
+	// The yard's shortage notice names its reporter by role label (UX-76); a nil pool (the wiring shape
+	// tests) leaves it saying "a teammate".
+	if pool != nil {
+		roleLabels, err := erpidentity.NewStaffAuthorityResolver(pool)
+		if err != nil {
+			panic("tasks: yard shortage notice role labels refused to boot: " + err.Error())
+		}
+		yardTasksSvc.WithRoleLabels(roleLabels)
+	}
 	yardTasksSvc.
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
@@ -676,6 +689,16 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// The sync record door's body is the yard service, the one the REST record door runs.
 	pickSync.WithPickRecorder(yardTasksSvc)
+	// The pick payload names a claimed pick's holder by role label, never by name (UX-75): identity's
+	// reader serves the REST detail and list and the pick_tasks rows alike. A nil pool wires none.
+	if pool != nil {
+		claimerRoles, rolesErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if rolesErr != nil {
+			panic("tasks: claimer role labels refused to boot: " + rolesErr.Error())
+		}
+		yardTasksSvc.WithClaimerRoles(claimerRoles)
+		pickSync.WithClaimerRoles(claimerRoles)
+	}
 	// A shortage created through sync tells the counter as the REST report does, through the yard
 	// service's notifier.
 	shortageSync.WithNoticer(yardTasksSvc)

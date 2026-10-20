@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { boardLoad, boardView, BOARD_EMPTY } from "../src/board.ts";
-import { InMemoryTenantSession, tenantClient, stubAdapter } from "@hardscapehouse/pro-kit";
+import { InMemoryTenantSession, tenantClient, stubAdapter, money } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
 import { spawnStub } from "@hardscapehouse/pro-kit/test-stub/spawn-stub.mjs";
 
@@ -88,6 +88,8 @@ test("the board groups by the contract's stage map: Plan, Quote, Order, Invoice"
   assert.ok(text.includes("Q-7002") === false, "an ACCEPTED quote has no quote stage");
   // Order: the confirmed through fulfilled orders.
   assert.ok(text.includes("SO-30506"), text);
+  assert.ok(text.includes("Wanted by"), "the order card says Wanted by");
+  assert.ok(text.includes("No lines yet") && !text.includes("Awaiting price") && !text.includes("n/a"), "an empty plan says No lines yet");
   assert.ok(text.includes("SO-30504"), text);
   // Invoice: the invoiced order.
   assert.ok(text.includes("SO-30501"), text);
@@ -164,4 +166,22 @@ test("Buy again is gated on create_orders rather than view_orders_deliveries, an
 
   const appRootSource = readFileSync(fileURLToPath(new URL("../src/app-root.ts", import.meta.url)), "utf8");
   assert.doesNotMatch(appRootSource, /^\s*can,\s*$/m, "app-root.ts must not carry an unused can import");
+});
+
+test("a plan with lines reads Estimated with its subtotal, a plan with none reads No lines yet, never Not priced beside an estimate", async () => {
+  const page = await pageFor("buyer");
+  const answer = await boardLoad(page);
+  if (answer.kind !== "ready") throw new Error("the board did not load");
+  const planning = answer.data.projects.find((p) => p.status === "PLANNING" && p.line_count > 0);
+  assert.ok(planning, "the stub has a planning plan with lines");
+  const some = words(boardView({ ...answer.data, projects: [planning] }, page)).replace(/<[^>]*>/g, " ");
+  assert.ok(some.includes("Estimated"), some);
+  assert.ok(some.includes(money(planning.subtotal_cents)), some);
+  assert.doesNotMatch(some, /Price\s+Not priced/, some);
+  const none = words(boardView({ ...answer.data, projects: [{ ...planning, line_count: 0, subtotal_cents: 0 }] }, page)).replace(/<[^>]*>/g, " ");
+  assert.ok(none.includes("No lines yet"), none);
+  assert.doesNotMatch(none, /\$0\.00/, none);
+  const dayless = words(boardView({ ...answer.data, quotes: [{ ...answer.data.quotes[0], valid_until: null }], orders: [{ ...answer.data.orders[0], requested_date: null }] }, page)).replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(dayless, /n\/a/, dayless);
+  assert.ok(dayless.includes("Wanted by Not set") && dayless.includes("Valid until Not set"), dayless);
 });

@@ -17,6 +17,7 @@ package assist
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -37,10 +38,18 @@ func (s *Service) WithStaff(l StaffLister) *Service { s.staff = l; return s }
 // bill, and the answer should be the first row. Name breaks the tie so the order is STABLE, a
 // report whose rows shuffle between refreshes is one nobody can compare against yesterday's.
 func (s *Service) SpendReport(ctx context.Context) ([]UserSpend, error) {
-	from, to := MonthWindow(s.now())
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	spend := map[string]Spend{}
-	if s.ledger != nil {
+	if s.spend != nil {
+		var err error
+		if spend, err = s.spend.UsersMonth(ctx, from, to); err != nil {
+			return nil, err
+		}
+	} else if s.ledger != nil {
 		var err error
 		if spend, err = s.ledger.SpendAll(ctx, from, to); err != nil {
 			return nil, err
@@ -172,16 +181,31 @@ func (s *Service) SetSetting(ctx context.Context, key, value, actorID string) er
 	}
 	switch key {
 	case KeyProvider:
-		if value != ProviderStub && value != ProviderAnthropic {
-			return badArg("Provider must be %q or %q.", ProviderStub, ProviderAnthropic)
+		if value != ProviderStub && value != ProviderAnthropic && value != ProviderRouted {
+			return badArg("Provider must be %q, %q or %q.", ProviderStub, ProviderAnthropic, ProviderRouted)
 		}
 	case KeyModel:
 		if value == "" {
 			return badArg("The model name can't be empty.")
 		}
+		if !IsAliasName(value) {
+			// A model is chosen by alias. A vendor model name written here would be ignored, and an
+			// admin should be told that at once rather than discover it from the invoice.
+			return badArg("The model is chosen by alias: %s, %s, %s or %s.", AliasMain, AliasAlt, AliasPremium, AliasCA)
+		}
+	case KeyRoute:
+		for _, a := range strings.Split(value, ",") {
+			if !IsAliasName(strings.TrimSpace(a)) {
+				return badArg("The route is a comma separated list of aliases: %s, %s, %s, %s.", AliasMain, AliasAlt, AliasPremium, AliasCA)
+			}
+		}
 	case KeyChatEnabled, KeySpendVisibleToNonAdmin:
 		if !isTrue(value) && !isFalse(value) {
 			return badArg("%s is a yes/no setting, use true or false.", key)
+		}
+	case KeyRateRequests, KeyRateWindowSeconds:
+		if !validRateSetting(key, value) {
+			return badArg("%s is out of range.", key)
 		}
 	default:
 		return badArg("%q isn't an assistant setting.", key)
@@ -203,4 +227,10 @@ func (s *Service) MySpendVisible(ctx context.Context, c Caller) bool {
 }
 
 // asOfMonth is a small helper the handler uses to label the report with the month it covers.
-func (s *Service) asOfMonth() time.Time { from, _ := MonthWindow(s.now()); return from }
+func (s *Service) asOfMonth() time.Time {
+	from, _, err := s.monthWindow(context.Background())
+	if err != nil {
+		from, _ = MonthWindow(s.now())
+	}
+	return from
+}

@@ -108,12 +108,12 @@ test("a failed column save is shown", async ({ page }) => {
   await expect(page.getByTestId("qb-layout-error")).toContainText("The columns were not saved");
 });
 
-test("Send Quote is one send: a double press mints one link, and the confirmation claims no email", async ({ page }) => {
+test("Send Quote is one send: a double press texts once, and the confirmation names the text and claims no email", async ({ page }) => {
   await signIn(page);
   await startQuote(page);
-  const mints: string[] = [];
+  const texts: string[] = [];
   page.on("request", (req) => {
-    if (req.method() === "POST" && /\/api\/v1\/quotes\/[^/]+\/share-links$/.test(new URL(req.url()).pathname)) mints.push(req.url());
+    if (req.method() === "POST" && /\/api\/v1\/quotes\/[^/]+\/sms-share$/.test(new URL(req.url()).pathname)) texts.push(req.url());
   });
   let opened = 0;
   page.on("popup", () => (opened += 1));
@@ -121,13 +121,11 @@ test("Send Quote is one send: a double press mints one link, and the confirmatio
   // A real pointer double click: the page moves between the two presses (the draft hint folds when the quote is
   // sent), so the second press must find nothing that mints or prints under the pointer.
   await send.dblclick();
-  await expect(page.getByTestId("qb-notice")).toContainText("Quote sent");
-  expect(mints).toHaveLength(1);
+  await expect(page.getByTestId("qb-notice")).toContainText("Sent by text");
+  expect(texts).toHaveLength(1);
   expect(opened, "no print or preview window was opened by the second press").toBe(0);
   const notice = (await page.getByTestId("qb-notice").innerText()).toLowerCase();
-  expect(notice).toContain("nothing was emailed");
-  expect(notice).not.toMatch(/emailed to the customer|emailed and texted/);
-  expect(notice).not.toContain("texted");
+  expect(notice).not.toMatch(/emailed/);
 });
 
 test("the Sales manager and Sales both get the Screen settings entry; the server answers who may write", async ({ page }) => {
@@ -234,7 +232,7 @@ test("a typed delivery fee of $25 or 1,250 is refused in words, never saved as z
 
 // ── P3: popovers, the picker's words ──
 
-test("Escape closes the help, columns and send channel popovers", async ({ page }) => {
+test("Escape closes the help and columns popovers", async ({ page }) => {
   await signIn(page);
   await startQuote(page);
   await page.getByTestId("qb-help").click();
@@ -245,10 +243,6 @@ test("Escape closes the help, columns and send channel popovers", async ({ page 
   await expect(page.locator('[data-field="column"]').first()).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-field="column"]')).toHaveCount(0);
-  await page.getByTestId("qb-send-channel").click();
-  await expect(page.getByTestId("qb-send-channel")).toHaveAttribute("aria-expanded", "true");
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("qb-send-channel")).toHaveAttribute("aria-expanded", "false");
 });
 
 for (const [status, words] of [

@@ -101,6 +101,7 @@ The baseline runtime values (every copy):
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_SIGNIN_MODE` | required, no default; `demo` for staging, `console` for the testers' and public copies |
 | `HH_DEMO_MINT_VISITOR_ALLOWANCE` | optional, the per-visitor mint allowance on the testers' copy; staging and public deployments leave this unset (`deploy/demo/README.md`) |
+| `HH_DEMO_MINT_ADDRESS_CEILING` | optional, the mint allowance of one network address, shared by every visitor behind it; staging and public deployments leave this unset (`deploy/demo/README.md`) |
 | `CORE_DEMO_TOKEN_TTL` | optional, the demo session length the mint issues |
 
 The console sign in variables (`CORE_` and `HH_WEB_` names) are listed in the
@@ -269,6 +270,63 @@ Step 2) name `HH_WEB_MODE=console`, `HH_WEB_ORG=hh-demo`,
 I could not confirm: the public copy's exact `HH_WEB_*` values. The README
 names the fields and says `HH_WEB_PERSONAS=true` and `HH_WEB_PERSONAS_OPEN=true`
 on the public copy; the rest of the console names are the same shape.
+
+## The assistant on a demo copy: a real model behind caps
+
+A demo copy runs TanyAI on Claude Sonnet 5.5 (the `tanyai-premium` alias, the native
+Anthropic adapter) when, and only when, every step below is done. With any of them
+missing the copy still boots where it can and answers on the deterministic stub, and the
+answer says so (the `model_unavailable` notice). The boot guard is
+`core/cmd/core/demoenv_inventory.go`; the guards are in `core/cmd/core/demo_on.go`.
+
+What the guard admits: exactly two `HOS_ASSIST_` names, `HOS_ASSIST_ANTHROPIC_API_KEY` and
+`HOS_ASSIST_DEALER_CAP_MICROCENTS`. Every other `HOS_ASSIST_` name (the gateway URL and
+key, the dealer tag) still refuses the boot: a demo reaches the vendor directly through
+the one alias and no gateway. The route is fixed by the build to `tanyai-premium`; no
+setting and no request moves it.
+
+Do these in this order, once per demo copy:
+
+1. **Set the provider spend limit** on the Anthropic workspace that owns the key. It is
+   the outer bound; Colton sets it before the key is placed.
+2. **Insert the price row** for the model, before the key. The table is append only and deliberately not
+   seeded; the boot refuses a keyed copy whose model has no row, with a message naming
+   `assist_model_prices`, the alias and the model. Insert the vendor's published prices for
+   `claude-sonnet-5-5`, in integer micro cents per million tokens, from the vendor's current
+   published pricing (a later price change is a new row with a higher
+   `effective_seq`; never an update):
+
+   ```sql
+   INSERT INTO assist_model_prices
+     (alias, model, price_in_micro_per_m, price_out_micro_per_m, price_cached_micro_per_m, effective_seq)
+   VALUES ('tanyai-premium', 'claude-sonnet-5-5', <input>, <output>, <cached input>, 1);
+   ```
+
+   Check a row exists (and which one is in force, the highest `effective_seq`):
+
+   ```sql
+   SELECT alias, model, price_in_micro_per_m, price_out_micro_per_m, price_cached_micro_per_m, effective_seq
+     FROM assist_model_prices
+    WHERE alias = 'tanyai-premium' AND model = 'claude-sonnet-5-5'
+    ORDER BY effective_seq DESC LIMIT 1;
+   ```
+
+   No rows means the copy will refuse to boot once the key is set.
+3. **Place the cap, then the key, last.** The key is the vault prod `/hh-demo` value
+   `HOS_ASSIST_ANTHROPIC_API_KEY`, put into FB Deploy's environment for the copy from the
+   vault; no agent reads or prints it. `HOS_ASSIST_DEALER_CAP_MICROCENTS` is the box's hard
+   spend bound in whole micro cents (a positive integer; one cent is 1,000,000 micro cents).
+   A key with no cap, a zero, a negative or a non numeric cap stops the boot with a message
+   naming the cap variable.
+   FB Deploy may redeploy the copy as soon as a variable changes; with the price row already in,
+   that redeploy serves, and without it the copy refuses to boot until the row is in.
+4. **Restart the copy** if it did not redeploy, and read the boot log: it either serves, or names the one step
+   still missing.
+
+The demo's per visitor, per address and box wide request limits are always on for a demo
+copy, and the boot refuses a keyed copy whose wired assistant lacks them. When the dealer
+cap is reached the copy answers on the stub with the `model_unavailable` notice until the
+month turns or an operator raises the cap.
 
 ## Resetting a copy
 

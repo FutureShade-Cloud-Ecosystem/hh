@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 var errNoDB = errors.New("tasks: database not configured")
@@ -188,8 +191,8 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, taskType string
-	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType); err != nil {
+	var from, taskType, claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrNotFound
 		}
@@ -200,6 +203,28 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	}
 	if !canTransition(from, in.To) {
 		return Task{}, ErrIllegalTransition
+	}
+	// The holder rule (UX-76b), on the locked row: start and done are the holder's; a cancel is the holder's,
+	// or an explicit act of a manager above the yard hands, with its reason, audited on this transition's
+	// event. A transition with no actor is a system transition (TransitionInput.ActorID) and owns no claim; the
+	// doors (the REST transition handlers and the sync write) refuse a person's write with no actor before they
+	// reach here, so no pick is claimed and left with no holder.
+	note := in.Note
+	switch in.To {
+	case StatusInProgress, StatusDone:
+		if notHolder(claimedBy, in.ActorID) {
+			return Task{}, ErrNotHolder
+		}
+	case StatusCancelled:
+		if notHolder(claimedBy, in.ActorID) {
+			if in.OverrideRole == "" {
+				return Task{}, ErrCancelNotAllowed
+			}
+			if strings.TrimSpace(in.Note) == "" {
+				return Task{}, httpx.BadRequestf("say why you are cancelling a pick someone else holds")
+			}
+			note = "cancelled over the holder by " + in.OverrideRole + ": " + strings.TrimSpace(in.Note)
+		}
 	}
 
 	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
@@ -224,7 +249,7 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
 		VALUES ($1::uuid, $2, $3, NULLIF($4,'')::uuid, $5)`,
-		in.TaskID, from, in.To, in.ActorID, in.Note); err != nil {
+		in.TaskID, from, in.To, in.ActorID, note); err != nil {
 		return Task{}, fmt.Errorf("tasks: insert transition event: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

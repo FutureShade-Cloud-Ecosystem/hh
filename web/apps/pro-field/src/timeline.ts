@@ -14,6 +14,7 @@
 // truck route, so the journey's delivered step and the fulfillment word are
 // what the contract gives, and this file invents nothing past them.
 import type { TenantOrder } from "@hardscapehouse/api-client";
+import { houseDayInZone, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { TRACKING_WORDS, calendarDay, houseDay, trackingOf, type Tracking } from "@hardscapehouse/pro-kit";
 
 export type StepState = "done" | "current" | "upcoming";
@@ -63,8 +64,7 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
 
 // The submitted step's day: created_at is an instant, so it reads as the dealer's own day.
 function houseDayOf(iso: string): string | undefined {
-  const words = houseDay(iso);
-  return words === "n/a" ? undefined : words;
+  return Number.isNaN(new Date(iso).getTime()) ? undefined : houseDay(iso);
 }
 
 const FULFILLMENT_WORDS: Readonly<Record<string, string>> = { PICKUP: "Pickup", DELIVERY: "Delivery", WILL_CALL: "Will call" };
@@ -79,11 +79,11 @@ export interface PromisedWords {
   day: string;
 }
 
-/** The asked-for day, the journey's headline answer: promised for a delivery, ready by for a pickup. */
+/** The day the customer asked for, the journey's headline answer. It is the customer's day, never a dealer promise. */
 export function promisedWords(order: Pick<TenantOrder, "fulfillment" | "requested_date">): PromisedWords {
   return {
-    label: order.fulfillment === "DELIVERY" ? "Promised for" : "Ready by",
-    day: calendarDay(order.requested_date),
+    label: "Wanted by",
+    day: /^\d{4}-\d{2}-\d{2}/.test(order.requested_date ?? "") ? calendarDay(order.requested_date) : "Not set",
   };
 }
 
@@ -102,12 +102,10 @@ export function lateWords(order: Pick<TenantOrder, "status" | "fulfillment" | "r
     : "Past the requested day and not collected yet. Ask the dealer where it stands.";
 }
 
-/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock, never written down anywhere.
-* The parts are picked out by hand: a locale tag that names a place has no business in the sources. */
+/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock in the zone the dealer serves
+* (the shared house zone, the one every date on these screens reads in), never written down anywhere. */
 export function houseToday(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
-  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+  return houseDayInZone(houseZone(), now);
 }
 
 // ---- the delivery instructions ------------------------------------------------------------------

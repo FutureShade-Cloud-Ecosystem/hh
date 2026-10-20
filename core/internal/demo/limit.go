@@ -28,6 +28,17 @@ const (
 	// MaxVisitorAllowance caps the per-visitor allowance so an operator
 	// cannot raise it without bound.
 	MaxVisitorAllowance = 20
+	// AddressCeilingVar is the optional address ceiling, read once at boot
+	// and passed to NewAddressLimit for the address bucket only. It exists
+	// for a room of testers behind one office address, who share the bucket.
+	AddressCeilingVar = "HH_DEMO_MINT_ADDRESS_CEILING"
+	// MaxAddressCeiling caps the address ceiling. The bucket's whole job is
+	// to bound cookie farming from one address: each fresh visitor id buys
+	// DefaultBurstAllowance mints, so the ceiling is the number of mints a
+	// script can spend per address per window whatever ids it forges. 200
+	// is five times the default, room for a large office, while a farm
+	// stays bounded at a few hundred session mints per window.
+	MaxAddressCeiling = 200
 )
 
 // AddressLimit is the shared limit.
@@ -54,6 +65,27 @@ func VisitorAllowance(raw string) int {
 	}
 	if n > MaxVisitorAllowance {
 		return MaxVisitorAllowance
+	}
+	return n
+}
+
+// AddressCeiling parses the raw HH_DEMO_MINT_ADDRESS_CEILING value, with the
+// per-visitor allowance already in effect. An empty, unparseable, or
+// non-positive value keeps the default ceiling; a positive value is capped
+// at MaxAddressCeiling. The result is never below the visitor allowance: a
+// ceiling under it would refuse a single visitor's own flow, which the
+// visitor bucket is there to meter. Staging and public deployments leave
+// the variable unset.
+func AddressCeiling(raw string, visitorAllowance int) int {
+	n := DefaultAddressCeiling
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && parsed > 0 {
+		n = parsed
+	}
+	if n > MaxAddressCeiling {
+		n = MaxAddressCeiling
+	}
+	if n < visitorAllowance {
+		n = visitorAllowance
 	}
 	return n
 }

@@ -17819,6 +17819,93 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/pos/card-refund-attempts:
+    get:
+      operationId: posListCardRefundAttempts
+      tags:
+        - staff-pos
+      summary: List the open card refund attempts the caller's branches reach
+      description: "The two-transaction card refund's reconciliation queue: attempts left IN_FLIGHT or UNBOOKED by an unknown processor outcome or a crash between the two transactions, branch fenced to the caller's reach, newest attempted first. Manager only."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - manager-home
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - IN_FLIGHT
+              - UNBOOKED
+      responses:
+        "200":
+          description: The open card refund attempts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCardRefundAttemptList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: A status filter other than IN_FLIGHT or UNBOOKED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/card-refund-attempts/{id}/resolve:
+    post:
+      operationId: posResolveCardRefundAttempt
+      tags:
+        - staff-pos
+      summary: Resolve one open card refund attempt after checking the processor
+      description: "A manager at the sale's branch records the processor outcome: REFUNDED with the processor's refund_ref stands the attempt UNBOOKED so the return's same-key retry books without a second processor call, NOT_REFUNDED closes it FAILED and releases the capture ceiling. The person who started the refund is refused (separation of duties); the resolution writes a sensitive-access audit row."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - manager-home
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosResolveCardRefundAttemptInput"
+      responses:
+        "200":
+          description: The attempt after the resolution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCardRefundAttempt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: A malformed attempt id, an outcome other than REFUNDED or NOT_REFUNDED, or REFUNDED without the processor's refund_ref
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/parked:
     post:
       operationId: posParkTicket
@@ -23301,13 +23388,45 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/quotes/{id}/mark-sent:
+    post:
+      operationId: quoteMarkSent
+      tags:
+        - staff-quote
+      x-addition: the quote desk's I sent it myself door (UX-48); the ERP marked a quote sent at link mint, no ERP source route
+      summary: Say you sent the quote's link yourself
+      description: The dealer's word that the link went out by a means the core cannot see (they copied it and sent it). A DRAFT quote moves to SENT and its follow-up cadence starts; the quote's history records sent_how DEALER_WORD, so the word is never mistaken for a delivery the core made. Pressed again it changes nothing. A 409 answers a quote that is empty, frozen, or expired.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The quote reads SENT
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/quotes/{id}/share-links:
     post:
       operationId: quoteMintShareLink
       tags:
         - staff-quote
       summary: Mint a public share link for a dealer quote
-      description: The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting moves a DRAFT quote to SENT and starts its follow-up cadence. A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead.
+      description: "The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting is not a send: a DRAFT quote stays DRAFT and no follow-up cadence starts (Copy link, Preview and Print all mint). The quote reads SENT only after a send the core verified (quoteShareBySMS) or the dealer's own word (quoteMarkSent). A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -23535,7 +23654,7 @@ paths:
       tags:
         - staff-quote
       summary: Text a quote's share link to the customer
-      description: Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words. The answer is 202 because the message is queued, not sent. No payment link is ever included; the payload type has no field for one.
+      description: "Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words and leaves the quote a DRAFT. The answer is 202 because the message is queued, not sent. A queued text is the send the core verifies: a DRAFT quote moves to SENT and its follow-up cadence starts only here (recorded in the quote's history as sent_how TEXT). No payment link is ever included; the payload type has no field for one."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -32603,6 +32722,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AssistField"
+        ref:
+          $ref: "#/components/schemas/AssistRef"
+        cite:
+          type: integer
+          format: int32
+          description: The number the model may write as [n] to cite this row; assigned by the server per exchange, present on data.query rows that have a record.
     AssistRef:
       type: object
       description: The one record an answer is about, carried as data rather than as a URL; the frontend turns it into a deep link through its own route table.
@@ -32645,6 +32770,97 @@ components:
         note:
           type: string
           description: An honest caveat when there is one (a truncated list, a narrowed scope)
+        ref:
+          $ref: "#/components/schemas/AssistRef"
+        notice:
+          $ref: "#/components/schemas/AssistNotice"
+        scope:
+          $ref: "#/components/schemas/AssistScope"
+    AssistNotice:
+      type: object
+      description: The one structured notice of an answer. The core sends the code (and the class of a refusal); the panel words it. A refusal names the class the asker lacks and never a record. model_unavailable is set on a demo copy when the answer was given on the stub because the model could not be used.
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - model_unavailable
+            - refused
+            - too_broad
+        class:
+          type: string
+          enum:
+            - cost
+            - margin
+            - payment_trail
+            - pii
+            - capability
+            - disabled
+    AssistScopeBranch:
+      type: object
+      required:
+        - id
+        - label
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+    AssistScopePeriod:
+      type: object
+      description: The period a query filtered on, in the dealer's zone; an open ended period runs to the day the query ran
+      required:
+        - from
+        - to
+        - label
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        label:
+          type: string
+    AssistScopeAccount:
+      type: object
+      description: The contractor's own account (slice 10); absent on a staff answer
+      required:
+        - label
+      properties:
+        label:
+          type: string
+    AssistScope:
+      type: object
+      description: What an answer's figures cover, built by the core from the asker's claims and the query, in the dealer's time zone. It never counts what is withheld.
+      required:
+        - as_of
+      properties:
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssistScopeBranch"
+        all_branches:
+          type: boolean
+        account:
+          $ref: "#/components/schemas/AssistScopeAccount"
+        period:
+          $ref: "#/components/schemas/AssistScopePeriod"
+        as_of:
+          type: string
+          description: The time the query ran, in the dealer's zone (RFC 3339)
+    AssistCitation:
+      type: object
+      description: "A verified citation: n is the number written as [n] in the text; label and ref are built by the server from this exchange's own results."
+      required:
+        - n
+        - label
+        - ref
+      properties:
+        n:
+          type: integer
+          format: int32
+        label:
+          type: string
         ref:
           $ref: "#/components/schemas/AssistRef"
     AssistInvocation:
@@ -32725,8 +32941,12 @@ components:
       properties:
         question:
           type: string
+        conversation_id:
+          type: string
+          description: The opaque id the server issued for this conversation. When present the history is rebuilt on the server from its exchange log and the history and ran of the request are ignored. It is honoured only for the same user and the same sign in (the bearer's jti); any other id starts a new conversation with no error.
         history:
           type: array
+          description: The v1 client kept history, used only when conversation_id is absent
           items:
             $ref: "#/components/schemas/AssistMessage"
     AssistUsage:
@@ -32782,6 +33002,20 @@ components:
           type: array
           items:
             type: string
+        conversation_id:
+          type: string
+          description: The opaque, server issued id of the conversation this exchange belongs to; send it on the next turn instead of history. Absent when the bearer carries no session id.
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssistCitation"
+        notice:
+          $ref: "#/components/schemas/AssistNotice"
+        scope:
+          $ref: "#/components/schemas/AssistScope"
+        answer_id:
+          type: string
+          description: Opaque id of this answer, for the feedback route
     AssistBudget:
       type: object
       description: A resolved allowance and where it came from
@@ -32965,8 +33199,13 @@ components:
           enum:
             - stub
             - anthropic
+            - routed
         model:
           type: string
+          description: An alias (tanyai-main, tanyai-alt, tanyai-premium, tanyai-ca), never a vendor model
+        route:
+          type: string
+          description: The escalation order for the routed provider, aliases comma separated
         chat_enabled:
           type: boolean
         spend_visible_to_non_admin:
@@ -35442,6 +35681,11 @@ components:
           format: date-time
         reopen_reason:
           type: string
+        lines:
+          type: array
+          description: What comes off the truck at this stop. Present only on the stops sync pull of a driver login, for that driver's own stops; absent when the lines are not recorded. Carries no money field of any kind.
+          items:
+            $ref: "#/components/schemas/DispatchDriverLine"
     DispatchPhotoMeta:
       type: object
       description: A POD photo without its bytes (the list read); bytes come only from the per-photo route
@@ -44091,6 +44335,9 @@ components:
           type: string
         claimed_by:
           type: string
+        claimed_by_role:
+          type: string
+          description: The claimer's staff role label (for example Yard Manager), served on the pick reads only; never a name, an email or an id. Absent when the pick is unclaimed or the claimer holds no role.
         claimed_at:
           type:
             - string
@@ -47479,6 +47726,111 @@ components:
         reason:
           type: string
           maxLength: 2000
+    PosCardRefundAttempt:
+      type: object
+      description: "One row of the two-transaction card refund's attempt ledger as the manager's list and resolve answer it: what the processor holds, who started the refund, and who (if anybody yet) resolved its outcome."
+      required:
+        - id
+        - refund_key
+        - order_id
+        - order_no
+        - branch_id
+        - customer_id
+        - customer_name
+        - gateway_ref
+        - refund_ref
+        - amount_cents
+        - status
+        - last_error
+        - initiated_by
+        - attempted_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        refund_key:
+          type: string
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        gateway_ref:
+          type: string
+        refund_ref:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+            - IN_FLIGHT
+            - UNBOOKED
+            - BOOKED
+            - FAILED
+        last_error:
+          type: string
+        initiated_by:
+          type: string
+        resolved_by:
+          type: string
+        resolved_at:
+          type: string
+          format: date-time
+        resolution_note:
+          type: string
+        attempted_at:
+          type: string
+          format: date-time
+        processor_at:
+          type: string
+          format: date-time
+        booked_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PosCardRefundAttemptList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosCardRefundAttempt"
+    PosResolveCardRefundAttemptInput:
+      type: object
+      description: "The manager's judgment of one open attempt: REFUNDED carries the processor's refund_ref, NOT_REFUNDED closes the attempt FAILED and releases the capture ceiling."
+      required:
+        - outcome
+      properties:
+        outcome:
+          type: string
+          enum:
+            - REFUNDED
+            - NOT_REFUNDED
+        refund_ref:
+          type: string
+          maxLength: 200
+        note:
+          type: string
+          maxLength: 300
     PosParkedLineInput:
       type: object
       description: One saved-cart line; no price, prices re-derive from the engine on resume

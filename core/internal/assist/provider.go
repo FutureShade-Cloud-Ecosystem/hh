@@ -24,12 +24,16 @@ package assist
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 )
 
 // Message roles. Strings rather than an enum so the wire format, the stub, and any provider
-// translation all speak the same three words with no mapping table.
+// translation all speak the same four words with no mapping table. The set is the OpenAI
+// compatible chat API's: system, user, assistant, tool.
 const (
+	RoleSystem    = "system"
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
 	RoleTool      = "tool"
@@ -64,6 +68,15 @@ type Message struct {
 	// turn can be recognised as an ANSWER to it rather than re-parsed as a new question, picking
 	// "Techo-Bloc Blu 60" out of a list is not a sentence, it is the completion of an invocation.
 	Clarify *Clarify `json:"clarify,omitempty"`
+
+	// -- TanyAI slice 1: the tool round trip --------------------------------------------------------
+	//
+	// ToolCalls is what an ASSISTANT turn asked to run, each call with the id the provider issued.
+	// ToolCallID is what a TOOL turn answers: the id of the call it is the result of. Both are
+	// `json:"-"` so a client history can never carry them: they are set by the service from what the
+	// provider really returned, and a forged id on the wire is unreadable by construction.
+	ToolCalls  []ToolCall `json:"-"`
+	ToolCallID string     `json:"-"`
 }
 
 // ToolSpec is one command offered to the provider for this exchange.
@@ -87,14 +100,33 @@ type ToolSpec struct {
 // ToolCall is the provider asking for a command to be run. Command is matched against the registry;
 // anything it invents is refused by name.
 type ToolCall struct {
+	// ID is the provider's own id for this call. A tool message answers it by this id, so the
+	// provider can pair the result with the call. Empty for a call the service decided itself (a
+	// resolved follow-up, the stub), in which case the service issues one before the call is sent
+	// anywhere.
+	ID      string `json:"id,omitempty"`
 	Command string `json:"command"`
 	Args    Args   `json:"args"`
+	// ArgsErr is set by an adapter when the provider's arguments were not valid JSON. It is the
+	// adapter's finding, not the model's text, and the service's escalation check reads it.
+	ArgsErr string `json:"-"`
+}
+
+// OutputSchema asks a provider for structured output: the reply must be JSON matching Schema.
+type OutputSchema struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // CompletionRequest is what a provider is given: the conversation so far and the tools allowed.
 type CompletionRequest struct {
+	// Alias names the route entry this call is for ("tanyai-main"). Empty means the route's first
+	// entry. HH code names aliases only; the alias table alone knows which model that is.
+	Alias    string
 	Messages []Message
 	Tools    []ToolSpec
+	// Schema, when set, asks for structured output.
+	Schema *OutputSchema
 }
 
 // Reply is what a provider returns. TokensIn/TokensOut are recorded in the ledger EXACTLY as
@@ -105,6 +137,13 @@ type Reply struct {
 	ToolCalls []ToolCall
 	TokensIn  int
 	TokensOut int
+	// TokensCached is the part of TokensIn the provider served from its prompt cache.
+	TokensCached int
+
+	// Provider and Model are who answered, set by Service.complete (never by a provider), for the
+	// ledger and the usage report.
+	Provider string
+	Model    string
 
 	// Suggest is DIB-513: the command CODES to offer beside a reply that could not answer.
 	//
@@ -130,6 +169,22 @@ type Provider interface {
 	Complete(ctx context.Context, req CompletionRequest) (Reply, error)
 }
 
+// ErrStreamingUnsupported is what Stream returns today. Streaming arrives with the panel slice.
+var ErrStreamingUnsupported = errors.New("assist: streaming is not supported by this provider yet")
+
+// StreamEvent is one increment of a streamed reply.
+type StreamEvent struct {
+	TextDelta string
+	Done      bool
+	Reply     *Reply
+}
+
+// StreamingProvider is the declared, unimplemented streaming method. It is a separate interface so
+// a provider that never streams is still a Provider.
+type StreamingProvider interface {
+	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error)
+}
+
 // toolSpecsFor renders a caller's permitted commands as tool specs.
 func toolSpecsFor(cmds []Command) []ToolSpec {
 	out := make([]ToolSpec, 0, len(cmds))
@@ -147,6 +202,9 @@ func renderResult(r Result) string {
 	b.WriteString(r.Headline)
 	for _, it := range r.Items {
 		b.WriteString("\n- ")
+		if it.Cite > 0 {
+			b.WriteString("[" + itoa(it.Cite) + "] ")
+		}
 		b.WriteString(it.Title)
 		for i, f := range it.Fields {
 			if i == 0 {

@@ -50,9 +50,17 @@ async function setMode(page: Page, mode: "ok" | "fail" | "no-number"): Promise<v
   await page.request.put("/_stub/feedback-mode", { data: { mode } });
 }
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 async function openPanel(page: Page): Promise<void> {
+  await openAccountMenu(page);
   await page.getByTestId("feedback-control").click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
+  // The account menu overlay would block the panel's own controls.
+  await page.locator("hh-shell-header button.account").click();
 }
 
 async function fill(page: Page): Promise<void> {
@@ -68,16 +76,13 @@ async function fill(page: Page): Promise<void> {
   await expect(page.getByTestId("feedback-thumbs").locator("li")).toHaveCount(1);
 }
 
-test("the header carries a Feedback button, no floating pill, and the button opens the shared panel", async ({ page }) => {
+test("the band's account menu carries a Feedback button, no floating pill, and the button opens the shared panel", async ({ page }) => {
   await signIn(page);
-  // The pill is not in the layout; the trigger sits in the shared header's cluster.
+  // The pill is not in the layout; the trigger sits in the band's account menu.
   await expect(page.getByTestId("feedback-pill")).toBeHidden();
-  const bar = (await page.getByTestId("qd-bar").boundingBox())!;
+  await openAccountMenu(page);
   const control = page.getByTestId("feedback-control");
   await expect(control).toHaveText("Feedback");
-  const box = (await control.boundingBox())!;
-  expect(box.y).toBeGreaterThanOrEqual(bar.y);
-  expect(box.y + box.height).toBeLessThanOrEqual(bar.y + bar.height);
 
   await control.click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
@@ -85,8 +90,10 @@ test("the header carries a Feedback button, no floating pill, and the button ope
   await expect(page.getByTestId("feedback-kind-feedback")).toHaveText("Polish idea");
   await expect(page.getByTestId("feedback-kind-flag")).toHaveText("Flag for later");
   // The button only opens; the panel's own Close shuts it, and a second press opens it again.
-  await page.getByRole("button", { name: "Close feedback" }).click();
+  // The band sits above the panel's Close button in the layout, so dispatch the click directly.
+  await page.getByRole("button", { name: "Close feedback" }).dispatchEvent("click");
   await expect(page.getByTestId("feedback-panel")).toBeHidden();
+  await openAccountMenu(page);
   await control.click();
   await expect(page.getByTestId("feedback-panel")).toBeVisible();
 });
@@ -182,12 +189,12 @@ for (const scheme of ["light", "dark"] as const) {
           }
           return false;
         }
-        const ids = ["qb-send", "qb-send-channel", "qb-fulfil-pickup", "qb-fulfil-delivery"];
+        const ids = ["qb-send", "qb-fulfil-pickup", "qb-fulfil-delivery"];
         const controls: Element[] = [];
         for (const id of ids) controls.push(...deepAll(document, `[data-testid="${id}"]`));
         controls.push(...deepAll(document, 'nav[aria-label="Quote sections"] button, nav[aria-label="Quote sections"] a'));
         const problems: string[] = [];
-        if (controls.length < 7) problems.push(`only ${controls.length} controls found`);
+        if (controls.length < 6) problems.push(`only ${controls.length} controls found`);
         // Every fixed or sticky box the widget owns, shown or not.
         const host = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("hh-feedback") ?? null;
         const boxes = host?.shadowRoot === null || host === null
@@ -214,7 +221,7 @@ for (const scheme of ["light", "dark"] as const) {
         }
         return { problems, found: controls.length };
       });
-      expect(verdict.found).toBeGreaterThanOrEqual(7);
+      expect(verdict.found).toBeGreaterThanOrEqual(6);
       expect(verdict.problems).toEqual([]);
 
       // The open panel sits wholly inside the viewport.

@@ -11,7 +11,7 @@ import type { Branch, InventoryBranchStock, Product } from "@hardscapehouse/api-
 import type { AreaDesk, DeskHost } from "../purch/area.js";
 import { InventoryApi, branchRows, browseAnswer } from "../inventory/inventory-api.js";
 import type { InventoryBrowseRow } from "@hardscapehouse/api-client";
-import { incomingLines } from "../po/po-logic.js";
+import { houseDay, incomingLines } from "../po/po-logic.js";
 import { chipGrants, comingInRows, type ComingInRow } from "./lookup-logic.js";
 import { renderLookup, type LookupModel } from "./lookup-views.js";
 
@@ -39,8 +39,6 @@ export class LookupDesk implements AreaDesk {
   // The products whose image read answered (the route 404s a product with none): the screen draws
   // a thumb only where there is a picture, the empty slot where there is not.
   #images = new Set<string>();
-  // The day the expected words are read against, the same source the other desks hand their views.
-  readonly #today = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   constructor(api: InventoryApi, host: DeskHost, coreBaseUrl: string) {
     this.#api = api;
@@ -161,7 +159,7 @@ export class LookupDesk implements AreaDesk {
     if (!incoming.ok) {
       this.#detailError = lookupRefusal("incoming", incoming.error, incoming.status);
     } else {
-      this.#coming = comingInRows(incomingLines(incoming.value), this.#branchNames, this.#today);
+      this.#coming = comingInRows(incomingLines(incoming.value), this.#branchNames, houseDay());
     }
     this.#product = product.ok ? product.value : null;
     this.#busy = false;

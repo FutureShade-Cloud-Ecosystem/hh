@@ -67,6 +67,9 @@ type taskStore interface {
 	// task's fresh seq written in the same transaction.
 	RecordPickLocked(ctx context.Context, taskID, actorID string, apply func(context.Context, Task) ([]PickedLineInput, error)) ([]PickedLine, error)
 	// ListPickedLines reads a task's recorded pick in ticket order.
+	// HolderLocked runs apply with the task row locked and the actor checked against the claim (ErrNoActor
+	// when there is none, ErrNotHolder when someone else holds it), the skid count's guard (UX-76b).
+	HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error
 	ListPickedLines(ctx context.Context, taskID string) ([]PickedLine, error)
 
 	// - W3 (Swarm C) -
@@ -108,6 +111,11 @@ type Service struct {
 	// holdCheck is the pick hold seam (yard_hold.go, item 9 Opus P2-1). Nil = the yard doors do not
 	// refuse a held order (the additive lane; the composition root asserts the wiring at boot).
 	holdCheck PickHoldCheck
+	// claimerRoles labels a pick's claimer by role on the pick reads (claimer_role.go). Nil = no label.
+	claimerRoles ClaimerRoleReader
+	// roleLabels names a shortage's reporter by role for the yard's notice (UX-76), never by name or id.
+	// Nil = the notice says "a teammate".
+	roleLabels RoleLabeler
 }
 
 // NewService wires the store. Inject the order + chat seams with WithOrderReader / WithChatNotifier.
@@ -117,6 +125,14 @@ func NewService(store taskStore) *Service {
 
 // WithOrderReader injects the order-validation seam (create-from-order rejects an unknown order).
 func (s *Service) WithOrderReader(r OrderReader) *Service { s.orders = r; return s }
+
+// RoleLabeler answers the role label each given user holds. The identity resolver satisfies it.
+type RoleLabeler interface {
+	RoleLabelsForUsers(ctx context.Context, userIDs []string) (map[string]string, error)
+}
+
+// WithRoleLabels injects the role label seam the yard shortage notice names its reporter with.
+func (s *Service) WithRoleLabels(r RoleLabeler) *Service { s.roleLabels = r; return s }
 
 // WithChatNotifier injects the messaging event-post seam (create + done post a system EVENT into chat).
 func (s *Service) WithChatNotifier(n ChatNotifier) *Service { s.notifier = n; return s }
@@ -209,6 +225,16 @@ func (s *Service) Done(ctx context.Context, id, actor, photoURL string) (Task, e
 // Cancel moves any non-terminal task to CANCELLED with an optional note. Illegal from a terminal status.
 func (s *Service) Cancel(ctx context.Context, id, actor, note string) (Task, error) {
 	return s.transition(ctx, id, StatusCancelled, actor, note, "")
+}
+
+// CancelAs is Cancel by a caller who may cancel a pick someone else holds (overrideRole is that caller's role
+// code, decided by the handler from the staff context): the cancel then needs its reason in note and is
+// audited with the role (UX-76b).
+func (s *Service) CancelAs(ctx context.Context, id, actor, note, overrideRole string) (Task, error) {
+	if id == "" {
+		return Task{}, httpx.BadRequestf("task id is required")
+	}
+	return s.store.Transition(ctx, TransitionInput{TaskID: id, To: StatusCancelled, ActorID: actor, Note: note, OverrideRole: overrideRole})
 }
 
 // ListTasks returns one page of the picking queue, validating the optional

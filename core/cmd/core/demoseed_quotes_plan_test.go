@@ -539,3 +539,46 @@ func TestApply_AnAuditAnchorIsABoundLookup(t *testing.T) {
 		t.Errorf("args %#v, want the id bound as text", args)
 	}
 }
+
+// TestDemoQuoteNotesAreForTheCustomer holds the one fact the customer's quote page rests on: the note a
+// quote carries is its customer notes, which the public page prints, so a seeded note is written to the
+// customer, never a dealer's own remark about the quote's state or about how staff handle it.
+func TestDemoQuoteNotesAreForTheCustomer(t *testing.T) {
+	staffVoice := []string{"draft", "sent for review", "accepted by the customer", "ready to become", "at the till", "cod sale", "convert it"}
+	// A note that opens with the quote's own state is a dealer's status remark, not a word to the customer.
+	staffOpeners := []string{"declined", "accepted."}
+	notes := map[string]string{}
+	for _, q := range demoQuotes {
+		notes[q.Key] = q.Notes
+	}
+	for _, q := range contractorQuotes {
+		notes[q.Key] = q.Notes
+	}
+	for key, note := range notes {
+		low := strings.ToLower(note)
+		for _, w := range staffVoice {
+			if strings.Contains(low, w) {
+				t.Errorf("quote %s: customer note %q reads as a dealer's internal remark (%q)", key, note, w)
+			}
+		}
+		for _, w := range staffOpeners {
+			if strings.HasPrefix(low, w) {
+				t.Errorf("quote %s: customer note %q opens with the quote's state (%q)", key, note, w)
+			}
+		}
+	}
+}
+
+// TestDemoQuoteNotesPromiseWhatTheQuoteCarries: the seed writes every demo quote as a PICKUP with no
+// delivery address or fee (see the "fulfillment" column in quoteFacts), so a note that names delivery,
+// or a yard's word for the work behind it, promises something the page does not price.
+func TestDemoQuoteNotesPromiseWhatTheQuoteCarries(t *testing.T) {
+	for _, q := range demoQuotes {
+		low := strings.ToLower(q.Notes)
+		for _, w := range []string{"deliver", "picking"} {
+			if strings.Contains(low, w) {
+				t.Errorf("quote %s: note %q names %q on a pickup quote", q.Key, q.Notes, w)
+			}
+		}
+	}
+}

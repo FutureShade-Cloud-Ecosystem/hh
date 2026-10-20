@@ -6,7 +6,7 @@
 // and should not depend on the sheet). It also holds every control to the
 // app's own 56 px floor, the other half of a screen that fits a gloved hand.
 import { test, expect, type Page } from "@playwright/test";
-import { chooseReason, resetStub, useScenario, yardHandoff } from "./helpers.js";
+import { accountItem, chooseReason, resetStub, useScenario, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -45,7 +45,7 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
     // The landing.
     await page.goto("/");
     await expect(page.locator("[data-pick-card]")).toHaveCount(5);
-    if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+    if (theme === "brand") await accountItem(page, "Brand theme");
     await noSideways(page, `${theme}: the queue`);
 
     // The held order, scrolled to.
@@ -59,7 +59,7 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
     await noSideways(page, `${theme}: the pick started`);
 
     // The line editor open on a short line, before and after the reason.
-    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
+    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).getByRole("button", { name: "Short" }).click();
     for (let i = 0; i < 4; i += 1) await page.getByRole("button", { name: "Add one on" }).click();
     await noSideways(page, `${theme}: the line editor open`);
     await chooseReason(page, "line", "NOT_IN_YARD");

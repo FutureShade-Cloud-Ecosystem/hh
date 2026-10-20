@@ -19,6 +19,7 @@
 // (repository hardscapeos_dibbits, read only; see PROVENANCE.md), rebuilt on
 // HH's generated client and narrowed to what this app's screens use.
 import { ApiClient, staffSettings, type Result } from "@hardscapehouse/api-client";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { ConfigItem } from "./config-logic.js";
 
 /** One cell of the grid: the curation rows and the caller's own answer. */
@@ -94,6 +95,8 @@ export class ConfigApi {
   async surfaceConfig(surface: string, profile: string): Promise<Result<CellConfig>> {
     const answer = await staffSettings.settingsGetSurfaceConfig(this.#client, surface, { profile: profile as never });
     if (!answer.ok) return answer;
+    // The dealer's business day zone rides on this read; the trail's time words follow it.
+    serveHouseZoneFrom(answer.value);
     const r = bag(answer.value);
     return {
       ok: true,

@@ -8,6 +8,7 @@
 // the host's listeners act on them; a select's answer rides its change event,
 // read off the element's data-action.
 import { html, nothing, type TemplateResult } from "lit";
+import { initialsOf } from "@hardscapehouse/shell-chrome/src/shell-state.js";
 import type { BranchRow, ResetLink, RoleRow, StaffMemberRow } from "./dealer-api.js";
 import {
   WAITS_FOR_SIGN_IN_WORDS,
@@ -75,11 +76,11 @@ export function renderStaff(model: StaffModel): TemplateResult {
 
 // -- the register -------------------------------------------------------------------------------------
 
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0 || parts[0] === "") return "??";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+/** The register avatar's letters: the shell chrome's initials (the first letters of the first two words, a
+ * parenthetical demo suffix ignored); a name with no letters keeps the register's "??". */
+export function staffInitials(name: string): string {
+  const initials = initialsOf(name);
+  return initials === "" ? "??" : initials;
 }
 
 function accessWord(tier: number, scope: string): string {
@@ -155,7 +156,7 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
       <td>
         <div class="person-cell">
           <div class="initials-disc">
-            ${initialsOf(m.display_name)}
+            ${staffInitials(m.display_name)}
           </div>
           <div>
             <div class="person"><strong>${m.display_name}</strong></div>
@@ -243,7 +244,7 @@ function renderCreate(roles: readonly RoleRow[], branches: readonly BranchRow[])
         </label>
         <label class="field">
           <span class="field-label">Email</span>
-          <input class="text-field" type="email" value="jordan@gablelandscape.example" placeholder="jordan@gablelandscape.example" disabled />
+          <input class="text-field" type="email" value="name@example.com" placeholder="name@example.com" disabled />
         </label>
         <label class="field">
           <span class="field-label">Role</span>

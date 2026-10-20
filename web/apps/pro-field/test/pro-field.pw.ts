@@ -83,6 +83,57 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-rows")).toBeVisible();
   });
 
+  test("a slow session check and slow data call keep the signed in frame with the loading pattern, never the sign in page", async ({ page }) => {
+    await page.route("**/api/v1/tenant/**", async (route) => {
+      if (route.request().url().endsWith("/tenant/config")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible({ timeout: 600 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "loading");
+    await expect(state.locator('.state-indicator[data-pattern="progress"]')).toBeVisible();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-", { timeout: 6000 });
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+  });
+
+  test("the section nav waits for the profile, so it never reshuffles under a tap", async ({ page }) => {
+    let releaseMe!: () => void;
+    const meHeld = new Promise<void>((resolve) => {
+      releaseMe = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "GET") await meHeld;
+      await route.continue();
+    });
+    await signIn(page, "owner");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.getByTestId("section-nav")).toHaveCount(0);
+    releaseMe();
+    await expect(page.getByTestId("section-nav").getByRole("button", { name: "Projects" })).toBeVisible();
+    await expect(page.getByTestId("section-nav").getByRole("button")).toHaveCount(4);
+  });
+
+  test("a network failure on the session check or data call keeps the person in the frame with not reachable words and Try again", async ({ page }) => {
+    let failMe = true;
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (failMe) return route.abort("failed");
+      return route.continue();
+    });
+    await signIn(page, "field");
+    await expect(page.locator("hh-pro-frame")).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).toHaveCount(0);
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Pro is not reachable right now. Try again in a moment.");
+    failMe = false;
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-");
+  });
+
   test("an empty answer shows this app's own empty words", async ({ page, request }) => {
     await request.post("/_stub/control", { data: { empty: "orders" } });
     await signIn(page, "field");
@@ -182,7 +233,7 @@ test.describe("phone", () => {
     await firstRow.click();
     await expect(page.getByTestId("surface-title")).toHaveText("Order");
     await expect(page.getByTestId("order-head")).toContainText(orderNo);
-    await expect(page.getByTestId("order-head")).toContainText("Promised for");
+    await expect(page.getByTestId("order-head")).toContainText("Wanted by");
     const steps = page.getByTestId("order-timeline").locator(".tstep");
     await expect(steps).toHaveCount(5);
     await expect(page.getByTestId("order-lines")).toContainText("at $");
@@ -608,6 +659,72 @@ test.describe("phone", () => {
     await page.waitForURL(/\/pro-[a-z]+\/$/);
     expect(new URL(page.url()).pathname).toBe(`/pro-${target === "procurement" ? "procurement" : target}/`);
   });
+
+  test("Orders at 390x844 has zero serious contrast violations across the section segments", async ({ page }) => {
+    const contrastOffenders = (floor = 4.5) =>
+      page.evaluate((minRatio: number) => {
+        const parse = (v: string): [number, number, number, number] | null => {
+          const m = v.match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const p = m[1].split(",").map((s) => Number.parseFloat(s));
+          return p.length >= 3 && p.slice(0, 3).every((n) => !Number.isNaN(n))
+            ? [p[0], p[1], p[2], p.length > 3 && !Number.isNaN(p[3]) ? p[3] : 1]
+            : null;
+        };
+        const over = (t: [number, number, number, number], b: [number, number, number, number]): [number, number, number, number] => {
+          const a = t[3] + b[3] * (1 - t[3]);
+          if (a === 0) return [0, 0, 0, 1];
+          const mix = (x: number, y: number): number => (t[3] * x + b[3] * (1 - t[3]) * y) / a;
+          return [mix(t[0], b[0]), mix(t[1], b[1]), mix(t[2], b[2]), 1];
+        };
+        const parentOf = (n: Element): Element | null => {
+          if (n.parentElement) return n.parentElement;
+          const root = n.getRootNode();
+          return root instanceof ShadowRoot ? root.host : null;
+        };
+        const backdrop = (el: Element): [number, number, number, number] => {
+          let acc: [number, number, number, number] | null = null;
+          for (let cur: Element | null = el; cur !== null; cur = parentOf(cur)) {
+            const layer = parse(getComputedStyle(cur).backgroundColor);
+            if (layer && layer[3] > 0) {
+              acc = acc === null ? layer : over(acc, layer);
+              if (acc[3] >= 1) return acc;
+            }
+          }
+          return acc === null ? [255, 255, 255, 1] : over(acc, [255, 255, 255, 1]);
+        };
+        const ch = (v: number): number => {
+          const s = v / 255;
+          return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        const lum = (c: [number, number, number, number]): number => 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+        const ratio = (a: [number, number, number, number], b: [number, number, number, number]): number =>
+          (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        const out: { text: string; ratio: number }[] = [];
+        const walk = (root: Element | ShadowRoot | Document): void => {
+          for (const el of Array.from(root.querySelectorAll("*"))) {
+            if (el.shadowRoot) walk(el.shadowRoot);
+            const cs = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            if (cs.display === "none" || cs.visibility === "hidden" || rect.width < 1 || rect.height < 1) continue;
+            if (!Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "")) continue;
+            const ink = parse(cs.color);
+            if (!ink) continue;
+            const r = ratio(ink, backdrop(el));
+            if (r < minRatio) out.push({ text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40), ratio: Math.round(r * 100) / 100 });
+          }
+        };
+        walk(document);
+        return out;
+      }, floor);
+
+    await signIn(page, "owner");
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toBeVisible();
+    await expect.poll(() => contrastOffenders(4.5)).toEqual([]);
+  });
 });
 
 test.describe("desktop", () => {
@@ -628,3 +745,35 @@ test.describe("desktop", () => {
     await page.screenshot({ path: test.info().outputPath("order-desktop.png") });
   });
 });
+
+// UX-70 round 3: the dealer's served zone reaches the order page, whatever the machine's own zone is.
+// 05:30 UTC is the previous evening in Los Angeles; the page must read that day, never the UTC or Tokyo one.
+for (const machineZone of ["UTC", "Asia/Tokyo"]) {
+  test.describe(`the dealer's zone, machine in ${machineZone}`, () => {
+    test.use({ viewport: { width: 390, height: 844 }, timezoneId: machineZone });
+
+    test("an order's Submitted and Placed days read in the zone the dealer serves", async ({ page }) => {
+      const boundary = new Date();
+      boundary.setUTCHours(5, 30, 0, 0);
+      const dayIn = (timeZone: string): string => new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" }).format(boundary);
+      const pacificDay = dayIn("America/Los_Angeles");
+      expect(pacificDay).not.toBe(dayIn("UTC"));
+      expect(pacificDay).not.toBe(dayIn("Asia/Tokyo"));
+      await page.route("**/api/v1/tenant/config", async (route) => {
+        const response = await route.fetch();
+        const cfg = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...cfg, business_zone: "America/Los_Angeles" } });
+      });
+      await page.route("**/api/v1/tenant/orders/*", async (route) => {
+        const response = await route.fetch();
+        const detail = (await response.json()) as Record<string, unknown>;
+        await route.fulfill({ response, json: { ...detail, created_at: boundary.toISOString() } });
+      });
+      await signIn(page, "field");
+      await page.getByTestId("landing-rows").getByTestId("order-row").first().click();
+      await expect(page.getByTestId("order-timeline")).toBeVisible();
+      await expect(page.getByTestId("order-placed")).toContainText(`Placed ${pacificDay}`);
+      await expect(page.getByTestId("order-timeline").locator(".tstep").first()).toContainText(pacificDay);
+    });
+  });
+}

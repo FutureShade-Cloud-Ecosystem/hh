@@ -8,12 +8,12 @@ defineConsoleLegs({
   persona: "yard-team",
   personaCard: "Yard Team",
   signedIn: async (page, roleName) => {
-    await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "", { timeout: 20_000 });
+    await expect(page.locator("hh-field-frame")).toHaveAttribute("signed-in", "", { timeout: 20_000 });
     await expect(page.getByTestId("header-word")).toHaveText(roleName);
     await expect(page.locator("[data-branch]")).toBeVisible();
   },
   unavailable: async (page) => {
     await expect(page.getByText("The demo way in is not available on this box.")).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator("hos-app-header")).not.toHaveAttribute("signed-in", "");
+    await expect(page.locator("hh-field-frame")).not.toHaveAttribute("signed-in", "");
   },
 });

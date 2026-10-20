@@ -287,12 +287,12 @@ func TestIntegration_DIB491_FlagOn_TheShareSurfaceFollows(t *testing.T) {
 
 	setMultiAccept(t, pool, false)
 	var notEditable *NotEditableError
-	if _, err := svc.MintShareLink(ctx, quoteID, 0); !errors.As(err, &notEditable) {
+	if _, err := mintAndSend(svc, ctx, quoteID, 0); !errors.As(err, &notEditable) {
 		t.Fatalf("switch off: minting a link for a CONVERTED quote must refuse (NotEditableError); got %v", err)
 	}
 
 	setMultiAccept(t, pool, true)
-	minted, err := svc.MintShareLink(ctx, quoteID, 0)
+	minted, err := mintAndSend(svc, ctx, quoteID, 0)
 	if err != nil {
 		t.Fatalf("switch on: minting a link for a CONVERTED quote must work; got %v", err)
 	}

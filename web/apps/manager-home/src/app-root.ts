@@ -20,12 +20,15 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its controls ride data-action
 // names and the host's click listener below acts on them.
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
@@ -61,7 +64,7 @@ import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { WeightsApi } from "./weights-api.js";
 import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
-import { keyForSignApply, waitingKinds } from "./approvals-logic.js";
+import { decisionSubject, itemsForKind, keyForSignApply, pendingCounts, waitingKinds } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
@@ -170,6 +173,10 @@ export class ManagerHomeApp extends HHElement {
     index: (name) => this.renderRoot.querySelector<HTMLSelectElement>(`select[data-field="${name}"]`)?.selectedIndex ?? -1,
   });
 
+  // Framed by the Work shell: the host's band is the one band; standalone, this
+  // app renders its own white band above the app-local header (GAPS-r2 row G1).
+  readonly #framed = framedByShell();
+
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
@@ -235,6 +242,13 @@ export class ManagerHomeApp extends HHElement {
 
   // The entry cards and every control ride data-action names; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -245,8 +259,7 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "reload") {
@@ -363,7 +376,7 @@ export class ManagerHomeApp extends HHElement {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
         this.#approvalsOpening += 1;
-        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "" };
+        this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading", selectedId: undefined, declineReason: "", confirming: undefined, notice: "" };
         this.requestUpdate();
         void this.#loadApprovals();
       }
@@ -372,7 +385,8 @@ export class ManagerHomeApp extends HHElement {
     if (action === "select-approval") {
       const id = control?.getAttribute("data-approval-id") ?? "";
       if (id !== "" && id !== this.#approvals.selectedId) {
-        this.#approvals = { ...this.#approvals, selectedId: id };
+        const confirming = this.#approvals.confirming?.id === id ? this.#approvals.confirming : undefined;
+        this.#approvals = { ...this.#approvals, selectedId: id, confirming };
         this.requestUpdate();
       }
       return;
@@ -390,9 +404,21 @@ export class ManagerHomeApp extends HHElement {
       const isApprove = control?.getAttribute("data-decision") === "approve";
       if (this.#approvals.kind === "CHANGE_ORDER" && !isApprove) {
         void this.#changeOrderReject(id);
-      } else {
-        void this.#decide(id, isApprove);
+      } else if (id !== "" && this.#approvals.busyId === "") {
+        // A press only asks: the confirm names the request and the amount, and nothing is sent until the yes.
+        this.#approvals = { ...this.#approvals, selectedId: id, confirming: { id, decision: isApprove ? "approve" : "reject" }, notice: "", error: "" };
+        this.#decisionFocus = { kind: "confirm" };
+        this.requestUpdate();
       }
+      return;
+    }
+    if (action === "decide-confirm") {
+      const id = control?.getAttribute("data-approval-id") ?? "";
+      if (this.#approvals.confirming?.id === id) void this.#decide(id, this.#approvals.confirming.decision === "approve");
+      return;
+    }
+    if (action === "decide-cancel") {
+      this.#cancelDecision();
       return;
     }
     if (action === "sign-apply") {
@@ -422,6 +448,8 @@ export class ManagerHomeApp extends HHElement {
     }
     if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "decline-reason") {
       this.#approvals = { ...this.#approvals, declineReason: target.value };
+      // The reject confirm waits for a reason, so it must hear each keystroke.
+      if (this.#approvals.confirming?.decision === "reject") this.requestUpdate();
       return;
     }
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -440,13 +468,33 @@ export class ManagerHomeApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+  };
+
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the form
     // listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
+    this.renderRoot.addEventListener("keydown", this.#onDecisionKey as EventListener);
     if (this.#custody.mode === "console") {
       this.#custody.begin("manager-home", (outcome) => this.#onRecovered(outcome));
       return;
@@ -496,8 +544,10 @@ export class ManagerHomeApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
+    this.renderRoot.removeEventListener("keydown", this.#onDecisionKey as EventListener);
     super.disconnectedCallback();
   }
 
@@ -513,12 +563,8 @@ export class ManagerHomeApp extends HHElement {
   // address are set on their elements after the render that drew them, never bound.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
     this.#restoreFocus();
+    this.#applyDecisionFocus();
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
     this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
@@ -533,6 +579,27 @@ export class ManagerHomeApp extends HHElement {
       if (url !== undefined && img.getAttribute("src") !== url) img.setAttribute("src", url);
       const alt = this.#warranty.photoAlt(id);
       if (img.getAttribute("alt") !== alt) img.setAttribute("alt", alt);
+    }
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when Manager Home stands alone; framed by the Work shell, the host's band
+    // is the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header used
+    // to (theme, switch role, sign out): the actions ride the band's
+    // accountMenu template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = this.#dealerName;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#view));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.theme = this.#theme;
+      band.accountMenu = this.#accountMenu();
     }
   }
 
@@ -550,6 +617,68 @@ export class ManagerHomeApp extends HHElement {
     const op = control.getAttribute("data-op");
     this.#focusTarget = op !== null && (key !== null || entry !== null) ? { op, key: key ?? "", entry: entry ?? "" } : null;
   }
+
+  // Where focus goes in the approvals decision, set with the state that needs it and used by the render that draws it:
+  // into the confirm when it opens, back to the asking button after a cancel, to the next waiting row (or the notice)
+  // after a decision. The confirm and the result are also scrolled into view, for the phone.
+  #decisionFocus: { kind: "confirm" } | { kind: "row"; id: string; decision: string } | { kind: "next"; id: string } | { kind: "error" } | null = null;
+
+  #cancelDecision(): void {
+    const asked = this.#approvals.confirming;
+    this.#approvals = { ...this.#approvals, confirming: undefined };
+    if (asked !== undefined) this.#decisionFocus = { kind: "row", id: asked.id, decision: asked.decision };
+    this.requestUpdate();
+  }
+
+  #applyDecisionFocus(): void {
+    const want = this.#decisionFocus;
+    if (want === null) return;
+    this.#decisionFocus = null;
+    const root = this.renderRoot;
+    const ask = (id: string): string => `.approval-card[data-approval-id='${CSS.escape(id)}']`;
+    if (want.kind === "confirm") {
+      const confirm = root.querySelector<HTMLElement>("[data-test='decision-confirm']");
+      if (confirm === null) return;
+      const reason = root.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      const first = this.#approvals.confirming?.decision === "reject" && reason !== null ? reason : confirm.querySelector<HTMLButtonElement>("button");
+      first?.focus({ preventScroll: true });
+      confirm.scrollIntoView({ block: "nearest" });
+    } else if (want.kind === "row") {
+      const button = root.querySelector<HTMLButtonElement>(`${ask(want.id)} button[data-decision='${CSS.escape(want.decision)}']`);
+      button?.focus();
+    } else if (want.kind === "next") {
+      const notice = root.querySelector<HTMLElement>("[data-test='decision-notice']");
+      notice?.scrollIntoView({ block: "nearest" });
+      const card = want.id !== "" ? root.querySelector<HTMLElement>(ask(want.id)) : null;
+      (card ?? notice)?.focus({ preventScroll: true });
+    } else {
+      root.querySelector<HTMLElement>(".error-line")?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // Escape cancels the confirm, and Tab stays inside the decision block while it is open.
+  readonly #onDecisionKey = (event: KeyboardEvent): void => {
+    if (this.#approvals.confirming === undefined) return;
+    const section = this.renderRoot.querySelector<HTMLElement>(".decision-section");
+    if (section === null) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.#cancelDecision();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = Array.from(section.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
+    if (items.length === 0) return;
+    const active = (this.renderRoot as ShadowRoot).activeElement;
+    const at = active === null ? -1 : items.indexOf(active as HTMLElement);
+    if (!event.shiftKey && (at === items.length - 1 || at === -1)) {
+      event.preventDefault();
+      items[0].focus();
+    } else if (event.shiftKey && at <= 0) {
+      event.preventDefault();
+      items[items.length - 1].focus();
+    }
+  };
 
   #restoreFocus(): void {
     const target = this.#focusTarget;
@@ -793,7 +922,7 @@ export class ManagerHomeApp extends HHElement {
     if (qa === "message-branch") {
       this.#landing = {
         ...this.#landing,
-        notice: "Messaging opens in the Messages app; it is not on this box yet.",
+        notice: "Messaging opens in the Messages app; it is not available yet.",
       };
       this.requestUpdate();
     }
@@ -810,7 +939,7 @@ export class ManagerHomeApp extends HHElement {
     }
     this.#landing = {
       ...this.#landing,
-      notice: `Escalation (${targetRef}) opens in the Messages app; it is not on this box yet.`,
+      notice: `Escalation (${targetRef}) opens in the Messages app; it is not available yet.`,
     };
     this.requestUpdate();
   }
@@ -1722,6 +1851,7 @@ export class ManagerHomeApp extends HHElement {
     // The view opens on the first waiting approvals kind the core does not refuse, as it always has; the change
     // orders tab shows its count but is never the opening tab, so a person lands where the approvals board puts them.
     const candidates = all.ok ? waitingKinds(all.value) : [];
+    if (all.ok) this.#approvals = { ...this.#approvals, counts: pendingCounts(all.value) };
     for (const kind of candidates) {
       if (opening !== this.#approvalsOpening) return;
       if (kind === "CHANGE_ORDER") {
@@ -1814,30 +1944,41 @@ export class ManagerHomeApp extends HHElement {
 
   async #decide(id: string, approve: boolean): Promise<void> {
     if (id === "" || this.#approvals.busyId !== "") return;
-    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "" };
+    // The words of the decision are taken before the list moves under them.
+    const before = itemsForKind(this.#approvals.kind, this.#approvals.rows).find((i) => i.id === id);
+    const subject = before ? decisionSubject(before) : "the request";
+    this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "", notice: "" };
     this.requestUpdate();
-    const reason = this.#approvals.declineReason ?? "";
+    // A typed reason belongs to a reject: an approve sends none.
+    const reason = approve ? "" : (this.#approvals.declineReason ?? "");
     const result = await this.#api.decideApproval(id, approve, reason);
     if (result.ok) {
+      this.#approvals = { ...this.#approvals, confirming: undefined, declineReason: "" };
       await this.#loadApprovals();
+      // The tab counts are the core's own, read again; the next waiting request opens so the queue keeps moving.
+      const all = await this.#api.approvals("", true);
+      const next = itemsForKind(this.#approvals.kind, this.#approvals.rows).find((i) => i.status === "PENDING");
+      this.#approvals = {
+        ...this.#approvals,
+        ...(all.ok ? { counts: pendingCounts(all.value) } : {}),
+        selectedId: next?.id,
+        notice: `${approve ? "Approved" : "Rejected"} ${subject}.${
+          itemsForKind(this.#approvals.kind, this.#approvals.rows).some((i) => i.id === id && i.status !== "PENDING") ? " It is under Decided." : ""
+        }`,
+      };
+      this.#decisionFocus = { kind: "next", id: next?.id ?? "" };
+      // The reason belonged to the decision just made; the box is not bound, so it is emptied here.
+      await this.updateComplete;
+      const box = this.renderRoot.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      if (box) box.value = "";
       await this.#refreshLanding();
-    } else if (result.status === 404) {
-      const existing = this.#approvals.rows.find((r) => r.id === id);
-      const updatedRow = existing
-        ? { ...existing, status: approve ? "APPROVED" : "REJECTED" }
-        : {
-            id,
-            branch_id: "",
-            policy_type: this.#approvals.kind,
-            detail: "",
-            subject_ref: "",
-            amount_cents: 0,
-            status: approve ? "APPROVED" : "REJECTED",
-          };
-      const rows = existing
-        ? this.#approvals.rows.map((r) => (r.id === id ? updatedRow : r))
-        : [...this.#approvals.rows, updatedRow];
-      this.#approvals = { ...this.#approvals, rows };
+    } else if (result.status === 404 || result.status === 409) {
+      // Gone or already decided by someone else: say so and read the list again. A status is never written here.
+      this.#approvals = { ...this.#approvals, confirming: undefined, error: "That request is no longer waiting." };
+      const kept = this.#approvals.error;
+      await this.#loadApprovals();
+      const all = await this.#api.approvals("", true);
+      this.#approvals = { ...this.#approvals, ...(all.ok ? { counts: pendingCounts(all.value) } : {}), error: kept };
     } else {
       this.#approvals = {
         ...this.#approvals,
@@ -1849,6 +1990,7 @@ export class ManagerHomeApp extends HHElement {
       };
     }
     this.#approvals = { ...this.#approvals, busyId: "" };
+    if (this.#approvals.error !== "") this.#decisionFocus = { kind: "error" };
     this.requestUpdate();
   }
 
@@ -1877,7 +2019,7 @@ export class ManagerHomeApp extends HHElement {
     if (id === "" || this.#approvals.busyId !== "") return;
     const note = this.#approvals.declineReason ?? "";
     if (note.trim() === "") {
-      this.#approvals = { ...this.#approvals, error: "A note is needed to decline." };
+      this.#approvals = { ...this.#approvals, error: "A note is needed to reject." };
       this.requestUpdate();
       return;
     }
@@ -1897,11 +2039,28 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
-  // The theme control rides the header's named slot; its word names the
+  // The theme control now rides the band's account menu; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+    return html`<button type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+  }
+
+  /** The account chip's menu: the actions the app-local header used to carry. */
+  #accountMenu(): TemplateResult {
+    const signedIn = this.#sessions.current !== null;
+    return html`
+      ${signedIn
+        ? html`<p>Signed in as <strong data-testid="header-word">${this.#roleLabel}</strong></p>`
+        : nothing}
+      ${this.renderThemeControl()}
+      ${signedIn
+        ? html`
+          <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
+          <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
+        `
+        : nothing}
+    `;
   }
 
   private renderWork(): TemplateResult {
@@ -1917,21 +2076,12 @@ export class ManagerHomeApp extends HHElement {
     return renderLanding(this.#landing);
   }
 
-  private renderSignedIn(): TemplateResult {
-    return html`
-      <hos-app-header signed-in demo product-name="Home" product-sub="Manager Home · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-      <main>${this.renderWork()}</main>
-    `;
-  }
-
   render(): TemplateResult {
     const session = this.#sessions.current;
-    if (session !== null) return this.renderSignedIn();
+    const band = this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`;
     return html`
-      <hos-app-header demo product-name="Home" product-sub="Manager Home · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-      <main>
-        ${renderEntry(this.#entryView)}
-      </main>
+      ${band}
+      <main>${session !== null ? this.renderWork() : renderEntry(this.#entryView)}</main>
     `;
   }
 }

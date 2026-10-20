@@ -12,8 +12,8 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import type { ConsoleSession } from "./console.js";
-import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS, dealerLine } from "./signin.js";
-import type { LiveRole } from "./roles.js";
+import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS, dealerLine, firstNameOf, pickerGreeting } from "./signin.js";
+import { primaryTileFor, type LiveRole } from "./roles.js";
 
 /** The gable diamond over two bars in a ring: the tenant kit's mark, drawn in the ink the page is on and the house gold. */
 function gableMark(): TemplateResult {
@@ -205,5 +205,94 @@ export function personaCards(
       ${session.personaRoles.map((role) => card(role, session.personaRefusal(role.flow), session.personaBusy === role.flow))}
     </div>
     ${coming()}
+  `;
+}
+
+function radioCheckMark(): TemplateResult {
+  return html`<svg class="picker-check-mark" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.5 6.2 5 8.7 9.5 3.5"></path>
+  </svg>`;
+}
+
+/** The role and branch picker after sign in: greet by first name and period in houseZone, choose role and branch, and open the chosen role's primary app. */
+export function roleEntryScreen(
+  session: ConsoleSession,
+  personaBlock: TemplateResult | typeof nothing,
+  footControls: TemplateResult | typeof nothing = nothing,
+): TemplateResult {
+  const who = session.who;
+  const chosenRole = session.chosenRole;
+  const initial = firstNameOf(who?.name ?? "").slice(0, 1).toUpperCase() || "?";
+  const primary = chosenRole === null ? null : primaryTileFor(chosenRole);
+  return html`
+    <div class="picker-stage">
+      ${dealerLockup(session.config.dealer)}
+      <section class="entry-card" aria-labelledby="entry-title" data-testid="role-entry">
+        <h1 class="entry-greeting" id="entry-title">${pickerGreeting(who?.name ?? "")}</h1>
+        <div class="account-row">
+          <div class="account-who">
+            <span class="account-avatar" aria-hidden="true">${initial}</span>
+            <span class="account-name" data-testid="entry-name"
+              >${who?.name ?? ""}${chosenRole !== null ? ` · ${chosenRole.label}` : ""}</span
+            >
+          </div>
+          <button type="button" class="not-you-btn" data-action="sign-out" data-testid="entry-sign-out">
+            Not you? Sign out
+          </button>
+        </div>
+        ${chosenRole === null || primary === null
+          ? html`<p data-testid="entry-no-screens">This site has no screens for your role yet. Ask your administrator.</p>`
+          : html`
+              <div class="picker-group">
+                <span class="picker-group-label" id="role-group-label">YOUR ROLE</span>
+                <div class="picker-radio-list" role="radiogroup" aria-labelledby="role-group-label" data-testid="role-radiogroup">
+                  ${session.heldRoles.map((role) => {
+                    const checked = chosenRole.id === role.id;
+                    const rolePrimary = primaryTileFor(role);
+                    return html`
+                      <button
+                        type="button"
+                        class="picker-option ${checked ? "checked" : ""}"
+                        role="radio"
+                        aria-checked=${checked ? "true" : "false"}
+                        data-tabstop=${checked ? "true" : "false"}
+                        data-action="select-role"
+                        data-role=${role.id}
+                      >
+                        <span class="picker-radio-dot" aria-hidden="true">${checked ? radioCheckMark() : nothing}</span>
+                        <span class="picker-option-words">
+                          <span class="picker-option-title">${role.label}</span>
+                          <span class="picker-option-sub">Opens ${rolePrimary.name}</span>
+                        </span>
+                      </button>
+                    `;
+                  })}
+                </div>
+              </div>
+              ${session.branches.length === 0
+                ? nothing
+                : html`
+                    <p class="picker-branches" data-testid="branch-list">
+                      <span class="picker-group-label">${session.branches.length > 1 ? "Your branches" : "Your branch"}</span>
+                      <span class="picker-branches-names">${session.branches.map((branch) => branch.name).join(", ")}</span>
+                    </p>
+                  `}
+              <button
+                type="button"
+                class="btn btn-primary btn-wide picker-submit"
+                data-action="continue-own"
+                data-testid="continue-own"
+                data-href=${primary.href ?? nothing}
+              >
+                Open ${primary.name} <span aria-hidden="true">›</span>
+              </button>
+            `}
+      </section>
+      ${personaBlock}
+      <footer class="signin-footer" data-testid="entry-footer">
+        <p class="signin-footer-copy">Powered by HardscapeOS</p>
+        ${footControls}
+      </footer>
+    </div>
   `;
 }

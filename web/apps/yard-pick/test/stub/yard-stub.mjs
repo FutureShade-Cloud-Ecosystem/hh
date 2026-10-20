@@ -178,6 +178,16 @@ function readBody(req) {
 // shortage and a resolved one.
 
 const YARD_USER = "d0200000-0000-4000-9000-000000000002";
+const RIVAL_USER = "d0200000-0000-4000-9000-0000000000a2";
+// The core serves a claimed pick's claimer by role label (claimed_by_role, UX-75), read through identity's
+// role seam; a claimer with no label here (the dispatch reassign) is served without the field.
+const ROLE_LABEL_BY_USER = { [YARD_USER]: "Yard Team", [RIVAL_USER]: "Yard Manager" };
+function stampClaim(task, userId) {
+  task.claimed_by = userId;
+  const label = ROLE_LABEL_BY_USER[userId];
+  if (label !== undefined) task.claimed_by_role = label;
+  else delete task.claimed_by_role;
+}
 const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const BRANCH = { id: POINT_LOMA, code: "PLM", name: "Gable Landscape Supply, Point Loma", address: { line1: "857 Bayly Rd", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true };
@@ -388,7 +398,7 @@ function buildWorld() {
     branch_id: POINT_LOMA,
     priority: seed.priority,
     status: seed.status,
-    ...(seed.claimed ? { claimed_by: YARD_USER, claimed_at: new Date(now - 30 * 60000).toISOString() } : {}),
+    ...(seed.claimed ? { claimed_by: YARD_USER, claimed_by_role: ROLE_LABEL_BY_USER[YARD_USER], claimed_at: new Date(now - 30 * 60000).toISOString() } : {}),
     source: "MANUAL",
     created_at: new Date(now - seed.created_min * 60000).toISOString(),
     updated_at: new Date(now - 10 * 60000).toISOString(),
@@ -748,8 +758,22 @@ async function handle(req, res) {
     const task = findTask(String(body.task_id ?? ""));
     if (!task) return notFound(res);
     task.status = "CANCELLED";
-    task.claimed_by = "dispatch";
+    stampClaim(task, "dispatch");
     task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
+  // A second person takes an unclaimed pick while the first person's screen still shows it queued:
+  // the row moves to ACCEPTED under a user other than the yard persona, and its seq moves with it. The
+  // claims every other path stamps still go to the yard persona, so no existing spec sees a change.
+  if (req.method === "POST" && path === "/_stub/rival-claim") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.status = "ACCEPTED";
+    stampClaim(task, RIVAL_USER);
+    task.claimed_at = new Date().toISOString();
+    task.updated_at = task.claimed_at;
     syncTouch("pick_tasks", task.id);
     return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
   }
@@ -770,6 +794,8 @@ async function handle(req, res) {
   if (req.method === "GET" && path === "/_stub/state") return json(res, { tasks: world.tasks.map(taskOut), shortages: world.shortages });
 
   // ---- the demo way in ----
+  // The public tenant config: the demo tenant's dealer name, which the Field frame's lockup shows.
+  if (path === "/api/v1/tenant/config") return json(res, { dealer_name: "Gable Landscape Supply" });
   if (path === "/api/v1/demo/flows") return json(res, { flows: FLOWS });
   if (req.method === "POST" && path === "/api/v1/demo/session") {
     const body = await readBody(req);
@@ -918,7 +944,7 @@ function moveTask(res, task, move) {
   task.status = to;
   task.updated_at = new Date().toISOString();
   if (to === "ACCEPTED") {
-    task.claimed_by = YARD_USER;
+    stampClaim(task, YARD_USER);
     task.claimed_at = new Date().toISOString();
   }
   syncTouch("pick_tasks", task.id);
@@ -1177,7 +1203,7 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
     }
     task.status = to;
     if (to === "ACCEPTED") {
-      task.claimed_by = YARD_USER;
+      stampClaim(task, YARD_USER);
       task.claimed_at = new Date().toISOString();
     }
   }

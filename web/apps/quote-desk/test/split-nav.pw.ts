@@ -20,6 +20,7 @@
 //      the right of the title row, and the Sales manager's tabs also carry
 //      Approvals (Sales sees neither Approvals nor Pricing).
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { hold, row, settle, showList } from "./switch-helpers.js";
 
 const SALES = { name: "Sales", exact: true };
@@ -241,6 +242,7 @@ test("split E: the Sales manager's tabs also carry Approvals, and Sales sees nei
   await expect(page.getByTestId("qb-list")).toBeVisible();
   await expect(page.locator("qd-approvals")).toBeHidden();
   // Sales sees no Approvals tab at all (the role wall is the tab's own).
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await signIn(page);
   const salesTabs = page.getByTestId("qd-list-toolbar").locator('[data-control="segmented"][data-field="status-filter"]');
@@ -328,6 +330,8 @@ test("split search: the quote page adds lines through the search and add box, no
   expect(where.scan, "no scan box on the quote page").toBe(0);
   expect(where.search, "one search and add box on the quote page").toBe(1);
   const box = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  // The quote's lines arrive after its page opens; the count the adds are measured from waits for them.
+  await expect(page.getByTestId("qb-line")).not.toHaveCount(0);
   const before = await page.getByTestId("qb-line").count();
   // A code adds on Enter; a name search adds on a click; a pause adds nothing.
   await box.fill("EDG-08");

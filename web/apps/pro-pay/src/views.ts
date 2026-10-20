@@ -8,7 +8,7 @@
 // position the gate allows); there is no text input in this app at all (the card field is the processor's frame).
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantBillingSummary, TenantInvoice, TenantInvoiceDetail, TenantInvoiceLine, TenantPayment, TenantPaymentMethod } from "@hardscapehouse/api-client";
-import { money, calendarDay, houseDay, qtyWithUnit, statusChip, NO_FIGURE } from "@hardscapehouse/pro-kit";
+import { money, calendarDay, houseMoment, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
 import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, isPayable, payableCents, type MethodKind } from "./pay-core.js";
 import { SANDBOX_NOTE } from "./hosted-field.js";
 
@@ -81,7 +81,7 @@ function lateWords(invoice: TenantInvoice, today: string): { words: string; late
 // ---- Pay home: Invoices ---------------------------------------------------------------------------------------
 
 function checkbox(on: boolean, id: string, label: string): TemplateResult {
-  return html`<button type="button" class="box" role="checkbox" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-action="toggle" data-id="${id}"><span class="mark"></span></button>`;
+  return html`<button type="button" class="box-hit" role="checkbox" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-action="toggle" data-id="${id}"><span class="box"><span class="mark"></span></span></button>`;
 }
 
 function invoiceRow(invoice: TenantInvoice, state: ViewState): TemplateResult {
@@ -89,12 +89,12 @@ function invoiceRow(invoice: TenantInvoice, state: ViewState): TemplateResult {
   const { words, late } = lateWords(invoice, state.today);
   const pickable = state.canPay && payable;
   const on = state.selected.has(invoice.id);
-  return html`<li class="inv ${on ? "is-on" : ""}" data-testid="invoice-row" data-invoice="${invoice.invoice_no}">
+  return html`<li class="inv ${on ? "is-on" : ""}" data-testid="invoice-row" data-invoice="${invoice.invoice_no}" data-action="${pickable ? "toggle" : "open"}" data-id="${invoice.id}">
     ${pickable ? checkbox(on, invoice.id, `Select ${invoice.invoice_no}`) : html`<span class="box-gap"></span>`}
-    <button type="button" class="inv-main" data-action="open" data-id="${invoice.id}">
-      <span class="inv-top"><span class="mono inv-no">${invoice.invoice_no}</span>${statusChip("invoice", invoice.status)}</span>
+    <div class="inv-main">
+      <span class="inv-top"><button type="button" class="inv-open mono inv-no" aria-label="Open statement for ${invoice.invoice_no}" data-action="open" data-id="${invoice.id}">${invoice.invoice_no}</button>${statusChip("invoice", invoice.status)}</span>
       <span class="inv-sub ${late ? "late" : ""}">${words}</span>
-    </button>
+    </div>
     <span class="inv-amount mono">${payable ? html`${money(payableCents(invoice))}<span class="inv-of">of ${money(invoice.total_cents)}</span>` : money(invoice.total_cents)}</span>
   </li>`;
 }
@@ -104,7 +104,7 @@ export function invoicesScreen(state: ViewState): TemplateResult {
   const payable = state.invoices.filter(isPayable);
   const picked = payable.filter((i) => state.selected.has(i.id));
   const pickedCents = picked.reduce((sum, i) => sum + payableCents(i), 0);
-  const owed = state.summary === null ? NO_FIGURE : money(state.summary.open_balance_cents);
+  const owed = state.summary === null ? NO_PRICE : money(state.summary.open_balance_cents);
   return html`
     <section class="owed" data-testid="owed">
       <p class="label">Outstanding balance</p>
@@ -122,7 +122,7 @@ export function invoicesScreen(state: ViewState): TemplateResult {
       : nothing}
     ${!state.canPay ? html`<p class="quiet" data-testid="read-only">Your role can read invoices. Paying is for the roles that hold it.</p>` : nothing}
     ${state.canPay && payable.length > 0
-      ? html`<div class="pickbar"><span data-testid="picked-count">${picked.length} of ${payable.length} selected</span><button type="button" class="btn btn-secondary" data-action="select-all">${picked.length === payable.length ? "Clear" : `Select all ${payable.length}`}</button></div>`
+      ? html`<div class="pickbar"><span data-testid="picked-count" aria-live="polite">${picked.length} of ${payable.length} selected</span><button type="button" class="btn btn-secondary" data-action="select-all">${picked.length === payable.length ? "Clear" : `Select all ${payable.length}`}</button></div>`
       : nothing}
     <ul class="invoices" data-testid="landing-rows">${state.invoices.map((i) => invoiceRow(i, state))}</ul>
     ${state.canPay
@@ -168,7 +168,7 @@ export function invoiceDetailScreen(state: ViewState): TemplateResult {
       <h3>Payments on this invoice</h3>
       ${history.length === 0
         ? html`<p class="quiet" data-testid="detail-history-empty">No payments yet.</p>`
-        : html`<ul class="lines" data-testid="detail-history">${history.map((p) => html`<li class="line"><span class="line-desc">${tender(p.method ?? "")}</span><span class="mono line-qty">${houseDay(p.received_at)}</span><span class="mono line-total">${money(p.amount_cents)}</span></li>`)}</ul>`}
+        : html`<ul class="lines" data-testid="detail-history">${history.map((p) => html`<li class="line"><span class="line-desc">${tender(p.method ?? "")}</span><span class="mono line-qty">${houseMoment(p.received_at)}</span><span class="mono line-total">${money(p.amount_cents)}</span></li>`)}</ul>`}
       ${state.canPay && payNowCents > 0 ? html`<button type="button" class="btn btn-primary detail-pay" data-action="pay-this" data-id="${d.id}" data-testid="pay-this">Pay ${money(payNowCents)}</button>` : nothing}
     </section>`;
 }
@@ -200,7 +200,7 @@ function sheetBody(state: ViewState, sheet: Sheet): TemplateResult {
     return html`<div class="receipt" data-testid="receipt" role="status">
       <p class="receipt-head">Payment received</p>
       <p class="big mono" data-testid="receipt-amount">${money(r.amount_cents)}</p>
-      <p class="quiet"><span class="mono" data-testid="receipt-no">${r.payment_no}</span> · ${tender(r.method)} · ${houseDay(r.received_at)}</p>
+      <p class="quiet"><span class="mono" data-testid="receipt-no">${r.payment_no}</span> · ${tender(r.method)} · ${houseMoment(r.received_at)}</p>
       ${sheet.differs ? html`<p class="notice-line" data-testid="receipt-differs">The dealer's books settled ${money(r.amount_cents)}, not the ${money(sheet.expectedCents)} shown before paying. The receipt above is the figure that counts.</p>` : nothing}
       <button type="button" class="btn btn-primary" data-action="done" data-testid="receipt-done">Done</button>
     </div>`;
@@ -299,7 +299,7 @@ export function statementsScreen(state: ViewState): TemplateResult {
     <ul class="payments" data-testid="payment-rows">
       ${state.payments.map((p) => html`<li class="pay-row" data-testid="payment-row">
         <div class="pay-top"><span class="mono">${p.payment_no}</span>${statusChip("payment", p.status)}<span class="pay-amount mono">${money(p.amount_cents)}</span></div>
-        <div class="quiet">${tender(p.method)} · ${houseDay(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
+        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
       </li>`)}
     </ul>`;
 }

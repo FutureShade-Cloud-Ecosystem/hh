@@ -239,6 +239,8 @@ type shareStore interface {
 	ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) (AcceptanceResult, bool, error)
 	// MarkSent moves DRAFT -> SENT under the lock. Idempotent for an already-SENT quote.
 	MarkSent(ctx context.Context, quoteID, actorID string, hooks quoteDateHooks) error
+	// HasLines reports whether the quote has at least one line (a link or a send of an empty quote is refused).
+	HasLines(ctx context.Context, quoteID string) (bool, error)
 }
 
 // acceptWrite is the acceptance payload.
@@ -266,9 +268,11 @@ type acceptHooks struct {
 
 // MintShareLink issues a share link for a quote and returns the raw token ONCE.
 //
-// Minting also moves a DRAFT quote to SENT (D4). That edge had no implementation anywhere, nothing in
-// the codebase could move a quote out of DRAFT, and "sent" and "shared" are the same act in this
-// workflow: the moment a customer can see it, it has been sent.
+// Minting does NOT send the quote. UX-48: the link is made for Copy link, Preview and Print as well as for
+// a send, and the core cannot know what the dealer does with it, so a mint leaves a DRAFT quote a DRAFT and
+// starts no follow ups (a reminder about a quote the customer never saw). The quote becomes Sent only
+// through a send the core verified (ShareBySMS, which makes the text call itself) or through
+// MarkSentByDealer, the dealer's own word that they sent the link.
 func (s *StaffService) MintShareLink(ctx context.Context, quoteID string, ttl time.Duration) (MintedShareLink, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -306,37 +310,86 @@ func (s *StaffService) MintShareLink(ctx context.Context, quoteID string, ttl ti
 	if ttl <= 0 {
 		ttl = defaultShareTTL
 	}
+	// DIB-395: the first link of an empty DRAFT is refused. It counts LINES, never money (a fully
+	// discounted or warranty replacement quote legitimately totals $0 and is still shareable).
+	if status == "DRAFT" {
+		has, err := s.shares.HasLines(ctx, quoteID)
+		if err != nil {
+			return MintedShareLink{}, err
+		}
+		if !has {
+			return MintedShareLink{}, ErrEmptyQuote
+		}
+	}
 	raw, hashed, err := newShareToken()
 	if err != nil {
 		return MintedShareLink{}, fmt.Errorf("mint share token: %w", err)
-	}
-	if status == "DRAFT" {
-		if err := s.shares.MarkSent(ctx, quoteID, caller.UserID, quoteDateHooks{
-			record: func(ctx context.Context, tx pgx.Tx, before, after string) error {
-				return s.recordFieldChange(ctx, tx, caller.UserID, quoteID, 0, "status", before, after)
-			},
-		}); err != nil {
-			return MintedShareLink{}, err
-		}
 	}
 	link, err := s.shares.CreateShareLink(ctx, quoteID, hashed, s.now().Add(ttl), caller.UserID)
 	if err != nil {
 		return MintedShareLink{}, err
 	}
 	link.Live = true
-
-	// DIB-482 (M3-G3): sharing a quote starts its follow-up cadence. This is the natural moment and
-	// the one the Follow-ups panel already promises, the customer now has the document, and the
-	// clock the salesperson thinks in ("I sent it Tuesday") starts here. Until this line the ONLY
-	// path that started a cadence was ShareBySMS, so the ordinary way of sending a quote, mint a
-	// link, paste it into an email, produced a quote nobody ever followed up.
-	//
-	// AFTER the link exists, not before: a cadence for a quote whose share failed to mint would be a
-	// reminder about a document the customer never received. See startCadenceOnShare for why a
-	// failure here does not fail the mint.
-	s.startCadenceOnShare(ctx, quoteID, s.now())
-
 	return MintedShareLink{ShareLink: link, Token: raw}, nil
+}
+
+// How a quote came to read Sent, kept in the quote's history as the "sent_how" field.
+const (
+	sentViaText       = "TEXT"        // the core queued the customer's text itself
+	sentViaDealerWord = "DEALER_WORD" // the dealer said they sent the link themselves
+)
+
+// MarkSentByDealer is "I sent it myself": the dealer copied the link and sent it by a means the core cannot
+// see, and says so. It moves a DRAFT quote to SENT, starts the follow up cadence and records in the quote's
+// history that it was the dealer's word, not a delivery the core made. Pressed again it changes nothing.
+func (s *StaffService) MarkSentByDealer(ctx context.Context, quoteID string) error {
+	return s.markSent(ctx, quoteID, sentViaDealerWord)
+}
+
+// markSent is the one door to Sent. how names the evidence and is written to the history in the same
+// transaction as the status change.
+func (s *StaffService) markSent(ctx context.Context, quoteID, how string) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if caller.Status != identity.StatusActive {
+		return ErrForbidden
+	}
+	rGlobal, rBranches := callerBranchScope(caller)
+	quoteID, err = s.store.ResolveQuoteID(ctx, quoteID, rGlobal, rBranches)
+	if err != nil {
+		return err
+	}
+	status, branchID, validUntil, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	if err != nil {
+		return err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return ErrForbidden
+	}
+	if status != "DRAFT" && status != "SENT" {
+		return &NotEditableError{Field: "status", Status: status}
+	}
+	if err := assertNotExpired(validUntil, s.now()); err != nil {
+		return err
+	}
+	if status == "DRAFT" {
+		if err := s.shares.MarkSent(ctx, quoteID, caller.UserID, quoteDateHooks{
+			record: func(ctx context.Context, tx pgx.Tx, before, after string) error {
+				if err := s.recordFieldChange(ctx, tx, caller.UserID, quoteID, 0, "status", before, after); err != nil {
+					return err
+				}
+				return s.recordFieldChange(ctx, tx, caller.UserID, quoteID, 0, "sent_how", "", how)
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	// DIB-482: a sent quote starts its follow up cadence. After the status change, best effort, and
+	// EnsurePlan never restarts a running cadence.
+	s.startCadenceOnShare(ctx, quoteID, s.now())
+	return nil
 }
 
 // ListShareLinks returns the links issued for a quote. No tokens, they are unrecoverable by design.

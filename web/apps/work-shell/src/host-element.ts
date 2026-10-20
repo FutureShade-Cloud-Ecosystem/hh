@@ -19,8 +19,9 @@
 // assembly script and the demo box already serve it from, and the session
 // handoff the apps already speak (the front door's key in this tab's session
 // storage, read once and dropped) works between same-origin frames without any
-// app change. The cost, named: the hosted app keeps its own header inside the
-// frame until it grows a framed mode (a fidelity pass item).
+// app change. The framed mode exists (GAPS-r2 row G1): framed, the app wears
+// no band of its own; standing alone it renders the board's white band above
+// its app-local header.
 //
 // The host holds the session in memory only. Each desk app drops the handoff
 // key when it adopts it, so the host writes the key again right before it
@@ -48,7 +49,8 @@ import "@hardscapehouse/shell-chrome/src/shell-rail.js";
 import "@hardscapehouse/shell-chrome/src/shell-banner.js";
 import { bannerFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
-import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import { DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
 import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
 import { acceptSwitchRole, announceChromeAction } from "./frames.js";
 import { readDoorSession, writeHandoff } from "./handoff.js";
@@ -201,8 +203,17 @@ export class WorkShellHost extends HHElement {
     this.#pins = new PinBook({ storage: this.#pinStorage });
   }
 
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     this.addEventListener("click", this.#onClick);
     this.addEventListener("hh-shell-surface-open", this.#onSurfaceOpen as EventListener);
     this.addEventListener("hh-shell-rail-select", this.#onRailSelect as EventListener);
@@ -536,7 +547,7 @@ export class WorkShellHost extends HHElement {
     const pinned = this.#pins.pins(userId);
     const held = new Set(apps.map((a) => a.id));
     if (header !== null) {
-      header.org = DEMO_ORG_NAME;
+      header.org = this.#dealerName;
       header.demo = true;
       header.user = state.session.roleLabel;
       header.groups = switcherGroups({ frontends: apps, roles: [state.session.roleCode], surfaces: NO_SURFACES });

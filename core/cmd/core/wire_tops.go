@@ -17,6 +17,8 @@ package main
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"os"
 	"strings"
@@ -152,6 +154,8 @@ type topsSpine struct {
 	posHandler *pos.Handler
 	// posSvc is held so a wiring test can read the role configuration the till's service was built with.
 	posSvc *pos.Service
+	// assistSvc is held so the demo serve can read which limits the wiring gave it (demoRefuseAssistWithoutDemoLimits).
+	assistSvc *assist.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -645,7 +649,32 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		}
 		return raw
 	}())
+	// The model layer's deployment configuration: the operator's environment, never a request. A
+	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
+	if cfg.DemoMode {
+		// The demo's route is tanyai-premium by composition, never by a settings row.
+		assistSettings = assist.DemoSettings(assistSettings)
+	}
+	assistModelCfg := assist.ModelConfig{
+		AnthropicKey: redact.NewSecret(assistKey),
+		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
+		GatewayKey:   redact.NewSecret(os.Getenv(assist.EnvGatewayKey)),
+		DealerTag:    os.Getenv(assist.EnvDealerTag),
+	}
 	assistProvider := assist.NewProviderFromConfig(assistSettings, assistKey, "", log)
+	// The alias table and the conversation log live in Postgres (0416); the DB-free registration
+	// proof (no pool) gets the shipped default table and an in memory log.
+	var (
+		assistAliases assist.AliasStore        = assist.StaticAliases(assist.DefaultAliases())
+		assistConvs   assist.ConversationStore = assist.NewMemoryConversations()
+	)
+	if pool != nil {
+		assistAliases, assistConvs = assistRepo, assistRepo
+	}
+	assistRouter := assist.NewRouter(assistAliases, assistModelCfg, assist.NewStubProvider(), log)
+	if cfg.DemoMode {
+		assistRouter = assistRouter.Only(assist.AliasPremium) // the demo reaches one alias
+	}
 
 	// DIB-66/67: the quote assist surfaces on the builder.
 	quoteAssistSvc := quoteassist.NewService(
@@ -654,7 +683,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		quoteassist.NewRepository(pool),
 		log,
 	)
-	quoteAssistSvc.WithAI(assistadapt.NewQuoteExtractRails(assistProvider, assistRepo, assistRepo, log))
+	quoteRails := assistadapt.NewQuoteExtractRails(assistProvider, assistRepo, assistRepo, log)
+	quoteAssistSvc.WithAI(quoteRails)
 	quoteassist.NewHandler(quoteAssistSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W6-B: reporting and commissions.
@@ -684,6 +714,25 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	assistDeps.Stock = assistadapt.NewStockReader(inventorySvc)
 	assistDeps.Customers = assistadapt.NewCustomerReader(customerSvc, w3bCreditSvc)
 	assistDeps.Now = time.Now
+	// TanyAI slice 5: the structured data tool, over the assist logins (never the app role). With no
+	// configuration, or a configuration the startup gate refuses (wrong login, no claims key, statement
+	// pooling), data.query stays unwired and answers 503 while everything else works. The error names
+	// the check and carries no URL or key.
+	if pool != nil {
+		if rcfg := readtx.ConfigFromEnv(os.Getenv); !rcfg.ReaderURL.IsEmpty() {
+			octx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			readers, rerr := readtx.Open(octx, rcfg)
+			cancel()
+			if rerr != nil {
+				log.Warn("assist: the data path is off", "reason", rerr.Error())
+			} else {
+				assistDeps.Query = &assist.ReadQuerier{
+					Reader: readers.Staff, Zone: newDealerZone(pool), Now: time.Now,
+					Log: assistRepo, Branches: assistDeps.Branches, Logger: log,
+				}
+			}
+		}
+	}
 	assistSvc := assist.NewService(
 		assist.NewRegistry(assistDeps, assistRepo),
 		assistProvider,
@@ -694,7 +743,29 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	).
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
+		// Slice 2: every provider call is reserved and settled in the spend table, and the dealer
+		// wide cap (FutureBuild's deployment variable, never an assist setting) bounds them all.
+		WithMetering(assistRepo, assistRepo).
+		WithZone(newDealerZone(pool)). // the dealer's month, not the server clock's
+		WithDealerCap(assist.ParseDealerCap(os.Getenv(assist.EnvDealerCap))).
+		// Per asker rate limit on every build; the demo's per visitor, per address and box wide
+		// buckets only on a demo copy.
+		WithRateLimits(assist.NewRateLimits(assistDemoLimits(cfg.DemoMode), time.Now)).
+		WithRouter(assistRouter).
+		WithQueryLog(assistQueryLog(pool, assistRepo)).
+		// Server kept conversations keyed by user and session (the jti), on the append only log.
+		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
+	// A demo copy is pinned to tanyai-premium and answers on the stub, and says so, when the model
+	// cannot be used.
+	if cfg.DemoMode {
+		assistSvc = assistSvc.WithPinnedRoute(assist.AliasPremium).WithStubFallback()
+	}
+	// The quote rails call the provider only through the assist service's meter (reservation,
+	// dealer cap, settlement); bound here because the service is built after them.
+	if quoteRails != nil {
+		quoteRails.WithCompleter(assistSvc)
+	}
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
@@ -760,6 +831,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		cardRefunder:  cardRefunder,
 		posHandler:    posHandler,
 		posSvc:        posSvc,
+		assistSvc:     assistSvc,
 	}
 }
 
@@ -799,6 +871,14 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	return paySvc, payStore, payVault
 }
 
+// assistDemoLimits returns the demo copy's extra assistant rate buckets, and nil everywhere else.
+func assistDemoLimits(demoMode bool) *assist.DemoLimits {
+	if !demoMode {
+		return nil
+	}
+	return assist.NewDemoLimits(time.Now)
+}
+
 // bindTileAccess binds the dashboard's tile access rules (HH-777). The money tile's rule is the payment
 // trail reader the register and the order activity already use (the role gate's own admission to the
 // trail routes), asked with the caller's platform identity and org the handler stamps on the scope. The
@@ -811,4 +891,13 @@ func bindTileAccess(svc *dashboard.Service, trail billing.PaymentTrailReader) {
 		}
 		return trail.HoldsPaymentTrail(ctx, sc.PlatformUserID, sc.OrgID)
 	})
+}
+
+// assistQueryLog is the writer of the exchange summary row: the repository when there is a database,
+// nothing in the DB free registration proof.
+func assistQueryLog(pool *pgxpool.Pool, repo *assist.Repository) assist.QueryLog {
+	if pool == nil {
+		return nil
+	}
+	return repo
 }

@@ -117,6 +117,7 @@ func (b *builder) procurementWorld() {
 			"vendor_id", demoID("procurement-vendor:"+po.Vendor),
 			"branch_id", b.branchID(po.Branch),
 			"status", po.Status,
+			"currency", "CAD",
 			"expected_at", b.day(po.Expected),
 			"ordered_at", at,
 			"notes", po.Notes,

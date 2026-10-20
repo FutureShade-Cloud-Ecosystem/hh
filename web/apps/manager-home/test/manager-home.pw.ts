@@ -13,12 +13,14 @@ test.beforeEach(async ({ request }) => {
   await resetStub(request);
 });
 
-test("the yard manager's card signs in and the header names the role", async ({ page }) => {
+test("the yard manager's card signs in and the band's account menu names the role", async ({ page }) => {
   await page.goto("/");
   const card = page.locator("[data-flow='yard-manager']");
   await expect(card).toBeVisible();
   await card.click();
-  await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "");
+  const band = page.locator("hh-shell-header");
+  await expect(band).toBeVisible();
+  await band.locator("button.account").click();
   await expect(page.getByTestId("header-word")).toHaveText("Yard manager");
 });
 
@@ -63,9 +65,9 @@ test("a card links to the live app that owns it, and only a source with no app s
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const hero = page.locator("[data-widget='hero.deliveries']");
-  await expect(hero.locator(".tile-foot")).toHaveText("not on this box yet");
+  await expect(hero.locator(".tile-foot")).toHaveText("Not available yet");
   await expect(hero.locator(".tile-foot")).toBeVisible();
-  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("not on this box yet");
+  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("Not available yet");
   // Pick queue and Queue depth are the yard's (Yard Pick); Open claims is this app's Warranty view.
   const footLinks = page.locator(".tile-foot button");
   await expect(footLinks).toHaveCount(3);
@@ -184,11 +186,13 @@ test("the sales manager's landing comes from the sales profile: the same code, d
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome back, sales manager.");
 });
 
-test("the theme control flips the document between light and brand", async ({ page }) => {
+test("the theme control in the band's account menu flips the document between light and brand", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
+  const band = page.locator("hh-shell-header");
+  await band.locator("button.account").click();
   await expect(page.getByRole("button", { name: "Brand theme" })).toBeVisible();
-  // The header's theme input drives the document root's attribute: light keeps
+  // The band's theme input drives the document root's attribute: light keeps
   // data-theme=light, brand (the dark half) drops it back to the sheet's dark default.
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.getByRole("button", { name: "Brand theme" }).click();

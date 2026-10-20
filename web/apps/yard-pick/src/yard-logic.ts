@@ -306,6 +306,34 @@ function looksLikeUUID(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+/**
+ * Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by the <role label>" for anyone else when
+ * the core serves the claimer's role label (claimed_by_role), "Claimed by a teammate" when it serves none. The label is the
+ * identity module's role name, never a name or an email, and an id is never printed (a label that is only an id is dropped).
+ */
+export function claimedByWords(
+  claimedBy: string | null | undefined,
+  me: string | null | undefined,
+  roleLabel?: string | null,
+): string {
+  const raw = (claimedBy ?? "").trim();
+  if (raw === "") return "";
+  const myId = (me ?? "").trim();
+  if (myId !== "" && raw === myId) return "Claimed by you";
+  const label = (roleLabel ?? "").trim();
+  if (label !== "" && label !== raw && !looksLikeUUID(label) && !label.includes("@")) return `Claimed by the ${label}`;
+  return "Claimed by a teammate";
+}
+
+/** What the second person in a race is told: the pick is held, and nothing they pulled was recorded. */
+export const PICK_TAKEN_WORDS = "Someone else already took this pick. Nothing was recorded from you.";
+
+/** True when the pick is held by a person other than the signed-in one. */
+export function heldByOther(claimedBy: string | null | undefined, me: string | null | undefined, status: string): boolean {
+  const raw = (claimedBy ?? "").trim();
+  return raw !== "" && raw !== (me ?? "").trim() && status !== "CANCELLED";
+}
+
 /** What the board calls a row when the feed gave it no order number: never a uuid, never nothing. */
 export function orderHandle(ticket: { order_no?: string; reference?: string; customer_name?: string } | null | undefined): string {
   const orderNo = (ticket?.order_no ?? "").trim();
@@ -448,7 +476,30 @@ export const CORE_PICK_CANCELLED = "this pick was cancelled, its record cannot c
  * the picker recorded then never reached the order: the order still bills the full quantity, which the customer sees, so the
  * picker is told to tell the counter. Any other refusal keeps the core's own words.
  */
+/** What the core's holder guard (Stage and Save pick from a person who does not hold the pick) reads as on screen. */
+export const NOT_HOLDER_WORDS = "Someone else is on this pick.";
+const CORE_NOT_HOLDER = "someone else is on this pick";
+
+/** A cancel from a person who neither holds the pick nor is a yard manager (UX-76b). */
+export const CANCEL_NOT_ALLOWED_WORDS = "Only the person on this pick or a yard manager can cancel it.";
+const CORE_CANCEL_NOT_ALLOWED = "only the holder or a yard manager may cancel this pick";
+
+/** A yard write from a sign in with no linked staff account (UX-76b). */
+export const NO_ACTOR_WORDS = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.";
+const CORE_NO_ACTOR = "this sign in is not linked to a staff account";
+
+/** The core's holder-rule refusals, as one plain line each; empty when the text is none of them. */
+function holderRuleWords(text: string): string {
+  const t = text.toLowerCase();
+  if (t.includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
+  if (t.includes(CORE_CANCEL_NOT_ALLOWED) || t.includes("cancel it")) return CANCEL_NOT_ALLOWED_WORDS;
+  if (t.includes(CORE_NO_ACTOR) || t.includes("sign in is not linked")) return NO_ACTOR_WORDS;
+  return "";
+}
+
 export function recordRefusalWords(error: string): string {
+  const rule = holderRuleWords(error);
+  if (rule !== "") return rule;
   if (error.includes(CORE_PICK_DONE)) {
     return "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
   }
@@ -467,6 +518,9 @@ export function isLocalLine(line: { id: string }): boolean {
 
 /** What the pick says when its record is saved on the device and not yet sent. */
 export const RECORD_WAITING_WORDS = "Waiting to send: this pick's record goes as soon as you have signal.";
+
+/** What the pick says after a queued record has gone out to the server. */
+export const RECORD_SENT_WORDS = "Sent to the counter.";
 
 /** The notice after a record that could not go yet (no signal): honest that the rep is told on send. */
 export function pickQueuedWords(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string }>): string {
@@ -688,9 +742,11 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string } = {},
+  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string; taken?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
+  const rule0 = holderRuleWords(plainSentence(error));
+  if (rule0 !== "" && status !== 401) return rule0;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
   if (status === 403) {
     // The gate's bare body is the one 403 with no sentence: a list wall. It
@@ -711,6 +767,8 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
+  // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
+  if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;

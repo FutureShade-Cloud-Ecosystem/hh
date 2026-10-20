@@ -5,6 +5,7 @@
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
 import { expect, test as base, type Page, type Request, type TestInfo } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "../account-menu";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -422,7 +423,9 @@ export async function signIn(page: Page, role: Role): Promise<void> {
   await expect(card).toBeVisible();
   await tapRoleCard(page, role);
   await openCounterTill(page);
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
+  await closeAccountMenu(page);
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
   await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
   await expect(page.getByTestId("pagectx")).toContainText("Point Loma");

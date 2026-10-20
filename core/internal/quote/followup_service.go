@@ -160,6 +160,17 @@ func (a *AutomationService) ShareBySMS(ctx context.Context, quoteIDOrNo string, 
 		return SMSShareResult{}, err
 	}
 
+	// UX-48: the text is queued, the core's own call, so this is a send the core verified: only now does a
+	// DRAFT quote read Sent (and start its cadence). The mint above did neither. A refused queue call
+	// returned before this point, so a text that went nowhere leaves the quote a draft.
+	// Only a draft is marked Sent, and that was settled from the status read before anything was queued: a quote past
+	// DRAFT (a re-share under the dealer's multi accept switch) is texted once, answers success and keeps its status.
+	if view.Status == "DRAFT" {
+		if err := a.staff.markSent(ctx, view.ID, sentViaText); err != nil {
+			return SMSShareResult{}, err
+		}
+	}
+
 	// Sharing a quote starts its follow-up cadence. This is the natural moment: the customer now has
 	// the document, and the clock the salesperson thinks in ("I sent it Tuesday") starts here. An
 	// existing plan is left alone, EnsurePlan never restarts a running cadence.
