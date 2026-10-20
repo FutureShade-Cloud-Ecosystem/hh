@@ -16,6 +16,7 @@ package assist
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -192,5 +193,31 @@ func TestIntegration_Conversations_TwoVisitorsOnOneUserOverPostgres(t *testing.T
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assist_conversations`).Scan(&after)
 	if after != before {
 		t.Fatalf("a bearer with no jti created %d conversation rows", after-before)
+	}
+}
+
+// Review P3-3: the history read is bounded. A long conversation yields only the newest window of
+// exchanges, oldest first among them.
+func TestIntegration_Conversations_HistoryReadIsBoundedToTheWindow(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	user := syntheticUser(t, pool)
+	id, _ := repo.NewConversation(ctx, user, "jti-long")
+	total := WindowTurns + 25
+	for i := 0; i < total; i++ {
+		if err := repo.AppendExchange(ctx, id, user, "jti-long", Exchange{Question: fmt.Sprintf("q%03d", i), Answer: "a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ex, ok, err := repo.Exchanges(ctx, id, user, "jti-long")
+	if err != nil || !ok {
+		t.Fatalf("ok %v err %v", ok, err)
+	}
+	if len(ex) != WindowTurns {
+		t.Fatalf("read %d exchanges, want only the window of %d", len(ex), WindowTurns)
+	}
+	if ex[0].Question != fmt.Sprintf("q%03d", total-WindowTurns) || ex[len(ex)-1].Question != fmt.Sprintf("q%03d", total-1) {
+		t.Fatalf("not the newest window in order: first %q last %q", ex[0].Question, ex[len(ex)-1].Question)
 	}
 }

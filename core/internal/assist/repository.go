@@ -401,10 +401,12 @@ func (r *Repository) Exchanges(ctx context.Context, id, userID, sessionKey strin
 	if err != nil {
 		return nil, false, fmt.Errorf("assist: read conversation: %w", err)
 	}
+	// Only the newest window is read (a provider sees six turns and the resolver WindowTurns),
+	// newest first so the LIMIT keeps the right rows, then put back in order below.
 	rows, err := r.pool.Query(ctx, `
 		SELECT question, answer, ran, clarify
 		  FROM assist_conversation_exchanges
-		 WHERE conversation_id = $1 ORDER BY seq`, id)
+		 WHERE conversation_id = $1 ORDER BY seq DESC LIMIT $2`, id, WindowTurns)
 	if err != nil {
 		return nil, false, fmt.Errorf("assist: read exchanges: %w", err)
 	}
@@ -426,6 +428,9 @@ func (r *Repository) Exchanges(ctx context.Context, id, userID, sessionKey strin
 			}
 		}
 		out = append(out, e)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
 	return out, true, rows.Err()
 }
