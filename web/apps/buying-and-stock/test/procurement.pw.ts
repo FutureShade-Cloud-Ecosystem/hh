@@ -31,7 +31,8 @@ test("the way in with no handoff offers this role's own card", async ({ page, re
 test("the band names the role as the reference does, and the theme control names the current theme", async ({ page, request }) => {
   await openHome(page, request);
   const band = page.locator("hh-shell-header");
-  await expect(band).toContainText("Procurement manager (demo)");
+  await expect(band).toContainText("Procurement manager");
+  await expect(band).not.toContainText("(demo)");
   await band.locator("button.account").click();
   const theme = page.getByRole("button", { name: /^Theme: / });
   await expect(theme).toHaveText("Theme: Light");

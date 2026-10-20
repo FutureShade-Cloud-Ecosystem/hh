@@ -180,6 +180,11 @@ const styles = css`
   .pin-menu:hover {
     display: flex;
   }
+  /* After a pick the popover steps aside until the pointer re-enters the rail. */
+  .rail[data-picked='true'] .pin-menu,
+  .rail[data-picked='true'] .pin-menu:hover {
+    display: none;
+  }
   .pin-item {
     display: flex;
     align-items: center;
@@ -334,6 +339,7 @@ export class ShellRail extends HHElement {
     collapsed: { type: Boolean, attribute: 'collapsed' },
     storage: { attribute: false },
     pin: { attribute: 'pin' },
+    picked: { attribute: false },
   };
 
   /** The person's pins, in rail order: the model's answer, the rail's only list. */
@@ -354,6 +360,9 @@ export class ShellRail extends HHElement {
    * rail body pinned, or off (the default, resolved from the same seam under
    * RAIL_PIN_KEY). Off waits as the toggle and reveals on hover or focus. */
   declare pin: RailPinMode;
+  /** A pin choice was just made: the popover steps aside (it would sit over the
+   * rail the pick just changed) until the pointer or the keyboard comes back. */
+  declare picked: boolean;
 
   /** The roving entry index into pins. Collapsed mode only. */
   #rovingIdx = 0;
@@ -367,6 +376,7 @@ export class ShellRail extends HHElement {
     this.collapsed = true;
     this.storage = null;
     this.pin = 'off';
+    this.picked = false;
     this.state = 'ready';
   }
 
@@ -421,13 +431,18 @@ export class ShellRail extends HHElement {
   /** Anchor the fixed pin popover from the rail's rect: just right of the
    * rail, level with its head. Runs on hover and focus, before the menu shows. */
   readonly #anchorPinMenu = (): void => {
+    this.picked = false;
+    this.#measurePinMenu();
+  };
+
+  #measurePinMenu(): void {
     const rail = this.renderRoot.querySelector?.('.rail');
     const menu = this.renderRoot.querySelector?.<HTMLElement>('.pin-menu');
     if (!(rail instanceof HTMLElement) || menu === null || menu === undefined) return;
     const rect = rail.getBoundingClientRect();
     menu.style.setProperty('--pin-left', `${Math.round(rect.right + 10)}px`);
     menu.style.setProperty('--pin-top', `${Math.round(rect.top + 12)}px`);
-  };
+  }
 
   #emit(type: string, detail?: unknown): void {
     this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -455,7 +470,11 @@ export class ShellRail extends HHElement {
     }
     if (action === 'rail-pin') {
       const mode = control.getAttribute('data-mode');
-      if (mode === 'icons' || mode === 'wide') this.#pinMode(mode);
+      if (mode === 'icons' || mode === 'wide') {
+        this.#pinMode(mode);
+        this.picked = true;
+        if (control instanceof HTMLElement) control.blur();
+      }
     }
   };
 
@@ -554,6 +573,8 @@ export class ShellRail extends HHElement {
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    // The rail's width moves with the pin mode and the posture: the fixed popover re-anchors from the new rect.
+    if (changed.has('pin') || changed.has('collapsed')) this.#measurePinMenu();
     // The roving stop is carried in data-tab and applied to the real
     // tabindex here: the design system's position gate refuses a bound
     // tabindex, and the attribute keeps the contract visible to the server
@@ -574,7 +595,7 @@ export class ShellRail extends HHElement {
     const pin = this.#pinCurrent();
     const collapsed = this.#effectiveCollapsed();
     return html`
-      <nav class="rail" data-collapsed=${collapsed ? 'true' : 'false'} data-pin=${pin} aria-label="Pinned surfaces">
+      <nav class="rail" data-collapsed=${collapsed ? 'true' : 'false'} data-pin=${pin} data-picked=${this.picked ? 'true' : 'false'} aria-label="Pinned surfaces">
         <div class="rhead">
           <span class="heading">${this.heading}</span>
           <button

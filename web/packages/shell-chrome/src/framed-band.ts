@@ -17,14 +17,19 @@ export function framedBandBreadcrumb(appName: string, surfaceLabel: string): str
   return surface === '' ? appName : `${appName} > ${surface}`;
 }
 
+/** The longest role the chip shows whole; a longer one is cut to its first 20 characters and an ellipsis. */
+const ROLE_CAP = 24;
+
 /** The account chip's words: the persona's display name with the role
- * label ("Dana, General Manager"). One side missing renders the other; the
- * two equal renders once, never a doubled word. */
+ * label ("Dana, General Manager"). The demo personas' " (demo)" suffix is not
+ * shown. One side missing renders the other; the two equal renders once,
+ * never a doubled word; a long role is capped. */
 export function framedBandAccount(userName: string, roleLabel: string): string {
-  const name = userName.trim();
-  const role = roleLabel.trim();
+  const name = userName.replace(/\s*\(demo\)\s*$/i, '').trim();
+  const trimmed = roleLabel.replace(/\s*\(demo\)\s*$/i, '').trim();
+  const role = trimmed.length > ROLE_CAP ? `${trimmed.slice(0, 20)}\u2026` : trimmed;
   if (name === '') return role;
-  if (role === '' || role === name) return name;
+  if (role === '' || trimmed === name) return name;
   return `${name}, ${role}`;
 }
 

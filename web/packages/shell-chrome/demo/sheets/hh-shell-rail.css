@@ -357,6 +357,11 @@
   .pin-menu:hover {
     display: flex;
   }
+  /* After a pick the popover steps aside until the pointer re-enters the rail. */
+  .rail[data-picked='true'] .pin-menu,
+  .rail[data-picked='true'] .pin-menu:hover {
+    display: none;
+  }
   .pin-item {
     display: flex;
     align-items: center;

@@ -67,7 +67,8 @@ for (const [width, height] of [
     await expect(page.getByText("Everything on this box is invented demo data")).toHaveCount(0);
     await expect(page.locator("hos-app-header")).toHaveCount(0);
     // The account chip names the signed-in persona, and the menu carries the role.
-    await expect(band.locator("button.account")).toContainText("Dealer admin (demo)");
+    await expect(band.locator("button.account")).toContainText("Dealer admin");
+    await expect(band.locator("button.account")).not.toContainText("(demo)");
     await band.locator("button.account").click();
     await expect(page.getByTestId("signed-in-role")).toHaveText("General Manager");
     await shot(page, `dealer-admin-${width}-light.png`);

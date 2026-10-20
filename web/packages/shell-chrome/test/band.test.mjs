@@ -232,3 +232,19 @@ test('at phone width the band stacks the selector under the lockup and the chip 
   assert.ok(phone.includes('grid-column: 1 / -1'), 'the selector takes the full second row');
   assert.ok(phone.includes('text-overflow: ellipsis'), 'the lockup truncates instead of pushing the run out');
 });
+
+test('the account string drops the demo suffix of a persona name and caps a long role', () => {
+  assert.equal(framedBandAccount('Sales (demo)', 'Sales'), 'Sales', 'the suffix goes, and the equal word is said once');
+  assert.equal(framedBandAccount('Dealer admin (demo)', 'General Manager'), 'Dealer admin, General Manager');
+  assert.equal(framedBandAccount('Dana', 'Chief Financial Controller of the Yard'), 'Dana, Chief Financial Cont\u2026', 'a role over 24 characters stops at 20 and an ellipsis');
+  assert.equal(framedBandAccount('(demo)', 'Sales'), 'Sales', 'a name that was only the suffix is no name');
+  assert.equal(framedBandAccount('Procurement manager (demo)', 'Procurement manager (demo)'), 'Procurement manager', 'the same persona word in both, said once');
+});
+
+test('every account menu button wears one style, whatever class the app gave it', () => {
+  const rule = declsFor(headerRules, '.account-menu button');
+  assert.equal(rule['background'], 'transparent', 'one outlined face, never the grey filled default');
+  assert.ok((rule['border'] ?? '').startsWith('1px solid'), 'the outline');
+  assert.equal(rule['text-align'], 'left', 'one alignment');
+  assert.ok((rule['color'] ?? '').includes('--hh-text'), 'one ink');
+});

@@ -34,6 +34,20 @@ test("hover the rail, cross to Pin wide, click: the rail's pin state (data-pin a
   expect(await rail.evaluate((el) => (el as unknown as { pin: string }).pin)).toBe("wide");
   expect(await page.evaluate(() => window.localStorage.getItem("hh-shell.rail-pin"))).toBe("wide");
 
+  // After a pick the menu steps aside, so it never sits over the rail it just widened; hovering the rail
+  // again brings it back, anchored from the new width (round 3, P2-1).
+  await expect(menu).toBeHidden();
+  const wideRail = (await rail.locator("nav.rail").boundingBox())!;
+  expect(wideRail.width).toBeGreaterThan(railBox.width + 40);
+  // Re-anchored by the width change itself, before any pointer comes back.
+  expect(await menu.evaluate((el) => el.style.getPropertyValue("--pin-left"))).toBe(`${Math.round(wideRail.x + wideRail.width + 10)}px`);
+  await page.mouse.move(900, 500);
+  await page.mouse.move(wideRail.x + wideRail.width / 2, wideRail.y + 100);
+  await expect(menu).toBeVisible();
+  const reanchored = (await menu.boundingBox())!;
+  expect(reanchored.x).toBeGreaterThanOrEqual(wideRail.x + wideRail.width);
+  if (SHOTS !== "") await page.screenshot({ path: `${SHOTS}/rail-pin-wide-menu-1440-charcoal.png` });
+
   const icons = rail.getByRole("button", { name: "Pin as icons" });
   const iconsBox = (await icons.boundingBox())!;
   await page.mouse.move(iconsBox.x + iconsBox.width / 2, iconsBox.y + iconsBox.height / 2, { steps: 4 });

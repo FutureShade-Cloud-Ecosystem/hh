@@ -326,10 +326,31 @@
   .account-menu strong {
     color: var(--hh-text);
   }
+  /* One face for every action in the menu, whatever class the app gave the
+   * button (btn-secondary, theme-btn): the app's own class sheets do not reach
+   * into the band's shadow. */
   .account-menu button {
     width: 100%;
     min-height: 44px;
+    display: flex;
+    align-items: center;
     justify-content: flex-start;
+    padding: 0 var(--hh-s-12);
+    background: transparent;
+    color: var(--hh-text);
+    border: 1px solid var(--hh-control-line);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .account-menu button:hover:not(:disabled) {
+    background: var(--hh-row-alt);
+  }
+  .account-menu button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 1px;
   }
   .brand {
     display: flex;
