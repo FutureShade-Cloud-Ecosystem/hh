@@ -703,6 +703,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
 		WithRouter(assistRouter).
+		// Server kept conversations keyed by user and session (the jti). In memory until the
+		// exchange log migration lands; a restart only starts new conversations.
+		WithConversations(assist.NewMemoryConversations()).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 

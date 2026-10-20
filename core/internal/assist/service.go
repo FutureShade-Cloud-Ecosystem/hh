@@ -84,6 +84,11 @@ type Answer struct {
 	// that could not answer. `omitempty`, and nil on every answer that DID answer, an answer with
 	// numbers in it does not need a menu under it.
 	Suggest []string `json:"suggest,omitempty"`
+
+	// ConversationID is the opaque, server issued id of the conversation this exchange belongs to.
+	// The client sends it back on the next turn instead of its own history. Absent when the bearer
+	// has no session id or no store is wired.
+	ConversationID string `json:"conversation_id,omitempty"`
 }
 
 // LimitReachedMessage is the exact sentence an over-budget user sees. It is a constant so the test,
@@ -107,6 +112,10 @@ type Service struct {
 	settings SettingStore
 	staff    StaffLister
 	log      *slog.Logger
+
+	// convs is the append only exchange log behind conversation_id. Nil means no server kept
+	// conversations: every question is stateless.
+	convs ConversationStore
 
 	// router, when attached, chooses the provider PER REQUEST from the settings and the alias table.
 	// Without one the service uses its single provider, which is what every test double wants.
@@ -135,6 +144,9 @@ func NewService(reg *Registry, p Provider, ledger LedgerStore, limits LimitStore
 
 // WithClock replaces the clock (tests only).
 func (s *Service) WithClock(f func() time.Time) *Service { s.now = f; return s }
+
+// WithConversations attaches the exchange log that makes conversation_id work.
+func (s *Service) WithConversations(c ConversationStore) *Service { s.convs = c; return s }
 
 // WithRouter attaches the alias router. From then on the provider is resolved on every provider
 // call from the current settings, so a changed route or alias applies to the next request with no

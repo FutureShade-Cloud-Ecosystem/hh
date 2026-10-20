@@ -32722,8 +32722,12 @@ components:
       properties:
         question:
           type: string
+        conversation_id:
+          type: string
+          description: The opaque id the server issued for this conversation. When present the history is rebuilt on the server from its exchange log and the history and ran of the request are ignored. It is honoured only for the same user and the same sign in (the bearer's jti); any other id starts a new conversation with no error.
         history:
           type: array
+          description: The v1 client kept history, used only when conversation_id is absent
           items:
             $ref: "#/components/schemas/AssistMessage"
     AssistUsage:
@@ -32779,6 +32783,9 @@ components:
           type: array
           items:
             type: string
+        conversation_id:
+          type: string
+          description: The opaque, server issued id of the conversation this exchange belongs to; send it on the next turn instead of history. Absent when the bearer carries no session id.
     AssistBudget:
       type: object
       description: A resolved allowance and where it came from

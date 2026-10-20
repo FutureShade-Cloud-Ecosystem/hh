@@ -1129,6 +1129,7 @@ export type AssistMessage = {
 };
 export type AssistChatRequest = {
   question: string;
+  conversation_id?: string;
   history?: AssistMessage[];
 };
 export type AssistUsage = {
@@ -1146,6 +1147,7 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
+  conversation_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
