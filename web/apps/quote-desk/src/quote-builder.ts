@@ -332,12 +332,12 @@ export class QdQuoteBuilder extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: var(--hh-s-12);
       flex-wrap: wrap;
-      margin-top: 10px;
-      padding: 10px 12px;
+      margin-top: var(--hh-s-12);
+      padding: var(--hh-s-8) var(--hh-s-12);
       border: 1px solid var(--hos-line, var(--hh-line));
-      border-radius: 8px;
+      border-radius: var(--hh-radius-control);
       background: var(--hos-slate-warm, var(--hh-card));
     }
     /* The approvals view stands in the list page's content place; the rows
