@@ -29,6 +29,7 @@ func TestRolesExistWithTheirAttributes(t *testing.T) {
 		{roles.ProReader, false, true, ""},
 		{roles.Login, true, false, ""},
 		{roles.ProLogin, true, false, ""},
+		{roles.ZoneReader, false, true, ""},
 	} {
 		var super, bypass, createRole, createDB, repl, login, inherit bool
 		err := conn.QueryRow(ctxT(t), `SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication, rolcanlogin, rolinherit
@@ -103,6 +104,9 @@ func TestSchemasAndGrantsAreExactlyPlan31(t *testing.T) {
 	sch(roles.ViewOwner, "ai", "USAGE", true)
 	sch(roles.ViewOwner, "ai_pro", "CREATE", true)
 	sch(roles.ViewOwner, "ai_pro", "USAGE", true)
+	sch(roles.ZoneReader, "ai", "USAGE", true)
+	sch(roles.ZoneReader, "ai", "CREATE", true)
+	sch(roles.ZoneReader, "ai_pro", "CREATE", false)
 	// The logins hold nothing of their own (NOINHERIT): the reader's grants
 	// reach them only through SET ROLE.
 	sch(roles.Login, "ai", "USAGE", false)
@@ -137,9 +141,8 @@ func TestTempAndOutsideFunctionsAreRevokedFromTheAssistRoles(t *testing.T) {
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'ai', 'ai_pro')
 		  AND n.nspname NOT LIKE 'pg\_%'
 		  AND has_function_privilege(r.oid, p.oid, 'EXECUTE')
-		  AND NOT (r.rolname = $2 AND p.proname = 'hmac')
-		  AND NOT (r.rolname = $3 AND p.proname = 'assist_dealer_day')`,
-		[]string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner}, roles.ClaimsOwner, roles.Reader)
+		  AND NOT (r.rolname = $2 AND p.proname = 'hmac')`,
+		[]string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner}, roles.ClaimsOwner)
 	if err != nil {
 		t.Fatal(err)
 	}

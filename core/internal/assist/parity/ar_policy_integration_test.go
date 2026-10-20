@@ -8,7 +8,10 @@ package parity
 // cannot hide behind the other table's policy.
 
 import (
+	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx/testsupport"
@@ -159,33 +162,72 @@ func TestPolicy_AllocationRowsAreTheTrailRoutesOnlyAndStandAlone(t *testing.T) {
 	}
 }
 
-// The view owner reads no setting at all. The dealer's day reaches the aging view through the one purpose
-// wrapper assist_dealer_day(), which returns a date and nothing else.
-func TestPolicy_TheViewOwnerReadsNoSettingAndSeesOnlyTheDealersDay(t *testing.T) {
+// No assist role but the zone reader reads a setting, and the zone reader reads one row of it. The dealer's day
+// reaches the aging view through ai.dealer_day(), a definer function owned by the zone reader that returns a date
+// and nothing else; the reader may run it, no one else may, and the zone reader holds nothing else.
+func TestPolicy_OnlyTheZoneReaderReadsTheBusinessZoneAndTheReaderSeesOnlyTheDealersDay(t *testing.T) {
 	env := testsupport.Open(t)
 	ctx := testsupport.Ctx(t)
-	var canRead bool
-	if err := env.Admin.QueryRow(ctx, `SELECT has_any_column_privilege($1, 'public.system_settings', 'SELECT')`, env.Roles.ViewOwner).Scan(&canRead); err != nil {
+	for _, r := range []string{env.Roles.ViewOwner, env.Roles.Reader, env.Roles.ProReader, env.Roles.Login, env.Roles.ProLogin, env.Roles.ClaimsOwner} {
+		var canRead bool
+		if err := env.Admin.QueryRow(ctx, `SELECT has_any_column_privilege($1, 'public.system_settings', 'SELECT')`, r).Scan(&canRead); err != nil {
+			t.Fatal(err)
+		}
+		if canRead {
+			t.Errorf("role %s can read system_settings", r)
+		}
+	}
+	// The zone reader reads the business zone row and no other, with the row security on.
+	if n := countWhere(t, env, `SELECT count(*) FROM system_settings WHERE key::text <> 'business_zone'`); n == 0 {
+		t.Fatal("the world holds no other setting to be denied")
+	}
+	plant := `INSERT INTO system_settings (key, value) VALUES ('business_zone', '"America/Winnipeg"') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`
+	tx, err := env.Admin.Begin(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if canRead {
-		t.Error("the view owner can read system_settings")
-	}
-	var readerRuns, publicRuns, definer bool
-	if err := env.Admin.QueryRow(ctx, `SELECT has_function_privilege($1, 'public.assist_dealer_day()', 'EXECUTE'), has_function_privilege('public', 'public.assist_dealer_day()', 'EXECUTE'),
-		(SELECT prosecdef AND proconfig IS NOT NULL FROM pg_proc WHERE proname = 'assist_dealer_day')`, env.Roles.Reader).Scan(&readerRuns, &publicRuns, &definer); err != nil {
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, plant); err != nil {
 		t.Fatal(err)
 	}
-	if !readerRuns || publicRuns || !definer {
-		t.Errorf("assist_dealer_day: the reader may run it %v (want true), PUBLIC may %v (want false), definer with a fixed search path %v (want true)", readerRuns, publicRuns, definer)
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+pgx.Identifier{env.Roles.ZoneReader}.Sanitize()); err != nil {
+		t.Fatal(err)
 	}
-	for _, r := range []string{env.Roles.ProReader, env.Roles.Login, env.Roles.ProLogin, env.Roles.ClaimsOwner} {
+	var all, other int
+	if err := tx.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE key::text <> 'business_zone') FROM public.system_settings`).Scan(&all, &other); err != nil {
+		t.Fatalf("the zone reader cannot read its one setting: %v", err)
+	}
+	if all != 1 || other != 0 {
+		t.Errorf("the zone reader reads %d settings, %d of them other than the business zone, want exactly the business zone", all, other)
+	}
+	var day string
+	if err := tx.QueryRow(ctx, `SELECT public.settings_business_zone()`).Scan(&day); err != nil || day != "America/Winnipeg" {
+		t.Errorf("the zone reader runs the zone rule and gets %q (%v), want America/Winnipeg", day, err)
+	}
+	_ = tx.Rollback(ctx)
+
+	var readerRuns, publicRuns, definer, stable bool
+	var owner string
+	if err := env.Admin.QueryRow(ctx, `SELECT has_function_privilege($1, 'ai.dealer_day()', 'EXECUTE'), has_function_privilege('public', 'ai.dealer_day()', 'EXECUTE'),
+		p.prosecdef AND p.proconfig IS NOT NULL, p.provolatile = 's', r.rolname
+		FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.oid = 'ai.dealer_day()'::regprocedure`, env.Roles.Reader).Scan(&readerRuns, &publicRuns, &definer, &stable, &owner); err != nil {
+		t.Fatal(err)
+	}
+	if !readerRuns || publicRuns || !definer || !stable || owner != env.Roles.ZoneReader {
+		t.Errorf("ai.dealer_day: the reader may run it %v (want true), PUBLIC may %v (want false), definer with a fixed search path %v, stable %v, owner %s (want %s)", readerRuns, publicRuns, definer, stable, owner, env.Roles.ZoneReader)
+	}
+	for _, r := range []string{env.Roles.ViewOwner, env.Roles.ProReader, env.Roles.Login, env.Roles.ProLogin, env.Roles.ClaimsOwner} {
 		var may bool
-		if err := env.Admin.QueryRow(ctx, `SELECT has_function_privilege($1, 'public.assist_dealer_day()', 'EXECUTE')`, r).Scan(&may); err != nil {
+		if err := env.Admin.QueryRow(ctx, `SELECT has_function_privilege($1, 'ai.dealer_day()', 'EXECUTE')`, r).Scan(&may); err != nil {
 			t.Fatal(err)
 		}
 		if may {
-			t.Errorf("role %s can run assist_dealer_day", r)
+			t.Errorf("role %s can run ai.dealer_day", r)
 		}
+	}
+	var member bool
+	if err := env.Admin.QueryRow(ctx, `SELECT bool_or(pg_has_role(r.oid, z.oid, 'MEMBER')) FROM pg_roles r, pg_roles z WHERE z.rolname = $1 AND r.rolname = ANY($2)`,
+		env.Roles.ZoneReader, []string{env.Roles.ViewOwner, env.Roles.ClaimsOwner, env.Roles.Reader, env.Roles.ProReader, env.Roles.Login, env.Roles.ProLogin}).Scan(&member); err != nil || member {
+		t.Errorf("an assist role is a member of the zone reader (%v, %v)", member, err)
 	}
 }
