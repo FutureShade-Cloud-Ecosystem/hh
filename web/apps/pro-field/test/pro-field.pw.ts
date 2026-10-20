@@ -139,6 +139,42 @@ test.describe("phone", () => {
     }
   });
 
+  test("when the orders list stops at 100 pages with a cursor left, the screen says the list is cut", async ({ page }) => {
+    let pageNo = 0;
+    await page.route("**/api/v1/tenant/orders*", async (route) => {
+      pageNo += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: `00000000-0000-4000-8000-${String(pageNo).padStart(12, "0")}`,
+              order_no: `SO-${40000 + pageNo}`,
+              customer_id: "00000000-0000-4000-8000-000000001001",
+              quote_id: null,
+              status: "CONFIRMED",
+              fulfillment: "DELIVERY",
+              requested_date: "2042-05-01",
+              subtotal_cents: 10000,
+              tax_cents: 800,
+              total_cents: 10800,
+              created_at: "2042-04-01T12:00:00Z",
+              has_backorder: false,
+            },
+          ],
+          next_cursor: `cursor-${pageNo}`,
+          limit: 1,
+        }),
+      });
+    });
+    await signIn(page, "field");
+    await expect(page.getByTestId("orders-truncated")).toHaveText(
+      "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.",
+    );
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-40001");
+  });
+
   test("a row opens the order with its journey and its asked-for day, and back returns to the list", async ({ page }) => {
     await signIn(page, "field");
     const firstRow = page.getByTestId("landing-rows").getByTestId("order-row").first();
@@ -162,7 +198,12 @@ test.describe("phone", () => {
     await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
     const input = page.getByTestId("instructions-input");
     await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await expect(input).toHaveAttribute("maxlength", "2000");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
+    await input.fill("x".repeat(1850));
+    await expect(page.getByTestId("instructions-count")).toHaveText("1850 / 2000 characters");
     await input.fill("Call the site lead 30 minutes before arrival. Gate is on the north fence.");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
     await page.getByRole("button", { name: "Save notes" }).click();
     await expect(page.getByTestId("instructions-saved")).toHaveText("Delivery instructions saved.");
     await page.screenshot({ path: test.info().outputPath("instructions-phone.png") });
@@ -191,6 +232,19 @@ test.describe("phone", () => {
     await page.getByTestId("request-return").click();
     await expect(page.getByTestId("return-words")).toHaveText("This order cannot be returned through Pro. Ask the dealer to arrange it.");
     await expect(page.getByTestId("return-form")).toHaveCount(0);
+  });
+
+  test("a 403 on return eligibility reads as a role refusal naming who can request a return, with no retry", async ({ page }) => {
+    await page.route("**/return-eligibility", (route) =>
+      route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "insufficient permissions" }) }),
+    );
+    await signIn(page, "owner");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();
+    await page.getByTestId("request-return").click();
+    await expect(page.getByTestId("return-words")).toHaveText(
+      "Your role cannot request a return. Ask an Owner, Buyer, or Project manager on your account to request it.",
+    );
+    await expect(page.getByTestId("returns-card").getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
   test("a role that cannot commit a return sees no button and still sees the requests list", async ({ page }) => {
@@ -245,9 +299,41 @@ test.describe("phone", () => {
     await expect(page.getByTestId("invites-empty")).toBeVisible();
     const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
     await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(page.getByTestId("team-notice")).toHaveCount(0);
+    await expect(crewRow.getByTestId("role-confirm")).toContainText("Change Contractor field crew from Field crew to Buyer?");
+    await crewRow.getByTestId("confirm-role").click();
     await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
     await expect(crewRow.getByTestId("member-role")).toHaveValue("buyer");
     await page.screenshot({ path: test.info().outputPath("team-phone.png") });
+  });
+
+  test("a role change can be cancelled without asking the server, and an owner demoting themself is warned of losing Team access", async ({ page }) => {
+    const rolePuts: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PUT" && req.url().includes("/role")) rolePuts.push(req.url());
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const members = page.getByTestId("team-members").getByTestId("member-row");
+    const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
+    await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(crewRow.getByTestId("role-confirm")).toBeVisible();
+    await crewRow.getByTestId("cancel-role").click();
+    await expect(crewRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(crewRow.getByTestId("member-role")).toHaveValue("field_crew");
+    expect(rolePuts).toHaveLength(0);
+
+    await crewRow.getByTestId("member-role").selectOption({ label: "Owner" });
+    await crewRow.getByTestId("confirm-role").click();
+    await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
+
+    const ownerRow = members.filter({ hasText: "contractor.owner@hh-demo.invalid" });
+    await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(ownerRow.getByTestId("role-confirm")).toContainText(
+      "Change your role from Owner to Buyer? You will lose access to Team and user management as soon as this saves.",
+    );
+    await ownerRow.getByTestId("cancel-role").click();
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
   });
 
   test("deactivating a member asks the server, and the row says so and offers to reactivate", async ({ page }) => {
@@ -261,12 +347,39 @@ test.describe("phone", () => {
     await expect(crewRow).toContainText("Active");
   });
 
+  test("a pending member row shows Invited and is not offered Reactivate or Deactivate", async ({ page }) => {
+    await page.route("**/api/v1/tenant/users", async (route) => {
+      const response = await route.fetch();
+      const users = (await response.json()) as Record<string, unknown>[];
+      users.push({
+        id: "00000000-0000-4000-8000-000000009999",
+        customer_id: "00000000-0000-4000-8000-000000001001",
+        email: "contractor.pending@hh-demo.invalid",
+        name: "Pending crew",
+        role: "field_crew",
+        status: "pending",
+        notification_prefs: {},
+        created_at: "",
+        updated_at: "",
+      });
+      await route.fulfill({ response, json: users });
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const pendingRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.pending@hh-demo.invalid" });
+    await expect(pendingRow).toContainText("Invited");
+    await expect(pendingRow.getByTestId("member-reactivate")).toHaveCount(0);
+    await expect(pendingRow.getByTestId("member-deactivate")).toHaveCount(0);
+  });
+
   test("the last owner's refusal reads in plain words, for the role picker and for Deactivate", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
     const ownerRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.owner@hh-demo.invalid" });
     await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
+    await expect(ownerRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
     await ownerRow.getByTestId("member-deactivate").click();
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
     await expect(page.getByTestId("team-error")).not.toContainText("account_admin");
@@ -356,6 +469,104 @@ test.describe("phone", () => {
     await page.getByRole("button", { name: "Change password" }).click();
     await expect(page.getByTestId("password-error")).toHaveText("Type your current password and a new one.");
     expect(passwordCalls).toHaveLength(0);
+  });
+
+  test("leaving a section during profile, password, or invite save does not leave the form stuck busy", async ({ page }) => {
+    await signIn(page, "owner");
+
+    let releaseProfile!: () => void;
+    const profileHeld = new Promise<void>((resolve) => {
+      releaseProfile = resolve;
+    });
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await profileHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseProfile();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Summit Ridge owner");
+    await page.getByTestId("account-name").fill("Summit Ridge second");
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeEnabled();
+
+    let releasePassword!: () => void;
+    const passwordHeld = new Promise<void>((resolve) => {
+      releasePassword = resolve;
+    });
+    await page.route("**/api/v1/tenant/me/password", async (route) => {
+      await passwordHeld;
+      await route.continue();
+    });
+
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("another-password");
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releasePassword();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByRole("button", { name: "Change password" })).toBeEnabled();
+
+    let releaseInvite!: () => void;
+    const inviteHeld = new Promise<void>((resolve) => {
+      releaseInvite = resolve;
+    });
+    await page.route("**/api/v1/tenant/invites", async (route) => {
+      if (route.request().method() === "POST") {
+        await inviteHeld;
+      }
+      await route.continue();
+    });
+
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await page.getByRole("button", { name: "Create invite" }).click();
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeDisabled();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    releaseInvite();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await expect(page.getByRole("button", { name: "Create invite" })).toBeEnabled();
+  });
+
+  test("an expired session on a write says so in dealer words with a sign in action, never raw server words", async ({ page, request }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
+    const input = page.getByTestId("instructions-input");
+    await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await page.route("**/delivery-instructions", async (route) => {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+    });
+    await input.fill("Gate is on the north fence.");
+    await page.getByRole("button", { name: "Save notes" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await expect(page.locator("hh-pro-signin")).not.toContainText("Missing or invalid credentials");
+
+    await request.post("/_stub/reset");
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.route("**/api/v1/tenant/me", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Missing or invalid credentials" }) });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await page.getByRole("button", { name: "Save profile" }).click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You were signed out, so this was not saved. Sign in again and make the change again.");
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   });
 
   test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {

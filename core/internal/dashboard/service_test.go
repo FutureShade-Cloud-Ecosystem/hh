@@ -117,7 +117,7 @@ func TestTileDegradesToLabelledEmDashWhenUnwired(t *testing.T) {
 		t.Run(meta.ID, func(t *testing.T) {
 			f := newFakeStore()
 			allVisible(ProfileAdmin, f)
-			svc := NewService(f, nil)
+			svc := NewService(f, nil).WithTileAccess(AccessPaymentTrail, allowAll)
 			// Wire EVERY tile except this one, so the test isolates one missing provider rather
 			// than asserting against an empty registry.
 			for _, other := range Catalog {
@@ -298,7 +298,7 @@ func TestSaveThenResetMyLayoutReturnsToTheRoleDefault(t *testing.T) {
 		t.Fatalf("source = %q, want %q", role.Source, SourceRole)
 	}
 
-	if _, err := svc.SaveMyLayout(ctx, "u1", []LayoutRow{
+	if _, err := svc.SaveMyLayout(ctx, Scope{UserID: "u1"}, []LayoutRow{
 		{TileID: TileOrdersOpen, Position: 0, Visible: true},
 		{TileID: TileSalesToday, Position: 1, Visible: false},
 	}); err != nil {
@@ -335,10 +335,10 @@ func TestSaveThenResetMyLayoutReturnsToTheRoleDefault(t *testing.T) {
 
 func TestSaveMyLayoutRefusesAnEmptyOrAllUnknownLayout(t *testing.T) {
 	svc := NewService(newFakeStore(), nil)
-	if _, err := svc.SaveMyLayout(context.Background(), "u1", nil); !errors.Is(err, ErrEmptyLayout) {
+	if _, err := svc.SaveMyLayout(context.Background(), Scope{UserID: "u1"}, nil); !errors.Is(err, ErrEmptyLayout) {
 		t.Fatalf("empty layout error = %v, want ErrEmptyLayout", err)
 	}
-	if _, err := svc.SaveMyLayout(context.Background(), "u1", []LayoutRow{{TileID: "nope"}}); !errors.Is(err, ErrEmptyLayout) {
+	if _, err := svc.SaveMyLayout(context.Background(), Scope{UserID: "u1"}, []LayoutRow{{TileID: "nope"}}); !errors.Is(err, ErrEmptyLayout) {
 		t.Fatalf("all-unknown layout error = %v, want ErrEmptyLayout", err)
 	}
 	// Storing an empty override would be indistinguishable from having reset, so nothing was stored.
