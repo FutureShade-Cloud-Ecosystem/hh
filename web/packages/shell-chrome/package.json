@@ -8,7 +8,9 @@
     "./src/shell-header.ts",
     "./src/shell-rail.ts",
     "./src/shell-banner.ts",
-    "./src/shell-update.ts"
+    "./src/shell-update.ts",
+    "./src/shell-tanyai.ts",
+    "./src/field-frame.ts"
   ],
   "main": "src/index.ts",
   "exports": {
@@ -22,6 +24,7 @@
     "demo": "node --import ./test/_ts-js-loader.mjs demo/serve.mjs"
   },
   "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
     "@hardscapehouse/design-system": "0.0.0",
     "lit": "3.3.3"
   },

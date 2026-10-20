@@ -21,6 +21,10 @@ import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.j
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
+// hh-tanyai-panel: the one TanyAI panel (PANEL-API r1); the host opens it and resolves the records it names.
+import "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import type { ShellTanyai } from "@hardscapehouse/shell-chrome/src/shell-tanyai.js";
+import { generatedTransport } from "@hardscapehouse/shell-chrome/src/tanyai-transport.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
@@ -91,6 +95,8 @@ export class MoneyDeskApp extends HHElement {
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
     .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
     @media (max-width: 520px) { .areas { padding-inline: var(--hh-s-12); } }
+    .assist-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--hh-s-8); }
+    .assist-btn svg { width: 18px; height: 18px; display: block; }
   `];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
@@ -402,6 +408,10 @@ export class MoneyDeskApp extends HHElement {
       this.#onSignOut();
       return;
     }
+    if (action === "assist") {
+      this.#tanyai()?.show();
+      return;
+    }
     if (action === "theme") {
       this.#theme = this.#theme === "light" ? "dark" : "light";
       this.requestUpdate();
@@ -534,12 +544,44 @@ export class MoneyDeskApp extends HHElement {
     if (this.#area === "tax") this.#tax.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
+    this.#wireTanyai();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
   }
+
+  #tanyai(): ShellTanyai | null {
+    return this.renderRoot.querySelector<ShellTanyai>("hh-tanyai-panel");
+  }
+
+  // The panel gets its transport (the generated client, the staff routes) and the one record kind this desk can
+  // open, a customer's account. It is set once; the panel keeps its own state across renders.
+  #wireTanyai(): void {
+    const panel = this.#tanyai();
+    if (panel === null || panel.transport !== null) return;
+    panel.transport = generatedTransport(this.#staffClient);
+    panel.openableKinds = this.#holdsReceivables() ? ["customer"] : [];
+    panel.addEventListener("hh-tanyai-open-ref", this.#onOpenRef as EventListener);
+  }
+
+  // A record the panel names opens on this desk's own route: a customer is the receivables account screen.
+  readonly #onOpenRef = (event: CustomEvent<{ ref: { kind: string; id: string } }>): void => {
+    const ref = event.detail.ref;
+    if (ref.kind !== "customer" || !this.#holdsReceivables()) return;
+    this.#tanyai()?.hide();
+    if (this.#area !== "receivables") {
+      this.#area = "receivables";
+      this.#openArea();
+    }
+    const open = document.createElement("button");
+    open.setAttribute("data-action", "open-account");
+    open.setAttribute("data-customer-id", ref.id);
+    open.setAttribute("data-right", "receive");
+    this.#ar.press(open);
+    this.requestUpdate();
+  };
 
   private async loadFlows(): Promise<void> {
     this.#entryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -631,6 +673,15 @@ export class MoneyDeskApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
+  // The TanyAI button rides the same slot, beside the theme control, once someone is signed in.
+  private renderAssistControl(): TemplateResult {
+    return html`<button slot="theme" type="button" class="btn btn-secondary assist-btn" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    </button>`;
+  }
+
   // The desks the role holds, as the area switch: the controller's five, Payables and Receivables' four and the General
   // Manager's two. The ledger reads "Ledger" to a reader.
   private renderAreas(): TemplateResult {
@@ -663,11 +714,12 @@ export class MoneyDeskApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     return html`
       ${this.#isController()
-        ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
+        ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderAssistControl()}${this.renderThemeControl()}</hos-app-header>`
         : this.#holdsLedger()
-          ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Receivables and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
-          : html`<hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>`}
+          ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Receivables and ledger · HH Work shell">${this.renderAssistControl()}${this.renderThemeControl()}</hos-app-header>`
+          : html`<hos-app-header signed-in demo product-name="Money Desk">${this.renderAssistControl()}${this.renderThemeControl()}</hos-app-header>`}
       ${this.renderAreas()} ${this.renderArea()}
+      <hh-tanyai-panel></hh-tanyai-panel>
     `;
   }
 

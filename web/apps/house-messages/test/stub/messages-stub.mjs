@@ -424,6 +424,8 @@ async function route(req, res, url) {
   }
 
   // ---- the demo way in
+  // The public tenant config: the demo tenant's dealer name, which the Field frame's lockup shows.
+  if (path === "/api/v1/tenant/config") return json(res, { dealer_name: "Gable Landscape Supply" });
   if (path === "/api/v1/demo/flows") return json(res, { flows: FLOWS });
   if (method === "POST" && path === "/api/v1/demo/session") {
     const body = await readBody(req);

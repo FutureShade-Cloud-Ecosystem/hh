@@ -272,6 +272,9 @@ test("D paying fifty dollars cash posts the payment with its idempotency key", a
   await next(page);
   await page.getByTestId("qc-confirm").click();
   await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  // The order is made first and the payment is posted after the done screen is drawn: the stub has the payment
+  // only once the screen says it was taken, so the stub is read after that, never at the order.
+  await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
   const seen = await state(page);
   expect(seen.payments).toHaveLength(1);
   const posted = seen.payments[0]!;

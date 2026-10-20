@@ -42,6 +42,13 @@ function readTenantConfig(): Promise<TenantTitleConfig | TenantTitleFailure> {
   return readOnce;
 }
 
+/** The dealer's name from the public tenant config, or an empty string when the read fails: the Field frame's lockup
+ *  shows what the config said and nothing it had to guess. */
+export async function readDealerName(): Promise<string> {
+  const config = await readTenantConfig();
+  return config.ok ? config.dealerName : "";
+}
+
 export interface ApplyTenantTitleOptions {
   /** When true, the title becomes "Your quote from <dealer>" instead of
    *  "<dealer> · <app>". */
