@@ -226,12 +226,21 @@ BEGIN
       IF c.audience IS NULL OR c.audience NOT IN ('staff', 'pro') OR c.asker_id IS NULL THEN
         RETURN NULL;
       END IF;
+      -- The database binds the audience to the login: a staff claim on the contractor
+      -- login, and the reverse, verify to NULL. Any other session user (the app role,
+      -- a test connection) is not constrained here; the policies still check audience.
+      IF session_user = %2$L AND c.audience <> 'staff' THEN
+        RETURN NULL;
+      END IF;
+      IF session_user = %3$L AND c.audience <> 'pro' THEN
+        RETURN NULL;
+      END IF;
       RETURN c;
     EXCEPTION WHEN OTHERS THEN
       RETURN NULL;
     END
     $body$
-  $def$, crypto_schema);
+  $def$, crypto_schema, v_login, v_pro_login);
   RESET ROLE;
 
   -- Who may call the verifier: the two readers (Postgres checks EXECUTE against the
