@@ -777,7 +777,9 @@ export class ShellHeader extends HHElement {
                 <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
               </span>`}
           ${this.org !== ''
-            ? html`<span class=${isBand ? 'lockup' : 'org'}>${this.org}</span>`
+            ? isBand
+              ? html`<span class="lockup">${this.org}</span>`
+              : html`<span class="org">${this.org}</span>`
             : nothing}
           ${this.demo && !isBand ? html`<span class="demo" role="note">Demo</span>` : nothing}
         </div>
