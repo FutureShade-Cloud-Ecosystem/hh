@@ -69,7 +69,7 @@ test("a truck is dispatched only with a crew, behind a confirm naming the truck,
   await dispatchBtn.click();
   const sheet = truck(page, "RUN-PLM-2").locator("[data-sheet='dispatch-run']");
   await expect(sheet).toContainText("Send Truck 03 with Driver A (demo) and 1 stop?");
-  await expect(sheet).toContainText("The driver sees the run at once, and marks its 1 load loaded. A sent run cannot be called back here.");
+  await expect(sheet).toContainText("The driver sees the run at once. Sending it marks its 1 ready load loaded. A sent run cannot be called back here.");
   expect(dispatchCalls).toBe(0);
 
   // Cancel sends nothing and returns focus to the Dispatch button.
@@ -78,6 +78,19 @@ test("a truck is dispatched only with a crew, behind a confirm naming the truck,
   await expect(dispatchBtn).toBeFocused();
   expect(dispatchCalls).toBe(0);
   await expect(truck(page, "RUN-PLM-2")).toHaveAttribute("data-run-status", "PLANNED");
+
+  // On a 2-stop run, the body counts only the stops still in READY.
+  await truck(page, "RUN-PLM-3").getByRole("button", { name: "Dispatch" }).click();
+  const sheet3 = truck(page, "RUN-PLM-3").locator("[data-sheet='dispatch-run']");
+  await expect(sheet3).toContainText("Send Truck 04 with Driver C (demo) and 2 stops?");
+  await expect(sheet3).toContainText("The driver sees the run at once. Sending it marks its 2 ready loads loaded. A sent run cannot be called back here.");
+  await sheet3.getByRole("button", { name: "Cancel" }).click();
+  await load(page, "ORD-0017").getByRole("button", { name: "Mark loaded" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("ORD-0017 is now loaded");
+  await truck(page, "RUN-PLM-3").getByRole("button", { name: "Dispatch" }).click();
+  await expect(sheet3).toContainText("Send Truck 04 with Driver C (demo) and 2 stops?");
+  await expect(sheet3).toContainText("The driver sees the run at once. Sending it marks its 1 ready load loaded. A sent run cannot be called back here.");
+  await sheet3.getByRole("button", { name: "Cancel" }).click();
 
   // Escape also cancels, sends nothing, and returns focus to the Dispatch button.
   await dispatchBtn.click();

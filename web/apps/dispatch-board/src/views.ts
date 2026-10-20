@@ -438,7 +438,8 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
   if (sheet.kind === "dispatch-run") {
     const runs = [...(model.view?.loads.map((r) => r.run) ?? []), ...(model.day?.runs ?? [])];
     const run = runs.find((r) => r.id === sheet.id);
-    const words = dispatchConfirmWords(run);
+    const stops = model.view?.loads.find((r) => r.run.id === sheet.id)?.stops ?? model.day?.stops.filter((s) => s.run_id === sheet.id);
+    const words = dispatchConfirmWords(run, stops);
     return html`
       <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
         <h4>${words.title}</h4>

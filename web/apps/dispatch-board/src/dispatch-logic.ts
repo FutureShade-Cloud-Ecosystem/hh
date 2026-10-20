@@ -1452,15 +1452,17 @@ export const PUT_ON_TRUCK_COMMIT_NOTE = "Putting a load on a truck commits the o
  */
 export function dispatchConfirmWords(
   run: { readonly run_no?: string; readonly truck_code?: string; readonly driver_name?: string; readonly stop_count?: number } | null | undefined,
+  stops?: readonly { readonly id: string; readonly order_no?: string; readonly status: string }[],
 ): { readonly title: string; readonly body: string } {
   const truck = (run?.truck_code ?? "").trim() || (run?.run_no ?? "").trim() || "this truck";
   const driver = (run?.driver_name ?? "").trim() || "the driver";
-  const n = run?.stop_count ?? 0;
-  const stops = `${n} ${n === 1 ? "stop" : "stops"}`;
-  const loads = `${n} ${n === 1 ? "load" : "loads"}`;
+  const n = run?.stop_count ?? (stops?.length ?? 0);
+  const ready = stops !== undefined ? stops.filter((s) => s.status === "READY").length : n;
+  const stopsWord = `${n} ${n === 1 ? "stop" : "stops"}`;
+  const readyWord = `${ready} ready ${ready === 1 ? "load" : "loads"}`;
   return {
-    title: `Send ${truck} with ${driver} and ${stops}?`,
-    body: `The driver sees the run at once, and marks its ${loads} loaded. A sent run cannot be called back here.`,
+    title: `Send ${truck} with ${driver} and ${stopsWord}?`,
+    body: `The driver sees the run at once. Sending it marks its ${readyWord} loaded. A sent run cannot be called back here.`,
   };
 }
 
