@@ -220,3 +220,11 @@ test('drop: browsing is the EXCEPTION path: one disclosure, and the results flip
   assert.match(browse.slice(0, 2600), /<hos-pos-product-grid/, 'and the full catalogue keeps every capability it had');
   assert.match(terminalSrc, /\.externalTerm=\$\{this\.lookupTerm\}/, 'still ONE field feeding both surfaces');
 });
+
+test('drop: a search row with zero or negative branch stock reads Out of stock here in red, never a negative count', () => {
+  assert.match(dropSrc, /onHandStatus\(h\.on_hand_branch\)/, 'the row formats branch stock through onHandStatus');
+  assert.match(dropSrc, /\.meta \.out \{\s*\n\s*color: var\(--hos-safety-red\);/, 'out-of-stock label wears the red token');
+  assert.match(dropSrc, /stock\.tone === 'out'[\s\S]*?<span class="out">\$\{stock\.label\}<\/span>/, 'zero or negative stock renders the out-of-stock span');
+  assert.ok(!/\$\{onHand\} on hand/.test(dropSrc), 'no raw onHand interpolation that could print a negative count');
+});
+

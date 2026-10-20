@@ -368,6 +368,9 @@ var ownedObjects = map[string]string{
 	"ar_statement_runs":               "billing",           // 0105_ar_statements
 	"ar_statements":                   "billing",           // 0105_ar_statements
 	"assist_command_policy":           "assist",            // 0153_assist_commands_config
+	"assist_conversation_exchanges":   "assist",            // 0416_assist_aliases_and_conversations
+	"assist_conversations":            "assist",            // 0416_assist_aliases_and_conversations
+	"assist_model_aliases":            "assist",            // 0416_assist_aliases_and_conversations
 	"assist_role_limits":              "assist",            // 0155_assist_limits
 	"assist_settings":                 "assist",            // 0153_assist_commands_config
 	"assist_token_ledger":             "assist",            // 0154_assist_token_ledger

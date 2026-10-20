@@ -224,6 +224,7 @@ func (g *Gate) serveStaff(w http.ResponseWriter, r *http.Request, token identity
 		OrgID:          orgID,
 		IssuedAt:       token.IssuedAt,
 		ExpiresAt:      token.ExpiresAt,
+		SessionID:      token.JTI,
 	}
 	next.ServeHTTP(w, r.WithContext(WithStaffScope(r.Context(), scope)))
 }

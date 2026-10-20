@@ -127,18 +127,17 @@ func TestAsk_InventedToolCallIsRefusedAndRelayedNotFatal(t *testing.T) {
 	if rd.calls != 0 {
 		t.Fatalf("an invented command reached a read seam %d times", rd.calls)
 	}
-	// The failure was told to the provider as a tool message so it could answer in its own voice.
+	// Slice 1 (escalation): the invented command is a failed check. It never reaches the registry,
+	// and the provider is asked once more with OUR text naming the check.
 	if len(p.seen) < 2 {
-		t.Fatal("the service did not take a second turn after the failed tool call")
+		t.Fatal("the service did not retry after the failed check")
 	}
-	var sawToolFailure bool
-	for _, m := range p.seen[1].Messages {
-		if m.Role == RoleTool && m.ToolName == "payment.delete" {
-			sawToolFailure = true
-		}
+	retry := p.seen[1].Messages
+	if last := retry[len(retry)-1]; last.Role != RoleUser || last.Text != failUnknownCommand {
+		t.Fatalf("the retry did not carry the validator's text: %+v", last)
 	}
-	if !sawToolFailure {
-		t.Fatal("the failed tool call was not relayed back to the provider")
+	if ans.Text != "I can't do that, but I can look a payment up." {
+		t.Fatalf("text = %q, want the retried reply", ans.Text)
 	}
 }
 
@@ -183,7 +182,7 @@ func TestAsk_HistoryIsBoundedSoTheBillDoesNotGrowQuadratically(t *testing.T) {
 	if _, err := svc.Ask(context.Background(), manager(), "the new one", history); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
-	sent := p.seen[0].Messages
+	sent := withoutSystem(p.seen[0].Messages)
 	if len(sent) != maxHistory+1 {
 		t.Fatalf("sent %d messages, want %d trimmed turns plus the new question", len(sent), maxHistory)
 	}
