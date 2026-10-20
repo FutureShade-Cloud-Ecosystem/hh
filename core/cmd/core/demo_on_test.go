@@ -267,6 +267,9 @@ func TestDemoServeRefusesTheAssistantKeyWithoutItsCap(t *testing.T) {
 // refuses, and one built the way the demo composition builds it passes.
 func TestDemoRefusesAnAssistantThatIsNotDemoWired(t *testing.T) {
 	bare := func() *assist.Service { return assist.NewService(nil, nil, nil, nil, nil, nil) }
+	only := func() *assist.Router {
+		return assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasPremium)
+	}
 	limits := func(s *assist.Service) *assist.Service {
 		return s.WithRateLimits(assist.NewRateLimits(assistDemoLimits(true), time.Now))
 	}
@@ -277,17 +280,22 @@ func TestDemoRefusesAnAssistantThatIsNotDemoWired(t *testing.T) {
 		t.Fatalf("a keyless demo needs nothing to be safe, got %v", err)
 	}
 	for name, svc := range map[string]*assist.Service{
-		"no limits":        bare().WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"no limits":        bare().WithRouter(only()).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
 		"limits only":      limits(bare()),
-		"no pin":           limits(bare()).WithStubFallback(),
-		"pinned elsewhere": limits(bare()).WithPinnedRoute(assist.AliasMain).WithStubFallback(),
-		"no stub fallback": limits(bare()).WithPinnedRoute(assist.AliasPremium),
+		"no pin":           limits(bare()).WithRouter(only()).WithStubFallback(),
+		"pinned elsewhere": limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasMain).WithStubFallback(),
+		"no stub fallback": limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasPremium),
+		// The wired router must be restricted to the one alias (the review's surviving mutation).
+		"no router":           limits(bare()).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"unrestricted router": limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"router for main":     limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasMain)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
+		"router for two":      limits(bare()).WithRouter(assist.NewRouter(nil, assist.ModelConfig{}, nil, nil).Only(assist.AliasPremium, assist.AliasMain)).WithPinnedRoute(assist.AliasPremium).WithStubFallback(),
 	} {
 		if err := demoRefuseAssistNotDemoWired(svc, true); err == nil {
 			t.Fatalf("%s: a keyed demo was accepted", name)
 		}
 	}
-	whole := limits(bare()).WithPinnedRoute(assist.AliasPremium).WithStubFallback()
+	whole := limits(bare()).WithRouter(only()).WithPinnedRoute(assist.AliasPremium).WithStubFallback()
 	if err := demoRefuseAssistNotDemoWired(whole, true); err != nil {
 		t.Fatalf("the demo composition refused: %v", err)
 	}

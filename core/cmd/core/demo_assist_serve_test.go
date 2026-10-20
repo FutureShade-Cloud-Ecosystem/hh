@@ -53,7 +53,21 @@ func assistServeEnv(t *testing.T, caseURL string, port int, capValue string) fun
 func TestDemoServeRefusesAKeyedAssistantWithNoPriceRow(t *testing.T) {
 	caseURL := demoServeCase(t)
 	getenv := assistServeEnv(t, caseURL, freeServePort(t), "5000000")
-	err := demoServe(getenv, demoSaysDemoTwice(), os.Environ)
+	// Bounded like the other serve legs: a missing refusal means the box boots and serves, so the
+	// wait ends with a line instead of hanging to the package timeout.
+	errCh := make(chan error, 1)
+	go func() { errCh <- demoServe(getenv, demoSaysDemoTwice(), os.Environ) }()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(90 * time.Second):
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM) // the serve role's own shutdown signal, as the other legs send
+		select {
+		case <-errCh:
+		case <-time.After(30 * time.Second):
+		}
+		t.Fatal("a keyed demo with no price row did not refuse the boot: it kept serving")
+	}
 	if err == nil {
 		t.Fatal("a keyed demo with no price row served")
 	}

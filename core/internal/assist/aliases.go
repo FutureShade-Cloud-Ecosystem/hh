@@ -126,6 +126,18 @@ type Router struct {
 	only map[string]bool
 }
 
+// OnlyAlias is the one alias this router is restricted to, or empty when it is unrestricted or
+// restricted to more than one. The demo boot reads it off the wired router.
+func (r *Router) OnlyAlias() string {
+	if r == nil || len(r.only) != 1 {
+		return ""
+	}
+	for a := range r.only {
+		return a
+	}
+	return ""
+}
+
 // Only restricts the router to the named aliases: any other alias resolves to the stub with ok
 // false, whatever its row says. The demo composition uses it so the demo can reach one alias.
 func (r *Router) Only(aliases ...string) *Router {

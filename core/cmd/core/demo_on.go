@@ -308,7 +308,7 @@ func demoRefuseLiveCardRail(paySvc *payment.Service) error {
 // visitor, per address and box wide limits must be in force (demo personas
 // are shared users, so the per asker limit alone would let one visitor spend
 // the box's allowance), the route must be pinned to tanyai-premium so the
-// settings table cannot move it, and the stub fallback must be on. A nil
+// settings table cannot move it and the wired router must reach that one alias, and the stub fallback must be on. A nil
 // service refuses too (fail closed); with no key the stub serves and nothing
 // is spent, so there is nothing to bound.
 func demoRefuseAssistNotDemoWired(svc *assist.Service, keyed bool) error {
@@ -320,6 +320,9 @@ func demoRefuseAssistNotDemoWired(svc *assist.Service, keyed bool) error {
 	}
 	if svc.PinnedRoute() != assist.AliasPremium {
 		return errors.New("the demo box carries the assistant's key but the wired assistant's route is not pinned to tanyai-premium: the demo build reaches that one alias and no other")
+	}
+	if svc.RouterOnlyAlias() != assist.AliasPremium {
+		return errors.New("the demo box carries the assistant's key but the wired router is not restricted to tanyai-premium: the demo build reaches that one alias and no other")
 	}
 	if !svc.StubFallbackOn() {
 		return errors.New("the demo box carries the assistant's key but the wired assistant has no stub fallback: the demo build answers on the stub when the model cannot be used")

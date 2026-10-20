@@ -203,6 +203,15 @@ func (s *Service) WithPinnedRoute(alias string) *Service { s.pinned = alias; ret
 // PinnedRoute is the alias the route is pinned to, or empty when it is not.
 func (s *Service) PinnedRoute() string { return s.pinned }
 
+// RouterOnlyAlias is the single alias the wired router is restricted to, or empty when there is
+// no router or it is not restricted to exactly one.
+func (s *Service) RouterOnlyAlias() string {
+	if s == nil {
+		return ""
+	}
+	return s.router.OnlyAlias()
+}
+
 // StubFallbackOn reports whether the demo's stub fallback is switched on.
 func (s *Service) StubFallbackOn() bool { return s != nil && s.stubFallback }
 

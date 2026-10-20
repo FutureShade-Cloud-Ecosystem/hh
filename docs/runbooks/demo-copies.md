@@ -289,13 +289,7 @@ Do these in this order, once per demo copy:
 
 1. **Set the provider spend limit** on the Anthropic workspace that owns the key. It is
    the outer bound; Colton sets it before the key is placed.
-2. **Place the key and the cap.** The key is the vault prod `/hh-demo` value
-   `HOS_ASSIST_ANTHROPIC_API_KEY`, put into FB Deploy's environment for the copy from the
-   vault; no agent reads or prints it. `HOS_ASSIST_DEALER_CAP_MICROCENTS` is the box's hard
-   spend bound in whole micro cents (a positive integer; one cent is 1,000,000 micro cents).
-   A key with no cap, a zero, a negative or a non numeric cap stops the boot with a message
-   naming the cap variable.
-3. **Insert the price row** for the model. The table is append only and deliberately not
+2. **Insert the price row** for the model, before the key. The table is append only and deliberately not
    seeded; the boot refuses a keyed copy whose model has no row, with a message naming
    `assist_model_prices`, the alias and the model. Insert the vendor's published prices for
    `claude-sonnet-5-5`, in integer micro cents per million tokens, from the vendor's current
@@ -317,8 +311,16 @@ Do these in this order, once per demo copy:
     ORDER BY effective_seq DESC LIMIT 1;
    ```
 
-   No rows means the copy will refuse to boot with the key set.
-4. **Restart the copy** and read the boot log: it either serves, or names the one step
+   No rows means the copy will refuse to boot once the key is set.
+3. **Place the cap, then the key, last.** The key is the vault prod `/hh-demo` value
+   `HOS_ASSIST_ANTHROPIC_API_KEY`, put into FB Deploy's environment for the copy from the
+   vault; no agent reads or prints it. `HOS_ASSIST_DEALER_CAP_MICROCENTS` is the box's hard
+   spend bound in whole micro cents (a positive integer; one cent is 1,000,000 micro cents).
+   A key with no cap, a zero, a negative or a non numeric cap stops the boot with a message
+   naming the cap variable.
+   FB Deploy may redeploy the copy as soon as a variable changes; with the price row already in,
+   that redeploy serves, and without it the copy refuses to boot until the row is in.
+4. **Restart the copy** if it did not redeploy, and read the boot log: it either serves, or names the one step
    still missing.
 
 The demo's per visitor, per address and box wide request limits are always on for a demo
