@@ -319,6 +319,7 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups create: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A new row: nothing to lock first, so the draw goes first (see the lock order note at willCallSeqUpsert).
 	seq, err := allocatePickupsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
@@ -478,6 +479,16 @@ func (s *PickupsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, k
 		return sync.RowState{}, fmt.Errorf("dispatch: begin pickups delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The one lock order: the row lock, then the draw (as Write does).
+	var locked int
+	if err := tx.QueryRow(ctx, `
+		SELECT 1 FROM will_call_pickups
+		WHERE id = $1::uuid AND order_id = ANY($2::uuid[]) AND deleted_at IS NULL FOR UPDATE`,
+		id, ids).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	} else if err != nil {
+		return sync.RowState{}, fmt.Errorf("dispatch: lock pickup %q for sync delete: %w", id, err)
+	}
 	seq, err := allocatePickupsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err

@@ -841,7 +841,9 @@ func (r *Repository) InsertPickup(ctx context.Context, orderID, branchID, tokenH
 		return WillCall{}, err
 	}
 	var id string
-	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+	// A new row: there is nothing to lock first, so the draw goes first. That cannot
+	// cycle, because no other writer can name a row that does not exist yet.
+	err = withWillCallSeq(ctx, pool, "", func(tx pgx.Tx, seq int64) error {
 		return tx.QueryRow(ctx, `
 INSERT INTO will_call_pickups (order_id, branch_id, token_hash, expires_at, created_by, seq)
 VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, $6) RETURNING id::text`,
@@ -855,14 +857,29 @@ VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, $6) RETURNING id::text`,
 }
 
 // withWillCallSeq runs one staff write to will_call_pickups in a short
-// transaction that draws the table's one seq first (the same counter the
-// contractor's sync writes and the staff sync writes draw from).
-func withWillCallSeq(ctx context.Context, pool *pgxpool.Pool, write func(tx pgx.Tx, seq int64) error) error {
+// transaction that takes the pickup row's lock and then draws the table's one
+// seq (the same counter the contractor's sync writes and the staff sync writes
+// draw from). The lock order is the same for every writer of the table: the
+// row lock first, the counter second (see willCallSeqUpsert). Drawing first
+// and letting the UPDATE take the row would cycle against a writer that locks
+// the row and then draws (40P01). rowID is "" for a mint, which has no row yet.
+// A row that does not exist draws nothing and the write sees no row.
+func withWillCallSeq(ctx context.Context, pool *pgxpool.Pool, rowID string, write func(tx pgx.Tx, seq int64) error) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if rowID != "" {
+		var one int
+		err := tx.QueryRow(ctx, `SELECT 1 FROM will_call_pickups WHERE id = $1 FOR UPDATE`, rowID).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 	seq, err := allocateSyncSeqTx(ctx, tx, willCallSyncScope)
 	if err != nil {
 		return err
@@ -921,7 +938,7 @@ func (r *Repository) ConfirmPickup(ctx context.Context, id, sigRef, collectedBy 
 		return false, err
 	}
 	var changed bool
-	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+	err = withWillCallSeq(ctx, pool, id, func(tx pgx.Tx, seq int64) error {
 		tag, err := tx.Exec(ctx, `
 UPDATE will_call_pickups
    SET status = 'CONFIRMED', signature_ref = $2, collected_by = $3, confirmed_at = $4,
@@ -941,7 +958,7 @@ func (r *Repository) RevokePickup(ctx context.Context, id string, at time.Time) 
 		return false, err
 	}
 	var changed bool
-	err = withWillCallSeq(ctx, pool, func(tx pgx.Tx, seq int64) error {
+	err = withWillCallSeq(ctx, pool, id, func(tx pgx.Tx, seq int64) error {
 		tag, err := tx.Exec(ctx,
 			`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = $3
 			 WHERE id = $1 AND status = 'ACTIVE'`, id, at, seq)

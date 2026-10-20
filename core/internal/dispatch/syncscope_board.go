@@ -83,6 +83,12 @@ const willCallSyncScope = "will_call"
 // has already consumed. The row is frozen once the lift has happened.
 const legacyPickupsSeqScope = "pickups"
 
+// Lock order for will_call_pickups, the same for every writer: the pickup
+// row's lock first (SELECT ... FOR UPDATE), then this draw. A writer that
+// drew first and let its UPDATE take the row would cycle against one that
+// locks the row and then draws. A mint has no row to lock yet, so it draws
+// first, which cannot cycle: no other writer can name a row not yet inserted.
+//
 // willCallSeqUpsert, a format over the two scope names, draws the next
 // will_call seq. Because scope_sequences holds the last value issued
 // (the upsert increments and returns next_value), the draw lifts above
@@ -1056,6 +1062,17 @@ func (s *WillCallSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, 
 		return sync.RowState{}, fmt.Errorf("dispatch: begin will_call sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The one lock order: the row lock, then the draw (as Write does).
+	var locked int
+	if err := tx.QueryRow(ctx, `
+		SELECT 1 FROM will_call_pickups
+		WHERE id = $1::uuid AND deleted_at IS NULL
+		  AND branch_id IN (SELECT id FROM locations WHERE org_id = $2::uuid) FOR UPDATE`,
+		id, f.OrgID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	} else if err != nil {
+		return sync.RowState{}, fmt.Errorf("dispatch: lock pickup %q for will_call sync delete: %w", id, err)
+	}
 	seq, err := allocateSyncSeqTx(ctx, tx, willCallSyncScope)
 	if err != nil {
 		return sync.RowState{}, err
