@@ -54,6 +54,10 @@ const driverPersonaUserID = "d0200000-0000-4000-9000-000000000003"
 type driveWorld struct {
 	pool   *pgxpool.Pool
 	driver *tillClient
+	// as hands back a client for any staff login on the same served surface, and tenant for a
+	// contractor portal login (sub and the account it belongs to).
+	as     func(sub, who string) *tillClient
+	tenant func(sub, tenantID, who string) *tillClient
 }
 
 // bootDriveWorld builds the world in the order a demo box builds it (the frozen migrations, the
@@ -121,6 +125,14 @@ func bootDriveWorld(t *testing.T) *driveWorld {
 	return &driveWorld{
 		pool:   pool,
 		driver: &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, driverPersonaUserID), who: "Driver"},
+		as: func(sub, who string) *tillClient {
+			appwrite.setTeam(sub, "org-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, sub), who: who}
+		},
+		tenant: func(sub, tenantID, who string) *tillClient {
+			appwrite.setTeam(sub, "ten-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.TenantToken(t, sub, tenantID), who: who, tenant: true}
+		},
 	}
 }
 
@@ -524,10 +536,16 @@ func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
 	}
 
 	date := qwClock.In(seedLocation()).Format("2006-01-02")
+	// onDay is the Driver's runs OUT FOR DELIVERY on a day. The stable fleet's planned runs that
+	// belong to the same driver are sequenced too (every seeded row reaches the feeds), so the
+	// pull also carries them; the claim is that exactly one run is out, the day keyed one.
 	onDay := func(day string) []map[string]any {
 		var out []map[string]any
 		for _, r := range pull("runs") {
 			if d, _ := r["scheduled_date"].(string); strings.HasPrefix(d, day) {
+				if st, _ := r["status"].(string); st != "DISPATCHED" {
+					continue
+				}
 				out = append(out, r)
 			}
 		}
@@ -535,7 +553,7 @@ func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
 	}
 	today := onDay(date)
 	if len(today) != 1 {
-		t.Fatalf("the runs pull gives the Driver %d runs for %s, want exactly 1", len(today), date)
+		t.Fatalf("the runs pull gives the Driver %d runs out for delivery for %s, want exactly 1", len(today), date)
 	}
 	// A reseed on the same day draws no new seq (the sequence is not a mutation per apply), and a
 	// reseed on a later day gives that day its own run in the feed.
