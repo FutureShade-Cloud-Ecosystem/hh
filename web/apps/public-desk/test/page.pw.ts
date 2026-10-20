@@ -1817,6 +1817,9 @@ test("the notice is an information callout: an icon, a tinted ground, no field b
 
 test("the quantities tick is one of the card's own ticks: the same row and the same type as the confirmation", async ({ page }) => {
   await page.goto("/?t=q-print-33");
+  // The card is drawn once the quote is read; the styles are read from it after that, never from the empty page.
+  await expect(page.locator("#qty-confirm")).toBeVisible();
+  await expect(page.locator("#affirm")).toBeVisible();
   const same = await page.evaluate(() => {
     const root = document.querySelector("pd-quote-public")?.shadowRoot as ShadowRoot;
     const read = (id: string) => {
@@ -2031,7 +2034,8 @@ test("the Print or save PDF button is a secondary design-system button that call
   await page.goto("/?t=q-terms-28");
   await expect(page.getByRole("button", { name: "Print or save PDF" })).toBeVisible();
   await page.getByRole("button", { name: "Print or save PDF" }).click();
-  expect(printed).toBe(true);
+  // The page's call reaches this flag through the exposed function, a message to the test process: it is waited for.
+  await expect.poll(() => printed).toBe(true);
 });
 
 test("the page at 390px shows the new surface without sideways scroll", async ({ page }) => {
