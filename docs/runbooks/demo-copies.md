@@ -110,19 +110,22 @@ sign in section below.
 
 The console copies need a persistent ES256 (P-256) session signing key pair.
 `CORE_SESSION_SIGNING_KEY_FILE` names the path to the PEM private key inside
-the container. FB Deploy's file storage mounts files at mode `0755` and its
-API refuses `chmod`, while the core refuses a session signing key readable
-by group or other (`core/internal/identity/sessionsigner.go`).
+the container. FB Deploy's file storage mounts files as `0755` `root:root`
+and its API refuses `chmod` and `chown` (HTTP 422); the core refuses a
+session signing key readable by group or other (`principal/DECISION-LOG-SESSION-2.md`
+row 2354, the principal's probe of FB Deploy's file storage, and
+`core/internal/identity/sessionsigner.go` on `origin/main`).
 
-The entrypoint on `origin/main` reconciles the two: on a console copy, a
-mounted key whose mode is outside `0400` and `0600` is copied once to
-`/run/hh-secrets/session.pem` at `0400` before the core starts (the file's
-own mode is preserved across the copy with `umask 077`, and the destination
-is `chmod 0400`); a mounted key already at `0400` or `0600` is used as-is
-and the copy is skipped. The mounted file is untouched
-(`deploy/demo/entrypoint.sh` on `origin/main`, `secrets_signing_key` helper).
-The boot then refuses a private directory that is not under `/run/`, and
-refuses a copy that fails (`deploy/demo/entrypoint.sh` on `origin/main`).
+The entrypoint on `origin/main` reconciles the two through
+`ensure_signing_key`, console mode only. The check on the mounted key's
+group or other bits is `key_mode & 0177 == 0` (no group or other bits): a
+mounted key whose mode satisfies it is used as-is; any mounted key that
+fails it (readable by group or other) is copied once with `umask 077` and
+then `chmod 0400` into `/run/hh-secrets/session.pem`, the directory is
+created at `0700`, and `CORE_SESSION_SIGNING_KEY_FILE` is repointed at the
+copy before any core process starts. The mounted file is untouched. A copy
+that fails refuses the boot
+(`deploy/demo/entrypoint.sh` on `origin/main`, `ensure_signing_key`).
 
 `CORE_SESSION_KEY_NEXT_FILE` and `CORE_SESSION_KEY_PREVIOUS_FILE` are the
 optional staged and retired PEM public halves, any mode, one PEM block each
@@ -130,15 +133,20 @@ optional staged and retired PEM public halves, any mode, one PEM block each
 
 ### The health check
 
-The image's own `HEALTHCHECK` is the only health leg the source names. It
-runs in the image against the loopback core, not through Caddy: `CMD wget -q
--O /dev/null "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1`, with
-`--interval=10s --timeout=3s --start-period=90s --retries=12` and `EXPOSE
-8080` (`deploy/demo/Dockerfile`). The entrypoint probes the same leg on the
-core's loopback (`CORE_INTERNAL_PORT`, default `9090`) before Caddy takes
-the public port: `until wget -q -O /dev/null
+Two probes hit `/healthz` from two places. The image's `HEALTHCHECK` runs
+inside the image, targets the public port (Caddy), and uses the public
+port's default: `CMD wget -q -O /dev/null
+"http://127.0.0.1:${PORT:-8080}/healthz" || exit 1`, with `--interval=10s
+--timeout=3s --start-period=90s --retries=12` and `EXPOSE 8080`
+(`deploy/demo/Dockerfile`). The entrypoint's own wait loop targets the
+core's loopback port (`CORE_INTERNAL_PORT`, default `9090`), bypassing
+Caddy: `until wget -q -O /dev/null
 "http://127.0.0.1:${CORE_INTERNAL_PORT}/healthz"` (`deploy/demo/entrypoint.sh`
 on `origin/main`).
+
+Caddy serves `/healthz` in its own handle with no `basic_auth` line, so on
+the public port `/healthz` answers without the phrase
+(`deploy/demo/Caddyfile.template`, the `handle /healthz` block).
 
 I could not confirm: how FB Deploy wires the image's `HEALTHCHECK` to the
 copy's platform health check. The plan section A9 names "a health check"
@@ -228,7 +236,7 @@ boot if the copy is `open`.
 ### The `HH_WEB_` names (the web side)
 
 Set in FB Deploy and read by `deploy/demo/write-web-config.sh`, which writes
-`socket-server/app/config.json` at container boot from the names below. The
+`/srv/app/config.json` at container boot from the names below. The
 entrypoint refuses to start, naming the variable and never its value, if one
 is wrong (`deploy/demo/README.md` "What the operator sets"):
 
@@ -327,9 +335,10 @@ The sandbox credentials' vault path is named in the master plan section B.10
 item 1: Production, `/hh-demo/run`. What the plan leaves open is whether
 testers' and public copies share one sandbox account or have two
 (`HH-MASTER-PLAN-r1.md` decision H10). The pre-real-data plan section 3
-names the four paths (`HH-691`, `HH-692`, `HH-768`, `HH-769`, `HH-770`) and
-the credential placement ("FB Vault at a demo path, never in chat"). The
-names of the values, not their values, are what the deploy side records.
+names four paths and the five Plane items that build them (`HH-691`,
+`HH-692`, `HH-768`, `HH-769`, `HH-770`) and the credential placement: an
+FB Vault path under the demo, never carried in chat. The names of the
+values, not their values, are what the deploy side records.
 
 ## Running the exit test
 
