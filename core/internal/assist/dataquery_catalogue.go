@@ -22,6 +22,7 @@ const (
 	ClassPayment    = "payment"
 	ClassPIIContact = "pii_contact"
 	ClassPIILoc     = "pii_location"
+	ClassSecret     = "secret"
 )
 
 // colType is how a column's values are read from a question and shown in an answer.
@@ -98,24 +99,26 @@ func builtinViews() []ViewDef {
 	return []ViewDef{ordersView(), orderLinesView()}
 }
 
-func ordersView() ViewDef {
+func ordersView() ViewDef { return classify(rawOrdersView()) }
+
+func rawOrdersView() ViewDef {
 	return ViewDef{
 		Name: "ai.orders", Schema: "ai", Table: "orders", Title: "Orders", MinTier: 2, Large: true,
 		About: "One row per order: number, status, branch, customer, dates and totals in cents.",
 		Columns: []ColumnDef{
-			{Name: "id", Label: "Order id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "order_no", Label: "Order", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "status", Label: "Status", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "fulfillment", Label: "Fulfilment", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "branch_label", Label: "Branch", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "customer_name", Label: "Customer", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "requested_date", Label: "Requested date", Type: typeDate, Class: ClassPlain, Filter: true, Group: true, Agg: true},
-			{Name: "created_at", Label: "Placed", Type: typeTime, Class: ClassPlain, Filter: true, Agg: true},
-			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Class: ClassPlain, Filter: true, Agg: true},
-			{Name: "tax_cents", Label: "Tax", Type: typeCents, Class: ClassPlain, Filter: true, Agg: true},
-			{Name: "total_cents", Label: "Total", Type: typeCents, Class: ClassPlain, Filter: true, Agg: true},
+			{Name: "id", Label: "Order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "order_no", Label: "Order", Type: typeText, Filter: true, Group: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "fulfillment", Label: "Fulfilment", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true},
+			{Name: "requested_date", Label: "Requested date", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "created_at", Label: "Placed", Type: typeTime, Filter: true, Agg: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+			{Name: "tax_cents", Label: "Tax", Type: typeCents, Filter: true, Agg: true},
+			{Name: "total_cents", Label: "Total", Type: typeCents, Filter: true, Agg: true},
 		},
 		Default:      []string{"order_no", "customer_name", "branch_label", "status", "created_at", "total_cents"},
 		DefaultOrder: []OrderBy{{Col: "created_at", Dir: "desc"}, {Col: "order_no", Dir: "asc"}},
@@ -124,21 +127,23 @@ func ordersView() ViewDef {
 	}
 }
 
-func orderLinesView() ViewDef {
+func orderLinesView() ViewDef { return classify(rawOrderLinesView()) }
+
+func rawOrderLinesView() ViewDef {
 	return ViewDef{
 		Name: "ai.order_lines", Schema: "ai", Table: "order_lines", Title: "Order lines", MinTier: 2, Large: true,
 		About: "One row per order line: the order, the product description, quantity with its unit, price and total in cents.",
 		Columns: []ColumnDef{
-			{Name: "id", Label: "Line id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "order_id", Label: "Order id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "order_no", Label: "Order", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Class: ClassPlain, Filter: true, Hidden: true},
-			{Name: "line_no", Label: "Line", Type: typeInt, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "description", Label: "Description", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "qty_entered", Label: "Quantity", Type: typeNumeric, Class: ClassPlain, Filter: true, Agg: true},
-			{Name: "uom", Label: "Unit", Type: typeText, Class: ClassPlain, Filter: true, Group: true},
-			{Name: "unit_price_cents", Label: "Unit price", Type: typeCents, Class: ClassPlain, Filter: true, Agg: true},
-			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Class: ClassPlain, Filter: true, Agg: true},
+			{Name: "id", Label: "Line id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "order_id", Label: "Order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "order_no", Label: "Order", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "line_no", Label: "Line", Type: typeInt, Filter: true, Group: true},
+			{Name: "description", Label: "Description", Type: typeText, Filter: true, Group: true},
+			{Name: "qty_entered", Label: "Quantity", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "unit_price_cents", Label: "Unit price", Type: typeCents, Filter: true, Agg: true},
+			{Name: "line_total_cents", Label: "Line total", Type: typeCents, Filter: true, Agg: true},
 		},
 		Default:      []string{"order_no", "line_no", "description", "qty_entered", "uom", "line_total_cents"},
 		DefaultOrder: []OrderBy{{Col: "order_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
