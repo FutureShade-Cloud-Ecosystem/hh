@@ -39,5 +39,84 @@ BEGIN
 
   -- 1. The zone reader keeps nothing on schema ai.
   EXECUTE format('REVOKE CREATE, USAGE ON SCHEMA ai FROM %I', v_zone);
+  -- 2. The delivery family: ai.delivery_runs and ai.delivery_stops.
+  --
+  -- Rows follow the dispatch screens (board, run, stop, manifest): the branch fence of the run or the stop, the
+  -- assistant's tier floor on top. delivery_runs and delivery_stops are served tables (sync): row security is
+  -- enabled on them and no column and no json column is added. No latitude, longitude, instructions, gate code,
+  -- signature reference, signer name, freight or load-building column is granted or exposed.
+  FOREACH t IN ARRAY ARRAY['delivery_runs', 'delivery_stops'] LOOP
+    SELECT tableowner INTO owner_name FROM pg_tables WHERE schemaname = 'public' AND tablename = t;
+    IF owner_name IS DISTINCT FROM current_user THEN
+      RAISE EXCEPTION 'table % is owned by %, not by the migrating role %: refusing to enable row security on it',
+        t, coalesce(owner_name, '(missing)'), current_user;
+    END IF;
+  END LOOP;
+  EXECUTE format('GRANT SELECT (id, run_no, branch_id, scheduled_date, truck_id, driver_id, status, dispatched_at, completed_at) ON public.delivery_runs TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, branch_id, order_id, run_id, stop_no, scheduled_date, status, time_window, contact_name, contact_phone, address_line, city, postal_code, failure_reason, delivered_at) ON public.delivery_stops TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, code) ON public.dispatch_trucks TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, name) ON public.dispatch_drivers TO %I', v_view);
+
+  ALTER TABLE public.delivery_runs ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.delivery_stops ENABLE ROW LEVEL SECURITY;
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_delivery_runs ON public.delivery_runs TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
+    )$p$, v_view);
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_delivery_stops ON public.delivery_stops TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND ((SELECT ai.claims()).global OR branch_id = ANY ((SELECT ai.claims()).branch_ids))
+    )$p$, v_view);
+
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  CREATE VIEW ai.delivery_runs AS
+    SELECT r.id,
+           r.run_no,
+           r.scheduled_date,
+           r.branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           COALESCE(t.code::text, '') AS truck_code,
+           COALESCE(d.name, '') AS driver_label,
+           r.status,
+           (SELECT count(*) FROM public.delivery_stops s WHERE s.run_id = r.id)::int AS stop_count,
+           r.dispatched_at,
+           r.completed_at
+      FROM public.delivery_runs r
+      LEFT JOIN public.locations l ON l.id = r.branch_id
+      LEFT JOIN public.dispatch_trucks t ON t.id = r.truck_id
+      LEFT JOIN public.dispatch_drivers d ON d.id = r.driver_id;
+  CREATE VIEW ai.delivery_stops AS
+    SELECT s.id,
+           s.run_id,
+           COALESCE(r.run_no, '') AS run_no,
+           s.stop_no,
+           s.scheduled_date,
+           s.branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           s.order_id,
+           COALESCE(o.order_no::text, '') AS order_no,
+           COALESCE(c.name, '') AS customer_name,
+           s.status,
+           s.time_window,
+           s.contact_name,
+           s.contact_phone,
+           s.address_line,
+           s.city,
+           s.postal_code,
+           s.failure_reason,
+           s.delivered_at
+      FROM public.delivery_stops s
+      LEFT JOIN public.delivery_runs r ON r.id = s.run_id
+      LEFT JOIN public.locations l ON l.id = s.branch_id
+      LEFT JOIN public.orders o ON o.id = s.order_id
+      LEFT JOIN public.customers c ON c.id = o.customer_id;
+  EXECUTE format('GRANT SELECT ON ai.delivery_runs, ai.delivery_stops TO %I', v_reader);
+  RESET ROLE;
 END
 $s7b$;

@@ -127,7 +127,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView(), deliveryRunsView(), deliveryStopsView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -451,5 +451,64 @@ func rawPaymentAllocationsView() ViewDef {
 		DefaultOrder: []OrderBy{{Col: "payment_no", Dir: "asc"}, {Col: "invoice_no", Dir: "asc"}},
 		Period:       "allocated_at",
 		CiteKind:     RefPayment, CiteIDCol: "payment_id", CiteLabelCol: "payment_no", CiteLabelPrefix: "Payment ",
+	}
+}
+
+func deliveryRunsView() ViewDef { return classify(rawDeliveryRunsView()) }
+
+func rawDeliveryRunsView() ViewDef {
+	return ViewDef{
+		Name: "ai.delivery_runs", Schema: "ai", Table: "delivery_runs", Title: "Delivery runs", MinTier: 2, Large: true,
+		About: "One row per delivery run: run number, date, branch, truck, driver, status, how many stops, and when it left and finished.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Run id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "run_no", Label: "Run", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "scheduled_date", Label: "Date", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "truck_code", Label: "Truck", Type: typeText, Filter: true, Group: true},
+			{Name: "driver_label", Label: "Driver", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "stop_count", Label: "Stops", Type: typeInt, Filter: true, Agg: true},
+			{Name: "dispatched_at", Label: "Left", Type: typeTime, Filter: true, Agg: true},
+			{Name: "completed_at", Label: "Finished", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"run_no", "scheduled_date", "branch_label", "truck_code", "driver_label", "status", "stop_count"},
+		DefaultOrder: []OrderBy{{Col: "scheduled_date", Dir: "desc"}, {Col: "run_no", Dir: "asc"}},
+		Period:       "scheduled_date",
+	}
+}
+
+func deliveryStopsView() ViewDef { return classify(rawDeliveryStopsView()) }
+
+func rawDeliveryStopsView() ViewDef {
+	return ViewDef{
+		Name: "ai.delivery_stops", Schema: "ai", Table: "delivery_stops", Title: "Delivery stops", MinTier: 2, Large: true,
+		About: "One row per delivery stop: the run and stop number, date, branch, order and customer, status, time window, the contact, phone and address, why it failed, and when it was delivered.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Stop id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "run_id", Label: "Run id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "run_no", Label: "Run", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "stop_no", Label: "Stop", Type: typeInt, Filter: true, Group: true},
+			{Name: "scheduled_date", Label: "Date", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "order_id", Label: "Order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "order_no", Label: "Order", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "time_window", Label: "Window", Type: typeText, Filter: true, Group: true},
+			{Name: "contact_name", Label: "Contact", Type: typeText, Filter: true, Group: true},
+			{Name: "contact_phone", Label: "Phone", Type: typeText, Filter: true},
+			{Name: "address_line", Label: "Address", Type: typeText, Filter: true},
+			{Name: "city", Label: "City", Type: typeText, Filter: true, Group: true},
+			{Name: "postal_code", Label: "Postal code", Type: typeText, Filter: true, Group: true},
+			{Name: "failure_reason", Label: "Failure reason", Type: typeText, Filter: true},
+			{Name: "delivered_at", Label: "Delivered", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"scheduled_date", "run_no", "stop_no", "order_no", "customer_name", "status", "time_window"},
+		DefaultOrder: []OrderBy{{Col: "scheduled_date", Dir: "desc"}, {Col: "run_no", Dir: "asc"}, {Col: "stop_no", Dir: "asc"}},
+		Period:       "scheduled_date",
+		CiteKind:     RefOrder, CiteIDCol: "order_id", CiteLabelCol: "order_no", CiteLabelPrefix: "Order ",
 	}
 }

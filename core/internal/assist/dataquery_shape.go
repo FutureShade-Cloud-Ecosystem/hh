@@ -21,7 +21,7 @@ const (
 )
 
 // largeTables are the base tables behind the large views, by name as the planner reports them.
-var largeTables = map[string]bool{"orders": true, "order_lines": true, "stock_balances": true, "quotes": true, "quote_lines": true, "purchasing_pos": true, "purchasing_po_lines": true, "invoices": true, "payments": true, "payment_allocations": true}
+var largeTables = map[string]bool{"orders": true, "order_lines": true, "stock_balances": true, "quotes": true, "quote_lines": true, "purchasing_pos": true, "purchasing_po_lines": true, "invoices": true, "payments": true, "payment_allocations": true, "delivery_runs": true, "delivery_stops": true}
 
 // planNode is the part of an EXPLAIN node the check reads.
 type planNode struct {

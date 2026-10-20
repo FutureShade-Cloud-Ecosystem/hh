@@ -41,6 +41,8 @@ var assistReaderViews = map[string]bool{
 	"ai.ar_aging":             true, // slice 7a
 	"ai.payments":             true, // slice 7a
 	"ai.payment_allocations":  true, // slice 7a
+	"ai.delivery_runs":        true, // slice 7b
+	"ai.delivery_stops":       true, // slice 7b
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
@@ -61,6 +63,10 @@ var viewOwnerColumns = map[string][]string{
 	"public.invoices":             {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
 	"public.payments":             {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
 	"public.payment_allocations":  {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+	"public.delivery_runs":        {"branch_id", "completed_at", "dispatched_at", "driver_id", "id", "run_no", "scheduled_date", "status", "truck_id"},                                                                                                                                             // slice 7b
+	"public.delivery_stops":       {"address_line", "branch_id", "city", "contact_name", "contact_phone", "delivered_at", "failure_reason", "id", "order_id", "postal_code", "run_id", "scheduled_date", "status", "stop_no", "time_window"},                                                       // slice 7b
+	"public.dispatch_trucks":      {"code", "id"},                                                                                                                                                                                                                                                  // slice 7b
+	"public.dispatch_drivers":     {"id", "name"},                                                                                                                                                                                                                                                  // slice 7b
 }
 
 func (r Roles) all() []string {
