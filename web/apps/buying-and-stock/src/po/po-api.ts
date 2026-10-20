@@ -14,6 +14,7 @@ import {
   staffInventory,
   staffProduct,
   staffPurchasing,
+  staffSettings,
   type ApiClient,
   type Branch,
   type InventoryReorderResult,
@@ -26,8 +27,52 @@ import {
   type PurchasingVendorSKUPage,
   type Result,
 } from "@hardscapehouse/api-client";
+import { houseDay, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type DeliveryMethod = "PICKUP" | "DELIVERY" | "UNKNOWN";
+
+/** A stalling connection must not hold the day: the zone read carries a short timeout. */
+const ZONE_READ_TIMEOUT_MS = 4_000;
+
+const zoneReads = new WeakMap<ApiClient, Promise<void>>();
+
+/**
+ * The dealer's business day zone is served on the buying-and-stock surface's config read
+ * (business_zone) and held by the kit; a read that fails keeps the default, so every screen still
+ * names a day, never a blank screen. One read serves a session: the promise is kept per client and
+ * dropped only when the read fails, so the next call retries.
+ */
+export function serveBuyingZone(client: ApiClient): Promise<void> {
+  const held = zoneReads.get(client);
+  if (held !== undefined) return held;
+  const read = staffSettings
+    .settingsGetSurfaceConfig(client, "buying-and-stock", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS })
+    .then((config) => {
+      if (!config.ok) {
+        zoneReads.delete(client);
+        return;
+      }
+      const before = houseZone();
+      serveHouseZoneFrom(config.value);
+      if (houseZone() !== before) zoneWatchers.get(client)?.forEach((repaint) => repaint());
+    });
+  zoneReads.set(client, read);
+  return read;
+}
+
+const zoneWatchers = new WeakMap<ApiClient, Set<() => void>>();
+
+/** Calls back when a zone that lands differs from the one in force, so the day words are painted again. */
+export function watchBuyingZone(client: ApiClient, repaint: () => void): void {
+  const held = zoneWatchers.get(client) ?? new Set<() => void>();
+  held.add(repaint);
+  zoneWatchers.set(client, held);
+}
+
+/** Starts the zone read beside a data read, never ahead of it: the list shows at once. */
+export function serveBuyingZoneBeside(client: ApiClient): void {
+  void serveBuyingZone(client);
+}
 
 export class PoApi {
   readonly #client: ApiClient;
@@ -36,11 +81,23 @@ export class PoApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
+  /** The dealer's day, after refreshing the served business zone from the surface config read. */
+  async dealersDay(now: Date = new Date()): Promise<string> {
+    await serveBuyingZone(this.#client);
+    return houseDay(now);
+  }
+
   shortfall(): Promise<Result<InventoryShortfallPage>> {
     return staffInventory.inventoryShortfall(this.#client);
   }
 
-  orders(): Promise<Result<PurchasingPOPage>> {
+  async orders(): Promise<Result<PurchasingPOPage>> {
+    serveBuyingZoneBeside(this.#client);
     return staffPurchasing.purchasingListPOs(this.#client);
   }
 
@@ -49,7 +106,8 @@ export class PoApi {
   }
 
   /** The branches the caller reaches: the name shown beside "Ship to". */
-  branches(): Promise<Result<Branch[]>> {
+  async branches(): Promise<Result<Branch[]>> {
+    serveBuyingZoneBeside(this.#client);
     return staffBranches.branchesList(this.#client);
   }
 

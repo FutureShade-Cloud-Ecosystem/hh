@@ -13,6 +13,10 @@ export const yardStyles = css`
     color: var(--hh-text);
     padding-bottom: calc(var(--hh-s-32) + var(--hh-safe-bottom));
   }
+  /* The Field frame's phone tab bar is fixed to the foot: the page clears it (the frame's FIELD_TABBAR_CLEARANCE). */
+  @media (max-width: 767.98px) {
+    :host { padding-bottom: calc(var(--hh-s-64) + var(--hh-s-24) + var(--hh-safe-bottom)); }
+  }
   main {
     max-width: 620px;
     margin: 0 auto;
@@ -415,10 +419,11 @@ export const yardStyles = css`
   .staged-ref { color: var(--hh-text-dim); }
 
   /* Every control this app draws sits at its own 56 px floor (the design
-     system's own floor is 44). The shared header's Switch role and Sign out
-     take the floor through its one host knob. */
-  hos-app-header { --hh-header-control-min: 56px; }
+     system's own floor is 44). The Field frame's controls take the floor
+     through its one host knob. */
+  hh-field-frame { --hh-field-control-min: 56px; }
   .header-extra {
+    margin-bottom: var(--hh-s-16);
     display: flex;
     align-items: center;
     gap: var(--hh-s-8);

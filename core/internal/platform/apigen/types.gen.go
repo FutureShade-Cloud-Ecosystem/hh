@@ -1297,8 +1297,9 @@ type AssistMessage struct {
 }
 
 type AssistChatRequest struct {
-	Question string           `json:"question"`
-	History  *[]AssistMessage `json:"history,omitempty"`
+	Question       string           `json:"question"`
+	ConversationId *string          `json:"conversation_id,omitempty"`
+	History        *[]AssistMessage `json:"history,omitempty"`
 }
 
 type AssistUsage struct {
@@ -1309,14 +1310,15 @@ type AssistUsage struct {
 }
 
 type AssistAnswer struct {
-	Text         string             `json:"text"`
-	Results      []AssistResult     `json:"results"`
-	LimitReached bool               `json:"limit_reached"`
-	Usage        *AssistUsage       `json:"usage,omitempty"`
-	Ran          []AssistInvocation `json:"ran"`
-	Clarify      *AssistClarify     `json:"clarify,omitempty"`
-	Carried      *[]string          `json:"carried,omitempty"`
-	Suggest      *[]string          `json:"suggest,omitempty"`
+	Text           string             `json:"text"`
+	Results        []AssistResult     `json:"results"`
+	LimitReached   bool               `json:"limit_reached"`
+	Usage          *AssistUsage       `json:"usage,omitempty"`
+	Ran            []AssistInvocation `json:"ran"`
+	Clarify        *AssistClarify     `json:"clarify,omitempty"`
+	Carried        *[]string          `json:"carried,omitempty"`
+	Suggest        *[]string          `json:"suggest,omitempty"`
+	ConversationId *string            `json:"conversation_id,omitempty"`
 }
 
 type AssistBudget struct {
@@ -1383,10 +1385,11 @@ type AssistUserLimitResetResult struct {
 }
 
 type AssistSettings struct {
-	Provider               string `json:"provider"`
-	Model                  string `json:"model"`
-	ChatEnabled            bool   `json:"chat_enabled"`
-	SpendVisibleToNonAdmin bool   `json:"spend_visible_to_non_admin"`
+	Provider               string  `json:"provider"`
+	Model                  string  `json:"model"`
+	Route                  *string `json:"route,omitempty"`
+	ChatEnabled            bool    `json:"chat_enabled"`
+	SpendVisibleToNonAdmin bool    `json:"spend_visible_to_non_admin"`
 }
 
 type AssistSettingsResponse struct {
