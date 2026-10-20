@@ -5679,12 +5679,12 @@ export type PricingFloorPreviewItem = {
   branch_code?: string;
   branch_name?: string;
   final_cents: number;
-  margin_bps: number;
-  floor_bps: number;
+  margin_bps?: number;
+  floor_bps?: number;
   price_uom: string;
   source: "CUSTOMER_PRODUCT_RULE" | "QUANTITY_BREAK" | "CUSTOMER_CATEGORY_RULE" | "CUSTOMER_OVERRIDE" | "TIER_CATEGORY" | "TIER_DEFAULT" | "LIST" | "PROMOTION";
   previous_final_cents: number;
-  previous_margin_bps: number;
+  previous_margin_bps?: number;
   already_under_floor: boolean;
 };
 export type PricingFloorPreview = {
@@ -6066,9 +6066,9 @@ export type PricingRebateAccrual = {
   source_type: "POS_SALE" | "ORDER" | "ADJUSTMENT";
   source_id?: string;
   qty_base: number;
-  basis_cents: number;
-  accrual_cents: number;
-  rate_note: string;
+  basis_cents?: number;
+  accrual_cents?: number;
+  rate_note?: string;
   accrued_at: string;
 };
 export type PricingRebateAccrualResult = {

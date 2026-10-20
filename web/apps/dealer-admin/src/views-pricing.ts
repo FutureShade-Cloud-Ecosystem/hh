@@ -51,6 +51,10 @@ import {
   CUSTOMER_TYPES,
   customerTypeWord,
   marginEmptyWords,
+  costCellWords,
+  ledgerTotalWords,
+  WITHHELD_FIGURE_WORDS,
+  marginCellWords,
   moneyWords,
   overrideEmptyWords,
   overrideValueWords,
@@ -488,8 +492,8 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                         <td>${floorItemWords(item)}</td>
                         <td class="num">${moneyWords(item.previous_final_cents)}</td>
                         <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${pctWords(item.margin_bps)}</td>
-                        <td class="num">${pctWords(item.floor_bps)}</td>
+                        <td class="num">${marginCellWords(item.margin_bps)}</td>
+                        <td class="num">${marginCellWords(item.floor_bps)}</td>
                         <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,
@@ -1613,7 +1617,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       <div class="card-head">
         <h2 class="card-title">Accrual ledger</h2>
         ${m.phase === "ready"
-          ? html`<span class="count" data-test="pr-ledger-total">${moneyWords(m.totalCents)} over ${m.count} ${m.count === 1 ? "claim" : "claims"}</span>`
+          ? html`<span class="count" data-test="pr-ledger-total">${ledgerTotalWords(m.totalCents, m.rows)}</span>`
           : nothing}
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
@@ -1646,14 +1650,14 @@ function renderLedger(model: PricingModel): TemplateResult {
                 <tbody>
                   ${m.rows.map(
                     (row) => html`
-                      <tr data-accrual=${row.accrual_cents}>
+                      <tr data-accrual=${row.accrual_cents ?? ""}>
                         <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
                         <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
                         <td><span class="chip">${row.source_type}</span></td>
-                        <td class="num">${moneyWords(row.basis_cents)}</td>
-                        <td class="mono dim">${row.rate_note}</td>
-                        <td class="num">${moneyWords(row.accrual_cents)}</td>
+                        <td class="num">${costCellWords(row.basis_cents)}</td>
+                        <td class="mono dim">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
+                        <td class="num">${costCellWords(row.accrual_cents)}</td>
                       </tr>
                     `,
                   )}
