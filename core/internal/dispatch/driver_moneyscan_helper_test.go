@@ -173,37 +173,80 @@ var freightRaiseForbiddenWholeValues = []string{
 	"8000",
 }
 
+var union15ForbiddenKeys = []string{
+	"value_cents",
+	"freight_cents",
+}
+
+var union15ForbiddenWholeValues = []string{
+	"353125",
+	"9500",
+}
+
+// findForbiddenDecodedJSON walks the decoded JSON in raw and returns every
+// match of forbiddenKeys (as an object key), forbiddenWholeValues (as a whole
+// number or whole string value), and (when forbidNull is true) "null" for any
+// JSON null value.
+func findForbiddenDecodedJSON(raw []byte, forbiddenKeys, forbiddenWholeValues []string, forbidNull bool) ([]string, error) {
+	w, err := walkDecodedJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	for _, forbidden := range forbiddenKeys {
+		for _, k := range w.Keys {
+			if strings.EqualFold(k, forbidden) {
+				found = append(found, k)
+			}
+		}
+	}
+	for _, forbidden := range forbiddenWholeValues {
+		for _, n := range w.Numbers {
+			if numberEqualsPlanted(n, forbidden) {
+				found = append(found, forbidden)
+			}
+		}
+		for _, s := range w.Strings {
+			if s == forbidden || numberEqualsPlanted(strings.TrimSpace(s), forbidden) {
+				found = append(found, forbidden)
+			}
+		}
+	}
+	if forbidNull && w.Nulls > 0 {
+		found = append(found, "null")
+	}
+	return found, nil
+}
+
 // assertFreightRaiseDriverCardJSON walks the decoded JSON of a freight raise
 // card and fails t if it carries any forbidden money key, any forbidden whole
 // number or whole string figure, or any JSON null value.
 func assertFreightRaiseDriverCardJSON(t testing.TB, drvJSON []byte) {
 	t.Helper()
-	w, err := walkDecodedJSON(drvJSON)
+	found, err := findForbiddenDecodedJSON(drvJSON, freightRaiseForbiddenKeys, freightRaiseForbiddenWholeValues, true)
 	if err != nil {
 		t.Fatalf("decode driver's card JSON: %v, %s", err, drvJSON)
 		return
 	}
-	for _, forbidden := range freightRaiseForbiddenKeys {
-		for _, k := range w.Keys {
-			if strings.EqualFold(k, forbidden) {
-				t.Fatalf("a driver's card carries forbidden key %q, %s", k, drvJSON)
-			}
-		}
+	for _, forbidden := range found {
+		t.Fatalf("a driver's card carries %q, %s", forbidden, drvJSON)
 	}
-	for _, forbidden := range freightRaiseForbiddenWholeValues {
-		for _, n := range w.Numbers {
-			if numberEqualsPlanted(n, forbidden) {
-				t.Fatalf("a driver's card carries forbidden number %s, %s", n, drvJSON)
-			}
-		}
-		for _, s := range w.Strings {
-			if s == forbidden || numberEqualsPlanted(strings.TrimSpace(s), forbidden) {
-				t.Fatalf("a driver's card carries forbidden string value %q, %s", s, drvJSON)
-			}
-		}
+}
+
+// assertUnion15DriverBoardJSON walks the decoded JSON of a driver's load board
+// and fails t if it carries any forbidden money key or forbidden whole number
+// or whole string figure.
+func assertUnion15DriverBoardJSON(t testing.TB, drvJSON []byte) {
+	t.Helper()
+	found, err := findForbiddenDecodedJSON(drvJSON, union15ForbiddenKeys, union15ForbiddenWholeValues, false)
+	if err != nil {
+		t.Fatalf("decode driver's load board JSON: %v, %s", err, drvJSON)
+		return
 	}
-	if w.Nulls > 0 {
-		t.Fatalf("a driver's card carries null, %s", drvJSON)
+	for _, forbidden := range found {
+		t.Fatalf("a driver's load board carries %q. The gate is DEFINED correctly and the struct tags "+
+			"are correct; what this asserts is that the one line joining them is still there. Got %s",
+			forbidden, drvJSON)
 	}
 }
 
@@ -460,6 +503,78 @@ func TestFreightRaise_DriverCardScanTeeth(t *testing.T) {
 			assertFreightRaiseDriverCardJSON(spy, []byte(tc.body))
 			if !spy.failed {
 				t.Fatalf("expected assertFreightRaiseDriverCardJSON to fail on %s (%s), but it passed", tc.name, tc.body)
+			}
+			if !strings.Contains(spy.msgs[0], tc.want) {
+				t.Fatalf("expected failure message %q to name %q", spy.msgs[0], tc.want)
+			}
+		})
+	}
+}
+
+func TestUnion15_DriverBoardScanTeeth(t *testing.T) {
+	cleanBoard := []byte(`{
+		"branch_id": "5d1b3f6e-0000-4000-9000-000000000001",
+		"date": "2026-10-20",
+		"value_visible": false,
+		"unassigned": [
+			{
+				"id": "0195f3a2-9500-7b12-9c34-353125000001",
+				"order_id": "0195f3a2-1111-7b12-9500-000000000002",
+				"status": "READY"
+			}
+		]
+	}`)
+	t.Run("board_with_ids_holding_9500_and_353125_passes", func(t *testing.T) {
+		spy := &spyTB{TB: t}
+		assertUnion15DriverBoardJSON(spy, cleanBoard)
+		if spy.failed {
+			t.Fatalf("expected board with ids holding 9500 and 353125 to pass, got failure: %v", spy.msgs)
+		}
+	})
+
+	mustFailCases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "carries_value_cents_key",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","value_cents":0}]}`,
+			want: "value_cents",
+		},
+		{
+			name: "carries_freight_cents_key",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","freight_cents":0}]}`,
+			want: "freight_cents",
+		},
+		{
+			name: "carries_whole_353125_number",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","stop_no":353125}]}`,
+			want: "353125",
+		},
+		{
+			name: "carries_whole_353125_string",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","notes":"353125"}]}`,
+			want: "353125",
+		},
+		{
+			name: "carries_whole_9500_number",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","stop_no":9500}]}`,
+			want: "9500",
+		},
+		{
+			name: "carries_whole_9500_string",
+			body: `{"value_visible":false,"unassigned":[{"id":"s-1","notes":"9500"}]}`,
+			want: "9500",
+		},
+	}
+
+	for _, tc := range mustFailCases {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &spyTB{TB: t}
+			assertUnion15DriverBoardJSON(spy, []byte(tc.body))
+			if !spy.failed {
+				t.Fatalf("expected assertUnion15DriverBoardJSON to fail on %s (%s), but it passed", tc.name, tc.body)
 			}
 			if !strings.Contains(spy.msgs[0], tc.want) {
 				t.Fatalf("expected failure message %q to name %q", spy.msgs[0], tc.want)
