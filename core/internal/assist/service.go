@@ -231,6 +231,12 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	}
 	spent, err := s.MonthSpend(ctx, c.UserID)
 	if err != nil {
+		if s.spend != nil {
+			// The spend table cannot be read, so nothing can be reserved: the plain unavailable
+			// answer, and the provider is not reached.
+			s.warn("assist: cannot read month spend, the question is not sent", "err", err)
+			return Answer{Text: UnavailableMessage, Results: []Result{}}, nil
+		}
 		return Answer{}, err
 	}
 	if OverBudget(spent, budget) {
