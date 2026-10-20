@@ -8,12 +8,14 @@ defineConsoleLegs({
   persona: "sales-manager",
   personaCard: "Sales manager",
   signedIn: async (page, roleName) => {
-    await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "", { timeout: 20_000 });
+    const band = page.locator("hh-shell-header");
+    await expect(band).toBeVisible({ timeout: 20_000 });
+    await band.locator("button.account").click();
     await expect(page.getByTestId("header-word")).toHaveText(roleName);
     await expect(page.locator("[data-widget]").first()).toBeVisible();
   },
   unavailable: async (page) => {
     await expect(page.getByText("The demo roles could not be loaded", { exact: false })).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator("hos-app-header")).not.toHaveAttribute("signed-in", "");
+    await expect(page.locator("hos-app-header")).toHaveCount(0);
   },
 });

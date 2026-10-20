@@ -60,3 +60,16 @@ test("the pin storage is the platform's when it works and memory when it throws"
   assert.equal(degraded.read("k"), "v");
   assert.equal(pinStorageFrom(undefined).read("missing"), null);
 });
+
+// GAPS-r2 row G1: the rail's pin menu (Pin as icons, Pin wide) persists at
+// the rail's container state through the same seam the host wires to the
+// rail, so a pinned posture survives a reload and silence stays the toggle.
+test("the rail's pin mode rides the host's seam: silence means off, a stored mode survives a reload", async () => {
+  const { RAIL_PIN_KEY, railPinFromStored, railPinToStored } = await import("@hardscapehouse/shell-chrome/src/shell-state.js");
+  const seam = pinStorageFrom(fakeStorage());
+  assert.equal(railPinFromStored(seam.read(RAIL_PIN_KEY)), "off", "nothing stored: the rail waits as the toggle");
+  seam.write(RAIL_PIN_KEY, railPinToStored("icons"));
+  assert.equal(railPinFromStored(seam.read(RAIL_PIN_KEY)), "icons", "Pin as icons persists at the container state");
+  seam.write(RAIL_PIN_KEY, railPinToStored("wide"));
+  assert.equal(railPinFromStored(seam.read(RAIL_PIN_KEY)), "wide", "Pin wide persists at the container state");
+});
