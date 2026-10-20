@@ -174,7 +174,7 @@ parent row `FOR UPDATE` and then wants a counter that a child write draws theref
 read for that shape. Fixed, each red first on a deterministic leg: the run row (`lockRunThenStopsSeqTx` and the
 sync cancel's pre-image, now `FOR NO KEY UPDATE`; stop create beside ReopenRun, MoveRunDate and the sync cancel),
 the last admin guard's customer row (`portal` `guardedAdminUpdate`, beside a team insert), and the credit memo
-(it now takes the order row and the invoice it reverses `FOR NO KEY UPDATE` before its insert, the order of steps
+(it now takes the order row, with the same `lockOrder` every invoice writer uses, and the invoice it reverses `FOR NO KEY UPDATE` before its insert, the order of steps
 1 and 3 above, beside an order row holder that then draws the invoices counter). Read and safe: the other
 `orders` lockers (every invoice writer takes the order row before the invoices counter, so there is no child
 write to meet; delivery stops and will call children are drawn by no order locker), the `payments` lockers
