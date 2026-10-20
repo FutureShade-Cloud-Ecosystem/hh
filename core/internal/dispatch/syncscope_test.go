@@ -32,7 +32,7 @@ import (
 // serialised key is one of these: the sync payload for stops carries
 // exactly what the contract declares and nothing else.
 var contractStopFields = map[string]bool{
-	"id": true, "branch_id": true, "order_id": true, "order_no": true,
+	"id": true, "branch_id": true, "order_id": true, "order_no": true, "lines": true,
 	"customer_name": true, "run_id": true, "run_no": true, "stop_no": true,
 	"scheduled_date": true, "status": true, "time_window": true,
 	"contact_name": true, "contact_phone": true, "address_line": true,

@@ -88,6 +88,15 @@ interface BranchRow {
 /** The most pages one refresh of the list reads: a runaway cursor ends here. */
 const MAX_LIST_PAGES = 40;
 
+const LIST_ERROR_WORDS = "The quotes did not load. Check the connection and press Refresh.";
+const LIST_REFUSAL_WORDS = "Your role cannot see this list. A manager can.";
+
+function listErrorWords(status: number | undefined, what: string): string {
+  if (status === 401 || status === 403) return LIST_REFUSAL_WORDS;
+  if (status === 409) return spokenRefusal(quoteErrorMessage(status, "", what));
+  return LIST_ERROR_WORDS;
+}
+
 /** The status tabs' own options, the closed set the segmented control renders. */
 const STATUS_TABS = [
   { label: "All", value: "" },
@@ -319,6 +328,18 @@ export class QdQuoteBuilder extends LitElement {
       color: var(--hos-text-dim, var(--hh-text-dim));
       font-size: 0.83rem;
     }
+    .listerr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--hh-s-12);
+      flex-wrap: wrap;
+      margin-top: var(--hh-s-12);
+      padding: var(--hh-s-8) var(--hh-s-12);
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: var(--hh-radius-control);
+      background: var(--hos-slate-warm, var(--hh-card));
+    }
     /* The approvals view stands in the list page's content place; the rows
        stand down while it is the page's content. */
     .approvalsview[data-open="false"] {
@@ -475,7 +496,9 @@ export class QdQuoteBuilder extends LitElement {
     // A newer read of the list began while this one was out (or while it followed the pages): its answer is the one to show.
     if (seq !== this.listSeq) return;
     if (!result.ok) {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list quotes"));
+      this.error = listErrorWords(result.status, "list quotes");
+      this.rows = [];
+      this.nextCursor = "";
       return;
     }
     this.rows = rows;
@@ -503,7 +526,7 @@ export class QdQuoteBuilder extends LitElement {
         const result = await client.listQuotes(this.statusFilter, this.nextCursor);
         if (seq !== this.listSeq || gen !== this.searchGen) return;
         if (!result.ok) {
-          this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "search the quotes"));
+          this.error = listErrorWords(result.status, "search the quotes");
           return;
         }
         const known = new Set(this.rows.map((r) => r.id));
@@ -532,7 +555,7 @@ export class QdQuoteBuilder extends LitElement {
     this.busy = false;
     if (seq !== this.listSeq) return;
     if (!result.ok) {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list more quotes"));
+      this.error = listErrorWords(result.status, "list more quotes");
       return;
     }
     const known = new Set(this.rows.map((r) => r.id));
@@ -694,6 +717,7 @@ export class QdQuoteBuilder extends LitElement {
     }
     if (action === "refresh") {
       void this.loadList();
+      this.reloadSessionPanels();
     }
     if (action === "more") {
       void this.loadMore();
@@ -813,8 +837,18 @@ export class QdQuoteBuilder extends LitElement {
           </div>
         </div>
         <div class="listmain" data-open=${this.approvalsOpen ? "false" : "true"}>
+          ${this.error !== ""
+            ? html`<div class="listerr" role="alert" data-testid=${rows.length === 0 ? "qb-list" : "qb-list-error"}>
+                <span class="err" data-testid="qb-list-error-text">${this.error}</span>
+                ${this.error === LIST_ERROR_WORDS
+                  ? button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })
+                  : nothing}
+              </div>`
+            : nothing}
           ${rows.length === 0
-            ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">${this.searching ? "Searching all the quotes…" : "No quotes."}</p>`
+            ? this.error === ""
+              ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">${this.searching ? "Searching all the quotes…" : "No quotes."}</p>`
+              : nothing
             : html`<ul style="margin-top: 0" data-testid="qb-list">
                 ${rows.map(
                   (r) => html`<li>
@@ -868,7 +902,6 @@ export class QdQuoteBuilder extends LitElement {
 
   private renderDesk() {
     return html`
-      ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
       <div class="desksplit" data-view=${routeIsQuotePage(this.route) ? "quote" : "list"}>
         ${this.renderListPage()}
         <section class="quotepage" aria-label="The quote">

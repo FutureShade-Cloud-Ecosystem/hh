@@ -32812,8 +32812,12 @@ components:
       properties:
         question:
           type: string
+        conversation_id:
+          type: string
+          description: The opaque id the server issued for this conversation. When present the history is rebuilt on the server from its exchange log and the history and ran of the request are ignored. It is honoured only for the same user and the same sign in (the bearer's jti); any other id starts a new conversation with no error.
         history:
           type: array
+          description: The v1 client kept history, used only when conversation_id is absent
           items:
             $ref: "#/components/schemas/AssistMessage"
     AssistUsage:
@@ -32869,6 +32873,9 @@ components:
           type: array
           items:
             type: string
+        conversation_id:
+          type: string
+          description: The opaque, server issued id of the conversation this exchange belongs to; send it on the next turn instead of history. Absent when the bearer carries no session id.
     AssistBudget:
       type: object
       description: A resolved allowance and where it came from
@@ -33052,8 +33059,13 @@ components:
           enum:
             - stub
             - anthropic
+            - routed
         model:
           type: string
+          description: An alias (tanyai-main, tanyai-alt, tanyai-premium, tanyai-ca), never a vendor model
+        route:
+          type: string
+          description: The escalation order for the routed provider, aliases comma separated
         chat_enabled:
           type: boolean
         spend_visible_to_non_admin:
@@ -35529,6 +35541,11 @@ components:
           format: date-time
         reopen_reason:
           type: string
+        lines:
+          type: array
+          description: What comes off the truck at this stop. Present only on the stops sync pull of a driver login, for that driver's own stops; absent when the lines are not recorded. Carries no money field of any kind.
+          items:
+            $ref: "#/components/schemas/DispatchDriverLine"
     DispatchPhotoMeta:
       type: object
       description: A POD photo without its bytes (the list read); bytes come only from the per-photo route
