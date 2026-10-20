@@ -549,3 +549,11 @@ type fixedZone string
 func (z fixedZone) BusinessZone(context.Context) (houseday.Zone, error) {
 	return houseday.NewZone(string(z))
 }
+
+func TestTheInputEstimateIsBytesOverThree(t *testing.T) {
+	req := CompletionRequest{Messages: []Message{{Role: RoleUser, Text: strings.Repeat("a", 300)}}}
+	// 300 text bytes + 16 framing = 316 bytes; three bytes a token, rounded up.
+	if got := estimateInputTokens(req); got != 106 {
+		t.Fatalf("estimate = %d, want 106 (316 bytes over 3 rounded up)", got)
+	}
+}

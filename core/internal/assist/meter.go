@@ -214,8 +214,8 @@ const UnavailableMessage = "The assistant isn't available right now. " +
 // reservation reserves for the reply. The Anthropic adapter's request ceiling is the same number.
 const MaxOutputTokens = 1024
 
-// estimateInputTokens is a deliberately generous count of the request's input: four bytes a token,
-// rounded up, over every message and every tool description. An under-estimate lets a reservation
+// estimateInputTokens is a deliberately generous count of the request's input: three bytes a token
+// (JSON heavy, numeric and non English text often runs under four), rounded up, over every message and every tool description. An under-estimate lets a reservation
 // pass a budget the call then overruns, so the error is made in the other direction.
 func estimateInputTokens(req CompletionRequest) int {
 	n := 0
@@ -228,7 +228,7 @@ func estimateInputTokens(req CompletionRequest) int {
 			n += len(a.Name) + len(a.Label) + len(a.Example) + 16
 		}
 	}
-	return (n + 3) / 4
+	return (n + 2) / 3
 }
 
 // exchange identity travels in the context so both calls of one Ask share an exchange id.
