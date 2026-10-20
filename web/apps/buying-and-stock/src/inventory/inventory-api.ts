@@ -57,6 +57,8 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 
+import { serveBuyingZone } from "../po/po-api.js";
+
 // ---- the shapes the core writes --------------------------------------------------------------------
 
 /** The on-hand rows. */
@@ -127,8 +129,9 @@ export class InventoryApi {
   }
 
   /** The branches the caller reaches: the names the screens show. */
-  branches(): Promise<Result<Branch[]>> {
-    return staffBranches.branchesList(this.#client);
+  async branches(): Promise<Result<Branch[]>> {
+    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
+    return branches;
   }
 
   /** The active catalogue: the pickers' lists. */

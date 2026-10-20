@@ -19,6 +19,7 @@ import {
   type InvCountSubmitCountsRequest,
   type Result,
 } from "@hardscapehouse/api-client";
+import { serveBuyingZone } from "../po/po-api.js";
 
 export class CountsApi {
   readonly #client: ApiClient;
@@ -28,8 +29,9 @@ export class CountsApi {
   }
 
   /** The branches the caller reaches: the names the sheets and the recon show. */
-  branches(): Promise<Result<Branch[]>> {
-    return staffBranches.branchesList(this.#client);
+  async branches(): Promise<Result<Branch[]>> {
+    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
+    return branches;
   }
 
   sheets(branchId?: string): Promise<Result<InvCountSheetPage>> {

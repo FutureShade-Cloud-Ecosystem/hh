@@ -130,10 +130,10 @@ function refused(res, status, fragment, inSource = fragment) {
   assert.ok(coreSource.includes(inSource), `the core's source does not contain the sentence "${inSource}": the stub invented it`);
 }
 
-const later = (days) => {
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const at = new Date(`${day}T12:00:00Z`);
-  at.setUTCDate(at.getUTCDate() + days);
+const later = (offset, zone) => {
+  const cur = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const at = new Date(`${cur}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + offset);
   return at.toISOString().slice(0, 10);
 };
 
@@ -243,7 +243,10 @@ test("placing moves a draft to ORDERED, and the product's incoming read answers 
   const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
   const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
-  const date = later(5);
+  const cfg = await call("GET", "/api/v1/surfaces/buying-and-stock/config");
+  assert.equal(cfg.status, 200);
+  holds("SettingsSurfaceConfig", cfg.json);
+  const date = later(5, cfg.json.business_zone);
   const dated = await call("PUT", `/api/v1/purchasing/pos/${made.json.po_id}/expected-date`, { expected_at: date });
   assert.equal(dated.status, 200);
   holds("PurchasingPODetail", dated.json);

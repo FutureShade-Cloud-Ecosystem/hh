@@ -19,6 +19,7 @@ import {
   type PurchasingTolerance,
   type Result,
 } from "@hardscapehouse/api-client";
+import { serveBuyingZone } from "../po/po-api.js";
 
 export class BillsApi {
   readonly #client: ApiClient;
@@ -27,8 +28,9 @@ export class BillsApi {
     this.#client = client;
   }
 
-  branches(): Promise<Result<Branch[]>> {
-    return staffBranches.branchesList(this.#client);
+  async branches(): Promise<Result<Branch[]>> {
+    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
+    return branches;
   }
 
   /** The register; the entry form keeps the orders a bill can be entered against. */

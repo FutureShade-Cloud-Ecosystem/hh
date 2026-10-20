@@ -1,8 +1,12 @@
 // The procurement slice's plain logic: the words for what the server answered,
 // who may do what the role may not, the shapes the core really writes, and the
 // quantity and money text. Nothing here computes money; the server decides.
-import { test } from "node:test";
+import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { ApiClient } from "@hardscapehouse/api-client";
+import { houseZone, resetHouseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
+import { ReceivingApi } from "../src/receiving/receiving-api.ts";
+import { startStub } from "./contract-kit.mjs";
 import {
   deliveryWord,
   dateWords,
@@ -27,6 +31,8 @@ import {
   totalDueVendorLabel,
 } from "../src/po/po-logic.ts";
 import { costCentsFromTyped, formatMoney, formatQty } from "../src/po/po-money.ts";
+
+afterEach(() => resetHouseZone());
 
 test("the shortfall is read from the contract's key, the one key the core writes", () => {
   const row = { sku: "A" };
@@ -208,6 +214,41 @@ test("an expected date of the house tomorrow reads tomorrow and a date-only valu
     assert.equal(relativeDay(houseToday), "today");
     assert.equal(dateWords(houseTomorrow).endsWith("(tomorrow)"), true);
   });
+});
+
+test("a receipt at a Pacific evening with the stub serving America/Los_Angeles reads today, never tomorrow", async () => {
+  const y = 2000 + 31;
+  // 21:30 in America/Los_Angeles on the second of the seventh: already 00:30 on the third in Toronto.
+  const pacificEvening = new Date(Date.UTC(y, 6, 3, 4, 30));
+  const pacificToday = ymd(y, 7, 2);
+  const stub = await startStub();
+  try {
+    await stub.post("/_stub/reset", { now: pacificEvening.getTime(), business_zone: "America/Los_Angeles" });
+    const client = new ApiClient({
+      baseUrl: stub.base,
+      headers: () => ({ Authorization: "Bearer stub-token", "X-Org": "hh-demo" }),
+    });
+    const receiving = new ReceivingApi(client);
+    await receiving.branches();
+    const worklist = await receiving.worklist();
+    assert.equal(worklist.ok, true);
+    const target = worklist.value.items.find((i) => i.po_no === "PO-PLM-136");
+    const detail = await receiving.order(target.po_id);
+    assert.equal(detail.ok, true);
+    const received = await receiving.receive(target.po_id, {
+      lines: [{ po_line_id: detail.value.lines[0].id, qty_base: 2 }],
+    });
+    assert.equal(received.ok, true);
+    withPinnedClock(pacificEvening, () => {
+      assert.equal(whenWords(received.value.received_at, pacificToday), "today");
+      assert.equal(houseZone(), "America/Los_Angeles");
+      assert.equal(houseDay(), pacificToday);
+      assert.equal(stampDay(received.value.received_at), pacificToday);
+      assert.equal(whenWords(received.value.received_at), "today");
+    });
+  } finally {
+    stub.stop();
+  }
 });
 
 test("what has landed reads as a count against what was ordered", () => {

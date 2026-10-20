@@ -14,6 +14,7 @@ import {
   staffInventory,
   staffProduct,
   staffPurchasing,
+  staffSettings,
   type ApiClient,
   type Branch,
   type InventoryReorderResult,
@@ -26,8 +27,22 @@ import {
   type PurchasingVendorSKUPage,
   type Result,
 } from "@hardscapehouse/api-client";
+import { houseDay, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type DeliveryMethod = "PICKUP" | "DELIVERY" | "UNKNOWN";
+
+/** A stalling connection must not hold the day: the zone read carries a short timeout. */
+const ZONE_READ_TIMEOUT_MS = 4_000;
+
+/**
+ * The dealer's business day zone is served on the buying-and-stock surface's config read
+ * (business_zone) and held by the kit; a read that fails keeps the default, so every screen still
+ * names a day, never a blank screen.
+ */
+export async function serveBuyingZone(client: ApiClient): Promise<void> {
+  const config = await staffSettings.settingsGetSurfaceConfig(client, "buying-and-stock", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS });
+  if (config.ok) serveHouseZoneFrom(config.value);
+}
 
 export class PoApi {
   readonly #client: ApiClient;
@@ -36,12 +51,19 @@ export class PoApi {
     this.#client = client;
   }
 
+  /** The dealer's day, after refreshing the served business zone from the surface config read. */
+  async dealersDay(now: Date = new Date()): Promise<string> {
+    await serveBuyingZone(this.#client);
+    return houseDay(now);
+  }
+
   shortfall(): Promise<Result<InventoryShortfallPage>> {
     return staffInventory.inventoryShortfall(this.#client);
   }
 
-  orders(): Promise<Result<PurchasingPOPage>> {
-    return staffPurchasing.purchasingListPOs(this.#client);
+  async orders(): Promise<Result<PurchasingPOPage>> {
+    const [, orders] = await Promise.all([serveBuyingZone(this.#client), staffPurchasing.purchasingListPOs(this.#client)]);
+    return orders;
   }
 
   order(id: string): Promise<Result<PurchasingPODetail>> {
@@ -49,8 +71,9 @@ export class PoApi {
   }
 
   /** The branches the caller reaches: the name shown beside "Ship to". */
-  branches(): Promise<Result<Branch[]>> {
-    return staffBranches.branchesList(this.#client);
+  async branches(): Promise<Result<Branch[]>> {
+    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
+    return branches;
   }
 
   /** A vendor's own codes for our SKUs (the draft's "vendor code" column). */
