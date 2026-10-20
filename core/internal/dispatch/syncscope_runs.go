@@ -585,19 +585,18 @@ func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 		return sync.RowState{}, fmt.Errorf("dispatch: begin runs sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocateSyncSeqTx(ctx, tx, runsSyncScope)
-	if err != nil {
-		return sync.RowState{}, err
-	}
-	delArm, delArg := d.leg(runDriverCol, 4)
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
+	delArm, delArg := d.leg(runDriverCol, 3)
 	var deleted bool
+	var seq int64
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_runs SET
 			deleted_at = now(),
-			updated_at = now(),
-			seq        = $3
+			updated_at = now()
 		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+delArm+`
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
+		RETURNING (deleted_at IS NOT NULL), seq`, id, f.OrgID, delArg).Scan(&deleted, &seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
