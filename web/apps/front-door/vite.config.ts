@@ -21,6 +21,12 @@ export default defineConfig({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    watch: {
+      usePolling: true,
+      interval: 20000,
+      binaryInterval: 20000,
+      ignored: ["**/node_modules/**"],
+    },
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,

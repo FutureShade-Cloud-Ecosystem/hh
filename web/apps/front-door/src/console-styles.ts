@@ -24,28 +24,28 @@ export const consoleStyles = css`
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
     border-radius: var(--hh-radius-control);
-    font-weight: 800;
-    font-size: 18px;
+    font-weight: 700;
+    font-size: 16px;
   }
   .dealer-names {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--hh-s-2);
     min-width: 0;
   }
   .dealer-name {
-    font-family: Bitter, Georgia, serif;
-    font-weight: 800;
-    font-size: 18px;
+    font-family: var(--hh-font-ui);
+    font-weight: 700;
+    font-size: 16px;
     letter-spacing: 0.01em;
-    line-height: 1.05;
+    line-height: 1.2;
     text-transform: uppercase;
   }
   .dealer-sub {
-    font-family: Bitter, Georgia, serif;
-    font-weight: 500;
+    font-family: var(--hh-font-ui);
+    font-weight: 600;
     font-size: 10px;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.12em;
     line-height: 1.2;
     text-transform: uppercase;
     color: var(--hh-text-dim);
@@ -56,13 +56,13 @@ export const consoleStyles = css`
   .signin-stage {
     display: grid;
     justify-items: center;
-    gap: var(--hh-s-24);
-    padding: var(--hh-s-40) var(--hh-s-16) var(--hh-s-64);
+    gap: var(--hh-s-16);
+    padding: var(--hh-s-64) var(--hh-s-16);
   }
   .signin-card {
     width: 100%;
-    max-width: 420px;
-    padding: var(--hh-s-32) var(--hh-s-24);
+    max-width: 460px;
+    padding: var(--hh-s-28) var(--hh-s-40) var(--hh-s-32);
     background: var(--hh-card);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hh-radius-card);
@@ -70,25 +70,33 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-16);
   }
+  .signin-card .dealer {
+    justify-self: center;
+  }
   .signin-card .dealer-mark {
     width: 44px;
     height: 44px;
   }
   .signin-card .dealer-name {
-    font-size: 22px;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.25;
   }
   .signin-title {
-    margin: var(--hh-s-8) 0 0;
-    font-size: 26px;
-    line-height: 1.15;
+    margin: 0;
+    text-align: center;
+    font-size: 20px;
+    line-height: 1.25;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
   }
   .signin-lead {
-    margin: calc(var(--hh-s-8) * -1) 0 0;
+    margin: calc(var(--hh-s-12) * -1) 0 0;
+    text-align: center;
     color: var(--hh-text-dim);
-    font-size: 15px;
-    line-height: 1.45;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
   }
   .signin-form {
     display: grid;
@@ -99,13 +107,16 @@ export const consoleStyles = css`
     gap: var(--hh-s-4);
   }
   .field label {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
+    line-height: 1.3;
   }
   .field input {
     width: 100%;
     min-height: 44px;
-    font-size: 16px;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.4;
   }
   .field input[readonly] {
     cursor: progress;
@@ -115,8 +126,10 @@ export const consoleStyles = css`
   }
   .signin-card .btn-wide {
     width: 100%;
-    min-height: 48px;
+    min-height: 44px;
+    font-size: 14px;
     font-weight: 600;
+    line-height: 1.2;
   }
   .signin-card .btn-primary:disabled {
     cursor: progress;
@@ -145,7 +158,9 @@ export const consoleStyles = css`
     align-items: center;
     gap: var(--hh-s-12);
     color: var(--hh-text-dim);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
   }
   .or::before,
   .or::after {
@@ -158,32 +173,32 @@ export const consoleStyles = css`
     flex: none;
     width: 18px;
     height: 18px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    border: 1px solid var(--hh-control-line);
-    font-size: 11px;
-    font-weight: 700;
+    display: block;
   }
   /* The status line: always rendered, empty at rest. An error is ink, with
      the words doing the work and a mark beside them, never colour alone. */
   .status {
     margin: 0;
     min-height: 1.5em;
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
     color: var(--hh-text-dim);
   }
   /* Empty at rest it takes no room of its own: the card's row gap beside it is cancelled, so the
      live region stays in the tree without a blank band under the lead. */
   .status:empty {
     margin-top: calc(var(--hh-s-16) * -1);
+    min-height: 0;
+    padding: 0;
+    border: none;
   }
   .status.error {
     color: var(--hh-danger);
-    font-weight: 600;
-    padding-inline-start: var(--hh-s-12);
-    border-inline-start: 3px solid var(--hh-danger);
+    font-weight: 400;
+    padding: var(--hh-s-8) var(--hh-s-12);
+    border: 1px solid var(--hh-danger);
+    border-radius: var(--hh-radius-control);
   }
   .methods-note {
     margin: 0;

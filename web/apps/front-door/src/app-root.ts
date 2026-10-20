@@ -241,7 +241,7 @@ export class FrontDoorApp extends HHElement {
       .controls button {
         white-space: nowrap;
         min-height: 0;
-        padding: 7px 12px;
+        padding: var(--hh-s-8) var(--hh-s-12);
         font-size: 11px;
         line-height: normal;
         color: var(--hh-text-dim);
