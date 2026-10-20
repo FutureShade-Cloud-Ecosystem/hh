@@ -202,6 +202,8 @@ test("Retire asks first, then retires and keeps the row, greyed", async ({ page 
   await page.getByTestId("pr-row").filter({ hasText: "Accessories" }).getByTestId("pr-retire").click();
   await expect(page.getByTestId("pr-confirm")).toContainText("history is kept");
   await page.getByRole("button", { name: "Cancel" }).click();
+  // Nothing-retired is read once the ask has gone: read at the click, it would pass whatever the click did next.
+  await expect(page.getByTestId("pr-confirm")).toHaveCount(0);
   expect((await pricingState(page)).rules.every((r) => r.is_active === true)).toBe(true);
   await page.getByTestId("pr-row").filter({ hasText: "Accessories" }).getByTestId("pr-retire").click();
   await page.getByTestId("pr-retire-confirm").click();

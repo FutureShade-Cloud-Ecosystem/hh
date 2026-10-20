@@ -4,7 +4,7 @@
 // two answers that can be lost on the way back. The stub is held to the core's shapes and sentences
 // by test/receiving-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { test, expect, openArea, stubRole, lowContrast, noSidewaysScroll } from "./helpers.js";
+import { test, expect, openArea, resetStub, procurementHandoff, stubRole, lowContrast, noSidewaysScroll } from "./helpers.js";
 
 const P = "/api/v1/purchasing";
 const auth = { Authorization: "Bearer x" };
@@ -219,13 +219,18 @@ test("a send whose answer was lost is the same attempt when pressed again, so th
 test("the manager's queue keeps the Value open column, as the ruling kept it", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
   // Change 5, R5: the queue's Value open column is the managers'; where cost is visible it stays.
-  const heads = (await page.locator("[data-queue] th").allTextContents()).map((t) => t.trim());
-  expect(heads).toContain("Value open");
+  // The queue is read from the core after the tab opens and the area shows only a reading note until
+  // that answer lands, so the head is waited for, never sampled once: a one shot read of the cells
+  // taken at the click returns an empty list on a slow runner.
+  await expect(page.locator("[data-queue] th", { hasText: "Value open" })).toHaveCount(1);
   await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toContainText("$");
 });
 
 test("where the policy hides cost the screen says so, shows no price or value, and draws no value column", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
+  // Let the first read land before the policy flips: flipped sooner, that read already answers
+  // hidden, the column check passes at once and the next click meets a desk busy with the Refresh.
+  await expect(page.locator("[data-queue-row]")).toHaveCount(3);
   // Change 5, R5: where the policy hides cost the column is not drawn at all, never a stub cell.
   await request.post("/_stub/flag", { data: { name: "costsHidden", value: true } });
   await page.getByRole("button", { name: "Refresh" }).click();
@@ -333,4 +338,43 @@ test("the queue's Expected cell never truncates: the relative day word reads who
   expect(minPx).toBeGreaterThanOrEqual(6.5 * 12);
   // The full cell width holds the whole phrase without horizontal overflow inside the cell.
   expect(floor.scrollW).toBeLessThanOrEqual(floor.clientW + 1);
+});
+
+test("a receipt at a Pacific evening with the stub serving America/Los_Angeles reads today, never tomorrow", async ({ page, request }) => {
+  const at = new Date();
+  at.setUTCHours(5, 30, 0, 0);
+  const pacificEvening = at.getTime();
+  const earlierSamePacific = pacificEvening - 2 * 3_600_000;
+
+  await request.post("/_stub/reset", { data: { now: pacificEvening, business_zone: "America/Los_Angeles" } });
+  await page.clock.setFixedTime(earlierSamePacific);
+  await page.addInitScript(procurementHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+  await page.locator("nav.areas").getByRole("button", { name: "Receiving" }).click();
+  await openOrder(page, "PO-PLM-136");
+  await recv(page).fill("4");
+  await page.getByRole("button", { name: "Receive goods", exact: true }).click();
+  await page.getByRole("button", { name: "Receive the goods" }).click();
+  await expect(page.locator("[data-receipt-row]").first().locator("td[data-label='Received']")).toHaveText("today");
+
+  await page.clock.setFixedTime(pacificEvening);
+  await recv(page).fill("2");
+  await page.getByRole("button", { name: "Receive goods", exact: true }).click();
+  await page.getByRole("button", { name: "Receive the goods" }).click();
+  await expect(page.locator("[data-receipt-row]")).toHaveCount(2);
+  await expect(page.locator("[data-receipt-row]").nth(0).locator("td[data-label='Received']")).toHaveText("today");
+  await expect(page.locator("[data-receipt-row]").nth(1).locator("td[data-label='Received']")).toHaveText("today");
+  await expect(page.locator("[data-queue-row]").first().locator("td[data-expected-col]")).toHaveText("in 2 days");
+});
+
+test("a stalling config route never holds the Receiving list: the rows show at once", async ({ page, request }) => {
+  await resetStub(request);
+  await request.post("/_stub/config", { data: { delay_ms: 8000 } });
+  await page.addInitScript(procurementHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible({ timeout: 2000 });
+  await page.locator("nav.areas").getByRole("button", { name: "Receiving" }).click();
+  await expect(page.locator("[data-queue-row]")).toHaveCount(3, { timeout: 2000 });
+  await expect(page.locator("[data-queue-row]").first()).toContainText("PO-PLM-141");
 });

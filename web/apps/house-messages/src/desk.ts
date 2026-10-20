@@ -201,6 +201,11 @@ export class MessagesDesk {
 
   // ---- loads ------------------------------------------------------------------------------------
 
+  /** The live feed's state: null before it starts. The frame's sync chip reads it. */
+  get live(): LiveState | null {
+    return this.#liveState;
+  }
+
   /** The first read of the desk: the caller's channels, then the live feed. */
   async load(): Promise<void> {
     this.#phase = "loading";

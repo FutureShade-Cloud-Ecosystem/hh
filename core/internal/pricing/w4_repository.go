@@ -460,7 +460,7 @@ func (r *Repository) VendorLedger(ctx context.Context, vendorID string, from, to
 	q := `SELECT a.id::text, a.program_id::text, p.code, a.vendor_id::text, a.product_id::text,
 	             COALESCE(pr.sku::text,''), COALESCE(a.branch_id::text,''), a.source_type,
 	             COALESCE(a.source_id::text,''), a.qty_base, a.basis_cents, a.accrual_cents,
-	             a.rate_note, a.accrued_at
+	             a.rate_note, a.accrued_at, p.basis
 	        FROM rebate_accruals a
 	        JOIN rebate_programs p ON p.id = a.program_id
 	        LEFT JOIN products pr ON pr.id = a.product_id
@@ -478,7 +478,7 @@ func (r *Repository) VendorLedger(ctx context.Context, vendorID string, from, to
 		var qty float64
 		if err := rows.Scan(&a.ID, &a.ProgramID, &a.ProgramCode, &a.VendorID, &a.ProductID,
 			&a.ProductSKU, &a.BranchID, &a.SourceType, &a.SourceID, &qty, &a.BasisCents,
-			&a.AccrualCents, &a.RateNote, &a.AccruedAt); err != nil {
+			&a.AccrualCents, &a.RateNote, &a.AccruedAt, &a.Basis); err != nil {
 			return VendorRebateLedger{}, err
 		}
 		a.QtyBase = qty

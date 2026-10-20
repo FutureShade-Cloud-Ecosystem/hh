@@ -57,6 +57,8 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
+
 // ---- the shapes the core writes --------------------------------------------------------------------
 
 /** The on-hand rows. */
@@ -126,8 +128,14 @@ export class InventoryApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
   /** The branches the caller reaches: the names the screens show. */
-  branches(): Promise<Result<Branch[]>> {
+  async branches(): Promise<Result<Branch[]>> {
+    serveBuyingZoneBeside(this.#client);
     return staffBranches.branchesList(this.#client);
   }
 

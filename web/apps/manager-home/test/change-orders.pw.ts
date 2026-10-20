@@ -38,6 +38,8 @@ test("a double press of Sign and apply sends one request", async ({ page, reques
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await page.locator(".kind-tab", { hasText: "Change orders" }).click();
   await page.locator("[data-approval]").first().getByRole("button", { name: "Sign and apply" }).click({ clickCount: 2 });
+  // The card leaves the list when the request is answered; the stub's log is read after that, never at the click.
+  await expect(page.locator("[data-approval]")).toHaveCount(1);
   const log = await (await request.get("/_stub/log")).json();
   const signApply = log.filter((entry: { method: string; path: string }) => entry.method === "POST" && entry.path.includes("/sign-apply"));
   expect(signApply).toHaveLength(1);

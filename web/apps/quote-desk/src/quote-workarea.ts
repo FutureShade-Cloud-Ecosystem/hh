@@ -80,6 +80,7 @@ import {
   marginPctLabel,
   marginPresent,
   qtyLabel,
+  quoteClampSplit,
   quoteFlowSteps,
   quotePanelTracks,
   quoteSplitFromPointer,
@@ -993,6 +994,11 @@ export class QdQuoteWorkarea extends LitElement {
     }
     .drafthint {
       margin: var(--hos-s-8, 8px) 0 0;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+    }
+    .fieldhint {
+      margin: var(--hos-s-4, 4px) 0 0;
       font-size: var(--qb-caption);
       color: var(--hos-text-dim, var(--hh-text-dim));
     }
@@ -3610,16 +3616,20 @@ export class QdQuoteWorkarea extends LitElement {
             Include product images
           </label>
         </div>
-        <div>
-          <label class="f" for="qb-notes">Customer notes</label>
+        <div class="wide">
+          <label class="f" for="qb-notes">Note to the customer</label>
           <input
             id="qb-notes"
             data-field="terms-notes"
             data-terms-field="notes"
             data-testid="qb-terms-notes"
+            aria-describedby="qb-notes-hint"
             maxlength="500"
             placeholder="Printed on the quote"
           />
+          <p class="fieldhint" id="qb-notes-hint" data-testid="qb-terms-notes-hint">
+            The customer sees this on their quote.
+          </p>
         </div>
       </div>
     </div>`;
@@ -3817,6 +3827,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>
           </div>`
         : this.renderSummaryPanel();
+    const leftPct = ws.arrangement === "PRIMARY_RIGHT" ? 100 - quoteClampSplit(ws.splitPct) : quoteClampSplit(ws.splitPct);
     const divider = html`<div
       class="divider"
       data-testid="qb-divider"
@@ -3824,6 +3835,9 @@ export class QdQuoteWorkarea extends LitElement {
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize panels"
+      aria-valuemin="20"
+      aria-valuemax="80"
+      aria-valuenow=${leftPct}
       tabindex="0"
     >
       <span class="grip" aria-hidden="true"></span>

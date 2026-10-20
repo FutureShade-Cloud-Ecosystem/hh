@@ -14,7 +14,7 @@
 //   with money laid on every read, none of it reaches the glass (the walk in
 //     money.pw.ts covers the poisoned half).
 import { test, expect } from "@playwright/test";
-import { resetStub, stubLog, useScenario, yardHandoff } from "./helpers.js";
+import { accountItem, resetStub, stubLog, useScenario, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -107,7 +107,7 @@ test("the sheet and its typed note do not outlive the person: switch role, and s
   await page.getByLabel("A note for the counter, optional").fill("the truck can take it Friday");
   // The shared phone changes hands: the next persona signs in and opens the
   // list. Nothing of the last person's may be on the glass.
-  await page.getByRole("button", { name: "Switch role" }).click();
+  await accountItem(page, "Switch role");
   await page.getByRole("button", { name: "Yard Team" }).click();
   await expect(page.locator("[data-pick-card]").first()).toBeVisible();
   await page.locator("[data-changes-door]").click();
@@ -115,7 +115,7 @@ test("the sheet and its typed note do not outlive the person: switch role, and s
   // The other way out leaves nothing behind either.
   await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
   await page.getByLabel("A note for the counter, optional").fill("the second pallet is damp");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await accountItem(page, "Sign out");
   await page.getByRole("button", { name: "Yard Team" }).click();
   await expect(page.locator("[data-pick-card]").first()).toBeVisible();
   await page.locator("[data-changes-door]").click();

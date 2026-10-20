@@ -50,7 +50,7 @@ func (r *keyedRail) RefundCard(_ context.Context, _ pgx.Tx, _ string, amountCent
 		// (HH-690 round 2, P1-2).
 		return "", &payment.DeclineError{RespCode: "05", RespText: "Do not honour"}
 	}
-	ref := fmt.Sprintf("rf_%d", len(r.byKey)+1)
+	ref := fmt.Sprintf("rf_%d_%s", len(r.byKey)+1, key())
 	r.byKey[idempotencyKey] = ref
 	r.amounts[idempotencyKey] = amountCents
 	return ref, nil
@@ -328,7 +328,7 @@ func (p *inFlightProbe) RefundCard(_ context.Context, tx pgx.Tx, _ string, _ int
 		return "", err
 	}
 	p.probed, p.attemptedSet = true, attempted
-	return "rp_two_tx_probe", nil
+	return "rp_two_tx_probe_" + p.refundKey, nil
 }
 
 // HH-690 on real Postgres: while the processor holds the refund call, the
@@ -376,7 +376,7 @@ SELECT status, refund_ref, processor_at, booked_at FROM pos_card_refund_attempts
 		t.Fatalf("the committed return closes the attempt BOOKED with its refs and times: %s %q %v %v",
 			status, refundRef, processorAt, bookedAt)
 	}
-	if refundRef != "rp_two_tx_probe" {
+	if refundRef != "rp_two_tx_probe_"+probe.refundKey {
 		t.Fatalf("the booked reversal ref is the processor's own answer, got %q", refundRef)
 	}
 }
@@ -397,7 +397,7 @@ func (r *outcomeRail) RefundCard(_ context.Context, _ pgx.Tx, _ string, _ int64,
 	if r.err != nil {
 		return "", r.err
 	}
-	return fmt.Sprintf("rp_outcome_%d", r.calls), nil
+	return fmt.Sprintf("rp_outcome_%d_%s", r.calls, key()), nil
 }
 
 func saleGatewayRef(t *testing.T, pool *pgxpool.Pool, orderID string) string {
@@ -430,12 +430,14 @@ func TestIntegration_Rails_TwoTransactionCardRefund_SameKeyChangedBodyRefusesAnd
 		sale.OrderID).Scan(&wholeLine); err != nil {
 		t.Fatalf("the sale's capture: %v", err)
 	}
+	// The ref is unique per run: the table refuses one ref on two attempts.
+	keptRef := "rp_p1_1_kept_" + key()
 	// An earlier attempt under this key whose tx 2 rolled back: the processor
 	// refunded the whole line and the books hold nothing.
 	if _, err := s.pool.Exec(context.Background(), `
 INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
-VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, 'rp_p1_1_kept', $6, 'UNBOOKED', 'the earlier tx 2 rolled back')`,
-		refundKey, sale.OrderID, trentonBranchID, cust, saleGatewayRef(t, s.pool, sale.OrderID), wholeLine); err != nil {
+VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, $7, $6, 'UNBOOKED', 'the earlier tx 2 rolled back')`,
+		refundKey, sale.OrderID, trentonBranchID, cust, saleGatewayRef(t, s.pool, sale.OrderID), wholeLine, keptRef); err != nil {
 		t.Fatalf("plant the earlier attempt: %v", err)
 	}
 
@@ -454,7 +456,7 @@ SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refu
 		Scan(&status, &refundRef, &amount); err != nil {
 		t.Fatalf("the attempt row: %v", err)
 	}
-	if status != "UNBOOKED" || refundRef != "rp_p1_1_kept" || amount != wholeLine {
+	if status != "UNBOOKED" || refundRef != keptRef || amount != wholeLine {
 		t.Fatalf("the UNBOOKED record keeps the processor's own ref and amount: %s %q %d", status, refundRef, amount)
 	}
 	if n := s.countAll(`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, sale.OrderID); n != 0 {
@@ -471,7 +473,7 @@ SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refu
 	}
 	if err := s.pool.QueryRow(context.Background(), `
 SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refund_key = $1`, refundKey).
-		Scan(&status, &refundRef, &amount); err != nil || status != "BOOKED" || refundRef != "rp_p1_1_kept" || amount != wholeLine {
+		Scan(&status, &refundRef, &amount); err != nil || status != "BOOKED" || refundRef != keptRef || amount != wholeLine {
 		t.Fatalf("the booked retry closes the record at the processor's amount: %s %q %d (%v)", status, refundRef, amount, err)
 	}
 	var booked int64
@@ -480,7 +482,7 @@ SELECT status, refund_ref, amount_cents FROM pos_card_refund_attempts WHERE refu
 		t.Fatalf("the books hold the processor's amount, got %d (%v)", booked, err)
 	}
 	if n := s.countAll(`SELECT count(*) FROM payments pr JOIN pos_returns r ON r.refund_payment_id = pr.id
- WHERE r.order_id = $1::uuid AND pr.gateway_ref = 'rp_p1_1_kept'`, sale.OrderID); n != 1 {
+ WHERE r.order_id = $1::uuid AND pr.gateway_ref = $2`, sale.OrderID, keptRef); n != 1 {
 		t.Fatal("the refund payment rides the reused reversal ref")
 	}
 }

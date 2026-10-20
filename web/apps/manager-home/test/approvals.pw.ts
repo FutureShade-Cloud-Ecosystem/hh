@@ -27,10 +27,9 @@ test("the five kinds of the closed vocabulary and the change queue sit as tabs, 
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
   await expect(tabs).toHaveCount(6);
-  // The counts are the core's own, read when the view opens, so the check waits for them.
-  await expect
-    .poll(async () => tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim())))
-    .toEqual(["Margin 1", "Credit 0", "Cash On Demand 0", "Journal entry 0", "Freight above quote 2", "Change orders 2"]);
+  // The counts on the tabs arrive with the queue's read, after the tabs are drawn: the words are waited for, never sampled once.
+  // The counts are the core's own, so the words are UX-47's: one margin request waiting, the two freight raises, the change queue.
+  await expect(tabs).toHaveText(["Margin 1", "Credit 0", "Cash On Demand 0", "Journal entry 0", "Freight above quote 2", "Change orders 2"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 

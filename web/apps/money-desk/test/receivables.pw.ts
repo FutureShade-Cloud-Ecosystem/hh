@@ -264,7 +264,8 @@ test("a lost answer then a changed cheque number sends the same key; the refusal
   // kept for the next press, and the account reloads so the check the words ask for reads the balances.
   await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
   await page.getByRole("button", { name: "Record payment" }).click();
-  expect(posts).toHaveLength(2);
+  // The route handler records the post when the request leaves the page, which can be after the click returns.
+  await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(page.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(page.locator("[data-error]")).toContainText("press Record payment to record this one");
@@ -307,7 +308,7 @@ test("a held key re-used for a different payment: the error words say both, the 
   await page.locator("[data-field='receive-amount']").fill("50.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 5000");
   await page.getByRole("button", { name: "Record payment" }).click();
-  expect(posts).toHaveLength(2);
+  await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(page.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
@@ -369,12 +370,15 @@ test("the same re-use from a duplicated tab: the copied key refuses the new cheq
   await expect(tabB.locator("[data-card]")).toHaveCount(4);
   await tabB.locator("[data-register-row]", { hasText: "Granite Edge Landscaping" }).first().getByRole("button").click();
   await expect(tabB.getByRole("heading", { name: "Granite Edge Landscaping (demo)" })).toBeVisible();
+  // The row's invoice arrives prefilled once the account has loaded, and that read overwrites the picks and the
+  // amount: the clear, the pick and the typing below wait for it, as the other tab's openAccount does.
+  await expect(tabB.locator("[data-field='receive-amount']")).not.toHaveValue("");
   await tabB.getByRole("button", { name: "Clear" }).first().click();
   await tabB.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await tabB.locator("[data-field='receive-amount']").fill("50.00");
   await tabB.locator("[data-field='receive-reference']").fill("Cheque 5000");
   await tabB.getByRole("button", { name: "Record payment" }).click();
-  expect(postsB).toHaveLength(1);
+  await expect.poll(() => postsB.length).toBe(1);
   expect(postsB[0]?.idempotency_key).toBe(posts[0]?.idempotency_key);
   await expect(tabB.locator("[data-error]")).toContainText("This payment was not recorded. The earlier press was recorded as a different payment.");
   await expect(tabB.locator("[data-notice]")).toHaveCount(0);
@@ -1006,4 +1010,90 @@ test("the empty world: each screen says so in words", async ({ page, request }) 
   await page.getByRole("button", { name: "Credit holds", exact: true }).click();
   await expect(page.locator(".empty", { hasText: "No account is on hold." })).toBeVisible();
   await request.post("/_stub/reset");
+});
+
+// ---- the account reads every invoice, open and paid (audit B1, B2) ---------------------------------------------------
+
+test("an account arrived at from a past due row lists its overdue invoice, prefills the payment, picks it with Pick all open, and offers Remind", async ({ page, request }) => {
+  await openDesk(page, request);
+  const reads: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/v1/ar/register?") && r.url().includes("customer_id=")) reads.push(r.url());
+  });
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByRole("heading", { name: "Granite Edge Landscaping (demo)" })).toBeVisible();
+  // The account holds one paid and two open invoices: the open ones are listed, the paid one stays for context.
+  const overdue = page.locator("[data-invoice-row]", { hasText: "INV-1002" });
+  await expect(overdue).toBeVisible();
+  await expect(overdue.getByRole("checkbox")).toBeVisible();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1010" })).toContainText("paid");
+  await expect(page.locator("[data-field='receive-amount']")).toHaveValue("$960.00");
+  await expect(overdue.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await expect(overdue.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1001" }).getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeEnabled();
+  await expect(page.locator("[data-open-balance]")).not.toContainText("no figure");
+  await expect(page.getByText("Open balance")).toHaveCount(0);
+  // No read of the account used the chip that means paid invoices only.
+  expect(reads.length).toBeGreaterThan(0);
+  expect(reads.filter((u) => /chip=PAID/i.test(u))).toEqual([]);
+});
+
+test("when the account's invoices cannot be read the screen says so with a way to try again, never an empty table", async ({ page, request }) => {
+  await openDesk(page, request);
+  let failing = true;
+  await page.route("**/api/v1/ar/register?*customer_id=*", (route) => (failing ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }) : route.continue()));
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoices-failed]")).toHaveText("We could not load this account's invoices. Try again.");
+  await expect(page.locator("[data-invoice-row]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeDisabled();
+  failing = false;
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toBeVisible();
+  await expect(page.locator("[data-invoices-failed]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeEnabled();
+});
+
+test("Remind is offered only while the account has an overdue invoice", async ({ page, request }) => {
+  await openDesk(page, request);
+  await page.route("**/api/v1/ar/register?*customer_id=*", async (route) => {
+    const answer = await route.fetch();
+    const body = await answer.json();
+    body.items = body.items.map((r: { days_overdue: number }) => ({ ...r, days_overdue: 0 }));
+    await route.fulfill({ response: answer, body: JSON.stringify(body) });
+  });
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeDisabled();
+});
+
+test("a draft or a void invoice is neither listed as open nor picked, and never reaches the allocation", async ({ page, request }) => {
+  await openDesk(page, request);
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1002" })).toBeVisible();
+  // The account's read carries one draft (INV-1201) and one void (INV-1202), as the core's no chip read does.
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1201" })).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await expect(page.locator("[data-invoice-row] [role='checkbox'][aria-checked='true']")).toHaveCount(2);
+  await page.locator("[data-field='receive-amount']").fill("$5,000.00");
+  await page.locator("[data-field='receive-amount']").blur();
+  await expect(page.locator("[data-allocation]")).not.toContainText("INV-1201");
+  await expect(page.locator("[data-allocation]")).not.toContainText("INV-1202");
+  // The All view shows the paid history but still no draft or void.
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1010" })).toBeVisible();
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1201" })).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
+});
+
+test("while the invoices are loading or have failed, Remind gives no reason that reads as nothing owed", async ({ page, request }) => {
+  await openDesk(page, request);
+  await page.route("**/api/v1/ar/register?*customer_id=*", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
+  await page.locator("[data-register-row]", { hasText: "INV-1002" }).getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-invoices-failed]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remind", exact: true })).toBeDisabled();
+  await expect(page.getByText("Nothing on this account is overdue.")).toHaveCount(0);
 });

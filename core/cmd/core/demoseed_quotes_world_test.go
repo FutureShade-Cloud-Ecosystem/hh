@@ -187,6 +187,19 @@ func qwApply(t *testing.T) (proposed, created int) {
 // the apply that adds the quote world adds the contractor world in the same transaction (the account
 // exists by then), and demoseed_contractor_plan_test.go and internal/demo/world_contractor_test.go
 // hold that world; these fingerprints are about the OTHER worlds not moving.
+// qwSeqMoved is the SQL that drops the columns the demo seq repair moves (the sync seq, the org stamp
+// and the row version an update bumps) from a table's fingerprint, for the tables the repair names
+// alone. It is the named mover of the apply that follows the populate: every other column of those
+// rows still counts, so a status, a price or a name moving on them is seen.
+func qwSeqMoved(table string) string {
+	for _, s := range demoSeqTables {
+		if s.table == table {
+			return " - '{seq,org_id,row_version}'::text[]"
+		}
+	}
+	return ""
+}
+
 func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -194,7 +207,7 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 		var sum string
 		if err := pool.QueryRow(ctx, `
 			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-			  FROM (SELECT to_jsonb(r)::text AS line
+			  FROM (SELECT (to_jsonb(r)`+qwSeqMoved(table)+`)::text AS line
 			          FROM (SELECT *, xmin::text AS row_version FROM `+table+qwWithoutContractor(table)+`) r) s`).Scan(&sum); err != nil {
 			t.Fatalf("fingerprint %s: %v", table, err)
 		}
@@ -226,7 +239,7 @@ func qwWithoutContractor(table string) string {
 // the seed's org stamp addresses. The stamp cannot land on the first apply (the org row does not
 // exist until the populate provisions it), so it lands on the first apply AFTER the populate, which
 // in this world is the one that adds the quotes. The fingerprints around that apply keep these rows
-// in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
+// in, minus the columns the stamp itself moves (see qwDriverStampColumns), and the assertion
 // below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
 	stamp := qwClock.In(seedLocation()).Format("20060102")
@@ -235,9 +248,10 @@ func qwDriverDayIDs() []string {
 	return ids
 }
 
-// qwDriverStampColumns are the only columns the org stamp moves on a Driver day row: the org it
-// sets, the updated_at it bumps, and the row version (xmin) any update changes.
-var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
+// qwDriverStampColumns are the only columns the org stamp and the seq repair move on a Driver day
+// row: the org it sets, the updated_at it bumps, the sync seq the repair draws, and the row version
+// (xmin) any update changes.
+var qwDriverStampColumns = []string{"org_id", "updated_at", "seq", "row_version"}
 
 // qwTaskRepairColumns are the only columns the task sync repair (repairDemoTaskSync) moves on a
 // demo task row: the org it stamps, the seq it draws from the type's counter, and the row version
@@ -285,7 +299,7 @@ func qwFingerprintOrdersRep(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN (to_jsonb(r) - '{seq,org_id,row_version}'::text[]) - $2::text[] ELSE to_jsonb(r) - '{seq,org_id,row_version}'::text[] END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM orders`+qwWithoutContractor("orders")+`) r) s`,
 		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint orders: %v", err)
@@ -311,7 +325,7 @@ func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN (to_jsonb(r) - '{seq,org_id,row_version}'::text[]) - $2::text[] ELSE to_jsonb(r) - '{seq,org_id,row_version}'::text[] END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
 		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint %s: %v", table, err)
@@ -490,6 +504,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if runsStamped != 1 || stopsStamped != len(driverDayIDs)-1 {
 		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
 			runsStamped, stopsStamped, len(driverDayIDs)-1)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT (SELECT count(*) FROM delivery_runs WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL)
+		+ (SELECT count(*) FROM delivery_stops WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL)`, driverDayIDs); n != len(driverDayIDs) {
+		t.Errorf("the seq repair left %d of %d Driver day rows on the sync feeds, want all of them", n, len(driverDayIDs))
 	}
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
 		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {

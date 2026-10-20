@@ -78,9 +78,11 @@ interface AddState {
   chosen: string | null;
   busy: boolean;
   error: string;
+  createdPlan: { id: string; name: string } | null;
 }
 
 const addStates = new WeakMap<Page, AddState>();
+const createdPlans = new WeakMap<Page, { id: string; name: string }>();
 
 function addModal(state: AddState): TemplateResult {
   const needsName = state.chosen === "new";
@@ -123,7 +125,8 @@ export function productCommand(action: string, control: Element, page: Page): bo
   if (action === "add-to-plan-open") {
     const data = lastProduct.get(page);
     if (data === undefined) return true;
-    addStates.set(page, { product: data.product, plans: data.plans, chosen: null, busy: false, error: "" });
+    createdPlans.delete(page);
+    addStates.set(page, { product: data.product, plans: data.plans, chosen: null, busy: false, error: "", createdPlan: null });
     const state = addStates.get(page) as AddState;
     page.openModal("add-plan-modal", () => addModal(state), { "plan-qty": "1", "plan-uom": data.product.base_uom });
     return true;
@@ -157,19 +160,30 @@ export async function productAddToPlan(
   uom: string,
 ): Promise<{ ok: boolean; error?: string; status?: number; projectId?: string; projectName?: string }> {
   const id = page.route.productId ?? "";
+  const state = addStates.get(page);
   let planId = "planId" in target ? target.planId : "";
   let projectName = "newPlanName" in target ? target.newPlanName : "";
   if ("newPlanName" in target) {
-    const created = await tenantProcurement.tenantCreateProcurementProject(page.client, { name: target.newPlanName });
-    if (!created.ok) return { ok: false, error: created.error, status: created.status };
-    planId = created.value.id;
+    const prior = state?.createdPlan ?? createdPlans.get(page) ?? null;
+    if (prior !== null && prior.name === target.newPlanName) {
+      planId = prior.id;
+    } else {
+      const created = await tenantProcurement.tenantCreateProcurementProject(page.client, { name: target.newPlanName });
+      if (!created.ok) return { ok: false, error: created.error, status: created.status };
+      planId = created.value.id;
+      const saved = { id: planId, name: target.newPlanName };
+      if (state !== undefined) state.createdPlan = saved;
+      createdPlans.set(page, saved);
+    }
   } else {
     const projects = await tenantProcurement.tenantListProcurementProjects(page.client);
     const plan = projects.ok ? projects.value.projects.find((p) => p.id === target.planId) : undefined;
     projectName = plan?.name ?? "the plan";
   }
   const line = await tenantProcurement.tenantAddProcurementLine(page.client, planId, { product_id: id, qty_entered: qty, uom });
-  if (!line.ok) return { ok: false, error: line.error, status: line.status };
+  if (!line.ok) return { ok: false, error: line.error, status: line.status, projectId: planId, projectName };
+  if (state !== undefined) state.createdPlan = null;
+  createdPlans.delete(page);
   return { ok: true, projectId: planId, projectName };
 }
 

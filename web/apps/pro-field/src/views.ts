@@ -13,9 +13,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantAddress, TenantInvite, TenantMe, TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest, TenantUser } from "@hardscapehouse/api-client";
 import {
-  houseDay,
-  money,
-  qtyWithUnit,
   roleLabel,
   statusChip,
   statusWords,
@@ -26,9 +23,11 @@ import {
 import { button, segmented } from "@hardscapehouse/design-system/src/primitives.js";
 import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
+import { dayWords, priceWords, qtyWords } from "./figures.js";
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 import { addressKindWords } from "./account.js";
+import { roleChangeConfirmWords } from "./team.js";
 
 // ---- the section row ----------------------------------------------------------------------------
 
@@ -52,7 +51,7 @@ export function orderRowWords(order: TenantOrder): string {
     order.order_no,
     tracking === null ? statusWords("order", order.status) : TRACKING_WORDS[tracking],
     fulfillmentWords(order.fulfillment),
-    money(order.total_cents),
+    priceWords(order.total_cents),
     shortDay2(order.requested_date),
   ].join(" ");
 }
@@ -62,10 +61,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /** The dealer's short day for a bare day the core ships; anything else reads as nothing. */
 function shortDay2(value: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (m === null) return "";
+  if (m === null) return "Not set";
   const month = Number(m[2]);
   const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+  if (month < 1 || month > 12 || day < 1 || day > 31) return "Not set";
   return `${MONTHS[month - 1]} ${day}`;
 }
 
@@ -74,7 +73,7 @@ export function orderRow(order: TenantOrder): TemplateResult {
   return html`<li class="orow">
     <button type="button" class="rowbtn" data-action="open-order" data-order-id="${order.id}" data-testid="order-row">
       <span class="cell head"><span class="mono name">${order.order_no}</span>${tracking === null ? statusChip("order", order.status) : trackingChip(tracking)}</span>
-      <span class="cell"><span class="dim">${fulfillmentWords(order.fulfillment)}</span><span class="dim">Asked for ${shortDay2(order.requested_date)}</span><span class="mono total">${money(order.total_cents)}</span></span>
+      <span class="cell"><span class="dim">${fulfillmentWords(order.fulfillment)}</span><span class="dim">Wanted by ${shortDay2(order.requested_date)}</span><span class="mono total">${priceWords(order.total_cents)}</span></span>
     </button>
   </li>`;
 }
@@ -85,14 +84,18 @@ export interface OrdersListProps {
   phase: Phase;
   orders: readonly TenantOrder[];
   emptyWords: string;
+  truncated?: boolean;
 }
 
+export const ORDERS_TRUNCATED_WORDS = "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.";
+
 export function ordersList(props: OrdersListProps): TemplateResult {
+  const truncatedNote = props.truncated ? html`<p class="dim" role="status" data-testid="orders-truncated">${ORDERS_TRUNCATED_WORDS}</p>` : nothing;
   switch (props.phase) {
     case "ready":
-      return html`<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
+      return html`${truncatedNote}<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
     case "empty":
-      return html`<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
+      return html`${truncatedNote}<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
     case "error":
       return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
     case "refusal":
@@ -137,7 +140,7 @@ export function orderView(props: OrderViewProps): TemplateResult {
       <p class="facts">
         <span>${fulfillmentWords(o.fulfillment)}</span>
         <span class="dim" data-testid="order-placed">Placed ${placedDay(o.created_at)}</span>
-        <span class="mono">${money(o.total_cents)}</span>
+        <span class="mono">${priceWords(o.total_cents)}</span>
       </p>
       ${late === "" ? nothing : html`<p class="late" role="note">${late}</p>`}
       ${o.status === "CANCELLED" ? html`<p class="dim">${o.order_no} was cancelled. Nothing further is scheduled.</p>` : nothing}
@@ -148,15 +151,8 @@ export function orderView(props: OrderViewProps): TemplateResult {
     ${props.returns ?? nothing}`;
 }
 
-// The dealer's day for the placed line and the journey's first step.
-function placedDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (m === null) return "";
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
-  return `${MONTHS[month - 1]} ${day}`;
-}
+// The dealer's day for the placed line, read through the dealer's zone like the journey's first step.
+const placedDay = dayWords;
 
 function journeyCard(o: TenantOrderDetail): TemplateResult {
   const steps = timelineSteps(o);
@@ -186,15 +182,15 @@ function itemsCard(o: TenantOrderDetail): TemplateResult {
     <ul class="lines" data-testid="order-lines">
       ${o.lines.map(
         (line) => html`<li class="line">
-          <span class="linehead"><span>${line.description}</span><span class="mono">${money(line.line_total_cents)}</span></span>
-          <span class="dim">${qtyWithUnit(line.qty_entered, line.uom_entered)} at ${money(line.unit_price_cents)}</span>
+          <span class="linehead"><span>${line.description}</span><span class="mono">${priceWords(line.line_total_cents)}</span></span>
+          <span class="dim">${qtyWords(line.qty_entered, line.uom_entered)} at ${priceWords(line.unit_price_cents)}</span>
         </li>`,
       )}
     </ul>
     <p class="totals" data-testid="order-totals">
-      <span><span class="dim">Subtotal</span> <span class="mono">${money(o.subtotal_cents)}</span></span>
-      <span><span class="dim">Tax</span> <span class="mono">${money(o.tax_cents)}</span></span>
-      <span><span class="dim">Total</span> <span class="mono">${money(o.total_cents)}</span></span>
+      <span><span class="dim">Subtotal</span> <span class="mono">${priceWords(o.subtotal_cents)}</span></span>
+      <span><span class="dim">Tax</span> <span class="mono">${priceWords(o.tax_cents)}</span></span>
+      <span><span class="dim">Total</span> <span class="mono">${priceWords(o.total_cents)}</span></span>
     </p>
   </div>`;
 }
@@ -223,7 +219,7 @@ export function projectsList(props: ProjectsProps): TemplateResult {
               <span class="cell">
                 <span class="dim">${project.job_address === "" ? "No address on the job" : project.job_address}</span>
                 <span class="dim">${project.order_count} ${project.order_count === 1 ? "order" : "orders"} · ${project.delivery_count} ${project.delivery_count === 1 ? "delivery" : "deliveries"}</span>
-                <span class="mono total">${money(project.spend_cents)}</span>
+                <span class="mono total">${priceWords(project.spend_cents)}</span>
               </span>
             </button>
           </li>`,
@@ -247,7 +243,7 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
       <h2>${data.name}</h2>
       ${data.job_address === "" ? nothing : html`<p class="dim">${data.job_address}</p>`}
       <p class="facts" data-testid="project-stats">
-        <span><span class="dim">Spend</span> <span class="mono">${money(data.spend_cents)}</span></span>
+        <span><span class="dim">Spend</span> <span class="mono">${priceWords(data.spend_cents)}</span></span>
         <span><span class="dim">Orders</span> ${data.order_count}</span>
         <span><span class="dim">Deliveries</span> ${data.delivery_count}</span>
         <span class="variance-${variance.tone}" data-testid="project-variance"><span class="dim">Against the quote</span> ${variance.words}</span>
@@ -261,7 +257,7 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
             ${data.orders.map(
               (order) => html`<li class="line">
                 <button type="button" class="rowbtn slim" data-action="open-order" data-order-id="${order.id}" data-testid="project-order-row">
-                  <span class="cell"><span class="mono name">${order.order_no}</span>${statusChip("order", order.status)}<span class="mono total">${money(order.total_cents)}</span></span>
+                  <span class="cell"><span class="mono name">${order.order_no}</span>${statusChip("order", order.status)}<span class="mono total">${priceWords(order.total_cents)}</span></span>
                 </button>
               </li>`,
             )}
@@ -274,8 +270,8 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
         : html`<ul class="lines" data-testid="project-invoices">
             ${data.invoices.map(
               (invoice) => html`<li class="line">
-                <span class="linehead"><span class="mono name">${invoice.invoice_no}</span><span class="mono">${money(invoice.balance_cents)}</span></span>
-                <span class="cell">${statusChip("invoice", invoice.status)}<span class="dim">of ${money(invoice.total_cents)}</span></span>
+                <span class="linehead"><span class="mono name">${invoice.invoice_no}</span><span class="mono">${priceWords(invoice.balance_cents)}</span></span>
+                <span class="cell">${statusChip("invoice", invoice.status)}<span class="dim">of ${priceWords(invoice.total_cents)}</span></span>
               </li>`,
             )}
           </ul>`}
@@ -299,6 +295,8 @@ export interface TeamProps {
   phase: Phase;
   users: readonly TenantUser[];
   invites: readonly TenantInvite[];
+  currentUserId: string;
+  roleDraft: { userId: string; role: string } | null;
   inviteBusy: boolean;
   inviteEmail: string;
   notice: string;
@@ -316,7 +314,7 @@ export function teamView(props: TeamProps): TemplateResult {
       ${props.notice === "" ? nothing : html`<p class="notice" role="status" data-testid="team-notice">${props.notice}</p>`}
       ${props.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="team-error">${props.error}</p>`}
       <ul class="lines" data-testid="team-members">
-        ${props.users.map((user) => memberRow(user))}
+        ${props.users.map((user) => memberRow(user, props.currentUserId, props.roleDraft))}
       </ul>
     </div>
     <div class="card">
@@ -327,7 +325,7 @@ export function teamView(props: TeamProps): TemplateResult {
             ${props.invites.map(
               (invite) => html`<li class="line">
                 <span class="linehead"><span class="mono name">${invite.email}</span><span class="dim">${roleLabel(invite.role)}</span></span>
-                <span class="dim">Ends ${houseDay(invite.expires_at)}</span>
+                <span class="dim">Ends ${dayWords(invite.expires_at)}</span>
               </li>`,
             )}
           </ul>`}
@@ -353,7 +351,7 @@ export function teamView(props: TeamProps): TemplateResult {
     </div>`;
 }
 
-function memberRow(user: TenantUser): TemplateResult {
+function memberRow(user: TenantUser, currentUserId: string, roleDraft: { userId: string; role: string } | null): TemplateResult {
   return html`<li class="line" data-user-id="${user.id}" data-testid="member-row">
     <span class="linehead"><span class="name">${user.name}</span><span class="dim">${statusChip("team", user.status)}</span></span>
     <span class="dim mono">${user.email}</span>
@@ -363,8 +361,19 @@ function memberRow(user: TenantUser): TemplateResult {
       </select>
       ${user.status === "active"
         ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="inactive" data-testid="member-deactivate">Deactivate</button>`
-        : html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`}
+        : user.status === "inactive"
+          ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`
+          : nothing}
     </div>
+    ${roleDraft !== null && roleDraft.userId === user.id
+      ? html`<div class="form" data-testid="role-confirm">
+          <p class="dim">${roleChangeConfirmWords(user, roleDraft.role, currentUserId)}</p>
+          <div class="formrow">
+            <button type="button" class="btn btn-primary" data-action="confirm-role" data-user-id="${user.id}" data-testid="confirm-role">Confirm role change</button>
+            <button type="button" class="btn btn-secondary" data-action="cancel-role" data-user-id="${user.id}" data-testid="cancel-role">Cancel</button>
+          </div>
+        </div>`
+      : nothing}
   </li>`;
 }
 
@@ -450,7 +459,7 @@ function addressesCard(props: AccountProps): TemplateResult {
   return html`<div class="card" data-testid="account-addresses">
     <h3>Addresses</h3>
     ${props.addresses.length === 0
-      ? html`<p class="dim">No addresses yet. The dealer's ones appear here.</p>`
+      ? html`<p class="dim">No addresses yet. The addresses your dealer holds for you appear here.</p>`
       : html`<ul class="lines" data-testid="address-rows">
           ${props.addresses.map(
             (address) => html`<li class="line">
@@ -465,12 +474,12 @@ function addressesCard(props: AccountProps): TemplateResult {
 }
 
 function addressDetail(address: TenantAddress): TemplateResult {
-  const used = typeof address.last_used_at === "string" && address.last_used_at !== "" ? houseDay(address.last_used_at) : "Not used yet";
+  const used = typeof address.last_used_at === "string" && address.last_used_at !== "" ? dayWords(address.last_used_at) : "Not used yet";
   return html`<div class="card" data-testid="address-detail">
     ${button({ label: "Back", kind: "secondary", action: "back-to-addresses" })}
     <h2>${address.label}</h2>
     <p class="facts">
-      <span><span class="dim">Kind</span> ${addressKindWords(address.kind)}</span>
+      <span><span class="dim">Type</span> ${addressKindWords(address.kind)}</span>
       <span><span class="dim">Last used</span> ${used}</span>
     </p>
     <p class="readonly-note">
@@ -487,6 +496,7 @@ export interface InstructionsProps {
   editable: boolean;
   /** The read-only reason, empty when the form shows. */
   note: string;
+  countWords?: string;
   dirty: boolean;
   busy: boolean;
   saved: boolean;
@@ -503,8 +513,11 @@ export function instructionsCard(props: InstructionsProps): TemplateResult {
     ${props.editable
       ? html`<div class="form">
           <label for="instructions-input">Notes for the delivery</label>
-          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
+          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" maxlength="2000" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
           <div class="formrow">
+            ${props.countWords !== undefined && props.countWords !== ""
+              ? html`<span class="dim" data-testid="instructions-count">${props.countWords}</span>`
+              : nothing}
             <span class="grow"></span>
             ${button({ label: "Save notes", kind: "secondary", action: "save-instructions", disabled: props.busy || !props.dirty })}
           </div>
@@ -568,7 +581,7 @@ function returnRequestRow(request: TenantReturnRequest): TemplateResult {
     <span class="linehead"><span class="mono name">${request.request_no}</span><span class="pchip pchip-${tone}" data-return-status="${request.status}">${words}</span></span>
     <span class="dim">${returnReasonWords(request.reason_code)} · ${what}</span>
     ${request.status === "APPROVED"
-      ? html`<span class="dim">Credited to your account${request.fee_cents > 0 ? ` (less ${money(request.fee_cents)} restocking fee)` : ""}${request.return_no === undefined ? "" : ` as ${request.return_no}`}</span>`
+      ? html`<span class="dim">Credited to your account${request.fee_cents > 0 ? ` (less ${priceWords(request.fee_cents)} restocking fee)` : ""}${request.return_no === undefined ? "" : ` as ${request.return_no}`}</span>`
       : nothing}
     ${request.status === "REJECTED" && request.decision_reason !== undefined && request.decision_reason !== "" ? html`<span class="dim">Declined: ${request.decision_reason}</span>` : nothing}
   </li>`;

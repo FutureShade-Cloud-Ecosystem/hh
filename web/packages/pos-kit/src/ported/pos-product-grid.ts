@@ -323,6 +323,10 @@ export class HosPosProductGrid extends LitElement {
     .stock .b .qty {
       color: var(--hos-success);
     }
+    .stock .b .out {
+      color: var(--hos-safety-red);
+      font-family: var(--hos-font-ui);
+    }
  /* ── rev 6 (item I): in ROW view the branch-stock cluster is COLUMN-ALIGNED: every row
        renders every branch in the same order on equal-width tracks (an absent read prints an
        honest:), so the numbers line up down the list like a table. Card views keep the inline
@@ -713,7 +717,7 @@ export class HosPosProductGrid extends LitElement {
         const qty = onHand[b.id];
         if (qty === undefined) return nothing;
         return html`<span class="b ${b.id === this.homeBranchId ? 'home' : ''}">
-          ${branchName(b.id)} <span class="qty">${qty}</span>
+          ${branchName(b.id)} ${qty <= 0 ? html`<span class="out">Out of stock here</span>` : html`<span class="qty">${qty}</span>`}
         </span>`;
       })}
     </div>`;
@@ -732,7 +736,11 @@ export class HosPosProductGrid extends LitElement {
         const qty = onHand[b.id];
         return html`<span class="b ${b.id === this.homeBranchId ? 'home' : ''}">
           ${branchName(b.id)}
-          ${qty === undefined ? html`<span class="none">(no read)</span>` : html`<span class="qty">${qty}</span>`}
+          ${qty === undefined
+            ? html`<span class="none">(no read)</span>`
+            : qty <= 0
+              ? html`<span class="out">Out of stock here</span>`
+              : html`<span class="qty">${qty}</span>`}
         </span>`;
       })}
     </div>`;
@@ -975,7 +983,7 @@ export class HosPosProductGrid extends LitElement {
         const qty = onHand[b.id];
         if (qty === undefined) return nothing;
         return html`<span class="b ${b.id === this.homeBranchId ? 'home' : ''}">
-          ${branchName(b.id)} <span class="qty">${qty}</span>
+          ${branchName(b.id)} ${qty <= 0 ? html`<span class="out">Out of stock here</span>` : html`<span class="qty">${qty}</span>`}
         </span>`;
       })}
     </div>`;

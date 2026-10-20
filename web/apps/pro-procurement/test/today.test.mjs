@@ -75,7 +75,7 @@ test("the view carries the account, the credit line as the core returned it, and
   if (answer.kind !== "ready") return;
   const text = words(todayView(answer.data, page)).replace(/<[^>]*>/g, " ");
   assert.ok(text.includes("Summit Ridge Builders"), text);
-  assert.ok(text.includes("Open balance"), text);
+  assert.ok(text.includes("Balance"), text);
   assert.ok(text.includes("Available credit"), text);
   assert.ok(text.includes("Net 30"), text);
   assert.ok(text.includes("SO-30506"), "the newest order is not on Today");

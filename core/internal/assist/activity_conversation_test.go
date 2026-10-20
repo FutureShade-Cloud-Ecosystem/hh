@@ -91,6 +91,7 @@ func TestWhoChangedItResolvesWithoutConsultingAProviderForTheReferent(t *testing
 	svc := NewService(NewRegistry(deps, nil), p, &fakeLedger{}, newFakeLimits(), StaticSettings{}, nil).
 		WithClock(func() time.Time { return testNow }).
 		WithResolver(deepResolver(d))
+	svc.withTestMeter()
 
 	history := []Message{
 		{Role: RoleUser, Text: "where is SO-4?"},

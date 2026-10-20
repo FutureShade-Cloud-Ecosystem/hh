@@ -6,7 +6,8 @@
 //
 // THE CONSTRAINT THIS COMMAND WAS BUILT AROUND. Staging carries real homework from live testers and
 // must never be wiped, reset, truncated or reseeded. So: nothing here deletes, nothing truncates,
-// and nothing mints from a shared sequence. Every write is an INSERT with an explicit deterministic
+// and the only sequence it draws from is the sync scope counters, by the demo build's repair alone
+// (the seq repair named below). Every write is an INSERT with an explicit deterministic
 // id and ON CONFLICT DO NOTHING (ids.go explains the derivation; apply.go is the only writer and
 // can express no other statement kind). The TWO exceptions are demo-build-only pairs, each a fixed
 // list of guarded UPDATEs that repair rows this command itself (or a migration) already planted,
@@ -14,8 +15,11 @@
 // migration-planted demo customers off their scrub placeholders, and the seed-repair pass (the
 // demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved and
 // stamps the demo org on the Driver's day-keyed rows the boot's first apply wrote before the
-// populate provisioned the org.
-// Each statement in them names the row by fixed id AND the exact value being repaired, so nothing
+// populate provisioned the org. The seq repair (demoseed_seqrepair_demo.go) is the third: it gives
+// every row still carrying seq NULL in a table with a seq column its place in the table's sync scope
+// (and the demo org where the row has none), so the device sync feeds serve the world; it touches
+// only rows nobody sequenced, draws nothing on a second run, and the default build carries none of it.
+// Each statement in the first two names the row by fixed id AND the exact value being repaired, so nothing
 // outside the fixed list moves, a second run matches no row, and a hand-edited row is left alone.
 // Running it twice produces the same world: the second run's inserts all conflict, create nothing,
 // and report `created=0`.
@@ -152,6 +156,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// The demo world's words (the glsworld pair): the built plan's strings pass through the demo
 	// dictionary before anything prints or writes. The default build returns the rows as built.
 	rows = glsRewritePlan(rows)
+	summary = glsRewriteSummary(summary)
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
@@ -303,7 +308,7 @@ func writeSummary(out *os.File, s planSummary) {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}
-	fmt.Fprintln(out, "  deposit sales (item 9.9, walk them at the Trenton till and on Pay balance)")
+	fmt.Fprintln(out, "  deposit sales (item 9.9, walk them at the counter till and on Pay balance)")
 	for _, l := range s.DepositOrders {
 		fmt.Fprintf(out, "    %s\n", l)
 	}

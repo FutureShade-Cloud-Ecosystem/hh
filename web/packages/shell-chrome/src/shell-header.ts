@@ -18,6 +18,7 @@
 //   hh-shell-surface-open  { appId, surfaceId, key }   a row of the panel was picked
 //   hh-shell-pin           { key, pinned }             the pin control was pressed
 //   hh-shell-notifications                             the bell was pressed
+//   hh-shell-assist                                    the TanyAI button was pressed (the shell opens its hh-tanyai-panel)
 //   hh-shell-account                                   the account chip was pressed
 //
 // The panel's keyboard is the original launcher's, one keyboard for every
@@ -119,8 +120,12 @@ const styles = css`
     }
     .band[data-variant='band'] .brand {
       min-width: 0;
+      /* A nowrap word's min-content is its whole width, so the box is clamped to its track here: the lockup
+       * gives way (ellipsis) before the run of chips and icons ever overlaps it. */
+      max-width: 100%;
     }
     .band[data-variant='band'] .lockup {
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -133,6 +138,22 @@ const styles = css`
     }
     .band[data-variant='band'] .account-word {
       display: none;
+    }
+  }
+  /* Small phones (390): the first row keeps the board's lockup and the run of icons, so the DEMO marker drops to the
+   * right end of the selector's row (the last row, so it is anchored to the band's bottom) and the selector yields
+   * its width. One DEMO marker still; it never sits over the lockup. */
+  @media (max-width: 440px) {
+    .band[data-variant='band'] {
+      position: relative;
+    }
+    .band[data-variant='band'] .demo {
+      position: absolute;
+      right: var(--hh-s-12);
+      bottom: 16px;
+    }
+    .band[data-variant='band'] .selector {
+      margin-right: 72px;
     }
   }
   /* The account chip's menu: the actions the app-local header used to carry
@@ -513,6 +534,7 @@ export class ShellHeader extends HHElement {
     ...HHElement.properties,
     org: { attribute: 'org' },
     demo: { type: Boolean, attribute: 'demo' },
+    assist: { type: Boolean, attribute: 'assist' },
     user: { attribute: 'user' },
     breadcrumb: { attribute: 'breadcrumb' },
     groups: { attribute: false },
@@ -561,6 +583,9 @@ export class ShellHeader extends HHElement {
    * band (the board's white band: lockup left, selector centred, DEMO and
    * Synced chips in the run). */
   declare variant: string;
+  /** The host mounts a TanyAI panel and answers the assist press: only then does the band carry the Ask TanyAI
+   * button, so no band ever shows a button that does nothing. */
+  declare assist: boolean;
   /** The account chip's menu, open or closed. The chip toggles it in the band
    * variant; a shell may set it too. */
   declare accountOpen: boolean;
@@ -578,6 +603,7 @@ export class ShellHeader extends HHElement {
     super();
     this.org = '';
     this.demo = false;
+    this.assist = false;
     this.user = '';
     this.breadcrumb = '';
     this.groups = [];
@@ -672,6 +698,10 @@ export class ShellHeader extends HHElement {
     }
     if (action === 'notifications') {
       this.#emit('hh-shell-notifications');
+      return;
+    }
+    if (action === 'assist') {
+      this.#emit('hh-shell-assist');
       return;
     }
     if (action === 'account') {
@@ -832,6 +862,13 @@ export class ShellHeader extends HHElement {
             <span class="word">${chip.label}</span>
             ${chip.note !== '' ? html`<span class="note">${chip.note}</span>` : nothing}
           </span>
+          ${this.assist
+            ? html`<button class="icon-btn" type="button" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </button>`
+            : nothing}
           <button class="icon-btn" type="button" data-action="notifications" aria-label=${bellName}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>

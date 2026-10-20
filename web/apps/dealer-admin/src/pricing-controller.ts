@@ -341,7 +341,7 @@ export interface LedgerPanel {
   readonly vendorName: string;
   readonly totalCents: number;
   readonly count: number;
-  readonly rows: readonly { readonly accrued_at: string; readonly program_code: string; readonly product_sku: string; readonly source_type: string; readonly source_id: string; readonly basis_cents: number; readonly rate_note: string; readonly accrual_cents: number }[];
+  readonly rows: readonly { readonly accrued_at: string; readonly program_code: string; readonly product_sku: string; readonly source_type: string; readonly source_id: string; readonly basis_cents: number | null; readonly rate_note: string | null; readonly accrual_cents: number | null }[];
   readonly error: string;
 }
 

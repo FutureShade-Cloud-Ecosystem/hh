@@ -5,7 +5,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { liveFieldPort } from "../src/port.ts";
 import { ordersSurfaceOf } from "../src/sections.ts";
-import { orderRowWords } from "../src/views.ts";
+import { orderRowWords, ORDERS_TRUNCATED_WORDS } from "../src/views.ts";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession, tenantClient, stubAdapter, surfaceOf, can } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
@@ -129,4 +129,43 @@ test("the port is a closed surface: nothing on it queues and nothing on it names
     "listAddresses", "listInvites", "listOrders", "listProjects", "listReturnRequests", "listUsers",
     "setDeliveryInstructions",
   ]);
+});
+
+test("listOrders marks the answer truncated when the 100 page bound is reached with a cursor still left", async () => {
+  let pages = 0;
+  const pagedPort = liveFieldPort(
+    new ApiClient({
+      baseUrl: base,
+      fetch: async () => {
+        pages += 1;
+        const body = JSON.stringify({
+          items: [
+            {
+              id: `o-${pages}`,
+              order_no: `SO-${30000 + pages}`,
+              customer_id: "c1",
+              quote_id: null,
+              status: "CONFIRMED",
+              fulfillment: "DELIVERY",
+              requested_date: "2042-05-01",
+              subtotal_cents: 100,
+              tax_cents: 0,
+              total_cents: 100,
+              created_at: "2042-04-01T12:00:00Z",
+              has_backorder: false,
+            },
+          ],
+          next_cursor: `cursor-${pages}`,
+          limit: 1,
+        });
+        return { status: 200, ok: true, text: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+      },
+    }),
+  );
+  const cut = await pagedPort.listOrders();
+  assert.equal(cut.ok, true);
+  assert.equal(pages, 100);
+  assert.equal(cut.value.length, 100);
+  assert.equal(cut.truncated, true);
+  assert.equal(ORDERS_TRUNCATED_WORDS, "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.");
 });

@@ -149,7 +149,7 @@ func TestIntegration_ResetToRoleLandsOnTheRoleLayout(t *testing.T) {
 		t.Fatalf("a fresh user resolved as %q, want %q", roleLayout.Source, SourceRole)
 	}
 
-	if _, err := svc.SaveMyLayout(ctx, uid, []LayoutRow{
+	if _, err := svc.SaveMyLayout(ctx, Scope{UserID: uid}, []LayoutRow{
 		{TileID: TileMessagingUnread, Position: 0, Visible: true},
 		{TileID: TilePickQueue, Position: 1, Visible: false},
 	}); err != nil {
