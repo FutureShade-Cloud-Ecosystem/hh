@@ -54,6 +54,10 @@ const driverPersonaUserID = "d0200000-0000-4000-9000-000000000003"
 type driveWorld struct {
 	pool   *pgxpool.Pool
 	driver *tillClient
+	// as hands back a client for any staff login on the same served surface, and tenant for a
+	// contractor portal login (sub and the account it belongs to).
+	as     func(sub, who string) *tillClient
+	tenant func(sub, tenantID, who string) *tillClient
 }
 
 // bootDriveWorld builds the world in the order a demo box builds it (the frozen migrations, the
@@ -121,6 +125,14 @@ func bootDriveWorld(t *testing.T) *driveWorld {
 	return &driveWorld{
 		pool:   pool,
 		driver: &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, driverPersonaUserID), who: "Driver"},
+		as: func(sub, who string) *tillClient {
+			appwrite.setTeam(sub, "org-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, sub), who: who}
+		},
+		tenant: func(sub, tenantID, who string) *tillClient {
+			appwrite.setTeam(sub, "ten-"+demoOrgSlug)
+			return &tillClient{t: t, mux: rec.inner, token: env.minter.TenantToken(t, sub, tenantID), who: who, tenant: true}
+		},
 	}
 }
 

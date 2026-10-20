@@ -31,6 +31,11 @@
 // (audit_log's own series, the messaging tables' serial, the per purchase order receipt number) is
 // listed in demoSeqNotScoped and never touched, and tasks are stamped by repairDemoTaskSync.
 //
+// THE BRANCHES. Five pulls (drivers, trucks, warranty, will call, purchase orders and the parked
+// tickets among them) reach their org through the branch row (`JOIN locations l ... l.org_id`), and the
+// migrations plant the demo branches with org_id NULL, so those feeds stay empty whatever a row's
+// seq says. The pass stamps the demo org on the unstamped branches first, by the same guard.
+//
 // THE LIST. demoSeqTables and demoSeqNotScoped together name every table with a seq column; the
 // guard test reads the schema and fails when a table is in neither, so a new table cannot be missed
 // silently. The statement text is built from these fixed names only, never from input.
@@ -149,6 +154,13 @@ UPDATE %[1]s t
   FROM todo
  WHERE t.ctid = todo.row_ctid`
 
+// locationOrgRepairSQL stamps the demo org on the branch rows that carry none. The org row must exist
+// (a fresh box's first apply runs before the populate provisions it), and a branch that already
+// names an org is left alone.
+const locationOrgRepairSQL = `UPDATE locations
+	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext)
+	 WHERE org_id IS NULL AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`
+
 // demoSeqTableSet is the table names demoSeqTables and demoSeqNotScoped name, for the schema check.
 func demoSeqTableSet() map[string]bool {
 	set := make(map[string]bool, len(demoSeqTables)+len(demoSeqNotScoped))
@@ -170,6 +182,11 @@ func repairDemoSeq(ctx context.Context, tx txExec, rows rowQuery) (int, error) {
 		return 0, err
 	}
 	total := 0
+	tag, err := tx.Exec(ctx, locationOrgRepairSQL, demoOrgSlug)
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: stamping the demo org on the branches: %w", err)
+	}
+	total += int(tag.RowsAffected())
 	for _, s := range demoSeqTables {
 		cols, ok := have[s.table]
 		if !ok {

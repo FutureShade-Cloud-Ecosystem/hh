@@ -89,10 +89,10 @@ func TestDemoWorld_NoSeededRowIsUnsequenced(t *testing.T) {
 	}
 }
 
-// TestDemoSeqRepair_ListMatchesTheSchema: every table with a seq column is named by the repair's one
+// TestDemoWorld_SeqRepairListMatchesTheSchema: every table with a seq column is named by the repair's one
 // declared list (sequenced, or left alone with its reason), and the list names no table the schema
 // lacks. A new table with a seq column fails here until someone decides which it is.
-func TestDemoSeqRepair_ListMatchesTheSchema(t *testing.T) {
+func TestDemoWorld_SeqRepairListMatchesTheSchema(t *testing.T) {
 	w := bootDriveWorld(t)
 	ctx := context.Background()
 	listed := demoSeqTableSet()
@@ -110,9 +110,9 @@ func TestDemoSeqRepair_ListMatchesTheSchema(t *testing.T) {
 	}
 }
 
-// TestDemoSeqRepair_SecondApplyDrawsNothing: a second apply on the same world sequences no row and
+// TestDemoWorld_SeqRepairSecondApplyDrawsNothing: a second apply on the same world sequences no row and
 // moves no scope counter.
-func TestDemoSeqRepair_SecondApplyDrawsNothing(t *testing.T) {
+func TestDemoWorld_SeqRepairSecondApplyDrawsNothing(t *testing.T) {
 	w := bootDriveWorld(t)
 	ctx := context.Background()
 	snap := func() string {
