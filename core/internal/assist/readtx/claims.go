@@ -27,7 +27,11 @@ const minKeyLen = 32
 // caller by the assist package (Caller.ReadClaims), never from request input.
 // The field names are the keys of ai.claim_set in migration 0418.
 type Claims struct {
-	Audience      string   `json:"audience"`
+	Audience string `json:"audience"`
+	// Tier is the asker's identity tier (1 leadership, 2 manager, 3 frontline). The row policies require it
+	// to be within a view family's floor, so a tier the Go side never signs is still refused by the database.
+	// A claim without one verifies and reads as no tier: every floor refuses it.
+	Tier          int      `json:"tier"`
 	AskerID       string   `json:"asker_id"`
 	CustomerID    string   `json:"customer_id,omitempty"`
 	Global        bool     `json:"global"`

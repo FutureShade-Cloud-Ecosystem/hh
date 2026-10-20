@@ -239,3 +239,28 @@ func TestClaimExpiresInsideOneTransaction(t *testing.T) {
 		t.Fatalf("the claim verified %q in the same transaction after its expiry", *a)
 	}
 }
+
+// Slice 6a: the claim carries the asker's tier. A claim signed with one reads it back; a claim signed
+// without one (an old payload) still verifies and reads as no tier, so every tier floor refuses it.
+func TestClaimTierRoundTripsAndAnOldClaimReadsAsNoTier(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	kid, secret := testKey(t, conn)
+	pid := backendPID(t, conn)
+	read := func(payload map[string]any) (asker *string, tier *int) {
+		if _, err := conn.Exec(ctxT(t), `SELECT set_config('ai.claims', $1, false)`, rawSigned(kid, secret, payload)); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.QueryRow(ctxT(t), `SELECT (ai.claims()).asker_id, (ai.claims()).tier`).Scan(&asker, &tier); err != nil {
+			t.Fatalf("the verifier or the tier attribute: %v", err)
+		}
+		return
+	}
+	with := goodPayload(pid)
+	with["tier"] = 2
+	if a, tier := read(with); a == nil || tier == nil || *tier != 2 {
+		t.Errorf("a claim with a tier: asker=%v tier=%v", a, tier)
+	}
+	if a, tier := read(goodPayload(pid)); a == nil || tier != nil {
+		t.Errorf("an old claim without a tier: asker=%v tier=%v, want it to verify with no tier", a, tier)
+	}
+}
