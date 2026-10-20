@@ -340,8 +340,8 @@ var publicActionSuffixes = []string{"/accept", "/confirm", "/open", "/click"}
 // wrap sits outside the mux, so a doubled slash would otherwise bypass the prefix check), and the
 // family spelling is kept only for the families named in the tables above: an unlisted family, or
 // a credential sitting in the family position itself, collapses to the version-level placeholder.
-// Paths outside /api/public/ return unchanged (an ordinary /api path carries ids, not credentials,
-// and its raw shape is the trail's value).
+// Paths outside /api/public/ return path.Clean(rawPath) (an ordinary /api path carries ids, not
+// credentials, and the cleaned shape is the trail's value).
 func elidePublicToken(rawPath string) string {
 	if rawPath == "" {
 		return ""

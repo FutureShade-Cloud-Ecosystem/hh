@@ -91,3 +91,58 @@ func TestParseMentions_LongestFirst(t *testing.T) {
 	got = parseMentions("@Sam to the yard", []mentionPerson{short, mpSam}, nil)
 	assertMentions(t, got, []string{"u-short"}, nil)
 }
+
+// Equal width keeps the flatten order: a person ahead of a role. The candidates
+// are flattened persons first (display name, then e-mail local part) and roles
+// after, and the sort is stable, so a person and a role that share a name (a
+// member named "Yard" beside a role labelled "Yard", a member's "sales" handle
+// beside the SALES code) tie on width with the person's candidate in front and
+// the @ resolves to the person. The list carries more than a dozen candidates
+// on purpose: slices.SortFunc is a pdqsort that keeps tie order only inside its
+// insertion-sort band, and this test must fail if that variant comes back.
+func TestMentionCandidates_EqualWidthKeepsPersonBeforeRole(t *testing.T) {
+	persons := []mentionPerson{
+		{ID: "u-ana", Name: "Ana Fields", EmailLocal: "ana.fields"},
+		{ID: "u-bo", Name: "Bo Chan", EmailLocal: "bo.chan"},
+		{ID: "u-yard", Name: "Yard", EmailLocal: "yard.person"},
+		{ID: "u-sales", Name: "Sales Desk", EmailLocal: "sales"},
+	}
+	roles := []mentionRole{
+		{Code: "YARD", Name: "Yard"},
+		{Code: "SALES", Name: "Sales Desk"},
+		{Code: "OFFICE", Name: "Office"},
+		{Code: "CREW", Name: "Crew"},
+	}
+	cands := mentionCandidates(persons, roles)
+	if len(cands) <= 12 {
+		t.Fatalf("candidate count %d does not cross pdqsort's insertion-sort band", len(cands))
+	}
+	posOf := func(match func(mentionCandidate) bool) int {
+		for i, c := range cands {
+			if match(c) {
+				return i
+			}
+		}
+		t.Fatalf("candidate not found in %+v", cands)
+		return -1
+	}
+	for _, tie := range []struct{ text, userID, roleCode string }{
+		{"yard", "u-yard", "YARD"},
+		{"sales", "u-sales", "SALES"},
+	} {
+		person := posOf(func(c mentionCandidate) bool { return c.name == tie.text && c.user == tie.userID })
+		role := posOf(func(c mentionCandidate) bool { return c.name == tie.text && c.role == tie.roleCode })
+		if person > role {
+			t.Fatalf("tie %q: the role's candidate (%d) is ahead of the person's (%d)", tie.text, role, person)
+		}
+	}
+	// The comparator is unchanged: width alone, descending, through the list.
+	for i := 1; i < len(cands); i++ {
+		if cands[i-1].width < cands[i].width {
+			t.Fatalf("candidates %d and %d rise in width: %d then %d", i-1, i, cands[i-1].width, cands[i].width)
+		}
+	}
+	// The parse agrees: at a shared name the @ names the person, not the role.
+	assertMentions(t, parseMentions("@Yard and @sales please", persons, roles),
+		[]string{"u-yard", "u-sales"}, nil)
+}
