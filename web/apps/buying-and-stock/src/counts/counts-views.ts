@@ -310,7 +310,7 @@ function variancePane(model: CountsModel): TemplateResult {
               <button type="button" class="btn btn-primary" data-action="post-sheet" ?disabled=${model.busy}>Post adjustment</button>
               <button type="button" class="btn btn-secondary" data-action="cancel-sheet" ?disabled=${model.busy}>Cancel sheet</button>
             </div>
-            <p class="foot dim">Approving and posting are manager seats' moves. The maker never approves their own count, and posting writes the stock moves and the reason-coded journals.</p>
+            <p class="foot dim">Approving and posting are manager seats' moves. The maker never approves their own count, and posting writes the stock moves and the reason-coded journal.</p>
           `
         : nothing}
       ${notice(model)}

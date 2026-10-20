@@ -258,7 +258,7 @@ test("releasing a hold and the expiry sweep ask first, naming the hold and the s
 test("the transit table lists every ordered pair and names the admin wall in words, with no editor to press", async ({ page, request }) => {
   await openInventory(page, request, "transfers");
   await expect(page.locator("[data-transit-row]")).toHaveCount(6);
-  await expect(page.locator("[data-transit-note]")).toContainText("Transit times are set by your administrator; this table shows them and pre-fills the ship form.");
+  await expect(page.locator("[data-transit-note]")).toContainText("Transit times are set centrally; this table shows them and pre-fills the ship form.");
   await expect(page.locator("[data-transit]")).not.toContainText("Save transit");
 });
 

@@ -677,7 +677,7 @@ function transfersPane(model: InvModel): TemplateResult {
           </tbody>
         </table>
       </div>
-      <p class="foot dim" data-transit-note>Transit times are set by your administrator; this table shows them and pre-fills the ship form.</p>
+      <p class="foot dim" data-transit-note>Transit times are set centrally; this table shows them and pre-fills the ship form.</p>
     </section>
     ${model.incoming.length > 0
       ? html`
