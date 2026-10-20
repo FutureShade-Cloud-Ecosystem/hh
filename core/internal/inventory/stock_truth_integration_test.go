@@ -877,11 +877,12 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 	pool := intPool(t)
 	svc := newIntSvc(pool)
 	ctx := context.Background()
+	org := stampTestOrg(t, pool)
 	p := mkProduct(t, pool, "W4B-BROWSE")
 	seedBalance(t, pool, p, branch1, 18, 450)
 	reserve(t, svc, pool, ReserveInput{ProductID: p, BranchID: branch1, ResType: ResTypeOrder, QtyBase: 6})
 
-	res, err := svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", BranchID: branch1})
+	res, err := svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", OrgID: org, BranchID: branch1})
 	if err != nil {
 		t.Fatalf("Browse: %v", err)
 	}
@@ -902,7 +903,7 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 
 	// in_stock_only grades AVAILABLE: hold the rest and the product must drop out.
 	reserve(t, svc, pool, ReserveInput{ProductID: p, BranchID: branch1, ResType: ResTypeOrder, QtyBase: 12})
-	res, err = svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", BranchID: branch1, InStockOnly: true})
+	res, err = svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", OrgID: org, BranchID: branch1, InStockOnly: true})
 	if err != nil {
 		t.Fatalf("Browse in-stock: %v", err)
 	}
