@@ -18,6 +18,7 @@
 // leg holds the rows against reasonWord.
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { YardChange, YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
@@ -130,9 +131,11 @@ export function stalenessWords(
   if (offline) {
     const parsed = staleness.lastPullAt ? Date.parse(staleness.lastPullAt) : Number.NaN;
     const pulledAt = Number.isFinite(parsed) ? new Date(parsed) : new Date(Date.now() - staleness.ageMs);
-    const hh = String(pulledAt.getHours()).padStart(2, "0");
-    const mm = String(pulledAt.getMinutes()).padStart(2, "0");
-    return `Offline. Showing what you pulled at ${hh}:${mm}`;
+    // The glossary's time form ("8:15 AM") in the dealer's house zone, never the device's clock or a fixed HH:MM.
+    const clock = new Intl.DateTimeFormat("en-US", { timeZone: houseZone(), hour: "numeric", minute: "2-digit" })
+      .format(pulledAt)
+      .replace(/[\u202f\u00a0]/g, " ");
+    return `Offline. Showing what you pulled at ${clock}`;
   }
   const minutes = Math.floor(staleness.ageMs / 60_000);
   if (minutes < 1) return "Pulled just now";
@@ -329,6 +332,7 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
             <span class="line-qty" data-line-qty>
               ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
               <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
+              ${full && !held ? html`<span class="line-undo" data-undo-word>Undo</span>` : nothing}
             </span>
             ${reason !== "" ? html`<span class="line-sub line-reason">${reasonWord(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
             ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
@@ -339,6 +343,7 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
           class="btn btn-secondary line-short"
           data-action="edit-line"
           data-line-no=${line.line_no}
+          aria-label=${`Short on line ${line.line_no}, ${line.description}`}
           ?disabled=${held}
           data-tap
         >Short</button>
@@ -544,7 +549,9 @@ function skidsCard(model: PickModel): TemplateResult {
             </hh-sheet>
           `
         : counted && model.skidSaved
-          ? html`<p class="hint" data-skid-saved>Skid count saved · ${model.skids} ${model.skids === 1 ? "skid" : "skids"}</p>`
+          ? model.notice === ""
+            ? html`<p class="hint" data-skid-saved>Skid count saved · ${model.skids} ${model.skids === 1 ? "skid" : "skids"}</p>`
+            : nothing
           : html`<p class="hint">Step the count when you know it; the reason comes with the change.</p>`}
     </section>
   `;

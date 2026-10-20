@@ -289,7 +289,7 @@ for (const vp of [
       "Offline. Showing what you pulled at ",
     );
     await expect(page.locator("[data-staleness]")).toHaveText(
-      /^Offline\. Showing what you pulled at \d{1,2}:\d{2}$/,
+      /^Offline\. Showing what you pulled at \d{1,2}:\d{2} (AM|PM)$/,
     );
 
     await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();

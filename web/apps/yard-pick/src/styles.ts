@@ -253,6 +253,7 @@ export const yardStyles = css`
   .line-sub.backordered { color: var(--hh-state-watch); font-weight: 600; }
   .line-qty { font-weight: 700; white-space: nowrap; font-size: 16px; }
   .line-qty .picked-short { color: var(--hh-state-watch); }
+  .line-undo { margin-left: var(--hh-s-8); font-size: 14px; font-weight: 600; color: var(--hh-text-dim); text-decoration: underline; }
 
   /* The quantity editor: big, one hand, gloves. */
   .qty-edit { display: flex; flex-direction: column; gap: var(--hh-s-12); padding: var(--hh-s-12) 0 var(--hh-s-4); }

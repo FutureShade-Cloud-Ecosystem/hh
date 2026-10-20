@@ -143,14 +143,14 @@ test("the skid stepper says Not counted until it is changed, then changes with a
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 now holds 2 skids.");
   await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
-  await expect(page.locator("[data-skid-saved]")).toContainText("Skid count saved");
+  await expect(page.locator("[data-skid-saved]")).toHaveCount(0);
   // A change names both numbers, and the deposit figures never show.
   for (let i = 0; i < 3; i += 1) await page.getByRole("button", { name: "One skid more" }).click();
   await page.getByRole("radio", { name: "Skids condensed" }).click();
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("SO-1040 changed from 2 to 5 skids.");
   await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
-  await expect(page.locator("[data-skid-saved]")).toContainText("Skid count saved");
+  await expect(page.locator("[data-skid-saved]")).toHaveCount(0);
 });
 
 for (const vp of [
@@ -182,9 +182,8 @@ for (const vp of [
     await page.getByRole("radio", { name: "Count corrected" }).click();
     await page.getByRole("button", { name: "Save skid count" }).click();
     await expect(page.locator("[data-skids] hh-sheet")).toHaveCount(0);
-    await expect(page.locator("[data-skid-saved]")).toContainText(
-      "Skid count saved",
-    );
+    await expect(page.locator("[data-notice]")).toContainText("now holds");
+    await expect(page.locator("[data-skid-saved]")).toHaveCount(0);
   });
 }
 
