@@ -274,3 +274,41 @@ test("offline, a shortage reported before the record does not make the record co
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
+
+for (const vp of [
+  { width: 390, height: 844 },
+  { width: 1024, height: 768 },
+]) {
+  test(`offline queue says Offline. Showing what you pulled at <time>, and Sent to the counter replaces Waiting to send after reconnect at ${vp.width}x${vp.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(vp);
+    await loadBoard(page);
+    await platformWord(page, false, "You're offline");
+    await expect(page.locator("[data-staleness]")).toContainText(
+      "Offline. Showing what you pulled at ",
+    );
+    await expect(page.locator("[data-staleness]")).toHaveText(
+      /^Offline\. Showing what you pulled at \d{1,2}:\d{2}$/,
+    );
+
+    await page.locator("[data-pick-card]", { hasText: "SO-1041" }).click();
+    await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+    await page
+      .locator("[data-line]", { hasText: "Flagstone" })
+      .locator(".line-row")
+      .click();
+    await page.getByRole("button", { name: "Save pick" }).click();
+    await expect(page.locator("[data-pick-pending]")).toContainText(
+      "Waiting to send",
+    );
+    await expect(page.locator("[data-pick-sent]")).toHaveCount(0);
+
+    await platformWord(page, true);
+    await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
+    await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+    await expect(page.locator("[data-pick-sent]")).toContainText(
+      "Sent to the counter",
+    );
+  });
+}

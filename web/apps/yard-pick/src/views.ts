@@ -32,6 +32,7 @@ import {
   orderHandle,
   pickSummary,
   isLocalLine,
+  RECORD_SENT_WORDS,
   RECORD_WAITING_WORDS,
   priorityWord,
   qtyLabel,
@@ -117,9 +118,22 @@ export interface QueueModel {
 }
 
 /** The staleness words for a scope: reads answer from the device, so the
- * board says when the world last came down. Relative words only. */
-export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
-  if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
+ * board says when the world last came down. Offline, it names the clock time
+ * of the pull ("Offline. Showing what you pulled at <time>"). */
+export function stalenessWords(
+  staleness: { neverPulled: boolean; ageMs: number | null; lastPullAt?: string | null },
+  offline = false,
+): string {
+  if (staleness.neverPulled || staleness.ageMs === null) {
+    return offline ? "Offline. Never pulled" : "Never pulled";
+  }
+  if (offline) {
+    const parsed = staleness.lastPullAt ? Date.parse(staleness.lastPullAt) : Number.NaN;
+    const pulledAt = Number.isFinite(parsed) ? new Date(parsed) : new Date(Date.now() - staleness.ageMs);
+    const hh = String(pulledAt.getHours()).padStart(2, "0");
+    const mm = String(pulledAt.getMinutes()).padStart(2, "0");
+    return `Offline. Showing what you pulled at ${hh}:${mm}`;
+  }
   const minutes = Math.floor(staleness.ageMs / 60_000);
   if (minutes < 1) return "Pulled just now";
   return `Pulled ${minutes} min ago`;
@@ -266,6 +280,8 @@ export interface PickModel {
   readonly skidReason: string;
   /** True after the current skid count was saved, closing the reason sheet until the count is stepped again. */
   readonly skidSaved?: boolean;
+  /** True after a queued pick record went out to the server on reconnect. */
+  readonly recordSent?: boolean;
 }
 
 function draftFor(model: PickModel, lineNo: number): { order_line_no: number; qty_picked: string; short_reason: string; short_note: string } | null {
@@ -406,7 +422,11 @@ function pullList(model: PickModel): TemplateResult {
     <section class="card" data-pull-list>
       <h3>Pull list · ${pick.ticket.lines.length} ${pick.ticket.lines.length === 1 ? "line" : "lines"}</h3>
       ${summary !== "" ? html`<p class="dim" data-pick-summary>${summary}</p>` : nothing}
-      ${pick.picked.some(isLocalLine) ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>` : nothing}
+      ${pick.picked.some(isLocalLine)
+        ? html`<p class="dim" data-pick-pending role="status">${RECORD_WAITING_WORDS}</p>`
+        : model.recordSent
+          ? html`<p class="dim" data-pick-sent role="status">${RECORD_SENT_WORDS}</p>`
+          : nothing}
       <ul class="lines">${pick.ticket.lines.map((l) => lineRow(model, l, recorded.get(l.line_no)))}</ul>
     </section>
   `;

@@ -509,6 +509,9 @@ export function isLocalLine(line: { id: string }): boolean {
 /** What the pick says when its record is saved on the device and not yet sent. */
 export const RECORD_WAITING_WORDS = "Waiting to send: this pick's record goes as soon as you have signal.";
 
+/** What the pick says after a queued record has gone out to the server. */
+export const RECORD_SENT_WORDS = "Sent to the counter.";
+
 /** The notice after a record that could not go yet (no signal): honest that the rep is told on send. */
 export function pickQueuedWords(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string }>): string {
   const short = picked.filter((l) => lineIsShort(l.qty_ordered, l.qty_picked)).length;

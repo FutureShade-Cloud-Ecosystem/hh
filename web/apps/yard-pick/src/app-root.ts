@@ -45,6 +45,7 @@ import {
   CHANGE_ACK_WALL,
   ackDoneWords,
   actionDone,
+  isLocalLine,
   isUnclaimed,
   lineIsShort,
   pickSummary,
@@ -162,6 +163,8 @@ export class YardPickApp extends HHElement {
   #resolveFor = "";
   #skids: number | null = null;
   #skidSaved = false;
+  readonly #queuedPickTasks = new Set<string>();
+  readonly #sentPickTasks = new Set<string>();
 
   // The field mirrors: what the yard typed, keyed by field name (and line).
   #qtyMirror = new Map<number, string>();
@@ -860,8 +863,20 @@ export class YardPickApp extends HHElement {
   // wins, and a failed re-read keeps what is on the glass.
   async #refreshPick(): Promise<void> {
     if (this.#view.kind !== "pick" || this.#pick === null) return;
-    const answer = await this.#door().pick(this.#view.id);
-    if (answer.ok) this.#pick = answer.value;
+    const taskId = this.#view.id;
+    const answer = await this.#door().pick(taskId);
+    if (answer.ok) {
+      this.#pick = answer.value;
+      if (this.#pick.picked.some(isLocalLine)) {
+        this.#queuedPickTasks.add(taskId);
+        this.#sentPickTasks.delete(taskId);
+      } else if (this.#queuedPickTasks.has(taskId)) {
+        this.#queuedPickTasks.delete(taskId);
+        if (this.#pick.task.status !== "CANCELLED") {
+          this.#sentPickTasks.add(taskId);
+        }
+      }
+    }
     if (this.#yardOffline !== null) await this.#refreshOfflineChrome();
   }
 
@@ -1018,6 +1033,10 @@ export class YardPickApp extends HHElement {
     }
     this.#busy = false;
     this.#pick = current;
+    if (current.picked.some(isLocalLine)) {
+      this.#queuedPickTasks.add(taskId);
+      this.#sentPickTasks.delete(taskId);
+    }
     this.#view = { kind: "pick", id: taskId };
     this.#notice = openNotice;
     this.#drafts = new Map();
@@ -1108,11 +1127,17 @@ export class YardPickApp extends HHElement {
       const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
       if (layer !== null && (await layer.pendingRecord(taskId))) {
         // Not sent: no signal, or the server could not be reached. Nobody has been told yet.
+        this.#queuedPickTasks.add(taskId);
+        this.#sentPickTasks.delete(taskId);
         this.#notice = pickQueuedWords(answer.value);
       } else if (firstShort !== undefined) {
+        this.#queuedPickTasks.delete(taskId);
+        this.#sentPickTasks.delete(taskId);
         const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
         this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
       } else {
+        this.#queuedPickTasks.delete(taskId);
+        this.#sentPickTasks.delete(taskId);
         this.#notice = pickSummary(this.#pick?.picked ?? answer.value) || "The pick is recorded.";
       }
     } else {
@@ -1382,6 +1407,7 @@ export class YardPickApp extends HHElement {
         skids: this.#skids,
         skidReason: this.#skidReason,
         skidSaved: this.#skidSaved,
+        recordSent: this.#sentPickTasks.has(this.#pick.task.id),
       };
       return renderPick(detail);
     }
@@ -1398,6 +1424,7 @@ export class YardPickApp extends HHElement {
         sheetError: this.#changeError,
       });
     }
+    const isOffline = this.#bannerModeNow() === "offline";
     const model: QueueModel = {
       phase: this.#phase,
       branchName: this.#branchName,
@@ -1407,7 +1434,10 @@ export class YardPickApp extends HHElement {
       notice: this.#notice,
       moreBehind: this.#moreBehind,
       changesWaiting: this.#changesWaiting,
-      staleness: this.#yardOffline !== null ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null }) : "",
+      staleness:
+        this.#yardOffline !== null
+          ? stalenessWords(this.#queueStaleness ?? { neverPulled: true, ageMs: null, lastPullAt: null }, isOffline)
+          : "",
       conflicts: this.#openCards.length,
     };
     return renderQueue(model);
