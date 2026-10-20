@@ -737,7 +737,7 @@ func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sy
 // (yardBranchFence: a branch scoped caller reaches its granted branches, a GLOBAL caller every one) and the
 // writes hold to through syncBranchFence. It answers (nil, true) for a GLOBAL caller (no fence), the granted
 // branch ids and true for a scoped one (a pick with no branch is held by no one, so it stays in reach), and
-// false for an absent or inactive authority, which pulls nothing. An unwired seam fences nothing: the
+// false for an absent, inactive or unreadable authority, which pulls nothing. An unwired seam fences nothing: the
 // composition root refuses to boot a pick door without it (PickDoorWired).
 func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string, bool, error) {
 	if s.staff == nil {
@@ -745,7 +745,10 @@ func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string
 	}
 	sc, has, err := s.staff(ctx, f.Actor, f.OrgID)
 	if err != nil {
-		return nil, false, fmt.Errorf("tasks: sync pull authority: %w", err)
+		// Fail closed: an authority that cannot be read pulls nothing. The empty page leaves the cursor where
+		// it was, so the device's next pull recovers once the authority answers.
+		s.logger().Error("tasks: sync pull authority unreadable, the page is empty", "err", err)
+		return nil, false, nil
 	}
 	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
 		return nil, false, nil

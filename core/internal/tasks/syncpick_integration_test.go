@@ -594,8 +594,8 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 	if p, tk := has(items, inA); !p || !tk {
 		t.Fatalf("own branch row: present=%v ticket=%v, want both", p, tk)
 	}
-	if p, tk := has(items, inB); !p || tk {
-		t.Fatalf("other branch row: present=%v ticket=%v, want the row without a ticket", p, tk)
+	if p, _ := has(items, inB); p {
+		t.Fatalf("other branch row: present=%v, a branch scoped caller no longer pulls another branch's pick (UX-81)", p)
 	}
 	decorated := func(id string) map[string]any {
 		rs, ok, err := d.store.Load(ctx, d.f, id)
@@ -621,7 +621,7 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 		t.Fatal("a GLOBAL caller must receive the other branch's ticket")
 	}
 
-	// Unresolvable authority: rows still come, no ticket anywhere.
+	// Unresolvable authority (UX-81): nothing comes, fail closed; the pull does not fail.
 	for name, auth := range map[string]func() (identity.StaffContext, bool, error){
 		"error":   func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, errors.New("down") },
 		"unknown": func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, nil },
@@ -635,8 +635,8 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 			t.Fatalf("%s: pull must not fail: %v", name, err)
 		}
 		for _, id := range []string{inA, inB} {
-			if p, tk := has(items, id); !p || tk {
-				t.Fatalf("%s: row %s present=%v ticket=%v, want the row and no ticket", name, id, p, tk)
+			if p, _ := has(items, id); p {
+				t.Fatalf("%s: row %s present=%v, an authority that cannot be used pulls nothing (UX-81)", name, id, p)
 			}
 		}
 	}
