@@ -78,7 +78,7 @@ export function renderDelivery(): TemplateResult {
             <tr>
               <th scope="col">TYPE</th>
               <th scope="col">CAPABILITY</th>
-              <th scope="col">PAYLOAD</th>
+              <th scope="col">Payload</th>
               <th scope="col">TRUCKS</th>
             </tr>
           </thead>
