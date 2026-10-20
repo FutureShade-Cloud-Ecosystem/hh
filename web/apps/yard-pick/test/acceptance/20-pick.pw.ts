@@ -73,8 +73,6 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   for (const line of await page.locator("[data-line]").all()) {
     await line.locator(".line-row").click();
-    await page.getByRole("button", { name: /^All \d+/ }).click();
-    await page.getByRole("button", { name: "Done" }).click();
   }
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled in full");

@@ -278,6 +278,10 @@ export class YardPickApp extends HHElement {
       void this.#start(control?.getAttribute("data-task-id") ?? "");
       return;
     }
+    if (action === "pull-line") {
+      this.#pullLine(Number(control?.getAttribute("data-line-no") ?? "0"));
+      return;
+    }
     if (action === "edit-line") {
       this.#openEditor(Number(control?.getAttribute("data-line-no") ?? "0"));
       return;
@@ -872,6 +876,32 @@ export class YardPickApp extends HHElement {
       this.#drafts.set(lineNo, draft);
     }
     return draft;
+  }
+
+  #pullLine(lineNo: number): void {
+    const line = this.#ticketLine(lineNo);
+    if (line === null) return;
+    if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
+      void this.#ensureClaimed();
+    }
+    const draft = this.#draftFor(lineNo);
+    const recorded = this.#pick?.picked.find((p) => p.order_line_no === lineNo);
+    const current = draft.qty !== "" ? draft.qty : (recorded !== undefined ? qtyText(recorded.qty_picked) : "");
+    const isFull = current !== "" && !lineIsShort(line.qty_ordered, current);
+    if (isFull) {
+      this.#qtyMirror.set(lineNo, "");
+      draft.qty = "";
+    } else {
+      const fullQty = qtyText(line.qty_ordered);
+      this.#qtyMirror.set(lineNo, fullQty);
+      draft.qty = fullQty;
+      this.#reasonMirror.set(lineNo, "");
+      this.#noteMirror.set(lineNo, "");
+      draft.reason = "";
+      draft.note = "";
+      if (this.#editing === lineNo) this.#editing = null;
+    }
+    this.requestUpdate();
   }
 
   #openEditor(lineNo: number): void {

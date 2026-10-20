@@ -22,7 +22,7 @@ async function openInProgress(page: import("@playwright/test").Page): Promise<vo
 
 test("a short pick with a reason backorders the line and the rep's read holds the notice", async ({ page, request }) => {
   await openInProgress(page);
-  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Flagstone" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();

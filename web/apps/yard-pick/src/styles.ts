@@ -180,12 +180,19 @@ export const yardStyles = css`
     border-left: 4px solid var(--hh-state-watch);
     padding-left: var(--hh-s-8);
   }
+  .line-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    min-width: 0;
+  }
   .line-row {
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr) auto;
+    grid-template-columns: 56px minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
-    width: 100%;
+    flex: 1 1 0;
+    min-width: 0;
     min-height: 72px;
     padding: var(--hh-s-8) 0;
     background: transparent;
@@ -195,6 +202,11 @@ export const yardStyles = css`
     font: inherit;
     text-align: left;
     cursor: pointer;
+  }
+  .line-short {
+    flex: none;
+    min-height: 56px;
+    padding: 0 var(--hh-s-12);
   }
   .line-row:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
   .line-thumb {
@@ -239,7 +251,7 @@ export const yardStyles = css`
   .line-desc { font-weight: 600; overflow-wrap: anywhere; }
   .line-sub { color: var(--hh-text-dim); font-size: 14px; overflow-wrap: anywhere; }
   .line-sub.backordered { color: var(--hh-state-watch); font-weight: 600; }
-  .line-qty { font-weight: 700; white-space: nowrap; font-size: 18px; text-align: right; }
+  .line-qty { font-weight: 700; white-space: nowrap; font-size: 16px; }
   .line-qty .picked-short { color: var(--hh-state-watch); }
 
   /* The quantity editor: big, one hand, gloves. */

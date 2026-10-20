@@ -290,31 +290,41 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
   const productId = line.product_id !== "" ? line.product_id : line.sku;
   return html`
     <li class="line ${short ? "short" : full ? "full" : ""}" data-line data-line-no=${line.line_no} data-product-id=${productId}>
-      <button
-        type="button"
-        class="line-row"
-        data-action="edit-line"
-        data-line-no=${line.line_no}
-        aria-label=${`Line ${line.line_no}, ${line.description}`}
-        ?disabled=${held}
-        data-tap
-      >
-        <span class="line-thumb" aria-hidden="true">
-          <span class="line-thumb-fallback"></span>
-          <img class="line-img" alt="" data-line-img data-product-id=${productId} />
-          <span class="line-check ${full ? "full" : short ? "short" : ""}">${full ? "\u2713" : short ? "!" : ""}</span>
-        </span>
-        <span class="line-main">
-          <span class="line-desc">${line.description}</span>
-          <span class="line-sub">${line.sku !== "" ? `${line.sku} · ` : ""}${line.location !== "" ? line.location : "no bin on file"}</span>
-          ${reason !== "" ? html`<span class="line-sub line-reason">${reasonWord(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
-          ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
-        </span>
-        <span class="line-qty" data-line-qty>
-          ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
-          <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
-        </span>
-      </button>
+      <div class="line-bar">
+        <button
+          type="button"
+          class="line-row"
+          data-action="pull-line"
+          data-line-no=${line.line_no}
+          aria-label=${full ? `Undo line ${line.line_no}, ${line.description}` : `Line ${line.line_no}, ${line.description}`}
+          ?disabled=${held}
+          data-tap
+        >
+          <span class="line-thumb" aria-hidden="true">
+            <span class="line-thumb-fallback"></span>
+            <img class="line-img" alt="" data-line-img data-product-id=${productId} />
+            <span class="line-check ${full ? "full" : short ? "short" : ""}">${full ? "\u2713" : short ? "!" : ""}</span>
+          </span>
+          <span class="line-main">
+            <span class="line-desc">${line.description}</span>
+            <span class="line-sub">${line.sku !== "" ? `${line.sku} · ` : ""}${line.location !== "" ? line.location : "no bin on file"}</span>
+            <span class="line-qty" data-line-qty>
+              ${short ? html`<span class="picked-short">${qtyText(pickedRaw)}</span>` : html`${qtyText(pickedRaw)}`}
+              <span class="dim"> / ${qtyText(line.qty_ordered)} ${line.uom}</span>
+            </span>
+            ${reason !== "" ? html`<span class="line-sub line-reason">${reasonWord(reason)}${note !== "" ? `: ${note}` : ""}</span>` : nothing}
+            ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
+          </span>
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary line-short"
+          data-action="edit-line"
+          data-line-no=${line.line_no}
+          ?disabled=${held}
+          data-tap
+        >Short</button>
+      </div>
       ${editing && !held ? renderQtyEditor(model, line, draft, recorded) : nothing}
     </li>
   `;

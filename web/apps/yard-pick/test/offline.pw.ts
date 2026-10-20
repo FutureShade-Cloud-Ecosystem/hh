@@ -96,11 +96,9 @@ async function claimAndPickOffline(page: import("@playwright/test").Page): Promi
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   for (const what of ["Retaining wall block", "HPB bedding sand"]) {
     await page.locator("[data-line]", { hasText: what }).locator(".line-row").click();
-    await page.getByRole("button", { name: /^All \d+/ }).click();
-    await page.getByRole("button", { name: "Done" }).click();
   }
   // The short line: one of twelve off the shelf, with its reason.
-  await page.locator("[data-line]", { hasText: "Paver edge restraint" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Paver edge restraint" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
@@ -203,7 +201,7 @@ test("offline, the pick record and a shortage report drain in order and land cle
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
   await platformWord(page, false, "You're offline");
   // The short line: two of forty six flagstone, with its reason.
-  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Flagstone" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
@@ -261,7 +259,7 @@ test("offline, a shortage reported before the record does not make the record co
   await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   // Then records the pick.
-  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Flagstone" }).getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
