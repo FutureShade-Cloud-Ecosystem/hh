@@ -540,7 +540,7 @@ function renderRunDetail(model: ReportingModel, run: RunView | null): TemplateRe
         <button type="button" class="btn btn-secondary" data-action="reporting-open-doc" data-run-id=${run.id} ?disabled=${model.expandedDocId !== "" && model.expandedDocPhase === "loading"}>Open the document</button>
       </div>
       ${model.docNotice !== "" ? html`<p class="notice-line" data-test="reporting-doc-notice">${model.docNotice}</p>` : nothing}
-      <p class="notice-line">The document opens at the paper: the frozen copy the server stored, not a rerun.</p>
+      <p class="notice-line">The document opens at the paper: the copy as it was saved, not a rerun.</p>
     </div>
   `;
 }

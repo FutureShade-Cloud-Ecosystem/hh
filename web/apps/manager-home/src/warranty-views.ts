@@ -466,7 +466,7 @@ function renderVendorEditForm(profile: VendorProfile, saving: boolean): Template
         <button type="button" class="btn btn-primary" data-action="w-vendor-save" ?disabled=${saving}>${saving ? "Saving…" : "Save terms"}</button>
         <button type="button" class="btn btn-secondary" data-action="w-vendor-cancel" ?disabled=${saving}>Cancel</button>
       </div>
-      <p class="form-note full">The pick list's words are the counter's; the desk maps the picked row back to the stored value the server holds.</p>
+      <p class="form-note full">The pick list's words are the counter's; the desk maps the picked row back to the stored value.</p>
     </form>
   `;
 }
@@ -612,7 +612,7 @@ function renderChasePanel(data: RecoveryTab): TemplateResult {
       </div>
       ${data.logError !== "" ? html`<p class="error-line" data-test="warranty-refusal">${data.logError}</p>` : nothing}
       ${data.logNotice !== "" ? html`<p class="notice-line">${data.logNotice}</p>` : nothing}
-      <p class="vendor-no">A receipt that exceeds what was accrued is refused by the server, by name and by amount. The board re-reads the server's answer after every entry.</p>
+      <p class="vendor-no">A receipt above what was accrued is refused, by name and by amount. The board shows the saved figures after every entry.</p>
     </div>
   `;
 }
@@ -1187,7 +1187,7 @@ function renderClaimDetail(detail: ClaimDetailModel, vendorOptions: readonly { r
                   <button type="button" class="btn btn-secondary" data-action="w-advance" data-to-phase=${to} ?disabled=${detail.busy}>${phaseWord(to)}</button>
                 `)}
               </div>
-              <p class="form-note">Forward moves are gated by the current phase's required checklist items; the server names anything missing.</p>
+              <p class="form-note">Forward moves are gated by the current phase's required checklist items; anything missing is named.</p>
             `}
       </div>
 
@@ -1321,7 +1321,7 @@ function settlementBox(claim: Claim, detail: ClaimDetailModel): TemplateResult {
                 <button type="button" class="btn btn-primary" data-action="w-settle" ?disabled=${detail.busy}>${detail.busy ? "Recording…" : "Record settlement"}</button>
                 <button type="button" class="btn btn-secondary" data-action="w-settle-toggle" ?disabled=${detail.busy}>Cancel</button>
               </div>
-              <p class="form-note full">The settlement is recorded by the server in one call, and the figures it answers with are the ones this claim then carries.</p>
+              <p class="form-note full">The settlement is recorded in one step, and the claim then carries the figures it was saved with.</p>
             </div>
           `
         : html`
