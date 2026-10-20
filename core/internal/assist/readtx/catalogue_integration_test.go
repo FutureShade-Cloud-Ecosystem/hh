@@ -27,6 +27,22 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// assistReaderViews is the exact list of views the staff reader may SELECT. Each data slice adds its
+// views here, with the reason, so a view cannot be granted by accident.
+var assistReaderViews = map[string]bool{
+	"ai.orders":      true, // slice 5
+	"ai.order_lines": true, // slice 5
+}
+
+// viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
+// SELECT only, never a table grant. Each data slice adds the columns its views use.
+var viewOwnerColumns = map[string][]string{
+	"public.orders":      {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"}, // slice 5
+	"public.order_lines": {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                    // slice 5
+	"public.customers":   {"id", "name"},                                                                                                                                        // slice 5
+	"public.locations":   {"id", "name"},                                                                                                                                        // slice 5
+}
+
 func (r Roles) all() []string {
 	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin}
 }
@@ -205,9 +221,51 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		if write {
 			add("role %s holds a write privilege on %s", role, fq)
 		}
-		readerOK := kind == "v" && ((role == roles.Reader && schema == "ai") || (role == roles.ProReader && schema == "ai_pro"))
+		// The view owner's column grants are checked as an exact set below.
+		if role == roles.ViewOwner {
+			continue
+		}
+		readerOK := kind == "v" && role == roles.Reader && assistReaderViews[fq]
 		if (sel || anyCol) && !readerOK {
 			add("role %s holds a SELECT privilege on %s outside the plan's list", role, fq)
+		}
+	}
+
+	// 3b. The view owner's column grants, as an exact set.
+	rows, err = collect(`
+		SELECT n.nspname || '.' || c.relname || '.' || a.attname
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'ai', 'ai_pro')
+		  AND n.nspname NOT LIKE 'pg\_%' AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = $1)
+		  AND has_column_privilege($1, c.oid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES')`, roles.ViewOwner)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, row := range rows {
+		have[row[0].(string)] = true
+	}
+	want := map[string]bool{}
+	for table, cols := range viewOwnerColumns {
+		for _, col := range cols {
+			want[table+"."+col] = true
+		}
+	}
+	for col := range have {
+		if !want[col] {
+			add("the view owner can read %s outside the plan's list", col)
+		}
+	}
+	// The planned columns are required only once the data slice's views exist (a database
+	// that has run 0418 alone, as the planted mistake tests build, has none yet).
+	var viewsExist bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('ai.orders') IS NOT NULL`).Scan(&viewsExist); err != nil {
+		return nil, err
+	}
+	for col := range want {
+		if viewsExist && !have[col] {
+			add("the view owner lacks the planned column %s", col)
 		}
 	}
 
@@ -373,5 +431,37 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 	}
 	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
 		t.Errorf("objects created under the owner role must pass: %v %v", got, err)
+	}
+}
+
+// The slice 5 additions bite: one column beyond the view owner's exact list, and a
+// reader grant on a base table, are each reported (and put back).
+func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	roles := RolesFor(currentDatabase(t, conn))
+	q := pgx.Identifier.Sanitize
+	for _, p := range []struct{ name, plant, revert, mention string }{
+		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.account_no"},
+		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
+	} {
+		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {
+			t.Fatalf("%s: %v", p.name, err)
+		}
+		got, err := catalogueViolations(ctxT(t), conn, roles, false)
+		_, _ = conn.Exec(ctxT(t), p.revert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, v := range got {
+			found = found || strings.Contains(v, p.mention)
+		}
+		if !found {
+			t.Errorf("%s was not reported: %v", p.name, got)
+		}
+	}
+	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
+		t.Fatalf("not clean after the reverts: %v %v", got, err)
 	}
 }

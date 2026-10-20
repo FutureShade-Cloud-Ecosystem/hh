@@ -200,3 +200,33 @@ func TestRunRefusesAnUnusableRoleName(t *testing.T) {
 		}
 	}
 }
+
+func TestDoHandsTheReaderTransactionToTheCallerAfterTheRoleIsSet(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var seenAtCall int
+	err := h.reader.Do(context.Background(), okClaims, func(tx pgx.Tx) error {
+		seenAtCall = len(h.log)
+		_, err := tx.Exec(context.Background(), "EXPLAIN SELECT 1")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenAtCall != 5 || h.log[4].sql != `SET LOCAL ROLE "assist_reader_test"` {
+		t.Errorf("fn ran after %d statements, last %q; want it after the role was set", seenAtCall, h.log[len(h.log)-2].sql)
+	}
+	if !h.rolledBack || h.committed {
+		t.Errorf("rolledBack=%v committed=%v", h.rolledBack, h.committed)
+	}
+	if err := h.reader.Do(context.Background(), Claims{Audience: AudiencePro, AskerID: "p"}, func(pgx.Tx) error { return nil }); err == nil {
+		t.Error("the other audience reached fn")
+	}
+}
+
+func TestMapErrorKeepsNothingOfTheDriversText(t *testing.T) {
+	e := MapError(&pgconn.PgError{Code: "57014", Message: "canceling statement with SECRETVALUE"})
+	var c *Error
+	if !errors.As(e, &c) || c.Code != CodeTimeout || strings.Contains(e.Error(), "SECRETVALUE") {
+		t.Fatalf("got %v", e)
+	}
+}

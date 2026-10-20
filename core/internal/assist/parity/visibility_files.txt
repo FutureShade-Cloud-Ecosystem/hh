@@ -1,0 +1,19 @@
+# The files that decide what an asker may see, one path prefix per line (a path that ends in a slash
+# is a directory). A change to any of them must run the assist parity suite (internal/assist/parity)
+# green and not skipped: scripts/ci/assist-parity-path-rule.sh reads this file in the integration job.
+# Add the file that holds a new visibility rule here when a slice adds one (cost policy, the payment
+# trail, capabilities, messaging membership); the test beside this file fails on a path that is gone.
+core/internal/identity/staffcontext/rbac.go
+core/internal/identity/authority.go
+core/internal/order/summary.go
+core/internal/order/repository.go
+core/internal/assist/readclaims.go
+core/internal/assist/adapters/adapters.go
+core/internal/assist/dataquery_catalogue.go
+core/internal/assist/dataquery_spec.go
+core/internal/assist/dataquery_run.go
+core/internal/assist/commands_data.go
+core/internal/assist/readtx/
+core/internal/assist/parity/
+core/db/migrations/0418_assist_roles_and_claims.sql
+core/db/migrations/0419_assist_orders_views_and_query_log.sql

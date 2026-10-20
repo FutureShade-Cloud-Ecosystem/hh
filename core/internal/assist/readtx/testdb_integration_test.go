@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -153,3 +154,5 @@ func freshMigratedDB(t *testing.T, prefix string, exts ...string) (*pgx.Conn, st
 func freshMigratedDBBefore(t *testing.T, prefix string, exts ...string) (*pgx.Conn, string) {
 	return freshMigratedDB(t, prefix, exts...)
 }
+
+func redactNew(s string) redact.Secret { return redact.NewSecret(s) }
