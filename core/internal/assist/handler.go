@@ -52,6 +52,7 @@ type Handler struct {
 	// costRoles and costBranches decide the claim's cost fields (WithCostGate).
 	costRoles    CostRoles
 	costBranches BranchReader
+	poPolicy     PurchaseCostPolicies
 }
 
 // PaymentTrailReader says whether a caller holds the payment trail reads (ruling 87). The composition
@@ -79,6 +80,7 @@ func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, err
 	c := CallerFrom(r)
 	c.SessionKey = sc.SessionID
 	h.costFor(r.Context(), &c)
+	h.poCostFor(r.Context(), &c)
 	if h.trail == nil {
 		return c, nil
 	}
@@ -102,6 +104,65 @@ type CostRoles interface {
 func (h *Handler) WithCostGate(roles CostRoles, branches BranchReader) *Handler {
 	h.costRoles, h.costBranches = roles, branches
 	return h
+}
+
+// PurchaseCostPolicies is the per branch purchasing policy the purchasing screens ask for what the dealer pays
+// on a purchase order: purchasing.Service.PolicyFor(branch).CostVisibility, which resolves the branch row, else
+// the dealer default, and fails closed to MANAGER_UP. The composition root wires the purchasing service behind it.
+type PurchaseCostPolicies interface {
+	CostVisibility(ctx context.Context, branchID string) string
+}
+
+// The three policy words, as internal/settings spells them (VisibilityManagerUp, VisibilityAllStaff,
+// VisibilityHidden). Spelled here because this package imports no other module.
+const (
+	policyAllStaff = "ALL_STAFF"
+	policyHidden   = "HIDDEN"
+)
+
+// WithPurchaseCostPolicy wires the policy that decides the claim's purchase cost branches. Without it no caller
+// has purchase cost (fail closed).
+func (h *Handler) WithPurchaseCostPolicy(p PurchaseCostPolicies) *Handler {
+	h.poPolicy = p
+	return h
+}
+
+// poCostFor mirrors purchasing's costLensFor, branch by branch: ALL_STAFF allows, HIDDEN refuses, and every
+// other word (MANAGER_UP, the seeded default, and where every unknown resolves) allows a manager or better,
+// which is tier 1 or 2. A caller with no role sees nothing. Branches are the caller's reach: its grants, or
+// every branch for a global caller.
+func (h *Handler) poCostFor(ctx context.Context, c *Caller) {
+	c.POCostBranchIDs = nil
+	if h.poPolicy == nil || !c.HasRole() {
+		return
+	}
+	reach := c.BranchIDs
+	if c.Global {
+		if h.costBranches == nil {
+			return
+		}
+		bs, err := h.costBranches.Branches(ctx, *c)
+		if err != nil {
+			return
+		}
+		reach = nil
+		for _, b := range bs {
+			reach = append(reach, b.BranchID)
+		}
+	}
+	manager := c.Tier == 1 || c.Tier == 2
+	for _, id := range reach {
+		switch h.poPolicy.CostVisibility(ctx, id) {
+		case policyAllStaff:
+			c.POCostBranchIDs = append(c.POCostBranchIDs, id)
+		case policyHidden:
+		default:
+			if manager {
+				c.POCostBranchIDs = append(c.POCostBranchIDs, id)
+			}
+		}
+	}
+	sort.Strings(c.POCostBranchIDs)
 }
 
 // costFor resolves the caller's cost fields exactly as inventory's costAllowed does: the canonical role must

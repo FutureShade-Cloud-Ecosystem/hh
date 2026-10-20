@@ -78,6 +78,9 @@ type Caller struct {
 	// mean no cost and no margin.
 	CostBranchIDs []string
 	Margin        bool
+	// POCostBranchIDs are the branches where the per branch purchasing policy lets this caller see what the
+	// dealer pays on a purchase order (MANAGER_UP, ALL_STAFF, HIDDEN; the vocabulary the purchasing screens use).
+	POCostBranchIDs []string
 	// Address is the connection's trusted address (the demo mint's rule); it keys the demo rate
 	// limits and never grants anything.
 	Address string

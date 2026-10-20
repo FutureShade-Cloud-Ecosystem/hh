@@ -264,3 +264,28 @@ func TestClaimTierRoundTripsAndAnOldClaimReadsAsNoTier(t *testing.T) {
 		t.Errorf("an old claim without a tier: asker=%v tier=%v, want it to verify with no tier", a, tier)
 	}
 }
+
+// Slice 6b: the claim carries the branches where purchase cost is visible; an old claim without the field
+// verifies and reads empty, so every purchase cost mask treats it as no cost.
+func TestClaimPurchaseCostBranchesRoundTripAndAnOldClaimReadsEmpty(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	kid, secret := testKey(t, conn)
+	pid := backendPID(t, conn)
+	read := func(payload map[string]any) (asker *string, branches *string) {
+		if _, err := conn.Exec(ctxT(t), `SELECT set_config('ai.claims', $1, false)`, rawSigned(kid, secret, payload)); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.QueryRow(ctxT(t), `SELECT (ai.claims()).asker_id, (ai.claims()).po_cost_branch_ids::text`).Scan(&asker, &branches); err != nil {
+			t.Fatalf("the verifier or the attribute: %v", err)
+		}
+		return
+	}
+	with := goodPayload(pid)
+	with["po_cost_branch_ids"] = []string{"22222222-2222-2222-2222-222222222222"}
+	if a, b := read(with); a == nil || b == nil || *b != "{22222222-2222-2222-2222-222222222222}" {
+		t.Errorf("a claim with purchase cost branches: asker=%v branches=%v", a, b)
+	}
+	if a, b := read(goodPayload(pid)); a == nil || b != nil {
+		t.Errorf("an old claim: asker=%v branches=%v, want it to verify with none", a, b)
+	}
+}

@@ -24,6 +24,14 @@ import (
 // countAsViewOwner counts the rows of table the view owner reads under the claim.
 func countAsViewOwner(t *testing.T, env *testsupport.Env, c readtx.Claims, table string) int {
 	t.Helper()
+	return countAsViewOwnerWith(t, env, c, table)
+}
+
+// countAsViewOwnerWith is countAsViewOwner after running pre in the same transaction (rolled back with it),
+// so a test can switch row security off on a table the policy under test reads through, and make that policy
+// stand on its own.
+func countAsViewOwnerWith(t *testing.T, env *testsupport.Env, c readtx.Claims, table string, pre ...string) int {
+	t.Helper()
 	ctx := testsupport.Ctx(t)
 	signer, err := readtx.NewSigner(redact.NewSecret(env.Key))
 	if err != nil {
@@ -48,6 +56,11 @@ func countAsViewOwner(t *testing.T, env *testsupport.Env, c readtx.Claims, table
 	}
 	if _, err := tx.Exec(ctx, `SELECT set_config('ai.claims', $1, true)`, tok.Reveal()); err != nil {
 		t.Fatal(err)
+	}
+	for _, q := range pre {
+		if _, err := tx.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+vo); err != nil {
 		t.Fatal(err)
