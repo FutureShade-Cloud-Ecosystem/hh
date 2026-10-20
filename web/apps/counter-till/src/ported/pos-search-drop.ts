@@ -80,7 +80,7 @@ export class HosPosSearchDrop extends LitElement {
   commitTop(): boolean {
     const top = this.topHit();
     if (!top) return false;
-    this.add(top);
+    this.add(top, false);
     return true;
   }
 
@@ -346,8 +346,18 @@ export class HosPosSearchDrop extends LitElement {
     this.adder.ticketAt(this.ticketEpoch);
   }
 
-  private add(h: CounterHit): void {
-    this.adder.add(this, h.product_id, counterHitToProduct(h));
+  /**
+   * `announce` is true for a row the person picked: the terminal clears the field and returns the
+   * caret to it, so the next name does not append to this one. The field's own Enter commits the
+   * top row through commitTop and ends it there itself, so it passes false.
+   */
+  private add(h: CounterHit, announce = true): void {
+    const sent = this.adder.add(this, h.product_id, counterHitToProduct(h));
+    if (sent && announce) {
+      this.dispatchEvent(
+        new CustomEvent('pos-drop-added', { detail: { name: h.name, sku: h.sku }, bubbles: true, composed: true }),
+      );
+    }
   }
 
   private focusRow(i: number): void {
@@ -357,6 +367,14 @@ export class HosPosSearchDrop extends LitElement {
   }
 
   private onKeydown(e: KeyboardEvent, len: number): void {
+    // A printable key on a focused row belongs to the scan field: a gun's burst with a row holding
+    // focus must land in the field (and its Enter with it), never press the row. Space stays the
+    // row's own activation key. The terminal hands focus and the character to the box at once.
+    if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      this.dispatchEvent(new CustomEvent('pos-drop-type', { detail: { key: e.key }, bubbles: true, composed: true }));
+      return;
+    }
     const next = rowStep(this.roveIdx, e.key, len);
     if (next === null) return;
     e.preventDefault();

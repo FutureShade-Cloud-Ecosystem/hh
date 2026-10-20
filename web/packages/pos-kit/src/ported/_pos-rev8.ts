@@ -44,11 +44,33 @@ export function isScannerBurst(gapsMs: readonly number[], charCount: number): bo
 export type EnterMissOutcome = 'loud-unknown-code' | 'fall-through-to-search';
 
 /**
+ * looksLikeProductName: letters and spaces only, so it is a name a person typed and not a label.
+ * A barcode is digits and a SKU carries a digit or a dash; both resolve exactly before this is asked.
+ */
+export function looksLikeProductName(code: string): boolean {
+  return /^[A-Za-z][A-Za-z '.]*$/.test(code.trim());
+}
+
+/**
+ * burstMayCommit: a letters only entry that arrived at scanner speed (a gift card or vendor label
+ * reads like this) may commit the top search row only when that row's name begins with the typed
+ * text, case blind; any other row is a guess, and the loud unknown code answer stands instead.
+ */
+export function burstMayCommit(term: string, topName: string | null | undefined): boolean {
+  const typed = term.trim().toLowerCase();
+  if (typed === '' || !topName) return false;
+  return topName.trim().toLowerCase().startsWith(typed);
+}
+
+/**
  * enterMissOutcome: the one decision the unified field adds over the two boxes it replaces.
  * A scanner burst keeps the scan box's LOUD unknown-code contract; a typed entry falls through to
- * the live search that is already showing (its own no-match state answers there).
+ * the live search that is already showing (its own no-match state answers there). A fast typist
+ * (or a paste) is as quick as a gun, so when the entry is plainly a name (`code` given, letters
+ * only) it is a typed entry whatever its timing.
  */
-export function enterMissOutcome(gapsMs: readonly number[], charCount: number): EnterMissOutcome {
+export function enterMissOutcome(gapsMs: readonly number[], charCount: number, code?: string): EnterMissOutcome {
+  if (code !== undefined && looksLikeProductName(code)) return 'fall-through-to-search';
   return isScannerBurst(gapsMs, charCount) ? 'loud-unknown-code' : 'fall-through-to-search';
 }
 

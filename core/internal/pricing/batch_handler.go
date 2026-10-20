@@ -144,6 +144,13 @@ func (h *Handler) listBatchLines(w http.ResponseWriter, r *http.Request, _ guard
 	if out == nil {
 		out = []PriceChangeLine{}
 	}
+	// The cost legs ride only to a caller on the cost and margin list (HH-419): absent, never zero.
+	if !h.costAllowed(r) {
+		out = append([]PriceChangeLine(nil), out...) // never blank the service's own slice
+		for i := range out {
+			out[i].BeforeCostCents, out[i].AfterCostCents = nil, nil
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
@@ -216,6 +223,17 @@ func (h *Handler) changeLog(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	// The cost rows ride only to a caller on the cost and margin list (HH-419); the retail rows are the
+	// work itself and stay.
+	if !h.costAllowed(r) {
+		kept := out[:0:0]
+		for _, row := range out {
+			if row.Field != "cost_cents" {
+				kept = append(kept, row)
+			}
+		}
+		out = kept
 	}
 	if out == nil {
 		out = []ChangeLogRow{}

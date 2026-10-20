@@ -77,8 +77,9 @@ func syncProjection(v any) (map[string]any, error) {
 // - channels: the pull-only reference feed of the caller's rooms -
 
 type channelsSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
 }
 
 // NewChannelsSyncStore builds the channels Store (pull-only: the route
@@ -99,6 +100,9 @@ func (s *channelsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 	}
 	items := make([]sync.Entity, 0, len(rows))
 	for i, row := range rows {
+		if !admitsRoom(ctx, s.fence, uid, row.ID) {
+			continue
+		}
 		data, err := syncProjection(row)
 		if err != nil {
 			return nil, nil, err
@@ -120,6 +124,9 @@ func (s *channelsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 	row, seq, found, err := s.repo.syncChannelLoad(ctx, uid, id)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
+	}
+	if !admitsRoom(ctx, s.fence, uid, row.ID) {
+		return sync.RowState{}, false, nil
 	}
 	data, err := syncProjection(row)
 	if err != nil {
@@ -143,9 +150,22 @@ func (s *channelsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, 
 // - messages: the caller's channels' messages, and the offline post -
 
 type messagesSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
 }
+
+// admits says whether a seated user may read a room over the sync door: the money rooms follow the
+// payment trail and the branch reach here as on the REST door (HH-424). Unbound keeps the seat alone.
+func admitsRoom(ctx context.Context, fence roomFence, userID, channelID string) bool {
+	return fence == nil || fence(ctx, userID, channelID)
+}
+
+// WithRoomFence binds the money room fence to the channels feed.
+func (s *channelsSyncStore) WithRoomFence(f roomFence) *channelsSyncStore { s.fence = f; return s }
+
+// WithRoomFence binds the money room fence to the messages feed.
+func (s *messagesSyncStore) WithRoomFence(f roomFence) *messagesSyncStore { s.fence = f; return s }
 
 // NewMessagesSyncStore builds the messages Store (server_wins: a create is
 // admitted through the module's own write; edits and deletes are not the
@@ -166,6 +186,9 @@ func (s *messagesSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 	items := make([]sync.Entity, 0, len(rows))
 	tombstones := []sync.Tombstone{}
 	for i, row := range rows {
+		if !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
+			continue
+		}
 		if deleted[i] {
 			tombstones = append(tombstones, sync.Tombstone{ID: row.ID, Seq: seqs[i]})
 			continue
@@ -200,6 +223,9 @@ func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 	if err != nil || !found {
 		return sync.RowState{}, found, err
 	}
+	if !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
+		return sync.RowState{}, false, nil
+	}
 	data, err := syncProjection(row)
 	if err != nil {
 		return sync.RowState{}, false, err
@@ -219,6 +245,9 @@ func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	body, _ := fields["body"].(string)
 	if body == "" {
 		return sync.RowState{}, syncRefused(fmt.Errorf("message body is empty"))
+	}
+	if !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, errNotFound)
 	}
 	threadRoot, _ := fields["thread_root_id"].(string)
 	id, seq, err := s.repo.syncMessageCreate(ctx, uid, channelID, body, threadRoot, key)
