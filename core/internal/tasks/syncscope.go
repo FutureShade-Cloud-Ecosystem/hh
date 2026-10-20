@@ -523,20 +523,16 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
 	}
-	// Stage is held to the task's branch as the direct door is (UX-77), on the locked row, and the fence runs
-	// before the holder check so a holder refusal never tells another branch's caller that the pick exists.
-	stageOp := (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != ""
-	if s.staff != nil && stageOp {
+	// Every pick write is held to the task's branch (UX-77, UX-76b) and then to the holder rule, on the locked
+	// row, in this order: the branch fence first, so another branch's user is never told by a holder refusal
+	// that the pick exists.
+	if s.staff != nil {
 		if err := syncBranchFence(ctx, s.staff, f, branch); err != nil {
 			return sync.RowState{}, err
 		}
 	}
-	// Stage is the holder's act (UX-76): the move to STAGED and the stage legs are compared with the claim
-	// on the locked row. The claim itself, the start and the other moves keep their own rules.
-	if stageOp {
-		if notHolder(claimedBy, actor) {
-			return sync.RowState{}, refused(ErrNotHolder)
-		}
+	if err := yardWriteRule(hasStatus, status, photoURL != "", stageLocation != "" || stageRef != "", claimedBy, actor); err != nil {
+		return sync.RowState{}, refused(err)
 	}
 	to := from
 	if hasStatus {
@@ -763,4 +759,48 @@ func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string
 		}
 	}
 	return branches, true, nil
+}
+
+// yardWriteRule is the holder rule of the pick writes through sync (UX-76, UX-76b), applied to the locked row
+// after the branch fence: a write with no actor is refused (nobody could hold the pick), a claim is open to
+// any actor on an unclaimed pick, and start, done, Stage and the done photo are the holder's. A cancel is the
+// holder's; a manager's cancel of someone else's pick is an explicit act with a reason, which a sync op cannot
+// carry, so it goes through the desk (REST) and is refused here.
+func yardWriteRule(hasStatus bool, status string, photo, stageLegs bool, claimedBy, actor string) error {
+	holders := stageLegs || photo
+	if hasStatus {
+		switch status {
+		case StatusAccepted:
+			if actor == "" {
+				return ErrNoActor
+			}
+			return nil
+		case StatusInProgress, StatusDone, StatusStaged:
+			holders = true
+		case StatusCancelled:
+			if actor == "" {
+				return ErrNoActor
+			}
+			if notHolder(claimedBy, actor) {
+				return ErrCancelNotAllowed
+			}
+			return nil
+		default:
+			// PUSHED and QUEUED (and any status this switch does not name): a move on a held pick that is not
+			// the holder's takes work away from them, so it is the holder's too (UX-76b, item 67). The state
+			// machine offers no way back to QUEUED or PUSHED from a claimed pick, but it is the lock-time
+			// holder check, not the matrix, that must answer, so a stranger gets the holder words.
+			holders = true
+		}
+	}
+	if !holders {
+		return nil
+	}
+	if actor == "" {
+		return ErrNoActor
+	}
+	if notHolder(claimedBy, actor) {
+		return ErrNotHolder
+	}
+	return nil
 }

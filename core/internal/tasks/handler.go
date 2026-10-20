@@ -200,13 +200,28 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, caller guards.S
 	if !decodeJSONOptional(w, r, &req) {
 		return
 	}
-	h.doTransition(w, r, func(id, actor string) (Task, error) { return h.svc.Cancel(r.Context(), id, actor, req.Note) })
+	override := ""
+	if sc, ok := identity.StaffContextFromContext(r.Context()); ok && canOverrideHolder(sc) {
+		override = sc.RoleCode
+	}
+	h.doTransition(w, r, func(id, actor string) (Task, error) {
+		return h.svc.CancelAs(r.Context(), id, actor, req.Note, override)
+	})
 }
 
 // doTransition is the shared transition-handler body: resolve the staff caller, call the move, map the
 // result. The task id comes straight from the path, the repository UUID-guards it (malformed → 404).
 func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, move func(id, actor string) (Task, error)) {
 	actor := identity.StaffUserIDFromContext(r.Context())
+	// A yard write with no actor is refused (UX-76b): nobody could hold the pick. Then the branch fence,
+	// before any holder answer, so another branch's user is never told by a refusal that the pick exists.
+	if actor == "" {
+		httpx.Error(w, http.StatusForbidden, ErrNoActorWords)
+		return
+	}
+	if !h.taskBranchFence(w, r) {
+		return
+	}
 	t, err := move(r.PathValue("id"), actor)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -249,6 +264,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, "illegal task transition")
 	case errors.Is(err, ErrNoTransition):
 		httpx.Error(w, http.StatusConflict, "task already in that status")
+	case errors.Is(err, ErrNotHolder):
+		httpx.Error(w, http.StatusConflict, ErrNotHolderWords)
+	case errors.Is(err, ErrCancelNotAllowed):
+		httpx.Error(w, http.StatusConflict, ErrCancelNotAllowedWords)
+	case errors.Is(err, ErrNoActor):
+		httpx.Error(w, http.StatusForbidden, ErrNoActorWords)
 	case errors.Is(err, ErrHeldFromPicking):
 		// Item 9 Opus P2-1: the yard door's refusal speaks the mandated
 		// sentence every other door speaks, so the picker reads the same
