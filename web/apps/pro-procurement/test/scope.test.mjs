@@ -206,3 +206,13 @@ test("the plan page uses the plan words: no RFQ, no indicative, no order scope",
   await scopeSubmitRfq(page);
   assert.doesNotMatch(page.notices.at(-1).words, /RFQ|ndicative/, page.notices.at(-1).words);
 });
+
+test("a plan with no lines says No lines yet on its own page, not a $0.00 estimate", async () => {
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+  const page = await makePage("owner", { surface: "scope", projectId: EMPTY_PLAN_ID });
+  const answer = await scopeLoad(page);
+  if (answer.kind !== "ready") throw new Error("the plan did not load");
+  const text = words(scopeView(answer.data, page)).replace(/<[^>]*>/g, " ");
+  assert.ok(text.includes("No lines yet"), text);
+  assert.doesNotMatch(text, /Estimated subtotal\s+\$0\.00/, text);
+});

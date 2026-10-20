@@ -44,7 +44,10 @@ test("Projects opens from the selector and lists every project, the QUOTING one 
   await expect(quoting).toContainText("Estimated");
   const planning = rows.filter({ hasText: "Backyard planting beds" });
   await expect(planning).toContainText("Planning");
-  await expect(planning).toContainText("Not priced");
+  await expect(planning).toContainText("No lines yet");
+  const lines = rows.filter({ hasText: "La Jolla terrace pavers" });
+  await expect(lines).toContainText("Estimated");
+  await expect(lines).not.toContainText("Not priced");
   await page.screenshot({ path: join(SHOTS, "projects-phone.png"), fullPage: true });
 });
 

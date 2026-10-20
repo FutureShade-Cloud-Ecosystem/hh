@@ -8,8 +8,8 @@
 // the kit's placeholder, never a confident zero.
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantDashboard, type TenantDashboard } from "@hardscapehouse/api-client";
-import { priceWords } from "./figures.js";
-import { calendarDay, money, statusChip, trackingChip, trackingOf } from "@hardscapehouse/pro-kit";
+import { dayWords, priceWords } from "./figures.js";
+import { money, statusChip, trackingChip, trackingOf } from "@hardscapehouse/pro-kit";
 import { metaLine, type Page, type SurfaceAnswer } from "./views.js";
 
 // An account figure the core did not send says so in words, never "n/a" and never a zero.
@@ -33,7 +33,7 @@ function orderRow(order: TenantDashboard["recent_orders"][number]): TemplateResu
     ${statusChip("order", order.status)}
     ${tracking === null ? nothing : trackingChip(tracking)}
     <span class="grow"></span>
-    <span>${calendarDay(order.requested_date)}</span>
+    <span>${dayWords(order.requested_date)}</span>
     <span class="mono">${priceWords(order.total_cents)}</span>
   </div>`;
 }

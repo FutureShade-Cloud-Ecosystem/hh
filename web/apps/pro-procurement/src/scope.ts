@@ -90,7 +90,9 @@ export function scopeView(dataRaw: unknown, page: Page): TemplateResult {
   return html`${backHeader(fromProjects ? "Projects" : "Board", fromProjects ? "open-projects" : "open-board")}
     ${metaLine([
       statusChip("project", data.status),
-      html`<span>Estimated subtotal <span class="mono figure">${priceWords(data.subtotal_cents)}</span></span>`,
+      data.line_count > 0
+        ? html`<span>Estimated subtotal <span class="mono figure">${priceWords(data.subtotal_cents)}</span></span>`
+        : html`<span>No lines yet</span>`,
       html`<span>${data.line_count} lines</span>`,
     ])}
     ${editable

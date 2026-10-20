@@ -73,7 +73,7 @@ test("the list reads every project of the account, the QUOTING ones included", a
   assert.ok(names.includes("Backyard planting beds"));
 });
 
-test("each card carries its status word and line count, and the indicative subtotal only past PLANNING", async () => {
+test("each card carries its status word and line count, and the estimate for any plan with a line", async () => {
   const page = await pageFor("buyer");
   const answer = await projectsLoad(page);
   assert.equal(answer.kind, "ready");
@@ -88,8 +88,9 @@ test("each card carries its status word and line count, and the indicative subto
   assert.ok(text.includes("Quoting"), text);
   assert.ok(text.includes("Ordered"), text);
   assert.ok(/\b3 lines\b/.test(text), `the line count is missing: ${text}`);
-  // The scope page's rule: a PLANNING project awaits its price; past PLANNING the indicative subtotal shows.
-  assert.ok(text.includes("Not priced"), text);
+  // A plan with lines shows its estimate on the card as its own page does; a plan with none says so.
+  assert.ok(text.includes("No lines yet"), text);
+  assert.doesNotMatch(text, /Price\s+Not priced/, text);
   assert.ok(text.includes("Estimated"), text);
   const quoting = answer.data.find((p) => p.status === "QUOTING");
   assert.ok(quoting.subtotal_cents > 0);
