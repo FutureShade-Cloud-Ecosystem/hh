@@ -25,6 +25,7 @@ import {
   demoTenantAdapter,
   signInFromCard,
   demoRoleFromAddress,
+  personaRoleHeld,
   otherAppAddress,
   roleLabel,
   stubAdapter,
@@ -114,15 +115,21 @@ export class ProProcurementApp extends HHElement {
   #busy = false;
   #dealerName = "";
   #signinMessage = "";
+  #errorWords = "";
+  #personaRole: string | null = null;
   #loads = 0;
   #unsubscribe: (() => void) | null = null;
 
   constructor() {
     super();
     const adapter = import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter();
-    this.#session = new InMemoryTenantSession({ adapter });
+    this.#session = new InMemoryTenantSession({ adapter, onCustody: () => this.requestUpdate() });
     this.#client = tenantClient(this.#session);
     this.#page = this.#buildPage();
+  }
+
+  #inFrame(): boolean {
+    return this.#session.current() !== null || this.#personaRole !== null;
   }
 
   // The one object a surface's code sees: its route, the session and client,
@@ -148,6 +155,7 @@ export class ProProcurementApp extends HHElement {
       // The session is gone: say so on the sign in screen, then end it. The
       // same move a load's 401 takes, so the words never differ by path.
       this.#signinMessage = words;
+      this.#personaRole = null;
       await this.#session.signOut();
     },
     hold: (busy) => {
@@ -204,6 +212,7 @@ export class ProProcurementApp extends HHElement {
       return;
     }
     this.#view = { kind: "loading" };
+    this.#errorWords = "";
     this.requestUpdate();
     const loaders: Record<SurfaceId, (page: Page) => Promise<SurfaceAnswer>> = {
       today: todayLoad,
@@ -226,6 +235,33 @@ export class ProProcurementApp extends HHElement {
       return;
     } else {
       this.#view = { kind: answer.kind };
+      if (answer.kind === "error" && answer.status === undefined) {
+        this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      }
+    }
+    this.requestUpdate();
+  }
+
+  async #retrySession(): Promise<void> {
+    this.#view = { kind: "loading" };
+    this.#errorWords = "";
+    this.requestUpdate();
+    if (this.#session.current() === null && this.#personaRole !== null) {
+      await this.#signIn({ method: "persona", roleLabel: this.#personaRole });
+      return;
+    }
+    const result = await this.#session.check();
+    if (result.ok) {
+      this.#route = { surface: LANDING };
+      this.#page.route = this.#route;
+      this.#signinMessage = "";
+      void this.#loadRoute();
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
+      this.#signinMessage = result.error;
+    } else {
+      this.#view = { kind: "error" };
+      this.#errorWords = result.error;
     }
     this.requestUpdate();
   }
@@ -243,6 +279,10 @@ export class ProProcurementApp extends HHElement {
     }
     switch (action) {
       case "retry":
+        if (this.#session.profile() === null) {
+          void this.#retrySession();
+          return;
+        }
         void this.#loadRoute();
         return;
       case "open-scope":
@@ -314,12 +354,16 @@ export class ProProcurementApp extends HHElement {
   };
 
   readonly #onSignOut = (): void => {
+    this.#personaRole = null;
     void this.#session.signOut();
   };
 
   async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#busy = true;
     this.#signinMessage = "";
+    this.#errorWords = "";
+    this.#view = { kind: "loading" };
+    this.#personaRole = personaRoleHeld(input, import.meta.env.MODE === "demo" || import.meta.env.DEV);
     this.requestUpdate();
     const result = await signInFromCard(this.#session, input);
     this.#busy = false;
@@ -329,8 +373,12 @@ export class ProProcurementApp extends HHElement {
       this.#signinMessage = "";
       this.#notice = result.value.notice === undefined ? null : { kind: "ok", words: result.value.notice };
       void this.#loadRoute();
-    } else {
+    } else if (result.status === 401 || result.status === 403 || !this.#inFrame()) {
+      this.#personaRole = null;
       this.#signinMessage = result.error;
+    } else {
+      this.#view = { kind: "error" };
+      this.#errorWords = result.error;
     }
     this.requestUpdate();
   }
@@ -338,9 +386,12 @@ export class ProProcurementApp extends HHElement {
   connectedCallback(): void {
     super.connectedCallback();
     // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
-    if (import.meta.env.MODE === "demo") {
+    if (import.meta.env.MODE === "demo" || import.meta.env.DEV) {
       const asked = demoRoleFromAddress(window.location.search);
-      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+      if (asked !== null) {
+        this.#personaRole = asked;
+        void this.#signIn({ method: "persona", roleLabel: asked });
+      }
     }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
@@ -391,7 +442,7 @@ export class ProProcurementApp extends HHElement {
     super.updated(changed);
     const root = document.documentElement;
     root.setAttribute("data-brand", "hh-pro");
-    if (this.#session.profile() === null) root.removeAttribute("data-theme");
+    if (!this.#inFrame()) root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", "light");
     const signin = this.renderRoot.querySelector("hh-pro-signin") as HHProSignIn | null;
     if (signin !== null) {
@@ -429,7 +480,7 @@ export class ProProcurementApp extends HHElement {
 
   #renderRoute(): TemplateResult {
     const surface = SURFACES[this.#route.surface];
-    if (!this.#session.can(surface.capability)) {
+    if (this.#session.profile() !== null && !this.#session.can(surface.capability)) {
       return html`<hh-pro-state data-state="refusal" data-testid="surface-state"></hh-pro-state>`;
     }
     if (this.#view.kind !== "ready") {
@@ -442,7 +493,7 @@ export class ProProcurementApp extends HHElement {
         scope: SCOPE_MISSING,
         product: "",
       };
-      return stateBlock(this.#view, { empty: empties[this.#route.surface] }, "surface-state");
+      return stateBlock(this.#view, { empty: empties[this.#route.surface], error: this.#errorWords === "" ? undefined : this.#errorWords }, "surface-state");
     }
     const views: Record<SurfaceId, (page: Page) => TemplateResult> = {
       today: (page) => todayView(this.#data, page),
@@ -458,10 +509,11 @@ export class ProProcurementApp extends HHElement {
 
   render(): TemplateResult {
     const profile = this.#session.profile();
-    if (profile === null) return html`<hh-pro-signin></hh-pro-signin>`;
+    if (!this.#inFrame()) return html`<hh-pro-signin></hh-pro-signin>`;
     const top = frameSurfaceOf(this.#route);
     const held = CAPABILITIES.filter((c) => this.#session.can(c)).join(" ");
-    return html`<hh-pro-frame data-app="procurement" data-surface="${top}" data-dealer="${this.#dealerName}" data-role="${roleLabel(profile.role)}" data-capabilities="${held}">
+    const role = profile === null ? (this.#personaRole ?? "") : roleLabel(profile.role);
+    return html`<hh-pro-frame data-app="procurement" data-surface="${top}" data-dealer="${this.#dealerName}" data-role="${role}" data-capabilities="${held}">
       <span slot="actions">${top !== "today" ? html`<button type="button" class="todaybtn" data-action="open-today" data-testid="open-today">Today</button>` : nothing}</span>
       <h1 data-testid="surface-title">${this.#headingFor()}</h1>
       ${noticeLine(this.#notice)}

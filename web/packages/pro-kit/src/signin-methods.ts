@@ -142,3 +142,9 @@ export function signInPlan(input: SignInPlanInput): SignInPlan {
     buttons,
   };
 }
+
+/** The role label a persona sign in holds the frame open with, or null: only where the demo or dev gate is open. */
+export function personaRoleHeld(input: SignInSubmit | SignInMethodChoice, gateOpen: boolean): string | null {
+  if (!gateOpen || "password" in input || input.method !== "persona") return null;
+  return input.roleLabel ?? null;
+}
