@@ -10,7 +10,7 @@ import type { PurchasingPO, Result } from "@hardscapehouse/api-client";
 import type { TemplateResult } from "lit";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
 import { type PoApi } from "../po/po-api.js";
-import { isPlaced, poRows, refusalWords, whenWords } from "../po/po-logic.js";
+import { houseDay, isPlaced, poRows, refusalWords, whenWords } from "../po/po-logic.js";
 import { arrivalRows, sortByPromise, type ArrivalRow } from "./incoming-logic.js";
 import { renderIncoming, renderSalesIncoming, type IncomingModel } from "./incoming-views.js";
 
@@ -26,6 +26,7 @@ export class IncomingDesk implements AreaDesk {
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   /** The first read of the area, run when it is first shown. */
@@ -90,7 +91,7 @@ export class IncomingDesk implements AreaDesk {
       rows: this.#rows,
       busy: this.#busy,
       error: this.#error,
-      today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      today: houseDay(),
     });
   }
 }
@@ -136,11 +137,11 @@ export class SalesIncomingDesk implements AreaDesk {
   #error = "";
   #orders: readonly PurchasingPO[] = [];
   #busy = false;
-  readonly #today = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   /** The first read of the area: the register, of which the placed orders are the arrivals. */
@@ -178,7 +179,7 @@ export class SalesIncomingDesk implements AreaDesk {
       rows: this.#orders.map((o) => ({
         po: o.po_no,
         vendor: o.vendor_name,
-        expected: whenWords(o.expected_at, this.#today),
+        expected: whenWords(o.expected_at, houseDay()),
         how: o.delivery_method,
         lines: o.line_count,
         justPlaced: false,

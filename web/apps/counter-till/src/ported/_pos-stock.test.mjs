@@ -4,7 +4,7 @@
 // node --import./src/_ts-js-loader.mjs --test 'src/**/*.test.mjs' (run from app/)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stockStatus, availableInSellUnit, formatQty } from './_pos-stock.ts';
+import { stockStatus, onHandStatus, availableInSellUnit, formatQty } from './_pos-stock.ts';
 
 const facts = (over = {}) => ({
   availableBase: undefined,
@@ -22,9 +22,19 @@ test('DIB-488: no glance answer renders NOTHING: absent data is not an error and
 test('DIB-488: zero or negative available is out of stock', () => {
   assert.deepEqual(stockStatus(facts({ availableBase: 0 })), {
     tone: 'out',
-    label: 'Out of stock at this branch',
+    label: 'Out of stock here',
   });
-  assert.equal(stockStatus(facts({ availableBase: -3 })).tone, 'out');
+  assert.deepEqual(stockStatus(facts({ availableBase: -3 })), {
+    tone: 'out',
+    label: 'Out of stock here',
+  });
+});
+
+test('UX-51: onHandStatus formats zero or negative on-hand as "Out of stock here" and positive as "<n> on hand"', () => {
+  assert.equal(onHandStatus(undefined), null);
+  assert.deepEqual(onHandStatus(0), { tone: 'out', label: 'Out of stock here' });
+  assert.deepEqual(onHandStatus(-3), { tone: 'out', label: 'Out of stock here' });
+  assert.deepEqual(onHandStatus(12), { tone: 'ok', label: '12 on hand' });
 });
 
 test('DIB-488: in stock speaks the quantity and unit', () => {
