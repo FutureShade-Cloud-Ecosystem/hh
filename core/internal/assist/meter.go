@@ -10,8 +10,8 @@ package assist
 //	          if the write fails. The user gets the plain unavailable answer; nothing was spent.
 //	call      the provider is reached only past the reservation.
 //	settle    actual tokens in, out and cached, cost at the price row in force, that row's id.
-//	sweep     a reservation whose exchange ended with no settlement is voided by a job; the sweep
-//	          settles nothing, because it cannot prove what was spent.
+//	sweep     a reservation open past the grace may have reached the provider, so a job SETTLES it at
+//	          its estimate, marked as the sweep's. Only a call refused before sending is voided.
 //
 // MONTHLY SPEND READS THIS TABLE. A call counts once, as its settlement when it has one, as nothing
 // when it was voided, and as its ESTIMATE while it is still open (FoldCalls). So two requests in
@@ -79,8 +79,14 @@ type SpendRow struct {
 	CostMicroCents int64
 	// PriceID names the assist_model_prices row used, empty for a free provider.
 	PriceID string
-	At      time.Time
+	// SettledBy is empty for a settlement from the provider call itself and SettledBySweep for one the
+	// sweep wrote at the reservation's estimate. Only a settlement carries it.
+	SettledBy string
+	At        time.Time
 }
+
+// SettledBySweep marks a settlement the sweep wrote at the estimate.
+const SettledBySweep = "sweep"
 
 // Validate is the Go twin of the table's CHECK constraints.
 func (r SpendRow) Validate() error {
@@ -107,6 +113,9 @@ func (r SpendRow) Validate() error {
 		}
 	default:
 		return fmt.Errorf("assist: spend row audience %q is not staff, pro, embed or messages", r.Audience)
+	}
+	if r.SettledBy != "" && (r.Kind != SpendSettlement || r.SettledBy != SettledBySweep) {
+		return errors.New("assist: only a settlement may be marked settled by the sweep")
 	}
 	if r.TokensIn < 0 || r.TokensOut < 0 || r.TokensCached < 0 || r.CostMicroCents < 0 {
 		return errors.New("assist: spend row has a negative amount")
@@ -333,10 +342,21 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 		return Reply{}, s.meterFailure("write reservation", err)
 	}
 
+	// The one thing provably unspent: the context ended before the request was sent. Voided at
+	// once; the provider is not reached.
+	if cerr := ctx.Err(); cerr != nil {
+		v := row
+		v.Kind = SpendVoid
+		if verr := s.spend.Void(context.WithoutCancel(ctx), v); verr != nil {
+			s.warn("assist: void of an unsent call could not be written, the sweep will settle it at its estimate", "err", verr)
+		}
+		return Reply{}, cerr
+	}
+
 	reply, callErr := s.provider.Complete(ctx, req)
 	if callErr != nil {
-		// Nothing is settled that cannot be proven. The reservation stays, counted at its
-		// estimate, until the sweep voids it.
+		// The call may have reached the provider, so it is neither settled nor voided here. The
+		// reservation stays, counted at its estimate, and the sweep settles it at that estimate.
 		return reply, callErr
 	}
 
@@ -385,8 +405,8 @@ func (s *Service) warn(msg string, args ...any) {
 	}
 }
 
-// SweepReservations voids reservations that have been open longer than the grace period with no
-// settlement. It settles none, and it returns how many it voided. Run by the worker's job runner.
+// SweepReservations settles at their estimate the reservations open longer than the grace period,
+// and returns how many. Run by the worker's job runner.
 func (s *Service) SweepReservations(ctx context.Context, grace time.Duration) (int, error) {
 	if s.spend == nil {
 		return 0, nil
@@ -402,8 +422,10 @@ const SpendSweepJobName = "assist.spend_reservation_sweep"
 const ReservationGrace = 15 * time.Minute
 
 // SweepReservations is the sweep over a store, for the worker's job (which holds a store, not a
-// service). It voids each reservation older than the grace with neither a settlement nor a void.
-// It settles nothing: what the provider billed is not provable from here.
+// service). Each reservation older than the grace with neither a settlement nor a void may have
+// reached the provider, so voiding it would drop real spend: it is SETTLED at its estimate (same
+// tokens, cost and price row, the reservation's at), marked SettledBySweep. A reservation is voided
+// only where it is provable that nothing was sent, and that void is written by complete itself.
 func SweepReservations(ctx context.Context, store SpendStore, now time.Time, grace time.Duration) (int, error) {
 	open, err := store.Unsettled(ctx, now.Add(-grace))
 	if err != nil {
@@ -412,8 +434,8 @@ func SweepReservations(ctx context.Context, store SpendStore, now time.Time, gra
 	n := 0
 	for _, r := range open {
 		v := r
-		v.Kind, v.TokensIn, v.TokensOut, v.TokensCached, v.CostMicroCents = SpendVoid, 0, 0, 0, 0
-		if err := store.Void(ctx, v); err != nil {
+		v.Kind, v.SettledBy = SpendSettlement, SettledBySweep
+		if err := store.Settle(ctx, v); err != nil {
 			return n, err
 		}
 		n++

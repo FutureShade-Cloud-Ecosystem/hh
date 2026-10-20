@@ -25,6 +25,8 @@ func exportRows() []SpendRow {
 		mk("e5", AudiencePro, "", "p-1", "", "tanyai-main", "m1", 700, 90, 10, 2500),
 		mk("e6", AudienceEmbed, "", "", "", "embed", "e1", 9000, 0, 0, 800),
 		mk("e7", AudienceMessages, "u-sm", "", "SALES_MANAGER", "tanyai-main", "m1", 60, 30, 0, 250),
+		{Kind: SpendSettlement, ExchangeID: "e10", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-is", RoleCode: "INSIDE_SALES",
+			Alias: "tanyai-main", Model: "m1", TokensIn: 5, TokensOut: 5, CostMicroCents: 40, SettledBy: SettledBySweep, At: at(4)},
 		// Not billable: an open reservation and a void.
 		{Kind: SpendReservation, ExchangeID: "e8", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", TokensIn: 99999, CostMicroCents: 99999, At: at(4)},
 		{Kind: SpendVoid, ExchangeID: "e9", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", At: at(4)},
@@ -66,6 +68,9 @@ func TestExportTotalsEqualTheSpendTablesSums(t *testing.T) {
 	s := exp.Summary
 	if s.Requests != wantReq || s.TokensIn != wantIn || s.TokensOut != wantOut || s.TokensCached != wantCached || s.CostMicroCents != wantCost {
 		t.Fatalf("summary %+v does not equal the table's sums", s)
+	}
+	if s.SweptRequests != 1 || s.SweptCostMicroCents != 40 {
+		t.Fatalf("swept part = %d / %d, want 1 / 40", s.SweptRequests, s.SweptCostMicroCents)
 	}
 	if s.Org != "hh-demo" || s.Month != "2026-08" {
 		t.Fatalf("summary carries org %q month %q", s.Org, s.Month)

@@ -346,34 +346,75 @@ func TestFoldCalls(t *testing.T) {
 	}
 }
 
-func TestSweepReservations_VoidsOnlyWhatEndedUnsettled(t *testing.T) {
+func TestSweepSettlesAtTheEstimateWhatMayHaveReachedTheProvider(t *testing.T) {
 	sp := &memSpend{}
-	old := at(1)
-	fresh := at(11)
-	mk := func(ex string, k SpendKind, when time.Time) SpendRow {
-		return SpendRow{Kind: k, ExchangeID: ex, CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", RoleCode: "SALES_MANAGER", Alias: "a", Model: "m", At: when}
-	}
-	sp.rows = []SpendRow{
-		mk("e-settled", SpendReservation, old), mk("e-settled", SpendSettlement, old),
-		mk("e-ended", SpendReservation, old),
-		mk("e-live", SpendReservation, fresh),
-	}
 	svc := meteredService(&pricedProvider{}, sp)
-
-	n, err := svc.SweepReservations(context.Background(), 15*time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	old := at(1)
+	sp.rows = []SpendRow{
+		{Kind: SpendReservation, ExchangeID: "e-settled", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", Alias: "a", Model: "m", At: old},
+		{Kind: SpendSettlement, ExchangeID: "e-settled", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", Alias: "a", Model: "m", At: old},
+		{Kind: SpendReservation, ExchangeID: "e-ended", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", Alias: "a", Model: "m", TokensIn: 500, TokensOut: 1024, CostMicroCents: 900, PriceID: "p", At: old},
+		{Kind: SpendReservation, ExchangeID: "e-live", CallNo: 1, Audience: AudienceStaff, StaffUserID: "u-sm", Alias: "a", Model: "m", At: at(11)},
 	}
-	if n != 1 {
-		t.Fatalf("voided %d, want exactly the one ended reservation", n)
+	n, err := svc.SweepReservations(context.Background(), 15*time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("swept %d (%v), want exactly the one ended reservation", n, err)
 	}
 	last := sp.rows[len(sp.rows)-1]
-	if last.Kind != SpendVoid || last.ExchangeID != "e-ended" {
-		t.Fatalf("last row = %+v, want a void of e-ended", last)
+	if last.Kind != SpendSettlement || last.ExchangeID != "e-ended" || last.SettledBy != SettledBySweep ||
+		last.TokensIn != 500 || last.TokensOut != 1024 || last.CostMicroCents != 900 || last.PriceID != "p" || !last.At.Equal(old) {
+		t.Fatalf("last row = %+v, want a sweep settlement at the reservation's estimate", last)
 	}
-	// Idempotent: a second pass finds nothing.
 	if n, _ := svc.SweepReservations(context.Background(), 15*time.Minute); n != 0 {
-		t.Fatalf("second sweep voided %d, want 0", n)
+		t.Fatalf("second sweep touched %d, want 0", n)
+	}
+}
+
+// The provider answered, the settlement write failed, the sweep ran: the spend is kept.
+func TestAnAnsweredCallWhoseSettlementFailedKeepsItsSpendThroughTheSweep(t *testing.T) {
+	sp := &memSpend{failSettle: errors.New("write refused")}
+	p := &pricedProvider{reply: Reply{Text: "ok", TokensIn: 10, TokensOut: 5}}
+	clock := at(11)
+	svc := meteredService(p, sp).WithClock(func() time.Time { return clock })
+	if _, err := svc.complete(context.Background(), manager(), CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	from, to := MonthWindow(clock)
+	before, _ := sp.DealerMonthMicroCents(context.Background(), from, to)
+	if before == 0 {
+		t.Fatal("the open reservation must count at its estimate")
+	}
+	clock = clock.Add(time.Hour)
+	sp.failSettle = nil
+	if _, err := svc.SweepReservations(context.Background(), 15*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := sp.DealerMonthMicroCents(context.Background(), from, to)
+	if after != before {
+		t.Fatalf("dealer spend %d after the sweep, was %d: the sweep dropped spend", after, before)
+	}
+	for _, k := range sp.kinds() {
+		if k == SpendVoid {
+			t.Fatal("the sweep voided a call that reached the provider")
+		}
+	}
+}
+
+// A call refused before sending is the one thing provably unspent: voided at once.
+func TestACallCancelledBeforeSendingIsVoidedAndNeverReachesTheProvider(t *testing.T) {
+	sp := &memSpend{}
+	p := &pricedProvider{reply: Reply{Text: "ok"}}
+	svc := meteredService(p, sp)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.complete(ctx, manager(), CompletionRequest{}); err == nil {
+		t.Fatal("a cancelled context must refuse the call")
+	}
+	if p.calls != 0 {
+		t.Fatal("the provider was reached")
+	}
+	if k := sp.kinds(); len(k) != 2 || k[1] != SpendVoid {
+		t.Fatalf("table = %v, want reservation then void", k)
 	}
 }
 
@@ -393,6 +434,8 @@ func TestSpendRowValidate(t *testing.T) {
 		{"embed with a user", func(r *SpendRow) { r.Audience = AudienceEmbed }, false},
 		{"messages with a staff user", func(r *SpendRow) { r.Audience = AudienceMessages }, true},
 		{"unknown audience", func(r *SpendRow) { r.Audience = "web" }, false},
+		{"settled by something else", func(r *SpendRow) { r.Kind, r.SettledBy = SpendSettlement, "operator" }, false},
+		{"sweep mark on a reservation", func(r *SpendRow) { r.SettledBy = SettledBySweep }, false},
 		{"unknown kind", func(r *SpendRow) { r.Kind = "refund" }, false},
 		{"negative tokens", func(r *SpendRow) { r.TokensIn = -1 }, false},
 		{"negative cost", func(r *SpendRow) { r.CostMicroCents = -1 }, false},

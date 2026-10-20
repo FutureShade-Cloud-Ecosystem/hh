@@ -19,7 +19,7 @@ var (
 
 const spendColumns = `kind, exchange_id::text, call_no, audience,
 	COALESCE(staff_user_id::text, ''), COALESCE(portal_user_id::text, ''), role_code::text,
-	alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, COALESCE(price_id::text, ''), at`
+	alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, COALESCE(price_id::text, ''), settled_by, at`
 
 // foldedCalls selects one effective row per call inside the window. The window is on the row's at,
 // and a settlement or void carries its reservation's at, so a call never straddles a month.
@@ -39,11 +39,11 @@ func (r *Repository) appendSpend(ctx context.Context, row SpendRow) error {
 	}
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO assist_spend (kind, exchange_id, call_no, audience, staff_user_id, portal_user_id, role_code,
-		                          alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, price_id, at)
+		                          alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, price_id, settled_by, at)
 		VALUES ($1, $2::uuid, $3, $4, NULLIF($5,'')::uuid, NULLIF($6,'')::uuid, $7,
-		        $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15)`,
+		        $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16)`,
 		string(row.Kind), row.ExchangeID, row.CallNo, string(row.Audience), row.StaffUserID, row.PortalUserID, row.RoleCode,
-		row.Alias, row.Model, row.TokensIn, row.TokensOut, row.TokensCached, row.CostMicroCents, row.PriceID, at)
+		row.Alias, row.Model, row.TokensIn, row.TokensOut, row.TokensCached, row.CostMicroCents, row.PriceID, row.SettledBy, at)
 	if err != nil {
 		return fmt.Errorf("assist: append spend %s: %w", row.Kind, err)
 	}
@@ -111,7 +111,7 @@ func scanSpend(rows interface {
 		var s SpendRow
 		var kind, aud string
 		if err := rows.Scan(&kind, &s.ExchangeID, &s.CallNo, &aud, &s.StaffUserID, &s.PortalUserID, &s.RoleCode,
-			&s.Alias, &s.Model, &s.TokensIn, &s.TokensOut, &s.TokensCached, &s.CostMicroCents, &s.PriceID, &s.At); err != nil {
+			&s.Alias, &s.Model, &s.TokensIn, &s.TokensOut, &s.TokensCached, &s.CostMicroCents, &s.PriceID, &s.SettledBy, &s.At); err != nil {
 			return nil, fmt.Errorf("assist: scan spend: %w", err)
 		}
 		s.Kind, s.Audience = SpendKind(kind), Audience(aud)

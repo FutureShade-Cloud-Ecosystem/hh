@@ -45,6 +45,10 @@ type ExportSummary struct {
 	TokensOut      int64  `json:"tokens_out"`
 	TokensCached   int64  `json:"tokens_cached"`
 	CostMicroCents int64  `json:"cost_micro_cents"`
+	// SweptRequests and SweptCostMicroCents are the part of the totals that the sweep settled at an
+	// estimate (the call may not have been billed by the provider); the operator reviews them.
+	SweptRequests       int   `json:"swept_requests"`
+	SweptCostMicroCents int64 `json:"swept_cost_micro_cents"`
 }
 
 // BillingExport is one month.
@@ -85,6 +89,10 @@ func BuildBillingExport(org, month string, rows []SpendRow) BillingExport {
 		g.TokensCached += int64(r.TokensCached)
 		g.CostMicroCents += r.CostMicroCents
 		sum.Requests++
+		if r.SettledBy == SettledBySweep {
+			sum.SweptRequests++
+			sum.SweptCostMicroCents += r.CostMicroCents
+		}
 		sum.TokensIn += int64(r.TokensIn)
 		sum.TokensOut += int64(r.TokensOut)
 		sum.TokensCached += int64(r.TokensCached)
