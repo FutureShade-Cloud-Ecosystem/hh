@@ -11,6 +11,7 @@
 // screenshot names every screen.
 import { openReturns } from "./helpers.js";
 import type { Page } from "@playwright/test";
+import { closeAccountMenu, openAccountMenu } from "../account-menu";
 import {
   expect,
   SEEDED,
@@ -586,7 +587,9 @@ test("beyond the till: the reload keeps the session, sign out ends it, and a fre
   // way.
   const signedIn = await page.screenshot({ fullPage: true });
   await page.reload();
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await closeAccountMenu(page);
   await settle(page);
   // The picture holds the claim's two halves: the till as it stood signed
   // in, and the till the reload left, still signed in under the same role.
@@ -605,7 +608,9 @@ test("beyond the till: the reload keeps the session, sign out ends it, and a fre
   await freshTab.close();
   // Signing out ends the session, deliberately: the till returns to its
   // entry cards.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   // A fresh page starts at the front door, and the till is nobody's either.

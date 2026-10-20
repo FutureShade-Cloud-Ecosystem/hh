@@ -44,7 +44,7 @@ test("the entry page shows the demo role cards and the desk opens on the Sales t
   await expect(page.getByRole("button", SALES)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await signIn(page);
-  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)");
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales");
   // The desk's landing page is the list alone (the split-list navigation):
   // the work area is the quote page's own screen, not the list's neighbour.
   await expect(page.getByTestId("qb-list")).toBeVisible();

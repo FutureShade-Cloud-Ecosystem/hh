@@ -58,10 +58,10 @@ test("with the front door's key the desk opens, keeps the key, and a reload stil
     { key: HANDOFF_KEY, value: JSON.stringify(record()) },
   );
   await page.goto("./");
-  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales", { timeout: 15_000 });
   expect(await page.evaluate((key) => window.sessionStorage.getItem(key) !== null, HANDOFF_KEY)).toBe(true);
   await page.reload();
-  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales", { timeout: 15_000 });
   expect(new URL(page.url()).pathname).toBe("/quote/");
 });
 
@@ -77,7 +77,7 @@ test("Sign out under the prefix drops the key and returns to the front door", as
     { key: HANDOFF_KEY, value: JSON.stringify(record()) },
   );
   await page.goto("./");
-  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales (demo)", { timeout: 15_000 });
+  await expect(page.locator("hh-shell-header button.account")).toContainText("Sales", { timeout: 15_000 });
   await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByText("front door")).toBeVisible();
