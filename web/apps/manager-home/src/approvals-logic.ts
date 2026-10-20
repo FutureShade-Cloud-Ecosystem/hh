@@ -266,7 +266,7 @@ export function toApprovalCardItem(row: ApprovalRow): ApprovalCardItem {
     timeAgo: status === "PENDING" ? "Waiting for a decision" : "Decided",
     status,
     detailTitle: ref !== "" ? `${ref} · ${kindWord(row.policy_type)}` : kindWord(row.policy_type),
-    detailSubtitle: kindWord(row.policy_type),
+    detailSubtitle: "",
     metadata: [{ label: "The request", value: row.detail }],
   };
 }
@@ -371,7 +371,19 @@ export function itemsForKind(kind: string, rows: readonly ApprovalRow[]): readon
     .map((row) => {
       const board = BOARD_APPROVAL_ITEMS.find((b) => b.id === row.id);
       const card = toApprovalCardItem(row);
-      return board ? { ...board, status: card.status } : card;
+      if (board === undefined) return card;
+      // The board only adds what the core row lacks (the customer in the title, the role label, the metric bands). The
+      // row's own figure, its word, its summary and its status stay the core's: no figure on the row, none shown.
+      const sameRef = refOfDetail(board.title) === refOfDetail(row.detail);
+      return {
+        ...board,
+        title: sameRef ? board.title : card.title,
+        amount: card.amount,
+        amountLabel: card.amountLabel,
+        summary: card.summary,
+        timeAgo: card.status === "PENDING" ? board.timeAgo : card.timeAgo,
+        status: card.status,
+      };
     });
   return [...items.filter((i) => i.status === "PENDING"), ...items.filter((i) => i.status !== "PENDING")];
 }

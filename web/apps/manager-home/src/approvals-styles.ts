@@ -138,6 +138,16 @@ export const approvalsStyles = css`
     margin-top: var(--hh-s-16);
   }
 
+  .decision-notice {
+    margin: 0 0 var(--hh-s-16);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--hh-text);
+    border: 1px solid var(--hh-success);
+    border-radius: var(--hh-radius-control);
+  }
+
   .decision-confirm {
     display: flex;
     flex-direction: column;

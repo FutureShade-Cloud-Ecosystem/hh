@@ -406,6 +406,7 @@ export class ManagerHomeApp extends HHElement {
       } else if (id !== "" && this.#approvals.busyId === "") {
         // A press only asks: the confirm names the request and the amount, and nothing is sent until the yes.
         this.#approvals = { ...this.#approvals, selectedId: id, confirming: { id, decision: isApprove ? "approve" : "reject" }, notice: "", error: "" };
+        this.#decisionFocus = { kind: "confirm" };
         this.requestUpdate();
       }
       return;
@@ -416,8 +417,7 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     if (action === "decide-cancel") {
-      this.#approvals = { ...this.#approvals, confirming: undefined };
-      this.requestUpdate();
+      this.#cancelDecision();
       return;
     }
     if (action === "sign-apply") {
@@ -484,6 +484,7 @@ export class ManagerHomeApp extends HHElement {
     // input does not leave this element's own shadow root, so the form
     // listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
+    this.renderRoot.addEventListener("keydown", this.#onDecisionKey as EventListener);
     if (this.#custody.mode === "console") {
       this.#custody.begin("manager-home", (outcome) => this.#onRecovered(outcome));
       return;
@@ -536,6 +537,7 @@ export class ManagerHomeApp extends HHElement {
     window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
+    this.renderRoot.removeEventListener("keydown", this.#onDecisionKey as EventListener);
     super.disconnectedCallback();
   }
 
@@ -552,6 +554,7 @@ export class ManagerHomeApp extends HHElement {
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
     this.#restoreFocus();
+    this.#applyDecisionFocus();
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
     this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
@@ -604,6 +607,68 @@ export class ManagerHomeApp extends HHElement {
     const op = control.getAttribute("data-op");
     this.#focusTarget = op !== null && (key !== null || entry !== null) ? { op, key: key ?? "", entry: entry ?? "" } : null;
   }
+
+  // Where focus goes in the approvals decision, set with the state that needs it and used by the render that draws it:
+  // into the confirm when it opens, back to the asking button after a cancel, to the next waiting row (or the notice)
+  // after a decision. The confirm and the result are also scrolled into view, for the phone.
+  #decisionFocus: { kind: "confirm" } | { kind: "row"; id: string; decision: string } | { kind: "next"; id: string } | { kind: "error" } | null = null;
+
+  #cancelDecision(): void {
+    const asked = this.#approvals.confirming;
+    this.#approvals = { ...this.#approvals, confirming: undefined };
+    if (asked !== undefined) this.#decisionFocus = { kind: "row", id: asked.id, decision: asked.decision };
+    this.requestUpdate();
+  }
+
+  #applyDecisionFocus(): void {
+    const want = this.#decisionFocus;
+    if (want === null) return;
+    this.#decisionFocus = null;
+    const root = this.renderRoot;
+    const ask = (id: string): string => `.approval-card[data-approval-id='${CSS.escape(id)}']`;
+    if (want.kind === "confirm") {
+      const confirm = root.querySelector<HTMLElement>("[data-test='decision-confirm']");
+      if (confirm === null) return;
+      const reason = root.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
+      const first = this.#approvals.confirming?.decision === "reject" && reason !== null ? reason : confirm.querySelector<HTMLButtonElement>("button");
+      first?.focus({ preventScroll: true });
+      confirm.scrollIntoView({ block: "nearest" });
+    } else if (want.kind === "row") {
+      const button = root.querySelector<HTMLButtonElement>(`${ask(want.id)} button[data-decision='${CSS.escape(want.decision)}']`);
+      button?.focus();
+    } else if (want.kind === "next") {
+      const notice = root.querySelector<HTMLElement>("[data-test='decision-notice']");
+      notice?.scrollIntoView({ block: "nearest" });
+      const card = want.id !== "" ? root.querySelector<HTMLElement>(ask(want.id)) : null;
+      (card ?? notice)?.focus({ preventScroll: true });
+    } else {
+      root.querySelector<HTMLElement>(".error-line")?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // Escape cancels the confirm, and Tab stays inside the decision block while it is open.
+  readonly #onDecisionKey = (event: KeyboardEvent): void => {
+    if (this.#approvals.confirming === undefined) return;
+    const section = this.renderRoot.querySelector<HTMLElement>(".decision-section");
+    if (section === null) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.#cancelDecision();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = Array.from(section.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
+    if (items.length === 0) return;
+    const active = (this.renderRoot as ShadowRoot).activeElement;
+    const at = active === null ? -1 : items.indexOf(active as HTMLElement);
+    if (!event.shiftKey && (at === items.length - 1 || at === -1)) {
+      event.preventDefault();
+      items[0].focus();
+    } else if (event.shiftKey && at <= 0) {
+      event.preventDefault();
+      items[items.length - 1].focus();
+    }
+  };
 
   #restoreFocus(): void {
     const target = this.#focusTarget;
@@ -1874,7 +1939,8 @@ export class ManagerHomeApp extends HHElement {
     const subject = before ? decisionSubject(before) : "the request";
     this.#approvals = { ...this.#approvals, busyId: id, error: "", refusal: "", notice: "" };
     this.requestUpdate();
-    const reason = this.#approvals.declineReason ?? "";
+    // A typed reason belongs to a reject: an approve sends none.
+    const reason = approve ? "" : (this.#approvals.declineReason ?? "");
     const result = await this.#api.decideApproval(id, approve, reason);
     if (result.ok) {
       this.#approvals = { ...this.#approvals, confirming: undefined, declineReason: "" };
@@ -1886,8 +1952,11 @@ export class ManagerHomeApp extends HHElement {
         ...this.#approvals,
         ...(all.ok ? { counts: pendingCounts(all.value) } : {}),
         selectedId: next?.id,
-        notice: `${approve ? "Approved" : "Rejected"} ${subject}. It is under Decided.`,
+        notice: `${approve ? "Approved" : "Rejected"} ${subject}.${
+          itemsForKind(this.#approvals.kind, this.#approvals.rows).some((i) => i.id === id && i.status !== "PENDING") ? " It is under Decided." : ""
+        }`,
       };
+      this.#decisionFocus = { kind: "next", id: next?.id ?? "" };
       // The reason belonged to the decision just made; the box is not bound, so it is emptied here.
       await this.updateComplete;
       const box = this.renderRoot.querySelector<HTMLInputElement>("input[data-field='decline-reason']");
@@ -1911,6 +1980,7 @@ export class ManagerHomeApp extends HHElement {
       };
     }
     this.#approvals = { ...this.#approvals, busyId: "" };
+    if (this.#approvals.error !== "") this.#decisionFocus = { kind: "error" };
     this.requestUpdate();
   }
 

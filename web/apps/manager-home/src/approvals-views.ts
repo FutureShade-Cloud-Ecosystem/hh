@@ -59,7 +59,7 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
       })}
     </div>
     ${model.notice !== undefined && model.notice !== ""
-      ? html`<p class="notice-line" role="status" data-test="decision-notice">${model.notice}</p>`
+      ? html`<p class="decision-notice" role="status" tabindex="-1" data-test="decision-notice">${model.notice}</p>`
       : nothing}
     ${model.error !== "" ? html`<p class="error-line">${model.error}</p>` : nothing}
     ${model.refusal !== "" ? html`<p class="refusal" data-test="approvals-refusal">${model.refusal}</p>` : nothing}
@@ -75,12 +75,12 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
               : html`
                   <div class="approvals-layout">
                     <div class="approvals-list" role="tablist" aria-label="Approval requests">
-                      ${items.filter((i) => i.status === "PENDING").map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
+                      ${items.filter((i) => i.status === "PENDING").map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId, model.confirming !== undefined))}
                       ${decided.length > 0
                         ? html`
                             <div class="decided-group" data-test="decided-group">
                               <h3 class="section-heading">Decided</h3>
-                              ${decided.map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
+                              ${decided.map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId, false))}
                             </div>
                           `
                         : nothing}
@@ -100,7 +100,7 @@ function renderAmount(item: ApprovalCardItem): TemplateResult {
     : nothing}</span>`;
 }
 
-function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, busyId: string): TemplateResult {
+function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, busyId: string, asking: boolean): TemplateResult {
   if (item.isCompanion) {
     return html`
       <div
@@ -154,7 +154,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
                 data-action="decide"
                 data-approval-id="${item.id}"
                 data-decision="approve"
-                ?disabled=${busyId !== ""}
+                ?disabled=${busyId !== "" || asking}
               >
                 Approve
               </button>
@@ -164,7 +164,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
                 data-action="decide"
                 data-approval-id="${item.id}"
                 data-decision="reject"
-                ?disabled=${busyId !== ""}
+                ?disabled=${busyId !== "" || asking}
               >
                 Reject
               </button>
@@ -233,7 +233,7 @@ function renderDecision(item: ApprovalCardItem, model: ApprovalsModel, middle: T
   if (item.status !== "PENDING") {
     return html`
       <div class="decision-section">
-        <span class="decision-eyebrow">DECISION</span>
+        <span class="decision-eyebrow">Decision</span>
         <p class="decision-outcome">${item.status === "APPROVED" ? "Approved" : "Rejected"}. Nothing more to do here.</p>
       </div>
     `;
@@ -242,7 +242,7 @@ function renderDecision(item: ApprovalCardItem, model: ApprovalsModel, middle: T
   const reasonMissing = confirming === "reject" && (model.declineReason ?? "").trim() === "";
   return html`
     <div class="decision-section">
-      <span class="decision-eyebrow">DECISION</span>
+      <span class="decision-eyebrow">Decision</span>
       ${confirming === null
         ? html`
             <div class="decision-actions">
@@ -261,10 +261,14 @@ function renderDecision(item: ApprovalCardItem, model: ApprovalsModel, middle: T
               </div>
             </div>
           `}
-      <div class="decline-reason-group">
-        <label class="reason-label">Reason, needed to reject</label>
-        <input type="text" class="control reason-input" placeholder="Tell the person who asked why" data-field="decline-reason" />
-      </div>
+      ${confirming === "approve"
+        ? nothing
+        : html`
+            <div class="decline-reason-group">
+              <label class="reason-label">Reason, needed to reject</label>
+              <input type="text" class="control reason-input" placeholder="Tell the person who asked why" data-field="decline-reason" />
+            </div>
+          `}
     </div>
   `;
 }
@@ -275,7 +279,7 @@ function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): Templa
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
         <h2 class="decision-title">${item.detailTitle}</h2>
-        <p class="decision-subtitle">${item.detailSubtitle}</p>
+        ${item.detailSubtitle !== "" ? html`<p class="decision-subtitle">${item.detailSubtitle}</p>` : nothing}
       </div>
 
       <div class="metric-band">
@@ -339,7 +343,7 @@ function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): Templa
       </div>
 
       <div class="decision-section">
-        <span class="decision-eyebrow">DECISION</span>
+        <span class="decision-eyebrow">Decision</span>
         <div class="decision-actions">
           ${item.canSignApply
             ? html`
@@ -393,7 +397,7 @@ function renderMarginDetail(item: ApprovalCardItem, model: ApprovalsModel): Temp
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
         <h2 class="decision-title">${item.detailTitle}</h2>
-        <p class="decision-subtitle">${item.detailSubtitle}</p>
+        ${item.detailSubtitle !== "" ? html`<p class="decision-subtitle">${item.detailSubtitle}</p>` : nothing}
       </div>
 
       <div class="metric-band">
@@ -474,7 +478,7 @@ function renderCreditDetail(item: ApprovalCardItem, model: ApprovalsModel): Temp
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
         <h2 class="decision-title">${item.detailTitle}</h2>
-        <p class="decision-subtitle">${item.detailSubtitle}</p>
+        ${item.detailSubtitle !== "" ? html`<p class="decision-subtitle">${item.detailSubtitle}</p>` : nothing}
       </div>
 
       <div class="metric-band">
@@ -517,7 +521,7 @@ function renderJournalEntryDetail(item: ApprovalCardItem): TemplateResult {
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
         <h2 class="decision-title">${item.detailTitle}</h2>
-        <p class="decision-subtitle">${item.detailSubtitle}</p>
+        ${item.detailSubtitle !== "" ? html`<p class="decision-subtitle">${item.detailSubtitle}</p>` : nothing}
       </div>
 
       ${item.journalLines && item.journalLines.length > 0
@@ -594,7 +598,7 @@ function renderGenericDetail(item: ApprovalCardItem, model: ApprovalsModel): Tem
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
         <h2 class="decision-title">${item.detailTitle}</h2>
-        <p class="decision-subtitle">${item.detailSubtitle}</p>
+        ${item.detailSubtitle !== "" ? html`<p class="decision-subtitle">${item.detailSubtitle}</p>` : nothing}
       </div>
 
       <div class="metadata-section">

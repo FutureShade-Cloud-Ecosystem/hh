@@ -221,3 +221,80 @@ test("Reject is the one word on the row and in the pane, and it asks first too",
   await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, reject" }).click();
   await expect(page.locator("[data-test='decided-group']").locator(`[data-approval='${SECOND}']`)).toContainText("Rejected");
 });
+
+// PR 550 round 2: the confirm by keyboard, one decision surface at a time, the core's own figure.
+const FIRST = "0e000000-0000-4000-9000-0000000000a1";
+
+test("by keyboard the confirm takes focus, Tab stays inside, Escape cancels and focus goes back to the button", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  const rowApprove = page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" });
+  await rowApprove.focus();
+  await page.keyboard.press("Enter");
+  const confirm = page.locator("[data-test='decision-confirm']");
+  const yes = confirm.getByRole("button", { name: "Yes, approve" });
+  await expect(yes).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(yes).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(rowApprove).toBeFocused();
+});
+
+test("after a decision focus moves to the next waiting row, and Cancel by button returns to the asking button", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  const row = page.locator(`[data-approval='${SECOND}']`);
+  await row.getByRole("button", { name: "Reject" }).click();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Cancel" }).click();
+  await expect(row.getByRole("button", { name: "Reject" })).toBeFocused();
+  await row.getByRole("button", { name: "Approve" }).click();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator("[data-test='decided-group']")).toContainText("Approved");
+  await expect(page.locator(`[data-approval='${FIRST}']`).first()).toBeFocused();
+});
+
+test("while a confirm is open every row's Approve and Reject are off, and a typed reason goes only with a reject", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  const bodies: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/decide")) bodies.push(r.postData() ?? "");
+  });
+  await page.locator("input[data-field='decline-reason']").fill("a note typed before choosing");
+  await page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-test='decision-confirm']")).toBeVisible();
+  for (const name of ["Approve", "Reject"]) {
+    const buttons = page.locator(".approvals-list").getByRole("button", { name });
+    await expect(buttons).toHaveCount(2);
+    for (const button of await buttons.all()) await expect(button).toBeDisabled();
+  }
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator("[data-test='decided-group']")).toContainText("Approved");
+  expect(bodies).toHaveLength(1);
+  expect(JSON.parse(bodies[0])).toEqual({ approve: true, reason: "" });
+});
+
+test("at phone width the confirm and then the result come into view", async ({ request, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  await page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-test='decision-confirm']")).toBeInViewport();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator("[data-test='decision-notice']")).toBeInViewport();
+});
+
+test("a board item never replaces the core row's figure, and the pane does not say the kind twice", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  // The core's row for the board's own id carries no amount: no figure is shown.
+  await expect(page.locator(`[data-approval='${FIRST}']`).first().locator(".card-amount")).not.toContainText("$");
+  await page.locator(`[data-approval='${SECOND}']`).locator(".card-title").click();
+  await expect(page.locator(`[data-approval-detail='${SECOND}'] .decision-subtitle`)).toHaveCount(0);
+  await expect(page.locator(`[data-approval-detail='${SECOND}'] .decision-eyebrow`)).toHaveText("Decision");
+});
