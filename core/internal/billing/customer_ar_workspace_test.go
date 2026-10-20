@@ -119,7 +119,8 @@ type fakeCreditForWorkspace struct {
 	activity []ARActivity
 	actErr   error
 
-	gotID string
+	gotID           string
+	gotWithPayments bool
 }
 
 func (f *fakeCreditForWorkspace) CustomerAging(_ context.Context, customerID string) (AgingRow, time.Time, bool, error) {
@@ -127,8 +128,9 @@ func (f *fakeCreditForWorkspace) CustomerAging(_ context.Context, customerID str
 	return f.agingRow, f.asOf, f.found, f.agingErr
 }
 
-func (f *fakeCreditForWorkspace) CustomerActivity(_ context.Context, customerID string, _ int, _ bool) ([]ARActivity, error) {
+func (f *fakeCreditForWorkspace) CustomerActivity(_ context.Context, customerID string, _ int, withPayments bool) ([]ARActivity, error) {
 	f.gotID = customerID
+	f.gotWithPayments = withPayments
 	return f.activity, f.actErr
 }
 
@@ -149,7 +151,7 @@ type workspaceCreditSeam interface {
 // credit seam. nil-credit is the optional case the seam supports (the handler skips
 // the aging field).
 func newWorkspaceHandlerForTest(store *fakeWorkspaceStore, credit workspaceCreditSeam) *WorkspaceHandler {
-	return NewWorkspaceHandler(store, credit, nil)
+	return NewWorkspaceHandler(store, credit, nil).WithPaymentTrail(&fakeTrail{held: true}).WithCustomerReach(&fakeReach{ok: true})
 }
 
 // -- reconciliation to the penny ----------------------------------------------------------------

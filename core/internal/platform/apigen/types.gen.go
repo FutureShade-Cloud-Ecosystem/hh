@@ -1155,7 +1155,8 @@ type BillingCustomerWorkspace struct {
 	InvoicesOpen     []BillingCustomerWorkspaceInvoice    `json:"invoices_open"`
 	InvoicesClosed   []BillingCustomerWorkspaceInvoice    `json:"invoices_closed"`
 	InvoicesDisputed []BillingCustomerWorkspaceInvoice    `json:"invoices_disputed"`
-	Payments         []BillingCustomerWorkspacePayment    `json:"payments"`
+	Payments         *[]BillingCustomerWorkspacePayment   `json:"payments,omitempty"`
+	PaymentsWithheld bool                                 `json:"payments_withheld"`
 	CreditNotes      []BillingCustomerWorkspaceCreditNote `json:"credit_notes"`
 	Statements       []BillingCustomerWorkspaceStatement  `json:"statements"`
 	Notes            []BillingCustomerWorkspaceNote       `json:"notes"`
