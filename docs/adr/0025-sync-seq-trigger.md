@@ -72,12 +72,18 @@ The database draws the seq when the writer did not.
   return (the counter, then the restock). SF-7 adds the table together with its place in the lock order.
 - Every `msg_*` table: their `seq` is an IDENTITY column (0385), a different counter on the same column. Its own
   gap (identity draws are not commit ordered) is a later item.
-- `will_call_pickups`: its stream, `will_call`, waits for the UX-72 change to reach main; a one line follow up
-  adds it.
-- `tasks`: two scopes serve it on two streams chosen by task type (`pick_tasks`, `weights`), which one trigger
-  argument cannot express. To be ruled.
+- `tasks`: excluded for good (row 2696). Two scopes serve it on two streams chosen by task type (`pick_tasks` for
+  PICK rows, `weights` for NEED_WEIGHT rows), which one trigger argument cannot express, and its writers draw
+  them explicitly.
 - `dashboard_user_widgets`: the plan names the stream `widget_measures`, the demo repair map counts it under the
   table's own name. To be ruled; SF-13 owns the table.
+
+## `will_call_pickups`
+
+In the trigger, on its single stream `will_call` (UX-72 put every writer on it, the counter lifted past the
+frozen `pickups` value). The migration's floor is the greatest seq the table holds, which covers any value the
+old counter handed out to a row, and its rows are re-drawn explicitly, so a staff pickup that sat below a
+contractor device's cursor reaches that device.
 
 ## What the trigger does not fix
 

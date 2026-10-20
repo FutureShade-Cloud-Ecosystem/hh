@@ -34,6 +34,7 @@ var seqTriggerStreams = map[string]string{
 	"purchasing_pos":               "purchase_orders",
 	"task_shortages":               "shortages",
 	"count_sheets":                 "cycle_counts",
+	"will_call_pickups":            "will_call",
 }
 
 // SeqTriggerStreams returns a copy of the table to stream map of the sync seq trigger.

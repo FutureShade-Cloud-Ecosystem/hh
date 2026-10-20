@@ -14,8 +14,14 @@
 --      without a draw catches up (its feed learns the row, and the deletes). Set based, per stream.
 --
 -- Left out on purpose: stock_balances (SF-7 owns it with its lock order place), every msg_* table
--- (their seq is an IDENTITY column, a different counter), will_call_pickups (its stream is not yet
--- settled), tasks (two streams by task type), dashboard_user_widgets (stream still to be ruled).
+-- (their seq is an IDENTITY column, a different counter), tasks (excluded for good: two streams by
+-- task type, pick_tasks for PICK rows and weights for NEED_WEIGHT rows, and its writers draw them
+-- explicitly), dashboard_user_widgets (stream still to be ruled).
+-- will_call_pickups is in, on its single stream will_call (the pickups UX-72 change put every writer on
+-- it, the counter lifted past the frozen pickups value). Its floor is the greatest seq the table holds,
+-- which covers any value the old pickups counter handed out to a row, and its rows are re-drawn
+-- explicitly below, which is what lets a staff pickup that sat under a contractor device's cursor reach
+-- that device.
 -- docs/adr/0025-sync-seq-trigger.md records the reasoning.
 --
 -- An upsert (INSERT ... ON CONFLICT DO UPDATE) draws twice: the BEFORE INSERT trigger for the
@@ -86,7 +92,8 @@ BEGIN
         ('pricing_list_prices', 'price_matrix'),
         ('purchasing_pos', 'purchase_orders'),
         ('task_shortages', 'shortages'),
-        ('count_sheets', 'cycle_counts');
+        ('count_sheets', 'cycle_counts'),
+        ('will_call_pickups', 'will_call');
 
     -- 2. the triggers.
     FOR m IN SELECT tbl, stream FROM sync_seq_map ORDER BY tbl LOOP

@@ -40,8 +40,7 @@ var seqExcluded = map[string]string{
 	"msg_acks":               "seq is an IDENTITY column (0385); SF-15",
 	"msg_channels":           "seq is an IDENTITY column (0385); SF-15",
 	"msg_notification_prefs": "seq is an IDENTITY column (0385); SF-15",
-	"will_call_pickups":      "its single stream, will_call, waits for UX-72 on main; a one line follow up adds it",
-	"tasks":                  "two streams by task type (pick_tasks for PICK rows, weights for NEED_WEIGHT rows), which one trigger argument cannot express; to be ruled",
+	"tasks":                  "excluded for good (row 2696): two streams by task type, pick_tasks for PICK rows and weights for NEED_WEIGHT rows; its writers draw them explicitly",
 	"dashboard_user_widgets": "stream disagreement: the plan says widget_measures, PR 532's demo repair map counts it under its own name; to be ruled (SF-13 owns the table)",
 }
 
