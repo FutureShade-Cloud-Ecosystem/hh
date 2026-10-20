@@ -140,6 +140,11 @@ type Reply struct {
 	// TokensCached is the part of TokensIn the provider served from its prompt cache.
 	TokensCached int
 
+	// Provider and Model are who answered, set by Service.complete (never by a provider), for the
+	// ledger and the usage report.
+	Provider string
+	Model    string
+
 	// Suggest is DIB-513: the command CODES to offer beside a reply that could not answer.
 	//
 	// It exists so a refusal can be a sentence and a row of chips instead of a sentence and a

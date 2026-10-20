@@ -644,7 +644,16 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		}
 		return raw
 	}())
+	// The model layer's deployment configuration: the operator's environment, never a request. A
+	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
+	assistModelCfg := assist.ModelConfig{
+		AnthropicKey: assistKey,
+		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
+		GatewayKey:   os.Getenv(assist.EnvGatewayKey),
+		DealerTag:    os.Getenv(assist.EnvDealerTag),
+	}
 	assistProvider := assist.NewProviderFromConfig(assistSettings, assistKey, "", log)
+	assistRouter := assist.NewRouter(assist.StaticAliases(assist.DefaultAliases()), assistModelCfg, assist.NewStubProvider(), log)
 
 	// DIB-66/67: the quote assist surfaces on the builder.
 	quoteAssistSvc := quoteassist.NewService(
@@ -693,6 +702,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	).
 		WithStaff(assistRepo).
 		WithKeyPresent(strings.TrimSpace(assistKey) != "").
+		WithRouter(assistRouter).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 

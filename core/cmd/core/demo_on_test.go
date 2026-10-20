@@ -173,6 +173,9 @@ func TestDemoServeStillRefusesEveryOtherProviderPrefix(t *testing.T) {
 		"TWILIO_AUTH_TOKEN=x",
 		"HOS_PAYMENT_API_KEY=x",
 		"HOS_ASSIST_ANTHROPIC_API_KEY=x",
+		"HOS_ASSIST_GATEWAY_URL=http://gateway.example/v1",
+		"HOS_ASSIST_GATEWAY_KEY=x",
+		"HOS_ASSIST_DEALER_TAG=x",
 	} {
 		env := serveEnv(t)
 		getenv, lookup, environ := envFuncs(env)

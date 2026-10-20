@@ -106,6 +106,10 @@ type Service struct {
 	staff    StaffLister
 	log      *slog.Logger
 
+	// router, when attached, chooses the provider PER REQUEST from the settings and the alias table.
+	// Without one the service uses its single provider, which is what every test double wants.
+	router *Router
+
 	// resolver is DIB-478's conversational layer. It may be nil, a deployment with no resolver
 	// answers every question as a fresh one, which is exactly the pre-478 behaviour, so the depth is
 	// additive rather than load-bearing.
@@ -129,6 +133,11 @@ func NewService(reg *Registry, p Provider, ledger LedgerStore, limits LimitStore
 
 // WithClock replaces the clock (tests only).
 func (s *Service) WithClock(f func() time.Time) *Service { s.now = f; return s }
+
+// WithRouter attaches the alias router. From then on the provider is resolved on every provider
+// call from the current settings, so a changed route or alias applies to the next request with no
+// restart.
+func (s *Service) WithRouter(r *Router) *Service { s.router = r; return s }
 
 // WithResolver attaches DIB-478's conversational resolver.
 //
@@ -201,6 +210,8 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		return Answer{Text: ChatDisabledMessage}, nil
 	}
 
+	id := s.identityFor(ctx, cfg)
+
 	// Step 2: the caller's own commands, and nothing else, become the tool set.
 	tools := toolSpecsFor(s.reg.List(ctx, c))
 
@@ -237,13 +248,13 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	case ResolveClarify:
 		// AN HONEST QUESTION IS AN ANSWER. No command ran, nothing was spent beyond the exchange
 		// itself, and the surface renders pickable options that feed the next turn.
-		s.record(ctx, c, 0, 0)
-		return Answer{Text: res.Clarify.Question, Clarify: res.Clarify, Results: []Result{}, Ran: nil, Usage: s.usage(0, 0)}, nil
+		s.record(ctx, c, id, 0, 0)
+		return Answer{Text: res.Clarify.Question, Clarify: res.Clarify, Results: []Result{}, Ran: nil, Usage: usageOf(id, 0, 0)}, nil
 	case ResolveNoReferent:
 		// NEVER FABRICATE. The window holds no referent, so the assistant says so plainly instead of
 		// picking the most recent plausible thing and sounding certain about it.
-		s.record(ctx, c, 0, 0)
-		return Answer{Text: res.Refusal, Results: []Result{}, Usage: s.usage(0, 0)}, nil
+		s.record(ctx, c, id, 0, 0)
+		return Answer{Text: res.Refusal, Results: []Result{}, Usage: usageOf(id, 0, 0)}, nil
 	}
 
 	run := &askRun{msgs: append(sanitizeHistory(history), Message{Role: RoleUser, Text: question})}
@@ -256,8 +267,8 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		// assistant turn with ids the service issued, so the provider sees a legal round trip.
 		calls, cl := s.preflight(ctx, c, tools, window, &res, res.Calls, false)
 		if cl != nil {
-			s.record(ctx, c, 0, 0)
-			return Answer{Text: cl.Question, Clarify: cl, Results: []Result{}, Usage: s.usage(0, 0)}, nil
+			s.record(ctx, c, id, 0, 0)
+			return Answer{Text: cl.Question, Clarify: cl, Results: []Result{}, Usage: usageOf(id, 0, 0)}, nil
 		}
 		s.exec(ctx, c, run, "", calls)
 	}
@@ -269,8 +280,8 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		return Answer{}, err
 	}
 	if out.clarify != nil {
-		s.record(ctx, c, run.in, run.out)
-		return Answer{Text: out.clarify.Question, Clarify: out.clarify, Results: []Result{}, Usage: s.usage(run.in, run.out)}, nil
+		s.record(ctx, c, run.ident(id), run.in, run.out)
+		return Answer{Text: out.clarify.Question, Clarify: out.clarify, Results: []Result{}, Usage: usageOf(run.ident(id), run.in, run.out)}, nil
 	}
 	if out.fail != "" {
 		// The bound was reached with tool calls still pending. The commands that ran are good;
@@ -283,24 +294,24 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	if run.executed == 0 {
 		// Prose with no lookups: the capability answer, the "I can't answer that one yet", the
 		// menu. Nothing ran, so nothing is recorded as having run.
-		s.record(ctx, c, run.in, run.out)
+		s.record(ctx, c, run.ident(id), run.in, run.out)
 		return Answer{
 			Text:    out.text,
 			Results: []Result{},
 			Suggest: out.suggest,
-			Usage:   s.usage(run.in, run.out),
+			Usage:   usageOf(run.ident(id), run.in, run.out),
 		}, nil
 	}
 
 	// Step 7: the ledger row, always, including the stub's zeros.
-	s.record(ctx, c, run.in, run.out)
+	s.record(ctx, c, run.ident(id), run.in, run.out)
 
 	return Answer{
 		Text:    out.text,
 		Results: run.results,
 		Ran:     run.ran,
 		Carried: res.Carried,
-		Usage:   s.usage(run.in, run.out),
+		Usage:   usageOf(run.ident(id), run.in, run.out),
 	}, nil
 }
 
@@ -316,6 +327,18 @@ type askRun struct {
 	executed int // tool calls dispatched through the registry, failed ones included
 	nextID   int
 	filled   bool
+	// provider and model are who answered last, for the ledger row and the usage report.
+	provider, model string
+}
+
+// ident is the provider identity an exchange is recorded under.
+type ident struct{ provider, model string }
+
+func (r *askRun) ident(fallback ident) ident {
+	if r.provider == "" {
+		return fallback
+	}
+	return ident{provider: r.provider, model: r.model}
 }
 
 // outcome is what one pass over the rounds produced.
@@ -407,6 +430,9 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 		run.in += reply.TokensIn
 		run.out += reply.TokensOut
 		run.cached += reply.TokensCached
+		if reply.Provider != "" {
+			run.provider, run.model = reply.Provider, reply.Model
+		}
 		if err != nil {
 			if run.executed == 0 {
 				return outcome{}, err
@@ -439,29 +465,60 @@ func (s *Service) drive(ctx context.Context, c Caller, tools []ToolSpec, window 
 }
 
 // complete is the ONE place a provider is called. Every attempt, retry and escalation goes through
-// it, so whatever wraps it (metering, caps) sees every provider call and nothing bypasses it.
+// it, so whatever wraps it (metering, caps) sees every provider call and nothing bypasses it. The
+// provider is resolved here, per call, from the current settings and alias table.
 func (s *Service) complete(ctx context.Context, _ Caller, req CompletionRequest) (Reply, error) {
-	return s.provider.Complete(ctx, req)
+	p := s.providerFor(ctx, req.Alias)
+	reply, err := p.Complete(ctx, req)
+	reply.Provider, reply.Model = p.Name(), p.Model()
+	return reply, err
+}
+
+// providerFor resolves the provider for an alias; an empty alias means the route's first entry.
+func (s *Service) providerFor(ctx context.Context, alias string) Provider {
+	if s.router == nil {
+		return s.provider
+	}
+	if alias == "" {
+		if route := s.Settings(ctx).RouteAliases(); len(route) > 0 {
+			alias = route[0]
+		}
+	}
+	p, _ := s.router.Resolve(ctx, alias)
+	return p
+}
+
+// identityFor is the provider identity an exchange that never reaches a provider is recorded under.
+func (s *Service) identityFor(ctx context.Context, cfg Settings) ident {
+	if s.router == nil {
+		return ident{s.provider.Name(), s.provider.Model()}
+	}
+	alias := ""
+	if route := cfg.RouteAliases(); len(route) > 0 {
+		alias = route[0]
+	}
+	p, _ := s.router.Resolve(ctx, alias)
+	return ident{p.Name(), p.Model()}
 }
 
 // usage is the per-exchange cost report, built in one place so every early return in Ask carries the
 // same shape. The handler decides who may READ it (the spend-visibility toggle); the service always
 // computes it, because the ledger needs it either way.
-func (s *Service) usage(in, out int) *Usage {
-	return &Usage{Provider: s.provider.Name(), Model: s.provider.Model(), TokensIn: in, TokensOut: out}
+func usageOf(id ident, in, out int) *Usage {
+	return &Usage{Provider: id.provider, Model: id.model, TokensIn: in, TokensOut: out}
 }
 
 // record appends the ledger row. A failure is logged and swallowed, see ledger.go for why the
 // answer is not held hostage to the accounting.
-func (s *Service) record(ctx context.Context, c Caller, in, out int) {
+func (s *Service) record(ctx context.Context, c Caller, id ident, in, out int) {
 	if s.ledger == nil {
 		return
 	}
 	err := s.ledger.Append(ctx, Entry{
 		UserID:    c.UserID,
 		RoleCode:  c.RoleCode,
-		Provider:  s.provider.Name(),
-		Model:     s.provider.Model(),
+		Provider:  id.provider,
+		Model:     id.model,
 		TokensIn:  in,
 		TokensOut: out,
 		Kind:      KindChat,
