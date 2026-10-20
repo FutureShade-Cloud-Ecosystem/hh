@@ -474,6 +474,14 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
 	}
+	// A pick is created only on a branch the caller reaches (UX-81 round 3), by the rule Load and the pull use
+	// (callerReaches). An order out of reach, or a branchless one a scoped caller must not learn of, is refused
+	// with exactly the words and status an unknown order gets, so the refusal tells nothing.
+	if s.staff != nil {
+		if reach, err := s.callerReaches(ctx, f, ob.BranchID); err != nil || !reach {
+			return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, ErrUnknownOrder)
+		}
+	}
 	// A pick is never born with no branch (UX-81 round 2): the branch is what holds it to a yard, so an order
 	// that answers none is refused here, with no row written.
 	if ob.BranchID == "" {

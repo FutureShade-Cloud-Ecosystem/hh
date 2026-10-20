@@ -62,12 +62,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	// The caller's branch reach (UX-81 round 3): GLOBAL reaches every branch, a scoped caller its granted ones, a
+	// request with no staff context none (fail closed).
+	sc, haveStaff := identity.StaffContextFromContext(r.Context())
 	t, err := h.svc.CreateFromOrder(r.Context(), CreateInput{
 		OrderID:         req.OrderID,
 		Source:          req.Source,
 		CreatedBy:       identity.StaffUserIDFromContext(r.Context()),
 		SourceMessageID: req.SourceMessageID,
 		OrgID:           caller.StaffScope.OrgID,
+		Reach:           func(branch string) bool { return haveStaff && sc.CanAccessBranch(branch) },
 	})
 	if err != nil {
 		h.writeErr(w, r, err)

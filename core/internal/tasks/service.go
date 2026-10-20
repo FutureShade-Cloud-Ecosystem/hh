@@ -167,6 +167,11 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 	if err != nil {
 		return Task{}, err // ErrUnknownOrder (or a transport error), surfaced as-is
 	}
+	// An order outside the caller's branch reach is an unknown order to it (UX-81 round 3): the same error, so
+	// the same 422 "order not found", tells the caller nothing about an order on another branch.
+	if in.Reach != nil && !in.Reach(ob.BranchID) {
+		return Task{}, ErrUnknownOrder
+	}
 	// A pick is never born with no branch (UX-81 round 2): the repository would write a NULL for an empty
 	// branch, and a branchless pick belongs to no yard.
 	if ob.BranchID == "" {

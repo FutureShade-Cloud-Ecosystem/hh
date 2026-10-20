@@ -195,6 +195,10 @@ type CreateInput struct {
 	CreatedBy       string
 	SourceMessageID string
 	OrgID           string
+	// Reach says whether the caller's branch reach covers a branch (UX-81 round 3). When set, an order on a
+	// branch it does not cover is refused as an unknown order. Nil is a system caller with no staff reach to
+	// hold (the REST handler always sets it).
+	Reach func(branch string) bool
 }
 
 // OrderBrief is the narrow order projection the tasks module consumes to validate an order exists and
