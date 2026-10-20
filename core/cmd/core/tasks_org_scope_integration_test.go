@@ -46,18 +46,23 @@ func newOrgScopeWorld(t *testing.T) *orgScopeWorld {
 		t.Fatalf("build the kit's two orgs: %v", err)
 	}
 	t.Cleanup(func() { _ = testkit.Cleanup(context.Background(), testkit.PgxPool(pool)) })
-	w := &orgScopeWorld{pool: pool, northOrder: testkit.OrderAlphaConfID, southOrder: uuid.NewString()}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment, org_id, tenant_id)
-		VALUES ($1::uuid, 'FXORD-S-ORGSCOPE-'||substr($1::text,1,8), $2::uuid, $3::uuid, 'CONFIRMED', 'PICKUP', $4::uuid, $2::uuid)`,
-		w.southOrder, testkit.TenantGammaID, testkit.BranchSouthAID, testkit.OrgSouthID); err != nil {
-		t.Fatalf("plant the south order: %v", err)
+	w := &orgScopeWorld{pool: pool, northOrder: uuid.NewString(), southOrder: uuid.NewString()}
+	// Both orders are inserted exactly the way production inserts an order: NO org_id (no writer stamps it; UX-95
+	// owns that). The branch decides the dealer: north's order sits at north A, south's at south A, whose locations
+	// rows carry the org (UX-81 round 6).
+	for _, o := range []struct{ id, branch string }{{w.northOrder, testkit.BranchNorthAID}, {w.southOrder, testkit.BranchSouthAID}} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment)
+			VALUES ($1::uuid, 'FXORD-ORGSCOPE-'||substr($1::text,1,8), $2::uuid, $3::uuid, 'CONFIRMED', 'PICKUP')`,
+			o.id, testkit.TenantGammaID, o.branch); err != nil {
+			t.Fatalf("plant an order the production way: %v", err)
+		}
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
 		_, _ = pool.Exec(bg, `DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE order_id = ANY($1::uuid[]))`, []string{w.northOrder, w.southOrder})
 		_, _ = pool.Exec(bg, `DELETE FROM tasks WHERE order_id = ANY($1::uuid[])`, []string{w.northOrder, w.southOrder})
-		_, _ = pool.Exec(bg, `DELETE FROM orders WHERE id = $1::uuid`, w.southOrder)
+		_, _ = pool.Exec(bg, `DELETE FROM orders WHERE id = ANY($1::uuid[])`, []string{w.northOrder, w.southOrder})
 	})
 	return w
 }

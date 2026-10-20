@@ -46,12 +46,14 @@ func newOrgRestWorld(t *testing.T) *orgRestWorld {
 	t.Setenv("APP_ENV", "dev")
 	_, w.mux, w.sg = wireFold(t, base.pool, hex.EncodeToString(rawKey), cw.branchID)
 	ctx := context.Background()
+	// The tasks are inserted the way production inserts a pick task that no sync create made: NO org_id (UX-81 round
+	// 6; no writer stamps it on the REST weight request path, UX-95 owns that). The branch decides the dealer.
 	plant := func(orgID, branchID, orderID string) string {
 		var id string
 		if err := base.pool.QueryRow(ctx, `
-			INSERT INTO tasks (task_type, order_id, branch_id, priority, status, source, org_id, seq)
-			VALUES ('PICK', $1::uuid, $2::uuid, 'NORMAL', 'QUEUED', 'MANUAL', $3::uuid, (SELECT COALESCE(max(seq),0)+1 FROM tasks))
-			RETURNING id::text`, orderID, branchID, orgID).Scan(&id); err != nil {
+			INSERT INTO tasks (task_type, order_id, branch_id, priority, status, source, seq)
+			VALUES ('PICK', $1::uuid, $2::uuid, 'NORMAL', 'QUEUED', 'MANUAL', (SELECT COALESCE(max(seq),0)+1 FROM tasks))
+			RETURNING id::text`, orderID, branchID).Scan(&id); err != nil {
 			t.Fatalf("plant task: %v", err)
 		}
 		return id
@@ -82,6 +84,19 @@ func (w *orgRestWorld) call(t *testing.T, method, path string) (int, string) {
 	return rec.Code, body
 }
 
+func (w *orgRestWorld) postJSON(t *testing.T, path, body string) (int, string) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+w.sg.Bearer(t))
+	r.Header.Set("X-Org", testkit.OrgNorthSlug)
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	w.mux.ServeHTTP(rec, r)
+	out := strings.TrimSpace(rec.Body.String())
+	t.Logf("POST  %-72s -> %d %.120s", path, rec.Code, out)
+	return rec.Code, out
+}
+
 func (w *orgRestWorld) southTaskState(t *testing.T) (status, claimedBy string) {
 	t.Helper()
 	if err := w.pool.QueryRow(context.Background(), `SELECT status, COALESCE(claimed_by::text,'') FROM tasks WHERE id = $1::uuid`, w.southTask).Scan(&status, &claimedBy); err != nil {
@@ -102,7 +117,8 @@ func holds(body string, needles ...string) bool {
 func TestTasksOrgREST_AGlobalCallerOfNorthDoesNotReachSouthsYard(t *testing.T) {
 	w := newOrgRestWorld(t)
 	w.globalNorth()
-	southOrderNo := "FXORD-S-ORGSCOPE-" + w.southOrder[:8]
+	southOrderNo := "FXORD-ORGSCOPE-" + w.southOrder[:8]
+	northOrderNo := "FXORD-ORGSCOPE-" + w.northOrder[:8]
 
 	// GET /api/v1/tasks: with and without branch_id.
 	if code, body := w.call(t, http.MethodGet, "/api/v1/tasks"); code != http.StatusOK || holds(body, w.southTask) {
@@ -135,7 +151,17 @@ func TestTasksOrgREST_AGlobalCallerOfNorthDoesNotReachSouthsYard(t *testing.T) {
 	if status, by := w.southTaskState(t); status != "QUEUED" || by != "" {
 		t.Errorf("a refused claim writes nothing to another dealer's yard: %s claimed by %q", status, by)
 	}
-	// The controls: the caller's own org still lists, reads and claims.
+	// The controls: the caller's own dealer still lists, reads, claims, creates and sees its own pending ticket, on
+	// an order and a task that carry no org_id (production never writes it).
+	if code, body := w.call(t, http.MethodGet, "/api/v1/yard/pending-tickets?branch_id="+testkit.BranchNorthAID); code != http.StatusOK || !holds(body, northOrderNo) || holds(body, southOrderNo) {
+		t.Errorf("the caller's own branch's pending tickets list its own order: %d %.200s", code, body)
+	}
+	if code, body := w.call(t, http.MethodGet, "/api/v1/yard/pick-queue?branch_id="+testkit.BranchNorthAID); code != http.StatusOK || !holds(body, w.northTask) || holds(body, w.southTask) {
+		t.Errorf("the caller's own branch's pick queue lists its own task: %d %.200s", code, body)
+	}
+	if code, body := w.postJSON(t, "/api/v1/tasks", `{"order_id":"`+w.northOrder+`"}`); code != http.StatusCreated {
+		t.Errorf("the caller's own dealer's order creates a pick through REST: %d %.200s", code, body)
+	}
 	if code, body := w.call(t, http.MethodGet, "/api/v1/tasks"); code != http.StatusOK || !holds(body, w.northTask) {
 		t.Errorf("the caller's own task is still listed: %d %.200s", code, body)
 	}
@@ -170,9 +196,9 @@ func TestTasksOrgREST_AGlobalCallersReachIsBoundedToItsOrgsBranches(t *testing.T
 	w.globalNorth()
 	var odd string
 	if err := w.pool.QueryRow(context.Background(), `
-		INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment, org_id, tenant_id)
-		VALUES (gen_random_uuid(), 'FXORD-N-ODDBRANCH-'||substr(gen_random_uuid()::text,1,8), $1::uuid, $2::uuid, 'CONFIRMED', 'PICKUP', $3::uuid, $1::uuid)
-		RETURNING id::text`, testkit.TenantAlphaID, testkit.BranchSouthAID, testkit.OrgNorthID).Scan(&odd); err != nil {
+		INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment)
+		VALUES (gen_random_uuid(), 'FXORD-N-ODDBRANCH-'||substr(gen_random_uuid()::text,1,8), $1::uuid, $2::uuid, 'CONFIRMED', 'PICKUP')
+		RETURNING id::text`, testkit.TenantAlphaID, testkit.BranchSouthAID).Scan(&odd); err != nil {
 		t.Fatalf("plant a north order on south's branch: %v", err)
 	}
 	t.Cleanup(func() {
