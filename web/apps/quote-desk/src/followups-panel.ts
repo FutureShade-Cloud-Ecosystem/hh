@@ -15,7 +15,7 @@ import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
-import { isShareable } from "./_quote-edit.js";
+import { isShareable, quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import {
   contactLine,
@@ -107,7 +107,13 @@ export class QdQuoteFollowups extends PanelBase {
         return;
       }
       this.unavailable = "";
-      this.error = "The follow-ups did not load. Check the connection and press Refresh.";
+      if (result.status === 401) {
+        this.error = spokenRefusal(quoteErrorMessage(401, "", "read the follow-ups"));
+      } else if (result.status === 403 || result.status === 409) {
+        this.error = spokenRefusal(shareErrorMessage(result.status, ""));
+      } else {
+        this.error = "The follow-ups did not load. Check the connection and press Refresh.";
+      }
       return;
     }
     this.unavailable = "";

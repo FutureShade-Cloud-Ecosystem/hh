@@ -62,8 +62,10 @@ import { baseStyles, button, chip, segmented, textInput, type ChipTone } from "@
 import { icon } from "@hardscapehouse/design-system/src/state-icons.js";
 import {
   expiryLabel,
+  quoteErrorMessage,
   quoteStatusWord,
 } from "./_quote-edit.js";
+import { spokenRefusal } from "./_quote-workarea.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import { FLOOR_REFUSAL_DROPPED_EVENT, LATE_REFUSAL_EVENT } from "./floor-refusal.js";
 import {
@@ -85,6 +87,15 @@ interface BranchRow {
 
 /** The most pages one refresh of the list reads: a runaway cursor ends here. */
 const MAX_LIST_PAGES = 40;
+
+const LIST_ERROR_WORDS = "The quotes did not load. Check the connection and press Refresh.";
+
+function listErrorWords(status: number | undefined, what: string): string {
+  if (status === 401 || status === 403 || status === 409) {
+    return spokenRefusal(quoteErrorMessage(status, "", what));
+  }
+  return LIST_ERROR_WORDS;
+}
 
 /** The status tabs' own options, the closed set the segmented control renders. */
 const STATUS_TABS = [
@@ -485,7 +496,7 @@ export class QdQuoteBuilder extends LitElement {
     // A newer read of the list began while this one was out (or while it followed the pages): its answer is the one to show.
     if (seq !== this.listSeq) return;
     if (!result.ok) {
-      this.error = "The quotes did not load. Check the connection and press Refresh.";
+      this.error = listErrorWords(result.status, "list quotes");
       this.rows = [];
       this.nextCursor = "";
       return;
@@ -515,7 +526,7 @@ export class QdQuoteBuilder extends LitElement {
         const result = await client.listQuotes(this.statusFilter, this.nextCursor);
         if (seq !== this.listSeq || gen !== this.searchGen) return;
         if (!result.ok) {
-          this.error = "The quotes did not load. Check the connection and press Refresh.";
+          this.error = listErrorWords(result.status, "search the quotes");
           return;
         }
         const known = new Set(this.rows.map((r) => r.id));
@@ -544,7 +555,7 @@ export class QdQuoteBuilder extends LitElement {
     this.busy = false;
     if (seq !== this.listSeq) return;
     if (!result.ok) {
-      this.error = "The quotes did not load. Check the connection and press Refresh.";
+      this.error = listErrorWords(result.status, "list more quotes");
       return;
     }
     const known = new Set(this.rows.map((r) => r.id));
@@ -829,7 +840,9 @@ export class QdQuoteBuilder extends LitElement {
           ${this.error !== ""
             ? html`<div class="listerr" role="alert" data-testid=${rows.length === 0 ? "qb-list" : "qb-list-error"}>
                 <span class="err" data-testid="qb-list-error-text">${this.error}</span>
-                ${button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })}
+                ${this.error === LIST_ERROR_WORDS
+                  ? button({ label: "Refresh", kind: "secondary", action: "refresh", disabled: this.busy })
+                  : nothing}
               </div>`
             : nothing}
           ${rows.length === 0

@@ -26,6 +26,8 @@ import type { IdentityApproval } from "@hardscapehouse/api-client";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import { approvalDetail, decisionWord, isDecidable, MARGIN_POLICY, policyLabel } from "./_approval-copy.js";
+import { quoteErrorMessage } from "./_quote-edit.js";
+import { spokenRefusal } from "./_quote-workarea.js";
 
 @customElement("qd-approvals")
 export class QdApprovals extends PanelBase {
@@ -138,7 +140,10 @@ export class QdApprovals extends PanelBase {
       // decision offered on a stale row is the server's to refuse.
       this.items = [];
       this.loaded = false; // no count is shown beside a failed read
-      this.error = "The approvals did not load. Check the connection and press Refresh.";
+      this.error =
+        result.status === 401 || result.status === 403
+          ? spokenRefusal(quoteErrorMessage(result.status, "", "list approvals"))
+          : "The approvals did not load. Check the connection and press Refresh.";
       return;
     }
     this.error = "";

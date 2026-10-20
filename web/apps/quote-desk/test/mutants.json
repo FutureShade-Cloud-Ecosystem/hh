@@ -668,8 +668,8 @@
   {
     "id": "bq-list-order",
     "file": "src/quote-builder.ts",
-    "find": "    if (seq !== this.listSeq) return;\n    if (!result.ok) {\n      this.error = \"The quotes did not load. Check the connection and press Refresh.\";\n      this.rows = [];",
-    "replace": "    if (!result.ok) {\n      this.error = \"The quotes did not load. Check the connection and press Refresh.\";\n      this.rows = [];",
+    "find": "    if (seq !== this.listSeq) return;\n    if (!result.ok) {\n      this.error = listErrorWords(result.status, \"list quotes\");",
+    "replace": "    if (!result.ok) {\n      this.error = listErrorWords(result.status, \"list quotes\");",
     "test": "guard list order:"
   },
   {
