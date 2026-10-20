@@ -201,3 +201,93 @@ func TestPickPullFence_ASyncCreateWithNoBranchIsRefused(t *testing.T) {
 		t.Errorf("no row is written: %d rows, %v", n, err)
 	}
 }
+
+// pushJSON pushes one op as the given caller and returns the whole result as JSON, the way a device reads it.
+func (d *pickDoor) pushAs(sc identity.StaffContext, op apigen.SyncPushOperation) (apigen.SyncPushResult, string) {
+	d.t.Helper()
+	d.authority = func() (identity.StaffContext, bool, error) { return sc, true, nil }
+	res := d.push(op)
+	raw, _ := json.Marshal(res[0])
+	return res[0], string(raw)
+}
+
+// TestPickPullFence_AStaleWriteOnAPickOutOfReachGetsNoRowBack: the engine builds a stale write's conflict envelope
+// from what SyncStore.Load returns. A branch B device that knows a branch A pick's id (it appears in chat deep
+// links) and sends an update with an old base_seq used to get the whole row back (branch, claimer, order). Load is
+// held to the pull's reach (UX-81 round 2): such a write is answered "row not found" and no row rides the reply.
+func TestPickPullFence_AStaleWriteOnAPickOutOfReachGetsNoRowBack(t *testing.T) {
+	d := newPickDoor(t)
+	pickA, pickB, pickNone := d.task(d.branchA), d.task(d.branchB), d.branchlessTask()
+	aCaller := scopedTo(d.user, d.branchA)
+	if res, _ := d.pushAs(aCaller, apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update", Payload: map[string]any{"id": pickA, "status": "ACCEPTED"}}); res.Status != "applied" {
+		t.Fatalf("A claims: %+v", res)
+	}
+	claimer := d.user
+	b := scopedTo(uuid.NewString(), d.branchB)
+	stale := int64(0)
+	staleUpdate := func(id string) apigen.SyncPushOperation {
+		return apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update", BaseSeq: &stale, Payload: map[string]any{"id": id, "photo_url": "x"}}
+	}
+
+	for name, id := range map[string]string{"another branch's pick": pickA, "a branchless pick": pickNone} {
+		res, raw := d.pushAs(b, staleUpdate(id))
+		t.Logf("branch B device, stale update on %s -> %s", name, raw)
+		if res.Status != "rejected" || res.Conflict != nil {
+			t.Errorf("a stale update on %s must be rejected with no envelope, got status %q conflict %v", name, res.Status, res.Conflict != nil)
+		}
+		if res.Error == nil || !strings.Contains(*res.Error, "not found") {
+			t.Errorf("a stale update on %s is answered not found, got %v", name, res.Error)
+		}
+		if strings.Contains(raw, claimer) || strings.Contains(raw, d.branchA) || strings.Contains(raw, id) {
+			t.Errorf("no row data (claimer, branch, id) may ride the reply for %s: %s", name, raw)
+		}
+	}
+	// A delete is read the same way.
+	res, raw := d.pushAs(b, apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "delete", Payload: map[string]any{"id": pickA}})
+	if res.Status != "rejected" || strings.Contains(raw, claimer) {
+		t.Errorf("a delete of another branch's pick is rejected with no row: %s", raw)
+	}
+
+	// The reach is the pull's: the owning branch and a GLOBAL caller still get the envelope, and B its own pick.
+	if res, _ := d.pushAs(aCaller, staleUpdate(pickA)); res.Status == "rejected" {
+		t.Errorf("the owning branch's stale write is still judged, not hidden: %+v", res)
+	}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	for name, id := range map[string]string{"A's pick": pickA, "the branchless pick": pickNone} {
+		if res, _ := d.pushAs(global, staleUpdate(id)); res.Status != "conflict" || res.Conflict == nil {
+			t.Errorf("a GLOBAL caller's stale write on %s still gets the envelope: %+v", name, res)
+		}
+	}
+	if res, _ := d.pushAs(b, staleUpdate(pickB)); res.Status == "rejected" && res.Error != nil && strings.Contains(*res.Error, "not found") {
+		t.Errorf("a branch B device still reaches its own branch's pick")
+	}
+}
+
+// TestPickPullFence_AReplayNeverAnswersForARowOutOfReach: FindApplied resolves a client key to the row it applied.
+// A device that presents a key another branch's operation applied is told nothing: the row is out of its reach, so
+// it is not "applied" for this caller, and the owning branch's own replay is still answered.
+func TestPickPullFence_AReplayNeverAnswersForARowOutOfReach(t *testing.T) {
+	d := newPickDoor(t)
+	pickA := d.task(d.branchA)
+	aCaller := scopedTo(d.user, d.branchA)
+	key := uuid.NewString()
+	claim := apigen.SyncPushOperation{ClientId: key, Op: "update", Payload: map[string]any{"id": pickA, "status": "ACCEPTED"}}
+	first, _ := d.pushAs(aCaller, claim)
+	if first.Status != "applied" {
+		t.Fatalf("A claims: %+v", first)
+	}
+	again, _ := d.pushAs(aCaller, claim)
+	if again.Status != "applied" || again.Seq == nil {
+		t.Errorf("the owning branch's replay is still answered applied: %+v", again)
+	}
+	d.authority = func() (identity.StaffContext, bool, error) { return scopedTo(uuid.NewString(), d.branchB), true, nil }
+	row, found, err := d.store.FindApplied(context.Background(), d.f, key)
+	if err != nil || found || row.ID != "" || row.Seq != 0 {
+		t.Errorf("another branch's device is told nothing of a key it did not apply: found %v seq %d id %q err %v", found, row.Seq, row.ID, err)
+	}
+	d.authority = func() (identity.StaffContext, bool, error) { return scopedTo(d.user, d.branchA), true, nil }
+	if _, found, err := d.store.FindApplied(context.Background(), d.f, key); err != nil || !found {
+		t.Errorf("the owning branch's device still resolves its key: found %v err %v", found, err)
+	}
+}

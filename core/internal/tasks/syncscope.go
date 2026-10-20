@@ -294,6 +294,11 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: sync find applied: %w", err)
 	}
+	// A replay never answers for a row the caller cannot pull (UX-81 round 2): the key's row is out of reach, so
+	// it is not "applied" for this caller (the same answer as an absent key).
+	if reach, err := s.callerReaches(ctx, f, r.task.BranchID); err != nil || !reach {
+		return sync.RowState{}, false, err
+	}
 	if err := s.attachPicked(ctx, s.pool, &r); err != nil {
 		return sync.RowState{}, false, err
 	}
@@ -307,7 +312,37 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	// No ticket here: Load serves the update and delete paths and the replay, which use the seq and the
 	// task fields. The ticket rides where the row leaves, the conflict envelope (DecorateServerState).
-	return s.load(ctx, s.pool, f, id)
+	//
+	// The row is the caller's to see only under the pull's reach (UX-81 round 2): the engine puts what Load
+	// returns into a stale write's conflict envelope, so a row the caller cannot pull is answered as absent
+	// ("row not found", existence never leaks) and the envelope can never carry it.
+	rs, branch, ok, err := s.loadWithBranch(ctx, s.pool, f, id)
+	if err != nil || !ok {
+		return sync.RowState{}, false, err
+	}
+	if reach, err := s.callerReaches(ctx, f, branch); err != nil || !reach {
+		return sync.RowState{}, false, err
+	}
+	return rs, true, nil
+}
+
+// callerReaches says whether the caller's branch reach covers a pick on the given branch: exactly the pull's rule
+// (pullReach): GLOBAL reaches all, a scoped caller its granted branches only (a pick with no branch is in no scoped
+// caller's reach), an absent, inactive or unreadable authority nothing. An unwired seam fences nothing, as the pull.
+func (s *SyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
+	branches, ok, err := s.pullReach(ctx, f)
+	if err != nil || !ok {
+		return false, err
+	}
+	if branches == nil {
+		return true, nil
+	}
+	for _, b := range branches {
+		if b == branch {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // DecorateServerState attaches the ticket to the row a conflict envelope shows the device, under the
@@ -333,24 +368,31 @@ type pickQuerier interface {
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
 func (s *SyncStore) load(ctx context.Context, db pickQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	rs, _, ok, err := s.loadWithBranch(ctx, db, f, id)
+	return rs, ok, err
+}
+
+// loadWithBranch is load that also answers the row's branch (empty for none), which a tombstone's projection does
+// not carry, so the reach check (Load) can run on a deleted row too.
+func (s *SyncStore) loadWithBranch(ctx context.Context, db pickQuerier, f sync.ScopeFilter, id string) (sync.RowState, string, bool, error) {
 	where, args, ok := pickScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
-		return sync.RowState{}, false, nil
+		return sync.RowState{}, "", false, nil
 	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks WHERE id = $2::uuid AND %s`, syncColumns, where)
 	args = append(args, id)
 	r, err := scanSyncRow(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sync.RowState{}, false, nil
+		return sync.RowState{}, "", false, nil
 	}
 	if err != nil {
-		return sync.RowState{}, false, fmt.Errorf("tasks: sync load: %w", err)
+		return sync.RowState{}, "", false, fmt.Errorf("tasks: sync load: %w", err)
 	}
 	if err := s.attachPicked(ctx, db, &r); err != nil {
-		return sync.RowState{}, false, err
+		return sync.RowState{}, "", false, err
 	}
 	rs, err := rowStateOf(r)
-	return rs, true, err
+	return rs, r.task.BranchID, true, err
 }
 
 // writableFields is the field set a pushed update may declare on a pick

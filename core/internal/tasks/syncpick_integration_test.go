@@ -605,8 +605,10 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 		d.store.DecorateServerState(ctx, d.f, &rs)
 		return rs.Data
 	}
-	if decorated(inB)["ticket"] != nil {
-		t.Fatal("the conflict envelope of the other branch's row carried a ticket")
+	// UX-81 round 2: Load is held to the pull's reach, so there is no conflict envelope row at all for another
+	// branch's pick (it used to be loaded and shown without its ticket).
+	if _, ok, err := d.store.Load(ctx, d.f, inB); err != nil || ok {
+		t.Fatalf("the other branch's row must not load for a branch scoped caller: ok=%v err=%v", ok, err)
 	}
 	if decorated(inA)["ticket"] == nil {
 		t.Fatal("the conflict envelope of the own branch's row lost its ticket")
