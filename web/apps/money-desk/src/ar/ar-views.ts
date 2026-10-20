@@ -944,7 +944,7 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 <div><dt>${STATEMENT_STRIP_LABELS[3]}</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
                 <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
-              ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
+              ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is over 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
             `}
     </section>

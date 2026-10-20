@@ -453,7 +453,7 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 
 	// Aging summary, the part the office actually reads.
 	b.WriteString(`<table style="width:100%;border-collapse:collapse;background:#f6f6f6"><thead><tr>`)
-	for _, th := range []string{"Current", "1-30 days", "31-60 days", "60+ days", "Total due"} {
+	for _, th := range []string{"Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"} {
 		b.WriteString(`<th style="padding:8px 4px;font-size:12px;text-align:right;border-bottom:1px solid #ccc">` + th + `</th>`)
 	}
 	b.WriteString(`</tr></thead><tbody><tr>`)
@@ -465,11 +465,11 @@ func RenderStatementHTML(h StatementHeader, r AgingRow, lines []StatementLine, a
 
 	if over60 := r.Days60To90Cents + r.Days90PlusCents; over60 > 0 {
 		b.WriteString(`<p style="margin-top:20px;padding:12px;background:#fff4f4;border-left:3px solid #b00">` +
-			`<strong>` + Money(over60) + `</strong> of this balance is more than 60 days past due. ` +
+			`<strong>` + Money(over60) + `</strong> of this balance is over 60 days past due. ` +
 			`Please contact our office to arrange payment.</p>`)
 	}
 	b.WriteString(`<footer style="margin-top:32px;color:#777;font-size:11px">Statement generated ` +
-		asOf.Format("2006-01-02") + `. Please contact the branch with any discrepancy.</footer>`)
+		asOf.Format("Jan 2, 2006") + `. Please contact the branch with any discrepancy.</footer>`)
 	b.WriteString(`</body></html>`)
 	return b.String()
 }
