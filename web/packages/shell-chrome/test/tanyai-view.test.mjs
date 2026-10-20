@@ -287,6 +287,6 @@ test('stream: an unknown event is ignored, never rendered', () => {
 test('the new sources carry no em or en dash', () => {
   for (const f of ['tanyai-view.ts', 'tanyai-render.ts', 'shell-tanyai.ts', 'tanyai-transport.ts']) {
     const text = readFileSync(fileURLToPath(new URL(`../src/${f}`, import.meta.url)), 'utf8');
-    assert.ok(!/[–—]/.test(text), `${f} has a dash`);
+    assert.ok(!/[\u2013\u2014]/.test(text), `${f} has a dash`);
   }
 });

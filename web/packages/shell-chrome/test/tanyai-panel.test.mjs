@@ -91,5 +91,5 @@ test('every control in the panel has a name', () => {
 
 test('the panel source carries no em or en dash', () => {
   const text = readFileSync(fileURLToPath(new URL('../src/shell-tanyai.ts', import.meta.url)), 'utf8');
-  assert.ok(!/[–—]/.test(text));
+  assert.ok(!/[\u2013\u2014]/.test(text));
 });
