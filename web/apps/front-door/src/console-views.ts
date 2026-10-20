@@ -101,6 +101,20 @@ function googleButton(busy: boolean): TemplateResult {
   `;
 }
 
+function statusLine(session: ConsoleSession): TemplateResult {
+  const notice = session.notice;
+  return html`
+    <p
+      id="signin-status"
+      class="status ${notice.tone === "error" ? "error" : ""}"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="signin-status"
+    >${notice.text}</p>
+  `;
+}
+
 // The fields are read only while a sign in is in flight so focus and the typed values stay; the
 // root sets that in its own update pass (the design system's position gate keeps ?readonly out of
 // templates, the same wiring pass the shared header and the widget use).
@@ -135,6 +149,7 @@ function emailForm(session: ConsoleSession, busy: boolean, invalid: boolean): Te
           aria-invalid=${invalid ? "true" : "false"}
         />
       </div>
+      ${statusLine(session)}
       <button type="submit" class="btn btn-primary btn-wide" data-testid="signin-submit" ?disabled=${busy}>
         ${signingIn ? html`<span class="spinner" aria-hidden="true"></span>Signing in` : "Sign in"}
       </button>
@@ -151,20 +166,14 @@ export function signInScreen(
   const busy = session.phase === "signing-in";
   const notice = session.notice;
   const invalid = notice.tone === "error" && notice.text === SIGN_IN_WORDS["bad_credentials"];
+  const hasEmail = session.methods.kind === "ready" && session.methods.methods.includes("email_password");
   return html`
     <div class="signin-stage">
       <section class="signin-card" aria-labelledby="signin-title">
         ${dealerLockup(session.config.dealer)}
         <h1 class="signin-title" id="signin-title">Sign in to Work</h1>
         <p class="signin-lead" data-testid="signin-dealer-line">${dealerLine(session.config.dealer)}</p>
-        <p
-          id="signin-status"
-          class="status ${notice.tone === "error" ? "error" : ""}"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="signin-status"
-        >${notice.text}</p>
+        ${hasEmail ? nothing : statusLine(session)}
         ${methodsBlock(session, busy, invalid)}
       </section>
       <footer class="signin-footer" data-testid="signin-footer">

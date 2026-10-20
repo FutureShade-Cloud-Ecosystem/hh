@@ -21,7 +21,7 @@ const answer = (status, body) => async () => new Response(body === undefined ? n
 
 test("the words of each sign in state are the ones the brief names", () => {
   assert.equal(signInNotice("forbidden"), "This account is not set up for this site. Ask your administrator to add you.");
-  assert.equal(signInNotice("bad_credentials"), "That email and password do not match. Check them and try again.");
+  assert.equal(signInNotice("bad_credentials"), "That sign in did not work. Check the email and the password and try again.");
   assert.equal(signInNotice("rate_limited"), "Too many attempts. Wait a moment, then try again.");
   assert.equal(signInNotice("unavailable"), "Sign in is unavailable right now. Try again in a moment.");
   assert.equal(signInNotice("offline"), "You are offline. Connect to the internet, then try again.");

@@ -20,7 +20,7 @@ export function dealerLine(dealer: DealerBrand): string {
 
 /** The sentence under the form for each reason a sign in did not land. */
 export const SIGN_IN_WORDS: Readonly<Record<string, string>> = {
-  bad_credentials: "That email and password do not match. Check them and try again.",
+  bad_credentials: "That sign in did not work. Check the email and the password and try again.",
   forbidden: "This account is not set up for this site. Ask your administrator to add you.",
   rate_limited: "Too many attempts. Wait a moment, then try again.",
   unavailable: "Sign in is unavailable right now. Try again in a moment.",

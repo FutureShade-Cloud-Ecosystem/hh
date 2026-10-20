@@ -86,7 +86,10 @@ test.describe("the sign in screen", () => {
     await page.goto("/");
     await expect(page.getByTestId("dealer-lockup").first()).toContainText("Gable");
     await expect(page.getByTestId("dealer-lockup").first()).toContainText("Landscape Supply");
-    await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in to Work", exact: true })).toBeVisible();
+    await expect(page.locator("header")).toHaveCount(0);
+    await expect(page.getByTestId("signin-dealer-line")).toHaveText("Gable Landscape Supply");
+    await expect(page.getByTestId("signin-footer")).toContainText("Powered by HardscapeOS");
     await expect(page.getByLabel("Email")).toBeVisible();
     await expect(page.getByLabel("Password")).toBeVisible();
     await expect(page.getByTestId("google-button")).toHaveText(/Continue with Google/);
@@ -99,6 +102,28 @@ test.describe("the sign in screen", () => {
     // The live region exists at rest and is polite.
     await expect(status(page)).toHaveAttribute("aria-live", "polite");
     await expect(status(page)).toHaveText("");
+  });
+
+  test("board alignment: dealer branch line from config and keyboard-reachable quiet Theme and Feedback controls", async ({ page, baseURL }) => {
+    await serve(page, baseURL!, {
+      dealer: { name: "Gable Landscape Supply", mark: "gable", branch: "Point Loma" },
+    });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Sign in to Work", exact: true })).toBeVisible();
+    await expect(page.getByTestId("signin-dealer-line")).toHaveText("Gable Landscape Supply · Point Loma");
+    await expect(page.locator("header")).toHaveCount(0);
+    await expect(page.getByTestId("signin-footer")).toContainText("Powered by HardscapeOS");
+    await page.getByTestId("google-button").focus();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("theme-control")).toBeFocused();
+    const beforeLabel = await page.getByTestId("theme-control").getAttribute("aria-label");
+    await page.keyboard.press("Enter");
+    const afterLabel = await page.getByTestId("theme-control").getAttribute("aria-label");
+    expect(afterLabel).not.toBe(beforeLabel);
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("feedback-button")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("feedback-button")).toHaveAttribute("aria-expanded", "true");
   });
 
   test("focus order follows the page: email, password, Sign in, Continue with Google; every control is named", async ({ page, baseURL }) => {
@@ -172,7 +197,7 @@ test.describe("the sign in screen", () => {
     await page.goto("/");
     await fill(page, PARTNER_EMAIL, "not the password");
     await page.getByTestId("signin-submit").click();
-    await expect(status(page)).toHaveText("That email and password do not match. Check them and try again.");
+    await expect(status(page)).toHaveText("That sign in did not work. Check the email and the password and try again.");
     await expect(page.getByLabel("Email")).toHaveValue(PARTNER_EMAIL);
     await expect(page.getByLabel("Password")).toBeFocused();
     await expect(page.getByLabel("Password")).toHaveAttribute("aria-invalid", "true");
@@ -456,7 +481,7 @@ for (const theme of THEMES) {
       await page.goto("/");
       await fill(page, PARTNER_EMAIL, "not the password");
       await page.getByTestId("signin-submit").click();
-      await expect(status(page)).toContainText("do not match");
+      await expect(status(page)).toContainText("That sign in did not work");
       await shot("03-wrong-credentials");
       // Not allowed, too many, unavailable.
       for (const [code, name] of [[403, "04-not-allowed"], [429, "05-too-many"], [503, "06-unavailable"]] as const) {
