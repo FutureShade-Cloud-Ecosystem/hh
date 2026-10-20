@@ -86,14 +86,18 @@ export interface OrdersListProps {
   phase: Phase;
   orders: readonly TenantOrder[];
   emptyWords: string;
+  truncated?: boolean;
 }
 
+export const ORDERS_TRUNCATED_WORDS = "Showing the newest 100 pages of orders. Older orders are cut from this list; ask the dealer if you need an older order.";
+
 export function ordersList(props: OrdersListProps): TemplateResult {
+  const truncatedNote = props.truncated ? html`<p class="dim" role="status" data-testid="orders-truncated">${ORDERS_TRUNCATED_WORDS}</p>` : nothing;
   switch (props.phase) {
     case "ready":
-      return html`<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
+      return html`${truncatedNote}<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
     case "empty":
-      return html`<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
+      return html`${truncatedNote}<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
     case "error":
       return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
     case "refusal":

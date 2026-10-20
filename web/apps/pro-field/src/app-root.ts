@@ -53,6 +53,7 @@ import { fieldStyles } from "./styles.js";
 interface OrdersState {
   phase: Phase;
   items: TenantOrder[];
+  truncated: boolean;
 }
 
 interface InstructionsState {
@@ -151,7 +152,7 @@ export class ProFieldApp extends HHElement {
   #signinBusy = false;
   #section: Section = "orders";
   #surface = "tracking";
-  #orders: OrdersState = { phase: "idle", items: [] };
+  #orders: OrdersState = { phase: "idle", items: [], truncated: false };
   #order: OrderState | null = null;
   #projects: ProjectsState = { phase: "idle", items: [] };
   #project: ProjectState | null = null;
@@ -377,7 +378,7 @@ export class ProFieldApp extends HHElement {
       if (this.#session.profile() === null) {
         this.#section = "orders";
         this.#surface = "tracking";
-        this.#orders = { phase: "idle", items: [] };
+        this.#orders = { phase: "idle", items: [], truncated: false };
         this.#order = null;
         this.#projects = { phase: "idle", items: [] };
         this.#project = null;
@@ -481,23 +482,23 @@ export class ProFieldApp extends HHElement {
 
   async #loadOrders(): Promise<void> {
     const sequence = (this.#ordersSeq += 1);
-    this.#orders = { phase: "loading", items: this.#orders.items };
+    this.#orders = { phase: "loading", items: this.#orders.items, truncated: this.#orders.truncated };
     this.requestUpdate();
     const answer = await this.#port.listOrders();
     if (sequence !== this.#ordersSeq || this.#session.profile() === null) return;
     if (answer.ok) {
       const filter = ordersSurfaceOf(this.#surface)?.fulfillments ?? null;
       const items = filter === null ? answer.value : answer.value.filter((order) => filter.includes(order.fulfillment));
-      this.#orders = { phase: items.length === 0 ? "empty" : "ready", items };
+      this.#orders = { phase: items.length === 0 ? "empty" : "ready", items, truncated: answer.truncated === true };
     } else if (answer.status === 401) {
       // The session is gone (expired, or the person was deactivated): sign out and say so, never blame the role.
       this.#signinMessage = "You are signed out. Sign in again.";
       await this.#session.signOut();
       return;
     } else if (answer.status === 403) {
-      this.#orders = { phase: "refusal", items: [] };
+      this.#orders = { phase: "refusal", items: [], truncated: false };
     } else {
-      this.#orders = { phase: "error", items: [] };
+      this.#orders = { phase: "error", items: [], truncated: false };
     }
     this.requestUpdate();
   }
@@ -1001,6 +1002,7 @@ export class ProFieldApp extends HHElement {
         phase: this.#orders.phase,
         orders: this.#orders.items,
         emptyWords: ordersSurfaceOf(this.#surface)?.emptyWords ?? "",
+        truncated: this.#orders.truncated,
       });
     }
     if (this.#section === "projects") {

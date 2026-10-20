@@ -139,6 +139,42 @@ test.describe("phone", () => {
     }
   });
 
+  test("when the orders list stops at 100 pages with a cursor left, the screen says the list is cut", async ({ page }) => {
+    let pageNo = 0;
+    await page.route("**/api/v1/tenant/orders*", async (route) => {
+      pageNo += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: `00000000-0000-4000-8000-${String(pageNo).padStart(12, "0")}`,
+              order_no: `SO-${40000 + pageNo}`,
+              customer_id: "00000000-0000-4000-8000-000000001001",
+              quote_id: null,
+              status: "CONFIRMED",
+              fulfillment: "DELIVERY",
+              requested_date: "2042-05-01",
+              subtotal_cents: 10000,
+              tax_cents: 800,
+              total_cents: 10800,
+              created_at: "2042-04-01T12:00:00Z",
+              has_backorder: false,
+            },
+          ],
+          next_cursor: `cursor-${pageNo}`,
+          limit: 1,
+        }),
+      });
+    });
+    await signIn(page, "field");
+    await expect(page.getByTestId("orders-truncated")).toHaveText(
+      "Showing the newest 100 pages of orders. Older orders are cut from this list; ask the dealer if you need an older order.",
+    );
+    await expect(page.getByTestId("landing-rows")).toContainText("SO-40001");
+  });
+
   test("a row opens the order with its journey and its asked-for day, and back returns to the list", async ({ page }) => {
     await signIn(page, "field");
     const firstRow = page.getByTestId("landing-rows").getByTestId("order-row").first();
