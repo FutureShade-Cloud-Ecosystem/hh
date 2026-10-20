@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"strings"
 	"sync/atomic"
 
@@ -512,12 +513,18 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	}
 	// The filing route's own wall (Work on the counter, the Quote Desk or
 	// Manager Home): a role the route answers 403 files nothing from here.
-	caller, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request")
-	if err != nil {
+	if _, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request"); err != nil {
 		return sync.RowState{}, err
 	}
 	// The branch wall the REST filing holds (UX-89): a card is filed only into a queue the caller is granted.
-	if !caller.CanAccessBranch(branchID) {
+	// The reach is the guard's own authority (the role grants, per org), the one the REST route's caller
+	// carries, not the legacy branch grant projection the decider reads.
+	resolver, rerr := identity.NewStaffAuthorityResolver(s.pool)
+	if rerr != nil {
+		return sync.RowState{}, fmt.Errorf("identity: resolve the filer's authority: %w: %w", sync.ErrOpRefused, rerr)
+	}
+	auth, held, rerr := resolver.ResolveStaff(ctx, f.Actor, f.OrgID)
+	if rerr != nil || !held || !auth.CanAccessBranch(branchID) {
 		return sync.RowState{}, fmt.Errorf("identity: that branch is outside your grants: %w", sync.ErrOpRefused)
 	}
 	detail, _ := fields["detail"].(string)

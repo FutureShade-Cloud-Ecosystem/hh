@@ -446,6 +446,16 @@ func TestGapApprovalsDecisionLegs(t *testing.T) {
 func TestGapApprovalsFences(t *testing.T) {
 	f := newGapFixture(t)
 	ctx := context.Background()
+	// UX-89: a filing is held to the filer's branch grants, so the two org principal needs the south branch
+	// grant a real south filer holds (the kit plants branch grants for the north principals only).
+	if _, err := f.pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)`,
+		testkit.UserTwoOrgID, testkit.BranchSouthAID, testkit.OrgSouthID); err != nil {
+		t.Fatalf("plant the south branch grant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM user_branch_grants WHERE user_id = $1 AND branch_id = $2`,
+			testkit.UserTwoOrgID, testkit.BranchSouthAID)
+	})
 	info, _ := sync.Lookup("approvals")
 	north := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}
 	south := sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubTwoOrg}
