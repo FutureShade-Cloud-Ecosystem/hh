@@ -524,10 +524,16 @@ func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
 	}
 
 	date := qwClock.In(seedLocation()).Format("2006-01-02")
+	// onDay is the Driver's runs OUT FOR DELIVERY on a day. The stable fleet's planned runs that
+	// belong to the same driver are sequenced too (every seeded row reaches the feeds), so the
+	// pull also carries them; the claim is that exactly one run is out, the day keyed one.
 	onDay := func(day string) []map[string]any {
 		var out []map[string]any
 		for _, r := range pull("runs") {
 			if d, _ := r["scheduled_date"].(string); strings.HasPrefix(d, day) {
+				if st, _ := r["status"].(string); st != "DISPATCHED" {
+					continue
+				}
 				out = append(out, r)
 			}
 		}
@@ -535,7 +541,7 @@ func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
 	}
 	today := onDay(date)
 	if len(today) != 1 {
-		t.Fatalf("the runs pull gives the Driver %d runs for %s, want exactly 1", len(today), date)
+		t.Fatalf("the runs pull gives the Driver %d runs out for delivery for %s, want exactly 1", len(today), date)
 	}
 	// A reseed on the same day draws no new seq (the sequence is not a mutation per apply), and a
 	// reseed on a later day gives that day its own run in the feed.
