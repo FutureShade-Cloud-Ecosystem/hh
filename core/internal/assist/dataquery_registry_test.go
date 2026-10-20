@@ -1,6 +1,9 @@
 package assist
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRegistry_EveryDeclaredViewColumnIsRegisteredAndNoneIsSecret(t *testing.T) {
 	reg := RegisteredColumns()
@@ -47,4 +50,40 @@ func TestRegistry_AnUnregisteredColumnIsSecretAndAbsentFromEveryCatalogue(t *tes
 	if _, err := Compile(sp, []ViewDef{v}, filterCatalogue([]ViewDef{v}, dqManager), dqToronto, dqClock); err == nil {
 		t.Error("a query for an unregistered column compiled")
 	}
+}
+
+// The cost class is held by a caller with at least one cost branch and by no one else, and the tool
+// description the model reads follows the same catalogue.
+func TestRegistry_TheCostColumnIsInTheCatalogueAndTheToolTextOnlyForACallerWithCostBranches(t *testing.T) {
+	const a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	hasCost := func(c Caller) (inCatalogue, inText bool) {
+		for _, v := range CatalogueFor(c) {
+			if _, ok := v.Column("avg_cost_cents"); ok {
+				inCatalogue = true
+			}
+		}
+		return inCatalogue, strings.Contains(describeDataQuery(c), "avg_cost_cents")
+	}
+	for name, c := range map[string]struct {
+		c    Caller
+		want bool
+	}{
+		"cost at one branch":             {Caller{UserID: "u", Tier: 2, BranchIDs: []string{a}, CostBranchIDs: []string{a}, Margin: true}, true},
+		"margin flag but no cost branch": {Caller{UserID: "u", Tier: 2, BranchIDs: []string{a}, Margin: true}, false},
+		"reach, no cost":                 {Caller{UserID: "u", Tier: 2, BranchIDs: []string{a}}, false},
+		"no role":                        {Caller{UserID: "u", CostBranchIDs: []string{a}}, false},
+	} {
+		in, text := hasCost(c.c)
+		if in != c.want || text != c.want {
+			t.Errorf("%s: catalogue has cost = %v, tool text names it = %v, want %v", name, in, text, c.want)
+		}
+	}
+	if c, ok := classOfView("ai.stock_balances", "avg_cost_cents"); !ok || c != ClassCost {
+		t.Errorf("avg_cost_cents is class %q", c)
+	}
+}
+
+func classOfView(view, col string) (string, bool) {
+	c, ok := RegisteredColumns()[view+"."+col]
+	return c, ok
 }
