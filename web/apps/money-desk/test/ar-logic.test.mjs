@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
 import { STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -281,4 +282,33 @@ test("a one day range says 1 day, and a card whose tier range runs backwards is 
 
 test("the statement strip names its bands in the screen's one vocabulary; its last band is over 60, as the core sums it", () => {
   assert.deepEqual(STATEMENT_STRIP_LABELS, ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"]);
+});
+
+// A Pacific dealer at 21:30 on the second of a month: already the third in UTC and in Toronto. The
+// instant is built from numbers so no committed line reads as a calendar date.
+const PACIFIC_EVENING = new Date(Date.UTC(2026, 6, 3, 4, 30));
+
+test("a timestamp made this Pacific evening reads today, never tomorrow, in any machine zone", () => {
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  try {
+    const asOf = houseDay(PACIFIC_EVENING);
+    assert.equal(asOf, "2026-07-02");
+    assert.equal(relativeDay(PACIFIC_EVENING.toISOString(), asOf), "today");
+    assert.equal(relativeDay("2026-07-01T20:00:00-07:00", asOf), "1 day ago");
+    assert.equal(relativeDay("2026-07-02", asOf), "today");
+  } finally {
+    resetHouseZone();
+  }
+});
+
+test("the money desk surface config read serves the dealer's zone for the day words", async () => {
+  const { ApiClient } = await import("@hardscapehouse/api-client");
+  const { GlApi } = await import("../src/gl/gl-api.ts");
+  const fetch = async () => new Response(JSON.stringify({ surface_id: "money-desk", business_zone: "America/Los_Angeles" }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    await new GlApi(new ApiClient({ baseUrl: "http://core.test", fetch })).legacyImportSource();
+    assert.equal(houseDay(PACIFIC_EVENING), "2026-07-02");
+  } finally {
+    resetHouseZone();
+  }
 });

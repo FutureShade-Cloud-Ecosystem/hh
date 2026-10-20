@@ -306,6 +306,27 @@ function looksLikeUUID(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+/**
+ * Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by a teammate" for anyone else.
+ * The core's pick payload serves the claimer's id and no role label, and an id is never printed.
+ */
+export function claimedByWords(claimedBy: string | null | undefined, me: string | null | undefined): string {
+  const raw = (claimedBy ?? "").trim();
+  if (raw === "") return "";
+  const myId = (me ?? "").trim();
+  if (myId !== "" && raw === myId) return "Claimed by you";
+  return "Claimed by a teammate";
+}
+
+/** What the second person in a race is told: the pick is held, and nothing they pulled was recorded. */
+export const PICK_TAKEN_WORDS = "Someone else already took this pick. Nothing was recorded from you.";
+
+/** True when the pick is held by a person other than the signed-in one. */
+export function heldByOther(claimedBy: string | null | undefined, me: string | null | undefined, status: string): boolean {
+  const raw = (claimedBy ?? "").trim();
+  return raw !== "" && raw !== (me ?? "").trim() && status !== "CANCELLED";
+}
+
 /** What the board calls a row when the feed gave it no order number: never a uuid, never nothing. */
 export function orderHandle(ticket: { order_no?: string; reference?: string; customer_name?: string } | null | undefined): string {
   const orderNo = (ticket?.order_no ?? "").trim();
@@ -467,6 +488,9 @@ export function isLocalLine(line: { id: string }): boolean {
 
 /** What the pick says when its record is saved on the device and not yet sent. */
 export const RECORD_WAITING_WORDS = "Waiting to send: this pick's record goes as soon as you have signal.";
+
+/** What the pick says after a queued record has gone out to the server. */
+export const RECORD_SENT_WORDS = "Sent to the counter.";
 
 /** The notice after a record that could not go yet (no signal): honest that the rep is told on send. */
 export function pickQueuedWords(picked: ReadonlyArray<{ qty_ordered: string; qty_picked: string }>): string {
@@ -688,7 +712,7 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string } = {},
+  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string; taken?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
@@ -711,6 +735,8 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
+  // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
+  if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;

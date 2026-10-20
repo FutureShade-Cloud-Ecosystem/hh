@@ -8,6 +8,7 @@
 // commit f8f4973db317b92296ae8ec7e62a3f54f5dc82ab); the refusal words follow the
 // role gate's shared body ("Forbidden") and ROLE-APP-OBLIGATIONS 1.
 import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
+import { stampDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type CardBucket = "CURRENT" | "WARN" | "LATE" | "ESCALATION";
 
@@ -221,8 +222,9 @@ export { centsToField };
 
 const DAY_MS = 86_400_000;
 
+// A date only value is already a calendar day; a timestamp is the day it falls on in the dealer's zone.
 function dayNumber(date: string): number {
-  return Math.floor(Date.parse(`${date.slice(0, 10)}T00:00:00Z`) / DAY_MS);
+  return Math.floor(Date.parse(`${stampDay(date)}T00:00:00Z`) / DAY_MS);
 }
 
 /** A calendar date as a count from the server's own day: "122 days ago", "in 12 days", "today". */
