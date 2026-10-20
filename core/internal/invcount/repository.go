@@ -172,8 +172,7 @@ func (r *Repository) FreezeSheet(ctx context.Context, sheetID string, snaps []Sn
 				return fmt.Errorf("invcount: insert snapshot line: %w", err)
 			}
 		}
-		ct, err := tx.Exec(ctx, cycleSeqCTE+`UPDATE count_sheets SET status = 'FROZEN', freeze_at = now(), updated_at = now(),
-			                         seq = (SELECT next_value FROM cseq)
+		ct, err := tx.Exec(ctx, `UPDATE count_sheets SET status = 'FROZEN', freeze_at = now(), updated_at = now()
 			WHERE id = $1 AND status = 'OPEN'`, sheetID)
 		if err != nil {
 			return fmt.Errorf("invcount: freeze sheet: %w", err)
@@ -208,9 +207,8 @@ func (r *Repository) SaveCounts(ctx context.Context, sheetID, countedBy string, 
 		// approved_by stamped) must not carry that stamp onto edited numbers, or a maker could revise quantities
 		// after the checker signed off and post under a stale approval (S3 W6 B5, maker-checker bypass). Null the
 		// approval on every save so the checker must re-approve the numbers that will actually post.
-		ct, err := tx.Exec(ctx, cycleSeqCTE+`UPDATE count_sheets
-			SET status = 'COUNTED', counted_by = $2, approved_by = NULL, approved_at = NULL, updated_at = now(),
-			    seq = (SELECT next_value FROM cseq)
+		ct, err := tx.Exec(ctx, `UPDATE count_sheets
+			SET status = 'COUNTED', counted_by = $2, approved_by = NULL, approved_at = NULL, updated_at = now()
 			WHERE id = $1 AND status IN ('FROZEN','COUNTED')`, sheetID, countedBy)
 		if err != nil {
 			return fmt.Errorf("invcount: mark counted: %w", err)
@@ -226,8 +224,7 @@ func (r *Repository) ApproveSheet(ctx context.Context, sheetID, approvedBy strin
 	if r.pool == nil {
 		return errNoDB
 	}
-	ct, err := r.pool.Exec(ctx, cycleSeqCTE+`UPDATE count_sheets SET approved_by = $2, approved_at = now(), updated_at = now(),
-		seq = (SELECT next_value FROM cseq)
+	ct, err := r.pool.Exec(ctx, `UPDATE count_sheets SET approved_by = $2, approved_at = now(), updated_at = now()
 		WHERE id = $1 AND status = 'COUNTED'`, sheetID, approvedBy)
 	if err != nil {
 		return fmt.Errorf("invcount: approve sheet: %w", err)
@@ -242,8 +239,7 @@ func (r *Repository) CancelSheet(ctx context.Context, sheetID string) error {
 	if r.pool == nil {
 		return errNoDB
 	}
-	ct, err := r.pool.Exec(ctx, cycleSeqCTE+`UPDATE count_sheets SET status = 'CANCELLED', updated_at = now(),
-		seq = (SELECT next_value FROM cseq)
+	ct, err := r.pool.Exec(ctx, `UPDATE count_sheets SET status = 'CANCELLED', updated_at = now()
 		WHERE id = $1 AND status <> 'POSTED'`, sheetID)
 	if err != nil {
 		return fmt.Errorf("invcount: cancel sheet: %w", err)
@@ -307,8 +303,7 @@ func (r *Repository) UpdateLinePostedTx(ctx context.Context, tx pgx.Tx, lineID s
 }
 
 func (r *Repository) MarkSheetPostedTx(ctx context.Context, tx pgx.Tx, sheetID string) error {
-	_, err := tx.Exec(ctx, cycleSeqCTE+`UPDATE count_sheets SET status = 'POSTED', posted_at = now(), updated_at = now(),
-		seq = (SELECT next_value FROM cseq)
+	_, err := tx.Exec(ctx, `UPDATE count_sheets SET status = 'POSTED', posted_at = now(), updated_at = now()
 		WHERE id = $1`, sheetID)
 	if err != nil {
 		return fmt.Errorf("invcount: mark posted: %w", err)

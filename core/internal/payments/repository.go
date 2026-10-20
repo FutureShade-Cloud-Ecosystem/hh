@@ -932,12 +932,11 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 		// move that no pull can see is a feed that lies by omission.
 		// The reach is the same cross-table one this settle already
 		// takes on invoices (the file's own recorded posture).
-		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
+		if _, err := tx.Exec(ctx, `
 UPDATE invoices
 			 SET balance_cents = balance_cents - $3,
 				 status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
-				 updated_at = now(),
-				 seq = (SELECT next_value FROM iseq)
+				 updated_at = now()
 			 WHERE id = $2 AND customer_id = $1`,
 			customerID, a.InvoiceID, a.AmountCents); err != nil {
 			return fmt.Errorf("pay: update invoice balance: %w", err)
@@ -1012,12 +1011,11 @@ func (r *Repository) AllocateToInvoiceTx(ctx context.Context, tx pgx.Tx, s Order
 		s.PaymentID, s.InvoiceID, s.AmountCents, by); err != nil {
 		return fmt.Errorf("payments: allocation: %w", err)
 	}
-	if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
+	if _, err := tx.Exec(ctx, `
 UPDATE invoices
 		   SET balance_cents = balance_cents - $3,
 		       status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
-		       updated_at = now(),
-		       seq = (SELECT next_value FROM iseq)
+		       updated_at = now()
 		 WHERE id = $2::uuid AND customer_id = $1::uuid`,
 		s.CustomerID, s.InvoiceID, s.AmountCents); err != nil {
 		return fmt.Errorf("payments: invoice balance move: %w", err)

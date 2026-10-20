@@ -216,7 +216,7 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 			sku, in.RowID, in.OrgID); err != nil {
 			return "", false, fmt.Errorf("product: load update: %w", err)
 		}
-		err = tx.QueryRow(ctx, productSeqCTE+`
+		err = tx.QueryRow(ctx, `
 			UPDATE products SET
 				name = $2, description = $3, category_id = NULLIF($4, '')::uuid,
 				base_uom = $5, price_uom = $6,
@@ -226,8 +226,7 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 				full_skid_quantity = $19, layer_quantity = $20, minimum_order_qty = $21,
 				dimensions_lwh = $22, pallet_count = $23, weight_per_unit_kg = $24,
 				is_active = $25, metadata = $26::jsonb,
-				org_id = $27::uuid, seq = (SELECT next_value FROM pseq),
-				idempotency_key = NULLIF($28, '')::uuid, updated_at = now()
+				org_id = $27::uuid, idempotency_key = NULLIF($28, '')::uuid, updated_at = now()
 			WHERE id = $29::uuid AND (org_id IS NULL OR org_id = $27::uuid) AND sku = $1
 			RETURNING id::text`,
 			sku, name, description, category,

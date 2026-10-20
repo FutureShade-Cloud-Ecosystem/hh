@@ -100,14 +100,13 @@ func recomputeTotals(ctx context.Context, tx pgx.Tx, quoteID, actorID string) (Q
 	// The quotes scope's seq rides the fold-up (0213, syncscope.go):
 	// a totals change is a header change, and a device's pull must see
 	// it the moment it lands.
-	err := tx.QueryRow(ctx, quoteSeqCTE+`
+	err := tx.QueryRow(ctx, `
 		UPDATE quotes SET
 			subtotal_cents = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0),
 			total_cents    = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)
 			                 + tax_cents + delivery_fee_cents,
 			updated_by     = NULLIF($2,'')::uuid,
-			updated_at     = now(),
-			seq            = (SELECT next_value FROM qseq)
+			updated_at     = now()
 		WHERE id = $1
 		RETURNING subtotal_cents, total_cents`, quoteID, actorID).Scan(&t.SubtotalCents, &t.TotalCents)
 	if err != nil {
@@ -416,9 +415,8 @@ func (r *Repository) UpdateValidUntilGuarded(ctx context.Context, quoteID, newDa
 		`SELECT COALESCE(valid_until::text,'') FROM quotes WHERE id = $1`, quoteID).Scan(&before); err != nil {
 		return "", "", status, fmt.Errorf("read quote expiry pre-image: %w", err)
 	}
-	if err = tx.QueryRow(ctx, quoteSeqCTE+`
-		UPDATE quotes SET valid_until = NULLIF($2,'')::date, updated_by = NULLIF($3,'')::uuid, updated_at = now(),
-		                   seq = (SELECT next_value FROM qseq)
+	if err = tx.QueryRow(ctx, `
+		UPDATE quotes SET valid_until = NULLIF($2,'')::date, updated_by = NULLIF($3,'')::uuid, updated_at = now()
 		 WHERE id = $1
 		 RETURNING COALESCE(valid_until::text,'')`, quoteID, newDate, actorID).Scan(&after); err != nil {
 		return before, "", status, fmt.Errorf("update quote expiry: %w", err)

@@ -21,142 +21,13 @@ package dispatch
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
-
-// drawPark parks sessions of its own pool (application name sf1-park) right before they take the counter row
-// of one scope, on an advisory lock the test holds.
-type drawPark struct {
-	t       *testing.T
-	base    *pgxpool.Pool
-	Pool    *pgxpool.Pool // the park pool: run the single row writer on it
-	hold    *pgxpool.Conn
-	key     int64
-	scope   string
-	release func()
-}
-
-func newDrawPark(t *testing.T, base *pgxpool.Pool, scope string, key int64) *drawPark {
-	t.Helper()
-	ctx := context.Background()
-	for _, q := range []string{
-		`CREATE OR REPLACE FUNCTION sf1_park_before() RETURNS trigger LANGUAGE plpgsql AS $$
-		 BEGIN
-		   IF NEW.scope = TG_ARGV[0] AND current_setting('application_name') = 'sf1-park' THEN
-		     PERFORM pg_advisory_xact_lock(TG_ARGV[1]::bigint);
-		   END IF;
-		   RETURN NEW;
-		 END $$`,
-		`DROP TRIGGER IF EXISTS sf1_park_before ON scope_sequences`,
-		fmt.Sprintf(`CREATE TRIGGER sf1_park_before BEFORE INSERT ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_before('%s', '%d')`, scope, key),
-		fmt.Sprintf(`INSERT INTO scope_sequences (scope, next_value) VALUES ('%s', 0) ON CONFLICT (scope) DO NOTHING`, scope),
-	} {
-		if _, err := base.Exec(ctx, q); err != nil {
-			t.Fatalf("park trigger: %v", err)
-		}
-	}
-	cfg := base.Config().Copy()
-	cfg.ConnConfig.RuntimeParams["application_name"] = "sf1-park"
-	cfg.MaxConns = 2
-	park, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("park pool: %v", err)
-	}
-	hold, err := base.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if _, err := hold.Exec(ctx, `SELECT pg_advisory_lock($1)`, key); err != nil {
-		t.Fatalf("hold: %v", err)
-	}
-	p := &drawPark{t: t, base: base, Pool: park, hold: hold, key: key, scope: scope}
-	released := false
-	p.release = func() {
-		if !released {
-			released = true
-			_, _ = hold.Exec(ctx, `SELECT pg_advisory_unlock($1)`, key)
-		}
-	}
-	t.Cleanup(func() {
-		p.release()
-		hold.Release()
-		park.Close()
-		c := context.Background()
-		_, _ = base.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_before ON scope_sequences`)
-		_, _ = base.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_before()`)
-	})
-	return p
-}
-
-// waitParked blocks until a park pool session stands on the advisory lock.
-func (p *drawPark) waitParked(what string) {
-	p.t.Helper()
-	waitCount(p.t, p.base, "parked: "+what, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)
-}
-
-// waitBlocked blocks until a session waits on a row or counter lock (not the park).
-func (p *drawPark) waitBlocked(what string) {
-	p.t.Helper()
-	waitCount(p.t, p.base, "blocked: "+what,
-		`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event <> 'advisory'`)
-}
-
-func waitCount(t *testing.T, pool *pgxpool.Pool, what, q string) {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		var n int
-		if err := pool.QueryRow(context.Background(), q).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", what, err)
-		}
-		if n > 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("never saw: %s", what)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// answers releases the park and requires every writer to finish without a deadlock victim.
-func (p *drawPark) answers(chs map[string]chan error) {
-	p.t.Helper()
-	p.release()
-	for who, ch := range chs {
-		select {
-		case err := <-ch:
-			if err != nil && (strings.Contains(err.Error(), "40P01") || strings.Contains(err.Error(), "deadlock")) {
-				p.t.Fatalf("%s was killed as a deadlock victim: %v", who, err)
-			}
-			if err != nil {
-				p.t.Logf("%s answered: %v", who, err)
-			}
-		case <-time.After(30 * time.Second):
-			p.t.Fatalf("%s never finished", who)
-		}
-	}
-}
-
-// touchRow is the trigger relying single row writer: it changes a row and lets the BEFORE UPDATE trigger draw.
-// Run on the park pool it stands between its row lock and its draw.
-func (p *drawPark) touchRow(table, set, id string) chan error {
-	ch := make(chan error, 1)
-	go func() {
-		_, err := p.Pool.Exec(context.Background(),
-			fmt.Sprintf(`UPDATE %s SET %s WHERE id = $1::uuid`, table, set), id)
-		ch <- err
-	}()
-	return ch
-}
 
 // - Part B: S2's two multi row writers, and the freight raise path -
 
@@ -173,14 +44,14 @@ func TestIntegration_DrawBeforeLock_SyncCancelUnassignBesideAStopWrite(t *testin
 		"address_line": "Fixture address", "city": "Fixture City"}, nil)
 	stopID := syncRowOf(t, f, "stops", f.north, key).ID
 
-	p := newDrawPark(t, f.pool, "stops", 4242010)
-	errStop := p.touchRow("delivery_stops", "updated_at = now()", stopID)
-	p.waitParked("the stop write between its row lock and its draw")
+	p := testkit.NewDrawPark(t, f.pool, "stops", 4242010)
+	errStop := p.TouchRow("delivery_stops", "updated_at = now()", stopID)
+	p.WaitParked("the stop write between its row lock and its draw")
 
 	errCancel := make(chan error, 1)
 	go func() { errCancel <- f.cancelRun(run.ID) }()
-	p.waitBlocked("the cancel waiting for the stop row")
-	p.answers(map[string]chan error{"stop write": errStop, "sync cancel": errCancel})
+	p.WaitBlocked("the cancel waiting for the stop row")
+	p.Answers(map[string]chan error{"stop write": errStop, "sync cancel": errCancel})
 }
 
 // AttachPODPhotos draws the pod counter in a CTE and updates every unattached photo of the stop; a pod caption
@@ -196,17 +67,17 @@ func TestIntegration_DrawBeforeLock_AttachPODPhotosBesideAPhotoWrite(t *testing.
 		"stop_id": stop.ID, "content_type": "image/png", "image_bytes_b64": tiny, "caption": "at the gate"}, nil)
 	photoID := syncRowOf(t, f, "pod", f.north, pkey).ID
 
-	p := newDrawPark(t, f.pool, "pod", 4242011)
-	errPhoto := p.touchRow("delivery_pod_photos", "caption = 'checked at the gate'", photoID)
-	p.waitParked("the photo write between its row lock and its draw")
+	p := testkit.NewDrawPark(t, f.pool, "pod", 4242011)
+	errPhoto := p.TouchRow("delivery_pod_photos", "caption = 'checked at the gate'", photoID)
+	p.WaitParked("the photo write between its row lock and its draw")
 
 	errAttach := make(chan error, 1)
 	go func() {
 		_, err := NewRepository(f.pool).AttachPODPhotos(context.Background(), stop.ID, "FXSIG-"+uniqueSuffix(), time.Now().UTC())
 		errAttach <- err
 	}()
-	p.waitBlocked("the attach waiting for the photo row")
-	p.answers(map[string]chan error{"photo write": errPhoto, "AttachPODPhotos": errAttach})
+	p.WaitBlocked("the attach waiting for the photo row")
+	p.Answers(map[string]chan error{"photo write": errPhoto, "AttachPODPhotos": errAttach})
 }
 
 // cancelRun pushes the sync cancel of a run through the engine on the fixture's pool.
@@ -246,9 +117,9 @@ func TestIntegration_DrawBeforeLock_FreightRaiseApplyWithAMintBesideAStopWrite(t
 		t.Skipf("no seeded user: %v", err)
 	}
 
-	p := newDrawPark(t, h.pool, "stops", 4242012)
-	errStop := p.touchRow("delivery_stops", "updated_at = now()", stopID)
-	p.waitParked("the stop write between its row lock and its draw")
+	p := testkit.NewDrawPark(t, h.pool, "stops", 4242012)
+	errStop := p.TouchRow("delivery_stops", "updated_at = now()", stopID)
+	p.WaitParked("the stop write between its row lock and its draw")
 
 	errApply := make(chan error, 1)
 	go func() {
@@ -264,8 +135,8 @@ func TestIntegration_DrawBeforeLock_FreightRaiseApplyWithAMintBesideAStopWrite(t
 		}
 		errApply <- tx.Commit(context.Background())
 	}()
-	p.waitBlocked("the apply waiting after its mint")
-	p.answers(map[string]chan error{"stop write": errStop, "ApplyFreightRaiseTx": errApply})
+	p.WaitBlocked("the apply waiting after its mint")
+	p.Answers(map[string]chan error{"stop write": errStop, "ApplyFreightRaiseTx": errApply})
 }
 
 // - Part A: the single row writers that drew in a CTE before locking their row -
@@ -283,9 +154,9 @@ func TestIntegration_DrawBeforeLock_AssignStopBesideAStopWrite(t *testing.T) {
 		"address_line": "Fixture address", "city": "Fixture City"}, nil)
 	stopID := syncRowOf(t, f, "stops", f.north, key).ID
 
-	p := newDrawPark(t, f.pool, "stops", 4242013)
-	errTouch := p.touchRow("delivery_stops", "updated_at = now()", stopID)
-	p.waitParked("the stop write between its row lock and its draw")
+	p := testkit.NewDrawPark(t, f.pool, "stops", 4242013)
+	errTouch := p.TouchRow("delivery_stops", "updated_at = now()", stopID)
+	p.WaitParked("the stop write between its row lock and its draw")
 	errAssign := make(chan error, 1)
 	go func() {
 		ok, err := NewRepository(f.pool).AssignStop(context.Background(), stopID, run.ID, 1)
@@ -294,17 +165,17 @@ func TestIntegration_DrawBeforeLock_AssignStopBesideAStopWrite(t *testing.T) {
 		}
 		errAssign <- err
 	}()
-	p.waitBlocked("AssignStop waiting for the stop row")
-	p.answers(map[string]chan error{"stop write": errTouch, "AssignStop": errAssign})
+	p.WaitBlocked("AssignStop waiting for the stop row")
+	p.Answers(map[string]chan error{"stop write": errTouch, "AssignStop": errAssign})
 }
 
 // AssignRunCrew (delivery_runs): the same shape on the run row.
 func TestIntegration_DrawBeforeLock_AssignRunCrewBesideARunWrite(t *testing.T) {
 	f := newSyncFixture(t)
 	run := syncOpenRun(t, f)
-	p := newDrawPark(t, f.pool, "runs", 4242014)
-	errTouch := p.touchRow("delivery_runs", "updated_at = now()", run.ID)
-	p.waitParked("the run write between its row lock and its draw")
+	p := testkit.NewDrawPark(t, f.pool, "runs", 4242014)
+	errTouch := p.TouchRow("delivery_runs", "updated_at = now()", run.ID)
+	p.WaitParked("the run write between its row lock and its draw")
 	errCrew := make(chan error, 1)
 	go func() {
 		ok, err := NewRepository(f.pool).AssignRunCrew(context.Background(), run.ID, f.truck, f.driver)
@@ -313,6 +184,6 @@ func TestIntegration_DrawBeforeLock_AssignRunCrewBesideARunWrite(t *testing.T) {
 		}
 		errCrew <- err
 	}()
-	p.waitBlocked("AssignRunCrew waiting for the run row")
-	p.answers(map[string]chan error{"run write": errTouch, "AssignRunCrew": errCrew})
+	p.WaitBlocked("AssignRunCrew waiting for the run row")
+	p.Answers(map[string]chan error{"run write": errTouch, "AssignRunCrew": errCrew})
 }
