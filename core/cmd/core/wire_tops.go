@@ -654,7 +654,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		quoteassist.NewRepository(pool),
 		log,
 	)
-	quoteAssistSvc.WithAI(assistadapt.NewQuoteExtractRails(assistProvider, assistRepo, assistRepo, log))
+	quoteRails := assistadapt.NewQuoteExtractRails(assistProvider, assistRepo, assistRepo, log)
+	quoteAssistSvc.WithAI(quoteRails)
 	quoteassist.NewHandler(quoteAssistSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W6-B: reporting and commissions.
@@ -702,6 +703,11 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// buckets only on a demo copy.
 		WithRateLimits(assist.NewRateLimits(assistDemoLimits(cfg.DemoMode), time.Now)).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
+	// The quote rails call the provider only through the assist service's meter (reservation,
+	// dealer cap, settlement); bound here because the service is built after them.
+	if quoteRails != nil {
+		quoteRails.WithCompleter(assistSvc)
+	}
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three

@@ -277,6 +277,13 @@ func (s *Service) WithDealerCap(microCents int64) *Service {
 // freeProvider reports whether the provider costs nothing, which is only the stub.
 func (s *Service) freeProvider() bool { return s.provider.Name() == "stub" }
 
+// Complete is complete for callers outside the package (the quote extraction rails): the same
+// budget check, dealer cap, reservation and settlement, as the asking user, in an exchange of its
+// own. It exists so no paid provider call is made outside the meter.
+func (s *Service) Complete(ctx context.Context, c Caller, req CompletionRequest) (Reply, error) {
+	return s.complete(withExchange(ctx), c, req)
+}
+
 // complete is the only place this package reaches a provider. Everything the slice adds, the budget
 // check, the dealer cap, the reservation and the settlement, happens here, so a path that calls
 // the provider cannot skip them.
