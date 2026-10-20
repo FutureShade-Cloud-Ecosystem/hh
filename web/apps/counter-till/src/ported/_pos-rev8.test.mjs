@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   isScannerBurst,
   enterMissOutcome,
+  looksLikeProductName,
   clockLabel,
   lineWeightLbs,
   formatLbs,
@@ -48,6 +49,15 @@ test('isScannerBurst: a machine-fast burst is a scan; human typing is not', () =
 test('isScannerBurst: the MEDIAN decides: one slow wake-up gap must not disqualify a gun', () => {
   assert.equal(isScannerBurst([400, 6, 7, 6, 7, 6, 7, 6], 9), true, 'the gun woke slowly, then burst');
   assert.equal(isScannerBurst([6, 300, 280, 320, 300, 310, 290, 300], 9), false, 'one fast key-roll pair does not promote a typist');
+});
+
+test('enterMissOutcome: a plain name typed at gun speed is still a typed entry; a digit code stays a scan', () => {
+  const fast = [5, 5, 5, 5, 5, 5];
+  assert.equal(enterMissOutcome(fast, 7, 'charcoal'), 'fall-through-to-search');
+  assert.equal(enterMissOutcome(fast, 10, '0099887766'), 'loud-unknown-code');
+  assert.equal(enterMissOutcome(fast, 6, 'HPV-60'), 'loud-unknown-code');
+  assert.equal(looksLikeProductName('edging paver'), true);
+  assert.equal(looksLikeProductName('6x9 paver'), false);
 });
 
 test('enterMissOutcome: burst → LOUD unknown-code; typed → quiet fall-through to the search', () => {
@@ -162,7 +172,7 @@ test('FLOOR (1): the terminal mounts ONE unified field: scan box unified, grid i
 });
 
 test('FLOOR (1): the unified Enter keeps BOTH contracts: exact resolve first, classified miss', () => {
-  assert.match(scanSrc, /enterMissOutcome\(gaps, code\.length\) === 'fall-through-to-search'/,
+  assert.match(scanSrc, /enterMissOutcome\(gaps, code\.length, code\) === 'fall-through-to-search'/,
     'a typed miss falls through to the live search');
   assert.match(scanSrc, /No product for \$\{code\}/, 'a burst miss keeps the LOUD unknown-code answer');
   assert.match(scanSrc, /Scan barcode or search product \/ SKU/, 'the concept placeholder');

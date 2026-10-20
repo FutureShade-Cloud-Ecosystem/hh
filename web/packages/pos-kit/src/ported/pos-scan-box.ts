@@ -268,7 +268,7 @@ export class HosPosScanBox extends LitElement {
  // scan box's LOUD contract below. A typed entry falls through QUIETLY: the live search
         // results (already on screen from the forwarded term) are the answer, and shouting
         // "no product" over them would call a working search broken.
-        if (this.unified && enterMissOutcome(gaps, code.length) === 'fall-through-to-search') {
+        if (this.unified && enterMissOutcome(gaps, code.length, code) === 'fall-through-to-search') {
           // THE CLIENT'S ASK: "Enter takes the top hit." The box does not know what the top hit is
  //: the results list does: so it hands the moment to the host and the host commits.
           // A host that has no hit to give simply leaves the term standing, which is the pre-
