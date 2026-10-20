@@ -27,10 +27,8 @@ test("the five kinds of the closed vocabulary and the change queue sit as tabs, 
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
   await expect(tabs).toHaveCount(6);
-  // The change queue's count lands after the tabs mount: poll the words, never read them once.
-  await expect
-    .poll(() => tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim())))
-    .toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 2"]);
+  // The counts on the tabs arrive with the queue's read, after the tabs are drawn: the words are waited for, never sampled once.
+  await expect(tabs).toHaveText(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 2"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
