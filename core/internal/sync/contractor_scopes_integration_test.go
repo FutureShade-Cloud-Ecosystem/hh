@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -482,6 +483,32 @@ func (f *the169Fixture) insertWillCallOrderT() string {
 		return ""
 	}
 	return id
+}
+
+// TestPickupsFreshness_AStaffMintReachesTheContractorsFeed: the sweep's probe 1, green. A staff
+// InsertPickup (the desk mints the tag) must reach the contractor's pickups feed from the cursor a
+// device already holds. Every will_call_pickups writer draws the one will_call stream (UX-72), and the
+// sync seq trigger (0422) carries the table for any writer that does not.
+func TestPickupsFreshness_AStaffMintReachesTheContractorsFeed(t *testing.T) {
+	f := new169Fixture(t)
+	orderID := f.insertWillCallOrderT()
+	if orderID == "" {
+		t.Fatalf("seed the will call order")
+	}
+	harness.Fresh(t, harness.FreshCase{
+		Engine: f.engine, Scope: mustInfo("pickups"), Filter: alphaFilter(),
+		Write: func(ctx context.Context) (string, error) {
+			w, err := dispatch.NewRepository(f.pool).InsertPickup(ctx, orderID, testkit.BranchNorthAID,
+				fmt.Sprintf("fresh-hash-%d", nextVal()), "", time.Now().Add(time.Hour))
+			return w.ID, err
+		},
+		Want: func(d map[string]any) error {
+			if d["order_id"] != orderID {
+				return fmt.Errorf("order_id is %v, want %s", d["order_id"], orderID)
+			}
+			return nil
+		},
+	})
 }
 
 // Test169PushScopeBatteries: the harness battery, GATE-7 and the replay
