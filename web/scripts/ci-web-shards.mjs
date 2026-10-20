@@ -8,9 +8,10 @@
 // lands in a shard without an edit here. WEIGHTS holds the measured minutes of
 // typecheck plus test per package; a package missing from it takes
 // DEFAULT_WEIGHT and still lands in a shard. SPLITS names the packages whose
-// bare `playwright test` run is divided with --shard=k/m across that many
-// parts; the first part also carries typecheck, the node tests and the
-// package's extra Playwright configs. The evening guard's two date sensitive
+// bare `playwright test` run is divided with --shard=k/m across `parts`
+// units of weight `playwright / parts` each; the package's typecheck, node
+// tests and extra Playwright configs are one more unit (part 0, weight
+// `extras`) so no part carries them on top of its share. The evening guard's two date sensitive
 // specs are one more unit, run under TZ=America/Toronto.
 //
 // Every shard validates every package first (the guards the old serial loop
@@ -40,7 +41,13 @@ export const WEIGHTS = {
   "pro-procurement": 1.1,
   [EVENING_GUARD]: 2.0,
 };
-export const SPLITS = { "quote-desk": 3, "counter-till": 2 };
+// Minutes of runner time measured on the first sharded run: Quote Desk's
+// bare Playwright run about 36 split four ways and its other legs about 6;
+// Counter Till's about 9 split two ways and its other legs about 4.
+export const SPLITS = {
+  "quote-desk": { parts: 4, playwright: 36, extras: 6 },
+  "counter-till": { parts: 2, playwright: 9, extras: 4 },
+};
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -88,10 +95,14 @@ export function validatePackages(pkgs) {
 export function buildUnits(pkgs, weights, splits) {
   const units = [];
   for (const pkg of pkgs) {
-    const weight = weights[pkg.name] ?? DEFAULT_WEIGHT;
-    const parts = splits[pkg.name] ?? 1;
-    for (let part = 1; part <= parts; part += 1) {
-      units.push({ id: parts === 1 ? pkg.name : `${pkg.name}#${part}/${parts}`, pkg: pkg.name, part, parts, weight: weight / parts });
+    const split = splits[pkg.name];
+    if (!split) {
+      units.push({ id: pkg.name, pkg: pkg.name, part: 1, parts: 1, weight: weights[pkg.name] ?? DEFAULT_WEIGHT });
+      continue;
+    }
+    units.push({ id: `${pkg.name}#extras`, pkg: pkg.name, part: 0, parts: split.parts, weight: split.extras });
+    for (let part = 1; part <= split.parts; part += 1) {
+      units.push({ id: `${pkg.name}#${part}/${split.parts}`, pkg: pkg.name, part, parts: split.parts, weight: split.playwright / split.parts });
     }
   }
   units.push({ id: EVENING_GUARD, pkg: EVENING_GUARD, part: 1, parts: 1, weight: weights[EVENING_GUARD] ?? DEFAULT_WEIGHT });
@@ -145,10 +156,12 @@ function runUnit(unit, pkgByName) {
     return 1;
   }
   const pkg = pkgByName.get(unit.pkg);
-  const first = unit.part === 1;
-  if (first && pkg.scripts.typecheck) run("npm run typecheck", pkg.dir);
+  const extras = unit.part === 0;
+  const split = unit.parts > 1 || extras;
+  // A split package's extras unit (or an unsplit package) carries the typecheck.
+  if ((extras || !split) && pkg.scripts.typecheck) run("npm run typecheck", pkg.dir);
   if (!pkg.scripts.test) return 0;
-  if (unit.parts === 1) {
+  if (!split) {
     run("npm test", pkg.dir);
     return 1;
   }
@@ -158,8 +171,8 @@ function runUnit(unit, pkgByName) {
     process.exit(1);
   }
   for (const segment of segments) {
-    if (segment.shardable) run(`${segment.command} --shard=${unit.part}/${unit.parts}`, pkg.dir);
-    else if (first) run(segment.command, pkg.dir);
+    if (extras && !segment.shardable) run(segment.command, pkg.dir);
+    else if (!extras && segment.shardable) run(`${segment.command} --shard=${unit.part}/${unit.parts}`, pkg.dir);
   }
   return 1;
 }
