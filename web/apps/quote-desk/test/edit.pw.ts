@@ -173,7 +173,9 @@ test("the expiry saves and clears", async ({ page }) => {
   const later = new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
   await panel(page).locator('[data-field="expiry"]').fill(later);
   await panel(page).getByRole("button", { name: "Save expiry" }).click();
-  await expect(page.getByTestId("qe-sub")).toContainText(`Valid until ${later}`);
+  await expect(page.getByTestId("qe-sub")).toContainText(
+    `Valid until ${new Date(`${later}T12:00:00`).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}`,
+  );
   await panel(page).locator('[data-field="expiry"]').fill("");
   await panel(page).getByRole("button", { name: "Save expiry" }).click();
   await expect(page.getByTestId("qe-sub")).toContainText("No expiry");
