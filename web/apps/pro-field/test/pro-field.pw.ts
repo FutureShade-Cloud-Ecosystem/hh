@@ -193,6 +193,19 @@ test.describe("phone", () => {
     await expect(page.getByTestId("return-form")).toHaveCount(0);
   });
 
+  test("a 403 on return eligibility reads as a role refusal naming who can request a return, with no retry", async ({ page }) => {
+    await page.route("**/return-eligibility", (route) =>
+      route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "insufficient permissions" }) }),
+    );
+    await signIn(page, "owner");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();
+    await page.getByTestId("request-return").click();
+    await expect(page.getByTestId("return-words")).toHaveText(
+      "Your role cannot request a return. Ask an Owner, Buyer, or Project manager on your account to request it.",
+    );
+    await expect(page.getByTestId("returns-card").getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+
   test("a role that cannot commit a return sees no button and still sees the requests list", async ({ page }) => {
     await signIn(page, "field");
     await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();

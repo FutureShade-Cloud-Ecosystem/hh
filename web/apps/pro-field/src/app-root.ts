@@ -120,6 +120,7 @@ interface AccountState {
 }
 
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
+const RETURN_REFUSAL_WORDS = "Your role cannot request a return. Ask an Owner, Buyer, or Project manager on your account to request it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
 // The core's last owner refusal (409) in the words a person reads; the core's
 // stored words stay the core's.
@@ -576,6 +577,8 @@ export class ProFieldApp extends HHElement {
       // The core answers not found for anything that was not a counter sale, on purpose
       // (IDOR safe), so this is a plain no, not a fault to retry.
       order.returns.eligibility = { phase: "error", data: null, words: CANNOT_RETURN_WORDS, canRetry: false };
+    } else if (answer.status === 403) {
+      order.returns.eligibility = { phase: "error", data: null, words: RETURN_REFUSAL_WORDS, canRetry: false };
     } else {
       order.returns.eligibility = { phase: "error", data: null, words: RETURN_FAULT_WORDS, canRetry: true };
     }
@@ -618,7 +621,7 @@ export class ProFieldApp extends HHElement {
       order.returns.notice = `Return request ${answer.value.request_no} sent. The dealer decides it.`;
       void this.#loadReturns();
     } else {
-      order.returns.form.error = answer.error;
+      order.returns.form.error = answer.status === 403 ? RETURN_REFUSAL_WORDS : answer.error;
     }
     this.requestUpdate();
   }
