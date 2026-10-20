@@ -37,11 +37,14 @@ test("the way in builds the role code from the session's own code, never from th
 test("the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words", async ({ page, request }) => {
   await openDesk(page, request);
   await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();
-  expect(await page.locator("[data-card] [data-card-title]").allTextContents()).toEqual(["Escalation", "Late", "Overdue", "Current"]);
+  expect(await page.locator("[data-card] [data-card-title]").allTextContents()).toEqual(["90 days and over", "61 to 89 days", "1 to 60 days", "Current"]);
+  await expect(page.locator("[data-card]").first()).toContainText("Past due");
+  await expect(page.locator("[data-card]").first()).toContainText("As of today");
+  await expect(page.locator("[data-card-note]")).toHaveText("Grouped by your past due settings");
   await expect(page.locator("[data-register-row]")).toHaveCount(9);
   const first = page.locator("[data-register-row]").first();
   await expect(first).toContainText("INV-1001");
-  await expect(first).toContainText("104d overdue");
+  await expect(first).toContainText("104d past due");
   await expect(first).toContainText("promise open");
   await expect(first).toContainText("104 days ago");
   await expect(page.locator("[data-register-row]", { hasText: "INV-1004" })).toContainText("disputed");
@@ -69,8 +72,8 @@ test("the register's filters: overdue, promised, disputed and paid", async ({ pa
   await pick("Past due");
   await expect(page.locator("[data-register-row]")).toHaveCount(7);
   await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $11,499.50");
-  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days late");
-  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("91 and over");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days past due");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("Over 90 days");
   await pick("Current");
   await expect(page.locator("[data-register-row]")).toHaveCount(2);
   await expect(page.locator("[data-testid='c8-summary']")).toHaveCount(0);
