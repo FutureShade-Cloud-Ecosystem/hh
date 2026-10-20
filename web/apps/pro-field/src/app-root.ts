@@ -43,7 +43,7 @@ import type { HHProSignIn, SignInMethodChoice, SignInSubmit } from "@hardscapeho
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
-import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
+import { MAX_INSTRUCTIONS_LENGTH, houseToday, instructionsCountWords, instructionsEditable, instructionsNote } from "./timeline.js";
 import { returnRequestLines } from "./returns.js";
 import { instructionsCard, accountView, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { passwordProblem } from "./account.js";
@@ -558,6 +558,11 @@ export class ProFieldApp extends HHElement {
   async #saveInstructions(): Promise<void> {
     const order = this.#order;
     if (order === null || order.detail === null || order.instructions.busy) return;
+    if (order.instructions.draft.length > MAX_INSTRUCTIONS_LENGTH) {
+      order.instructions.error = `Keep delivery instructions to ${MAX_INSTRUCTIONS_LENGTH} characters or fewer.`;
+      this.requestUpdate();
+      return;
+    }
     order.instructions.busy = true;
     order.instructions.error = "";
     this.requestUpdate();
@@ -980,6 +985,7 @@ export class ProFieldApp extends HHElement {
                   detail: order.detail,
                   editable: instructionsEditable(order.detail, mayEdit),
                   note: instructionsNote(order.detail, mayEdit),
+                  countWords: instructionsCountWords(order.instructions.draft),
                   dirty: order.instructions.draft !== order.detail.delivery_instructions,
                   busy: order.instructions.busy,
                   saved: order.instructions.saved,

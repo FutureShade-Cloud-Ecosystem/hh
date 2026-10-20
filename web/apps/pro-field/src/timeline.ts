@@ -131,3 +131,15 @@ export function instructionsNote(order: Pick<TenantOrder, "status" | "fulfillmen
   if (DISPATCHED.includes(order.status)) return "The truck already left with these notes.";
   return "";
 }
+
+/** The core's delivery instructions bound (core/internal/portal/orders.go maxDeliveryInstructionsLen = 2000). */
+export const MAX_INSTRUCTIONS_LENGTH = 2000;
+
+/** The length at which the character count appears near the limit. */
+export const INSTRUCTIONS_COUNT_THRESHOLD = 1800;
+
+/** The character count line shown when the draft is near the 2000 character limit, or empty before then. */
+export function instructionsCountWords(draft: string): string {
+  if (draft.length < INSTRUCTIONS_COUNT_THRESHOLD) return "";
+  return `${draft.length} / ${MAX_INSTRUCTIONS_LENGTH} characters`;
+}

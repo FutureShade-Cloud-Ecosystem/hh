@@ -198,7 +198,12 @@ test.describe("phone", () => {
     await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
     const input = page.getByTestId("instructions-input");
     await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await expect(input).toHaveAttribute("maxlength", "2000");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
+    await input.fill("x".repeat(1850));
+    await expect(page.getByTestId("instructions-count")).toHaveText("1850 / 2000 characters");
     await input.fill("Call the site lead 30 minutes before arrival. Gate is on the north fence.");
+    await expect(page.getByTestId("instructions-count")).toHaveCount(0);
     await page.getByRole("button", { name: "Save notes" }).click();
     await expect(page.getByTestId("instructions-saved")).toHaveText("Delivery instructions saved.");
     await page.screenshot({ path: test.info().outputPath("instructions-phone.png") });

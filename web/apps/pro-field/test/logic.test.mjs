@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
+import { MAX_INSTRUCTIONS_LENGTH, flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsCountWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
@@ -137,6 +137,14 @@ test("a locked order says why its notes are read only, and says so differently f
   assert.equal(instructionsNote(order("FULFILLED", "DELIVERY"), true), "The truck already left with these notes.");
   assert.equal(instructionsNote(order("READY", "WILL_CALL"), true), "This order is not a delivery, so its notes are set by the dealer.");
   assert.equal(instructionsNote(order("PICKING", "DELIVERY"), false), "Your role reads these notes; changing them is another role's to do.");
+});
+
+test("delivery instructions character count stays silent until near the 2000 character bound", () => {
+  assert.equal(MAX_INSTRUCTIONS_LENGTH, 2000);
+  assert.equal(instructionsCountWords("short note"), "");
+  assert.equal(instructionsCountWords("x".repeat(1799)), "");
+  assert.equal(instructionsCountWords("x".repeat(1800)), "1800 / 2000 characters");
+  assert.equal(instructionsCountWords("x".repeat(2000)), "2000 / 2000 characters");
 });
 
 test("return statuses and reasons read as words, never stored strings", () => {

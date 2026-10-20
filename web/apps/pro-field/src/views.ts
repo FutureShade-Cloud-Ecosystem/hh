@@ -505,6 +505,7 @@ export interface InstructionsProps {
   editable: boolean;
   /** The read-only reason, empty when the form shows. */
   note: string;
+  countWords?: string;
   dirty: boolean;
   busy: boolean;
   saved: boolean;
@@ -521,8 +522,11 @@ export function instructionsCard(props: InstructionsProps): TemplateResult {
     ${props.editable
       ? html`<div class="form">
           <label for="instructions-input">Notes for the delivery</label>
-          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
+          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" maxlength="2000" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
           <div class="formrow">
+            ${props.countWords !== undefined && props.countWords !== ""
+              ? html`<span class="dim" data-testid="instructions-count">${props.countWords}</span>`
+              : nothing}
             <span class="grow"></span>
             ${button({ label: "Save notes", kind: "secondary", action: "save-instructions", disabled: props.busy || !props.dirty })}
           </div>
