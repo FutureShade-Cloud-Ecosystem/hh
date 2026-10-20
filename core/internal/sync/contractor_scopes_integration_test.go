@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -178,6 +179,7 @@ func open169Pool(t *testing.T) *pgxpool.Pool {
 	if err := testkit.Build(context.Background(), testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
+	hideFixtureRowsFromFeeds(t, pool)
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM plan_line WHERE org_id IN ($1::uuid, $2::uuid)`, testkit.OrgNorthID, testkit.OrgSouthID)
@@ -481,6 +483,32 @@ func (f *the169Fixture) insertWillCallOrderT() string {
 		return ""
 	}
 	return id
+}
+
+// TestPickupsFreshness_AStaffMintReachesTheContractorsFeed: the sweep's probe 1, green. A staff
+// InsertPickup (the desk mints the tag) must reach the contractor's pickups feed from the cursor a
+// device already holds. Every will_call_pickups writer draws the one will_call stream (UX-72), and the
+// sync seq trigger (0422) carries the table for any writer that does not.
+func TestPickupsFreshness_AStaffMintReachesTheContractorsFeed(t *testing.T) {
+	f := new169Fixture(t)
+	orderID := f.insertWillCallOrderT()
+	if orderID == "" {
+		t.Fatalf("seed the will call order")
+	}
+	harness.Fresh(t, harness.FreshCase{
+		Engine: f.engine, Scope: mustInfo("pickups"), Filter: alphaFilter(),
+		Write: func(ctx context.Context) (string, error) {
+			w, err := dispatch.NewRepository(f.pool).InsertPickup(ctx, orderID, testkit.BranchNorthAID,
+				fmt.Sprintf("fresh-hash-%d", nextVal()), "", time.Now().Add(time.Hour))
+			return w.ID, err
+		},
+		Want: func(d map[string]any) error {
+			if d["order_id"] != orderID {
+				return fmt.Errorf("order_id is %v, want %s", d["order_id"], orderID)
+			}
+			return nil
+		},
+	})
 }
 
 // Test169PushScopeBatteries: the harness battery, GATE-7 and the replay
@@ -810,6 +838,26 @@ func pushAppliedFilter(t *testing.T, e *sync.Engine, scope string, f sync.ScopeF
 	}
 	t.Fatalf("no %s feed row carries seq %d", scope, *resp.Results[0].Seq)
 	return sync.RowState{}
+}
+
+// hideFixtureRowsFromFeeds clears the seq of the kit fixture's own rows (ids 3ef10000-...). Since the sync seq
+// trigger (migration 0422) the fixture builder's plain INSERTs take a seq, so every feed would hold the
+// fixture rows beside the rows a battery creates; these legs count the rows of a scope (since=0) and stamp
+// the fixture rows they want on a feed themselves, so their premise is a feed that holds only what the leg
+// put there. Setting seq to NULL is an explicit seq write, so the trigger leaves it alone.
+func hideFixtureRowsFromFeeds(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	for _, table := range []string{
+		"payments", "invoices", "quotes", "delivery_runs", "delivery_stops", "delivery_pod_photos", "products",
+		"customers", "vendors", "portal_payment_methods", "portal_users", "warranty_claims", "pos_parked_tickets",
+		"customer_quote", "procurement_projects", "dispatch_trucks", "dispatch_drivers", "attachment", "plan",
+		"plan_line", "permission_approval_requests", "purchasing_pos", "task_shortages", "count_sheets",
+	} {
+		if _, err := pool.Exec(context.Background(),
+			fmt.Sprintf(`UPDATE %s SET seq = NULL WHERE id::text LIKE '3ef10000-%%' AND seq IS NOT NULL`, table)); err != nil {
+			t.Fatalf("clear the fixture rows' seq on %s: %v", table, err)
+		}
+	}
 }
 
 func contains(ids []string, id string) bool {

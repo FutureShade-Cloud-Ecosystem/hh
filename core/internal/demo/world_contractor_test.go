@@ -56,7 +56,10 @@ func worldPipeline(t *testing.T) (*pgxpool.Pool, string) {
 	ctx := context.Background()
 	tables := []string{"orders", "order_lines", "invoices", "invoice_lines", "payments", "payment_allocations",
 		"quotes", "quote_lines", "procurement_projects", "procurement_project_lines", "portal_payment_methods",
-		"projects", "portal_users", "customers", "scope_sequences"}
+		"projects", "portal_users", "customers"}
+	// The world's rows, seq included, must not change. The scope counters are left out: since migration 0422 the
+	// sync seq trigger draws for each row the applier proposes under INSERT ... ON CONFLICT DO NOTHING before
+	// the conflict is known, a harmless gap in the counter that re-serves no row.
 	before := snapshotWorld(t, ctx, pool, tables)
 	out := runStep(t, bin, []string{"demoseed", "-apply", "-now", now}, env)
 	runStep(t, bin, []string{"demo-populate", "-now", now}, env)

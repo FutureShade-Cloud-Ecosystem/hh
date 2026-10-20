@@ -146,18 +146,18 @@ const teamSeqCTE = `WITH seq AS (INSERT INTO scope_sequences (scope) VALUES ('te
 // lock so concurrent demotions cannot race the tenant to zero admins (M-1).
 func (r *Repository) UpdateRole(ctx context.Context, id, role string, enforceLastAdmin bool) error {
 	if !enforceLastAdmin {
-		return r.exec(ctx, teamSeqCTE+`UPDATE portal_users SET role = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, id, role)
+		return r.exec(ctx, `UPDATE portal_users SET role = $2, updated_at = now() WHERE id = $1`, id, role)
 	}
-	return r.guardedAdminUpdate(ctx, id, teamSeqCTE+`UPDATE portal_users SET role = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, role)
+	return r.guardedAdminUpdate(ctx, id, `UPDATE portal_users SET role = $2, updated_at = now() WHERE id = $1`, role)
 }
 
 // UpdateStatus sets a user's status, with the same atomic last-admin guard when
 // deactivating an admin (M-1).
 func (r *Repository) UpdateStatus(ctx context.Context, id, status string, enforceLastAdmin bool) error {
 	if !enforceLastAdmin {
-		return r.exec(ctx, teamSeqCTE+`UPDATE portal_users SET status = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, id, status)
+		return r.exec(ctx, `UPDATE portal_users SET status = $2, updated_at = now() WHERE id = $1`, id, status)
 	}
-	return r.guardedAdminUpdate(ctx, id, teamSeqCTE+`UPDATE portal_users SET status = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, status)
+	return r.guardedAdminUpdate(ctx, id, `UPDATE portal_users SET status = $2, updated_at = now() WHERE id = $1`, status)
 }
 
 // guardedAdminUpdate applies updateSQL(id, arg) only if AT LEAST ONE OTHER active
@@ -181,8 +181,12 @@ func (r *Repository) guardedAdminUpdate(ctx context.Context, id, updateSQL, arg 
 		}
 		return err
 	}
-	// Serialize all admin-management for this tenant on the customer row.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM customers WHERE id = $1 FOR UPDATE`, customerID); err != nil {
+	// Serialize all admin-management for this tenant on the customer row. FOR NO KEY UPDATE, not FOR UPDATE:
+	// a team member's insert draws the team counter and then takes FOR KEY SHARE on this row at its foreign
+	// key check, and FOR UPDATE conflicts with that, so a guard holding the row while it waited for the
+	// counter its own update draws would cycle against it. NO KEY UPDATE still conflicts with itself, so
+	// admin changes keep serialising, and no key column of customers changes here.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM customers WHERE id = $1 FOR NO KEY UPDATE`, customerID); err != nil {
 		return err
 	}
 	var otherAdmins int

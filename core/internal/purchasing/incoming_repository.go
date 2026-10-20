@@ -178,8 +178,8 @@ func (r *Repository) UpdateExpectedAt(ctx context.Context, poID, expectedAt stri
 	if r.pool == nil {
 		return errNoDB
 	}
-	tag, err := r.pool.Exec(ctx, poSeqCTE+`
-		UPDATE purchasing_pos SET expected_at = $2::date, updated_at = now(), seq = (SELECT next_value FROM poseq)
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE purchasing_pos SET expected_at = $2::date, updated_at = now()
 		 WHERE id = $1`,
 		poID, nullStr(expectedAt))
 	if err != nil {
@@ -202,8 +202,8 @@ func (r *Repository) UpdateDeliveryMethod(ctx context.Context, poID, method stri
 	if r.pool == nil {
 		return errNoDB
 	}
-	tag, err := r.pool.Exec(ctx, poSeqCTE+`
-		UPDATE purchasing_pos SET delivery_method = $2, updated_at = now(), seq = (SELECT next_value FROM poseq)
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE purchasing_pos SET delivery_method = $2, updated_at = now()
 		 WHERE id = $1`,
 		poID, method)
 	if err != nil {

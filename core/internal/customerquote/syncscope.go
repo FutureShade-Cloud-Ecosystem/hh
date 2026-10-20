@@ -490,14 +490,13 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 		return sync.RowState{}, fmt.Errorf("customerquote: begin sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := s.store.AllocateSeqTx(ctx, tx, ScopeCustomerQuote)
-	if err != nil {
-		return sync.RowState{}, err
-	}
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
 	r, err := scanQuoteSync(tx.QueryRow(ctx, `
-		UPDATE customer_quote SET deleted_at = now(), updated_at = now(), seq = $4
+		UPDATE customer_quote SET deleted_at = now(), updated_at = now()
 		WHERE id = $1::uuid AND tenant_id = $2::uuid AND org_id = $3::uuid AND deleted_at IS NULL
-		RETURNING `+quoteSyncColumns, id, f.TenantID, f.OrgID, seq))
+		RETURNING `+quoteSyncColumns, id, f.TenantID, f.OrgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
