@@ -21,7 +21,6 @@ import {
   CAPABILITIES,
   InMemoryTenantSession,
   appOf,
-  can,
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,
@@ -327,6 +326,7 @@ export class ProProcurementApp extends HHElement {
       this.#route = { surface: LANDING };
       this.#page.route = this.#route;
       this.#signinMessage = "";
+      this.#notice = result.value.notice === undefined ? null : { kind: "ok", words: result.value.notice };
       void this.#loadRoute();
     } else {
       this.#signinMessage = result.error;

@@ -95,10 +95,11 @@ test("a token with no readable expiry is refused", async () => {
   assert.equal((await adapter.signInWith({ method: "persona", roleLabel: "Owner" })).ok, false);
 });
 
-test("the demo email link takes a persona's address and refuses any other", async () => {
+test("the demo email link takes a persona's address, words the direct demo sign in, and refuses any other", async () => {
   const good = rig();
   const ok = await good.adapter.signInWith({ method: "email_link", email: "Field_Crew@hh-demo.invalid" });
   assert.equal(ok.ok, true);
+  assert.equal(ok.value.notice, "Signed in as the demo Field crew. No email is sent in the demo.");
   assert.equal(JSON.parse(good.calls.find((c) => c.method === "POST").body).flow, "contractor-field-crew");
   const bad = rig();
   for (const email of ["someone@example.com", "buyer@elsewhere.invalid", "", "sales@hh-demo.invalid"]) {
