@@ -310,6 +310,39 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		}
 	}
 
+	// 3d. The zone reader holds no privilege on schema ai once ai.dealer_day() exists (0428 takes back the CREATE
+	// and USAGE it needed to create it). The CREATE is checked with every schema below; USAGE here.
+	var dayExists bool
+	if err := conn.QueryRow(ctx, `SELECT to_regprocedure('ai.dealer_day()') IS NOT NULL`).Scan(&dayExists); err != nil {
+		return nil, err
+	}
+	if dayExists {
+		var usage bool
+		if err := conn.QueryRow(ctx, `SELECT has_schema_privilege($1, 'ai', 'USAGE')`, roles.ZoneReader).Scan(&usage); err != nil {
+			return nil, err
+		}
+		if usage {
+			add("the zone reader still holds USAGE on schema ai")
+		}
+	}
+
+	// 3e. The two definer functions' search paths, exactly. A definer function resolves its names through the
+	// path it was created with; pg_temp first, or one more schema, would let an object planted there answer.
+	for fn, want := range map[string]string{
+		"ai.claims()":     "search_path=pg_catalog, pg_temp",
+		"ai.dealer_day()": "search_path=pg_catalog, public, pg_temp",
+	} {
+		var cfg []string
+		var found bool
+		err := conn.QueryRow(ctx, `SELECT true, coalesce(proconfig, '{}') FROM pg_proc WHERE oid = to_regprocedure($1)`, fn).Scan(&found, &cfg)
+		if err != nil {
+			continue // the function does not exist in this database (a database that has run 0418 alone has no dealer_day)
+		}
+		if len(cfg) != 1 || cfg[0] != want {
+			add("%s has settings %v, want exactly [%s]", fn, cfg, want)
+		}
+	}
+
 	// 3c. The zone reader's column grants, as an exact set: two columns of system_settings, nothing else.
 	rows, err = collect(`
 		SELECT n.nspname || '.' || c.relname || '.' || a.attname
@@ -402,7 +435,7 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 	}
 	for _, row := range rows {
 		role, schema := row[0].(string), row[1].(string)
-		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner || role == roles.ZoneReader)) || (schema == "ai_pro" && role == roles.ViewOwner)
+		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner)) || (schema == "ai_pro" && role == roles.ViewOwner)
 		if !ok {
 			add("role %s holds CREATE on schema %s", role, schema)
 		}
