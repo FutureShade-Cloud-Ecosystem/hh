@@ -418,6 +418,9 @@ func (r *Repository) MoveRunDate(ctx context.Context, runID, fromDate, toDate st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := lockStopsSeqTx(ctx, tx); err != nil {
+		return "", 0, false, err
+	}
 	tag, err := tx.Exec(ctx, `
 UPDATE delivery_runs SET scheduled_date = $3::date, updated_at = now()
  WHERE id = $1 AND scheduled_date = $2::date AND status = 'PLANNED'`, runID, fromDate, toDate)

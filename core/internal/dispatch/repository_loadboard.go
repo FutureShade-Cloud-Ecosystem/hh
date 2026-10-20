@@ -115,6 +115,9 @@ func (r *Repository) ReopenRun(ctx context.Context, runID, reason, actorID strin
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockStopsSeqTx(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 UPDATE delivery_runs SET commit_state = 'REOPENED', reopened_by = NULLIF($2,'')::uuid,
        reopened_at = $3, reopen_reason = $4, updated_at = now()
