@@ -247,7 +247,11 @@ test("a manual match pairs a line to a payment or a journal, the refusals come i
   refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", target_type: "PAYMENT" }), 400, "statement_line_id is required");
   refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "CHEQUE" }), 400, "target_type must be PAYMENT, LODGEMENT, JOURNAL or GROUP");
   refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: "b1000000-0000-4000-8000-0000000000ff", target_type: "JOURNAL" }), 404, "not found");
-  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: "b9000000-0000-4000-8000-0000000000ff" }), 409, "payment already claimed or not RECEIVED");
+  const gone = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: "b9000000-0000-4000-8000-0000000000ff" });
+  // The core's claim sentence: the stable words (found in the core's source), then the id of the payment that did
+  // not move and the count ("payment already claimed, reversed or not RECEIVED: <id> (claimed N of M)").
+  refused(gone, 409, "payment already claimed, reversed or not RECEIVED");
+  assert.ok(gone.json.error.includes(": b9000000-0000-4000-8000-0000000000ff (claimed 0 of 1)"), `the claim sentence names the payment and the count: ${gone.json.error}`);
   assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "UNMATCHED", "a refused claim leaves the line unmatched");
   const paid = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
   assert.equal(paid.status, 201);

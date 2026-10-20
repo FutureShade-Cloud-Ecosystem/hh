@@ -414,7 +414,7 @@ export function createBankrecWorld() {
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.
     if (input.target_type === "PAYMENT" && input.target_ref_id) {
       const payment = world.payments.find((p) => p.id === input.target_ref_id && p.status === "RECEIVED");
-      if (payment === undefined) return clientError(409, "payment already claimed or not RECEIVED (claimed 0 of 1)");
+      if (payment === undefined) return clientError(409, `payment already claimed, reversed or not RECEIVED: ${input.target_ref_id} (claimed 0 of 1)`);
       payment.status = "DEPOSITED";
     }
     line.status = "MATCHED";

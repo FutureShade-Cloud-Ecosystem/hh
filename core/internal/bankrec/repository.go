@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -316,23 +317,47 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 		if lerr := payments.LockPaymentRowsTx(ctx, tx, claimPaymentIDs); lerr != nil {
 			return "", fmt.Errorf("bankrec: lock payments: %w", lerr)
 		}
-		ct, cerr := tx.Exec(ctx,
+		rows, cerr := tx.Query(ctx,
 			`UPDATE payments
 			   SET status = 'DEPOSITED',
 			       metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 			       updated_at = now()
-			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL`,
+			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
+			 RETURNING id::text`,
 			claimPaymentIDs, m.StatementLineID)
 		if cerr != nil {
 			return "", fmt.Errorf("bankrec: claim payment: %w", cerr)
 		}
-		if int(ct.RowsAffected()) != len(claimPaymentIDs) {
+		moved := map[string]bool{}
+		for rows.Next() {
+			var pid string
+			if serr := rows.Scan(&pid); serr != nil {
+				rows.Close()
+				return "", fmt.Errorf("bankrec: claim payment: %w", serr)
+			}
+			moved[strings.ToLower(pid)] = true
+		}
+		rows.Close()
+		if rerr := rows.Err(); rerr != nil {
+			return "", fmt.Errorf("bankrec: claim payment: %w", rerr)
+		}
+		var unmoved []string
+		for _, pid := range claimPaymentIDs {
+			if !moved[strings.ToLower(pid)] {
+				unmoved = append(unmoved, pid)
+			}
+		}
+		if len(unmoved) > 0 {
 			// The UPDATE above decided: its row lock and its WHERE, re-checked after any concurrent
-			// commit (a reversal stamps reversed_at and leaves the status RECEIVED), refused these rows.
-			// No read of the payments table follows to say which of the three it was (a second read of
-			// another module's table would be a new cross-module access); the message names all three.
-			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED (claimed %d of %d)",
-				ct.RowsAffected(), len(claimPaymentIDs))
+			// commit (a reversal stamps reversed_at and leaves the status RECEIVED), refused these rows,
+			// and RETURNING says which moved. No read of the payments table follows to say which of the
+			// three causes it was (a second read of another module's table would be a new cross-module
+			// access), so the sentence names all three and lists the payments that did not move, by the
+			// id this module holds for them (the match input's target, the proposal's payment ids: the id
+			// the desk also asks the dealer to paste). The sentence's first words are the desk's stable
+			// match (money-desk bankrec-logic.ts).
+			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
+				strings.Join(unmoved, ", "), len(moved), len(claimPaymentIDs))
 		}
 	}
 	var id string
