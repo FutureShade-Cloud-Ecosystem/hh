@@ -89,11 +89,11 @@ interface BranchRow {
 const MAX_LIST_PAGES = 40;
 
 const LIST_ERROR_WORDS = "The quotes did not load. Check the connection and press Refresh.";
+const LIST_REFUSAL_WORDS = "Your role cannot see this list. A manager can.";
 
 function listErrorWords(status: number | undefined, what: string): string {
-  if (status === 401 || status === 403 || status === 409) {
-    return spokenRefusal(quoteErrorMessage(status, "", what));
-  }
+  if (status === 401 || status === 403) return LIST_REFUSAL_WORDS;
+  if (status === 409) return spokenRefusal(quoteErrorMessage(status, "", what));
   return LIST_ERROR_WORDS;
 }
 

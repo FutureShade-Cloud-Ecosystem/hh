@@ -132,7 +132,7 @@ test("a 403 on quotes, approvals or follow-ups lists shows the refusal words wit
   await signIn(page);
   await page.getByTestId("qd-list-tabs").getByRole("button", { name: "Approvals", exact: true }).click();
   const approvals = page.locator("qd-approvals");
-  await expect(approvals.getByTestId("ap-error")).toHaveText("This quote belongs to another branch.");
+  await expect(approvals.getByTestId("ap-error")).toHaveText("Your role cannot see this list. A manager can.");
   await expect(approvals.getByTestId("ap-error")).not.toContainText("Check the connection");
   await expect(approvals.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(page.getByText("raw server refusal detail")).toHaveCount(0);
@@ -144,12 +144,13 @@ test("a 403 on quotes, approvals or follow-ups lists shows the refusal words wit
   await expect(followups.getByTestId("fu-error")).toHaveText("This quote belongs to another branch.");
   await expect(followups.getByTestId("fu-error")).not.toContainText("Check the connection");
   await expect(followups.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(followups.getByRole("button", { name: "Try again" })).toHaveCount(0);
   await expect(page.getByText("raw server refusal detail")).toHaveCount(0);
 
   forbidQuotes = true;
   await signIn(page);
   const list = page.getByTestId("qb-list");
-  await expect(list).toHaveText("This quote belongs to another branch.");
+  await expect(list).toHaveText("Your role cannot see this list. A manager can.");
   await expect(list).not.toContainText("Check the connection");
   await expect(list.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(page.getByText("raw server refusal detail")).toHaveCount(0);
