@@ -555,3 +555,12 @@ test("split freight: an ordinary split applies, a raise above the quote parks an
   holds("DispatchFreightRaiseView", blind.json);
   assert.equal("money" in blind.json, false, "absent is absent: no key, no zero, no null");
 });
+
+test("the surface config route holds SettingsSurfaceConfig and serves the dealer's business_zone", async () => {
+  await reset();
+  const cfg = await call("GET", "/api/v1/surfaces/dispatch-board/config");
+  assert.equal(cfg.status, 200);
+  holds("SettingsSurfaceConfig", cfg.json);
+  assert.equal(cfg.json.surface_id, "dispatch-board");
+  assert.equal(cfg.json.business_zone, "America/Los_Angeles");
+});

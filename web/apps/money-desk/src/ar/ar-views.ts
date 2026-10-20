@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -944,7 +944,7 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 <div><dt>${STATEMENT_STRIP_LABELS[3]}</dt><dd>${formatMoney(s.days_90_plus_cents)}</dd></div>
                 <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
-              ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> of this balance is more than 60 days past due. Please contact our office to arrange payment.</p>` : nothing}
+              ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> ${STATEMENT_OVERDUE_NOTE}</p>` : nothing}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
             `}
     </section>

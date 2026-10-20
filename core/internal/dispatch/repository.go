@@ -375,10 +375,9 @@ func (r *Repository) AssignRunCrew(ctx context.Context, runID, truckID, driverID
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_runs
-   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now()
  WHERE id = $1 AND status = 'PLANNED'`, runID, truckID, driverID)
 	if err != nil {
 		return false, err
@@ -393,13 +392,12 @@ func (r *Repository) UpdateRunStatus(ctx context.Context, runID, from, to string
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_runs
    SET status = $3,
        dispatched_at = CASE WHEN $3 = 'DISPATCHED' THEN $4 ELSE dispatched_at END,
        completed_at  = CASE WHEN $3 IN ('COMPLETED','CANCELLED') THEN $4 ELSE completed_at END,
-       updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+       updated_at = now()
  WHERE id = $1 AND status = $2`, runID, from, to, at)
 	if err != nil {
 		return false, err
@@ -598,10 +596,9 @@ func (r *Repository) AssignStop(ctx context.Context, stopID, runID string, stopN
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
-   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now()
  WHERE id = $1 AND status = 'READY'`, stopID, runID, stopNo)
 	if err != nil {
 		return false, err
@@ -628,15 +625,14 @@ func (r *Repository) UpdateStopStatus(ctx context.Context, stopID, from, to, fai
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
    SET status = $3,
        loaded_at    = CASE WHEN $3 = 'LOADED'    THEN $5 ELSE loaded_at END,
        en_route_at  = CASE WHEN $3 = 'EN_ROUTE'  THEN $5 ELSE en_route_at END,
        delivered_at = CASE WHEN $3 = 'DELIVERED' THEN $5 ELSE delivered_at END,
        failure_reason = CASE WHEN $3 = 'FAILED' THEN $4 ELSE failure_reason END,
-       updated_at = now(),
-       seq = (SELECT next_value FROM seq)
+       updated_at = now()
  WHERE id = $1 AND status = $2`, stopID, from, to, failureReason, at)
 	if err != nil {
 		return false, err
@@ -655,12 +651,11 @@ func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedB
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+	tag, err := pool.Exec(ctx, `
 UPDATE delivery_stops
    SET pod_signature_ref = $3, pod_received_by = $4, pod_at = $6, pod_by = NULLIF($5,'')::uuid,
        status = 'DELIVERED', delivered_at = $6, updated_at = now(),
-       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key),
-       seq = (SELECT next_value FROM seq)
+       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key)
  WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at, idemKey)
 	if err != nil {
 		return false, err
@@ -677,8 +672,7 @@ func (r *Repository) MarkHandoff(ctx context.Context, stopID string, at time.Tim
 		return err
 	}
 	_, err = pool.Exec(ctx,
-		fmt.Sprintf(syncSeqCTE, stopsSyncScope)+
-			`UPDATE delivery_stops SET handoff_at = $2, updated_at = now(), seq = (SELECT next_value FROM seq)
+		`UPDATE delivery_stops SET handoff_at = $2, updated_at = now()
 			 WHERE id = $1 AND handoff_at IS NULL`,
 		stopID, at)
 	return err
@@ -841,15 +835,53 @@ func (r *Repository) InsertPickup(ctx context.Context, orderID, branchID, tokenH
 		return WillCall{}, err
 	}
 	var id string
-	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
+	// A new row: there is nothing to lock first, so the draw goes first. That cannot
+	// cycle, because no other writer can name a row that does not exist yet.
+	err = withWillCallSeq(ctx, pool, "", func(tx pgx.Tx, seq int64) error {
+		return tx.QueryRow(ctx, `
 INSERT INTO will_call_pickups (order_id, branch_id, token_hash, expires_at, created_by, seq)
-VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, (SELECT next_value FROM seq)) RETURNING id::text`,
-		orderID, branchID, tokenHash, expires, createdBy).Scan(&id)
+VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, $6) RETURNING id::text`,
+			orderID, branchID, tokenHash, expires, createdBy, seq).Scan(&id)
+	})
 	if err != nil {
 		return WillCall{}, err
 	}
 	w, err := scanPickup(pool.QueryRow(ctx, `SELECT `+pickupCols+` FROM will_call_pickups WHERE id = $1`, id))
 	return w, err
+}
+
+// withWillCallSeq runs one staff write to will_call_pickups in a short
+// transaction that takes the pickup row's lock and then draws the table's one
+// seq (the same counter the contractor's sync writes and the staff sync writes
+// draw from). The lock order is the same for every writer of the table: the
+// row lock first, the counter second (see willCallSeqUpsert). Drawing first
+// and letting the UPDATE take the row would cycle against a writer that locks
+// the row and then draws (40P01). rowID is "" for a mint, which has no row yet.
+// A row that does not exist draws nothing and the write sees no row.
+func withWillCallSeq(ctx context.Context, pool *pgxpool.Pool, rowID string, write func(tx pgx.Tx, seq int64) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if rowID != "" {
+		var one int
+		err := tx.QueryRow(ctx, `SELECT 1 FROM will_call_pickups WHERE id = $1 FOR UPDATE`, rowID).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	seq, err := allocateSyncSeqTx(ctx, tx, willCallSyncScope)
+	if err != nil {
+		return err
+	}
+	if err := write(tx, seq); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // PickupByTokenHash resolves a scanned token.
@@ -899,15 +931,17 @@ func (r *Repository) ConfirmPickup(ctx context.Context, id, sigRef, collectedBy 
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
+	var changed bool
+	err = withWillCallSeq(ctx, pool, id, func(tx pgx.Tx, seq int64) error {
+		tag, err := tx.Exec(ctx, `
 UPDATE will_call_pickups
    SET status = 'CONFIRMED', signature_ref = $2, collected_by = $3, confirmed_at = $4,
-       seq = (SELECT next_value FROM seq)
- WHERE id = $1 AND status = 'ACTIVE'`, id, sigRef, collectedBy, at)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+       seq = $5
+ WHERE id = $1 AND status = 'ACTIVE'`, id, sigRef, collectedBy, at, seq)
+		changed = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	return changed && err == nil, err
 }
 
 // RevokePickup kills a live token (a reprinted tag, a cancelled order). The will_call scope's seq
@@ -917,13 +951,15 @@ func (r *Repository) RevokePickup(ctx context.Context, id string, at time.Time) 
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+
-		`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = (SELECT next_value FROM seq)
-		 WHERE id = $1 AND status = 'ACTIVE'`, id, at)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	var changed bool
+	err = withWillCallSeq(ctx, pool, id, func(tx pgx.Tx, seq int64) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = $3
+			 WHERE id = $1 AND status = 'ACTIVE'`, id, at, seq)
+		changed = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	return changed && err == nil, err
 }
 
 // LogPickupEvent records a scan or a confirm against a token. Best-effort by contract: the caller

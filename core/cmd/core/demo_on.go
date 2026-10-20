@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
@@ -206,13 +207,19 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// mode is a declared shape (its names are on that list).
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
 		Prefixes:         demoEnvDenyPrefixes,
-		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
+		PrefixExceptions: demoEnvPrefixExceptions(),
 		Names:            demoEnvDenyNames,
 		CardVar:          demoEnvCardProcessorVar,
 		CardAllowed:      demoEnvCardProcessorValue,
 		ExplicitPrefix:   demoEnvExplicitPrefix,
 		ExplicitAllowed:  demoEnvAllowCoreNames,
 	}); err != nil {
+		return err
+	}
+
+	// The assistant's cap condition: a key is never carried without the
+	// dealer cap that bounds its spend (TanyAI slice 3, row 2496).
+	if err := boot.RefuseAssistKeyWithoutCap(getenv); err != nil {
 		return err
 	}
 
@@ -236,7 +243,24 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 		return err
 	}
 
+	// The assistant's demo wiring: when the key is carried, the wired service
+	// must carry the demo limits, the premium pin and the stub fallback. Like
+	// G7 this reads what the wiring built, not the environment.
+	assistKeyed := strings.TrimSpace(getenv(assist.EnvAPIKey)) != ""
+	if err := demoRefuseAssistNotDemoWired(graph.tops.assistSvc, assistKeyed); err != nil {
+		return err
+	}
+	// And the model the key would call must have a price row, or the meter would refuse every
+	// paid call: the boot says so plainly instead (the row is an operator step, never a seed).
+	assistRepo := assist.NewRepository(graph.pool)
+	if err := demoRefuseAssistWithoutPrice(ctx, assistRepo, assistRepo, assistKeyed); err != nil {
+		return err
+	}
+
 	// healthz: the same live database ping the default build serves.
+	if err := assistRequireServingRole(ctx, graph.pool); err != nil {
+		return err
+	}
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
 	srv, err := newServer(graph, otelhttp.Wrap(nil)(auditWrap(mux, graph)))
@@ -278,6 +302,47 @@ func demoRefuseLiveCardRail(paySvc *payment.Service) error {
 	}
 	if !paySvc.Simulated() {
 		return errors.New("G7: the wired card rail is not the simulator, the demo build refuses to serve on a live rail: a demo box takes no real card charges")
+	}
+	return nil
+}
+
+// demoRefuseAssistNotDemoWired refuses a demo box that carries the
+// assistant's key while the wired assistant is not the demo's: the per
+// visitor, per address and box wide limits must be in force (demo personas
+// are shared users, so the per asker limit alone would let one visitor spend
+// the box's allowance), the route must be pinned to tanyai-premium so the
+// settings table cannot move it and the wired router must reach that one alias, and the stub fallback must be on. A nil
+// service refuses too (fail closed); with no key the stub serves and nothing
+// is spent, so there is nothing to bound.
+func demoRefuseAssistNotDemoWired(svc *assist.Service, keyed bool) error {
+	if !keyed {
+		return nil
+	}
+	if !svc.DemoLimitsInForce() {
+		return errors.New("the demo box carries the assistant's key but the wired assistant lacks the demo's per visitor, per address and box wide limits: the demo build refuses to spend without them")
+	}
+	if svc.PinnedRoute() != assist.AliasPremium {
+		return errors.New("the demo box carries the assistant's key but the wired assistant's route is not pinned to tanyai-premium: the demo build reaches that one alias and no other")
+	}
+	if svc.RouterOnlyAlias() != assist.AliasPremium {
+		return errors.New("the demo box carries the assistant's key but the wired router is not restricted to tanyai-premium: the demo build reaches that one alias and no other")
+	}
+	if !svc.StubFallbackOn() {
+		return errors.New("the demo box carries the assistant's key but the wired assistant has no stub fallback: the demo build answers on the stub when the model cannot be used")
+	}
+	return nil
+}
+
+// demoRefuseAssistWithoutPrice refuses a demo box that carries the assistant's key when the
+// model of tanyai-premium has no row in assist_model_prices. The meter refuses a paid call with no
+// price (slice 2), so a keyed demo without the row would answer every question on the stub; the
+// boot says so in plain words instead. With no key the stub serves and no price is needed.
+func demoRefuseAssistWithoutPrice(ctx context.Context, aliases assist.AliasStore, prices assist.PriceStore, keyed bool) error {
+	if !keyed {
+		return nil
+	}
+	if err := assist.RequirePriceRow(ctx, aliases, prices, assist.AliasPremium); err != nil {
+		return fmt.Errorf("the demo box carries the assistant's key but %w", err)
 	}
 	return nil
 }

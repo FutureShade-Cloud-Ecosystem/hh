@@ -21,6 +21,7 @@ import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
@@ -104,8 +105,15 @@ export class RoleTemplateApp extends HHElement {
     }
   };
 
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    // The dealer leads the header once the served config names one (row 1858); until then no lockup is drawn.
+    void readDealerName().then((name) => {
+      this.#dealerName = name;
+      this.requestUpdate();
+    });
     this.addEventListener("click", this.#onHostClick);
     if (this.#custody.mode === "console") {
       this.#custody.begin("role-template", (outcome) => this.#onRecovered(outcome));
@@ -159,8 +167,11 @@ export class RoleTemplateApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string }) | null;
-    if (header !== null) header.roleLabel = this.#roleLabel;
+    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; dealerName: string }) | null;
+    if (header !== null) {
+      header.roleLabel = this.#roleLabel;
+      header.dealerName = this.#dealerName;
+    }
   }
 
   private async loadFlows(): Promise<void> {

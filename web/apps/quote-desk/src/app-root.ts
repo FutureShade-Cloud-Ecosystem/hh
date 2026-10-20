@@ -17,11 +17,12 @@ import { html, css, nothing, type PropertyValues, type TemplateResult } from "li
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
-import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { ApiClient, ok, staffFeedback, type Result } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
   type FeedbackSender,
@@ -31,6 +32,8 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import "@hardscapehouse/pos-kit/src/branch-chooser.js";
+import { clearSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
@@ -137,7 +140,11 @@ export class QuoteDeskApp extends HHElement {
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
   #themeStatus = "";
   /** The mounted surface: the entry cards, or the desk. */
-  #surface: "entry" | "desk" = "entry";
+  #surface: "entry" | "branch" | "desk" = "entry";
+  /** The granted branches the in desk chooser offers while the surface is "branch"; empty otherwise. */
+  #branchChoices: BranchRef[] = [];
+  /** Whether the start that stopped to ask came from the front door's handoff, so the re-start keeps its failure rules. */
+  #branchAskedFromHandoff = false;
   /**
    * The desk's route, parsed from the address bar (the split-list
    * navigation): the list page is the desk's landing page, and the quote
@@ -223,8 +230,17 @@ export class QuoteDeskApp extends HHElement {
     if (action === "feedback") this.#showFeedback();
   };
 
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   override connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     if (this.#framed) {
       window.addEventListener("message", this.#onChromeAction);
       announceChromeControls(window, ["theme", "feedback"]);
@@ -233,6 +249,7 @@ export class QuoteDeskApp extends HHElement {
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("hh-branch-chosen", this.#onBranchChosen);
     // The desk's navigation ear: a hash change (a control's walk, the
     // browser's back or forward) re-reads the address bar.
     window.addEventListener("hashchange", this.#onHashChange);
@@ -283,7 +300,7 @@ export class QuoteDeskApp extends HHElement {
     // band's accountMenu template and their clicks bubble back to #onHostClick.
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
-      band.org = FRAMED_BAND_ORG;
+      band.org = this.#dealerName;
       band.demo = this.#demoBuild;
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route.kind));
@@ -329,6 +346,7 @@ export class QuoteDeskApp extends HHElement {
     this.#stopHostSignOut = null;
     window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("hh-branch-chosen", this.#onBranchChosen);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
     super.disconnectedCallback();
@@ -337,6 +355,13 @@ export class QuoteDeskApp extends HHElement {
   readonly #onHashChange = (): void => {
     this.#route = parseRoute(location.hash);
     this.requestUpdate();
+  };
+
+  /** The in desk chooser wrote the one branch to the session key: start the desk again, which now reads it. */
+  readonly #onBranchChosen = (): void => {
+    this.#branchChoices = [];
+    this.#surface = "entry";
+    void this.#initDesk(this.#branchAskedFromHandoff);
   };
 
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -418,6 +443,7 @@ export class QuoteDeskApp extends HHElement {
     }
     if (read.kind === "unusable") {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -429,6 +455,7 @@ export class QuoteDeskApp extends HHElement {
     });
     if (!adopted) {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -511,6 +538,8 @@ export class QuoteDeskApp extends HHElement {
     this.#message = null;
     this.requestUpdate();
     const minted = await this.#account.chooseFlow(flow);
+    // A person signing in from the cards is a change of person: the last person's branch choice goes.
+    clearSessionBranchIds();
     if (!minted.ok) {
       this.#busy = false;
       this.#message = `Sign-in did not go through. ${minted.error}`;
@@ -549,7 +578,21 @@ export class QuoteDeskApp extends HHElement {
    * without the branch nothing on the surface can fence itself.
    */
   async #initDesk(fromHandoff = false): Promise<void> {
-    const branch = await this.#client.resolveBranch();
+    const resolved = await this.#client.resolveBranchChoice();
+    let branch: Result<BranchRef>;
+    if (!resolved.ok) {
+      branch = resolved;
+    } else if (resolved.value.kind === "ask") {
+      // Several branches granted and the front door's key named not exactly one: ask once, here, then start again.
+      this.#branchChoices = resolved.value.choices;
+      this.#branchAskedFromHandoff = fromHandoff;
+      this.#message = null;
+      this.#surface = "branch";
+      this.requestUpdate();
+      return;
+    } else {
+      branch = ok(resolved.value.branch);
+    }
     if (!branch.ok) {
       this.#message = `The desk did not start: ${branch.error}`;
       this.#roleLabel = null;
@@ -565,6 +608,7 @@ export class QuoteDeskApp extends HHElement {
       // and the person picks a role again at the front door. Only the handoff's own adopt does this.
       if (fromHandoff) {
         clearFrontDoorHandoff();
+        clearSessionBranchIds();
         this.#toFrontDoor();
       }
       return;
@@ -620,6 +664,7 @@ export class QuoteDeskApp extends HHElement {
     }
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
+    clearSessionBranchIds();
     this.#busy = false;
     this.#roleLabel = null;
     this.#deskUserId = null;
@@ -634,6 +679,7 @@ export class QuoteDeskApp extends HHElement {
     this.#message = lines.length > 0 ? lines.join(" ") : null;
     this.#view = "quotes";
     this.#surface = "entry";
+    this.#branchChoices = [];
     // The tab's title goes back to the entry page's own: it must not keep the last quote's number.
     applyTenantTitle("Quote Desk");
     // The shared surface's session-owned module state goes with the session.
@@ -748,7 +794,12 @@ export class QuoteDeskApp extends HHElement {
                 ? html`<div class="pricing" data-testid="pricing-screen"><qd-pricing-panel></qd-pricing-panel></div>`
                 : nothing}
             `
-          : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
+          : this.#surface === "branch"
+            ? html`<hh-branch-chooser
+                data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
+                action-label="Open the Quote Desk"
+              ></hh-branch-chooser>`
+            : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
       </main>
       <!-- The feedback widget (Feature Polish): the shared panel, opened by
            the band's Feedback button (trigger external: no floating pill). -->

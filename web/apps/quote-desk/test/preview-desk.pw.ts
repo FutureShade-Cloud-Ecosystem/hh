@@ -40,12 +40,14 @@ test("Preview shows the customer page in the desk and sends nothing", async ({ p
   expect((await page.getByTestId("qb-status").innerText()).trim()).toBe(before);
 });
 
-test("Copy link and Send say on their buttons that they send", async ({ page }) => {
+test("Copy link does not claim to send or to mark Sent, and says how Send will reach the customer", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
   await open(page, "Q-1004");
-  await expect(page.getByTestId("qb-copy-link")).toContainText(/sends|marks.*sent/i);
+  await expect(page.getByTestId("qb-copy-link")).not.toContainText(/sends|marks.*sent/i);
+  await expect(page.getByTestId("qb-print")).not.toContainText(/sends|marks.*sent/i);
   await expect(page.getByTestId("qb-send")).toContainText("SEND QUOTE");
+  await expect(page.getByTestId("qb-send-how")).toHaveText(/Sends by text|Gives you the link to copy/);
   await expect(page.getByTestId("qb-preview")).not.toContainText(/sends|marks.*sent/i);
 });
 

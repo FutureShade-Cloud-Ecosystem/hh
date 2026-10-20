@@ -15,6 +15,7 @@
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
 import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { decideSessionBranch, readSessionBranchIds, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import { isNoSignal } from "@hardscapehouse/work-offline";
 import type {
   IdentityApproval,
@@ -85,6 +86,9 @@ export interface BranchRef {
   code: string;
   name: string;
 }
+
+/** What a desk does with the branches the login reaches: work the one, or ask the person once which of several. */
+export type BranchResolution = { kind: "one"; branch: BranchRef } | { kind: "ask"; choices: BranchRef[] };
 
 /** One row of the quotes list, every field proven. */
 export interface QuoteRow {
@@ -616,27 +620,48 @@ export class QdClient {
   }
 
   /**
-   * The branch the login works: the branches route is fenced to the caller's
-   * own grants server-side, so the desk takes the one row that comes back.
-   * An empty list or a row this app cannot read is a refusal in words, never
-   * an invented branch.
+   * The branch the login works: the branches route is fenced to the caller's own grants server-side. One granted
+   * branch is taken as it is. With several granted, the front door's session branch key is read through the granted
+   * list (a forged or stale id is dropped): exactly one chosen and granted lands on it; several chosen, or none, is
+   * an "ask" for the desk's own chooser, never an invented branch. No granted branch at all, or a row this app
+   * cannot read, is a refusal in words. The store is a test seam; it defaults to this tab's own key store.
    */
-  async resolveBranch(): Promise<Result<BranchRef>> {
+  async resolveBranchChoice(store?: BranchKeyStore): Promise<Result<BranchResolution>> {
     const result = await staffBranches.branchesList(this.#client);
     if (!result.ok) return result;
     const rows = result.value as unknown;
-    if (!Array.isArray(rows) || rows.length !== 1) {
+    if (!Array.isArray(rows) || rows.length === 0) {
       return err("the branch list did not answer exactly the one branch this login reaches");
     }
-    const row = rows[0] as unknown;
-    if (!isRecord(row)) return err("the branch row is not readable");
-    const id = stringAt(row, "id");
-    const code = stringAt(row, "code");
-    const name = stringAt(row, "name");
-    if (id === null || code === null || name === null) {
-      return err("the branch row is missing its id, code or name");
+    const granted: BranchRef[] = [];
+    for (const row of rows as unknown[]) {
+      if (!isRecord(row)) return err("the branch row is not readable");
+      const id = stringAt(row, "id");
+      const code = stringAt(row, "code");
+      const name = stringAt(row, "name");
+      if (id === null || code === null || name === null) {
+        return err("the branch row is missing its id, code or name");
+      }
+      granted.push({ id, code, name });
     }
-    return ok({ id, code, name });
+    const decided = decideSessionBranch(granted, store);
+    if (decided.kind === "ask") {
+      // Several chosen on the front door: ask about those only; none or a stale key asks about every granted branch.
+      const chosen = new Set(readSessionBranchIds(granted, store));
+      const narrowed = granted.filter((row) => chosen.has(row.id));
+      return ok({ kind: "ask", choices: narrowed.length > 1 ? narrowed : granted });
+    }
+    const branch = granted.find((row) => row.id === (decided.kind === "one" ? decided.id : ""));
+    if (branch === undefined) return err("the branch list did not answer exactly the one branch this login reaches");
+    return ok({ kind: "one", branch });
+  }
+
+  /** The one branch this tab works, for the panels that read it after the start: refused while the desk still has to ask. */
+  async resolveBranch(store?: BranchKeyStore): Promise<Result<BranchRef>> {
+    const resolved = await this.resolveBranchChoice(store);
+    if (!resolved.ok) return resolved;
+    if (resolved.value.kind === "ask") return err("choose which branch you are working first");
+    return ok(resolved.value.branch);
   }
 
   /**
@@ -886,7 +911,7 @@ export class QdClient {
     return answer === null ? err("the decision answer is not readable") : ok(answer);
   }
 
-  /** Mint the share link: minting IS the email send, DRAFT moves to SENT. */
+  /** Mint the share link. A link is not a send: the quote stays a draft until a text is queued or the dealer says they sent it. */
   async mintShareLink(quoteId: string): Promise<Result<string>> {
     const result = await staffQuote.quoteMintShareLink(this.#client, quoteId, {});
     if (!result.ok) return result;
@@ -894,6 +919,22 @@ export class QdClient {
     if (!isRecord(record)) return err("the share link could not be read");
     const token = stringAt(record, "token");
     return token === null ? err("the share link did not carry its code") : ok(token);
+  }
+
+  /** The customer's texting permission, with the number masked by the core. A refused or unreadable answer is data. */
+  async smsConsent(customerId: string): Promise<Result<{ consent: boolean; phoneMasked: string }>> {
+    const result = await staffCustomer.customerGetSMSConsent(this.#client, customerId);
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record) || typeof record["consent"] !== "boolean") return err("the text permission could not be read");
+    const masked = record["phone_masked"];
+    return ok({ consent: record["consent"], phoneMasked: typeof masked === "string" ? masked : "" });
+  }
+
+  /** "I sent it myself": the dealer's word that the copied link went out. The core records it as theirs. */
+  async markSent(quoteId: string): Promise<Result<true>> {
+    const result = await staffQuote.quoteMarkSent(this.#client, quoteId);
+    return result.ok ? ok(true) : result;
   }
 
   /**

@@ -210,3 +210,21 @@ func TestCallerFromCarriesTheTrustedAddressAndNoBearerParse(t *testing.T) {
 func newTestLimit(n int, now func() time.Time) *ratelimit.AddressLimit {
 	return ratelimit.NewAddressLimit(n, time.Hour, now)
 }
+
+// Slice 3: the demo boot asks the service whether the demo's three buckets are in force.
+func TestDemoLimitsInForce(t *testing.T) {
+	now := time.Now
+	if NewService(nil, nil, nil, nil, nil, nil).DemoLimitsInForce() {
+		t.Fatal("a service with no limiter reports the demo limits in force")
+	}
+	if NewService(nil, nil, nil, nil, nil, nil).WithRateLimits(NewRateLimits(nil, now)).DemoLimitsInForce() {
+		t.Fatal("a limiter with no demo buckets reports them in force")
+	}
+	partial := &DemoLimits{Visitor: newTestLimit(1, now), Address: newTestLimit(1, now)}
+	if NewService(nil, nil, nil, nil, nil, nil).WithRateLimits(NewRateLimits(partial, now)).DemoLimitsInForce() {
+		t.Fatal("a limiter missing the box wide bucket reports the demo limits in force")
+	}
+	if !NewService(nil, nil, nil, nil, nil, nil).WithRateLimits(NewRateLimits(NewDemoLimits(now), now)).DemoLimitsInForce() {
+		t.Fatal("the full demo limits are not reported in force")
+	}
+}

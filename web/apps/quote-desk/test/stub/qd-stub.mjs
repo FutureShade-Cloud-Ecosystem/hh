@@ -20,7 +20,9 @@
 //   GET/PUT /api/v1/quotes/{id}/terms            -> QuoteTerms
 //   GET  /api/v1/quotes/{id}/margin-glance       -> QuoteMargin (byte-absent for an off-list caller)
 //   POST /api/v1/quotes/{id}/share-links         -> QuoteMintedShareLink
-//   POST /api/v1/quotes/{id}/sms-share           -> QuoteSMSShareResult | 409
+//   POST /api/v1/quotes/{id}/sms-share           -> QuoteSMSShareResult (202, DRAFT moves to SENT) | 409
+//   POST /api/v1/quotes/{id}/mark-sent           -> 204 (the dealer's word)
+//   GET|PUT /api/v1/customers/{id}/sms-consent   -> CustomerSMSConsent
 //   POST /api/v1/quotes/{id}/convert             -> QuoteConvertResult | 409
 //   GET  /api/v1/quotes/{id}/related-documents   -> QuoteRelatedDocumentList
 //   GET  /api/v1/orders/{id}/related-documents   -> QuoteRelatedDocumentList
@@ -331,6 +333,10 @@ const customerById = new Map([
   ["c-maple-ridge", CUSTOMERS[0]],
   ["c-fenwick", CUSTOMERS[1]],
 ]);
+
+// Who may be texted: every customer in the reference world has agreed, so the ordinary send is a text.
+// A test that needs a customer who has not agreed switches it with the contract's own PUT and puts it back.
+const smsConsent = new Map(CUSTOMERS.map((c) => [c.id, true]));
 
 const HST_RATE_BPS = 1300;
 const TAX_LABEL = "HST"; // the Ontario dealer's word, as the core sends it
@@ -1449,10 +1455,25 @@ const server = createServer(async (request, response) => {
   }
   // Put the whole in-memory world back to its seeded state, so a suite that
   // changes quotes, policy or switches leaves the next one a clean stub.
+  // A test's switch for a customer who has not agreed to texts: { customer, consent }. Reset puts it back.
+  if (path === "/_stub/sms-consent" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const customer = customerById.get(String(body.customer ?? ""));
+      if (customer === undefined) {
+        respondJson(response, 404, { error: "no customer with that id" });
+        return;
+      }
+      smsConsent.set(customer.id, body.consent === true);
+      respondJson(response, 200, { customer_id: customer.id, consent: body.consent === true });
+    });
+    return;
+  }
+
   if (path === "/_stub/reset" && request.method === "POST") {
     seedWorld();
     syncStub.reset();
     shareLinks.clear();
+    for (const c of CUSTOMERS) smsConsent.set(c.id, true);
     floorRequests.clear();
     resetSeamWorld();
     workspaces.clear();
@@ -2115,8 +2136,7 @@ const server = createServer(async (request, response) => {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()} and cannot be shared` });
         return;
       }
-      // Minting is the send: the reference's own rule, DRAFT moves to SENT.
-      if (quote.status === "DRAFT") quote.status = "SENT";
+      // UX-48: a link is not a send. The core leaves a DRAFT quote a DRAFT and starts no follow ups.
       const list = shareLinks.get(quote.id) ?? [];
       const now = Date.now();
       const row = {
@@ -2236,9 +2256,54 @@ const server = createServer(async (request, response) => {
       return;
     }
     readBody(request, response, () => {
-      // The reference world's own refusal: no text provider is keyed and the
-      // customer has not opted in, so the text leg is refused in words.
-      respondJson(response, 409, { error: "quote: the customer has not opted in to text messages" });
+      // The core's order (AutomationService.ShareBySMS): consent first, and only a queued text moves a DRAFT
+      // quote to SENT and starts its follow ups.
+      const customer = customerById.get(quote.customer_id);
+      if (customer === undefined || smsConsent.get(customer.id) !== true) {
+        respondJson(response, 409, { error: "quote: the customer has not opted in to text messages" });
+        return;
+      }
+      if (quote.status === "DRAFT") quote.status = "SENT";
+      respondJson(response, 202, { quote_id: quote.id, quote_no: quote.quote_no, event_id: `ev-${quote.id}`, not_before: new Date().toISOString(), queued: true });
+    });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/mark-sent$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    readBody(request, response, () => {
+      if (quote.status !== "DRAFT" && quote.status !== "SENT") {
+        respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()} and cannot be marked sent` });
+        return;
+      }
+      quote.status = "SENT";
+      response.writeHead(204);
+      response.end();
+    });
+    return;
+  }
+
+  match = /^\/api\/v1\/customers\/([^/]+)\/sms-consent$/.exec(path);
+  if (match !== null && (request.method === "GET" || request.method === "PUT")) {
+    const customer = customerById.get(decodeURIComponent(match[1]));
+    if (customer === undefined) {
+      respondJson(response, 404, { error: "no customer with that id" });
+      return;
+    }
+    const answer = () => respondJson(response, 200, { customer_id: customer.id, consent: smsConsent.get(customer.id) === true, recorded: true, phone_masked: "(***) ***-**34" });
+    if (request.method === "GET") {
+      answer();
+      return;
+    }
+    // The test's switch for a customer who has not agreed (or has): the contract's own PUT.
+    readBody(request, response, (body) => {
+      smsConsent.set(customer.id, body.consent === true);
+      answer();
     });
     return;
   }

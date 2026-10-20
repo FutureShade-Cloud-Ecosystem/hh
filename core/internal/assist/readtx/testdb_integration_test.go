@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -128,7 +129,7 @@ func freshMigratedDB(t *testing.T, prefix string, exts ...string) (*pgx.Conn, st
 		}
 		defer c.Close(ctxT(t))
 		_, _ = c.Exec(ctxT(t), `DROP DATABASE IF EXISTS `+pgx.Identifier{name}.Sanitize()+` WITH (FORCE)`)
-		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner, roles.FunctionUsers} {
+		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner, roles.FunctionUsers, roles.ZoneReader} {
 			_, _ = c.Exec(ctxT(t), `DROP ROLE IF EXISTS `+pgx.Identifier{r}.Sanitize())
 		}
 	})
@@ -153,3 +154,5 @@ func freshMigratedDB(t *testing.T, prefix string, exts ...string) (*pgx.Conn, st
 func freshMigratedDBBefore(t *testing.T, prefix string, exts ...string) (*pgx.Conn, string) {
 	return freshMigratedDB(t, prefix, exts...)
 }
+
+func redactNew(s string) redact.Secret { return redact.NewSecret(s) }

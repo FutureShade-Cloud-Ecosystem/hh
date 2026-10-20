@@ -84,6 +84,7 @@ export interface OrdersListProps {
   phase: Phase;
   orders: readonly TenantOrder[];
   emptyWords: string;
+  errorWords?: string;
   truncated?: boolean;
 }
 
@@ -97,7 +98,7 @@ export function ordersList(props: OrdersListProps): TemplateResult {
     case "empty":
       return html`${truncatedNote}<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
     case "error":
-      return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
+      return html`<hh-pro-state data-state="error" data-testid="landing-state">${props.errorWords ?? "This did not load. Nothing was changed."}</hh-pro-state>`;
     case "refusal":
       return html`<hh-pro-state data-state="refusal" data-testid="landing-state"></hh-pro-state>`;
     default:

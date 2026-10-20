@@ -788,6 +788,32 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 // was inline here, in the same order, against the same tx. The existing payments unit and integration
 // suites are the proof, and they pass unchanged.
 
+// LockPaymentRowsTx takes every named payment row, in ASCENDING id order, FOR NO KEY UPDATE, on the caller's
+// transaction. A BATCH status writer (the bank claim of several payments against one statement line, till's
+// MarkDeposited) calls it before its UPDATE: since the sync seq trigger (0422) that UPDATE takes the payments
+// counter on the first row it moves, and without this it holds the counter while it locks the next row, which
+// a reversal of that later payment (it holds the row, then wants the counter at its reversing insert) closes
+// into a cycle. With the rows locked first no batch holds the counter while it waits on a row, and a reversal
+// waits on a row holding nothing: LOCK-ORDER.md's "payment rows ascending, then the counter".
+//
+// FOR NO KEY UPDATE and not FOR UPDATE: a batch changes a payment's status and metadata, never a key column,
+// and a payment_allocations insert (a settle naming it) takes FOR KEY SHARE on the row; NO KEY UPDATE does not
+// conflict with that and still conflicts with itself and with the reversal's FOR UPDATE, so batches and
+// reversals still queue. The payments module owns the table, so this is the one place other modules take the
+// rows from.
+func LockPaymentRowsTx(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT 1 FROM payments WHERE id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, ids)
+	if err != nil {
+		return fmt.Errorf("payments: lock the named payment rows: %w", err)
+	}
+	rows.Close()
+	return rows.Err()
+}
+
 // lockPaymentsSequenceSQL takes the payments feed counter row WITHOUT advancing it: the upsert writes
 // the value it already holds, so the row lock is taken and no feed number is used up. The insert arm
 // seeds a missing row at 0, not at the column default of 1, so the settle's own increment that

@@ -15,6 +15,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 // UnreconciledCardPayments returns the CARD payments received in [from, to) that are still RECEIVED (not yet
@@ -52,15 +53,28 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 	if len(paymentIDs) == 0 {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx,
+	// One transaction: the named payment rows first, ascending (LOCK-ORDER.md), then the UPDATE, which takes
+	// the payments counter on its first row and must not hold it while it waits for another row a reversal
+	// holds.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("till: mark deposited: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := payments.LockPaymentRowsTx(ctx, tx, paymentIDs); err != nil {
+		return fmt.Errorf("till: mark deposited: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
 		`UPDATE payments
 		 SET status = 'DEPOSITED',
 		     metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 		     updated_at = now()
 		 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED'`,
-		paymentIDs, statementLineID)
-	if err != nil {
+		paymentIDs, statementLineID); err != nil {
 		return fmt.Errorf("till: mark deposited: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("till: mark deposited: commit: %w", err)
 	}
 	return nil
 }

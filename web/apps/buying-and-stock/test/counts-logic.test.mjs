@@ -13,7 +13,7 @@ import {
   entryState,
   reconcilePeriodWord,
   reconStatusWord,
-  sheetScopeWord,
+  sheetTypeWord,
   sheetStatusTone,
   sheetStatusWord,
   signTone,
@@ -49,10 +49,10 @@ test("the sheet's tone never carries the meaning alone; the word sits beside it"
   assert.equal(sheetStatusTone("OPEN"), "watch");
 });
 
-test("a sheet's scope is said as the counter says it, and a category scope stays raw", () => {
-  assert.equal(sheetScopeWord("FULL"), "Full count");
-  assert.equal(sheetScopeWord("AD_HOC"), "Ad-hoc");
-  assert.equal(sheetScopeWord("CATEGORY:42"), "category:42");
+test("a sheet's type is said as the counter says it, and a category scope stays raw", () => {
+  assert.equal(sheetTypeWord("FULL"), "Full count");
+  assert.equal(sheetTypeWord("AD_HOC"), "Ad-hoc");
+  assert.equal(sheetTypeWord("CATEGORY:42"), "category:42");
 });
 
 test("the entry pane shows one state at a time: freeze first, then the count, then the read", () => {

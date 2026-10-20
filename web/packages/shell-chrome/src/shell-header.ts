@@ -47,12 +47,6 @@ export const SHELL_HEADER_VARIANTS = ['compact', 'band'] as const;
 
 export type ShellHeaderVariant = (typeof SHELL_HEADER_VARIANTS)[number];
 
-/** The badge mark, the measured H geometry the design system's own header
- * carries (its source of truth is the design system's src/header.ts, rows 953
- * and 968): the badge yellow square ground, the mark in the accent ink. */
-const MARK_PATH =
-  'M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z';
-
 const styles = css`
   :host {
     display: block;
@@ -216,17 +210,18 @@ const styles = css`
     min-width: 0;
     flex: none;
   }
+  /* The dealer's initial on the badge ground (row 1858: our own mark is never drawn on a dealer's screen). */
   .mark {
     width: 30px;
     height: 30px;
     flex: none;
+    display: grid;
+    place-items: center;
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
-  }
-  .mark svg {
-    width: 100%;
-    height: 100%;
-    display: block;
+    font-size: var(--hh-s-16);
+    font-weight: 700;
+    line-height: 1;
   }
   .org {
     color: var(--hh-text-dim);
@@ -826,11 +821,9 @@ export class ShellHeader extends HHElement {
     return html`
       <header class="band" data-variant=${isBand ? 'band' : 'compact'} role="banner">
         <div class="brand">
-          ${isBand
+          ${isBand || this.org === ''
             ? nothing
-            : html`<span class="mark" aria-hidden="true">
-                <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
-              </span>`}
+            : html`<span class="mark" aria-hidden="true">${this.org.trim().slice(0, 1).toUpperCase()}</span>`}
           ${this.org !== ''
             ? isBand
               ? html`<span class="lockup">${this.org}</span>`

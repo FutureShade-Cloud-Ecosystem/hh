@@ -63,7 +63,17 @@ The database draws the seq when the writer did not.
   one order and another that takes them in the other can deadlock. The rule, written in
   `core/internal/payments/LOCK-ORDER.md`: a table written inside a money transaction gets its counter's place in
   that order before it gets a trigger; a writer that updates a row ahead of a counter it needs takes that counter
-  first, without advancing it (`LockPaymentsSequenceTx` for payments, `lockStopsSeqTx` for dispatch's stops).
+  first, without advancing it (`LockPaymentsSequenceTx` for payments), and always AFTER the row locks the other
+  writers of the same row take first. Dispatch's order is the run row (`FOR NO KEY UPDATE`), then the `stops`
+  counter, then the `runs` counter (`lockRunThenStopsSeqTx`): taking `stops` before the row is safe across two
+  runs and a deadlock on one. The row lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`, because a stop write takes
+  the `stops` counter and then `FOR KEY SHARE` on the run row at its foreign key check, and `FOR UPDATE` conflicts
+  with that; `FOR NO KEY UPDATE` does not, and still conflicts with itself, so run writers keep queueing.
+  On a trigger table the row comes before the counter: rely on the trigger, or lock the row first. A single row
+  UPDATE that draws explicitly (a CTE, or a counter allocated ahead of it) with no earlier lock of its row takes the
+  counter first and crosses a writer that relies on the trigger; the catalogue refuses a new one.
+  The exception is a counter first table (the load door's tables, `pricing_list_prices`): its counter comes before its
+  rows for every writer, and a trigger relying writer takes the counter first without advancing it.
 - **Hidden behaviour.** A comment at `syncSeqCTE` (`dispatch/syncscope.go`) and this record say so.
 
 ## Left out, and why
@@ -72,12 +82,20 @@ The database draws the seq when the writer did not.
   return (the counter, then the restock). SF-7 adds the table together with its place in the lock order.
 - Every `msg_*` table: their `seq` is an IDENTITY column (0385), a different counter on the same column. Its own
   gap (identity draws are not commit ordered) is a later item.
-- `will_call_pickups`: its stream, `will_call`, waits for the UX-72 change to reach main; a one line follow up
-  adds it.
-- `tasks`: two scopes serve it on two streams chosen by task type (`pick_tasks`, `weights`), which one trigger
-  argument cannot express. To be ruled.
+- `tasks`: excluded for good (row 2696). Two scopes serve it on two streams chosen by task type (`pick_tasks` for
+  PICK rows, `weights` for NEED_WEIGHT rows), which one trigger argument cannot express, and its writers draw
+  them explicitly.
 - `dashboard_user_widgets`: the plan names the stream `widget_measures`, the demo repair map counts it under the
   table's own name. To be ruled; SF-13 owns the table.
+
+## `will_call_pickups`
+
+In the trigger, on its single stream `will_call` (UX-72 put every writer on it, the counter lifted past the
+frozen `pickups` value). The migration's floor is the greatest of the `will_call` counter, the legacy `pickups` counter and the greatest
+seq the table holds. The legacy counter matters because a contractor device may hold a cursor the old counter
+handed out to a row a staff write later re-drew lower; no row holds that number, but the device's cursor does,
+so the re-draw must land above it. The rows are re-drawn explicitly, so a staff pickup that sat below a
+contractor device's cursor reaches that device.
 
 ## What the trigger does not fix
 

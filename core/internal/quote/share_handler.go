@@ -22,6 +22,8 @@ func (h *StaffHandler) RegisterShareRoutes(r httpx.Registrar, g *guards.Guards) 
 		panic("quote: guards are required")
 	}
 	r.Handle("POST /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.mintShareLink)))
+	// "I sent it myself": the dealer's word that the link went out by a means the core cannot see.
+	r.Handle("POST /api/v1/quotes/{id}/mark-sent", g.RequireStaff(h.staff(h.markSentByDealer)))
 	r.Handle("GET /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.listShareLinks)))
 	// The preview of the customer's page: a pure read, so it sits beside the quote reads and never mints.
 	r.Handle("GET /api/v1/quotes/{id}/customer-view", g.RequireStaff(h.staff(h.customerViewPreview)))
@@ -58,6 +60,14 @@ func (h *StaffHandler) mintShareLink(w http.ResponseWriter, r *http.Request, _ g
 	}
 	// 201 with the raw token, the ONLY time it is ever returned. It is unrecoverable afterwards.
 	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *StaffHandler) markSentByDealer(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	if err := h.svc.MarkSentByDealer(r.Context(), r.PathValue("id")); err != nil {
+		h.writeShareErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *StaffHandler) listShareLinks(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

@@ -94,6 +94,10 @@ const JULIAN = {
   is_active: true,
 };
 let manyBranches = false;
+const DEFAULT_BUSINESS_ZONE = "America/Los_Angeles";
+let businessZone = DEFAULT_BUSINESS_ZONE;
+let configReads = 0;
+let configDelayMs = 0;
 
 const DEFAULT_POLICY = {
   branch_id: BRANCH,
@@ -546,6 +550,7 @@ async function route(req, res, url) {
 
   // the test controls
   if (path === "/_stub/reset") {
+    const body = await readBody(req);
     world = seedWorld();
     armed = null;
     caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true, can_see_value: true };
@@ -553,6 +558,21 @@ async function route(req, res, url) {
     policyTrail = [];
     holdAmount = false;
     manyBranches = false;
+    businessZone = typeof body?.business_zone === "string" && body.business_zone !== "" ? body.business_zone : DEFAULT_BUSINESS_ZONE;
+    configReads = 0;
+    configDelayMs = 0;
+    return json(res, { ok: true });
+  }
+  if (path === "/_stub/config" && method === "POST") {
+    const body = await readBody(req);
+    if (typeof body?.business_zone === "string" && body.business_zone !== "") businessZone = body.business_zone;
+    if (typeof body?.delay_ms === "number" && Number.isFinite(body.delay_ms)) configDelayMs = Math.max(0, body.delay_ms);
+    return json(res, { ok: true, business_zone: businessZone, reads: configReads, delay_ms: configDelayMs });
+  }
+  if (path === "/_stub/stop" && method === "POST") {
+    const b = await readBody(req);
+    const s = world.stops.find((x) => x.order_no === b?.order_no || x.id === b?.id);
+    if (s && b && typeof b === "object") Object.assign(s, b);
     return json(res, { ok: true });
   }
   if (path === "/_stub/refuse" && method === "POST") {
@@ -594,6 +614,25 @@ async function route(req, res, url) {
   if (!String(req.headers.authorization ?? "").startsWith("Bearer ")) return fail(res, 401, "Missing or invalid credentials");
 
   if (path === "/api/v1/branches") return json(res, manyBranches ? [...BRANCHES, JULIAN] : BRANCHES);
+  if (method === "GET" && path === "/api/v1/surfaces/dispatch-board/config") {
+    configReads += 1;
+    if (configDelayMs > 0) await new Promise((r) => setTimeout(r, configDelayMs));
+    return json(res, {
+      surface_id: "dispatch-board",
+      profile: "manager",
+      role_items: [],
+      user_items: [],
+      workspace: {
+        split_pct: 50,
+        arrangement: "PRIMARY_LEFT",
+        primary_collapsed: false,
+        secondary_collapsed: false,
+        cost_hidden: false,
+        source: "dealer",
+      },
+      business_zone: businessZone,
+    });
+  }
 
   if (!path.startsWith("/api/v1/dispatch/")) return fail(res, 404, "not found");
   const rest = path.slice("/api/v1/dispatch/".length);

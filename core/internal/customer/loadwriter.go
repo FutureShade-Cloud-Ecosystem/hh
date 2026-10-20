@@ -53,6 +53,21 @@ const customerSeqCTE = `WITH cseq AS (
 	RETURNING next_value
 ) `
 
+// LockCustomersSeqTx takes the customers counter row WITHOUT advancing it, on the caller's transaction: the upsert writes the
+// value it already holds. The load door's claim transaction holds this counter from an item's first draw to the
+// batch commit and then wants item rows (LD-5, which closes batch against batch), so the counter comes BEFORE the
+// rows for every writer of this table. A single row REST writer that relies on the sync seq trigger would take
+// the row first and the counter after, and cross a batch holding the counter while it waits for that row (PR 556
+// round 3e). Every trigger relying writer of this table takes this first; the catalogue's check (h) says so.
+func LockCustomersSeqTx(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO scope_sequences (scope, next_value) VALUES ('customers', 0)
+		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`); err != nil {
+		return fmt.Errorf("customer: lock the customers counter: %w", err)
+	}
+	return nil
+}
+
 // CustomerLoadWriter is the load doors' customer writer.
 type CustomerLoadWriter struct {
 	// Country is the dealer's country source; nil is the Canadian dealer.
@@ -222,6 +237,11 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 	// whole batch. So it moves in its own statement, only when it changes; the content update
 	// below names no key column and keeps FOR NO KEY UPDATE.
 	if accountNo != "" {
+		// The counter first (round 3e): this move relies on the sync seq trigger, which takes the row and then
+		// the counter; the batch's order is the counter, then the rows.
+		if err := LockCustomersSeqTx(ctx, tx); err != nil {
+			return "", err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE customers SET account_no = $2, updated_at = now()
 			WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $3::uuid) AND account_no IS DISTINCT FROM $2`,
 			in.RowID, accountNo, in.OrgID); err != nil {

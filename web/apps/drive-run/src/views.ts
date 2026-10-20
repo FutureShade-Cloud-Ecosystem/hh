@@ -15,6 +15,9 @@ import type { DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
+  FAILURE_REASON_OTHER,
+  FAILURE_REASON_PRESETS,
+  FAILURE_REASON_SHEET_PROMPT,
   HANDBACK_BODY,
   HANDBACK_PROMPT,
   PROOF_WAITING_WORDS,
@@ -23,15 +26,20 @@ import {
   canRecordFailure,
   closeLine,
   driverActions,
-  formatTime,
+  formatGlossaryTime,
+  loadOrderLine,
+  nextStopOf,
   qtyLabel,
   plainSentence,
   runClose,
+  routeStops,
   runSummary,
   signBlockedReason,
   stopsInOrder,
   weightLabel,
   type PodDraft,
+  type RouteStop,
+  type StopChip,
 } from "./drive-logic.js";
 
 /** The status pill's tone, by status: colour never carries the meaning alone, the word is always there. */
@@ -67,25 +75,38 @@ export interface RunSheetModel {
 }
 
 /** The staleness words for a scope: reads answer from the device, so the sheet
- * says when the world last came down. Relative words only. */
-export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
+ * says when the world last came down, with the clock time in the dealer's zone. */
+export function stalenessWords(
+  staleness: { neverPulled: boolean; ageMs: number | null; lastPullAt?: string | null },
+  zone: string = houseZone(),
+): string {
   if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
   const minutes = Math.floor(staleness.ageMs / 60_000);
-  if (minutes < 1) return "Pulled just now";
-  return `Pulled ${minutes} min ago`;
+  const relative = minutes < 1 ? "Pulled just now" : `Pulled ${minutes} min ago`;
+  const clock = formatGlossaryTime(staleness.lastPullAt, zone);
+  return clock !== "" ? `${relative} · as of ${clock}` : relative;
 }
 
-function stopRow(stop: DriverStop): TemplateResult {
+const CHIP_TONE: Record<StopChip, string> = {
+  Delivered: "good",
+  "Next stop": "watch",
+  Waiting: "plain",
+  "Not delivered": "stop",
+  Cancelled: "stop",
+};
+
+function stopRow(entry: RouteStop<DriverStop>): TemplateResult {
+  const { stop } = entry;
   const where = addressLine(stop);
   return html`
-    <li>
+    <li class="stop-item ${entry.next ? "stop-item-next" : ""}" data-stop-card=${entry.chip}>
       <button type="button" class="stop-row" data-action="open-stop" data-stop-id=${stop.id} data-stop data-tap>
         <span class="stop-no" data-stop-no>${stop.stop_no}</span>
         <span class="stop-main">
           <span class="stop-who">${stop.customer_name || "Customer"}</span>
           <span class="stop-where">${where || "No address on file"}${stop.time_window ? ` · ${stop.time_window}` : ""}</span>
         </span>
-        ${statusPill(stop.status)}
+        <span class="status status-${CHIP_TONE[entry.chip]} stop-chip" data-stop-status>${entry.chip}</span>
       </button>
     </li>
   `;
@@ -94,12 +115,19 @@ function stopRow(stop: DriverStop): TemplateResult {
 function runCard(run: DriverRun): TemplateResult {
   const stops = stopsInOrder(run.stops);
   const progress = runSummary(stops);
+  const loadOrder = loadOrderLine(stops);
   return html`
     <section class="card run" data-run>
       <h2 class="run-title">${run.run_no}${run.truck_code ? ` · ${run.truck_code}` : ""}</h2>
       <p class="run-count">${stops.length} ${stops.length === 1 ? "stop" : "stops"}</p>
       <p class="run-progress" data-progress>${progress.sentence}</p>
-      <ul class="stop-list">${stops.map(stopRow)}</ul>
+      ${loadOrder !== ""
+        ? html`<div class="run-load-order" data-load-order-banner>
+            <p class="run-load-eyebrow">Loaded at the yard</p>
+            <p class="run-load-line" data-load-order>${loadOrder}</p>
+          </div>`
+        : nothing}
+      <ul class="stop-list">${routeStops(stops).map(stopRow)}</ul>
     </section>
   `;
 }
@@ -117,9 +145,22 @@ export function renderRunSheet(model: RunSheetModel): TemplateResult {
       </div>
     `;
   } else if (model.phase === "ready") {
+    let nextStop: DriverStop | null = null;
+    for (const run of model.runs) {
+      nextStop = nextStopOf(run.stops);
+      if (nextStop !== null) break;
+    }
+    const goBar =
+      nextStop === null
+        ? nothing
+        : html`<div class="go-bar-spacer" aria-hidden="true"></div>
+          <div class="go-bar" data-go-bar>
+            <button type="button" class="btn btn-primary big" data-action="open-stop" data-stop-id=${nextStop.id} data-go-next data-tap>Go to stop ${nextStop.stop_no}</button>
+          </div>`;
     body = html`
       ${model.runs.map(runCard)}
       <button type="button" class="btn btn-secondary big" data-action="open-close" data-tap>End of run</button>
+      ${goBar}
     `;
   } else {
     body = html``;
@@ -143,7 +184,7 @@ export function renderConflicts(model: { cards: number }): TemplateResult {
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the run</button>
     <h1>Review</h1>
-    <p class="dim small">What the server answered while you drove. A card is dismissed when you have read it; the record stays.</p>
+    <p class="dim small">What happened to the changes you made while you drove. A card goes away when you have read it; the record stays.</p>
     <hh-shell-conflict-list data-conflict-list></hh-shell-conflict-list>
   `;
 }
@@ -210,7 +251,7 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
           </div>`
         : nothing}
       ${stop.pod_received_by !== ""
-        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
+        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatGlossaryTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
         : nothing}
       ${stop.proof_waiting ? html`<p class="dim" data-proof-waiting role="status">${PROOF_WAITING_WORDS}</p>` : nothing}
     </section>
@@ -270,28 +311,39 @@ export function renderPod(model: PodModel): TemplateResult {
   const { stop, draft } = model;
   const blocked = signBlockedReason(draft);
   return html`
-    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
-    <h1>Proof of delivery</h1>
-    <p class="dim" data-pod>Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
-    ${renderMessages(model.error, "")}
-    <section class="card">
-      <label class="field-label" for="pod-name">Full name of the person receiving</label>
-      <input id="pod-name" class="text-field" type="text" autocomplete="off" data-field="name" ?disabled=${draft.busy} />
-      <label class="confirm" for="pod-affirm">
-        <input id="pod-affirm" class="confirm-box" type="checkbox" data-field="affirm" ?disabled=${draft.busy} />
-        <span>${ATTESTATION}</span>
-      </label>
-      <button type="button" class="btn btn-primary big" data-action="sign" ?disabled=${blocked !== ""} data-tap>
-        ${draft.busy ? "Signing" : "Sign for this delivery"}
-      </button>
-      ${blocked !== "" ? html`<p class="hint" data-sign-hint>${blocked}</p>` : nothing}
-      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${draft.busy} data-tap>Not yet</button>
-    </section>
-    <section data-photos>
-      <h3 class="section-label">Photo of the drop · optional</h3>
-      ${photoTiles(stop, stop.photo_count > 0 ? "Add another" : "Add a photo", model.photoBusy)}
-      <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
-    </section>
+    <div class="sheet-scrim" data-sheet-scrim>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-sheet="pod">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h1 id="sheet-title">Proof of delivery</h1>
+            <p class="dim" data-pod>Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+          </div>
+          <button type="button" class="sheet-close" data-action="back-to-stop" aria-label="Close" ?disabled=${draft.busy} data-tap>
+            Close
+          </button>
+        </div>
+        ${renderMessages(model.error, "")}
+        <div class="sheet-body">
+          <label class="field-label" for="pod-name">Full name of the person receiving</label>
+          <input id="pod-name" class="text-field" type="text" autocomplete="off" data-field="name" ?disabled=${draft.busy} />
+          <label class="confirm" for="pod-affirm">
+            <input id="pod-affirm" class="confirm-box" type="checkbox" data-field="affirm" ?disabled=${draft.busy} />
+            <span>${ATTESTATION}</span>
+          </label>
+          <button type="button" class="btn btn-primary big" data-action="sign" ?disabled=${blocked !== ""} data-tap>
+            ${draft.busy ? "Signing" : "Sign for this delivery"}
+          </button>
+          ${blocked !== "" ? html`<p class="hint" data-sign-hint>${blocked}</p>` : nothing}
+          <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${draft.busy} data-tap>Not yet</button>
+        </div>
+        <section class="sheet-photos" data-photos>
+          <h3 class="section-label">Photo of the drop · optional</h3>
+          ${photoTiles(stop, stop.photo_count > 0 ? "Add another" : "Add a photo", model.photoBusy)}
+          <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
+        </section>
+      </section>
+    </div>
   `;
 }
 
@@ -302,28 +354,68 @@ export function renderLatePhoto(stop: DriverStop, busy: boolean): TemplateResult
 
 export interface FailModel {
   readonly stop: DriverStop;
+  readonly preset?: string;
   readonly reason: string;
   readonly busy: boolean;
   readonly error: string;
 }
 
-/** Could not deliver: the reason in the driver's own words, and what happens to the load. */
+function reasonRadioRow(reason: string, selectedPreset: string, busy: boolean): TemplateResult {
+  const isSelected = selectedPreset === reason;
+  return html`
+    <label class="reason-row ${isSelected ? "reason-row-selected" : ""}" data-reason-option=${reason} data-tap>
+      <input
+        type="radio"
+        name="fail-reason"
+        class="reason-radio"
+        data-field="preset-reason"
+        data-reason=${reason}
+        ?disabled=${busy}
+      />
+      <span class="reason-text">${reason}</span>
+    </label>
+  `;
+}
+
+/** Could not deliver: the board's preset reasons plus free text for Other, and what happens to the load. */
 export function renderFail(model: FailModel): TemplateResult {
   const { stop } = model;
+  const selectedPreset = model.preset ?? "";
   return html`
-    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
-    <h1>Could not deliver</h1>
-    <p class="dim">Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
-    ${renderMessages(model.error, "")}
-    <section class="card">
-      <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
-      <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
-      <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
-      <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
-        Could not deliver
-      </button>
-      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${model.busy} data-tap>Back</button>
-    </section>
+    <div class="sheet-scrim" data-sheet-scrim>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-sheet="fail">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h1 id="sheet-title">Could not deliver</h1>
+            <p class="dim">Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+          </div>
+          <button type="button" class="sheet-close" data-action="back-to-stop" aria-label="Close" ?disabled=${model.busy} data-tap>
+            Close
+          </button>
+        </div>
+        ${renderMessages(model.error, "")}
+        <div class="sheet-body">
+          <fieldset class="reason-group" data-reason-group>
+            <legend class="field-label">${FAILURE_REASON_SHEET_PROMPT}</legend>
+            <div class="reason-list">
+              ${FAILURE_REASON_PRESETS.map((reason) => reasonRadioRow(reason, selectedPreset, model.busy))}
+            </div>
+          </fieldset>
+          ${selectedPreset === FAILURE_REASON_OTHER
+            ? html`
+                <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
+                <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
+              `
+            : nothing}
+          <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
+          <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
+            Could not deliver
+          </button>
+          <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${model.busy} data-tap>Back</button>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -391,16 +483,16 @@ export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
   } else if (view.flows.kind === "unavailable") {
-    body = html`<p class="alert alert-error" role="alert">The demo way in is not available on this box.</p>`;
+    body = html`<p class="alert alert-error" role="alert">The sign in list could not load. Check your signal and try again.</p>`;
   } else {
     const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
     body =
       flow === undefined
-        ? html`<p class="alert alert-error" role="alert">The Driver card is not on this box yet.</p>`
+        ? html`<p class="alert alert-error" role="alert">The Driver role is not available here yet.</p>`
         : html`<button type="button" class="btn btn-primary big" data-action="choose" data-flow=${flow.flow} ?disabled=${view.busy} data-tap>${flow.label}</button>`;
   }
   return html`
-    <h1>HH Drive</h1>
+    <h1>Drive</h1>
     <p class="dim">Your run, your stops and proof of delivery, on your phone. Demo data only.</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
     ${body}

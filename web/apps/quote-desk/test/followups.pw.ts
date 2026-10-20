@@ -78,7 +78,8 @@ test("a skipped step is not hearing from us", async ({ page, request }) => {
   await expect(panel(page).getByTestId("fu-row").first()).toContainText("Not sent");
 });
 
-test("the text leg's refusal shows the server's words and changes nothing", async ({ page }) => {
+test("the text leg's refusal shows the server's words and changes nothing", async ({ page, request }) => {
+  await request.post("/_stub/sms-consent", { data: { customer: "c-fenwick", consent: false } });
   await signIn(page);
   await openQuote(page, "Q-1002");
   await panel(page).getByRole("button", { name: "Text the quote link" }).click();

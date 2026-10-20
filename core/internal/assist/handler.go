@@ -48,6 +48,11 @@ type Handler struct {
 	svc      *Service
 	log      *slog.Logger
 	trail    PaymentTrailReader
+
+	// costRoles and costBranches decide the claim's cost fields (WithCostGate).
+	costRoles    CostRoles
+	costBranches BranchReader
+	poPolicy     PurchaseCostPolicies
 }
 
 // PaymentTrailReader says whether a caller holds the payment trail reads (ruling 87). The composition
@@ -63,10 +68,19 @@ func (h *Handler) WithPaymentTrail(t PaymentTrailReader) *Handler {
 	return h
 }
 
+// CallerFor is the Caller a request resolves to on the routes that run commands: the guard-resolved staff
+// context, the cost and margin fields from the dealer's cost rule, and the payment trail answer. Exported so
+// the parity suite builds callers by the same path the routes do.
+func (h *Handler) CallerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
+	return h.callerFor(r, sc)
+}
+
 // callerFor is CallerFrom plus the payment trail answer, for the routes that run commands.
 func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
 	c := CallerFrom(r)
 	c.SessionKey = sc.SessionID
+	h.costFor(r.Context(), &c)
+	h.poCostFor(r.Context(), &c)
 	if h.trail == nil {
 		return c, nil
 	}
@@ -76,6 +90,113 @@ func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, err
 	}
 	c.PaymentTrail = held
 	return c, nil
+}
+
+// CostRoles is the dealer's cost and margin role list: the one predicate that decides cost visibility on
+// every module's screen (inventory/cost_gate.go, quote, pricing, tasks, dispatch). The composition root wires
+// the role configuration behind it.
+type CostRoles interface {
+	SeesCostAndMargin(role string) (bool, error)
+}
+
+// WithCostGate wires the cost rule the signed claim's cost fields follow, and the branch reader used to name
+// every branch for a global caller on the list. Without it no caller has cost or margin (fail closed).
+func (h *Handler) WithCostGate(roles CostRoles, branches BranchReader) *Handler {
+	h.costRoles, h.costBranches = roles, branches
+	return h
+}
+
+// PurchaseCostPolicies is the per branch purchasing policy the purchasing screens ask for what the dealer pays
+// on a purchase order: purchasing.Service.PolicyFor(branch).CostVisibility, which resolves the branch row, else
+// the dealer default, and fails closed to MANAGER_UP. The composition root wires the purchasing service behind it.
+type PurchaseCostPolicies interface {
+	CostVisibility(ctx context.Context, branchID string) string
+}
+
+// The three policy words, as internal/settings spells them (VisibilityManagerUp, VisibilityAllStaff,
+// VisibilityHidden). Spelled here because this package imports no other module.
+const (
+	policyAllStaff = "ALL_STAFF"
+	policyHidden   = "HIDDEN"
+)
+
+// WithPurchaseCostPolicy wires the policy that decides the claim's purchase cost branches. Without it no caller
+// has purchase cost (fail closed).
+func (h *Handler) WithPurchaseCostPolicy(p PurchaseCostPolicies) *Handler {
+	h.poPolicy = p
+	return h
+}
+
+// poCostFor mirrors purchasing's costLensFor, branch by branch: ALL_STAFF allows, HIDDEN refuses, and every
+// other word (MANAGER_UP, the seeded default, and where every unknown resolves) allows a manager or better,
+// which is tier 1 or 2. A caller with no role sees nothing. Branches are the caller's reach: its grants, or
+// every branch for a global caller.
+func (h *Handler) poCostFor(ctx context.Context, c *Caller) {
+	c.POCostBranchIDs = nil
+	if h.poPolicy == nil || !c.HasRole() {
+		return
+	}
+	reach := c.BranchIDs
+	if c.Global {
+		if h.costBranches == nil {
+			return
+		}
+		bs, err := h.costBranches.Branches(ctx, *c)
+		if err != nil {
+			return
+		}
+		reach = nil
+		for _, b := range bs {
+			reach = append(reach, b.BranchID)
+		}
+	}
+	manager := c.Tier == 1 || c.Tier == 2
+	for _, id := range reach {
+		switch h.poPolicy.CostVisibility(ctx, id) {
+		case policyAllStaff:
+			c.POCostBranchIDs = append(c.POCostBranchIDs, id)
+		case policyHidden:
+		default:
+			if manager {
+				c.POCostBranchIDs = append(c.POCostBranchIDs, id)
+			}
+		}
+	}
+	sort.Strings(c.POCostBranchIDs)
+}
+
+// costFor resolves the caller's cost fields exactly as inventory's costAllowed does: the canonical role must
+// be known and on the list; any other answer, including an error, is no cost.
+func (h *Handler) costFor(ctx context.Context, c *Caller) {
+	c.CostBranchIDs, c.Margin = nil, false
+	if h.costRoles == nil {
+		return
+	}
+	role, ok := identity.CanonicalForERPCode(c.RoleCode)
+	if !ok || role == "" {
+		return
+	}
+	allowed, err := h.costRoles.SeesCostAndMargin(role)
+	if err != nil || !allowed {
+		return
+	}
+	c.Margin = true
+	if !c.Global {
+		c.CostBranchIDs = append([]string(nil), c.BranchIDs...)
+		return
+	}
+	if h.costBranches == nil {
+		return
+	}
+	bs, err := h.costBranches.Branches(ctx, *c)
+	if err != nil {
+		c.Margin = false
+		return
+	}
+	for _, b := range bs {
+		c.CostBranchIDs = append(c.CostBranchIDs, b.BranchID)
+	}
+	sort.Strings(c.CostBranchIDs)
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler { return &Handler{svc: svc, log: log} }
@@ -125,7 +246,12 @@ func CallerFrom(r *http.Request) Caller {
 }
 
 func (h *Handler) commands(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	c := CallerFrom(r)
+	// callerFor, not CallerFrom: the catalogue the tool description shows depends on the cost fields.
+	c, err := h.callerFor(r, caller)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
 	cmds := h.svc.Commands(r.Context(), c)
 	cfg := h.svc.Settings(r.Context())
 	// The list is ALWAYS a JSON array, never null: `{"commands":null}` and `{"commands":[]}` are

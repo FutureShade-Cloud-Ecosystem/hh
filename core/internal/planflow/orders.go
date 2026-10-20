@@ -500,16 +500,15 @@ func (s *OrdersSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("planflow: begin orders delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocateSeqTx(ctx, tx, ordersSeqScope)
-	if err != nil {
-		return sync.RowState{}, err
-	}
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
 	r, err := scanOrder(tx.QueryRow(ctx, `
 		UPDATE plan SET
-			deleted_at = now(), updated_at = now(), seq = $4
+			deleted_at = now(), updated_at = now()
 		WHERE id = $1::uuid AND org_id = $2::uuid AND tenant_id = $3::uuid AND deleted_at IS NULL
 		RETURNING `+ordersColumns,
-		id, f.OrgID, f.TenantID, seq))
+		id, f.OrgID, f.TenantID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

@@ -498,6 +498,13 @@ var keyColumnUpdateAccepted = map[string]string{
 	"dispatch_trucks.code":                           "the desk's truck edit is one statement on the pool (SF-6 owns the table); the lock is held for the statement only",
 }
 
+// What check (f) does not see: it scans string LITERALS, so a SET list built at run time is outside it.
+// Two dynamic builders write trigger tables and cannot name a key column today:
+//   - product.Repository.Update takes its columns from editableColumns, which has no sku (a test in
+//     internal/product, TestEditableColumnsNameNoKeyColumn, reads that list against the table's key columns
+//     and fails if one ever appears);
+//   - the stops loads write (dispatch syncscope_board.go) builds its SET from three measurement columns and
+//     the fixed trailing columns; delivery_stops' only key column is id, which no SET list names.
 var updateSetRe = regexp.MustCompile(`(?is)\bUPDATE\s+([a-z_][a-z0-9_]*)\s+(?:[a-z_][a-z0-9_]*\s+)?SET\s+(.*?)(?:\bWHERE\b|\bFROM\b|\bRETURNING\b|$)`)
 var setColRe = regexp.MustCompile(`(?im)(?:^|,)\s*([a-z_][a-z0-9_]*)\s*=`)
 

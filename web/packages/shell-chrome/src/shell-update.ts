@@ -117,7 +117,7 @@ export class ShellUpdate extends HHElement {
   constructor() {
     super();
     this.open = false;
-    this.shellName = 'HH Field';
+    this.shellName = 'Field';
     this.version = '';
     this.updater = null;
     this.state = 'ready';

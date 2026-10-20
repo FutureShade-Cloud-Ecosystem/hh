@@ -172,7 +172,7 @@ function list(model: LandedModel): TemplateResult {
               </table>
             </div>
           `}
-      <p class="foot dim">Figures are in the books' currency, as the core converted them. A draft changes nothing until it is applied.</p>
+      <p class="foot dim">Figures are in the books' currency, as converted. A draft changes nothing until it is applied.</p>
     </section>
   `;
 }
@@ -220,7 +220,7 @@ function capture(model: LandedModel): TemplateResult {
         ${usd
           ? html`<label>Exchange rate to the books' currency
               <input type="text" inputmode="decimal" autocomplete="off" data-field="lc-fx" data-lc-fx />
-              <span class="dim">Entered by hand, as the vendor's bill was converted. The core converts each amount with it.</span>
+              <span class="dim">Entered by hand, as the vendor's bill was converted. Each amount is converted with it.</span>
             </label>`
           : nothing}
         <label>Freight${usd ? " (USD)" : ""}

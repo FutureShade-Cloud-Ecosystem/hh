@@ -305,20 +305,19 @@ func (r *Repository) ResolveShortage(ctx context.Context, in ResolveShortageInpu
 	// The resolve draws a fresh shortages seq (the desk's correction is the
 	// write a stale device replay must meet) and bumps the parent task's
 	// own seq beside it, the same two-draw shape InsertShortage pays,
-	// because the task's projection carries the shortage counts.
-	shortageSeq, err := allocateScopeSeqTx(ctx, tx, shortagesSeqScope)
-	if err != nil {
-		return Shortage{}, Task{}, err
-	}
+	// because the task's projection carries the shortage counts. The
+	// shortage's draw is the sync seq trigger's (0422): the row lock first,
+	// then the counter. An explicit draw ahead of the UPDATE would take the
+	// counter before the row and cross a writer that relies on the trigger
+	// (PR 556 round 3c).
 	sh, err := scanShortage(tx.QueryRow(ctx, `
 		UPDATE task_shortages SET
 			resolved_at = now(),
 			resolved_by = NULLIF($3,'')::uuid,
-			resolution  = $4,
-			seq         = $5
+			resolution  = $4
 		WHERE id = $1::uuid AND task_id = $2::uuid AND resolved_at IS NULL
 		RETURNING `+shortageColumns,
-		in.ShortageID, in.TaskID, in.ActorID, in.Resolution, shortageSeq))
+		in.ShortageID, in.TaskID, in.ActorID, in.Resolution))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Either it is not this task's shortage / does not exist, or it is already closed. One
@@ -637,4 +636,50 @@ func (r *Repository) ListPickedLines(ctx context.Context, taskID string) ([]Pick
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// HolderLocked runs apply with the task row locked (FOR UPDATE) and the actor checked against the claim on
+// that locked row: ErrNotHolder when someone else holds the pick (the doors refuse a person's write with no
+// actor before they reach here). The skid count's
+// guard (UX-76b): the order call inside apply may need a pooled connection, so it takes a record slot as
+// RecordPickLocked does, and the lock is held across the call so a claim and a count cannot cross.
+func (r *Repository) HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if !looksLikeUUID(taskID) {
+		return ErrNotFound
+	}
+	if r.recordSlots == nil {
+		return ErrRecordPoolTooSmall
+	}
+	select {
+	case r.recordSlots <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-r.recordSlots }()
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("tasks: begin holder lock: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var claimedBy string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&claimedBy); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("tasks: lock %q for holder check: %w", taskID, err)
+	}
+	if notHolder(claimedBy, actorID) {
+		return ErrNotHolder
+	}
+	if err := apply(ctx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("tasks: commit holder lock: %w", err)
+	}
+	return nil
 }

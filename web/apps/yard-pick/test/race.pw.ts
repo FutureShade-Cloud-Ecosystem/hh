@@ -38,7 +38,7 @@ for (const vp of [
     await expect(page.locator("body")).not.toContainText("Claimed. It is yours to pull.");
     await expect(page.locator("body")).not.toContainText("Task already in that status");
     await expect(page.locator("body")).not.toContainText("Illegal task transition");
-    await expect(page.locator("[data-claimed-by]")).toHaveText("Claimed by a teammate");
+    await expect(page.locator("[data-claimed-by]")).toHaveText("Claimed by the Yard Manager");
     await page.screenshot({ path: `${process.env.YARD_SHOTS ?? "/tmp"}/race-${vp.width}.png` });
   });
 }
@@ -48,7 +48,7 @@ test("a pick the pull already shows as taken disables its line rows and says so"
   await rivalClaim(request, SO_1039);
   await page.reload();
   await openPickCard(page, "SO-1039");
-  await expect(page.locator("[data-claimed-by]")).toHaveText("Claimed by a teammate");
+  await expect(page.locator("[data-claimed-by]")).toHaveText("Claimed by the Yard Manager");
   await expect(page.locator("[data-line]").first().locator(".line-row")).toBeDisabled();
   await expect(page.locator("[data-line]").first().locator(".line-check")).toHaveText("");
 });
@@ -90,9 +90,10 @@ test("the claimer is never a guessed role or a raw id", async ({ page, browser }
   });
   await otherPage.goto("/");
   const card = otherPage.locator("[data-pick-card]", { hasText: "SO-1040" });
-  await expect(card).toContainText("Claimed by a teammate");
-  await expect(card).not.toContainText("Yard Team");
+  // The claimer is named by role label, as the core serves it, never by name or id.
+  await expect(card).toContainText("Claimed by the Yard Team");
   await expect(card).not.toContainText("d0200000");
+  await expect(card).not.toContainText("yard.demo");
   await other.close();
 });
 
@@ -172,7 +173,7 @@ test("green is for Claimed by you only; a teammate's claim is dim with a neutral
   const mine = await colour("SO-1040");
   const theirs = await colour("SO-1039");
   expect(mine.text).toBe("Claimed by you");
-  expect(theirs.text).toBe("Claimed by a teammate");
+  expect(theirs.text).toBe("Claimed by the Yard Manager");
   const probe = async (token: string) =>
     page.evaluate((t) => {
       const el = document.createElement("span");

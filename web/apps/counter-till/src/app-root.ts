@@ -29,7 +29,7 @@ import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { productTileUrl } from "@hardscapehouse/design-system/src/assets/product-tiles/index.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffFeedback, staffWarranty } from "@hardscapehouse/api-client";
+import { ApiClient, ok, staffFeedback, staffWarranty, type Result } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
   type FeedbackSender,
@@ -44,13 +44,16 @@ import {
   houseDay,
   type BranchRef,
 } from "./till-client.js";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { readPanesSwapped, writePanesSwapped } from "./pane-memory.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+import "@hardscapehouse/pos-kit/src/branch-chooser.js";
+import { clearSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 
 // The flows this app offers a card for. The flow table is the box's whole
 // mint set (the Counter Till's pair plus the personas the roles roadmap
@@ -432,7 +435,11 @@ export class CounterTillApp extends HHElement {
    * terminal IS the till, in both its modes (the linear flow and the detached
    * multi-card layout, the terminal's own choice to switch).
    */
-  #surface: "entry" | "terminal" = "entry";
+  #surface: "entry" | "branch" | "terminal" = "entry";
+  /** The granted branches the in desk chooser offers while the surface is "branch"; empty otherwise. */
+  #branchChoices: BranchRef[] = [];
+  /** Whether the start that stopped to ask came from the front door's handoff, so the re-start keeps its failure rules. */
+  #branchAskedFromHandoff = false;
   /**
    * Row 955: which surface of the till is up. The sale is the till; Returns is its own surface at
    * `#/returns`, reached by the Returns link in the bar (a plain anchor: no script writes the
@@ -591,8 +598,17 @@ export class CounterTillApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
@@ -608,6 +624,7 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves). Click is composed, so the host hears it.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("hh-branch-chosen", this.#onBranchChosen);
     // The terminal reports which layout it is in (composed, so the host hears it): the design
     // system's position gate allows no @ binding here, so the listener lives in code.
     this.addEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
@@ -646,7 +663,7 @@ export class CounterTillApp extends HHElement {
     // path at all (test/no-default-adopt.test.mjs reads the built files).
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
-      void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
+      void this.#flowsLoaded.then(() => this.#chooseFlow(popped, true));
     } else if (import.meta.env.MODE === "demo") {
       void this.#adoptFromFrontDoor();
     }
@@ -678,6 +695,7 @@ export class CounterTillApp extends HHElement {
     }
     if (read.kind === "unusable") {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -689,6 +707,7 @@ export class CounterTillApp extends HHElement {
     });
     if (!adopted) {
       clearFrontDoorHandoff();
+      clearSessionBranchIds();
       this.#toFrontDoor();
       return;
     }
@@ -776,6 +795,7 @@ export class CounterTillApp extends HHElement {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("hh-branch-chosen", this.#onBranchChosen);
     this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
     this.removeEventListener("keydown", this.#onHostKey);
@@ -874,6 +894,13 @@ export class CounterTillApp extends HHElement {
     const action = chromeActionFrom(event, window);
     if (action === "theme") this.#pressTheme();
     if (action === "feedback") this.#openFeedback();
+  };
+
+  /** The in desk chooser wrote the one branch to the session key: start the till again, which now reads it. */
+  readonly #onBranchChosen = (): void => {
+    this.#branchChoices = [];
+    this.#surface = "entry";
+    void this.#initTill(this.#branchAskedFromHandoff);
   };
 
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -990,12 +1017,15 @@ export class CounterTillApp extends HHElement {
     };
   }
 
-  async #chooseFlow(flow: string): Promise<void> {
+  async #chooseFlow(flow: string, samePerson = false): Promise<void> {
     if (this.#busy || flow === "") return;
     this.#busy = true;
     this.#message = null;
     this.requestUpdate();
     const minted = await this.#account.chooseFlow(flow);
+    // A person signing in from the cards is a change of person: the last person's branch choice goes. A pop-out
+    // window is the same person on a second window, and keeps the choice its opener was given.
+    if (!samePerson) clearSessionBranchIds();
     if (!minted.ok) {
       this.#busy = false;
       this.#message = `Sign-in did not go through. ${minted.error}`;
@@ -1078,6 +1108,7 @@ export class CounterTillApp extends HHElement {
     }
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
+    clearSessionBranchIds();
     this.#busy = false;
     this.#till = null;
     this.#activeFlow = null;
@@ -1090,6 +1121,7 @@ export class CounterTillApp extends HHElement {
     this.#payBalance.reset();
     this.#branch = null;
     this.#surface = "entry";
+    this.#branchChoices = [];
     // The ported surface's session-owned module state goes with the session:
     // the next person's boxes and branch facts are earned by their own login.
     clearSessionState();
@@ -1107,7 +1139,21 @@ export class CounterTillApp extends HHElement {
    * surface can fence itself, so the refusal says so and the cards come back.
    */
   async #initTill(fromHandoff = false): Promise<void> {
-    const branch = await this.#tillClient.resolveBranch();
+    const resolved = await this.#tillClient.resolveBranchChoice();
+    let branch: Result<BranchRef>;
+    if (!resolved.ok) {
+      branch = resolved;
+    } else if (resolved.value.kind === "ask") {
+      // Several branches granted and the front door's key named not exactly one: ask once, here, then start again.
+      this.#branchChoices = resolved.value.choices;
+      this.#branchAskedFromHandoff = fromHandoff;
+      this.#message = null;
+      this.#surface = "branch";
+      this.requestUpdate();
+      return;
+    } else {
+      branch = ok(resolved.value.branch);
+    }
     if (!branch.ok) {
       this.#message = `The till did not start: ${branch.error}`;
       this.#till = null;
@@ -1127,6 +1173,7 @@ export class CounterTillApp extends HHElement {
       // minted by the cards route has no key to drop.
       if (fromHandoff) {
         clearFrontDoorHandoff();
+        clearSessionBranchIds();
         this.#toFrontDoor();
       }
       return;
@@ -1254,7 +1301,12 @@ export class CounterTillApp extends HHElement {
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
             `
-          : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
+          : this.#surface === "branch"
+            ? html`<hh-branch-chooser
+                data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
+                action-label="Open the Counter Till"
+              ></hh-branch-chooser>`
+            : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
       </main>
       <!-- The feedback widget: the shared panel, opened by the bar's Feedback
            button (trigger external: no floating pill, so nothing of the
@@ -1329,7 +1381,7 @@ export class CounterTillApp extends HHElement {
         });
         this.#bandWatch.observe(band);
       }
-      band.org = FRAMED_BAND_ORG;
+      band.org = this.#dealerName;
       // The DEMO marker keeps the old banner's rule: only once the flows route has answered with cards, or on the till itself.
       const demoFlows = this.#entryFlowsState();
       band.demo = this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0);

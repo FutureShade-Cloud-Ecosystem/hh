@@ -2,6 +2,7 @@
 // person reads off an order without the network. The timeline is derived from
 // the contract's state map (the kit's board.ts) and is silent where the
 // contract is silent, exactly as the kit is; these cases pin that silence.
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -73,8 +74,8 @@ test("a cancelled order stops rather than promising steps", () => {
 });
 
 test("the promised line reads the asked-for day, and says ready-by for a pickup", () => {
-  assert.deepEqual(promisedWords(order("PICKING", "DELIVERY")), { label: "Wanted by", day: "May 1" });
-  assert.deepEqual(promisedWords(order("READY", "WILL_CALL")), { label: "Wanted by", day: "May 1" });
+  assert.deepEqual(promisedWords(order("PICKING", "DELIVERY")), { label: "Wanted by", day: "May 1, 2042" });
+  assert.deepEqual(promisedWords(order("READY", "WILL_CALL")), { label: "Wanted by", day: "May 1, 2042" });
   assert.equal(promisedWords({ status: "PICKING", fulfillment: "DELIVERY", requested_date: "" }).day, "Not set");
 });
 
@@ -89,10 +90,18 @@ test("a live order past its asked-for day reads as late, a finished one does not
 });
 
 test("the dealer's today comes from the clock in the dealer's own zone, as a bare day", () => {
-  const today = houseToday(new Date("2042-05-09T02:30:00.000Z"));
-  assert.match(today, /^\d{4}-\d{2}-\d{2}$/);
-  // 02:30 UTC is the previous afternoon in San Diego, so the dealer's day is not the UTC day.
-  assert.notEqual(today, "2042-05-09");
+  // 05:00 UTC is 01:00 on the 9th in Toronto (the unserved default) and 22:00 on the 8th in Los Angeles.
+  const stamp = new Date("2042-05-09T05:00:00.000Z");
+  try {
+    resetHouseZone();
+    assert.equal(houseToday(stamp), "2042-05-09");
+    serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+    assert.equal(houseToday(stamp), "2042-05-08");
+    serveHouseZoneFrom({ business_zone: "Asia/Tokyo" });
+    assert.equal(houseToday(stamp), "2042-05-09");
+  } finally {
+    resetHouseZone();
+  }
 });
 
 test("the fulfillment reads as the words a person uses, never the stored string", () => {
