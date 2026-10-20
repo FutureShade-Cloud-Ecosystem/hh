@@ -26,6 +26,9 @@ func glsPrepareWorld(context.Context, *pgxpool.Pool) error { return nil }
 // glsRewritePlan is the no-op: the plan's rows are returned as built.
 func glsRewritePlan(rows []row) []row { return rows }
 
+// glsRewriteSummary is the no-op: the plan's summary lines are returned as built.
+func glsRewriteSummary(s planSummary) planSummary { return s }
+
 // glsRenamePlanted is the no-op: no migration-planted row is renamed.
 func glsRenamePlanted(context.Context, glsTx, time.Time) (int, error) { return 0, nil }
 

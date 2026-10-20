@@ -15,3 +15,4 @@ export * from './shell-cards.js';
 export * from './shell-header.js';
 export * from './shell-rail.js';
 export * from './shell-update.js';
+export * from './field-frame.js';

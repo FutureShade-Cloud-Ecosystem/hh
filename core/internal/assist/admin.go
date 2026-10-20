@@ -17,6 +17,7 @@ package assist
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -172,12 +173,23 @@ func (s *Service) SetSetting(ctx context.Context, key, value, actorID string) er
 	}
 	switch key {
 	case KeyProvider:
-		if value != ProviderStub && value != ProviderAnthropic {
-			return badArg("Provider must be %q or %q.", ProviderStub, ProviderAnthropic)
+		if value != ProviderStub && value != ProviderAnthropic && value != ProviderRouted {
+			return badArg("Provider must be %q, %q or %q.", ProviderStub, ProviderAnthropic, ProviderRouted)
 		}
 	case KeyModel:
 		if value == "" {
 			return badArg("The model name can't be empty.")
+		}
+		if !IsAliasName(value) {
+			// A model is chosen by alias. A vendor model name written here would be ignored, and an
+			// admin should be told that at once rather than discover it from the invoice.
+			return badArg("The model is chosen by alias: %s, %s, %s or %s.", AliasMain, AliasAlt, AliasPremium, AliasCA)
+		}
+	case KeyRoute:
+		for _, a := range strings.Split(value, ",") {
+			if !IsAliasName(strings.TrimSpace(a)) {
+				return badArg("The route is a comma separated list of aliases: %s, %s, %s, %s.", AliasMain, AliasAlt, AliasPremium, AliasCA)
+			}
 		}
 	case KeyChatEnabled, KeySpendVisibleToNonAdmin:
 		if !isTrue(value) && !isFalse(value) {

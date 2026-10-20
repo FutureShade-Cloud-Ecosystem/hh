@@ -19,6 +19,7 @@ import {
   type PurchasingTolerance,
   type Result,
 } from "@hardscapehouse/api-client";
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
 
 export class BillsApi {
   readonly #client: ApiClient;
@@ -27,7 +28,13 @@ export class BillsApi {
     this.#client = client;
   }
 
-  branches(): Promise<Result<Branch[]>> {
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
+  async branches(): Promise<Result<Branch[]>> {
+    serveBuyingZoneBeside(this.#client);
     return staffBranches.branchesList(this.#client);
   }
 
