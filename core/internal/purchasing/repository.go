@@ -302,8 +302,8 @@ func (r *Repository) UpdatePOLine(ctx context.Context, tx pgx.Tx, poID, lineID s
 // line count, its totals), and a device's pull must see the header
 // move even though the lines themselves are not a synced table.
 func bumpPOHeaderSeq(ctx context.Context, q querier, poID string) error {
-	if _, err := q.Exec(ctx, poSeqCTE+`
-		UPDATE purchasing_pos SET updated_at = now(), seq = (SELECT next_value FROM poseq) WHERE id = $1`,
+	if _, err := q.Exec(ctx, `
+		UPDATE purchasing_pos SET updated_at = now() WHERE id = $1`,
 		poID); err != nil {
 		return fmt.Errorf("purchasing: bump po header seq: %w", err)
 	}
@@ -315,13 +315,12 @@ func (r *Repository) ApplyWarrantyCredit(ctx context.Context, tx pgx.Tx, poID st
 	if r.pool == nil {
 		return errNoDB
 	}
-	tag, err := r.q(tx).Exec(ctx, poSeqCTE+`
+	tag, err := r.q(tx).Exec(ctx, `
 		UPDATE purchasing_pos
 		   SET warranty_credit_applied_cents = $2,
 		       warranty_claim_id = $3::uuid,
 		       net_total_cents = $4,
-		       updated_at = now(),
-		       seq = (SELECT next_value FROM poseq)
+		       updated_at = now()
 		 WHERE id = $1::uuid`, poID, creditCents, claimID, netTotalCents)
 	if err != nil {
 		return fmt.Errorf("purchasing: apply warranty credit: %w", err)
@@ -368,13 +367,12 @@ func (r *Repository) SetPOStatus(ctx context.Context, tx pgx.Tx, poID, status st
 	if r.pool == nil {
 		return errNoDB
 	}
-	_, err := r.q(tx).Exec(ctx, poSeqCTE+`
+	_, err := r.q(tx).Exec(ctx, `
 		UPDATE purchasing_pos
 		   SET status = $2,
 		       ordered_at = CASE WHEN $3 THEN now() ELSE ordered_at END,
 		       closed_at  = CASE WHEN $4 THEN now() ELSE closed_at  END,
-		       updated_at = now(),
-		       seq = (SELECT next_value FROM poseq)
+		       updated_at = now()
 		 WHERE id = $1`, poID, status, stampOrdered, stampClosed)
 	if err != nil {
 		return fmt.Errorf("purchasing: set po status: %w", err)
@@ -1079,7 +1077,7 @@ func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID str
 		address = *email
 	}
 	var v VendorMaster
-	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
+	err := r.pool.QueryRow(ctx, `
 		UPDATE vendors SET
 			name = COALESCE($2, name),
 			payment_terms_days = COALESCE($3, payment_terms_days),
@@ -1090,8 +1088,7 @@ func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID str
 			END,
 			is_active = COALESCE($4, is_active),
 			org_id = COALESCE(org_id, $7::uuid),
-			updated_at = now(),
-			seq = (SELECT next_value FROM vseq)
+			updated_at = now()
 		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $7::uuid)
 		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
 		vendorID, name, terms, isActive, setEmail, address, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)

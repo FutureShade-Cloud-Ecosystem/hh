@@ -494,6 +494,13 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 			// The stops draw their own scope's seq beside the move (the
 			// unassignment is a stop change a device's pull must see,
 			// same as the REST path's stamped AssignStop).
+			// The run's READY stops first, ascending, FOR NO KEY UPDATE (PR 556 round 3d): the statement below
+			// draws the stops counter in a CTE, which runs BEFORE it locks the rows it updates, and a single
+			// stop write holds one of those rows between its own lock and its draw. Rows first, then the
+			// counter. The run row is already held (the pre-image read).
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE run_id = $1::uuid AND status = 'READY' ORDER BY id FOR NO KEY UPDATE`, id); err != nil {
+				return sync.RowState{}, fmt.Errorf("dispatch: lock stops to unassign on sync cancel: %w", err)
+			}
 			if _, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 				UPDATE delivery_stops SET run_id = NULL, stop_no = 0, updated_at = now(),
 				       seq = (SELECT next_value FROM seq)
@@ -578,19 +585,18 @@ func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 		return sync.RowState{}, fmt.Errorf("dispatch: begin runs sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocateSyncSeqTx(ctx, tx, runsSyncScope)
-	if err != nil {
-		return sync.RowState{}, err
-	}
-	delArm, delArg := d.leg(runDriverCol, 4)
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
+	delArm, delArg := d.leg(runDriverCol, 3)
 	var deleted bool
+	var seq int64
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_runs SET
 			deleted_at = now(),
-			updated_at = now(),
-			seq        = $3
+			updated_at = now()
 		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+delArm+`
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
+		RETURNING (deleted_at IS NOT NULL), seq`, id, f.OrgID, delArg).Scan(&deleted, &seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

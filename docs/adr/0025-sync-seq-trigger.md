@@ -69,6 +69,9 @@ The database draws the seq when the writer did not.
   runs and a deadlock on one. The row lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`, because a stop write takes
   the `stops` counter and then `FOR KEY SHARE` on the run row at its foreign key check, and `FOR UPDATE` conflicts
   with that; `FOR NO KEY UPDATE` does not, and still conflicts with itself, so run writers keep queueing.
+  On a trigger table the row comes before the counter: rely on the trigger, or lock the row first. A single row
+  UPDATE that draws explicitly (a CTE, or a counter allocated ahead of it) with no earlier lock of its row takes the
+  counter first and crosses a writer that relies on the trigger; the catalogue refuses a new one.
 - **Hidden behaviour.** A comment at `syncSeqCTE` (`dispatch/syncscope.go`) and this record say so.
 
 ## Left out, and why

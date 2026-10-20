@@ -183,8 +183,8 @@ not pin one id, plus the loops of single row updates inside one transaction):
 | `dispatch/repository_w3.go` MoveRunDate stops, :434 | delivery_stops | run row, the run's stop rows ascending, then the stops counter (`lockRunThenStopsSeqTx`) | fixed; red then green, `TestIntegration_SeqTrigger_RunWritersBesideASingleStopWriteOnOneOfTheirStops` |
 | `dispatch/repository_loadboard.go` ReopenRun stops, :128 | delivery_stops | the same | fixed; same leg |
 | `dispatch/repository_freightraise.go` writeFreightSplitOn, :220 (a loop of single row UPDATEs in one transaction) | delivery_stops | the named stops ascending first, then the loop | fixed; red then green, `TestIntegration_SeqTrigger_FreightSplitBesideASingleStopWrite` |
-| `dispatch/syncscope_runs.go` cancel's un-assign, :498 | delivery_stops | one explicit draw inside the statement that locks the rows it updates | proven safe: the leg that drives it beside a single stop write is green with no fix, and a dump of the waits shows the stop write queued on the cancel's row (`transactionid`), so the cancel holds the rows before the draw (the leg stays as a guard) |
-| `dispatch/repository_w3.go` AttachPODPhotos, :327 | delivery_pod_photos | one explicit draw (one seq for every row) | explicit and once: counter first, a shape that predates the trigger; the only single row writer of the table (the pod store) locks its photo row, then draws; listed, not changed (not a trigger cycle) |
+| `dispatch/syncscope_runs.go` cancel's un-assign, about :501 | delivery_stops | the run's READY stop rows ascending `FOR NO KEY UPDATE`, then the statement (one explicit draw inside it) | **was wrongly rated "proven safe" in round 3b; fixed in round 3d.** The statement draws the stops counter in a CTE, which runs BEFORE the outer UPDATE locks the rows, so a single stop write holding one of those rows between its lock and its draw crossed it (S2's probe: real 40P01). The round 3b leg parked the cancel through an AFTER trigger, which cannot reach a CTE statement's window (see "The method" below). Red then green: `TestIntegration_DrawBeforeLock_SyncCancelUnassignBesideAStopWrite` |
+| `dispatch/repository_w3.go` AttachPODPhotos, about :330 | delivery_pod_photos | now a transaction: the stop's unattached photo rows ascending `FOR NO KEY UPDATE`, then the statement (one explicit draw, one seq for every row) | **was wrongly rated "not a trigger cycle" in round 3b; fixed in round 3d.** The pod store locks its photo row and then draws; the attach drew first and locked after. Red then green: `TestIntegration_DrawBeforeLock_AttachPODPhotosBesideAPhotoWrite` |
 | `identity/populate.go` StampPortalTenants, :253 | portal_users | one statement over every unstamped row | runs inside the populate step at provisioning, before the service takes traffic, alone |
 | `payments/repository.go` :187, :259 (clear the prior default) | portal_payment_methods | a partial unique index allows at most one default per account | proven single row |
 | `pricing/syncscope.go` :515 | pricing_list_prices | WHERE `product_id = $1` and the table's primary key is `product_id` | proven single row |
@@ -194,11 +194,8 @@ not pin one id, plus the loops of single row updates inside one transaction):
 The hard deletes of a served table are the two pending ones (procurement SF-12, dashboard SF-13), both outside
 the trigger's per row cost until their items turn them into tombstone updates.
 
-One finding outside this class, said plainly: a single row write that draws through the trigger takes the row
-first and the counter after; a single row write that draws EXPLICITLY (the CTE form) evaluates the counter first
-and locks the row after. Two such writers on the SAME row (a REST edit and a sync edit of one quote, say) cross.
-That is a property of mixing the two forms on one table, not of one writer; Postgres detects the cycle and aborts
-one side, rolled back whole; no writer was changed for it here.
+The mixed forms note of round 3b is now the rule (round 3c, below): **on a trigger table the row comes before the
+counter: rely on the trigger, or lock the row first.**
 
 ### The row lock strength sweep (PR 556, round 3)
 
@@ -210,14 +207,95 @@ sync cancel's pre-image, now `FOR NO KEY UPDATE`; stop create beside ReopenRun, 
 the last admin guard's customer row (`portal` `guardedAdminUpdate`, beside a team insert), and the credit memo
 (it now takes the order row, with the same `lockOrder` every invoice writer uses, and the invoice it reverses `FOR NO KEY UPDATE` before its insert, the order of steps
 1 and 3 above, beside an order row holder that then draws the invoices counter). Read and safe: the other
-`orders` lockers (every invoice writer takes the order row before the invoices counter, so there is no child
-write to meet; delivery stops and will call children are drawn by no order locker), the `payments` lockers
+`orders` lockers (`lockOrder` stays `FOR UPDATE` on `orders`: no order child draws a counter after the lock today, and
+it is THE lock to weaken to `FOR NO KEY UPDATE` if an order child ever joins the trigger, because a child's foreign
+key check takes `FOR KEY SHARE` on the order after the child's draw. Every invoice writer takes the order row before
+the invoices counter, so there is no child write to meet; delivery stops and will call children are drawn by no order locker), the `payments` lockers
 (the reversal and `MarkNSF` lock the parent first), `plan` (every plan line writer locks the plan row first),
 `tasks` (every shortage writer locks the task row before the shortages counter), `portal_users`,
 `warranty_claims`, `uoms` (no child counter drawn after the lock), the `delivery_stops` lockers (the only child,
 a pod photo, draws a counter no stop locker takes; the pod store locks the photo row, `FOR UPDATE OF p`), the
 `FOR UPDATE` statements whose `locations` is only in a subquery (a subquery's rows are not locked), and the
 statements that lock a joined table `OF` another.
+
+### Draw before lock (PR 556, rounds 3c and 3d)
+
+**The rule: on a trigger table the row comes before the counter. Rely on the trigger, or lock the row first.**
+
+A write that relies on the trigger takes the row, then the counter (the BEFORE trigger fires after the row lock). A
+statement that draws EXPLICITLY, either in a data modifying CTE (`WITH seq AS (INSERT INTO scope_sequences ...)
+UPDATE ... SET seq = (SELECT next_value FROM seq)`) or as a counter allocated by a helper before the UPDATE, takes
+the counter first when it has not locked the row, and the CTE form evaluates its draw when it builds the new row,
+before the UPDATE locks it. Two such writers on one row cross. Before the trigger the first kind drew nothing, so
+the trigger made the pair.
+
+**The fix, and where each writer stood.** An explicit draw is dropped from a single row UPDATE on a trigger table
+unless the same function locks that row first; the trigger draws, and `RETURNING seq` answers the value (the legs
+prove it where a statement returns it). INSERTs keep their explicit draws (a new row has no lock to cross).
+
+| Table | Writers changed (explicit draw dropped) | Leg (red at 099f2e27, green after) |
+|---|---|---|
+| delivery_stops | `AssignStop`, `UpdateStopStatus`, `SetPOD`, `MarkHandoff`, `ReopenStop`, `CommitStopDate`, `UpdateLoadFacts`, `MoveStopDate`, the sync `Delete` | `TestIntegration_DrawBeforeLock_AssignStopBesideAStopWrite` |
+| delivery_runs | `AssignRunCrew`, `UpdateRunStatus`, the sync `Delete` | `..._AssignRunCrewBesideARunWrite` |
+| count_sheets | freeze, save counts, approve, cancel, mark posted | `..._CancelSheetBesideASheetWrite` (invcount) |
+| purchasing_pos | `bumpPOHeaderSeq`, `ApplyWarrantyCredit`, `SetPOStatus`, `UpdateExpectedAt`, `UpdateDeliveryMethod` | `..._PurchasingPOWriterBesideAPOWrite` |
+| vendors | `UpdateVendorMaster` | `..._VendorMasterWriterBesideAVendorWrite` |
+| permission_approval_requests | `SaveDecision`, `SaveDecisionTx`, `ConsumeApprovedFloorTx` | `..._ApprovalDecideBesideARequestWrite` (sync package) |
+| portal_users | `UpdateRole`, `UpdateStatus`, plain and under the last admin guard | `..._TeamMemberWritersBesideAUserWrite` |
+| quotes | the customer side `transition` (Reject, Accept paths) | `..._QuoteTransitionBesideAQuoteWrite` (also proves the quote's seq moved) |
+| customer_quote | `UpdateDraftQuote`, the sync `Delete` | `..._DraftEditBesideAQuoteWrite` (also proves the seq moved) |
+| attachment, plan, plan_line, task_shortages | the sync `Delete` of each; `tasks.ResolveShortage` | `..._AttachmentTombstoneBesideAWrite`, `..._PlanTombstonesBesideAWrite` (both tables), `..._ShortageTombstoneBesideAWrite` |
+
+Kept explicit, each with its reason in the catalogue's accepted list (`drawBeforeLockAccepted`, which refuses a
+new site until it names one):
+
+- the money and invoice statements `payments.applyAllocations`, `payments.AllocateToInvoiceTx` and
+  `billing.clearDepositDocument`: the caller already holds the invoice row `FOR NO KEY UPDATE` (the money lock
+  order, steps 2 to 4);
+- `quote.recomputeTotals` and `quote.UpdateValidUntilGuarded`: `lockQuoteForEdit` took the quote row first;
+- `customerquote.RotateOnSend`, `RetireOnRevise`, `FlipAcceptedTx`: the service loaded the quote with `GetQuoteLockTx`
+  (`FOR UPDATE`) first;
+- `dispatch.ConfirmPickup`, `RevokePickup`: `withWillCallSeq` takes the pickup row `FOR UPDATE` before it draws;
+- the sync stores' `Write` paths: they lock the row `FOR UPDATE` or `FOR NO KEY UPDATE` and then allocate (the lock
+  is in the same function, so the check passes them without an entry);
+- multi row statements are the round 3b class, not this one.
+
+No writer needed its seq value before the UPDATE, so none took the lock-first path; the lock-first path is what the
+accepted entries above already are.
+
+**OPEN, reported to the lead: loader batches.** `product.ApplyAttached` and `customer.Apply` run inside the load
+door's claim transaction, one savepoint per item. The batch takes the table's scope row (the counter) before any row
+of an item (LD-5, `landedUnitSetRefusal` for products) and holds it to the batch's commit. A trigger relying single
+row writer of the same product or customer (the REST edit) holds the row and wants the counter, while the batch
+holds the counter and wants that row: a cycle, rare (the same product edited while a load that names it runs) and
+detected by Postgres, which aborts one side. Dropping the loader's explicit draw changes nothing about this order,
+and putting the row first would reopen the batch against batch deadlock LD-5 closes. It needs a ruling and is left
+as it was; the catalogue lists both sites in `drawBeforeLockAccepted` marked OPEN.
+
+**The method.** A leg that parks a writer through an AFTER trigger on `scope_sequences` cannot stand a CTE statement
+in its draw before lock window: a data modifying CTE's AFTER triggers fire at the end of the whole statement, after
+the outer UPDATE has locked every row. Every draw before lock leg here parks the OTHER writer, the single row writer
+that relies on the trigger, between its row lock and its draw with a BEFORE INSERT trigger on `scope_sequences`
+(`testkit.DrawPark`), then runs the writer under test on the same row; the park is released only when that writer is
+seen waiting.
+
+**Verdicts rechecked.** Every "safe" or "proven" verdict of rounds 3 and 3b that rested on an AFTER trigger park was
+listed. An AFTER park is valid when the parked writer takes its counter in a standalone statement, through a row
+trigger (the AFTER trigger fires at the end of the nested upsert, row held), or by an INSERT (the foreign key checks
+are AFTER triggers queued after the counter's); it is invalid only for a CTE UPDATE.
+
+| Verdict | Old leg and its park | Park valid? | New result | Fix |
+|---|---|---|---|---|
+| sync cancel un-assign "proven safe" | `RunWritersBesideASingleStopWrite`, cancel parked through AFTER | no (CTE UPDATE) | red, 40P01 | stop rows ascending first |
+| AttachPODPhotos "not a trigger cycle" | none, read only | n/a | red, 40P01 | now a transaction, photo rows ascending first |
+| ReopenRun stops UPDATE (CTE) | `RunWritersBesideASingleStopWrite`, ReopenRun parked through AFTER | no | re-proved with the single stop write parked: green, red when its stop row lock is removed (both stops) | none needed, the round 3b stop row lock holds |
+| MoveRunDate stops (row trigger) | the same leg | yes | re-proved the same way: green, red when the stop row lock is removed (both stops) | none |
+| freight split loop (row trigger) | `FreightSplitBesideASingleStopWrite` | yes | re-proved: green; red on the stop it visits SECOND when its stop row lock is removed | none |
+| freight raise apply, mint before split | none | n/a | red, 40P01 (S2's P2-2) | the order's live loads ascending first |
+| batch payment writers beside a reversal | `BatchStatusWritersBesideAReversalOfAMember`, batch parked in the rig window | yes (row trigger, mid statement) | unchanged, green; one of the two members is red per writer before the fix because the UPDATE visits one of them second, and the leg reverses each member in turn so it is covered whichever that is | none |
+| credit memo beside an order or invoice holder | `lockorder_creditmemo_integration_test.go`, memo parked through AFTER | yes (INSERT: foreign key checks fire after) | unchanged, green | none |
+| last admin guard beside a team insert | `AdminGuardBesideATeamInsertOnTheSameCustomer`, insert parked through AFTER | yes (INSERT) | unchanged, green | none |
+| POS return legs (internal/order, cmd/core) | return parked through AFTER on the invoices counter | yes (the account credit locks the invoice row in its first CTE term, so the AFTER trigger fires with the row held, the order the writer really takes) | unchanged, green | none |
 
 ## The legs
 
