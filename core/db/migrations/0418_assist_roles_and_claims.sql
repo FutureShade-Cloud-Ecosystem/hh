@@ -107,11 +107,10 @@ BEGIN
     EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', r, app);
   END LOOP;
   EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', app);
-  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ai GRANT EXECUTE ON FUNCTIONS TO %I', app, app);
-  EXECUTE 'REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai FROM PUBLIC';
-  EXECUTE 'REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai_pro FROM PUBLIC';
-  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ai REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', app);
-  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ai_pro REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', app);
+  -- Functions the two owners create in ai and ai_pro start closed too (a schema level
+  -- default cannot subtract the global PUBLIC default, so this is the global form).
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', v_view);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', v_claims);
 
   -- The claims owner alone runs pgcrypto's hmac (the one function outside ai it needs).
   SELECT n.nspname INTO crypto_schema FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
@@ -120,6 +119,100 @@ BEGIN
     RAISE EXCEPTION 'pgcrypto is not installed (migration 0001 creates it)';
   END IF;
   EXECUTE format('GRANT EXECUTE ON FUNCTION %I.hmac(text, text, text) TO %I', crypto_schema, v_claims);
+
+  -- The claims key and the verifier, created under the claims owner (plan 3.1a) so they
+  -- are owned by it by construction. The key table is readable by nobody else.
+  EXECUTE format('SET LOCAL ROLE %I', v_claims);
+  CREATE TABLE IF NOT EXISTS ai.claims_key (
+    key_id     integer     PRIMARY KEY,
+    key        text        NOT NULL CHECK (length(key) >= 32),
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  -- The verifier's composite return type. Its fields are the claims of plan 3.2; pid,
+  -- exp and nonce ride along so the signed payload and the returned record share a shape.
+  IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+                 WHERE n.nspname = 'ai' AND t.typname = 'claim_set') THEN
+    CREATE TYPE ai.claim_set AS (
+      audience        text,
+      asker_id        text,
+      customer_id     uuid,
+      global          boolean,
+      branch_ids      uuid[],
+      cost_branch_ids uuid[],
+      margin          boolean,
+      payment_trail   boolean,
+      pii_classes     text[],
+      capabilities    text[],
+      channel_ids     uuid[],
+      pid             integer,
+      exp             bigint,
+      nonce           text
+    );
+  END IF;
+  -- The wire format is  v1.<key id>.<base64 of the JSON payload>.<hex HMAC SHA 256>  where the
+  -- MAC covers everything before its dot. The MAC check compares the HMAC of each hex string
+  -- under the same key, so how long a forged MAC matches the real one cannot show in timing.
+  -- Any failure returns NULL; nothing here raises or echoes the payload.
+  EXECUTE format($def$
+    CREATE OR REPLACE FUNCTION ai.claims() RETURNS ai.claim_set
+    LANGUAGE plpgsql STABLE PARALLEL SAFE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $body$
+    DECLARE
+      raw      pg_catalog.text;
+      parts    pg_catalog.text[];
+      kid      pg_catalog.int4;
+      k        pg_catalog.text;
+      signed   pg_catalog.text;
+      expected pg_catalog.text;
+      payload  pg_catalog.jsonb;
+      c        ai.claim_set;
+    BEGIN
+      raw := pg_catalog.current_setting('ai.claims', true);
+      IF raw IS NULL OR raw = '' THEN
+        RETURN NULL;
+      END IF;
+      parts := pg_catalog.string_to_array(raw, '.');
+      IF pg_catalog.array_length(parts, 1) IS DISTINCT FROM 4 OR parts[1] <> 'v1' THEN
+        RETURN NULL;
+      END IF;
+      kid := parts[2]::pg_catalog.int4;
+      SELECT ck.key INTO k FROM ai.claims_key ck
+       WHERE ck.key_id = kid
+         AND ck.key_id IN (SELECT ck2.key_id FROM ai.claims_key ck2 ORDER BY ck2.key_id DESC LIMIT 2);
+      IF k IS NULL THEN
+        RETURN NULL;
+      END IF;
+      signed := parts[1] || '.' || parts[2] || '.' || parts[3];
+      expected := pg_catalog.encode(%1$I.hmac(signed, k, 'sha256'), 'hex');
+      IF pg_catalog.encode(%1$I.hmac(parts[4], k, 'sha256'), 'hex')
+         IS DISTINCT FROM pg_catalog.encode(%1$I.hmac(expected, k, 'sha256'), 'hex') THEN
+        RETURN NULL;
+      END IF;
+      payload := pg_catalog.convert_from(pg_catalog.decode(parts[3], 'base64'), 'UTF8')::pg_catalog.jsonb;
+      c := pg_catalog.jsonb_populate_record(NULL::ai.claim_set, payload);
+      IF c.pid IS DISTINCT FROM pg_catalog.pg_backend_pid() THEN
+        RETURN NULL;
+      END IF;
+      IF c.exp IS NULL OR c.exp < pg_catalog.date_part('epoch', pg_catalog.now())::pg_catalog.int8 THEN
+        RETURN NULL;
+      END IF;
+      IF c.audience IS NULL OR c.audience NOT IN ('staff', 'pro') OR c.asker_id IS NULL THEN
+        RETURN NULL;
+      END IF;
+      RETURN c;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN NULL;
+    END
+    $body$
+  $def$, crypto_schema);
+  RESET ROLE;
+
+  -- Who may call the verifier: the two readers (Postgres checks EXECUTE against the
+  -- invoker even inside a view), and nobody else.
+  REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai FROM PUBLIC;
+  REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ai_pro FROM PUBLIC;
+  EXECUTE format('GRANT EXECUTE ON FUNCTION ai.claims() TO %I, %I', v_reader, v_pro);
 
   -- TEMP is granted to PUBLIC on every database by default; keep it for the app role only.
   EXECUTE format('REVOKE TEMP ON DATABASE %I FROM PUBLIC', db);
