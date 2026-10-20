@@ -211,17 +211,23 @@ export class InMemoryTenantSession implements TenantSession {
   }
 
   async #readMe(generation: number): Promise<Result<TenantProfile>> {
+    const asked = this.#sessions.current?.token ?? null;
     const answer = await tenantAuth.tenantGetMe(this.#client);
-    if (generation !== this.#generation) return err(REPLACED_WORDS);
-    if (!answer.ok) {
-      if (answer.status === 401 || answer.status === 403) {
+    // A refusal is read before the generation: the core refused the token it was asked with, so that token goes
+    // whatever call is newest. Only a success or a non-refusal failure of a superseded call is dropped as replaced.
+    if (!answer.ok && (answer.status === 401 || answer.status === 403)) {
+      const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : CANNOT_OPEN_WORDS;
+      if (asked !== null && this.#sessions.current?.token === asked) {
         const ended = this.#clearCustody();
         this.#profile = null;
         this.#notify();
         await ended;
-        const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : CANNOT_OPEN_WORDS;
         return err(words, answer.status);
       }
+      return generation !== this.#generation ? err(REPLACED_WORDS) : err(words, answer.status);
+    }
+    if (generation !== this.#generation) return err(REPLACED_WORDS);
+    if (!answer.ok) {
       return answer.status === undefined ? err(UNAVAILABLE_WORDS) : err(UNAVAILABLE_WORDS, answer.status);
     }
     const me = answer.value;

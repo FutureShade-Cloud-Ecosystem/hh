@@ -355,3 +355,71 @@ test("a 403 from tenant me clears custody and signs the person out, while a netw
   assert.equal(session.profile().role, "ap_finance");
 });
 
+
+// A refusal clears the token it was asked with, whatever the generation; a stale success or failure is dropped.
+function scriptedRig() {
+  const meGates = [];
+  const adapter = {
+    signIn: async (email) => ({ ok: true, value: { token: SECRET_TOKEN, expiresAtMs: NOW + 3_600_000, user: { userId: "u-1", email, name: "Contractor owner" } } }),
+    signOut: async () => {},
+  };
+  const fetchLike = async () => {
+    const g = gate();
+    meGates.push(g);
+    const answer = await g.promise;
+    if (answer === "network") throw new Error("network down");
+    const ok = answer === 200;
+    return { status: answer, ok, text: async () => JSON.stringify(ok ? me("ap_finance") : { error: "refused" }), arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  return { session: new InMemoryTenantSession({ adapter, fetch: fetchLike, now: () => NOW }), meGates };
+}
+
+test("an older check's 401 clears the token even after a newer check's network failure", async () => {
+  const { session, meGates } = scriptedRig();
+  const signedIn = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  meGates[0].open("network");
+  assert.equal((await signedIn).ok, false);
+  assert.notEqual(session.current(), null, "a network failure keeps the token");
+  const older = session.check();
+  await tick();
+  const newer = session.check();
+  await tick();
+  meGates[2].open("network");
+  assert.equal((await newer).ok, false);
+  meGates[1].open(401);
+  const result = await older;
+  assert.equal(result.ok, false);
+  assert.equal(session.current(), null, "no refused token is held");
+  assert.equal(session.profile(), null);
+});
+
+test("a sign in's late 401 clears the token even after a check started beside it", async () => {
+  const { session, meGates } = scriptedRig();
+  const signedIn = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  const check = session.check();
+  await tick();
+  meGates[1].open("network");
+  assert.equal((await check).ok, false);
+  meGates[0].open(401);
+  assert.equal((await signedIn).ok, false);
+  assert.equal(session.current(), null, "no refused token is held");
+});
+
+test("a stale success is still dropped and holds no profile", async () => {
+  const { session, meGates } = scriptedRig();
+  const signedIn = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  meGates[0].open("network");
+  await signedIn;
+  const older = session.check();
+  await tick();
+  const newer = session.check();
+  await tick();
+  meGates[2].open("network");
+  await newer;
+  meGates[1].open(200);
+  assert.equal((await older).ok, false);
+  assert.equal(session.profile(), null);
+});
