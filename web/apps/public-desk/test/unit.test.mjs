@@ -26,7 +26,7 @@ import {
   statusBadgeLabel,
   totalsBlock,
 } from "../src/_quote-public.js";
-import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "../src/format.js";
+import { formatMoney, plainDay, plainWhen, quantityLabel, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "../src/format.js";
 import { createHash } from "node:crypto";
 import { createAcceptKeys, deriveAcceptKey } from "../src/accept-key.js";
 import { isKeyReuseRefusal, validateAcceptance, validateQuoteView } from "../src/quote-client.js";
@@ -417,9 +417,9 @@ test("the quote number carries its mark once, whichever way the core serves it",
 });
 
 test("a moment and a day read in the page's own words, never as raw stamps", () => {
-  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]+ \d{1,2}, \d{4} at \d{1,2}:\d{2} [ap]\.m\. \S+$/);
+  assert.match(plainWhen("2026-10-06T19:49:47Z"), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M$/);
   assert.equal(plainWhen("not a time"), "not a time", "an unreadable stamp is shown as it arrived, never invented");
-  assert.equal(plainDay("2026-10-27"), "October 27, 2026");
+  assert.equal(plainDay("2026-10-27"), "Oct 27, 2026");
   assert.equal(plainDay("2026-02-31"), "2026-02-31", "a day that does not exist is shown as it arrived");
   assert.equal(plainDay("soon"), "soon");
 });
@@ -598,4 +598,14 @@ test("validateQuoteView reads the line's optional flag as sent, and absent is ho
   // Absent defaults false: an old server cannot add optional add-ons silently.
   const withoutOptional = validateQuoteView(FULL_VIEW);
   assert.equal(withoutOptional.lines[0].optional, false);
+});
+
+test("quantityLabel: the unit after the figure, no trailing zeros, catalogue codes said in words", () => {
+  assert.equal(quantityLabel("200.0000", "SF"), "200 sq ft");
+  assert.equal(quantityLabel("1.5000", "T"), "1.5 T");
+  assert.equal(quantityLabel("30.0000", "PC"), "30 pc");
+  assert.equal(quantityLabel("2.2500", "CYD"), "2.25 cu yd");
+  assert.equal(quantityLabel("1200.0000", "BAG"), "1,200 bag");
+  assert.equal(quantityLabel("3", "ZZ"), "3 ZZ", "an unknown unit code is shown as served");
+  assert.equal(quantityLabel("", "PC"), "", "no figure, nothing invented");
 });

@@ -3,6 +3,7 @@
 // surfaces), the seeded role to shape catalog, the cell summary words, the
 // item set's shape checks in the core's own words, and the door's calls.
 import { test } from "node:test";
+import { houseZone, resetHouseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { ConfigApi } from "../src/config-api.js";
@@ -266,4 +267,14 @@ test("a bounded pool runs every task and never more than the limit at once", asy
   });
   assert.equal(done.length, 20);
   assert.equal(peak, 4);
+});
+
+test("the cell read serves the dealer's business day zone for the trail's time words", async () => {
+  const { api } = apiAnswering({ body: { surface_id: "counter-till", profile: "counter", items_profile: "counter", role_items: [], user_items: [], business_zone: "America/Los_Angeles" } });
+  try {
+    assert.equal((await api.surfaceConfig("counter-till", "counter")).ok, true);
+    assert.equal(houseZone(), "America/Los_Angeles");
+  } finally {
+    resetHouseZone();
+  }
 });

@@ -405,6 +405,8 @@ func (h *Handler) writeYardErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusServiceUnavailable, "yard order changes not configured")
 	case errors.Is(err, ErrAboveOrdered):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrNotHolder):
+		httpx.Error(w, http.StatusConflict, ErrNotHolderWords)
 	case errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrShortageResolved):

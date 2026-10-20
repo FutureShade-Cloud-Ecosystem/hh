@@ -83,6 +83,7 @@ export class HouseMessagesApp extends HHElement {
       new MessagesApi(this.#staffClient),
       {
         repaint: () => this.requestUpdate(),
+        afterPaint: (run) => void this.updateComplete.then(run),
         find: (selector) => this.renderRoot.querySelector(selector),
         now: () => Date.now(),
         openStream: (url) => new EventSource(streamUrlOnCore(this.#custody.coreBaseUrl, url)),
@@ -151,6 +152,11 @@ export class HouseMessagesApp extends HHElement {
     if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) this.#desk?.typed(target);
   };
 
+  // A key pressed anywhere in the page: the desk keeps the delete confirm's Escape and Tab.
+  readonly #onHostKey = (event: KeyboardEvent): void => {
+    if (this.#desk?.key(event) === true) event.preventDefault();
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     void readDealerName().then((name) => {
@@ -158,6 +164,7 @@ export class HouseMessagesApp extends HHElement {
       this.requestUpdate();
     });
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("keydown", this.#onHostKey);
     this.renderRoot.addEventListener("input", this.#onHostInput);
     if (this.#custody.mode === "console") {
       this.#custody.begin("house-messages", (outcome) => this.#onRecovered(outcome));

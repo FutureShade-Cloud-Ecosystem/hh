@@ -497,19 +497,28 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, branch string
+	var from, branch, claimedBy string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, COALESCE(branch_id::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &branch); err != nil {
+		`SELECT status, COALESCE(branch_id::text, ''), COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&from, &branch, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for sync write: %w", id, err)
 	}
-	// Stage is held to the task's branch as the direct door is (UX-77), on the locked row.
-	if s.staff != nil && ((hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != "") {
+	// Stage is held to the task's branch as the direct door is (UX-77), on the locked row, and the fence runs
+	// before the holder check so a holder refusal never tells another branch's caller that the pick exists.
+	stageOp := (hasStatus && status == StatusStaged) || stageLocation != "" || stageRef != ""
+	if s.staff != nil && stageOp {
 		if err := syncBranchFence(ctx, s.staff, f, branch); err != nil {
 			return sync.RowState{}, err
+		}
+	}
+	// Stage is the holder's act (UX-76): the move to STAGED and the stage legs are compared with the claim
+	// on the locked row. The claim itself, the start and the other moves keep their own rules.
+	if stageOp {
+		if notHolder(claimedBy, actor) {
+			return sync.RowState{}, refused(ErrNotHolder)
 		}
 	}
 	to := from

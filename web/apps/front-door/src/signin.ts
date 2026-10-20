@@ -10,6 +10,7 @@
 // no status codes, no dashes.
 import type { SignInFailureReason } from "@hardscapehouse/auth";
 import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { LIVE_ROLES, type LiveRole } from "./roles.js";
 
 /** The dealer's name and optional branch line from the tenant configuration. */
@@ -130,5 +131,58 @@ export async function fetchMethods(
 
 /** The live role a role code lands on, or null when this site has no screens for it yet. */
 export function landingFor(roleCode: string): LiveRole | null {
-  return LIVE_ROLES.find((role) => role.id === roleCode) ?? null;
+  const exact = LIVE_ROLES.find((role) => role.id === roleCode);
+  if (exact !== undefined) return exact;
+  return heldRolesFor(roleCode)[0] ?? null;
+}
+
+/** The live roles a signed-in person holds, in order, without duplicates. */
+export function heldRolesFor(roleCode: string): LiveRole[] {
+  const codes = roleCode
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  const out: LiveRole[] = [];
+  for (const code of codes) {
+    const live = LIVE_ROLES.find((role) => role.id === code);
+    if (live !== undefined && !out.includes(live)) out.push(live);
+  }
+  return out;
+}
+
+/** The person's first name for the role picker greeting, stripped of any parenthetical suffix. */
+export function firstNameOf(name: string): string {
+  const cleaned = name.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  const token = cleaned.split(/\s+/)[0] ?? "";
+  return token;
+}
+
+export type DayPeriod = "morning" | "afternoon" | "evening";
+
+/** Period of the clock in the dealer's house zone (never the device's zone). */
+export function dayPeriodInZone(now: Date = new Date(), zone: string = houseZone()): DayPeriod {
+  let hour = 9;
+  try {
+    const formatted = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).format(now);
+    const parsed = Number.parseInt(formatted, 10);
+    if (Number.isFinite(parsed)) hour = parsed;
+  } catch {
+    // Keep morning fallback if Intl fails on an unrecognised zone.
+  }
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17) return "evening";
+  return "morning";
+}
+
+/** Greeting heading for the role and branch picker card. */
+export function pickerGreeting(name: string, now: Date = new Date(), zone: string = houseZone()): string {
+  const first = firstNameOf(name);
+  const period = dayPeriodInZone(now, zone);
+  return first === ""
+    ? `Good ${period}. What are you working on today?`
+    : `Good ${period}, ${first}. What are you working on today?`;
 }
