@@ -473,8 +473,26 @@ export const CORE_PICK_CANCELLED = "this pick was cancelled, its record cannot c
 export const NOT_HOLDER_WORDS = "Someone else is on this pick.";
 const CORE_NOT_HOLDER = "someone else is on this pick";
 
+/** A cancel from a person who neither holds the pick nor is a yard manager (UX-76b). */
+export const CANCEL_NOT_ALLOWED_WORDS = "Only the person on this pick or a yard manager can cancel it.";
+const CORE_CANCEL_NOT_ALLOWED = "only the holder or a yard manager may cancel this pick";
+
+/** A yard write from a sign in with no linked staff account (UX-76b). */
+export const NO_ACTOR_WORDS = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.";
+const CORE_NO_ACTOR = "this sign in is not linked to a staff account";
+
+/** The core's holder-rule refusals, as one plain line each; empty when the text is none of them. */
+function holderRuleWords(text: string): string {
+  const t = text.toLowerCase();
+  if (t.includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
+  if (t.includes(CORE_CANCEL_NOT_ALLOWED) || t.includes("cancel it")) return CANCEL_NOT_ALLOWED_WORDS;
+  if (t.includes(CORE_NO_ACTOR) || t.includes("sign in is not linked")) return NO_ACTOR_WORDS;
+  return "";
+}
+
 export function recordRefusalWords(error: string): string {
-  if (error.toLowerCase().includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
+  const rule = holderRuleWords(error);
+  if (rule !== "") return rule;
   if (error.includes(CORE_PICK_DONE)) {
     return "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
   }
@@ -720,6 +738,8 @@ export function yardError(
   words: { notFound?: string; wall?: readonly string[]; wallSentence?: string; taken?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
+  const rule0 = holderRuleWords(plainSentence(error));
+  if (rule0 !== "" && status !== 401) return rule0;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
   if (status === 403) {
     // The gate's bare body is the one 403 with no sentence: a list wall. It
@@ -740,7 +760,6 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
-  if (plain.toLowerCase().includes(CORE_NOT_HOLDER)) return NOT_HOLDER_WORDS;
   // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
   if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;
