@@ -38,6 +38,9 @@ export class HHBranchChooser extends LitElement {
   /** What the confirm says, naming where it goes ("Open the Counter Till"). */
   @property({ attribute: "action-label" }) actionLabel = "Continue";
   @state() private chosen = "";
+  /** Where focus was before the chooser showed, so a confirm can give it back. */
+  private opener: HTMLElement | null = null;
+  private focused = false;
   @state() private nudge = false;
 
   static override styles = css`
@@ -47,11 +50,15 @@ export class HHBranchChooser extends LitElement {
     }
     .stage {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       place-items: start center;
       padding: var(--hh-s-40) var(--hh-s-16);
     }
     .card {
       width: min(100%, 440px);
+      min-width: 0;
+      box-sizing: border-box;
+      justify-self: center;
       display: grid;
       gap: var(--hh-s-16);
       padding: var(--hh-s-24);
@@ -138,19 +145,45 @@ export class HHBranchChooser extends LitElement {
       border-radius: var(--hh-radius-control);
       cursor: pointer;
     }
+    .back {
+      justify-self: center;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--hh-text);
+    }
+    .back:focus-visible {
+      outline: 2px solid var(--hh-focus-ring);
+      outline-offset: 2px;
+    }
     .nudge {
       color: var(--hh-text);
     }
   `;
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    const active = document.activeElement;
+    this.opener = active instanceof HTMLElement && active !== document.body ? active : null;
+  }
+
+  protected override updated(): void {
+    if (this.focused || this.branches.length === 0) return;
+    this.focused = true;
+    const stop = this.renderRoot.querySelector<HTMLElement>('[role="radio"][tabindex="0"]');
+    stop?.focus();
+  }
+
   protected override render(): TemplateResult {
     const stop = this.branches.some((branch) => branch.id === this.chosen) ? this.chosen : (this.branches[0]?.id ?? "");
     return html`
       <div class="stage" data-testid="branch-chooser">
-        <section class="card" aria-labelledby="chooser-title">
+        <section class="card" aria-labelledby="chooser-title" @keydown=${this.onCardKey}>
           <h2 id="chooser-title">Which branch are you working today?</h2>
           <p>Your role reaches more than one. Pick the branch for this window.</p>
-          <div class="list" role="radiogroup" aria-labelledby="chooser-title" @keydown=${this.onKey}>
+          <div class="list" role="radiogroup" aria-labelledby="chooser-title">
             ${this.branches.map((branch) => {
               const checked = branch.id === this.chosen;
               return html`
@@ -171,6 +204,7 @@ export class HHBranchChooser extends LitElement {
           </div>
           ${this.nudge ? html`<p class="nudge" role="alert" data-testid="branch-chooser-nudge">Pick a branch to continue.</p>` : nothing}
           <button type="button" class="confirm" data-testid="branch-chooser-confirm" @click=${this.confirm}>${this.actionLabel}</button>
+          <a class="back" href="/">Change role</a>
         </section>
       </div>
     `;
@@ -188,7 +222,28 @@ export class HHBranchChooser extends LitElement {
   }
 
   /** Arrows move the choice and the focus together, as a radio group does. */
-  private readonly onKey = (event: KeyboardEvent): void => {
+  private readonly onCardKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      // A branch is required: Escape does not dismiss the chooser. "Change role" is the way back.
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "Tab") {
+      const stops = Array.from(this.renderRoot.querySelectorAll<HTMLElement>('[role="radio"][tabindex="0"], .confirm, .back'));
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      const at = this.shadowRoot?.activeElement;
+      if (first !== undefined && last !== undefined) {
+        if (!event.shiftKey && at === last) {
+          event.preventDefault();
+          first.focus();
+        } else if (event.shiftKey && at === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      }
+      return;
+    }
     const forward = event.key === "ArrowDown" || event.key === "ArrowRight";
     if (!forward && event.key !== "ArrowUp" && event.key !== "ArrowLeft") return;
     if (this.branches.length === 0) return;
@@ -211,5 +266,6 @@ export class HHBranchChooser extends LitElement {
     }
     writeSessionBranchIds([this.chosen]);
     this.dispatchEvent(new CustomEvent(BRANCH_CHOSEN_EVENT, { detail: { id: this.chosen }, bubbles: true, composed: true }));
+    if (this.opener?.isConnected) this.opener.focus();
   };
 }

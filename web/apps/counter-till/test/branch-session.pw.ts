@@ -67,6 +67,8 @@ const keyIds = (page: Page) =>
 
 const ready = (page: Page) => page.locator("hos-pos-terminal");
 
+const NORTH = { id: "6f1c2b3a-0000-4000-8000-000000000003", code: "NTH", name: "North Yard" };
+
 async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.UX79_SHOTS;
   if (dir !== undefined && dir !== "") await page.screenshot({ path: `${dir}/${name}.png` });
@@ -160,6 +162,9 @@ for (const theme of ["light", "dark"] as const) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
       const radios = page.getByRole("radiogroup", { name: /which branch/i }).getByRole("radio");
       await radios.nth(1).click();
+      const card = await page.locator("hh-branch-chooser .card").boundingBox();
+      expect(card!.x).toBeGreaterThan(0);
+      expect(card!.x + card!.width).toBeLessThanOrEqual(width);
       for (const control of [radios.nth(0), radios.nth(1), page.getByTestId("branch-chooser-confirm")]) {
         const box = await control.boundingBox();
         expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -168,3 +173,68 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+test("the chooser takes focus on showing, Tab stays inside it, Escape keeps it, and Change role leads back to the front door", async ({ page }) => {
+  await grant(page, [WEST, EAST]);
+  await arrive(page, { ids: [WEST.id, EAST.id] });
+  await page.goto("/");
+  await expect(page.getByTestId("branch-chooser")).toBeVisible({ timeout: 15_000 });
+  const radios = page.getByRole("radiogroup", { name: /which branch/i }).getByRole("radio");
+  const confirm = page.getByTestId("branch-chooser-confirm");
+  const back = page.getByRole("link", { name: "Change role" });
+  await expect(radios.nth(0)).toBeFocused();
+  await expect(back).toHaveAttribute("href", "/");
+  await page.keyboard.press("Tab");
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(back).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(radios.nth(0)).toBeFocused(); // wrapped, never out to the shell
+  await page.keyboard.press("Shift+Tab");
+  await expect(back).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("branch-chooser")).toBeVisible();
+  await expect(back).toBeFocused();
+  await expect(ready(page)).toHaveCount(0);
+  // With a pick made, the tab stop and the opening focus follow the checked branch.
+  await radios.nth(1).click();
+  await expect(radios.nth(1)).toHaveAttribute("tabindex", "0");
+});
+
+test("after the confirm, focus goes back to where it was before the chooser showed", async ({ page }) => {
+  await grant(page, [WEST, EAST]);
+  await arrive(page, { ids: [WEST.id, EAST.id] });
+  await page.goto("/");
+  await expect(page.getByTestId("branch-chooser")).toBeVisible({ timeout: 15_000 });
+  // The same element, mounted by hand over a focused button: the button gets focus back after a confirm.
+  const back = await page.evaluate(
+    async ({ west, east }) => {
+      const opener = document.createElement("button");
+      opener.id = "opener";
+      document.body.append(opener);
+      opener.focus();
+      const chooser = document.createElement("hh-branch-chooser");
+      chooser.setAttribute("data-branches", JSON.stringify([west, east]));
+      document.body.append(chooser);
+      await (chooser as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+      const inside = document.activeElement === chooser;
+      const radio = chooser.shadowRoot!.querySelector<HTMLElement>('[role="radio"]')!;
+      radio.click();
+      chooser.shadowRoot!.querySelector<HTMLElement>('[data-testid="branch-chooser-confirm"]')!.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { inside, restored: document.activeElement === opener };
+    },
+    { west: { id: WEST.id, name: WEST.name }, east: { id: EAST.id, name: EAST.name } },
+  );
+  expect(back).toEqual({ inside: true, restored: true });
+});
+
+test("narrowed to two of three branches on the front door, the chooser offers those two only", async ({ page }) => {
+  await grant(page, [WEST, EAST, NORTH]);
+  await arrive(page, { ids: [WEST.id, NORTH.id] });
+  await page.goto("/");
+  const radios = page.getByRole("radiogroup", { name: /which branch/i }).getByRole("radio");
+  await expect(radios).toHaveCount(2, { timeout: 15_000 });
+  await expect(radios.nth(0)).toContainText(WEST.name);
+  await expect(radios.nth(1)).toContainText(NORTH.name);
+});
