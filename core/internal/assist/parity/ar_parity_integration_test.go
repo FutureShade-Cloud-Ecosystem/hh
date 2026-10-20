@@ -502,3 +502,75 @@ func TestParity_EveryAllocationFollowsTheTrailRoutes(t *testing.T) {
 	}
 	_ = strconv.Itoa
 }
+
+// The aging day is the dealer's day: with the business zone set to a zone a whole day apart from the database's,
+// the view and the aging screen still age every account against the same day, and the view reports that day.
+func TestParity_AgingUsesTheDealersDay(t *testing.T) {
+	r := newARRig(t)
+	ctx := testsupport.Ctx(t)
+	var prior *string
+	err := r.env.Admin.QueryRow(ctx, `SELECT value::text FROM system_settings WHERE key = 'business_zone'`).Scan(&prior)
+	if err != nil && err != pgx.ErrNoRows {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, cerr := pgx.Connect(context.Background(), r.env.AdminURL)
+		if cerr != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		if prior == nil {
+			_, _ = c.Exec(context.Background(), `DELETE FROM system_settings WHERE key = 'business_zone'`)
+		} else {
+			_, _ = c.Exec(context.Background(), `UPDATE system_settings SET value = $1::jsonb WHERE key = 'business_zone'`, *prior)
+		}
+	})
+	var gm arCaller
+	for _, c := range r.cs {
+		if c.name == "global with trail" {
+			gm = c
+		}
+	}
+	_, claims := r.claimsFor(t, gm)
+	days := map[string]string{}
+	for _, zone := range []string{"Pacific/Kiritimati", "Pacific/Pago_Pago"} {
+		if _, err := r.env.Admin.Exec(ctx, `INSERT INTO system_settings (key, value) VALUES ('business_zone', to_jsonb($1::text)) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, zone); err != nil {
+			t.Fatal(err)
+		}
+		var asOf string
+		r.run(t, claims, `SELECT DISTINCT as_of::text FROM ai.ar_aging`, func(rs pgx.Rows) error { return rs.Scan(&asOf) })
+		var want string
+		if err := r.env.Admin.QueryRow(ctx, `SELECT (now() AT TIME ZONE $1)::date::text`, zone).Scan(&want); err != nil {
+			t.Fatal(err)
+		}
+		if asOf != want {
+			t.Errorf("zone %s: the view ages as of %s, the dealer's day is %s", zone, asOf, want)
+		}
+		days[zone] = asOf
+		got := map[string]int64{}
+		r.run(t, claims, `SELECT customer_id::text, open_cents, days_90_plus_cents + days_61_90_cents * 1000000 FROM ai.ar_aging`, func(rs pgx.Rows) error {
+			var id string
+			var open, mix int64
+			if err := rs.Scan(&id, &open, &mix); err != nil {
+				return err
+			}
+			got[id] = mix
+			return nil
+		})
+		rows, err := r.cred.Aging(identity.ContextWithStaff(ctx, gm.sc), time.Now(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range rows {
+			if w, ok := got[a.CustomerID]; !ok || w != a.Days90PlusCents+a.Days60To90Cents*1000000 {
+				t.Errorf("zone %s: account %s buckets differ between the view and the screen", zone, a.CustomerID)
+			}
+		}
+		if len(got) != len(rows) {
+			t.Errorf("zone %s: the view has %d accounts, the screen %d", zone, len(got), len(rows))
+		}
+	}
+	if days["Pacific/Kiritimati"] == days["Pacific/Pago_Pago"] {
+		t.Errorf("the two zones gave the same day %s: the view ignores the dealer's zone", days["Pacific/Kiritimati"])
+	}
+}

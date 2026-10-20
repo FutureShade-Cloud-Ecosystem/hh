@@ -36,3 +36,16 @@ core/internal/quote/floor.go
 core/internal/purchasing/vendor_order_repository.go
 core/internal/assist/adapters/purchasing_policy.go
 core/db/migrations/0425_assist_quotes_purchasing.sql
+# Slice 7a: what decides which invoices, aging rows, payments and allocations an asker reaches and who holds the
+# payment trail: the register's reads and branch fence, the aging projection, the workspace's payment list, the
+# payment history routes, the trail reader and its wiring, the conversation store's redaction, migration 0427.
+core/internal/billing/branch_reach.go
+core/internal/billing/payment_trail.go
+core/internal/billing/register_service.go
+core/internal/billing/register_repository.go
+core/internal/billing/register_detail_repository.go
+core/internal/billing/credit_repository.go
+core/internal/till/history.go
+core/cmd/core/wire_roles.go
+core/internal/assist/conversation_store.go
+core/db/migrations/0427_assist_receivables_payments.sql
