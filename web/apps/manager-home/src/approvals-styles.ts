@@ -125,6 +125,34 @@ export const approvalsStyles = css`
     white-space: nowrap;
   }
 
+  .card-amount-label {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--hh-text-dim);
+  }
+
+  .decided-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-16);
+  }
+
+  .decision-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+    margin-bottom: var(--hh-s-12);
+  }
+
+  .decision-confirm-line,
+  .decision-outcome {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--hh-text);
+    margin: 0;
+  }
+
   .card-summary {
     font-size: 13px;
     color: var(--hh-text);

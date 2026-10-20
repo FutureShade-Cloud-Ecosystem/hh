@@ -4,6 +4,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { APPROVAL_KINDS, kindWord } from "./manager-logic.js";
 import {
   changeOrderItems,
+  decisionSubject,
   itemsForKind,
   kindCount,
   type ApprovalCardItem,
@@ -22,6 +23,12 @@ export interface ApprovalsModel {
   readonly busyId: string;
   readonly selectedId?: string;
   readonly declineReason?: string;
+  /** The core's waiting count per kind (approvals-logic.ts pendingCounts); absent, a tab counts this kind's rows. */
+  readonly counts?: Readonly<Record<string, number>>;
+  /** A decision asked for and not yet confirmed: nothing is sent until the person says yes. */
+  readonly confirming?: { readonly id: string; readonly decision: "approve" | "reject" };
+  /** The last decision in words, or why it did not happen. */
+  readonly notice?: string;
 }
 
 export function renderApprovals(model: ApprovalsModel): TemplateResult {
@@ -29,13 +36,14 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
     ? changeOrderItems(model.changeOrders, model.changeOrderDetails)
     : itemsForKind(model.kind, model.rows);
   const selected = items.find((i) => i.id === model.selectedId) ?? items[0];
+  const decided = items.filter((i) => i.status !== "PENDING");
 
   return html`
     ${viewHeader("approvals", "", "")}
     <div class="kind-tabs" role="tablist" aria-label="Approval kinds">
       ${APPROVAL_KINDS.map((k) => {
         const isSelected = model.kind === k.kind;
-        const count = kindCount(k.kind, model.rows, model.changeOrders);
+        const count = kindCount(k.kind, model.rows, model.changeOrders, model.counts);
         return html`
           <button
             type="button"
@@ -50,6 +58,9 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
         `;
       })}
     </div>
+    ${model.notice !== undefined && model.notice !== ""
+      ? html`<p class="notice-line" role="status" data-test="decision-notice">${model.notice}</p>`
+      : nothing}
     ${model.error !== "" ? html`<p class="error-line">${model.error}</p>` : nothing}
     ${model.refusal !== "" ? html`<p class="refusal" data-test="approvals-refusal">${model.refusal}</p>` : nothing}
     <div role="tabpanel" aria-label="${kindWord(model.kind)}">
@@ -64,15 +75,29 @@ export function renderApprovals(model: ApprovalsModel): TemplateResult {
               : html`
                   <div class="approvals-layout">
                     <div class="approvals-list" role="tablist" aria-label="Approval requests">
-                      ${items.map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
+                      ${items.filter((i) => i.status === "PENDING").map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
+                      ${decided.length > 0
+                        ? html`
+                            <div class="decided-group" data-test="decided-group">
+                              <h3 class="section-heading">Decided</h3>
+                              ${decided.map((item) => renderApprovalListCard(item, item.id === selected?.id, model.busyId))}
+                            </div>
+                          `
+                        : nothing}
                     </div>
                     <div class="approvals-detail">
-                      ${selected ? renderDetailCard(selected, model.busyId) : nothing}
+                      ${selected ? renderDetailCard(selected, model) : nothing}
                     </div>
                   </div>
                 `}
     </div>
   `;
+}
+
+function renderAmount(item: ApprovalCardItem): TemplateResult {
+  return html`<span class="card-amount amount">${item.amount}${item.amount !== "" && item.amountLabel !== ""
+    ? html` <span class="card-amount-label">${item.amountLabel}</span>`
+    : nothing}</span>`;
 }
 
 function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, busyId: string): TemplateResult {
@@ -89,7 +114,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
       >
         <div class="approval-card-head">
           <span class="detail card-title">${item.title}</span>
-          <span class="card-amount amount">${item.amount}</span>
+          ${renderAmount(item)}
         </div>
         <p class="card-summary">${item.summary}</p>
         <p class="meta card-meta">
@@ -111,8 +136,8 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
       tabindex="0"
     >
       <div class="approval-card-head">
-        <span class="detail card-title">${item.title} <span class="visually-hidden">Quote Q-2001</span></span>
-        <span class="card-amount amount">${item.amount}</span>
+        <span class="detail card-title">${item.title}</span>
+        ${renderAmount(item)}
       </div>
       <p class="card-summary">${item.summary}</p>
       <p class="meta card-meta">
@@ -172,7 +197,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
                       data-decision="reject"
                       ?disabled=${busyId !== ""}
                     >
-                      Decline
+                      Reject
                     </button>
                   `
                 : nothing}
@@ -183,20 +208,65 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
   `;
 }
 
-function renderDetailCard(item: ApprovalCardItem, busyId: string): TemplateResult {
+function renderDetailCard(item: ApprovalCardItem, model: ApprovalsModel): TemplateResult {
+  const busyId = model.busyId;
   if (item.changeMetrics) {
     return renderChangeOrderDetail(item, busyId);
   }
   if (item.marginMetrics) {
-    return renderMarginDetail(item, busyId);
+    return renderMarginDetail(item, model);
   }
   if (item.creditMetrics) {
-    return renderCreditDetail(item, busyId);
+    return renderCreditDetail(item, model);
   }
   if (item.journalLines) {
     return renderJournalEntryDetail(item);
   }
-  return renderGenericDetail(item, busyId);
+  return renderGenericDetail(item, model);
+}
+
+// The decision block shared by the margin, credit and plain cards. A decided request shows the outcome and no
+// buttons. A press on Approve or Reject only asks: the confirm names the request and the amount, and nothing is sent
+// until the person says yes (the core has no way to take a decision back).
+function renderDecision(item: ApprovalCardItem, model: ApprovalsModel, middle: TemplateResult | typeof nothing): TemplateResult {
+  const busyId = model.busyId;
+  if (item.status !== "PENDING") {
+    return html`
+      <div class="decision-section">
+        <span class="decision-eyebrow">DECISION</span>
+        <p class="decision-outcome">${item.status === "APPROVED" ? "Approved" : "Rejected"}. Nothing more to do here.</p>
+      </div>
+    `;
+  }
+  const confirming = model.confirming?.id === item.id ? model.confirming.decision : null;
+  const reasonMissing = confirming === "reject" && (model.declineReason ?? "").trim() === "";
+  return html`
+    <div class="decision-section">
+      <span class="decision-eyebrow">DECISION</span>
+      ${confirming === null
+        ? html`
+            <div class="decision-actions">
+              <button type="button" class="btn btn-primary approve-btn" data-action="decide" data-approval-id="${item.id}" data-decision="approve" ?disabled=${busyId !== ""}>Approve</button>
+              ${middle}
+              <button type="button" class="btn btn-link decline-btn" data-action="decide" data-approval-id="${item.id}" data-decision="reject" ?disabled=${busyId !== ""}>Reject</button>
+            </div>
+          `
+        : html`
+            <div class="decision-confirm" data-test="decision-confirm" role="group" aria-label="Confirm the decision">
+              <p class="decision-confirm-line">${confirming === "approve" ? "Approve" : "Reject"} ${decisionSubject(item)}? ${confirming === "reject" ? "The person who asked is told why." : "This cannot be undone."}</p>
+              ${reasonMissing ? html`<p class="meta">Say why in the box below first.</p>` : nothing}
+              <div class="decision-actions">
+                <button type="button" class="btn ${confirming === "approve" ? "btn-primary" : "btn-danger"}" data-action="decide-confirm" data-approval-id="${item.id}" data-decision="${confirming}" ?disabled=${busyId !== "" || reasonMissing}>${confirming === "approve" ? "Yes, approve" : "Yes, reject"}</button>
+                <button type="button" class="btn btn-secondary" data-action="decide-cancel" data-approval-id="${item.id}">Cancel</button>
+              </div>
+            </div>
+          `}
+      <div class="decline-reason-group">
+        <label class="reason-label">Reason, needed to reject</label>
+        <input type="text" class="control reason-input" placeholder="Tell the person who asked why" data-field="decline-reason" />
+      </div>
+    </div>
+  `;
 }
 
 function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): TemplateResult {
@@ -294,7 +364,7 @@ function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): Templa
                   data-decision="reject"
                   ?disabled=${busyId !== ""}
                 >
-                  Decline
+                  Reject
                 </button>
               `
             : nothing}
@@ -302,7 +372,7 @@ function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): Templa
         ${item.canReject
           ? html`
               <div class="decline-reason-group">
-                <label class="reason-label">Reason, needed to decline</label>
+                <label class="reason-label">Reason, needed to reject</label>
                 <input
                   type="text"
                   class="control reason-input"
@@ -317,7 +387,7 @@ function renderChangeOrderDetail(item: ApprovalCardItem, busyId: string): Templa
   `;
 }
 
-function renderMarginDetail(item: ApprovalCardItem, busyId: string): TemplateResult {
+function renderMarginDetail(item: ApprovalCardItem, model: ApprovalsModel): TemplateResult {
   const metrics = item.marginMetrics!;
   return html`
     <article class="decision-card" data-approval-detail="${item.id}">
@@ -393,54 +463,12 @@ function renderMarginDetail(item: ApprovalCardItem, busyId: string): TemplateRes
         )}
       </div>
 
-      <div class="decision-section">
-        <span class="decision-eyebrow">DECISION</span>
-        <div class="decision-actions">
-          <button
-            type="button"
-            class="btn btn-primary approve-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="approve"
-            ?disabled=${busyId !== ""}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            class="btn btn-secondary custom-price-btn"
-            data-action="approve-different-price"
-            data-approval-id="${item.id}"
-            ?disabled=${busyId !== ""}
-          >
-            Approve at a different price
-          </button>
-          <button
-            type="button"
-            class="btn btn-link decline-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="reject"
-            ?disabled=${busyId !== ""}
-          >
-            Decline
-          </button>
-        </div>
-        <div class="decline-reason-group">
-          <label class="reason-label">Reason, needed to decline</label>
-          <input
-            type="text"
-            class="control reason-input"
-            placeholder="Tell the person who asked why"
-            data-field="decline-reason"
-          />
-        </div>
-      </div>
+      ${renderDecision(item, model, html`<button type="button" class="btn btn-secondary custom-price-btn" data-action="approve-different-price" data-approval-id="${item.id}" ?disabled=${model.busyId !== ""}>Approve at a different price</button>`)}
     </article>
   `;
 }
 
-function renderCreditDetail(item: ApprovalCardItem, busyId: string): TemplateResult {
+function renderCreditDetail(item: ApprovalCardItem, model: ApprovalsModel): TemplateResult {
   const metrics = item.creditMetrics!;
   return html`
     <article class="decision-card" data-approval-detail="${item.id}">
@@ -479,49 +507,7 @@ function renderCreditDetail(item: ApprovalCardItem, busyId: string): TemplateRes
         )}
       </div>
 
-      <div class="decision-section">
-        <span class="decision-eyebrow">DECISION</span>
-        <div class="decision-actions">
-          <button
-            type="button"
-            class="btn btn-primary approve-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="approve"
-            ?disabled=${busyId !== ""}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            class="btn btn-secondary custom-limit-btn"
-            data-action="approve-smaller-limit"
-            data-approval-id="${item.id}"
-            ?disabled=${busyId !== ""}
-          >
-            Approve a smaller limit
-          </button>
-          <button
-            type="button"
-            class="btn btn-link decline-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="reject"
-            ?disabled=${busyId !== ""}
-          >
-            Decline
-          </button>
-        </div>
-        <div class="decline-reason-group">
-          <label class="reason-label">Reason, needed to decline</label>
-          <input
-            type="text"
-            class="control reason-input"
-            placeholder="Tell the person who asked why"
-            data-field="decline-reason"
-          />
-        </div>
-      </div>
+      ${renderDecision(item, model, html`<button type="button" class="btn btn-secondary custom-limit-btn" data-action="approve-smaller-limit" data-approval-id="${item.id}" ?disabled=${model.busyId !== ""}>Approve a smaller limit</button>`)}
     </article>
   `;
 }
@@ -603,7 +589,7 @@ function renderJournalEntryDetail(item: ApprovalCardItem): TemplateResult {
   `;
 }
 
-function renderGenericDetail(item: ApprovalCardItem, busyId: string): TemplateResult {
+function renderGenericDetail(item: ApprovalCardItem, model: ApprovalsModel): TemplateResult {
   return html`
     <article class="decision-card" data-approval-detail="${item.id}">
       <div class="decision-card-head">
@@ -622,40 +608,7 @@ function renderGenericDetail(item: ApprovalCardItem, busyId: string): TemplateRe
         )}
       </div>
 
-      <div class="decision-section">
-        <span class="decision-eyebrow">DECISION</span>
-        <div class="decision-actions">
-          <button
-            type="button"
-            class="btn btn-primary approve-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="approve"
-            ?disabled=${busyId !== ""}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            class="btn btn-link decline-btn"
-            data-action="decide"
-            data-approval-id="${item.id}"
-            data-decision="reject"
-            ?disabled=${busyId !== ""}
-          >
-            Decline
-          </button>
-        </div>
-        <div class="decline-reason-group">
-          <label class="reason-label">Reason, needed to decline</label>
-          <input
-            type="text"
-            class="control reason-input"
-            placeholder="Tell the person who asked why"
-            data-field="decline-reason"
-          />
-        </div>
-      </div>
+      ${renderDecision(item, model, nothing)}
     </article>
   `;
 }

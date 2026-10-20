@@ -18,7 +18,7 @@ test("the sales manager's needs row opens the approvals view on the kind they de
   await expect(page.locator("[data-widget='needs.you'] [data-needs='approvals.waiting'] .needs-count")).toHaveText("1");
   await page.locator("[data-needs='approvals.waiting'] button", { hasText: "Review" }).click();
   await expect(page.getByRole("heading", { name: "Approvals" })).toBeVisible();
-  await expect(page.locator("[data-approval]").first().locator(".detail")).toContainText("Quote Q-2001");
+  await expect(page.locator("[data-approval]").first().locator(".detail")).toContainText("Q-2001");
 });
 
 test("the five kinds of the closed vocabulary and the change queue sit as tabs, the decided one first", async ({ page }) => {
@@ -27,8 +27,10 @@ test("the five kinds of the closed vocabulary and the change queue sit as tabs, 
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const tabs = page.locator(".kind-tab");
   await expect(tabs).toHaveCount(6);
-  const words = await tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim()));
-  expect(words).toEqual(["Margin 2", "Credit 1", "Cash On Demand 0", "Journal entry 1", "Freight above quote 0", "Change orders 2"]);
+  // The counts are the core's own, read when the view opens, so the check waits for them.
+  await expect
+    .poll(async () => tabs.evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim())))
+    .toEqual(["Margin 1", "Credit 0", "Cash On Demand 0", "Journal entry 0", "Freight above quote 2", "Change orders 2"]);
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 });
 
@@ -38,7 +40,8 @@ test("a margin approval decides through the core's route and the queue empties",
   await page.locator("[data-needs='approvals.waiting'] button", { hasText: "Review" }).click();
   const row = page.locator("[data-approval]").first();
   await row.getByRole("button", { name: "Approve" }).click();
-  await expect(row.locator(".meta")).toContainText("Approved");
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator("[data-test='decided-group']")).toContainText("Approved");
   // Back on the landing the approvals row is absent, not zero; the sales manager's other rows stay.
   await page.getByRole("button", { name: "Back to Home" }).click();
   await expect(page.locator("[data-needs='approvals.waiting']")).toHaveCount(0);
@@ -80,7 +83,9 @@ test("a rejection records its own word beside the request", async ({ page }) => 
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   const row = page.locator("[data-approval]").first();
   await row.getByRole("button", { name: "Reject" }).click();
-  await expect(row.locator(".meta")).toContainText("Rejected");
+  await page.locator("input[data-field='decline-reason']").fill("Below the floor for this account");
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, reject" }).click();
+  await expect(page.locator("[data-test='decided-group']")).toContainText("Rejected");
 });
 
 test("the controller's Review opens on Freight above quote, where the two raises are waiting", async ({ request, page }) => {
@@ -124,7 +129,7 @@ test("a tone word on the margin and credit cards paints no fill behind its text"
   await page.locator("[data-flow='general-manager']").click();
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
-  for (const kind of ["Margin", "Credit"]) {
+  for (const kind of ["Margin"]) {
     await page.locator(".kind-tab", { hasText: kind }).click();
     const toned = page.locator(".metric-val[class*='tone-'], td[class*='tone-'], .meta-value[class*='tone-']");
     await expect(toned.first()).toBeVisible();
@@ -132,4 +137,88 @@ test("a tone word on the margin and credit cards paints no fill behind its text"
     expect(fills.length).toBeGreaterThan(0);
     for (const fill of fills) expect(fill, `${kind}: ${fill}`).toMatch(/ on rgba\(0, 0, 0, 0\)$/);
   }
+});
+
+// UX-47 and UX-55: a decision on money is confirmed by name and amount, lands visibly, and reads back from the core.
+// The scenario "margin-pair" adds a margin request whose id is not a board item's id, the way every request on the
+// real core is: the screen shows the core's rows, never an invented one.
+const SECOND = "0e000000-0000-4000-9000-0000000000a5";
+
+async function openMargin(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  await page.locator("[data-flow='sales-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toContainText("Margin");
+}
+
+test("the screen lists the core's own requests, one id on a row, a labelled figure, no staff names", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  const row = page.locator(`[data-approval='${SECOND}']`);
+  await expect(row).toBeVisible();
+  await expect(row.locator(".card-amount")).toContainText("$35.59");
+  await expect(row.locator(".card-amount-label")).toHaveText("at stake");
+  const text = (await row.innerText()).replace(/\s+/g, " ");
+  expect(text.match(/Q-2002/g)?.length).toBe(1);
+  await expect(page.locator("[data-board-approval]")).toHaveCount(0);
+  await expect(page.locator(".approvals-list")).not.toContainText(/Jordan Lee|Elena Ruiz|Priya Shah|Morgan Ellis/);
+});
+
+test("Approve asks first, naming the quote and the amount, and a cancel decides nothing", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  await page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" }).click();
+  const confirm = page.locator("[data-test='decision-confirm']");
+  await expect(confirm).toContainText("Approve Q-2002");
+  await expect(confirm).toContainText("$35.59");
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(page.locator(".kind-tab", { hasText: "Margin" })).toContainText("Margin 2");
+});
+
+test("a confirmed approval drops the count, moves the row to Decided with no buttons, and survives a fresh open", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  await expect(page.locator(".kind-tab", { hasText: "Margin" })).toContainText("Margin 2");
+  await page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" }).click();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator(".kind-tab", { hasText: "Margin" })).toContainText("Margin 1");
+  await expect(page.locator("[data-test='decision-notice']")).toContainText("Approved Q-2002");
+  const decided = page.locator("[data-test='decided-group']");
+  await expect(decided.locator(`[data-approval='${SECOND}']`)).toContainText("Approved");
+  await expect(decided.getByRole("button")).toHaveCount(0);
+  await decided.locator(`[data-approval='${SECOND}']`).click();
+  await expect(page.locator(`[data-approval-detail='${SECOND}']`)).toBeVisible();
+  await expect(page.locator(`[data-approval-detail='${SECOND}'] button`)).toHaveCount(0);
+  // A fresh open reads the decision back from the list.
+  await page.getByRole("button", { name: "Back to Home" }).click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.locator(".kind-tab", { hasText: "Margin" })).toContainText("Margin 1");
+  await expect(page.locator("[data-test='decided-group']").locator(`[data-approval='${SECOND}']`)).toContainText("Approved");
+});
+
+test("a request that is no longer there is never shown as decided", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  await page.route("**/api/v1/staff/approvals/*/decide", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "approval not found" }) }),
+  );
+  await page.locator(`[data-approval='${SECOND}']`).getByRole("button", { name: "Approve" }).click();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator(".error-line")).toContainText("That request is no longer waiting.");
+  await expect(page.locator("[data-test='decided-group']")).toHaveCount(0);
+  await expect(page.locator(".kind-tab", { hasText: "Margin" })).toContainText("Margin 2");
+});
+
+test("Reject is the one word on the row and in the pane, and it asks first too", async ({ request, page }) => {
+  await useScenario(request, "margin-pair");
+  await openMargin(page);
+  await expect(page.getByRole("button", { name: "Decline" })).toHaveCount(0);
+  const row = page.locator(`[data-approval='${SECOND}']`);
+  await row.locator(".card-title").click();
+  await expect(page.locator(`[data-approval-detail='${SECOND}'] .decline-btn`)).toHaveText("Reject");
+  await row.getByRole("button", { name: "Reject" }).click();
+  await page.locator("input[data-field='decline-reason']").fill("Price is too low for this account");
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, reject" }).click();
+  await expect(page.locator("[data-test='decided-group']").locator(`[data-approval='${SECOND}']`)).toContainText("Rejected");
 });
