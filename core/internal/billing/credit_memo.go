@@ -433,6 +433,23 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 
 	var doc InvoiceDoc
 	err = w.inTx(ctx, func(tx pgx.Tx) error {
+		// The parent rows first, in the order internal/payments/LOCK-ORDER.md names: the order row (step 1),
+		// then the invoice this memo reverses (step 3), FOR NO KEY UPDATE, and only then the insert, whose
+		// invoices counter draw (the sync seq trigger, 0422) comes before its foreign key checks take
+		// FOR KEY SHARE on those same rows. A writer holding the order or the invoice FOR UPDATE while it
+		// waits for the invoices counter (the order cancel's settlement, a loader, the POS account credit)
+		// would otherwise cycle against a memo holding the counter while it waits for the row. NO KEY UPDATE
+		// still queues behind such a writer, and a memo changes no key column of either row.
+		if in.OrderID != "" {
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM orders WHERE id = $1::uuid FOR NO KEY UPDATE`, in.OrderID); err != nil {
+				return fmt.Errorf("lock the order for the credit memo: %w", err)
+			}
+		}
+		if in.ReversesInvoiceID != "" {
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, in.ReversesInvoiceID); err != nil {
+				return fmt.Errorf("lock the invoice the credit memo reverses: %w", err)
+			}
+		}
 		var id, no string
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
