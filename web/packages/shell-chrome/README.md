@@ -160,3 +160,14 @@ seven states plus the stuck alarm; the rail collapsed (phone), expanded, and
 empty; the banner in its four modes; the update prompt. Both themes ship as
 committed pages (`index.html` brand mode, `index-light.html` light). The
 states and sizes listed here are the pass's checklist.
+
+## The Field frame
+
+`hh-field-frame` (src/field-frame.ts) is the one frame Yard Pick, HH Drive and House Messages share in place of each
+app's own header (GAPS-r2 G2): a menu button, the dealer lockup from the tenant config (`readDealerName` in pos-kit;
+never an HH mark, never a hardcoded dealer), a chip naming the app and surface, the sync state, a bell where the app
+has a door behind it, and an account chip (initials and the role label). On a phone a bottom tab bar shows the tabs the
+role holds (`fieldTabsForRole`), at least 44 px each with the safe area beneath. Switch role, Sign out, Theme and
+Feedback live in the account menu, which the More tab opens too; the menu's keyboard is the house one. An app feeds the
+frame with `setFieldFrame` after each render and acts on the `data-action` clicks as they bubble out. There is no
+navigation tree: the menu button lists the role's own apps and nothing more.
