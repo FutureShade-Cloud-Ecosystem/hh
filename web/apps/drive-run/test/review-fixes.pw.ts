@@ -3,7 +3,7 @@
 // shows each photo taken, and the confirmation box and the grey sign control
 // can be found in brand. Measured in the browser, on the stub.
 import type { Page } from "@playwright/test";
-import { test, expect, TINY_PNG, driverHandoff, resetStub, takeFirstStopEnRoute } from "./helpers.js";
+import { test, expect, TINY_PNG, accountItem, driverHandoff, resetStub, takeFirstStopEnRoute } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -58,7 +58,7 @@ async function elementColours(page: Page, selector: string): Promise<{ bg: numbe
 for (const theme of ["light", "brand"] as const) {
   test(`the stop's two doors are drawn as the board draws them (${theme})`, async ({ page }) => {
     await takeFirstStopEnRoute(page);
-    if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+    if (theme === "brand") await accountItem(page, "Brand theme");
     await page.mouse.move(0, 0);
     const delivered = page.getByRole("button", { name: "Delivered", exact: true });
     const fail = page.getByRole("button", { name: "Could not deliver" });
@@ -78,30 +78,28 @@ for (const theme of ["light", "brand"] as const) {
   });
 }
 
-test("the header says HH Drive on every screen and not HH Yard", async ({ page, browser }) => {
-  // The way in, with no handoff at all.
-  const bare = await browser.newPage({ viewport: { width: 390, height: 844 } });
+test("the Field frame names Drive on every screen and not Yard", async ({ page, browser }) => {
+  // The way in, with no handoff at all: the lockup, no app words.
+  const bare = await browser.newPage({ viewport: { width: 1024, height: 768 } });
   await bare.goto(new URL("/", page.url() === "about:blank" ? test.info().project.use.baseURL! : page.url()).href);
   await expect(bare.locator("[data-flow]")).toHaveCount(1);
-  await expect(bare.locator("hos-app-header").getByRole("img")).toHaveAttribute("aria-label", "HH Drive, HH Drive · HH Field shell");
-  await expect(bare.locator("hos-app-header")).not.toContainText("Yard");
+  await expect(bare.locator("hh-field-frame")).toBeVisible();
+  await expect(bare.locator("hh-field-frame")).not.toContainText("Yard");
   await bare.close();
-  const lockup = page.locator("hos-app-header").getByRole("img");
+  await page.setViewportSize({ width: 1024, height: 768 });
   await takeFirstStopEnRoute(page);
-  await expect(lockup).toHaveAttribute("aria-label", "HH Drive, HH Drive · HH Field shell");
-  await expect(page.locator("hos-app-header")).toContainText("HH Drive");
-  await expect(page.locator("hos-app-header")).not.toContainText("Yard");
+  await expect(page.locator("hh-field-frame [data-selector]")).toContainText("Drive");
+  await expect(page.locator("hh-field-frame")).not.toContainText("Yard");
 });
 
-test("at 390 the header is compact and every control in it is at least 44 px tall", async ({ page }) => {
+test("at 390 the frame is one compact band and every control in it is at least 44 px tall", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "My run" })).toBeVisible();
-  const header = await page.locator("hos-app-header").boundingBox();
-  expect(header!.height).toBeLessThanOrEqual(170);
-  const buttons = page.locator("hos-app-header button");
-  const count = await buttons.count();
-  expect(count).toBe(3);
-  for (let i = 0; i < count; i += 1) expect((await buttons.nth(i).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const header = await page.locator("hh-field-frame header").boundingBox();
+  expect(header!.height).toBeLessThanOrEqual(80);
+  const buttons = page.locator("hh-field-frame header button");
+  await expect(buttons).toHaveCount(3);
+  for (const button of await buttons.all()) expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
@@ -182,7 +180,7 @@ test("a throw while a photo is being made ready does not wedge the queue", async
 
 test("in brand the unticked box and the grey sign control can be found at 3:1", async ({ page }) => {
   await takeFirstStopEnRoute(page);
-  await page.getByRole("button", { name: "Brand theme" }).click();
+  await accountItem(page, "Brand theme");
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   const card = await colour(page, "var(--hh-card)");
   const box = await elementColours(page, ".confirm-box");
