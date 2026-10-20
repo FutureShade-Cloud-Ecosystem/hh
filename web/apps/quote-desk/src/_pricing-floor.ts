@@ -104,8 +104,14 @@ export function itemLine(i: FloorItem): string {
   // keeps the line short; the full name rides in the item's tooltip.
   const where = i.branchCode !== "" ? i.branchCode : i.branchName;
   const at = where === "" ? "" : ` at ${where}`;
+  // The margin legs ride only to a caller on the cost list; for anyone else the line says the fact
+  // (under the floor) and shows no figure, never a zero that reads as break-even.
+  const figures =
+    i.marginBps !== null && i.floorBps !== null
+      ? `margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}`
+      : "under its margin floor";
   return (
-    `${i.sku}, ${i.name}: margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}${who}${at}, ` +
+    `${i.sku}, ${i.name}: ${figures}${who}${at}, ` +
     `price ${formatMoney(i.finalCents)} per ${i.priceUom}${i.finalCents === i.previousFinalCents ? ", unchanged" : ` (was ${formatMoney(i.previousFinalCents)})`}`
   );
 }

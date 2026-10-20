@@ -122,6 +122,15 @@ test("a floor preview reads its items and counts, and refuses a half answer", ()
   assert.equal(readFloorPreview({ ...good, evaluated: 1.5 }), null);
 });
 
+test("a floor preview from a caller off the cost list reads with the margin legs absent, not zero (HH-419)", () => {
+  const { margin_bps, floor_bps, previous_margin_bps, ...bare } = { product_id: "p1", sku: "HPV-60", name: "Charcoal", final_cents: 300, margin_bps: 800, floor_bps: 2500, price_uom: "sf", source: "TIER_CATEGORY", previous_final_cents: 400, previous_margin_bps: 3100, already_under_floor: false };
+  const p = readFloorPreview({ items: [bare], evaluated: 1, not_graded: 0, no_cost: 0, truncated: false });
+  assert.equal(p?.items[0]?.sku, "HPV-60");
+  assert.equal(p?.items[0]?.marginBps, null);
+  assert.equal(p?.items[0]?.floorBps, null);
+  assert.equal(p?.items[0]?.previousMarginBps, null);
+});
+
 // The round 4 additions: the yards a branch-less check found no cost on file at, and the
 // branch gradings the work cap left out. Absent both read as none; present but unreadable
 // refuses the whole answer, like every other half contract.

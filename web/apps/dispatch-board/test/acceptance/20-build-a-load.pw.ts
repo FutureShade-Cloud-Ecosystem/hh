@@ -50,6 +50,7 @@ test("a waiting load goes onto the truck that needs a crew, and the truck goes o
   await expect(page.locator("[data-notice]")).toHaveText("Crew set.");
   await shot(page, "21-crewed", testInfo);
   await lane.getByRole("button", { name: "Dispatch" }).click();
+  await lane.locator("[data-sheet='dispatch-run']").getByRole("button", { name: "Send the run" }).click();
   await expect(page.locator("[data-notice]")).toContainText(`${run.run_no} dispatched`);
   const after = await staff(page, "GET", `/api/v1/dispatch/runs/${run.id}`);
   expect(after.body.status).toBe("DISPATCHED");
