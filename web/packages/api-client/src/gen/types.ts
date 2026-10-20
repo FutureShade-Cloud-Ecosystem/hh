@@ -1007,7 +1007,8 @@ export type BillingCustomerWorkspace = {
   invoices_open: BillingCustomerWorkspaceInvoice[];
   invoices_closed: BillingCustomerWorkspaceInvoice[];
   invoices_disputed: BillingCustomerWorkspaceInvoice[];
-  payments: BillingCustomerWorkspacePayment[];
+  payments?: BillingCustomerWorkspacePayment[];
+  payments_withheld: boolean;
   credit_notes: BillingCustomerWorkspaceCreditNote[];
   statements: BillingCustomerWorkspaceStatement[];
   notes: BillingCustomerWorkspaceNote[];
