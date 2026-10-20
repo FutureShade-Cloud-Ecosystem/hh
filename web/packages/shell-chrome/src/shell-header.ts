@@ -105,6 +105,32 @@ const styles = css`
     color: var(--hh-accent-text);
     border: 1px solid currentColor;
   }
+  /* Phone width: the band never widens the page. The lockup and the chip run
+   * share the first row (the lockup truncates), the selector takes a row of its
+   * own, and the account chip keeps its initial only. */
+  @media (max-width: 640px) {
+    .band[data-variant='band'] {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding-inline: var(--hh-s-12);
+    }
+    .band[data-variant='band'] .brand {
+      min-width: 0;
+    }
+    .band[data-variant='band'] .lockup {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .band[data-variant='band'] .selector {
+      grid-row: 2;
+      grid-column: 1 / -1;
+      justify-self: stretch;
+      min-width: 0;
+    }
+    .band[data-variant='band'] .account-word {
+      display: none;
+    }
+  }
   /* The account chip's menu: the actions the app-local header used to carry
    * (Theme, Feedback, Switch role, Sign out) ride the slot, so the band is
    * the one band. */

@@ -223,3 +223,12 @@ test('the band applies the theme to the document root, the contract the app-loca
     globalThis.document = original;
   }
 });
+
+test('at phone width the band stacks the selector under the lockup and the chip run, and never widens the page', () => {
+  const css = ShellHeader.styles.map((sheet) => sheet.cssText).join('\n');
+  assert.ok(css.includes('@media (max-width: 640px)'), 'a phone width rule is in the sheet');
+  const phone = css.slice(css.indexOf('@media (max-width: 640px)'));
+  assert.ok(phone.includes('grid-template-columns: minmax(0, 1fr) auto'), 'two columns: the lockup (truncating) and the run');
+  assert.ok(phone.includes('grid-column: 1 / -1'), 'the selector takes the full second row');
+  assert.ok(phone.includes('text-overflow: ellipsis'), 'the lockup truncates instead of pushing the run out');
+});
