@@ -30,12 +30,13 @@ test("with no signal an approval is refused with no signal, sends nothing, and d
 
   await context.setOffline(true);
   await row.getByRole("button", { name: "Approve" }).click();
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
   await expect(page.getByText(/No signal/).first()).toBeVisible();
   expect(dialed.filter((w) => w.includes("/decide"))).toEqual([]);
-  await expect(row.locator(".meta")).not.toContainText("Approved");
+  await expect(page.locator("[data-test='decided-group']")).toHaveCount(0);
 
   await context.setOffline(false);
-  await row.getByRole("button", { name: "Approve" }).click();
-  await expect(row.locator(".meta")).toContainText("Approved");
+  await page.locator("[data-test='decision-confirm']").getByRole("button", { name: "Yes, approve" }).click();
+  await expect(page.locator("[data-test='decided-group']")).toContainText("Approved");
   expect(dialed.filter((w) => w.includes("/decide"))).toHaveLength(1);
 });
