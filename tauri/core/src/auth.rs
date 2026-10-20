@@ -23,7 +23,8 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::console::{
-    org_ok, AccountUser, AuthCode, AuthConfig, ConsoleClient, ExchangeAnswer, SessionSecret,
+    org_ok, AccountUser, AuthCode, AuthConfig, ConsoleClient, CoreToken, ExchangeAnswer,
+    SessionSecret,
 };
 use crate::custody::{Address, Custody, CustodyError};
 
@@ -155,6 +156,15 @@ impl AuthService {
                 tokio::time::timeout(self.best_effort, self.console.delete_session(&secret)).await;
         }
         cleared
+    }
+
+    /// Revoke a core session token at the core's sign out route (HH-678).
+    /// The webview hands the short token it holds to the shell's command and
+    /// the call runs here, on the Rust side, against the profile's fixed core
+    /// URL: the webview never posts to the network (the CSP pin holds). The
+    /// token is zeroized when the call ends; it touches no custody slot.
+    pub async fn revoke_core_session(&self, token: CoreToken) -> Result<(), AuthCode> {
+        self.console.core_sign_out(token).await
     }
 }
 

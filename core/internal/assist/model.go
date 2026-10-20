@@ -72,6 +72,12 @@ type Caller struct {
 	// PaymentTrail is the role gate's answer to "does this caller hold the payment trail reads"
 	// (ruling 87), set by the handler. False means the reads that list payments leave them out.
 	PaymentTrail bool
+	// CostBranchIDs are the branches whose cost this caller's own screens would show, and Margin whether it
+	// sees margin: both decided by the handler from the dealer's cost and margin role list (the predicate the
+	// inventory, quote, pricing, tasks and dispatch screens ask), never from the request. Empty and false
+	// mean no cost and no margin.
+	CostBranchIDs []string
+	Margin        bool
 	// Address is the connection's trusted address (the demo mint's rule); it keys the demo rate
 	// limits and never grants anything.
 	Address string

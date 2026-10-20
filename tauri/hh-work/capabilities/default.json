@@ -13,6 +13,7 @@
     "allow-auth-resume",
     "allow-auth-exchange",
     "allow-auth-sign-out",
+    "allow-cmd-sign-out-revoke",
     "updater:default"
   ]
 }
