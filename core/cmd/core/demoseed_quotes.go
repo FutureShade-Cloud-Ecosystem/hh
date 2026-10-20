@@ -165,7 +165,7 @@ type quoteSpec struct {
 var demoQuotes = []quoteSpec{
 	{Key: "Q1", Cust: "C02", Status: "DRAFT", Owner: personaQuoteSales, Branch: 1, AgeDays: 3,
 		Project: "Marina Road patio", PO: "", Contact: "Site contact",
-		Notes: "Pavers and edging for the patio, delivered to the site.",
+		Notes: "Pavers and edging for the patio.",
 		Lines: []quoteLineSpec{{Prod: "P02", Qty: 200}, {Prod: "P10", Qty: 30, DiscPct: 4}}},
 	{Key: "Q2", Cust: "C01", Status: "SENT", Owner: personaQuoteManager, Branch: 1, AgeDays: 5,
 		Project: "Front walk and drive apron", PO: "PO-DEMO-0042", Contact: "Site foreman",
@@ -173,7 +173,7 @@ var demoQuotes = []quoteSpec{
 		Lines: []quoteLineSpec{{Prod: "P01", Qty: 240}, {Prod: "P07", Qty: 8}}, Link: true},
 	{Key: "Q3", Cust: "C02", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 8,
 		Project: "Harbour Street steps", PO: "PO-DEMO-0077", Contact: "Site contact",
-		Notes: "Thank you for accepting. We will confirm your delivery date.",
+		Notes: "Thank you for accepting. We will confirm your pickup time.",
 		Lines: []quoteLineSpec{
 			{Prod: "P02", Qty: 150, DiscPct: 12, Cleared: true},
 			{Prod: "P10", Qty: 24, DiscPct: 5},
@@ -181,7 +181,7 @@ var demoQuotes = []quoteSpec{
 		}, Link: true, Editor: personaQuoteManager},
 	{Key: "Q4", Cust: "C10", Status: "ACCEPTED", Owner: personaQuoteSales, Branch: 1, AgeDays: 4,
 		Project: "Patio base material", PO: "PO-DEMO-0091", Contact: "Site contact",
-		Notes: "Thank you for accepting. Your account pays before release, so the order is held from picking until its balance is paid.",
+		Notes: "Thank you for accepting. Your account pays before release, so the order is held until its balance is paid.",
 		Lines: []quoteLineSpec{
 			{Prod: "P08", Qty: 10},
 			{Prod: "P07", Qty: 4},

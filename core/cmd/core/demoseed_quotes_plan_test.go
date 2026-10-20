@@ -554,3 +554,17 @@ func TestDemoQuoteNotesAreForTheCustomer(t *testing.T) {
 		}
 	}
 }
+
+// TestDemoQuoteNotesPromiseWhatTheQuoteCarries: the seed writes every demo quote as a PICKUP with no
+// delivery address or fee (see the "fulfillment" column in quoteFacts), so a note that names delivery,
+// or a yard's word for the work behind it, promises something the page does not price.
+func TestDemoQuoteNotesPromiseWhatTheQuoteCarries(t *testing.T) {
+	for _, q := range demoQuotes {
+		low := strings.ToLower(q.Notes)
+		for _, w := range []string{"deliver", "picking"} {
+			if strings.Contains(low, w) {
+				t.Errorf("quote %s: note %q names %q on a pickup quote", q.Key, q.Notes, w)
+			}
+		}
+	}
+}
