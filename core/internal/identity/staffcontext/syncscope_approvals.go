@@ -512,8 +512,13 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	}
 	// The filing route's own wall (Work on the counter, the Quote Desk or
 	// Manager Home): a role the route answers 403 files nothing from here.
-	if _, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request"); err != nil {
+	caller, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request")
+	if err != nil {
 		return sync.RowState{}, err
+	}
+	// The branch wall the REST filing holds (UX-89): a card is filed only into a queue the caller is granted.
+	if !caller.CanAccessBranch(branchID) {
+		return sync.RowState{}, fmt.Errorf("identity: that branch is outside your grants: %w", sync.ErrOpRefused)
 	}
 	detail, _ := fields["detail"].(string)
 	subject, _ := fields["subject_ref"].(string)

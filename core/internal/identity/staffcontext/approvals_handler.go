@@ -95,6 +95,13 @@ func (h *ApprovalsHandler) createApproval(w http.ResponseWriter, r *http.Request
 		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	// The branch wall, in the policy check's own words: a card is filed only into a branch queue the caller
+	// is granted, never into another yard's with a detail and subject of the caller's choosing. A global
+	// caller reaches every branch; a body naming no branch is left to the service's own validation.
+	if req.BranchID != "" && !caller.CanAccessBranch(req.BranchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
+		return
+	}
 	out, err := h.svc.CreateApproval(r.Context(), caller.UserID, req.BranchID, PolicyType(req.PolicyType), req.Detail, req.SubjectRef)
 	if err != nil {
 		writeApprovalErr(w, r, err)
