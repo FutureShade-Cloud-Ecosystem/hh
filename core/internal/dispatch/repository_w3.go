@@ -90,6 +90,26 @@ func (r *Repository) PickFeedStopForOrder(ctx context.Context, orderID string) (
 	return p, err
 }
 
+// PickFeedStopForOrderInOrg is PickFeedStopForOrder held to one org (UX-81 round 4): the order's org (the orders
+// join, the same authority the order module's brief read uses) must be the caller's, else ErrNotFound, so a ticket
+// of another org's order is the same absent as an unknown one.
+func (r *Repository) PickFeedStopForOrderInOrg(ctx context.Context, orgID, orderID string) (pickFeedStop, error) {
+	pool, err := r.db()
+	if err != nil {
+		return pickFeedStop{}, err
+	}
+	if !looksLikeUUID(orderID) || !looksLikeUUID(orgID) {
+		return pickFeedStop{}, ErrNotFound
+	}
+	p, err := scanPickFeedStop(pool.QueryRow(ctx, pickFeedSelect+`
+ WHERE s.order_id = $1 AND o.org_id = $2::uuid AND s.status NOT IN ('CANCELLED','FAILED')
+ ORDER BY s.created_at DESC LIMIT 1`, orderID, orgID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pickFeedStop{}, ErrNotFound
+	}
+	return p, err
+}
+
 // PickFeedPendingStops reads the stops still awaiting picking: READY, and either unassigned or on a
 // PLANNED run. Ordered by date then run/stop position so the queue reads the way the day runs.
 //
@@ -184,6 +204,24 @@ func (r *Repository) PickFeedPickupForOrder(ctx context.Context, orderID string)
 	}
 	p, err := scanPickFeedPickup(pool.QueryRow(ctx,
 		pickupFeedSelect+pickupAwaitingCollection+` AND o.id = $1 LIMIT 1`, orderID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pickFeedPickup{}, ErrNotFound
+	}
+	return p, err
+}
+
+// PickFeedPickupForOrderInOrg is PickFeedPickupForOrder held to one org (UX-81 round 4): the order's own org stamp
+// must be the caller's, else ErrNotFound.
+func (r *Repository) PickFeedPickupForOrderInOrg(ctx context.Context, orgID, orderID string) (pickFeedPickup, error) {
+	pool, err := r.db()
+	if err != nil {
+		return pickFeedPickup{}, err
+	}
+	if !looksLikeUUID(orderID) || !looksLikeUUID(orgID) {
+		return pickFeedPickup{}, ErrNotFound
+	}
+	p, err := scanPickFeedPickup(pool.QueryRow(ctx,
+		pickupFeedSelect+pickupAwaitingCollection+` AND o.id = $1 AND o.org_id = $2::uuid LIMIT 1`, orderID, orgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pickFeedPickup{}, ErrNotFound
 	}

@@ -300,6 +300,30 @@ func (r *Repository) OrderBrief(ctx context.Context, orderID string) (Brief, err
 	return b, nil
 }
 
+// OrderBriefInOrg is OrderBrief held to the caller's org (UX-81 round 4): an order of another org is the same
+// ErrNotFound as a missing or malformed one, so a consumer can never read, or tell that it exists, an order that
+// is not its org's. The tasks module's creates read through this; OrderBrief above stays for the carried callers
+// that name no org.
+func (r *Repository) OrderBriefInOrg(ctx context.Context, orgID, orderID string) (Brief, error) {
+	if r.pool == nil {
+		return Brief{}, errNoDB
+	}
+	if !looksLikeUUID(orderID) || !looksLikeUUID(orgID) {
+		return Brief{}, ErrNotFound
+	}
+	var b Brief
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text, branch_id::text, fulfillment, status FROM orders WHERE id = $1 AND org_id = $2`, orderID, orgID).
+		Scan(&b.ID, &b.BranchID, &b.Fulfillment, &b.Status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Brief{}, ErrNotFound
+		}
+		return Brief{}, fmt.Errorf("order brief %q in org: %w", orderID, err)
+	}
+	return b, nil
+}
+
 // CustomerForOrder resolves one order's owning customer id. It closes the W3-D declared gap: the yard's
 // fulfilment notice (sms.dispatch.notice) had nobody to resolve because every order→customer path this
 // module exposed was ALREADY customer-scoped, GetOrder takes the customer id it would have to return,

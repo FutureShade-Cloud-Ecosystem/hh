@@ -217,6 +217,19 @@ type OrderReader interface {
 	OrderBrief(ctx context.Context, orderID string) (OrderBrief, error)
 }
 
+// OrgOrderReader is OrderReader held to the caller's org (UX-81 round 4): an order of another org answers exactly
+// as an unknown one (ErrUnknownOrder), so a create can never read, or tell that it exists, another org's order. A
+// store whose order seam also implements this uses it for every create.
+type OrgOrderReader interface {
+	OrderBriefInOrg(ctx context.Context, orgID, orderID string) (OrderBrief, error)
+}
+
+// OrgPickSource is PickSource's ticket read held to the caller's org (UX-81 round 4): a ticket of another org's
+// order is ErrUnknownOrder. A store whose pick source also implements this uses it for every ticket read.
+type OrgPickSource interface {
+	PickTicketInOrg(ctx context.Context, orgID, orderID string) (PickTicket, error)
+}
+
 // TaskEventRef mirrors the messaging EVENT ref schema (Topic / Entity / DeepLink / Summary) plus the
 // idempotency EventKey and routing BranchID the ChatNotifier adapter needs. It lives in the tasks
 // package so tasks never imports messaging; the main.go adapter maps it to messaging.EventRef and

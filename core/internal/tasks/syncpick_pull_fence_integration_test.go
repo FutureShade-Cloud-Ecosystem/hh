@@ -343,3 +343,37 @@ func TestPickPullFence_ASyncCreateOnAnotherBranchsOrderIsRefusedAsUnknown(t *tes
 		t.Errorf("a scoped caller on a branchless order meets the unknown order words too: %v", err)
 	}
 }
+
+// TestPickPullFence_AFailedAuthorityReadIsRetryableNotARefusal (UX-81 round 4, S2's P3): when the staff authority
+// cannot be read, a legitimate create used to be answered "unknown order" (a rejected op, which the device drops for
+// good). An unreadable authority is no verdict on the operation: every reach read now returns a plain error, which
+// the sync engine does not classify as the operation's rejection (engine.go classified: only ErrRowNotFound,
+// ErrRowExists and ErrOpRefused are), so the whole push fails and the HTTP layer answers 503 "sync unavailable"
+// (sync/handler.go), the answer a device retries with the operation still in its outbox. The retry then applies.
+func TestPickPullFence_AFailedAuthorityReadIsRetryableNotARefusal(t *testing.T) {
+	d := newPickDoor(t)
+	create := apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "create", Payload: map[string]any{"order_id": uuid.NewString()}}
+	d.authority = func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{}, false, errors.New("authority read failed")
+	}
+	resp, err := d.engine.Push(context.Background(), d.info, d.f, []apigen.SyncPushOperation{create})
+	if err == nil {
+		t.Fatalf("a failed authority read must fail the push (retryable), got results %+v", resp.Results)
+	}
+	if errors.Is(err, hhsync.ErrOpRefused) || strings.Contains(err.Error(), "unknown order") {
+		t.Errorf("the failure is no refusal and no unknown order answer: %v", err)
+	}
+	var n int
+	if e := d.pool.QueryRow(context.Background(), `SELECT count(*) FROM tasks WHERE org_id = $1::uuid`, d.org).Scan(&n); e != nil || n != 0 {
+		t.Errorf("a failed read writes nothing: %d rows, %v", n, e)
+	}
+	// The same read failing on a pull is the same retryable error, never an empty page that hides it.
+	if _, _, perr := d.store.Pull(context.Background(), d.f, 0, 10); perr == nil {
+		t.Errorf("a pull whose authority cannot be read must fail, not answer an empty page")
+	}
+	// The authority back: the very same operation applies.
+	d.authority = func() (identity.StaffContext, bool, error) { return scopedTo(d.user, d.branchA), true, nil }
+	if res := d.push(create); res[0].Status != "applied" {
+		t.Errorf("the retried create applies once the authority answers: %+v %v", res[0], res[0].Error)
+	}
+}

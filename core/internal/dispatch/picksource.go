@@ -227,6 +227,32 @@ func (f *PickFeed) TicketForOrder(ctx context.Context, orderID string) (PickFeed
 	return t, nil
 }
 
+// TicketForOrderInOrg is TicketForOrder held to one org (UX-81 round 4): both source reads carry the org in their
+// WHERE, so a ticket of another org's order is ErrNotFound, exactly the answer for an unknown order. The lines are
+// read only for an order whose org matched.
+func (f *PickFeed) TicketForOrderInOrg(ctx context.Context, orgID, orderID string) (PickFeedTicket, error) {
+	row, err := f.repo.PickFeedStopForOrderInOrg(ctx, orgID, orderID)
+	var t PickFeedTicket
+	switch {
+	case err == nil:
+		t = f.ticket(row)
+	case errors.Is(err, ErrNotFound):
+		pickup, perr := f.repo.PickFeedPickupForOrderInOrg(ctx, orgID, orderID)
+		if perr != nil {
+			return PickFeedTicket{}, perr
+		}
+		t = f.pickupTicket(pickup)
+	default:
+		return PickFeedTicket{}, err
+	}
+	lines, err := f.readLines(ctx, orderID)
+	if err != nil {
+		return PickFeedTicket{}, err
+	}
+	t.Lines = lines
+	return t, nil
+}
+
 // ticketShell is the two-source lookup without the lines: the delivery stop, then the pickup.
 func (f *PickFeed) ticketShell(ctx context.Context, orderID string) (PickFeedTicket, error) {
 	row, err := f.repo.PickFeedStopForOrder(ctx, orderID)

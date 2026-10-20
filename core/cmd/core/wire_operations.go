@@ -886,6 +886,24 @@ func (a orderReaderAdapter) OrderBrief(ctx context.Context, orderID string) (tas
 	return tasks.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
 }
 
+// OrderBriefInOrg is the org held read the tasks creates use (UX-81 round 4): an order of another org maps onto
+// ErrUnknownOrder, the same as a missing one.
+func (a orderReaderAdapter) OrderBriefInOrg(ctx context.Context, orgID, orderID string) (tasks.OrderBrief, error) {
+	b, err := a.repo.OrderBriefInOrg(ctx, orgID, orderID)
+	if err != nil {
+		if errors.Is(err, order.ErrNotFound) {
+			return tasks.OrderBrief{}, tasks.ErrUnknownOrder
+		}
+		return tasks.OrderBrief{}, err
+	}
+	return tasks.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+var (
+	_ tasks.OrgOrderReader = orderReaderAdapter{}
+	_ tasks.OrgPickSource  = dispatchPickSource{}
+)
+
 // taskChatNotifier satisfies tasks.ChatNotifier over messaging's
 // event-post seam: the order's branch yard channel when known, else the
 // default channel, idempotent on the event key.
@@ -1401,6 +1419,19 @@ func newDispatchPickSource(pool *pgxpool.Pool, orderRepo *order.Repository, log 
 // seam contract's one required error translation.
 func (a dispatchPickSource) PickTicket(ctx context.Context, orderID string) (tasks.PickTicket, error) {
 	t, err := a.feed.TicketForOrder(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, dispatch.ErrNotFound) {
+			return tasks.PickTicket{}, tasks.ErrUnknownOrder
+		}
+		return tasks.PickTicket{}, err
+	}
+	return a.markHeld(ctx, pickTicketFromFeed(t))
+}
+
+// PickTicketInOrg is PickTicket held to the caller's org (UX-81 round 4): a foreign order's ticket is the same
+// tasks.ErrUnknownOrder as an unknown one.
+func (a dispatchPickSource) PickTicketInOrg(ctx context.Context, orgID, orderID string) (tasks.PickTicket, error) {
+	t, err := a.feed.TicketForOrderInOrg(ctx, orgID, orderID)
 	if err != nil {
 		if errors.Is(err, dispatch.ErrNotFound) {
 			return tasks.PickTicket{}, tasks.ErrUnknownOrder
