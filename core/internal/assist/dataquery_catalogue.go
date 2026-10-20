@@ -127,7 +127,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView(), deliveryRunsView(), deliveryStopsView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView(), deliveryRunsView(), deliveryStopsView(), customersView(), customerContactsView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -510,5 +510,49 @@ func rawDeliveryStopsView() ViewDef {
 		DefaultOrder: []OrderBy{{Col: "scheduled_date", Dir: "desc"}, {Col: "run_no", Dir: "asc"}, {Col: "stop_no", Dir: "asc"}},
 		Period:       "scheduled_date",
 		CiteKind:     RefOrder, CiteIDCol: "order_id", CiteLabelCol: "order_no", CiteLabelPrefix: "Order ",
+	}
+}
+
+func customersView() ViewDef { return classify(rawCustomersView()) }
+
+func rawCustomersView() ViewDef {
+	return ViewDef{
+		Name: "ai.customers", Schema: "ai", Table: "customers", Title: "Customers", MinTier: 2, Large: true,
+		About: "One row per customer account: account number, name, type, home branch, payment terms, whether it is on hold, tax exempt and active.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "account_no", Label: "Account", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "customer_type", Label: "Type", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Home branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Home branch", Type: typeText, Filter: true, Group: true},
+			{Name: "payment_terms_days", Label: "Payment terms (days)", Type: typeInt, Filter: true, Group: true, Agg: true},
+			{Name: "on_hold", Label: "On hold", Type: typeText, Filter: true, Group: true},
+			{Name: "tax_exempt", Label: "Tax exempt", Type: typeText, Filter: true, Group: true},
+			{Name: "is_active", Label: "Active", Type: typeText, Filter: true, Group: true},
+		},
+		Default:      []string{"account_no", "name", "customer_type", "branch_label", "on_hold", "is_active"},
+		DefaultOrder: []OrderBy{{Col: "name", Dir: "asc"}, {Col: "account_no", Dir: "asc"}},
+		CiteKind:     RefCustomer, CiteIDCol: "id", CiteLabelCol: "account_no", CiteLabelPrefix: "Account ",
+	}
+}
+
+func customerContactsView() ViewDef { return classify(rawCustomerContactsView()) }
+
+func rawCustomerContactsView() ViewDef {
+	return ViewDef{
+		Name: "ai.customer_contacts", Schema: "ai", Table: "customer_contacts", Title: "Customer contacts", MinTier: 2, Large: true,
+		About: "One row per account that has an invoice you can see: the account's contact (the primary one first) with name, email and phone.",
+		Columns: []ColumnDef{
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "account_no", Label: "Account", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "contact_name", Label: "Contact", Type: typeText, Filter: true, Group: true},
+			{Name: "contact_email", Label: "Email", Type: typeText, Filter: true},
+			{Name: "contact_phone", Label: "Phone", Type: typeText, Filter: true},
+		},
+		Default:      []string{"account_no", "customer_name", "contact_name", "contact_phone"},
+		DefaultOrder: []OrderBy{{Col: "customer_name", Dir: "asc"}, {Col: "account_no", Dir: "asc"}},
+		CiteKind:     RefCustomer, CiteIDCol: "customer_id", CiteLabelCol: "account_no", CiteLabelPrefix: "Account ",
 	}
 }

@@ -201,6 +201,24 @@ var columnRegistry = map[string]string{
 	"ai.delivery_stops.postal_code":    ClassPlain,
 	"ai.delivery_stops.failure_reason": ClassPlain,
 	"ai.delivery_stops.delivered_at":   ClassPlain,
+	// ai.customers: the customer screens' account facts (credit limit and balance are not exposed, see 0428).
+	"ai.customers.id":                 ClassPlain,
+	"ai.customers.account_no":         ClassPlain,
+	"ai.customers.name":               ClassPlain,
+	"ai.customers.customer_type":      ClassPlain,
+	"ai.customers.branch_id":          ClassPlain,
+	"ai.customers.branch_label":       ClassPlain,
+	"ai.customers.payment_terms_days": ClassPlain,
+	"ai.customers.on_hold":            ClassPlain,
+	"ai.customers.tax_exempt":         ClassPlain,
+	"ai.customers.is_active":          ClassPlain,
+	// ai.customer_contacts: the account's first active contact, as the receivables register shows it.
+	"ai.customer_contacts.customer_id":   ClassPlain,
+	"ai.customer_contacts.account_no":    ClassPlain,
+	"ai.customer_contacts.customer_name": ClassPlain,
+	"ai.customer_contacts.contact_name":  ClassPlain,
+	"ai.customer_contacts.contact_email": ClassPlain,
+	"ai.customer_contacts.contact_phone": ClassPlain,
 }
 
 // personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
@@ -210,24 +228,29 @@ var columnRegistry = map[string]string{
 // the asker typed, and counted for the retention purge. Free text columns that may hold anything typed carry it
 // too and stay plain; they are never indexed unless the scrubber has run on them.
 var personalColumns = map[string]bool{
-	"ai.orders.customer_name":          true, // customers.name: may be a person for a sole trader
-	"ai.quotes.customer_name":          true, // as above
-	"ai.quotes.contact_name":           true, // the quote screen shows it to staff with reach
-	"ai.quotes.delivery_address":       true, // as above
-	"ai.quotes.customer_notes":         true, // free text shown on the quote; may hold anything typed
-	"ai.purchase_orders.notes":         true, // free text on the order
-	"ai.invoices.customer_name":        true, // as ai.orders.customer_name
-	"ai.ar_aging.customer_name":        true, // as above
-	"ai.payments.customer_name":        true, // as above
-	"ai.delivery_runs.driver_label":    true, // a person's name
-	"ai.delivery_stops.customer_name":  true, // as ai.orders.customer_name
-	"ai.delivery_stops.time_window":    true, // free text
-	"ai.delivery_stops.contact_name":   true, // the board and the driver's run show it to anyone with reach
-	"ai.delivery_stops.contact_phone":  true, // as above
-	"ai.delivery_stops.address_line":   true, // as above
-	"ai.delivery_stops.city":           true, // part of the delivery address
-	"ai.delivery_stops.postal_code":    true, // part of the delivery address
-	"ai.delivery_stops.failure_reason": true, // free text a driver types
+	"ai.orders.customer_name":            true, // customers.name: may be a person for a sole trader
+	"ai.quotes.customer_name":            true, // as above
+	"ai.quotes.contact_name":             true, // the quote screen shows it to staff with reach
+	"ai.quotes.delivery_address":         true, // as above
+	"ai.quotes.customer_notes":           true, // free text shown on the quote; may hold anything typed
+	"ai.purchase_orders.notes":           true, // free text on the order
+	"ai.invoices.customer_name":          true, // as ai.orders.customer_name
+	"ai.ar_aging.customer_name":          true, // as above
+	"ai.payments.customer_name":          true, // as above
+	"ai.delivery_runs.driver_label":      true, // a person's name
+	"ai.delivery_stops.customer_name":    true, // as ai.orders.customer_name
+	"ai.delivery_stops.time_window":      true, // free text
+	"ai.delivery_stops.contact_name":     true, // the board and the driver's run show it to anyone with reach
+	"ai.delivery_stops.contact_phone":    true, // as above
+	"ai.delivery_stops.address_line":     true, // as above
+	"ai.delivery_stops.city":             true, // part of the delivery address
+	"ai.delivery_stops.postal_code":      true, // part of the delivery address
+	"ai.delivery_stops.failure_reason":   true, // free text a driver types
+	"ai.customers.name":                  true, // may be a person for a sole trader
+	"ai.customer_contacts.customer_name": true, // as above
+	"ai.customer_contacts.contact_name":  true, // PII-CLASSES-r2: customer_contacts.name
+	"ai.customer_contacts.contact_email": true, // PII-CLASSES-r2: customer_contacts.email
+	"ai.customer_contacts.contact_phone": true, // PII-CLASSES-r2: customer_contacts.phone
 }
 
 // columnGates names the vocabulary that gates a cost column when it is not the role list.
@@ -288,7 +311,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView(), rawInvoicesView(), rawARAgingView(), rawPaymentsView(), rawPaymentAllocationsView(), rawDeliveryRunsView(), rawDeliveryStopsView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView(), rawQuotesView(), rawQuoteLinesView(), rawPurchaseOrdersView(), rawPurchaseOrderLinesView(), rawInvoicesView(), rawARAgingView(), rawPaymentsView(), rawPaymentAllocationsView(), rawDeliveryRunsView(), rawDeliveryStopsView(), rawCustomersView(), rawCustomerContactsView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}

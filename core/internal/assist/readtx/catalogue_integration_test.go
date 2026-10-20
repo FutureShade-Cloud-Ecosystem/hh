@@ -43,6 +43,8 @@ var assistReaderViews = map[string]bool{
 	"ai.payment_allocations":  true, // slice 7a
 	"ai.delivery_runs":        true, // slice 7b
 	"ai.delivery_stops":       true, // slice 7b
+	"ai.customers":            true, // slice 7b
+	"ai.customer_contacts":    true, // slice 7b
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
@@ -50,7 +52,7 @@ var assistReaderViews = map[string]bool{
 var viewOwnerColumns = map[string][]string{
 	"public.orders":               {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
 	"public.order_lines":          {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
-	"public.customers":            {"account_no", "id", "name"},                                                                                                                                                                                                                                    // slice 5
+	"public.customers":            {"account_no", "customer_type", "home_branch_id", "id", "is_active", "name", "on_hold", "payment_terms_days", "tax_exempt"},                                                                                                                                     // slice 5
 	"public.locations":            {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
 	"public.stock_balances":       {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
 	"public.product_branch_costs": {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
@@ -67,6 +69,7 @@ var viewOwnerColumns = map[string][]string{
 	"public.delivery_stops":       {"address_line", "branch_id", "city", "contact_name", "contact_phone", "delivered_at", "failure_reason", "id", "order_id", "postal_code", "run_id", "scheduled_date", "status", "stop_no", "time_window"},                                                       // slice 7b
 	"public.dispatch_trucks":      {"code", "id"},                                                                                                                                                                                                                                                  // slice 7b
 	"public.dispatch_drivers":     {"id", "name"},                                                                                                                                                                                                                                                  // slice 7b
+	"public.customer_contacts":    {"created_at", "customer_id", "email", "id", "is_active", "is_primary", "name", "phone"},                                                                                                                                                                        // slice 7b
 }
 
 func (r Roles) all() []string {
@@ -556,7 +559,7 @@ func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
 	q := pgx.Identifier.Sanitize
 	for _, p := range []struct{ name, plant, revert, mention string }{
 		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
-		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.payment_terms_days"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no, customer_type, home_branch_id, payment_terms_days, on_hold, tax_exempt, is_active) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.credit_limit_cents"},
 		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
 	} {
 		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {

@@ -118,5 +118,73 @@ BEGIN
       LEFT JOIN public.customers c ON c.id = o.customer_id;
   EXECUTE format('GRANT SELECT ON ai.delivery_runs, ai.delivery_stops TO %I', v_reader);
   RESET ROLE;
+  -- 3. The CRM family: ai.customers and ai.customer_contacts.
+  --
+  -- ai.customers: the customer screens (GET /customers/{id} and the picker search) show an account to a staff
+  -- caller who reaches its home branch, and every account homed to no branch (company wide by construction). No
+  -- row security is put on customers: the order, quote, invoice, payment and delivery views already join it for the
+  -- customer's name, and a policy there would blank those names for an account homed to another branch, which
+  -- their own screens show. So the view carries the reach in its WHERE (audience, tier floor and home branch), and
+  -- is a security barrier so no outer qual runs below it. The three flags are the words yes and no, which the query
+  -- grammar can filter and group by. Credit limit and balance are not exposed: the receivables
+  -- register gates the account position by a per branch policy while the picker shows it to any staff, and that
+  -- disagreement is the lead's to settle.
+  -- ai.customer_contacts: the one screen that shows a contact to staff is the receivables register's invoice
+  -- detail, which shows the account's first active contact (the primary one first) to a caller who reaches one of
+  -- the account's invoices. The policy admits a contact for an account with an invoice in the caller's reach; the
+  -- view keeps that one contact per account. No billing address: no staff screen shows it.
+  SELECT tableowner INTO owner_name FROM pg_tables WHERE schemaname = 'public' AND tablename = 'customer_contacts';
+  IF owner_name IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'table customer_contacts is owned by %, not by the migrating role %: refusing to enable row security on it',
+      coalesce(owner_name, '(missing)'), current_user;
+  END IF;
+  EXECUTE format('GRANT SELECT (id, name, account_no, customer_type, home_branch_id, payment_terms_days, on_hold, tax_exempt, is_active) ON public.customers TO %I', v_view);
+  EXECUTE format('GRANT SELECT (id, customer_id, name, email, phone, is_primary, is_active, created_at) ON public.customer_contacts TO %I', v_view);
+  ALTER TABLE public.customer_contacts ENABLE ROW LEVEL SECURITY;
+  EXECUTE format($p$
+    CREATE POLICY assist_staff_customer_contacts ON public.customer_contacts TO %I
+    USING (
+      (SELECT ai.claims()).audience = 'staff'
+      AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+      AND EXISTS (
+        SELECT 1 FROM public.invoices i
+        WHERE i.customer_id = customer_contacts.customer_id
+          AND ((SELECT ai.claims()).global OR i.branch_id = ANY ((SELECT ai.claims()).branch_ids))
+      )
+    )$p$, v_view);
+
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+  CREATE VIEW ai.customers WITH (security_barrier = true) AS
+    SELECT c.id,
+           c.account_no::text AS account_no,
+           c.name,
+           c.customer_type,
+           c.home_branch_id AS branch_id,
+           COALESCE(l.name, '') AS branch_label,
+           c.payment_terms_days,
+           CASE WHEN c.on_hold THEN 'yes' ELSE 'no' END AS on_hold,
+           CASE WHEN c.tax_exempt THEN 'yes' ELSE 'no' END AS tax_exempt,
+           CASE WHEN c.is_active THEN 'yes' ELSE 'no' END AS is_active
+      FROM public.customers c
+      LEFT JOIN public.locations l ON l.id = c.home_branch_id
+     WHERE (SELECT ai.claims()).audience = 'staff'
+       AND (SELECT ai.claims()).tier BETWEEN 1 AND 2
+       AND (c.home_branch_id IS NULL
+            OR (SELECT ai.claims()).global
+            OR c.home_branch_id = ANY ((SELECT ai.claims()).branch_ids));
+  CREATE VIEW ai.customer_contacts AS
+    SELECT x.customer_id,
+           COALESCE(c.account_no::text, '') AS account_no,
+           COALESCE(c.name, '') AS customer_name,
+           x.name AS contact_name,
+           COALESCE(x.email::text, '') AS contact_email,
+           x.phone AS contact_phone
+      FROM (SELECT DISTINCT ON (cc.customer_id) cc.customer_id, cc.name, cc.email, cc.phone
+              FROM public.customer_contacts cc
+             WHERE cc.is_active
+             ORDER BY cc.customer_id, cc.is_primary DESC, cc.created_at ASC) x
+      LEFT JOIN public.customers c ON c.id = x.customer_id;
+  EXECUTE format('GRANT SELECT ON ai.customers, ai.customer_contacts TO %I', v_reader);
+  RESET ROLE;
 END
 $s7b$;
