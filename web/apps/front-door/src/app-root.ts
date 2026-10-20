@@ -52,6 +52,7 @@ import {
 // door's bundle carries the registry and the drawing rules, not the till.
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { writeSessionBranchIds } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import {
   COMING_ROLES,
   comingHeading,
@@ -919,14 +920,21 @@ export class FrontDoorApp extends HHElement {
       return;
     }
     const path = event.composedPath();
+    // A radio group moves the choice with the arrows; the branch toggle group only moves focus.
+    const toggleGroup = path.find(
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("data-testid") === "branch-group",
+    );
+    const memberSelector = toggleGroup !== undefined ? "[aria-pressed]" : '[role="radio"]';
     const currentRadio = path.find(
-      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radio",
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement &&
+        (toggleGroup !== undefined ? node.hasAttribute("aria-pressed") : node.getAttribute("role") === "radio"),
     );
-    const group = path.find(
-      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup",
-    );
+    const group =
+      toggleGroup ??
+      path.find((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup");
     if (currentRadio === undefined || group === undefined || this.#console === null) return;
-    const radios = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const radios = Array.from(group.querySelectorAll<HTMLElement>(memberSelector));
     const index = radios.indexOf(currentRadio);
     if (index < 0 || radios.length === 0) return;
     event.preventDefault();
@@ -938,11 +946,14 @@ export class FrontDoorApp extends HHElement {
     if (nextRadio.getAttribute("data-action") === "select-role") {
       const roleId = nextRadio.getAttribute("data-role");
       if (typeof roleId === "string" && roleId !== "") this.#console.chooseRole(roleId);
+    } else if (nextRadio.getAttribute("data-action") === "select-branch") {
+      const branchId = nextRadio.getAttribute("data-branch-id");
+      if (typeof branchId === "string" && branchId !== "") this.#console.focusBranchOption(branchId);
     }
     void this.updateComplete.then(() => {
       if (groupTestId === null) return;
       const nextGroup = this.renderRoot.querySelector<HTMLElement>(`[data-testid="${groupTestId}"]`);
-      const updatedRadios = nextGroup === null ? [] : Array.from(nextGroup.querySelectorAll<HTMLElement>('[role="radio"]'));
+      const updatedRadios = nextGroup === null ? [] : Array.from(nextGroup.querySelectorAll<HTMLElement>(memberSelector));
       updatedRadios[nextIndex]?.focus();
     });
   };
@@ -1018,7 +1029,13 @@ export class FrontDoorApp extends HHElement {
       const roleId = control.getAttribute("data-role");
       if (typeof roleId === "string" && roleId !== "") session.chooseRole(roleId);
     }
+    if (action === "select-branch") {
+      const branchId = control.getAttribute("data-branch-id");
+      if (typeof branchId === "string" && branchId !== "") session.toggleBranch(branchId);
+    }
     if (action === "continue-own") {
+      // The one channel the desks read: only branch ids the core already granted, per tab.
+      writeSessionBranchIds(session.chosenBranches.map((branch) => branch.id));
       session.continueOwn();
       this.#screen = { kind: "home" };
       void this.#loadApprovals();
@@ -1264,7 +1281,7 @@ export class FrontDoorApp extends HHElement {
     const who = session.who;
     const landing = this.#landingRole();
     const openable = landing === undefined ? [] : landing.tiles.filter((tile) => tile.href !== null);
-    const branchLabel = session.branches.map((branch) => branch.name).join(", ");
+    const branchLabel = session.chosenBranches.map((branch) => branch.name).join(", ");
     const roleText =
       who === null
         ? ""

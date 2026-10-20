@@ -109,6 +109,8 @@ export class ConsoleSession {
   #refusals = new Map<string, string>();
   #chosenRoleId: string | null = null;
   #branches: readonly GrantedBranch[] = [];
+  #chosenBranchIds: readonly string[] = [];
+  #activeBranchOption: string | null = null;
 
   constructor(deps: ConsoleDeps) {
     this.#deps = deps;
@@ -215,14 +217,57 @@ export class ConsoleSession {
     this.#changed();
   }
 
-  /** The person's granted branches from the core: information the picker and the home show, never a choice. */
+  /** The person's granted branches from the core, in the core's order. */
   get branches(): readonly GrantedBranch[] {
     return this.#branches;
   }
 
-  /** Record the person's granted branches from the core. */
+  /** Several granted branches are a choice on the picker; one is shown as information. */
+  get branchIsChoice(): boolean {
+    return this.#branches.length > 1;
+  }
+
+  /** The ids of the branches chosen to work this session: every granted branch until the person narrows it. */
+  get chosenBranchIds(): readonly string[] {
+    return this.#chosenBranchIds;
+  }
+
+  /** The chosen branches, in the core's order. */
+  get chosenBranches(): readonly GrantedBranch[] {
+    return this.#branches.filter((branch) => this.#chosenBranchIds.includes(branch.id));
+  }
+
+  /** The branch option that carries the choice group's single tab stop. */
+  get activeBranchOptionId(): string {
+    const active = this.#activeBranchOption;
+    if (active !== null && this.#branches.some((branch) => branch.id === active)) return active;
+    return this.#chosenBranchIds[0] ?? this.#branches[0]?.id ?? "";
+  }
+
+  /** Record the person's granted branches from the core; every one starts chosen. */
   setBranches(branches: readonly GrantedBranch[]): void {
     this.#branches = [...branches];
+    const kept = this.#chosenBranchIds.filter((id) => this.#branches.some((branch) => branch.id === id));
+    this.#chosenBranchIds = kept.length > 0 ? kept : this.#branches.map((branch) => branch.id);
+    this.#changed();
+  }
+
+  /** Turn one granted branch on or off. At least one stays chosen; an id the core did not grant is ignored. */
+  toggleBranch(branchId: string): void {
+    if (!this.branchIsChoice || !this.#branches.some((branch) => branch.id === branchId)) return;
+    this.#activeBranchOption = branchId;
+    if (this.#chosenBranchIds.includes(branchId)) {
+      if (this.#chosenBranchIds.length > 1) this.#chosenBranchIds = this.#chosenBranchIds.filter((id) => id !== branchId);
+    } else {
+      this.#chosenBranchIds = this.#branches.filter((branch) => branch.id === branchId || this.#chosenBranchIds.includes(branch.id)).map((branch) => branch.id);
+    }
+    this.#changed();
+  }
+
+  /** Move the choice group's tab stop without changing the choice: the arrow keys only move focus. */
+  focusBranchOption(branchId: string): void {
+    if (!this.#branches.some((branch) => branch.id === branchId)) return;
+    this.#activeBranchOption = branchId;
     this.#changed();
   }
 
@@ -443,6 +488,8 @@ export class ConsoleSession {
     this.#personaBusy = null;
     this.#chosenRoleId = null;
     this.#branches = [];
+    this.#chosenBranchIds = [];
+    this.#activeBranchOption = null;
   }
 
   async #loadMethods(): Promise<void> {
