@@ -155,7 +155,7 @@ export const messagesStyles = css`
   .msg-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8); margin-top: var(--hh-s-6); }
   .delete-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-8) var(--hh-s-12); margin-top: var(--hh-s-8); padding: var(--hh-s-8) var(--hh-s-12); background: var(--hh-card); border: 1px solid var(--hh-state-stop); border-inline-start: 4px solid var(--hh-state-stop); border-radius: var(--hh-radius-control); }
   .delete-confirm-actions { display: inline-flex; flex-wrap: wrap; gap: var(--hh-s-8); }
-  .btn-danger { background: var(--hh-state-stop); color: #ffffff; border: 1px solid var(--hh-state-stop); font-weight: 700; }
+  .btn-danger { background: var(--hh-card); color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); font-weight: 700; }
   .btn-replies { min-height: 44px; }
   .btn-open-thread { min-height: 44px; }
   .thread { margin: var(--hh-s-8) 0 0 var(--hh-s-16); padding-inline-start: var(--hh-s-12); border-inline-start: 2px solid var(--hh-line); display: grid; gap: var(--hh-s-8); }
