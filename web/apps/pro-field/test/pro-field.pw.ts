@@ -182,7 +182,7 @@ test.describe("phone", () => {
     await firstRow.click();
     await expect(page.getByTestId("surface-title")).toHaveText("Order");
     await expect(page.getByTestId("order-head")).toContainText(orderNo);
-    await expect(page.getByTestId("order-head")).toContainText("Promised for");
+    await expect(page.getByTestId("order-head")).toContainText("Wanted by");
     const steps = page.getByTestId("order-timeline").locator(".tstep");
     await expect(steps).toHaveCount(5);
     await expect(page.getByTestId("order-lines")).toContainText("at $");
