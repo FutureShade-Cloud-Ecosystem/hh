@@ -1,6 +1,7 @@
 // PR 121 round 3, Part A findings: each test holds one answer back behind a delayed route, so the order of events
 // is exact and does not depend on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { gate, hold, open, quiet, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
@@ -132,6 +133,7 @@ test("P2-2 sign out waits for the terms save of the quote just left, and sends i
   await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await settle(page);
   // The save is out: the session still stands.
@@ -152,6 +154,7 @@ test("P2-2 sign out is bounded: a save that never answers does not hold it, and 
   await showList(page);
   await row(page, "Q-1001").click();
   await put.asked;
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole("status").filter({ hasText: "timed out" })).toBeVisible();
@@ -180,6 +183,7 @@ test("P2-4 a sign in lands on the quotes list, whatever the desk held when the p
   await open(page, "Q-1001");
   await page.getByRole("button", { name: "Swap panels" }).click();
   await open(page, "Q-1003");
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sales", exact: true }).click();

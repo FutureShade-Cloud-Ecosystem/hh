@@ -236,8 +236,23 @@
     padding: var(--hh-s-12) 10px;
     background: var(--hh-card);
     border-right: 1px solid var(--hh-line);
+    /* The rail itself never clips: the pin menu and the row tooltips paint
+     * beside it (P1-1 of the PR 503 review). The scroll moves to the rows
+     * wrapper, so a long pin list still scrolls. */
+    overflow: visible;
+  }
+  .rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  .rail[data-collapsed='true'] .rows {
+    align-items: center;
   }
   /* Collapsed: the narrow strip the brief arrives as, icons only. */
   .rail[data-collapsed='true'] {
@@ -303,6 +318,87 @@
     display: block;
     width: 22px;
     height: 22px;
+  }
+  /* The pin menu (GAPS-r2 row G1): the board's two pin choices, "Pin as
+   * icons" and "Pin wide". Hidden at rest; the rail's own hover or focus
+   * reveals it, instantly, because an animated bar is an extra bar (the G3
+   * check). It hangs beside the rail with a small visual gap, and the
+   * ::before bridge carries the pointer across the gap, so a mouse moving
+   * from the rail to the menu never drops the hover (P1-1 of the review:
+   * the unbridged gap used to close the menu under the pointer). */
+  .pin-menu {
+    display: none;
+    /* A fixed popover anchored from the rail's own rect (the rail sets
+     * --pin-left and --pin-top on hover and focus), so no ancestor's clip or
+     * scroll can hide it. */
+    position: fixed;
+    left: var(--pin-left, 66px);
+    top: var(--pin-top, 12px);
+    z-index: var(--hh-z-dropdown);
+    flex-direction: column;
+    gap: 2px;
+    width: max-content;
+    padding: var(--hh-s-4);
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-line);
+    border-radius: 8px;
+    box-shadow: var(--hh-elev-2);
+  }
+  .pin-menu::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: 12px;
+  }
+  .rail:hover .pin-menu,
+  .rail:focus-within .pin-menu,
+  .pin-menu:hover {
+    display: flex;
+  }
+  /* After a pick the popover steps aside until the pointer re-enters the rail. */
+  .rail[data-picked='true'] .pin-menu,
+  .rail[data-picked='true'] .pin-menu:hover {
+    display: none;
+  }
+  .pin-item {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 10px;
+    background: transparent;
+    color: var(--hh-text-dim);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.15;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pin-item:hover {
+    background: var(--hh-row-alt);
+    color: var(--hh-text);
+  }
+  .pin-item:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .pin-item[aria-pressed='true'] {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+  }
+  /* Unpinned and collapsed, the rail waits as the toggle button alone: the
+   * icons column reveals on hover or focus, and stays only once a person
+   * pins it (pin icons or pin wide). */
+  .rail[data-pin='off'][data-collapsed='true'] .row {
+    display: none;
+  }
+  .rail[data-pin='off'][data-collapsed='true']:hover .row,
+  .rail[data-pin='off'][data-collapsed='true']:focus-within .row {
+    display: flex;
   }
   .row {
     position: relative;

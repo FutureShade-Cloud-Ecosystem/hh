@@ -67,6 +67,9 @@ type taskStore interface {
 	// task's fresh seq written in the same transaction.
 	RecordPickLocked(ctx context.Context, taskID, actorID string, apply func(context.Context, Task) ([]PickedLineInput, error)) ([]PickedLine, error)
 	// ListPickedLines reads a task's recorded pick in ticket order.
+	// HolderLocked runs apply with the task row locked and the actor checked against the claim (ErrNoActor
+	// when there is none, ErrNotHolder when someone else holds it), the skid count's guard (UX-76b).
+	HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error
 	ListPickedLines(ctx context.Context, taskID string) ([]PickedLine, error)
 
 	// - W3 (Swarm C) -
@@ -220,6 +223,16 @@ func (s *Service) Done(ctx context.Context, id, actor, photoURL string) (Task, e
 // Cancel moves any non-terminal task to CANCELLED with an optional note. Illegal from a terminal status.
 func (s *Service) Cancel(ctx context.Context, id, actor, note string) (Task, error) {
 	return s.transition(ctx, id, StatusCancelled, actor, note, "")
+}
+
+// CancelAs is Cancel by a caller who may cancel a pick someone else holds (overrideRole is that caller's role
+// code, decided by the handler from the staff context): the cancel then needs its reason in note and is
+// audited with the role (UX-76b).
+func (s *Service) CancelAs(ctx context.Context, id, actor, note, overrideRole string) (Task, error) {
+	if id == "" {
+		return Task{}, httpx.BadRequestf("task id is required")
+	}
+	return s.store.Transition(ctx, TransitionInput{TaskID: id, To: StatusCancelled, ActorID: actor, Note: note, OverrideRole: overrideRole})
 }
 
 // ListTasks returns one page of the picking queue, validating the optional

@@ -172,8 +172,11 @@ func TestYardHolderRule_RESTCancel(t *testing.T) {
 		mgr := g.yardManager(g.b)
 		mgr.Branches = map[string]bool{uuid.NewString(): true}
 		code, body := g.restCtx("B (yard manager, other branch)", mgr, http.MethodPost, "/api/v1/tasks/{id}/cancel", `{"note":"x"}`, g.h.cancel)
-		if code != http.StatusConflict {
-			t.Errorf("a manager who does not reach the branch is refused like any other hand: %d %s", code, body)
+		if code != http.StatusForbidden || !strings.Contains(body, "branch out of scope") {
+			t.Errorf("a manager who does not reach the branch meets the branch fence first: %d %s", code, body)
+		}
+		if s := g.status(); s != "IN_PROGRESS" {
+			t.Errorf("a fenced cancel changes nothing: %s", s)
 		}
 	})
 }
@@ -216,7 +219,13 @@ func TestYardHolderRule_SyncStartDoneCancelAndSkidsAreTheHolders(t *testing.T) {
 			g.as(g.b)
 			res := g.syncPush("B", "pick_tasks", apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update",
 				Payload: map[string]any{"id": g.task, "status": leg.to}})
-			wantHolderRejected(t, "sync "+leg.name, res)
+			if leg.name == "cancel" {
+				if res.Status != "rejected" || res.Error == nil || !strings.Contains(*res.Error, "only the holder or a yard manager may cancel") {
+					t.Errorf("sync cancel from a non holder must be rejected with the cancel words, got %+v", res)
+				}
+			} else {
+				wantHolderRejected(t, "sync "+leg.name, res)
+			}
 			if s := g.status(); s != leg.from {
 				t.Errorf("a rejected op changes nothing: the pick is %s", s)
 			}
@@ -242,4 +251,65 @@ func TestYardHolderRule_SyncStartDoneCancelAndSkidsAreTheHolders(t *testing.T) {
 			}
 		}
 	})
+}
+
+// otherBranch is a yard team caller scoped to the other branch, for the fence-first order.
+func (g *holderGuard) otherBranch(user string) identity.StaffContext {
+	sc := g.staffCtx(user)
+	sc.Branches = map[string]bool{g.branchB: true}
+	return sc
+}
+
+// TestYardHolderRule_AnotherBranchMeetsTheFenceFirst: every write on a held pick by a user scoped to another
+// branch is refused by the branch fence, never by a holder answer that would tell them the pick exists.
+func TestYardHolderRule_AnotherBranchMeetsTheFenceFirst(t *testing.T) {
+	restLegs := []struct {
+		name, from, method, path, body string
+		do                             func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller)
+	}{
+		{"claim", "QUEUED", http.MethodPost, "/api/v1/tasks/{id}/claim", "", func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller) { return g.h.claim }},
+		{"start", "ACCEPTED", http.MethodPost, "/api/v1/tasks/{id}/accept", "", func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller) { return g.h.accept }},
+		{"done", "IN_PROGRESS", http.MethodPost, "/api/v1/tasks/{id}/done", "", func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller) { return g.h.done }},
+		{"cancel", "IN_PROGRESS", http.MethodPost, "/api/v1/tasks/{id}/cancel", `{"note":"x"}`, func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller) { return g.h.cancel }},
+		{"skid count", "IN_PROGRESS", http.MethodPut, "/api/v1/yard/picks/{id}/skids", holderRuleSkids, func(g *holderGuard) func(http.ResponseWriter, *http.Request, guards.StaffCaller) {
+			return g.h.recordSkids
+		}},
+	}
+	for _, leg := range restLegs {
+		t.Run("REST "+leg.name, func(t *testing.T) {
+			g := newHolderGuard(t)
+			g.setStatus(leg.from)
+			code, body := g.restCtx("C (other branch)", g.otherBranch(g.b), leg.method, leg.path, leg.body, leg.do(g))
+			if code != http.StatusForbidden || !strings.Contains(body, "branch out of scope") {
+				t.Errorf("REST %s from another branch must be the branch fence 403, got %d %s", leg.name, code, body)
+			}
+			if s := g.status(); s != leg.from {
+				t.Errorf("a fenced write changes nothing: the pick is %s", s)
+			}
+			if h := g.holder(); h != g.a {
+				t.Errorf("the holder is still A, got %q", h)
+			}
+		})
+	}
+	for _, leg := range []struct{ name, from, to string }{
+		{"claim", "QUEUED", "ACCEPTED"}, {"start", "ACCEPTED", "IN_PROGRESS"}, {"done", "IN_PROGRESS", "DONE"}, {"cancel", "IN_PROGRESS", "CANCELLED"},
+	} {
+		t.Run("sync "+leg.name, func(t *testing.T) {
+			g := newHolderGuard(t)
+			g.setStatus(leg.from)
+			g.as(g.b)
+			g.authority = func() (identity.StaffContext, bool, error) { return g.otherBranch(g.b), true, nil }
+			res := g.syncPush("C (other branch)", "pick_tasks", apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update",
+				Payload: map[string]any{"id": g.task, "status": leg.to}})
+			if res.Status != "rejected" || res.Error == nil || !strings.Contains(*res.Error, "branch out of scope") {
+				t.Errorf("sync %s from another branch must be rejected by the branch fence, got %+v", leg.name, res)
+			}
+			if s := g.status(); s != leg.from {
+				t.Errorf("a rejected op changes nothing: the pick is %s", s)
+			}
+			if h := g.holder(); h != g.a {
+				t.Errorf("the holder is still A, got %q", h)
+			}
+		})
+	}
 }

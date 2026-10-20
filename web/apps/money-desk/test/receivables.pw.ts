@@ -623,6 +623,7 @@ test("the held key survives a sign out and a sign in of the same user", async ({
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);
@@ -641,6 +642,7 @@ test("held keys are never shared across users: another user starts with none, an
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='financial-controller']").click();
   await page.getByRole("button", { name: "Receivables", exact: true }).click();
@@ -652,6 +654,7 @@ test("held keys are never shared across users: another user starts with none, an
   expect(posts).toHaveLength(2);
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
   // The first user signs in again and still holds the first key: the route answers its replay.
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);

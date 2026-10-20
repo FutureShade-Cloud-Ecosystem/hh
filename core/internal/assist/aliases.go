@@ -15,6 +15,7 @@ package assist
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -45,11 +46,11 @@ const (
 
 // ModelConfig is the deployment's model configuration.
 type ModelConfig struct {
-	AnthropicKey     Secret // HOS_ASSIST_ANTHROPIC_API_KEY
-	AnthropicBaseURL string // empty is the vendor's own endpoint
-	GatewayURL       string // HOS_ASSIST_GATEWAY_URL, the OpenAI compatible gateway, version prefix included
-	GatewayKey       Secret // HOS_ASSIST_GATEWAY_KEY, this dealer's key
-	DealerTag        string // HOS_ASSIST_DEALER_TAG, this dealer's tag
+	AnthropicKey     redact.Secret // HOS_ASSIST_ANTHROPIC_API_KEY
+	AnthropicBaseURL string        // empty is the vendor's own endpoint
+	GatewayURL       string        // HOS_ASSIST_GATEWAY_URL, the OpenAI compatible gateway, version prefix included
+	GatewayKey       redact.Secret // HOS_ASSIST_GATEWAY_KEY, this dealer's key
+	DealerTag        string        // HOS_ASSIST_DEALER_TAG, this dealer's tag
 }
 
 // String keeps every credential out of any log line that formats the config.

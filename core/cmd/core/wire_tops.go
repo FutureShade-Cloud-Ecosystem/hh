@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"os"
 	"strings"
@@ -648,9 +649,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The model layer's deployment configuration: the operator's environment, never a request. A
 	// demo box refuses every one of these names (demoenv_inventory.go) until a later slice opens them.
 	assistModelCfg := assist.ModelConfig{
-		AnthropicKey: assist.Secret(assistKey),
+		AnthropicKey: redact.NewSecret(assistKey),
 		GatewayURL:   os.Getenv(assist.EnvGatewayURL),
-		GatewayKey:   assist.Secret(os.Getenv(assist.EnvGatewayKey)),
+		GatewayKey:   redact.NewSecret(os.Getenv(assist.EnvGatewayKey)),
 		DealerTag:    os.Getenv(assist.EnvDealerTag),
 	}
 	assistProvider := assist.NewProviderFromConfig(assistSettings, assistKey, "", log)
