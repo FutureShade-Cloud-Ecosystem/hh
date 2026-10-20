@@ -21,6 +21,7 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -186,4 +187,63 @@ func TestIntegration_DrawBeforeLock_AssignRunCrewBesideARunWrite(t *testing.T) {
 	}()
 	p.WaitBlocked("AssignRunCrew waiting for the run row")
 	p.Answers(map[string]chan error{"run write": errTouch, "AssignRunCrew": errCrew})
+}
+
+// - Part B, the method recheck (PR 556, round 3d) -
+//
+// The run writers and the freight split were first proved beside a single stop write with the RUN WRITER parked
+// through an AFTER trigger on scope_sequences. For a writer that takes its counter in a standalone statement or
+// through a row trigger that park is valid; for a CTE statement it never reaches the draw before lock window.
+// These legs re-prove the same verdicts the right way round: the SINGLE stop write is the parked session, holding
+// one stop row between its lock and its draw (a BEFORE INSERT trigger on scope_sequences), and the writer under
+// test runs on the same stop. A writer that took the stops counter before the stop rows waits for the row while
+// holding the counter; the release makes the stop write want the counter: 40P01.
+func TestIntegration_DrawBeforeLock_RunAndSplitWritersBesideAStopWrite(t *testing.T) {
+	writers := map[string]func(f *syncFixture, runID string, stopIDs []string) error{
+		"ReopenRun": func(f *syncFixture, runID string, _ []string) error {
+			return NewRepository(f.pool).ReopenRun(context.Background(), runID, "recheck leg", "", time.Now())
+		},
+		"MoveRunDate": func(f *syncFixture, runID string, _ []string) error {
+			from := syncToday()
+			to := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+			_, _, _, err := NewRepository(f.pool).MoveRunDate(context.Background(), runID, from, to, Reschedule{
+				BranchID: testkit.BranchNorthAID, EntityType: RescheduleEntityRun, EntityID: runID,
+				FromDate: from, ToDate: to, Reason: "recheck leg"})
+			return err
+		},
+		"WriteFreightSplit": func(f *syncFixture, _ string, stopIDs []string) error {
+			return NewRepository(f.pool).WriteFreightSplit(context.Background(), stopIDs, []int64{1000, 2000}, true, 2)
+		},
+	}
+	keys := map[string]int64{"ReopenRun": 4242012, "MoveRunDate": 4242013, "WriteFreightSplit": 4242014}
+	// Each stop is parked in turn: a writer that updates the run's stops one row at a time takes the counter on the
+	// first row it visits and closes the cycle on the second, and which stop that is follows the order the UPDATE
+	// visits the rows, not the id order (P3-1). Parking both covers whichever it is.
+	for name, write := range writers {
+		for which := 0; which < 2; which++ {
+			t.Run(fmt.Sprintf("%s beside a write of stop %d", name, which), func(t *testing.T) {
+				f := newSyncFixture(t)
+				run := syncOpenRun(t, f)
+				var ids []string
+				for i := 0; i < 2; i++ {
+					orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+					key := syncFreshKey()
+					syncApplied(t, f, "stops", f.north, "create", key, map[string]any{
+						"order_id": orderID, "scheduled_date": syncToday(), "run_id": run.ID,
+						"address_line": "Fixture address", "city": "Fixture City"}, nil)
+					ids = append(ids, syncRowOf(t, f, "stops", f.north, key).ID)
+				}
+				sort.Strings(ids)
+
+				p := testkit.NewDrawPark(t, f.pool, "stops", keys[name])
+				errStop := p.TouchRow("delivery_stops", "updated_at = now()", ids[which])
+				p.WaitParked("the stop write between its row lock and its draw")
+
+				errWrite := make(chan error, 1)
+				go func() { errWrite <- write(f, run.ID, ids) }()
+				p.WaitBlocked("the writer waits")
+				p.Answers(map[string]chan error{"stop write": errStop, name: errWrite})
+			})
+		}
+	}
 }
