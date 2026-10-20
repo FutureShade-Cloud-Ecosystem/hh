@@ -29,6 +29,12 @@ const foldedCalls = `(SELECT DISTINCT ON (exchange_id, call_no) *
 	 ORDER BY exchange_id, call_no,
 	          CASE kind WHEN 'settlement' THEN 0 WHEN 'void' THEN 1 ELSE 2 END) f`
 
+const insertSpendSQL = `
+	INSERT INTO assist_spend (kind, exchange_id, call_no, audience, staff_user_id, portal_user_id, role_code,
+	                          alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, price_id, settled_by, at)
+	VALUES ($1, $2::uuid, $3, $4, NULLIF($5,'')::uuid, NULLIF($6,'')::uuid, $7,
+	        $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16)`
+
 func (r *Repository) appendSpend(ctx context.Context, row SpendRow) error {
 	if err := row.Validate(); err != nil {
 		return err
@@ -37,11 +43,7 @@ func (r *Repository) appendSpend(ctx context.Context, row SpendRow) error {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO assist_spend (kind, exchange_id, call_no, audience, staff_user_id, portal_user_id, role_code,
-		                          alias, model, tokens_in, tokens_out, tokens_cached, cost_micro_cents, price_id, settled_by, at)
-		VALUES ($1, $2::uuid, $3, $4, NULLIF($5,'')::uuid, NULLIF($6,'')::uuid, $7,
-		        $8, $9, $10, $11, $12, $13, NULLIF($14,'')::uuid, $15, $16)`,
+	_, err := r.pool.Exec(ctx, insertSpendSQL,
 		string(row.Kind), row.ExchangeID, row.CallNo, string(row.Audience), row.StaffUserID, row.PortalUserID, row.RoleCode,
 		row.Alias, row.Model, row.TokensIn, row.TokensOut, row.TokensCached, row.CostMicroCents, row.PriceID, row.SettledBy, at)
 	if err != nil {
@@ -99,6 +101,71 @@ func (r *Repository) DealerMonthMicroCents(ctx context.Context, from, to time.Ti
 		return 0, fmt.Errorf("assist: read dealer month spend: %w", err)
 	}
 	return total, nil
+}
+
+// dealerLockKey and userLockKey name the advisory locks ReserveWithin takes. Dealer first, then
+// user, in every call, so two calls cannot wait on each other in opposite orders.
+const dealerLockKey = "assist.spend.dealer"
+
+func userLockKey(id string) string { return "assist.spend.user:" + id }
+
+// ReserveWithin is the atomic check and reservation (see SpendStore). One transaction: the dealer
+// lock (paid providers only), then the user lock, then the folded sums are read INSIDE the locks
+// (READ COMMITTED takes a fresh snapshot per statement, so a reservation committed by the lock's
+// previous holder is seen), then the reservation is inserted only if within both limits. The locks
+// are transaction scoped and drop at commit or rollback.
+func (r *Repository) ReserveWithin(ctx context.Context, row SpendRow, lim ReserveLimits) error {
+	if err := row.Validate(); err != nil {
+		return err
+	}
+	at := row.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("assist: begin reservation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if lim.CheckDealer {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, dealerLockKey); err != nil {
+			return fmt.Errorf("assist: dealer lock: %w", err)
+		}
+	}
+	if row.StaffUserID != "" {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, userLockKey(row.StaffUserID)); err != nil {
+			return fmt.Errorf("assist: user lock: %w", err)
+		}
+		var spent int64
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(sum(f.tokens_in + f.tokens_out), 0)
+			  FROM `+foldedCalls+`
+			 WHERE f.kind <> 'void' AND f.staff_user_id = $3::uuid`, lim.From, lim.To, row.StaffUserID).Scan(&spent); err != nil {
+			return fmt.Errorf("assist: read user month inside the lock: %w", err)
+		}
+		if spent >= int64(lim.BudgetTokens) {
+			return ErrOverBudget
+		}
+	}
+	if lim.CheckDealer {
+		var used int64
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(f.cost_micro_cents), 0) FROM `+foldedCalls+` WHERE f.kind <> 'void'`, lim.From, lim.To).Scan(&used); err != nil {
+			return fmt.Errorf("assist: read dealer month inside the lock: %w", err)
+		}
+		if used >= lim.DealerCapMicroCents || used+row.CostMicroCents > lim.DealerCapMicroCents {
+			return ErrDealerCap
+		}
+	}
+	if _, err := tx.Exec(ctx, insertSpendSQL,
+		string(row.Kind), row.ExchangeID, row.CallNo, string(row.Audience), row.StaffUserID, row.PortalUserID, row.RoleCode,
+		row.Alias, row.Model, row.TokensIn, row.TokensOut, row.TokensCached, row.CostMicroCents, row.PriceID, row.SettledBy, at); err != nil {
+		return fmt.Errorf("assist: append reservation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("assist: commit reservation: %w", err)
+	}
+	return nil
 }
 
 func scanSpend(rows interface {

@@ -45,6 +45,36 @@ func (m *memSpend) Reserve(_ context.Context, r SpendRow) error {
 	return nil
 }
 
+func (m *memSpend) ReserveWithin(_ context.Context, r SpendRow, lim ReserveLimits) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reserveCalls++
+	if m.failReserve != nil {
+		return m.failReserve
+	}
+	var tok, cost int64
+	for _, f := range FoldCalls(m.inWindow(lim.From, lim.To)) {
+		cost += f.CostMicroCents
+		if f.StaffUserID == r.StaffUserID {
+			tok += int64(f.TokensIn + f.TokensOut)
+		}
+	}
+	if r.StaffUserID != "" && tok >= int64(lim.BudgetTokens) {
+		return ErrOverBudget
+	}
+	if lim.CheckDealer && (cost >= lim.DealerCapMicroCents || cost+r.CostMicroCents > lim.DealerCapMicroCents) {
+		return ErrDealerCap
+	}
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	m.rows = append(m.rows, r)
+	if m.onReserve != nil {
+		m.onReserve(r)
+	}
+	return nil
+}
+
 func (m *memSpend) Settle(_ context.Context, r SpendRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

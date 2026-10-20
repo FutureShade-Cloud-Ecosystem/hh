@@ -193,13 +193,19 @@ func (s *Service) Budget(ctx context.Context, c Caller) (Budget, error) {
 // estimate; the older token ledger is the fallback of a deployment without it.
 func (s *Service) MonthSpend(ctx context.Context, userID string) (Spend, error) {
 	if s.spend != nil {
-		from, to := MonthWindow(s.now())
+		from, to, err := s.monthWindow(ctx)
+		if err != nil {
+			return Spend{}, err
+		}
 		return s.spend.UserMonth(ctx, userID, from, to)
 	}
 	if s.ledger == nil {
 		return Spend{}, nil
 	}
-	from, to := MonthWindow(s.now())
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return Spend{}, err
+	}
 	return s.ledger.SpendFor(ctx, userID, from, to)
 }
 

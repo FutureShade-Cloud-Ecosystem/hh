@@ -37,7 +37,10 @@ func (s *Service) WithStaff(l StaffLister) *Service { s.staff = l; return s }
 // bill, and the answer should be the first row. Name breaks the tie so the order is STABLE, a
 // report whose rows shuffle between refreshes is one nobody can compare against yesterday's.
 func (s *Service) SpendReport(ctx context.Context) ([]UserSpend, error) {
-	from, to := MonthWindow(s.now())
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	spend := map[string]Spend{}
 	if s.spend != nil {

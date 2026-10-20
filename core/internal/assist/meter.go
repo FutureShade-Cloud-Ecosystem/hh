@@ -162,6 +162,12 @@ func FoldCalls(rows []SpendRow) []SpendRow {
 // SpendStore is the append only spend table.
 type SpendStore interface {
 	Reserve(ctx context.Context, r SpendRow) error
+	// ReserveWithin is the check and the reservation as ONE atomic step: under locks that serialise
+	// every asker of the same dealer (and the same user), it re-reads the month's folded sums,
+	// refuses with ErrOverBudget when the user's budget is reached or ErrDealerCap when the
+	// reservation would pass the cap, and otherwise inserts the reservation. Concurrent calls
+	// therefore see each other's reservations. Locks are always taken dealer first, then user.
+	ReserveWithin(ctx context.Context, r SpendRow, lim ReserveLimits) error
 	Settle(ctx context.Context, r SpendRow) error
 	Void(ctx context.Context, r SpendRow) error
 	// UserMonth is one staff user's spend in [from, to), open reservations counted at their estimate.
@@ -175,6 +181,19 @@ type SpendStore interface {
 	Unsettled(ctx context.Context, reservedBefore time.Time) ([]SpendRow, error)
 	// Settled lists settlement rows in [from, to), for the billing export.
 	Settled(ctx context.Context, from, to time.Time) ([]SpendRow, error)
+}
+
+// ReserveLimits are the limits ReserveWithin enforces inside its lock.
+type ReserveLimits struct {
+	// From and To are the month window (the dealer's month, half open).
+	From, To time.Time
+	// BudgetTokens is the staff user's monthly token budget; the call is refused when the month's
+	// spend, open reservations at their estimate, has reached it.
+	BudgetTokens int
+	// CheckDealer is false for a free provider, which spends nothing against the cap.
+	CheckDealer bool
+	// DealerCapMicroCents is the cap; the reservation is refused if it would pass it.
+	DealerCapMicroCents int64
 }
 
 // Errors the metering path returns. Ask turns each into an ordinary answer.
@@ -298,25 +317,25 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 	}
 
 	now := s.now()
-	from, to := MonthWindow(now)
+	from, to, err := s.monthWindow(ctx)
+	if err != nil {
+		return Reply{}, s.meterFailure("resolve the dealer's month", err)
+	}
 
-	// The caller's own allowance, again: the second call of an exchange and the quote path arrive
-	// here without passing Ask's first check.
+	// The caller's own allowance: the second call of an exchange and the quote path arrive here
+	// without passing Ask's first check. The authoritative check is ReserveWithin's, under lock.
 	budget, err := s.Budget(ctx, c)
 	if err != nil {
 		return Reply{}, s.meterFailure("read budget", err)
-	}
-	spent, err := s.MonthSpend(ctx, c.UserID)
-	if err != nil {
-		return Reply{}, s.meterFailure("read month spend", err)
-	}
-	if OverBudget(spent, budget) {
-		return Reply{}, ErrOverBudget
 	}
 
 	alias, model := s.provider.Name(), s.provider.Model()
 	var price ModelPrice
 	if !free {
+		if s.dealerCap <= 0 {
+			s.warn("assist: no dealer wide cap is configured, paid calls are refused until FutureBuild sets one")
+			return Reply{}, ErrMeterUnavailable
+		}
 		var ok bool
 		price, ok, err = s.prices.PriceFor(ctx, alias, model)
 		if err != nil {
@@ -331,12 +350,6 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 	estIn := estimateInputTokens(req)
 	estCost := price.Cost(estIn, MaxOutputTokens, 0)
 
-	if !free {
-		if err := s.checkDealerCap(ctx, from, to, estCost); err != nil {
-			return Reply{}, err
-		}
-	}
-
 	exchangeID, callNo := nextCall(ctx)
 	row := SpendRow{
 		ExchangeID: exchangeID, CallNo: callNo, Audience: AudienceStaff,
@@ -345,7 +358,14 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 	}
 	res := row
 	res.Kind, res.TokensIn, res.TokensOut, res.CostMicroCents = SpendReservation, estIn, MaxOutputTokens, estCost
-	if err := s.spend.Reserve(ctx, res); err != nil {
+	err = s.spend.ReserveWithin(ctx, res, ReserveLimits{
+		From: from, To: to, BudgetTokens: budget.Tokens, CheckDealer: !free, DealerCapMicroCents: s.dealerCap,
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrOverBudget), errors.Is(err, ErrDealerCap):
+		return Reply{}, err
+	default:
 		return Reply{}, s.meterFailure("write reservation", err)
 	}
 
@@ -385,22 +405,6 @@ func (s *Service) complete(ctx context.Context, c Caller, req CompletionRequest)
 	return reply, nil
 }
 
-// checkDealerCap refuses when this reservation would take the dealer past its monthly cap.
-func (s *Service) checkDealerCap(ctx context.Context, from, to time.Time, est int64) error {
-	if s.dealerCap <= 0 {
-		s.warn("assist: no dealer wide cap is configured, paid calls are refused until FutureBuild sets one")
-		return ErrMeterUnavailable
-	}
-	used, err := s.spend.DealerMonthMicroCents(ctx, from, to)
-	if err != nil {
-		return s.meterFailure("read dealer spend", err)
-	}
-	if used >= s.dealerCap || used+est > s.dealerCap {
-		return ErrDealerCap
-	}
-	return nil
-}
-
 func (s *Service) meterFailure(what string, err error) error {
 	s.warn("assist: metering failed, the call is not made", "step", what, "err", err)
 	return ErrMeterUnavailable
@@ -410,6 +414,12 @@ func (s *Service) warn(msg string, args ...any) {
 	if s.log != nil {
 		s.log.Warn(msg, args...)
 	}
+}
+
+// monthWindow is the current month as a half open window.
+func (s *Service) monthWindow(_ context.Context) (time.Time, time.Time, error) {
+	from, to := MonthWindow(s.now())
+	return from, to, nil
 }
 
 // SweepReservations settles at their estimate the reservations open longer than the grace period,

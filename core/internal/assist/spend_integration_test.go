@@ -9,8 +9,13 @@ package assist
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // itYear is drawn once per run, so a rerun on the same database (append only rows cannot be cleaned
@@ -357,5 +362,138 @@ func TestIntegration_ProCapsTableExistsAndIsUnused(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO assist_pro_caps (scope, subject_id, monthly_cap_micro_cents) VALUES ('account', gen_random_uuid(), -1)`); err == nil {
 		t.Error("a negative pro cap was accepted")
+	}
+}
+
+// -- concurrency: the check and the reservation are one atomic step (review P2-1) ----------------
+
+// gatedProvider holds every call it receives until released, so a call that got past the limits is
+// still in flight (its reservation at the estimate, no settlement) while the others decide.
+type gatedProvider struct {
+	name, model string
+	mu          sync.Mutex
+	calls       int
+	release     chan struct{}
+}
+
+func (p *gatedProvider) Name() string  { return p.name }
+func (p *gatedProvider) Model() string { return p.model }
+func (p *gatedProvider) Complete(context.Context, CompletionRequest) (Reply, error) {
+	p.mu.Lock()
+	p.calls++
+	p.mu.Unlock()
+	<-p.release
+	return Reply{Text: "ok", TokensIn: 1, TokensOut: 1}, nil
+}
+
+// concurrentCalls runs n calls at once and returns how many were refused with each sentinel and how
+// many reached the provider, after every refusal has come back (the admitted call is released last).
+func concurrentCalls(t *testing.T, svc *Service, p *gatedProvider, who Caller, n int) (cap, budget, other int) {
+	t.Helper()
+	var wg sync.WaitGroup
+	var refusedCap, refusedBudget, refusedOther, done atomic.Int64
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.complete(context.Background(), who, CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "hello"}}})
+			switch {
+			case err == nil:
+			case errors.Is(err, ErrDealerCap):
+				refusedCap.Add(1)
+			case errors.Is(err, ErrOverBudget):
+				refusedBudget.Add(1)
+			default:
+				refusedOther.Add(1)
+			}
+			done.Add(1)
+		}()
+	}
+	// Wait until every call but the admitted ones has been refused, or the wait times out (on a
+	// racy build more than one call is admitted and blocks in the provider).
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) && refusedCap.Load()+refusedBudget.Load()+refusedOther.Load() < int64(n)-1 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(p.release)
+	wg.Wait()
+	return int(refusedCap.Load()), int(refusedBudget.Load()), int(refusedOther.Load())
+}
+
+func reservationsFor(t *testing.T, repo *Repository, user string, from, to time.Time) int {
+	t.Helper()
+	rows, err := repo.pool.Query(context.Background(), `SELECT count(*) FROM assist_spend WHERE staff_user_id = $1::uuid AND kind = 'reservation' AND at >= $2 AND at < $3`, user, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var n int
+	rows.Next()
+	_ = rows.Scan(&n)
+	return n
+}
+
+func concurrentService(t *testing.T, pool *pgxpool.Pool, month time.Month, dealerCap int64, userBudget int) (*Service, *gatedProvider, *Repository, Caller) {
+	t.Helper()
+	repo := NewRepository(pool)
+	user := syntheticUser(t, pool)
+	alias := "it-conc-" + newUUID()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO assist_model_prices (alias, model, price_in_micro_per_m, price_out_micro_per_m, price_cached_micro_per_m, effective_seq)
+		VALUES ($1, 'm', 3000000, 15000000, 300000, 1)`, alias); err != nil {
+		t.Fatal(err)
+	}
+	p := &gatedProvider{name: alias, model: "m", release: make(chan struct{})}
+	clock := time.Date(itYear, month, 15, 9, 0, 0, 0, time.UTC)
+	lim := newFakeLimits()
+	if userBudget > 0 {
+		lim.users[user] = userBudget
+	}
+	svc := NewService(NewRegistry(seededReaders().deps(), nil), p, &fakeLedger{}, lim, StaticSettings{}, nil).
+		WithClock(func() time.Time { return clock }).
+		WithMetering(repo, repo).
+		WithDealerCap(dealerCap)
+	c := manager()
+	c.UserID = user
+	return svc, p, repo, c
+}
+
+func TestIntegration_ConcurrentCallsAgainstAOneCallDealerCapAdmitExactlyOne(t *testing.T) {
+	pool := testPool(t)
+	req := CompletionRequest{Messages: []Message{{Role: RoleUser, Text: "hello"}}}
+	price := ModelPrice{InMicroPerM: 3000000, OutMicroPerM: 15000000, CachedMicroPerM: 300000}
+	oneCall := price.Cost(estimateInputTokens(req), MaxOutputTokens, 0)
+	const n = 24
+	svc, p, repo, who := concurrentService(t, pool, 8, oneCall, 0)
+
+	capRefused, _, other := concurrentCalls(t, svc, p, who, n)
+	from, to := MonthWindow(time.Date(itYear, 8, 15, 0, 0, 0, 0, time.UTC))
+	if got := reservationsFor(t, repo, who.UserID, from, to); got != 1 {
+		t.Errorf("reservations = %d, want exactly 1 under a one call dealer cap", got)
+	}
+	if p.calls != 1 {
+		t.Errorf("provider calls = %d, want 1", p.calls)
+	}
+	if capRefused != n-1 || other != 0 {
+		t.Errorf("refused by the cap %d (other %d), want %d", capRefused, other, n-1)
+	}
+}
+
+func TestIntegration_ConcurrentCallsAgainstAOneCallUserBudgetAdmitExactlyOne(t *testing.T) {
+	pool := testPool(t)
+	const n = 24
+	// One call's reservation estimate is over 1000 tokens; a budget of 100 admits the first call
+	// (nothing spent yet) and every later call must see that reservation.
+	svc, p, repo, who := concurrentService(t, pool, 9, 1<<60, 100)
+
+	_, budgetRefused, other := concurrentCalls(t, svc, p, who, n)
+	from, to := MonthWindow(time.Date(itYear, 9, 15, 0, 0, 0, 0, time.UTC))
+	if got := reservationsFor(t, repo, who.UserID, from, to); got != 1 {
+		t.Errorf("reservations = %d, want exactly 1 under a one call user budget", got)
+	}
+	if p.calls != 1 {
+		t.Errorf("provider calls = %d, want 1", p.calls)
+	}
+	if budgetRefused != n-1 || other != 0 {
+		t.Errorf("refused by the budget %d (other %d), want %d", budgetRefused, other, n-1)
 	}
 }

@@ -23,6 +23,16 @@ func (f *fakeSpend) Reserve(_ context.Context, r assist.SpendRow) error {
 	f.rows = append(f.rows, r)
 	return nil
 }
+func (f *fakeSpend) ReserveWithin(ctx context.Context, r assist.SpendRow, lim assist.ReserveLimits) error {
+	var cost int64
+	for _, x := range f.fold() {
+		cost += x.CostMicroCents
+	}
+	if lim.CheckDealer && (cost >= lim.DealerCapMicroCents || cost+r.CostMicroCents > lim.DealerCapMicroCents) {
+		return assist.ErrDealerCap
+	}
+	return f.Reserve(ctx, r)
+}
 func (f *fakeSpend) Settle(_ context.Context, r assist.SpendRow) error {
 	f.rows = append(f.rows, r)
 	return nil
