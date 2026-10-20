@@ -101,6 +101,8 @@ export const yardStyles = css`
   .pick-card-run { font-weight: 700; margin: 0; color: var(--hh-text); }
   .pick-facts { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); color: var(--hh-text-dim); font-size: 14px; margin: 0; }
   .mine-tag { color: var(--hh-state-good); font-weight: 700; margin: 0; }
+  .mine-tag.theirs { color: var(--hh-text-dim); }
+  .taken-line { color: var(--hh-text); font-weight: 700; margin: var(--hh-s-8) 0 0; }
   .held {
     padding: var(--hh-s-8) var(--hh-s-12);
     border-radius: var(--hh-radius-control);

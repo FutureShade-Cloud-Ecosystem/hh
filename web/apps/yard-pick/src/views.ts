@@ -27,6 +27,7 @@ import {
   canAcknowledge,
   changeStatusWord,
   claimedByWords,
+  heldByOther,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -153,9 +154,10 @@ function pickCard(entry: YardPick, me: string): TemplateResult {
   const mto = ticket !== null ? mtoLabel(ticket.mto_class, ticket.fulfillment) : "";
   const priority = priorityWord(ticket?.priority || t.priority);
   const runWords = runLineWords(t, ticket);
+  const theirs = heldByOther(t.claimed_by, me, t.status);
   const stripeTone = held
     ? "held"
-    : t.status === "IN_PROGRESS" || t.status === "ACCEPTED"
+    : (t.status === "IN_PROGRESS" || t.status === "ACCEPTED") && !theirs
       ? "picking"
       : t.status === "STAGED" || t.status === "DONE"
         ? "staged"
@@ -182,7 +184,7 @@ function pickCard(entry: YardPick, me: string): TemplateResult {
       ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
       : nothing}
     ${summary !== "" ? html`<p class="shortage-open" data-queue-shortage>${summary}</p>` : nothing}
-    ${claimedWords !== "" ? html`<p class="mine-tag" data-claimed-by>${claimedWords}</p>` : nothing}
+    ${claimedWords !== "" ? html`<p class="mine-tag ${theirs ? "theirs" : ""}" data-claimed-by>${claimedWords}</p>` : nothing}
   `;
   return html`
     <section class="card pick-card ${stripeTone} ${mine ? "mine" : ""}" data-pick-card data-task-id=${t.id}>
@@ -307,7 +309,8 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
   const reason = draft !== null ? draft.short_reason : (recorded?.short_reason ?? "");
   const note = draft !== null ? draft.short_note : (recorded?.short_note ?? "");
   const backordered = line.qty_backordered;
-  const held = model.pick.ticket?.held_from_picking === true;
+  const taken = heldByOther(model.pick.task.claimed_by, model.me, model.pick.task.status);
+  const held = model.pick.ticket?.held_from_picking === true || taken;
   const productId = line.product_id !== "" ? line.product_id : line.sku;
   return html`
     <li class="line ${short ? "short" : full ? "full" : ""}" data-line data-line-no=${line.line_no} data-product-id=${productId}>
@@ -338,7 +341,9 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
             ${backordered !== "" ? html`<span class="line-sub backordered">${qtyLabel(backordered, line.uom)} on backorder</span>` : nothing}
           </span>
         </button>
-        <button
+        ${taken
+          ? nothing
+          : html`<button
           type="button"
           class="btn btn-secondary line-short"
           data-action="edit-line"
@@ -346,7 +351,7 @@ function lineRow(model: PickModel, line: YardLine, recorded: YardPickedLine | un
           aria-label=${`Short on line ${line.line_no}, ${line.description}`}
           ?disabled=${held}
           data-tap
-        >Short</button>
+        >Short</button>`}
       </div>
       ${editing && !held ? renderQtyEditor(model, line, draft, recorded) : nothing}
     </li>
@@ -520,8 +525,18 @@ function shortageSheet(model: PickModel): TemplateResult | typeof nothing {
   `;
 }
 
-function skidsCard(model: PickModel): TemplateResult {
+function skidsCard(model: PickModel, readOnly = false): TemplateResult {
   const counted = model.skids !== null;
+  if (readOnly) {
+    return html`
+      <section class="card" data-skids>
+        <h3>Skids</h3>
+        <div class="skid-row">
+          <span class="skid-count ${counted ? "" : "unknown"}" data-skid-count>${counted ? String(model.skids) : "Not counted"}</span>
+        </div>
+      </section>
+    `;
+  }
   return html`
     <section class="card" data-skids>
       <h3>Skids</h3>
@@ -602,6 +617,7 @@ export function renderPick(model: PickModel): TemplateResult {
   const unclaimed = !held && isUnclaimed(t.status);
   const recordable = !held && (t.status === "IN_PROGRESS" || t.status === "STAGED" || t.status === "ACCEPTED" || unclaimed);
   const claimedWords = t.status === "CANCELLED" ? "" : claimedByWords(t.claimed_by, model.me);
+  const taken = heldByOther(t.claimed_by, model.me, t.status);
   const runWords = runLineWords(t, ticket);
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
@@ -622,7 +638,8 @@ export function renderPick(model: PickModel): TemplateResult {
         ${priorityWord(ticket?.priority || t.priority) !== "" ? html`<span class="pill pill-watch">${priorityWord(ticket?.priority || t.priority)}</span>` : nothing}
         ${ticket !== null && mtoLabel(ticket.mto_class, ticket.fulfillment) !== "" ? html`<span>${mtoLabel(ticket.mto_class, ticket.fulfillment)}</span>` : nothing}
       </div>
-      ${claimedWords !== "" ? html`<p class="mine-tag" data-claimed-by>${claimedWords}</p>` : nothing}
+      ${claimedWords !== "" ? html`<p class="mine-tag ${taken ? "theirs" : ""}" data-claimed-by>${claimedWords}</p>` : nothing}
+      ${taken ? html`<p class="taken-line" role="status" data-pick-taken>Someone else is on this pick.</p>` : nothing}
       ${held
         ? html`<p class="held" data-held>${ticket?.hold_words || "This order waits: it cannot be picked yet."}</p>`
         : nothing}
@@ -635,18 +652,18 @@ export function renderPick(model: PickModel): TemplateResult {
     <div class="detail-grid">
       <div>
         ${pullList(model)}
-        ${recordable ? skidsCard(model) : nothing}
-        ${recordable
+        ${recordable ? skidsCard(model, taken) : nothing}
+        ${recordable && !taken
           ? html`<div class="actions" data-record-door>
               <button type="button" class="btn btn-primary big" data-action="save-pick" ?disabled=${model.busy} data-tap>Save pick</button>
               <button type="button" class="btn btn-secondary big btn-door" data-action="open-sheet" data-tap>Report a shortage</button>
             </div>`
           : nothing}
-        ${shortageSheet(model)}
+        ${taken ? nothing : shortageSheet(model)}
       </div>
       <div>
         ${shortageList(model)}
-        ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : !held && t.status === "IN_PROGRESS" ? stageCard() : nothing}
+        ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : !held && !taken && t.status === "IN_PROGRESS" ? stageCard() : nothing}
       </div>
     </div>
   `;

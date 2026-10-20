@@ -43,14 +43,13 @@ for (const vp of [
   });
 }
 
-test("a pick the pull already shows as taken refuses a line tap in the same words", async ({ page, request }) => {
+test("a pick the pull already shows as taken disables its line rows and says so", async ({ page, request }) => {
   await page.goto("/");
   await rivalClaim(request, SO_1039);
   await page.reload();
   await openPickCard(page, "SO-1039");
   await expect(page.locator("[data-claimed-by]")).toHaveText("Claimed by a teammate");
-  await page.locator("[data-line]").first().locator(".line-row").click();
-  await expect(page.locator("[data-error]")).toHaveText(TAKEN);
+  await expect(page.locator("[data-line]").first().locator(".line-row")).toBeDisabled();
   await expect(page.locator("[data-line]").first().locator(".line-check")).toHaveText("");
 });
 
@@ -118,4 +117,77 @@ test("a saved skid count shows one message, not two", async ({ page }) => {
   await page.getByRole("button", { name: "Save skid count" }).click();
   await expect(page.locator("[data-notice]")).toContainText("now holds");
   await expect(page.locator("[data-skid-saved]")).toHaveCount(0);
+});
+
+async function expectNothingToAct(page: Page): Promise<void> {
+  await expect(page.locator("[data-pick-taken]")).toHaveText("Someone else is on this pick.");
+  await expect(page.getByRole("button", { name: /^Short/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save pick" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Report a shortage" })).toHaveCount(0);
+  await expect(page.locator("[data-stage-form]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stage", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "One skid more" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "One skid fewer" })).toHaveCount(0);
+  await expect(page.locator("[data-skid-count]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to the queue" })).toBeVisible();
+}
+
+test("after a lost race the second person acts on nothing and a standing line stays", async ({ page, request }) => {
+  await openPickCard(page, "SO-1039");
+  await rivalClaim(request, SO_1039);
+  await page.locator("[data-line]").first().locator(".line-row").click();
+  await expect(page.locator("[data-error]")).toHaveText(TAKEN);
+  await expectNothingToAct(page);
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await expect(page.locator("[data-pick-card]")).toHaveCount(5);
+  await page.locator("[data-pick-card]", { hasText: "SO-1039" }).click();
+  await expectNothingToAct(page);
+});
+
+test("opening a pick a teammate holds shows the same standing line and no controls", async ({ page, request }) => {
+  await page.goto("/");
+  await rivalClaim(request, SO_1039);
+  await page.reload();
+  await openPickCard(page, "SO-1039");
+  await expectNothingToAct(page);
+});
+
+test("a pick I hold keeps its controls and has no standing line", async ({ page }) => {
+  await openPickCard(page, "SO-1041");
+  await expect(page.locator("[data-pick-taken]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save pick" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Report a shortage" })).toBeVisible();
+});
+
+test("green is for Claimed by you only; a teammate's claim is dim with a neutral stripe", async ({ page, request }) => {
+  await page.goto("/");
+  await rivalClaim(request, SO_1039);
+  await page.reload();
+  await expect(page.locator("[data-pick-card]")).toHaveCount(5);
+  const colour = async (order: string) =>
+    page.locator("[data-pick-card]", { hasText: order }).evaluate((card) => {
+      const tag = card.querySelector("[data-claimed-by]") as HTMLElement;
+      return { tag: getComputedStyle(tag).color, stripe: getComputedStyle(card).borderLeftColor, text: tag.textContent };
+    });
+  const mine = await colour("SO-1040");
+  const theirs = await colour("SO-1039");
+  expect(mine.text).toBe("Claimed by you");
+  expect(theirs.text).toBe("Claimed by a teammate");
+  const probe = async (token: string) =>
+    page.evaluate((t) => {
+      const el = document.createElement("span");
+      el.style.color = `var(${t})`;
+      document.body.appendChild(el);
+      const c = getComputedStyle(el).color;
+      el.remove();
+      return c;
+    }, token);
+  const good = await probe("--hh-state-good");
+  const dim = await probe("--hh-text-dim");
+  const neutral = await probe("--hh-control-line");
+  expect(mine.tag).toBe(good);
+  expect(theirs.tag).toBe(dim);
+  expect(theirs.tag).not.toBe(good);
+  expect(mine.stripe).toBe(good);
+  expect(theirs.stripe).toBe(neutral);
 });
