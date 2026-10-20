@@ -155,6 +155,11 @@ func DomainCommands() []Command {
 // -- payments.today -----------------------------------------------------------------------------
 
 func runPaymentsToday(ctx context.Context, deps Deps, c Caller, _ Args) (Result, error) {
+	// The day's payment total is the payment trail's (ruling 87), the same rule the dashboard tile of the
+	// same name asks (HH-777): the tier floor lets every manager reach the command, the stamp decides.
+	if !c.PaymentTrail {
+		return Result{}, ErrRefused
+	}
 	if deps.Rollup == nil {
 		return Result{}, errUnwired("today's payments")
 	}
@@ -193,6 +198,10 @@ func runPaymentsToday(ctx context.Context, deps Deps, c Caller, _ Args) (Result,
 // -- payments.range -----------------------------------------------------------------------------
 
 func runPaymentsRange(ctx context.Context, deps Deps, c Caller, a Args) (Result, error) {
+	// The same rollup by day: the payment trail's, refused before the arguments and before the seam.
+	if !c.PaymentTrail {
+		return Result{}, ErrRefused
+	}
 	if deps.PaymentRange == nil {
 		return Result{}, errUnwired("payments over a period")
 	}

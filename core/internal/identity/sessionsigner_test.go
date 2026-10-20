@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -157,13 +158,22 @@ func TestSessionMinterClaimsAreExactlyTheVocabulary(t *testing.T) {
 		"iss": signerIssuer, "sub": "console-user-1", "aud": signerAud,
 		"iat": float64(at.Unix()), "exp": float64(at.Add(time.Hour).Unix()),
 	}
-	if len(claims) != len(want) {
+	if len(claims) != len(want)+1 {
 		t.Fatalf("claims = %v", claims)
 	}
 	for k, v := range want {
 		if claims[k] != v {
 			t.Errorf("claim %s = %v, want %v", k, claims[k], v)
 		}
+	}
+	// jti (HH-678): a fresh 32 hex char id on every mint, the id a sign
+	// out revokes; the only claim beside the vocabulary.
+	jti, _ := claims["jti"].(string)
+	if len(jti) != 32 {
+		t.Errorf("jti = %v, want 32 hex chars", claims["jti"])
+	}
+	if _, err := hex.DecodeString(jti); err != nil {
+		t.Errorf("jti = %v, not hex", claims["jti"])
 	}
 	rawHdr, _ := base64.RawURLEncoding.DecodeString(parts[0])
 	var hdr map[string]string
@@ -585,7 +595,8 @@ func TestVerifierClassifiesAMintedTenantTokenWithItsTenantClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := claimsOf(t, tok)
-	if len(c) != 6 || c["aud"] != signerTenant || c["tenant"] != signerTenantID {
+	jti, _ := c["jti"].(string)
+	if len(c) != 7 || c["aud"] != signerTenant || c["tenant"] != signerTenantID || len(jti) != 32 {
 		t.Fatalf("claims = %v", c)
 	}
 	got, err := verifierOver(t, set, nil).Verify(context.Background(), tok)

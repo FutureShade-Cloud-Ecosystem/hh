@@ -8,6 +8,8 @@
 // here.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { boardLoad, boardView, BOARD_EMPTY } from "../src/board.ts";
 import { InMemoryTenantSession, tenantClient, stubAdapter } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
@@ -115,4 +117,51 @@ test("an empty world shows the board's own empty words", async () => {
   assert.equal(answer.kind, "empty");
   assert.match(BOARD_EMPTY, /^Nothing is in motion/);
   await fetch(`${base}/_stub/reset`, { method: "POST" });
+});
+
+test("board columns delegate order stages to stageOfOrder without a private status list", () => {
+  const source = readFileSync(fileURLToPath(new URL("../src/board.ts", import.meta.url)), "utf8");
+  assert.doesNotMatch(source, /\bORDERED\b/, "board.ts must not carry a private ORDERED status list");
+  assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"order"/, "Order column must filter by stageOfOrder === order");
+  assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"invoice"/, "Invoice column must filter by stageOfOrder === invoice");
+});
+
+test("boardLoad walks cursor pages for quotes and orders so older cards are not lost", async () => {
+  const page = await pageFor("buyer");
+  page.client = tenantClient(page.session, {
+    baseUrl: base,
+    fetch: (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      if (url.pathname === "/api/v1/tenant/quotes" || url.pathname === "/api/v1/tenant/orders") {
+        url.searchParams.set("limit", "2");
+      }
+      return fetch(url, init);
+    },
+  });
+  const answer = await boardLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  assert.equal(answer.data.quotes.length, 4, "all quote pages must be read");
+  assert.equal(answer.data.orders.length, 6, "all order pages must be read");
+});
+
+test("Buy again is gated on create_orders rather than view_orders_deliveries, and app-root carries no unused can import", async () => {
+  const page = await pageFor("buyer");
+  const answer = await boardLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  const withCreate = words(boardView(answer.data, page));
+  assert.ok(/data-action="open-reorder"/.test(withCreate), "a role with create_orders is offered Buy again");
+
+  const withoutCreatePage = {
+    ...page,
+    session: {
+      can: (cap) => cap === "submit_rfq" || cap === "view_orders_deliveries",
+    },
+  };
+  const withoutCreate = words(boardView(answer.data, withoutCreatePage));
+  assert.equal(/data-action="open-reorder"/.test(withoutCreate), false, "a role without create_orders must not be offered Buy again");
+
+  const appRootSource = readFileSync(fileURLToPath(new URL("../src/app-root.ts", import.meta.url)), "utf8");
+  assert.doesNotMatch(appRootSource, /^\s*can,\s*$/m, "app-root.ts must not carry an unused can import");
 });

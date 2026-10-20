@@ -67,6 +67,11 @@ type Token struct {
 	IssuedAt time.Time
 	// ExpiresAt is the JWT exp.
 	ExpiresAt time.Time
+	// JTI is the JWT jti, the token's unique id. The session minters mint
+	// one on every session token (HH-678), so a signed out token can be
+	// revoked by id; a token without one carries the empty string and no
+	// revocation check keys on it.
+	JTI string
 }
 
 // rawClaims is the payload shape. NumericDate claims decode through
@@ -81,6 +86,7 @@ type rawClaims struct {
 	IssuedAt   json.Number     `json:"iat"`
 	NotBefore  json.Number     `json:"nbf"`
 	TenantLink string          `json:"tenant"`
+	ID         string          `json:"jti"`
 }
 
 // parseAudience accepts the OIDC shapes of aud, one string or an array of

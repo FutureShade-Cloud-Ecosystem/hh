@@ -134,6 +134,44 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503":
           description: A dependency of the entry could not answer; nothing was minted
+  /api/v1/auth/sign-out:
+    post:
+      operationId: identitySignOut
+      tags: [staff-identity]
+      summary: Revoke a core session token by presenting it
+      description: >-
+        Public leg, no bearer, present in every sign in mode: the holder of
+        a core session token ends it server side by presenting the token
+        itself in the body, and the token's own id (its jti) is stored
+        revoked until its expiry, so the revocation survives a core
+        restart and holds across instances (HH-678). The body is one JSON
+        object with the field token only. Signing out an already revoked
+        or already expired token is idempotent and answers ok; a token
+        that fails verification for any other reason (forged signature,
+        wrong issuer or audience, malformed JWT) answers the shared 401
+        body. The Authorization header is never read, so no bearer is
+        spent or required.
+      x-addition: "server side session revocation (HH-678); the ERP's stateless short token had no revoke, so a signed out session lived until it expired"
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentitySignOutRequest"
+      responses:
+        "200":
+          description: The token is revoked (or was already dead); ok is true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentitySignOutResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: The revocation store could not answer; the token is not revoked
+
   /api/v1/auth/methods:
     get:
       operationId: identityAuthMethods
@@ -1107,6 +1145,21 @@ components:
           description: The staff session bearer token
         user:
           $ref: "#/components/schemas/IdentityUser"
+
+    IdentitySignOutRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: The core session token to revoke; the only field the route reads
+
+    IdentitySignOutResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
 
     IdentityExchangeRequest:
       type: object

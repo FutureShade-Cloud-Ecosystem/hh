@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { SESSION_MIRROR_KEY, SessionStore, ThrowSafeMirror } from "@hardscapehouse/auth";
 import { createConsoleSession } from "../src/console-session.js";
 import { FRONT_DOOR_SESSION_KEY, readDoorSession } from "../src/handoff.js";
-import { endSession } from "../src/switch-role.js";
+import { clearPendingRevocationsForTest, endSession, flushPendingRevocations, pendingRevocationsForTest } from "../src/switch-role.js";
 import { NOW, doorRecord, fakeStorage } from "./support-data.mjs";
 
 function consoleWith(calls) {
@@ -41,4 +41,57 @@ test("without a Console session object (a browser) Switch role only clears the k
   storage.setItem(FRONT_DOOR_SESSION_KEY, "x");
   await endSession({ consoleSession: null, storage });
   assert.deepEqual(storage.keys(), []);
+});
+
+// HH-678: the core session token is revoked server side. The tests below
+// drive their own fetch, so no network is ever touched.
+const TOKEN = "aaa.bbb.ccc";
+
+function recordingFetch(calls, ok = true) {
+  return async (url, init) => {
+    calls.push({ url, init });
+    return { status: ok ? 200 : 503 };
+  };
+}
+
+test("endSession posts the token to /api/v1/auth/sign-out", async () => {
+  clearPendingRevocationsForTest();
+  const calls = [];
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: recordingFetch(calls) });
+  assert.equal(calls.length, 1, "one revocation post");
+  assert.equal(calls[0].url, "/api/v1/auth/sign-out");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { token: TOKEN });
+  assert.deepEqual(pendingRevocationsForTest(), [], "a 200 leaves nothing pending");
+});
+
+test("offline, the revocation is held pending and flushed when the connection returns", async () => {
+  clearPendingRevocationsForTest();
+  const offline = async () => {
+    throw new TypeError("fetch failed");
+  };
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: offline });
+  assert.deepEqual(pendingRevocationsForTest(), [TOKEN], "the offline post is held");
+
+  // A 5xx is held too: the core could not write the revocation.
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: recordingFetch([], false) });
+  assert.deepEqual(pendingRevocationsForTest(), [TOKEN], "the 5xx post is held");
+
+  const calls = [];
+  await flushPendingRevocations({ fetch: recordingFetch(calls) });
+  // One token, one pending entry (the set dedupes), so one flushed post.
+  assert.equal(calls.length, 1, "the held post flushed");
+  assert.deepEqual(pendingRevocationsForTest(), [], "nothing is held after the flush");
+});
+
+test("a 4xx is a final answer, never retried", async () => {
+  clearPendingRevocationsForTest();
+  const calls = [];
+  const refuse = async (url, init) => {
+    calls.push({ url, init });
+    return { status: 401 };
+  };
+  await endSession({ consoleSession: null, storage: fakeStorage(), token: TOKEN, fetch: refuse });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(pendingRevocationsForTest(), [], "a 401 is not held");
 });

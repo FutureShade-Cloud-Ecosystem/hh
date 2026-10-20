@@ -112,7 +112,7 @@ const (
 	gmUserID      = "de5b2000-0000-4000-9000-000000000001"
 	gmPlatformID  = "de5b2000-0000-4000-9000-000000000001"
 	gmEmail       = "general.manager@hh-demo.invalid"
-	gmDisplayName = "General manager (demo)"
+	gmDisplayName = "General Manager (demo)"
 
 	// HR (global, tier one): the coming roles cycle's second login, whose
 	// only cells above None are House Messages and Dealer Admin.

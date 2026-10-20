@@ -54,7 +54,7 @@ import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardsca
 import { acceptSwitchRole, announceChromeAction } from "./frames.js";
 import { readDoorSession, writeHandoff } from "./handoff.js";
 import { requestFrameSignOut, type FrameSignOutOutcome } from "./sign-out.js";
-import { endSession } from "./switch-role.js";
+import { endSession, flushPendingRevocations } from "./switch-role.js";
 import {
   initialState,
   openApp,
@@ -338,9 +338,9 @@ export class WorkShellHost extends HHElement {
    * Before the frame is dropped it is ASKED to run its own sign out (item 8e): its custody, device lock and offline
    * copy are the app's to end, and a framed app has no Sign out of its own to press. The wait is bounded
    * (SIGN_OUT_WAIT_MS). Whether the frame answered, ran out the wait or was not there, the host then ends what IT
-   * holds: the handoff keys and the Console session (endSession). The core's token has no server side revoke (it is a
-   * stateless short token), so it is dropped from memory and left to expire. An app that ended its own walk is not
-   * asked again (it already signed out; `ask: false`).
+   * holds: the handoff keys and the Console session (endSession), and revokes the core session token server side
+   * (HH-678's /api/v1/auth/sign-out, retried when the box comes back online if the call fails). An app that ended
+   * its own walk is not asked again (it already signed out; `ask: false`).
    */
   async #switchRole(options: { ask: boolean } = { ask: true }): Promise<void> {
     if (this.#leaving) return;
@@ -354,9 +354,12 @@ export class WorkShellHost extends HHElement {
       outcome = await requestFrameSignOut({ frame, origin: window.location.origin, win: window });
     }
     this.#leave = outcome;
+    // The desk's token is captured BEFORE the state is dropped: after the
+    // switch the host holds no session to revoke (HH-678).
+    const token = this.#state.phase === "desk" ? (this.#consoleSession?.currentToken() ?? this.#state.session.token) : null;
     this.#state = switchRole(this.#state);
     this.#notice = "";
-    void endSession({ consoleSession: this.#consoleSession });
+    void endSession({ consoleSession: this.#consoleSession, token });
     this.#startDoorPoll();
     this.#leaving = false;
     this.requestUpdate();
@@ -437,6 +440,8 @@ export class WorkShellHost extends HHElement {
   readonly #onConnection = (): void => {
     this.#online = navigator.onLine;
     this.requestUpdate();
+    // Back online: retry any session revocation the offline moment held (HH-678).
+    if (this.#online) void flushPendingRevocations();
   };
 
   #applyTheme(): void {

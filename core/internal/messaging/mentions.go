@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -126,13 +127,10 @@ func mentionCandidates(persons []mentionPerson, roles []mentionRole) []mentionCa
 		add(ro.Code, "", ro.Code)
 	}
 	// Longest first so the scan's first hit at an @ is the longest name that
-	// matches there (width desc; ties are arbitrary but one target per @ makes
-	// the order stable enough for the store).
-	for i := 1; i < len(cands); i++ {
-		for j := i; j > 0 && cands[j].width > cands[j-1].width; j-- {
-			cands[j], cands[j-1] = cands[j-1], cands[j]
-		}
-	}
+	// matches there. The sort is STABLE, so at equal width the flatten order
+	// above wins: a person (name, then e-mail local part) stays ahead of a role
+	// that shares the name, and one target per @ resolves the @ to the person.
+	slices.SortStableFunc(cands, func(a, b mentionCandidate) int { return b.width - a.width })
 	return cands
 }
 

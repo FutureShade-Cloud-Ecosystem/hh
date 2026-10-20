@@ -219,13 +219,18 @@ test("a send whose answer was lost is the same attempt when pressed again, so th
 test("the manager's queue keeps the Value open column, as the ruling kept it", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
   // Change 5, R5: the queue's Value open column is the managers'; where cost is visible it stays.
-  const heads = (await page.locator("[data-queue] th").allTextContents()).map((t) => t.trim());
-  expect(heads).toContain("Value open");
+  // The queue is read from the core after the tab opens and the area shows only a reading note until
+  // that answer lands, so the head is waited for, never sampled once: a one shot read of the cells
+  // taken at the click returns an empty list on a slow runner.
+  await expect(page.locator("[data-queue] th", { hasText: "Value open" })).toHaveCount(1);
   await expect(page.locator("[data-queue-row]").first().locator("td[data-label='Value open']")).toContainText("$");
 });
 
 test("where the policy hides cost the screen says so, shows no price or value, and draws no value column", async ({ page, request }) => {
   await openArea(page, request, "Receiving");
+  // Let the first read land before the policy flips: flipped sooner, that read already answers
+  // hidden, the column check passes at once and the next click meets a desk busy with the Refresh.
+  await expect(page.locator("[data-queue-row]")).toHaveCount(3);
   // Change 5, R5: where the policy hides cost the column is not drawn at all, never a stub cell.
   await request.post("/_stub/flag", { data: { name: "costsHidden", value: true } });
   await page.getByRole("button", { name: "Refresh" }).click();

@@ -77,6 +77,8 @@ export const APP_IDS = [
   "money-desk",
   "yard-pick",
   "dealer-admin",
+  "dispatch-board",
+  "house-messages",
   "role-template",
 ] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -95,6 +97,10 @@ export const APP_ROLES: Readonly<Record<AppId, readonly RoleCode[]>> = {
   "money-desk": ["payables_receivables", "financial_controller", "general_manager"],
   "yard-pick": ["yard_manager", "yard_team"],
   "dealer-admin": ["sales_manager", "financial_controller", "general_manager", "hr"],
+  // The dispatch tile rides the yard manager, the logistics manager and the branch manager homes.
+  "dispatch-board": ["yard_manager", "logistics_manager", "branch_manager"],
+  // The one tile every live role holds: the matrix gives all thirteen roles the House Messages cell.
+  "house-messages": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller", "logistics_manager", "general_manager", "hr", "branch_manager", "outside_sales"],
   // The role template admits every live role until the role that copies it narrows this list (ROLE-GOES-LIVE.md).
   "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller", "logistics_manager", "general_manager", "hr", "branch_manager", "outside_sales"],
 };

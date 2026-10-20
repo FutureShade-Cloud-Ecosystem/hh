@@ -236,7 +236,7 @@ var accounts = map[string]Account{
 		Flow:           "general-manager",
 		PlatformUserID: "de5b2000-0000-4000-9000-000000000001",
 		Email:          "general.manager@" + ReservedDomain,
-		DisplayName:    "General manager (demo)",
+		DisplayName:    "General Manager (demo)",
 		Label:          "General Manager",
 		Role:           "general_manager",
 	},

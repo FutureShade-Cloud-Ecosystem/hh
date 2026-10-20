@@ -316,32 +316,57 @@ test("the house queue: open rows by filter, a claim stamps the caller, a second 
   refused(await call("payables-receivables", "GET", `/api/v1/messaging/channels/${CH.house}/house-queue`), 403, "not a channel member");
 });
 
-test("the stream: a ticket is single use, a message reaches its channel's members only, 501 when tickets are off", async () => {
-  await reset();
-  const ticket = await call("sales", "POST", "/api/v1/messaging/stream-ticket");
-  holds("MessagingStreamTicket", ticket.json);
-  const stream = await fetch(`${base}/api/v1/messaging/stream?ticket=${ticket.json.ticket}`);
-  assert.equal(stream.status, 200);
-  assert.match(stream.headers.get("content-type"), /text\/event-stream/);
-  const reuse = await fetch(`${base}/api/v1/messaging/stream?ticket=${ticket.json.ticket}`);
-  assert.equal(reuse.status, 401);
-  const reader = stream.body.getReader();
-  await control(`/_stub/as/yard-manager`, { channel_id: CH.yard, body: "Hello over the stream" });
-  let seen = "";
+// Read the SSE body in a single pass, then release the underlying socket. Node 22 and Bun 1.3 both expose
+// body.getReader() and a Symbol.asyncIterable on the WHATWG ReadableStream; this helper takes the reader (the
+// path both runtimes use internally for cancel) so a cancel() call closes the keep-alive socket cleanly under
+// the bun test runner, where async iteration on a live SSE stream can hang after the server has sent its last
+// chunk. The helper reads up to maxChunks frames or until `predicate(seen)` holds, whichever comes first.
+async function readSseUntil(body, predicate, maxChunks) {
   const decoder = new TextDecoder();
-  for (let i = 0; i < 10 && !seen.includes("Hello over the stream"); i += 1) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    seen += decoder.decode(value);
+  const reader = typeof body?.getReader === "function" ? body.getReader() : null;
+  if (!reader) return "";
+  let seen = "";
+  try {
+    for (let i = 0; i < maxChunks && !predicate(seen); i += 1) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    return seen;
+  } finally {
+    try { await reader.cancel(); } catch { /* the stream may already be closed */ }
   }
-  assert.match(seen, /event: message/);
-  assert.match(seen, /Hello over the stream/);
-  await reader.cancel();
-  await control("/_stub/tickets", { enabled: false });
-  const off = await call("sales", "POST", "/api/v1/messaging/stream-ticket");
-  assert.equal(off.status, 501);
-  assert.ok(coreSource.includes("stream tickets not enabled; use the Bearer stream"));
-  await control("/_stub/tickets", { enabled: true });
+}
+
+test("the stream: a ticket is single use, a message reaches its channel's members only, 501 when tickets are off", async () => {
+  let stream = null;
+  try {
+    await reset();
+    const ticket = await call("sales", "POST", "/api/v1/messaging/stream-ticket");
+    holds("MessagingStreamTicket", ticket.json);
+    stream = await fetch(`${base}/api/v1/messaging/stream?ticket=${ticket.json.ticket}`);
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get("content-type"), /text\/event-stream/);
+    const reuse = await fetch(`${base}/api/v1/messaging/stream?ticket=${ticket.json.ticket}`);
+    assert.equal(reuse.status, 401);
+    await control(`/_stub/as/yard-manager`, { channel_id: CH.yard, body: "Hello over the stream" });
+    const seen = await readSseUntil(stream.body, (s) => s.includes("Hello over the stream"), 10);
+    assert.match(seen, /event: message/);
+    assert.match(seen, /Hello over the stream/);
+    await control("/_stub/tickets", { enabled: false });
+    const off = await call("sales", "POST", "/api/v1/messaging/stream-ticket");
+    assert.equal(off.status, 501);
+    assert.ok(coreSource.includes("stream tickets not enabled; use the Bearer stream"));
+    await control("/_stub/tickets", { enabled: true });
+  } finally {
+    // Belt-and-braces close on the response body itself: cancel() on the
+    // WHATWG stream closes the keep-alive socket even when the reader above
+    // already released, so the stub's req.on("close") fires and the next
+    // test file in a full sweep binds its port without contention.
+    if (stream && stream.body && typeof stream.body.cancel === "function") {
+      try { await stream.body.cancel(); } catch { /* ok if already closed */ }
+    }
+  }
 });
 
 test("a route without a bearer is refused, and the offline control answers 503 on every route", async () => {
