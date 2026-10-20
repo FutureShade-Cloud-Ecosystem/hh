@@ -181,8 +181,12 @@ func (r *Repository) guardedAdminUpdate(ctx context.Context, id, updateSQL, arg 
 		}
 		return err
 	}
-	// Serialize all admin-management for this tenant on the customer row.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM customers WHERE id = $1 FOR UPDATE`, customerID); err != nil {
+	// Serialize all admin-management for this tenant on the customer row. FOR NO KEY UPDATE, not FOR UPDATE:
+	// a team member's insert draws the team counter and then takes FOR KEY SHARE on this row at its foreign
+	// key check, and FOR UPDATE conflicts with that, so a guard holding the row while it waited for the
+	// counter its own update draws would cycle against it. NO KEY UPDATE still conflicts with itself, so
+	// admin changes keep serialising, and no key column of customers changes here.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM customers WHERE id = $1 FOR NO KEY UPDATE`, customerID); err != nil {
 		return err
 	}
 	var otherAdmins int
