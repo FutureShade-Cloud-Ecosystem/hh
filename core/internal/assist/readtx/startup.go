@@ -59,9 +59,13 @@ func (r *Reader) checkLogin(ctx context.Context, login string) error {
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var user string
 	var super bool
-	if err := tx.QueryRow(ctx, `SELECT session_user::text, (SELECT rolsuper FROM pg_roles WHERE rolname = session_user)`).Scan(&user, &super); err != nil {
+	// is_superuser is the server's own report for the session (read before any SET ROLE),
+	// so no catalogue table is read.
+	var isSuper string
+	if err := tx.QueryRow(ctx, `SELECT session_user::text, current_setting('is_superuser')`).Scan(&user, &isSuper); err != nil {
 		return mapError(err)
 	}
+	super = isSuper == "on"
 	if user != login || super {
 		return ErrWrongLogin
 	}
