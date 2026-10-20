@@ -64,6 +64,20 @@ func notHolder(claimedBy, actorID string) bool {
 	return claimedBy != "" && claimedBy != actorID
 }
 
+// ErrCancelNotAllowed is a cancel from a person who neither holds the pick nor stands above the yard hands
+// (a Yard Manager, or a Tier 1 leader): the holder's call, or an explicit manager act. → 409.
+var ErrCancelNotAllowed = errors.New("tasks: only the holder or a yard manager may cancel this pick")
+
+// ErrCancelNotAllowedWords is what the REST door answers and the screen shows.
+const ErrCancelNotAllowedWords = "Only the person on this pick or a yard manager can cancel it."
+
+// ErrNoActor is a yard write from a staff login with no linked ERP user: nobody to hold the pick, so nothing
+// is claimed or changed. → 403.
+var ErrNoActor = errors.New("tasks: this sign in is not linked to a staff account")
+
+// ErrNoActorWords is what the REST door answers and the screen shows.
+const ErrNoActorWords = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it."
+
 // ErrNotPickTask is a pick record or skid count submitted against a task that is not a PICK task (for
 // example a NEED_WEIGHT, DISPATCH, or OTHER task). The yard handlers, syncpick, and the fake store all
 // refuse it before the order is told, because a pick record or a skid count on a non-PICK row would
