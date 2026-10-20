@@ -17,6 +17,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 // UnreconciledCardPayments returns the CARD payments received in [from, to) that are still RECEIVED (not yet
@@ -66,11 +67,17 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 	if len(paymentIDs) == 0 {
 		return nil
 	}
+	// One transaction: the named payment rows first, ascending (LOCK-ORDER.md), then the UPDATE, which takes
+	// the payments counter on its first row and must not hold it while it waits for another row a reversal
+	// holds.
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("till: mark deposited: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := payments.LockPaymentRowsTx(ctx, tx, paymentIDs); err != nil {
+		return fmt.Errorf("till: mark deposited: %w", err)
+	}
 	rows, err := tx.Query(ctx,
 		`UPDATE payments
 		 SET status = 'DEPOSITED',

@@ -97,7 +97,7 @@ conflict; the share was never something these writers needed to hold back.
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | POS pay balance take (item 9.4) | order row (`FOR NO KEY UPDATE`), payments counter (not advancing), the order's open invoice rows (`FOR NO KEY UPDATE`, ascending), the raise of an uninvoiced remainder's invoice through the desk's writer (a new invoice: invoices counter +1, item 9 review P2-2), payment insert through the till's tender (payments feed +1), invoice balance moves (invoices counter +1 each) | yes: the order row is the order's own first step, then the register settle's own sequence; the raise draws the invoices counter (step 4) before the settle's own counter draws, the same step every invoice-inserting writer takes after its invoice row locks |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
-| `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one (the terminal writers `MarkDeposited` and bankrec's claim and release update payment rows but take no counter and no invoice) |
+| `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one; the terminal writers `MarkDeposited` and bankrec's claim and release also take the payment row first and, since the sync seq trigger (0422), the payments counter after it (the batch ones take every named payment row ascending, `FOR NO KEY UPDATE`, through `payments.LockPaymentRowsTx`, before the UPDATE draws the counter), and no invoice |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
 | POS return, cash or card refund (the till refund rail) | per-sale advisory lock, the restock's stock rows (the restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam, taken only when the return restocks), payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows the return takes, the order's own steps 2 then 3, and a paid sale's return (no invoice row) draws no counter at all (the delta reviews' P2); the stock rows sit ahead of every counter because the ring and the cancel's settlement both take stock rows before the invoices counter, so a return that drew a counter first could meet either head on (round 3's ring and cancel legs pin both meetings) |
 | POS credit note across orders, cash or card refund (`returnAcrossInTx`) | per-sale advisory locks in ascending order id, the children's restock stock rows (the union of every child's restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam; the swap is the one caller that pre-locks itself, taking the sorted union of both its halves' products ahead of the body, so the body adds no pass there), payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), every child's owed invoice rows (`FOR NO KEY UPDATE`, sorted), the note header, per child: returned order lines, invoice `FOR KEY SHARE`, refund payment insert (payments feed +1) | yes: the note draws the counter before its invoice rows exactly as the single return does (the delta reviews' P1: the note path was the one writer left on the old order), and a note of fully paid sales with no deposit documents draws no counter either; the stock rows sit ahead of every counter for the same reason the single return's do |
@@ -151,13 +151,13 @@ in each transaction was compared pairwise across transactions. What it found:
 |---|---|---|---|
 | `payments` and `invoices` writers with an explicit draw (settle, apply, ring, return, credit across orders, cancel's settlement, door, `ReversePayment`) | none: seq changes in the same statement, the trigger does nothing | unchanged | nothing added |
 | `MarkNSF`: `UPDATE payments SET status = 'BOUNCED'` | `payments`, advancing (the bounce is now a payments feed row) | after the payment row (step 0), before `LockPaymentsSequenceTx`, which re-enters it, before the invoice rows (step 3) and the invoices counter (step 4) | re-entrant, in order. The bounce used to take the counter without advancing it; it now also advances it |
-| `MarkDeposited` (till), bankrec `PersistMatch` claim and `Unmatch` release: `UPDATE payments SET status` | `payments`, advancing | after the payment row; these transactions take no other counter and no invoice row | the one counter they take; no pair to cross |
+| `MarkDeposited` (till), bankrec `PersistMatch` claim and `Unmatch` release: `UPDATE payments SET status` | `payments`, advancing | after the payment row; these transactions take no other counter and no invoice row | the one counter they take, after the payment rows ascending: a single payment crosses nothing, and a BATCH (a card batch deposit claims several payments against one statement line) takes every named row first, ascending, then the counter, so a reversal of a later member (it holds that row, then wants the counter at its reversing insert) waits on a row holding nothing (`TestIntegration_LockOrder_BatchStatusWritersBesideAReversalOfAMember`: red before, 40P01 on both writers and either member) |
 | Credit memo (`IssueCreditMemo`, own transaction): `INSERT INTO invoices` with no seq | `invoices` | step 4; the transaction holds no other counter and no existing invoice row | the one counter; no pair to cross |
 | `RemoveMethod`, `AddMethod`, `SetDefaultMethod`: `portal_payment_methods` | `payment_methods` | not a money transaction: no payments or invoices counter, no money row | none |
 | `UpdateTermsGuarded`: `quotes` terms and refold | `quotes` | not inside a money transaction (the quote order-payment door takes `quotes` by an explicit draw before `LockPaymentsSequenceTx`, which is the order it already ran in) | none new |
 | customers, pos_parked_tickets, warranty_claims | `customers`, `parked_tickets`, `warranty_claims` | none of the POS ring, returns, order cancel, `MarkNSF`, `ReversePayment` or the credit memo writes these tables in its transaction (checked at source; the warranty credit memo runs in the billing writer's own transaction, and warranty updates its claim afterward) | none |
 | `MarkSheetPostedTx` (count sheet post, inside the stock adjust transaction) | none: explicit draw | n/a | nothing added |
-| `ReopenRun`, `MoveRunDate` (dispatch): `UPDATE delivery_runs` then `delivery_stops` | `runs` then `stops` | not money, but a crossing with the sync cancel of a run (`RunsSyncStore.Write`), which takes the run row `FOR UPDATE`, then un-assigns its stops (`stops`), then draws the run's seq (`runs`) | **deadlock twice over.** First, across two runs: the cancel took stops then runs, the reopen runs then stops (`TestIntegration_SeqTrigger_RunFirstWritersTakeStopsBeforeRuns`). The first fix (take `stops` first) closed that and opened the same pair on ONE run: the reopen holding the `stops` counter waiting on the run row, the cancel holding the row waiting on the counter (PR 556 review P2-1). The dispatch order is **the run row, then `stops`, then `runs`**, the cancel's own: `lockRunThenStopsSeqTx` (run row `FOR UPDATE`, then a non advancing take of `stops`) first in both writers; red then green on both shapes (`TestIntegration_SeqTrigger_RunFirstWritersAndTheSyncCancelOnTheSameRun`, ReopenRun and MoveRunDate) |
+| `ReopenRun`, `MoveRunDate` (dispatch): `UPDATE delivery_runs` then `delivery_stops` | `runs` then `stops` | not money, but a crossing with the sync cancel of a run (`RunsSyncStore.Write`), which takes the run row `FOR UPDATE`, then un-assigns its stops (`stops`), then draws the run's seq (`runs`) | **deadlock twice over.** First, across two runs: the cancel took stops then runs, the reopen runs then stops (`TestIntegration_SeqTrigger_RunFirstWritersTakeStopsBeforeRuns`). The first fix (take `stops` first) closed that and opened the same pair on ONE run: the reopen holding the `stops` counter waiting on the run row, the cancel holding the row waiting on the counter (PR 556 review P2-1). The dispatch order is **the run row (`FOR NO KEY UPDATE`), then `stops`, then `runs`**, the cancel's own: `lockRunThenStopsSeqTx` (run row `FOR NO KEY UPDATE`, then a non advancing take of `stops`) first in both writers; red then green on both shapes (`TestIntegration_SeqTrigger_RunFirstWritersAndTheSyncCancelOnTheSameRun`, ReopenRun and MoveRunDate). **Why `FOR NO KEY UPDATE` and not `FOR UPDATE`:** every write that sets a stop's `run_id` takes the `stops` counter and then, at its foreign key check, `FOR KEY SHARE` on the run row; `FOR UPDATE` conflicts with that, so a run writer holding the row while it waited for the counter cycled against a stop write holding the counter while it waited for the row (PR 556 review, round 3; `TestIntegration_SeqTrigger_AStopCreateBesideRunWritersOnTheSameRun`: ReopenRun, MoveRunDate and the sync cancel, each red then green). The sync cancel's pre-image read had the same strength since before the trigger and is fixed the same way |
 
 The pairwise comparison over every non fixture transaction in the run found one opposite order among the
 trigger's draws, and it is the dispatch pair above. (`payments` before `invoices` is the only order the money
@@ -165,6 +165,59 @@ transactions take them in, and the trigger's `payments` draws all sit in front o
 `invoices` before `payments` entries in the log are the non advancing `payments` lock logged after an invoice
 raise inside one transaction, the order this file documents.) `stock_balances` is not in the trigger: SF-7 adds
 it with a take of the counter right after its stock rows, and a concurrent sale beside a restocking return.
+
+### Multi row writers on the served tables (PR 556, round 3b)
+
+Since the sync seq trigger (0422), a statement that updates or deletes several rows of a served table WITHOUT an
+explicit seq takes that table's counter once per row, and holds it to commit. Beside a single row writer of the
+same table that holds one of those rows and then wants the counter (the usual shape: the row lock, then the
+draw), the multi row writer cycles if it takes the counter before it has locked all its rows. The rule: **the
+rows first, ascending id, `FOR NO KEY UPDATE`; then the counter.** Every multi row UPDATE and DELETE in non test
+Go on a served table was listed from source (a scan of every `UPDATE` and `DELETE FROM` literal whose WHERE does
+not pin one id, plus the loops of single row updates inside one transaction):
+
+| Writer (file:line) | Table | Order | Verdict |
+|---|---|---|---|
+| `bankrec/repository.go` PersistMatch claim, about :318 | payments | the named payment rows ascending (`payments.LockPaymentRowsTx`), then the UPDATE | fixed; red then green, the batch leg |
+| `till/recon_seam.go` MarkDeposited, :56 | payments | the same, now one transaction | fixed; same leg |
+| `dispatch/repository_w3.go` MoveRunDate stops, :434 | delivery_stops | run row, the run's stop rows ascending, then the stops counter (`lockRunThenStopsSeqTx`) | fixed; red then green, `TestIntegration_SeqTrigger_RunWritersBesideASingleStopWriteOnOneOfTheirStops` |
+| `dispatch/repository_loadboard.go` ReopenRun stops, :128 | delivery_stops | the same | fixed; same leg |
+| `dispatch/repository_freightraise.go` writeFreightSplitOn, :220 (a loop of single row UPDATEs in one transaction) | delivery_stops | the named stops ascending first, then the loop | fixed; red then green, `TestIntegration_SeqTrigger_FreightSplitBesideASingleStopWrite` |
+| `dispatch/syncscope_runs.go` cancel's un-assign, :498 | delivery_stops | one explicit draw inside the statement that locks the rows it updates | proven safe: the leg that drives it beside a single stop write is green with no fix, and a dump of the waits shows the stop write queued on the cancel's row (`transactionid`), so the cancel holds the rows before the draw (the leg stays as a guard) |
+| `dispatch/repository_w3.go` AttachPODPhotos, :327 | delivery_pod_photos | one explicit draw (one seq for every row) | explicit and once: counter first, a shape that predates the trigger; the only single row writer of the table (the pod store) locks its photo row, then draws; listed, not changed (not a trigger cycle) |
+| `identity/populate.go` StampPortalTenants, :253 | portal_users | one statement over every unstamped row | runs inside the populate step at provisioning, before the service takes traffic, alone |
+| `payments/repository.go` :187, :259 (clear the prior default) | portal_payment_methods | a partial unique index allows at most one default per account | proven single row |
+| `pricing/syncscope.go` :515 | pricing_list_prices | WHERE `product_id = $1` and the table's primary key is `product_id` | proven single row |
+| `dispatch/syncscope_pickups.go` :497, `syncscope_board.go` :296, :1086, `repository_w3.go` :249, `quote/*` `quotes ... WHERE id = $1`, `pos/repository_w7.go` :1251, :1267, `invcount` :211, :552 | various | a WHERE that pins `id = $n` | proven single row |
+| the re-draw in migration 0422 | every trigger table | one set based UPDATE per table, explicit seq | runs in the migration, alone |
+
+The hard deletes of a served table are the two pending ones (procurement SF-12, dashboard SF-13), both outside
+the trigger's per row cost until their items turn them into tombstone updates.
+
+One finding outside this class, said plainly: a single row write that draws through the trigger takes the row
+first and the counter after; a single row write that draws EXPLICITLY (the CTE form) evaluates the counter first
+and locks the row after. Two such writers on the SAME row (a REST edit and a sync edit of one quote, say) cross.
+That is a property of mixing the two forms on one table, not of one writer; Postgres detects the cycle and aborts
+one side, rolled back whole; no writer was changed for it here.
+
+### The row lock strength sweep (PR 556, round 3)
+
+A foreign key check takes `FOR KEY SHARE` on the parent row AFTER the child's counter draw. A writer that holds a
+parent row `FOR UPDATE` and then wants a counter that a child write draws therefore cycles against that child
+(`FOR UPDATE` conflicts with `KEY SHARE`). Every non test `FOR UPDATE` on a table a trigger table points at was
+read for that shape. Fixed, each red first on a deterministic leg: the run row (`lockRunThenStopsSeqTx` and the
+sync cancel's pre-image, now `FOR NO KEY UPDATE`; stop create beside ReopenRun, MoveRunDate and the sync cancel),
+the last admin guard's customer row (`portal` `guardedAdminUpdate`, beside a team insert), and the credit memo
+(it now takes the order row, with the same `lockOrder` every invoice writer uses, and the invoice it reverses `FOR NO KEY UPDATE` before its insert, the order of steps
+1 and 3 above, beside an order row holder that then draws the invoices counter). Read and safe: the other
+`orders` lockers (every invoice writer takes the order row before the invoices counter, so there is no child
+write to meet; delivery stops and will call children are drawn by no order locker), the `payments` lockers
+(the reversal and `MarkNSF` lock the parent first), `plan` (every plan line writer locks the plan row first),
+`tasks` (every shortage writer locks the task row before the shortages counter), `portal_users`,
+`warranty_claims`, `uoms` (no child counter drawn after the lock), the `delivery_stops` lockers (the only child,
+a pod photo, draws a counter no stop locker takes; the pod store locks the photo row, `FOR UPDATE OF p`), the
+`FOR UPDATE` statements whose `locations` is only in a subquery (a subquery's rows are not locked), and the
+statements that lock a joined table `OF` another.
 
 ## The legs
 

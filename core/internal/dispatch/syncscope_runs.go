@@ -411,7 +411,9 @@ func (s *RunsSyncStore) crewInBranch(ctx context.Context, branchID, truckID, dri
 }
 
 // Write applies exactly the declared fields to one run under the
-// module's own rules, on a FOR UPDATE-locked pre-image so the recorded
+// module's own rules, on a FOR NO KEY UPDATE-locked pre-image (not FOR UPDATE: a stop write on
+// this run takes FOR KEY SHARE on the row at its foreign key check, and the two would cycle against
+// the stops counter this write draws next) so the recorded
 // transition is the one that landed: the status move runs the same
 // matrix the REST transitions run, DISPATCHED needs its crew (0090's
 // own CHECK), COMPLETED needs every stop settled (the precondition
@@ -460,7 +462,7 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 	arm, armArg := d.leg(runDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(truck_id::text,''), COALESCE(driver_id::text,''), notes FROM delivery_runs
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm+` FOR UPDATE`,
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm+` FOR NO KEY UPDATE`,
 		id, f.OrgID, armArg).Scan(&from, &truckID, &driverID, &fromNotes); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
