@@ -23,7 +23,8 @@ import {
   type TenantPayment,
   type TenantPaymentMethod,
 } from "@hardscapehouse/api-client";
-import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, proZone, realExchangeAdapter, demoTenantAdapter, serveProZoneFrom, signInFromCard, demoRoleFromAddress, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
+import { houseDayInZone, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, demoRoleFromAddress, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
@@ -41,9 +42,7 @@ const NEEDS: Readonly<Record<SurfaceId, Capability>> = { invoices: "view_billing
 
 /** The dealer's own day (the house zone the kit's words use), as YYYY-MM-DD, for aging. */
 function houseToday(): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: proZone(), year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-  const of = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
-  return `${of("year")}-${of("month")}-${of("day")}`;
+  return houseDayInZone(houseZone());
 }
 
 /** A 401 is a lapsed session (sign out and say so, never blame the role); a 403 is the role's refusal; anything else is an error. */
@@ -195,7 +194,7 @@ export class ProPayApp extends HHElement {
   async #loadDealer(): Promise<void> {
     const answer = await tenantAuth.tenantGetConfig(this.#client);
     if (answer.ok) {
-      serveProZoneFrom(answer.value);
+      serveHouseZoneFrom(answer.value);
       this.#dealerName = answer.value.dealer_name;
       this.requestUpdate();
     }

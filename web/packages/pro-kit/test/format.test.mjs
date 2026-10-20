@@ -3,6 +3,7 @@
 // never as a confident zero; ids and totals ride the mono face.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { DEFAULT_HOUSE_ZONE, resetHouseZone, serveHouseZoneFrom } from "../../pos-kit/src/ported/host-facts.ts";
 import * as format from "../src/format.ts";
 
 const { NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, calendarDay, monoStyles } = format;
@@ -43,48 +44,66 @@ test("a quantity keeps the core's decimal string and appends its unit, or reads 
 });
 
 test("a day reads in the dealer's own zone with the year, not UTC, and reads Not set when absent", () => {
-  // 03:30 UTC is the evening of the day before in San Diego in every season (UTC minus seven or eight hours),
-  // so the dealer's day is the UTC day less one.
+  // 02:30 UTC is the evening of the day before in the shared default zone in every season (UTC minus four or five),
+  // and 05:30 UTC is already the new day in the shared default zone while still the evening before in Los Angeles.
+  resetHouseZone();
   const moment = new Date();
-  moment.setUTCHours(3, 30, 0, 0);
+  moment.setUTCHours(2, 30, 0, 0);
   const utcDayBefore = new Date(moment.getTime() - 86_400_000);
   const expected = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }).format(utcDayBefore);
   assert.equal(houseDay(moment.toISOString()), expected);
   assert.match(houseDay(moment.toISOString()), /^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+  const boundary = new Date();
+  boundary.setUTCHours(5, 30, 0, 0);
+  const inDefault = new Intl.DateTimeFormat("en-US", { timeZone: DEFAULT_HOUSE_ZONE, month: "short", day: "numeric", year: "numeric" }).format(boundary);
+  const inPacific = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "numeric" }).format(boundary);
+  assert.notEqual(inDefault, inPacific);
+  assert.equal(houseDay(boundary.toISOString()), inDefault);
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  try {
+    assert.equal(houseDay(boundary.toISOString()), inPacific);
+  } finally {
+    resetHouseZone();
+  }
   assert.equal(houseDay("not a date"), "Not set");
   assert.equal(houseDay(null), "Not set");
   assert.equal(houseDay(undefined), "Not set");
 });
 
-test("a moment reads in the dealer's own zone with the year and clock time, or Not set when absent", () => {
+test("a moment reads in the shared host-facts zone with the year and clock time, or Not set when absent", () => {
   assert.equal(typeof format.houseMoment, "function");
+  assert.equal("DEFAULT_PRO_ZONE" in format, false);
+  assert.equal("serveProZoneFrom" in format, false);
+  assert.equal("proZone" in format, false);
+  resetHouseZone();
   const moment = new Date();
   moment.setUTCHours(15, 15, 0, 0);
-  const expected = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+  const inDefault = new Intl.DateTimeFormat("en-US", {
+    timeZone: DEFAULT_HOUSE_ZONE,
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
   }).format(moment);
-  assert.equal(format.houseMoment(moment.toISOString()), expected);
+  assert.equal(format.houseMoment(moment.toISOString()), inDefault);
   assert.match(format.houseMoment(moment.toISOString()), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} (AM|PM)$/);
   assert.equal(format.houseMoment("not a date"), "Not set");
   assert.equal(format.houseMoment(null), "Not set");
-  format.serveProZoneFrom({ business_zone: "America/New_York" });
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
   try {
-    const eastern = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
+    const pacific = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
       month: "short",
       day: "numeric",
       year: "numeric",
       hour: "numeric",
       minute: "2-digit",
     }).format(moment);
-    assert.equal(format.houseMoment(moment.toISOString()), eastern);
+    assert.notEqual(pacific, inDefault);
+    assert.equal(format.houseMoment(moment.toISOString()), pacific);
   } finally {
-    format.resetProZoneForTest();
+    resetHouseZone();
   }
 });
 

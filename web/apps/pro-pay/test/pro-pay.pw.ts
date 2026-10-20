@@ -36,7 +36,7 @@ async function signInAgain(page: Page, who: string): Promise<void> {
 
 /** The dealer's day (the house zone) a number of days from now, as YYYY-MM-DD: the day the app ages against. */
 function houseDayOffset(days: number): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
   const of = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
   const when = new Date(`${of("year")}-${of("month")}-${of("day")}T00:00:00Z`);
   when.setUTCDate(when.getUTCDate() + days);
@@ -580,6 +580,31 @@ test.describe("phone", () => {
     await expect(page.getByTestId("detail-history")).toContainText("Not set");
     const text = await page.locator("hh-pro-frame").innerText();
     expect(text).not.toMatch(/\bn\/a\b/i);
+  });
+
+  test("a moment on a Pro screen reads in the shared default zone when nothing is served, and in America/Los_Angeles when served on tenant config", async ({ page }) => {
+    const boundary = new Date();
+    boundary.setUTCHours(5, 30, 0, 0);
+    const defaultDay = new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", month: "short", day: "numeric", year: "numeric" }).format(boundary);
+    const pacificDay = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "numeric" }).format(boundary);
+    expect(pacificDay).not.toBe(defaultDay);
+    await page.route("**/api/v1/tenant/invoices/*", async (route) => {
+      const response = await route.fetch();
+      const detail = (await response.json()) as { payment_history: { received_at: string }[] };
+      if (detail.payment_history.length > 0) detail.payment_history[0]!.received_at = boundary.toISOString();
+      await route.fulfill({ response, json: detail });
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("detail-history")).toContainText(defaultDay);
+    await page.route("**/api/v1/tenant/config", async (route) => {
+      const response = await route.fetch();
+      const cfg = (await response.json()) as Record<string, unknown>;
+      await route.fulfill({ response, json: { ...cfg, business_zone: "America/Los_Angeles" } });
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20401" }).getByRole("button", { name: /INV-20401/ }).click();
+    await expect(page.getByTestId("detail-history")).toContainText(pacificDay);
   });
 
   test("nothing a person typed, was given or paid with rests in web storage, the address bar or the console", async ({ page }) => {

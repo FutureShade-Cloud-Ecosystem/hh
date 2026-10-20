@@ -9,6 +9,7 @@
 // ("Not priced", "Not counted", "Not set"), never as "n/a" or a plausible zero.
 import { css } from "lit";
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 /** What an unknown money figure reads as. Plain and sentence case; never a zero. */
 export const NO_PRICE = "Not priced";
@@ -48,60 +49,25 @@ export function qtyWithUnit(qty: string | null | undefined, unit: string | null 
   return u === "" ? qty.trim() : `${qty.trim()} ${u}`;
 }
 
-// The dealer's own zone: a day means the dealer's day, never UTC's (a UTC day
-// rolls over mid afternoon west of Greenwich). The demo dealer is in San Diego,
-// and a dealer config that carries business_zone serves that zone for the session.
-export const DEFAULT_PRO_ZONE = "America/Los_Angeles";
-
-let servedZone: string = DEFAULT_PRO_ZONE;
-
-function isValidZone(zone: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Record the dealer's IANA time zone when the tenant config carries business_zone. */
-export function serveProZoneFrom(config: unknown): string {
-  if (config !== null && typeof config === "object" && "business_zone" in config) {
-    const raw = (config as { business_zone?: unknown }).business_zone;
-    if (typeof raw === "string" && raw.trim() !== "" && isValidZone(raw.trim())) {
-      servedZone = raw.trim();
-    }
-  }
-  return servedZone;
-}
-
-/** The dealer's active IANA time zone for Pro screens. */
-export function proZone(): string {
-  return servedZone;
-}
-
-/** Reset the dealer's zone to the default between unit tests. */
-export function resetProZoneForTest(): void {
-  servedZone = DEFAULT_PRO_ZONE;
-}
+// The dealer's own zone comes from pos-kit's shared host-facts (served on the
+// tenant config read via serveHouseZoneFrom, and read via houseZone()): one
+// zone source and one default across the product.
 
 /** A timestamp as the dealer's calendar day in glossary words, for example `Mar 1, 2026`. */
-export function houseDay(iso: string | null | undefined, zone: string = proZone()): string {
+export function houseDay(iso: string | null | undefined): string {
   if (typeof iso !== "string" || iso.trim() === "") return NO_DAY;
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return NO_DAY;
-  const tz = isValidZone(zone) ? zone : proZone();
-  return new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric", year: "numeric" }).format(when);
+  return new Intl.DateTimeFormat("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric" }).format(when);
 }
 
 /** A timestamp as the dealer's calendar day and clock time in glossary words, for example `Mar 1, 2026, 8:15 AM`. */
-export function houseMoment(iso: string | null | undefined, zone: string = proZone()): string {
+export function houseMoment(iso: string | null | undefined): string {
   if (typeof iso !== "string" || iso.trim() === "") return NO_DAY;
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return NO_DAY;
-  const tz = isValidZone(zone) ? zone : proZone();
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
+    timeZone: houseZone(),
     month: "short",
     day: "numeric",
     year: "numeric",
