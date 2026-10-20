@@ -45,7 +45,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   screens.push(await everyWordOnScreen(page));
 
-  await page.locator("[data-line]").first().locator(".line-row").click();
+  await page.locator("[data-line]").first().getByRole("button", { name: "Short" }).click();
   await expect(page.locator("[data-qty-edit]")).toBeVisible();
   screens.push(await everyWordOnScreen(page));
 
@@ -111,7 +111,7 @@ test("nothing the app sends to the core carries a money field", async ({ page, r
   await page.goto("/");
   await page.locator("[data-pick-card]", { hasText: "SO-1040" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
-  await page.locator("[data-line]").first().locator(".line-row").click();
+  await page.locator("[data-line]").first().getByRole("button", { name: "Short" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();

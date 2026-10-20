@@ -40,7 +40,7 @@ import {
 } from "./_quote-public.js";
 import { createAcceptKeys } from "./accept-key.js";
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
-import { formatMoney, plainDay, plainWhen, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "./format.js";
+import { formatMoney, plainDay, plainWhen, quantityLabel, quoteNumberLabel, quoteStatusPhrase, withFullStop } from "./format.js";
 import {
   envelopeOnlyFetch,
   isDeadLinkAnswer,
@@ -329,6 +329,10 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-card);
         cursor: pointer;
       }
+      .paymentrow .payonly {
+        margin: 0;
+        cursor: default;
+      }
       .paymentrow .payopt:has(input:checked) {
         background: color-mix(in srgb, var(--hh-info) 10%, var(--hh-card));
         border-color: color-mix(in srgb, var(--hh-info) 40%, var(--hh-line));
@@ -433,10 +437,11 @@ export class QuotePublicPage extends HHElement {
       td.item {
         min-width: 6rem;
       }
-      /* The phone fold: at the design system's small breakpoint the UoM column
-         (redundant with the item's own words for a customer) folds away, so
-         the thumbnail column plus four columns fit a 390px card. CSS mirrors
-         the px of --hh-bp-sm, the sheet's own convention. */
+      /* The quantity carries its unit in one cell, so the table is the same on a phone: the
+         thumbnail column plus four columns fit a 390px card. */
+      td.qty {
+        white-space: nowrap;
+      }
       th {
         text-align: left;
         color: var(--hh-text-dim);
@@ -453,10 +458,6 @@ export class QuotePublicPage extends HHElement {
         text-align: right;
       }
       @media (max-width: 480px) {
-        th.uom,
-        td.uom {
-          display: none;
-        }
         /* The figures stay whole on a phone: tighter cell padding, and the Amount column holds the right edge while the
            rest of the row scrolls inside its own box. The words stay the page's body size, never smaller. */
         th,
@@ -1315,6 +1316,17 @@ export class QuotePublicPage extends HHElement {
     const cardOption = offersCardPayment(q);
     const surchargeCents = cardSurchargeCents(q.totalCents, q.cardSurchargePct);
     const surchargePct = q.cardSurchargePct ?? 0;
+    if (!cardOption) {
+      // One method is a statement, not a choice: no radio group of one.
+      return html`<div class="paymentrow">
+        <p class="payopt payonly">
+          <span class="paylabel">
+            Payment by ACH transfer
+            <span class="paysub">No surcharge; the deposit clears in one to three business days.</span>
+          </span>
+        </p>
+      </div>`;
+    }
     return html`<div class="paymentrow" role="radiogroup" aria-label="Payment method">
       <label class="payopt">
         <input type="radio" name="payment" value="ach" checked />
@@ -1530,8 +1542,8 @@ export class QuotePublicPage extends HHElement {
           </label>
         </div>
         ${this.renderPaymentOptions(q)}
-        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
         ${hint !== null ? html`<p class="note" id="accept-hint">${hint}</p>` : nothing}
+        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy || !acceptReady(this.lockedName ?? this.typedName, this.affirmed, this.quantitiesConfirmed) })}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:
@@ -1612,7 +1624,6 @@ export class QuotePublicPage extends HHElement {
                 ${withImages ? html`<th></th>` : nothing}
                 <th class="item">Item</th>
                 <th class="num">Qty</th>
-                <th class="uom">UoM</th>
                 <th class="num">Unit</th>
                 <th class="num amount">Amount</th>
               </tr>
@@ -1648,8 +1659,7 @@ export class QuotePublicPage extends HHElement {
                         </div>`
                       : nothing}
                   </td>
-                  <td class="num">${l.qtyEntered}</td>
-                  <td class="uom">${l.uomEntered}</td>
+                  <td class="num qty">${quantityLabel(l.qtyEntered, l.uomEntered)}</td>
                   <td class="num">${formatMoney(l.unitPriceCents)}</td>
                   <td class="num amount">${formatMoney(l.lineTotalCents)}</td>
                 </tr>`;
