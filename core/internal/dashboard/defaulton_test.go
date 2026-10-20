@@ -114,7 +114,7 @@ func TestResolve_LeadershipOverridePredatingTheCardStillGetsIt(t *testing.T) {
 	// The owner personalised their home before DIB-463 shipped: the override cannot name the card.
 	f.user["owner-1"] = []LayoutRow{{TileID: TileSalesToday, Position: 0, Visible: true}}
 
-	svc := NewService(f, nil)
+	svc := NewService(f, nil).WithTileAccess(AccessPaymentTrail, allowAll)
 	layout, err := svc.Resolve(context.Background(), Scope{UserID: "owner-1", RoleCode: "GENERAL_MANAGER"})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)

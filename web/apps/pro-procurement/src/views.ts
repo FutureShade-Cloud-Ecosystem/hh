@@ -6,11 +6,39 @@
 // on, never a bound listener.
 import { html, css, nothing, type TemplateResult } from "lit";
 import { baseStyles, button } from "@hardscapehouse/design-system/src/primitives.js";
-import type { ApiClient } from "@hardscapehouse/api-client";
+import type { ApiClient, Result } from "@hardscapehouse/api-client";
 import type { TenantSession } from "@hardscapehouse/pro-kit";
 import type { SurfaceId } from "./registry.js";
 
 export { button };
+
+export const LIST_CUT_WORDS = "Showing the newest items. Older items are not shown here.";
+
+const MAX_CURSOR_PAGES = 50;
+
+/**
+ * Read a cursor-paginated route up to MAX_CURSOR_PAGES pages. Returns the
+ * collected items and whether the feed still had a cursor at the ceiling; on a
+ * refused page, returns the failed answer so the caller's 401/403/error branch
+ * sees the status unchanged.
+ */
+export async function readCursorPages<T>(
+  fetchPage: (cursor: string | undefined) => Promise<Result<{ items: readonly T[]; next_cursor?: string | null }>>,
+  maxPages = MAX_CURSOR_PAGES,
+): Promise<{ ok: true; items: T[]; cut: boolean } | { ok: false; error: string; status?: number }> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const answer = await fetchPage(cursor);
+    if (!answer.ok) return { ok: false, error: answer.error, status: answer.status };
+    items.push(...answer.value.items);
+    const next = answer.value.next_cursor;
+    if (next === null || next === undefined || next === "") return { ok: true, items, cut: false };
+    if (next === cursor) return { ok: true, items, cut: true };
+    cursor = next;
+  }
+  return { ok: true, items, cut: true };
+}
 
 /** Where in the app a person is: a surface and, for a drill-down, what is open. */
 export interface Route {

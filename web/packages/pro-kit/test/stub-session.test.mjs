@@ -94,9 +94,11 @@ test("the demo adapter signs each of the five roles in through the stub's demo r
   }
 });
 
-test("the demo email link signs a role in by its demo address", async () => {
+test("the demo email link signs a role in by its demo address and words the direct demo sign in", async () => {
   const session = new InMemoryTenantSession({ adapter: demoTenantAdapter({ baseUrl: base }), baseUrl: base });
   const result = await session.signInWith({ method: "email_link", email: "ap_finance@hh-demo.invalid" });
   assert.equal(result.ok, true);
+  assert.equal(result.value.notice, "Signed in as the demo Accounts payable. No email is sent in the demo.");
   assert.equal(session.profile().role, "ap_finance");
+  assert.equal(session.profile().notice, "Signed in as the demo Accounts payable. No email is sent in the demo.");
 });

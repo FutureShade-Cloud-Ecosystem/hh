@@ -42,6 +42,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/signout"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
@@ -340,6 +341,13 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		return nil, err
 	}
 
+	// Revocable sessions (HH-678), the same step in the same place as the
+	// default wiring: the store over the shared pool, attached to the
+	// verifier this composition built before the pool existed, so a demo
+	// sign out's revocation holds across restarts.
+	sessionRevocations := identity.NewSessionRevocations(pool)
+	verifier.SetRevocations(sessionRevocations)
+
 	// G3: the database must be the demo's invented world, and the check
 	// runs here, before anything registers or serves.
 	if err := boot.CheckDemoDatabase(context.Background(), pool); err != nil {
@@ -502,6 +510,10 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		r.Handle("POST /api/v1/auth/persona", g.Public(pers))
 		r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
 	}
+
+	// The sign out beside the sign ins (HH-678): public leg, both sign in
+	// modes, the token revoked by its own presentation in the body.
+	r.Handle("POST /api/v1/auth/sign-out", g.Public(signout.NewHandler(verifier, sessionRevocations)))
 
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
 	// parity ledger's demo pair, pre-auth by design and registered on the

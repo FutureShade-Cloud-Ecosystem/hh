@@ -9,8 +9,8 @@
 // BoardPage (the stage board, New plan) and the original portal's procurement
 // lanes (portal-procurement.ts); the stage chips are the kit's.
 import { html, nothing, type TemplateResult } from "lit";
-import { tenantOrders, tenantProcurement, tenantQuotes, type TenantOrderPage } from "@hardscapehouse/api-client";
-import type { TenantOrder, TenantProject, TenantProjectBoard, TenantQuote, TenantQuotePage } from "@hardscapehouse/api-client";
+import { tenantOrders, tenantProcurement, tenantQuotes } from "@hardscapehouse/api-client";
+import type { TenantOrder, TenantProject, TenantProjectBoard, TenantQuote } from "@hardscapehouse/api-client";
 import {
   money,
   stageChip,
@@ -22,7 +22,7 @@ import {
   trackingOf,
   calendarDay,
 } from "@hardscapehouse/pro-kit";
-import { confirmModal, metaLine, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
+import { confirmModal, metaLine, actionFailure, readCursorPages, LIST_CUT_WORDS, type Page, type SurfaceAnswer } from "./views.js";
 import { openReorder, reorderCommand } from "./reorder.js";
 
 export const BOARD_EMPTY = "Nothing is in motion. Start a plan from the catalog.";
@@ -31,27 +31,29 @@ export interface BoardData {
   projects: TenantProject[];
   quotes: TenantQuote[];
   orders: TenantOrder[];
+  cut?: boolean;
 }
-
-const ORDERED: readonly string[] = ["CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED"];
 
 export async function boardLoad(page: Page): Promise<SurfaceAnswer> {
   // The gate before the wire: a role without the surface's capability makes no call at all.
   if (!page.session.can("submit_rfq")) return { kind: "refusal" };
   const [projects, quotes, orders] = await Promise.all([
     tenantProcurement.tenantListProcurementProjects(page.client),
-    tenantQuotes.tenantListQuotes(page.client),
-    tenantOrders.tenantListOrders(page.client),
+    readCursorPages((cursor) => tenantQuotes.tenantListQuotes(page.client, cursor === undefined ? undefined : { cursor })),
+    readCursorPages((cursor) => tenantOrders.tenantListOrders(page.client, cursor === undefined ? undefined : { cursor })),
   ]);
   for (const answer of [projects, quotes, orders]) {
     if (answer.ok) continue;
     if (answer.status === 403) return { kind: "refusal" };
     return { kind: "error", status: answer.status };
   }
+  const quotesOk = quotes as { ok: true; items: TenantQuote[]; cut: boolean };
+  const ordersOk = orders as { ok: true; items: TenantOrder[]; cut: boolean };
   const data: BoardData = {
     projects: (projects as { ok: true; value: TenantProjectBoard }).value.projects,
-    quotes: (quotes as { ok: true; value: TenantQuotePage }).value.items,
-    orders: (orders as { ok: true; value: TenantOrderPage }).value.items,
+    quotes: quotesOk.items,
+    orders: ordersOk.items,
+    cut: quotesOk.cut || ordersOk.cut,
   };
   if (data.projects.length === 0 && data.quotes.length === 0 && data.orders.length === 0) return { kind: "empty" };
   return { kind: "ready", data };
@@ -75,7 +77,7 @@ function quoteCard(quote: TenantQuote): TemplateResult {
 
 function orderCard(order: TenantOrder, page: Page): TemplateResult {
   const tracking = trackingOf(order.status, order.fulfillment);
-  const mayBuy = page.session.can("view_orders_deliveries");
+  const mayBuy = page.session.can("create_orders");
   return html`<div class="card" data-testid="board-order">
     <span class="rowline"><span class="mono figure">${order.order_no}</span><span class="grow"></span><span class="mono figure">${money(order.total_cents)}</span></span>
     <span class="rowline">${tracking === null ? statusChip("order", order.status) : trackingChip(tracking)}<span class="grow"></span><span class="dim">Wanted ${calendarDay(order.requested_date)}</span></span>
@@ -99,8 +101,8 @@ export function boardView(dataRaw: unknown, page: Page): TemplateResult {
   const planProjects = data.projects.filter((p) => stageOfProject(p.status) === "plan");
   const draftOrders = data.orders.filter((o) => stageOfOrder(o.status) === "plan");
   const quoteCards = data.quotes.filter((q) => stageOfQuote(q.status) === "quote");
-  const orderCards = data.orders.filter((o) => ORDERED.includes(o.status));
-  const invoiceCards = data.orders.filter((o) => o.status === "INVOICED" || o.status === "CLOSED");
+  const orderCards = data.orders.filter((o) => stageOfOrder(o.status) === "order");
+  const invoiceCards = data.orders.filter((o) => stageOfOrder(o.status) === "invoice");
   const mayPlan = page.session.can("submit_rfq");
   return html`<p class="meta">
       <span class="figure">${planProjects.length + draftOrders.length} plans</span>
@@ -118,7 +120,8 @@ export function boardView(dataRaw: unknown, page: Page): TemplateResult {
       ${column("quote", quoteCards.map((q) => quoteCard(q)))}
       ${column("order", orderCards.map((o) => orderCard(o, page)))}
       ${column("invoice", invoiceCards.map((o) => orderCard(o, page)))}
-    </div>`;
+    </div>
+    ${data.cut === true ? html`<p class="emptyline" data-testid="board-cut">${LIST_CUT_WORDS}</p>` : nothing}`;
 }
 
 // ---- the New plan modal -------------------------------------------------------------------------

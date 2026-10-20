@@ -27,9 +27,11 @@ import type {
 } from "@hardscapehouse/api-client";
 import { tenantAddresses, tenantAuth, tenantOrders, tenantProjects, tenantTeam } from "@hardscapehouse/api-client";
 
+export type OrdersListAnswer = Result<TenantOrder[]> & { truncated?: boolean };
+
 export interface FieldPort {
   /** Every order of the account, the core's keyset order, cursors followed to the end. */
-  listOrders(): Promise<Result<TenantOrder[]>>;
+  listOrders(): Promise<OrdersListAnswer>;
   getOrder(id: string): Promise<Result<TenantOrderDetail>>;
   /** The one write the offline plan covers. Everything else in this app never queues. */
   setDeliveryInstructions(id: string, instructions: string): Promise<Result<TenantStatusResponse>>;
@@ -58,10 +60,10 @@ export function liveFieldPort(client: ApiClient): FieldPort {
         if (!answer.ok) return answer;
         items.push(...answer.value.items);
         const next = answer.value.next_cursor;
-        if (typeof next !== "string" || next === "") return { ok: true, value: items };
+        if (typeof next !== "string" || next === "") return { ok: true, value: items, truncated: false };
         cursor = next;
       }
-      return { ok: true, value: items };
+      return { ok: true, value: items, truncated: true };
     },
     async getOrder(id) {
       return tenantOrders.tenantGetOrder(client, id);

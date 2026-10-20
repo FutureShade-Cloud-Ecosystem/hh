@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -265,10 +266,18 @@ func (m *SessionMinter) sign(claimSet map[string]any, window time.Duration, at t
 	if window < MinSessionWindow || window > MaxDriverSessionTTL {
 		return "", errors.New("identity: the session window is outside the allowed bounds")
 	}
+	// Every minted token carries a fresh jti (16 random bytes, hex), the id
+	// a sign out revokes (HH-678). Generated here, inside sign, so no
+	// caller can pass or reuse one.
+	jtiRaw := make([]byte, 16)
+	if _, err := rand.Read(jtiRaw); err != nil {
+		return "", errors.New("identity: the session token could not be signed")
+	}
 	header, err := json.Marshal(map[string]string{"alg": "ES256", "kid": m.kid, "typ": "JWT"})
 	if err != nil {
 		return "", err
 	}
+	claimSet["jti"] = hex.EncodeToString(jtiRaw)
 	claimSet["iat"] = at.Unix()
 	claimSet["exp"] = at.Add(window).Unix()
 	claims, err := json.Marshal(claimSet)
