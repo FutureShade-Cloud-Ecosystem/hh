@@ -81,7 +81,7 @@ function lateWords(invoice: TenantInvoice, today: string): { words: string; late
 // ---- Pay home: Invoices ---------------------------------------------------------------------------------------
 
 function checkbox(on: boolean, id: string, label: string): TemplateResult {
-  return html`<button type="button" class="box" role="checkbox" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-action="toggle" data-id="${id}"><span class="mark"></span></button>`;
+  return html`<button type="button" class="box-hit" role="checkbox" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-action="toggle" data-id="${id}"><span class="box"><span class="mark"></span></span></button>`;
 }
 
 function invoiceRow(invoice: TenantInvoice, state: ViewState): TemplateResult {
@@ -89,12 +89,12 @@ function invoiceRow(invoice: TenantInvoice, state: ViewState): TemplateResult {
   const { words, late } = lateWords(invoice, state.today);
   const pickable = state.canPay && payable;
   const on = state.selected.has(invoice.id);
-  return html`<li class="inv ${on ? "is-on" : ""}" data-testid="invoice-row" data-invoice="${invoice.invoice_no}">
+  return html`<li class="inv ${on ? "is-on" : ""}" data-testid="invoice-row" data-invoice="${invoice.invoice_no}" data-action="${pickable ? "toggle" : "open"}" data-id="${invoice.id}">
     ${pickable ? checkbox(on, invoice.id, `Select ${invoice.invoice_no}`) : html`<span class="box-gap"></span>`}
-    <button type="button" class="inv-main" data-action="open" data-id="${invoice.id}">
-      <span class="inv-top"><span class="mono inv-no">${invoice.invoice_no}</span>${statusChip("invoice", invoice.status)}</span>
+    <div class="inv-main">
+      <span class="inv-top"><button type="button" class="inv-open mono inv-no" aria-label="Open statement for ${invoice.invoice_no}" data-action="open" data-id="${invoice.id}">${invoice.invoice_no}</button>${statusChip("invoice", invoice.status)}</span>
       <span class="inv-sub ${late ? "late" : ""}">${words}</span>
-    </button>
+    </div>
     <span class="inv-amount mono">${payable ? html`${money(payableCents(invoice))}<span class="inv-of">of ${money(invoice.total_cents)}</span>` : money(invoice.total_cents)}</span>
   </li>`;
 }
@@ -122,7 +122,7 @@ export function invoicesScreen(state: ViewState): TemplateResult {
       : nothing}
     ${!state.canPay ? html`<p class="quiet" data-testid="read-only">Your role can read invoices. Paying is for the roles that hold it.</p>` : nothing}
     ${state.canPay && payable.length > 0
-      ? html`<div class="pickbar"><span data-testid="picked-count">${picked.length} of ${payable.length} selected</span><button type="button" class="btn btn-secondary" data-action="select-all">${picked.length === payable.length ? "Clear" : `Select all ${payable.length}`}</button></div>`
+      ? html`<div class="pickbar"><span data-testid="picked-count" aria-live="polite">${picked.length} of ${payable.length} selected</span><button type="button" class="btn btn-secondary" data-action="select-all">${picked.length === payable.length ? "Clear" : `Select all ${payable.length}`}</button></div>`
       : nothing}
     <ul class="invoices" data-testid="landing-rows">${state.invoices.map((i) => invoiceRow(i, state))}</ul>
     ${state.canPay

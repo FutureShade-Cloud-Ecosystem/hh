@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,7 @@ type fakeStore struct {
 	neverLeftShelf  map[string]bool             // order_line_id → goods that never left the shelf (the D1 case)
 	retLineOrders   map[string]string           // order_line_id → order_id (the customer lines fake's grouping)
 	returnRows      []returnRow
+	returnRowIDs    []string // parallel to returnRows: each committed return's own id (the cap check excepts the return being booked)
 	returnLineRows  []returnLineRow
 	unbookedRefunds []cardRefundFact
 	// cardAttempts is the HH-690 two-transaction card refund's attempt
@@ -77,16 +79,19 @@ type fakeStore struct {
 	lastNoteID       string            // the most recent InsertReturnNote's id, the across path binds children with
 	returnLocks      []string          // order ids the per-sale return advisory lock was taken for, in order
 	refundPayments   map[string]string // return id → refund payment id
-	creditApplies    []creditApply
-	invoiceBalance   map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
-	parked           map[string]ParkedTicket
-	lastResumeActor  string // the actor the last resume stamped (the parked fence's who-resumed)
-	pricingDocs      map[string]PricingOrder
-	products         map[string][2]string     // product id → {sku, name}
-	stockMeta        map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
-	staff            map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
-	discountStaff    []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
-	discountReads    []SaleDiscount           // canned ReadSaleDiscounts answer
+	// paymentGatewayRefs holds the gateway refs of the fake's booked payments
+	// (the duplicate-ref fence's payment side).
+	paymentGatewayRefs map[string]bool
+	creditApplies      []creditApply
+	invoiceBalance     map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
+	parked             map[string]ParkedTicket
+	lastResumeActor    string // the actor the last resume stamped (the parked fence's who-resumed)
+	pricingDocs        map[string]PricingOrder
+	products           map[string][2]string     // product id → {sku, name}
+	stockMeta          map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
+	staff              map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	discountStaff      []discountStaffRow       // the counter discount's candidate logins (discount_test.go)
+	discountReads      []SaleDiscount           // canned ReadSaleDiscounts answer
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -134,10 +139,22 @@ type creditApply struct {
 	applied   int64
 }
 
-// fakeCardAttempt is one row of the fake pos_card_refund_attempts.
+// fakeCardAttempt is one row of the fake pos_card_refund_attempts. id is the
+// row's own identifier (the resolve route names it); resolvedBy and
+// resolutionNote are the HH-767 resolution facts, while the initiator rides
+// fact.InitiatedBy.
 type fakeCardAttempt struct {
-	fact   cardRefundFact
-	status string
+	fact           cardRefundFact
+	status         string
+	id             string
+	resolvedBy     string
+	resolutionNote string
+	// attemptedAt and processorAt carry the live-request fence's facts
+	// (PR #501 round 1 P1-1): an empty attemptedAt falls back to the
+	// harness clock's far past, a nil processorAt means no unknown
+	// outcome was recorded.
+	attemptedAt string
+	processorAt *string
 }
 
 func newFakeStore(tr *[]string) *fakeStore {
@@ -160,16 +177,19 @@ func newFakeStore(tr *[]string) *fakeStore {
 		priorSums:      map[string]int64{},
 		cardAttempts:   map[string]fakeCardAttempt{},
 		refundPayments: map[string]string{},
-		invoiceBalance: map[string]int64{},
-		parked:         map[string]ParkedTicket{},
-		pricingDocs:    map[string]PricingOrder{},
-		products:       map[string][2]string{},
-		stockMeta:      map[string]fakeStockMeta{},
-		staff:          map[string]string{},
-		pickups:        map[string]ReturnPickup{},
-		returnRequests: map[string]ReturnRequest{},
-		owing:          map[string]payBalanceOrderFacts{},
-		payByKey:       map[string]payBalanceReplayRow{},
+		// paymentGatewayRefs holds the gateway refs of the fake's booked
+		// payments (the duplicate-ref fence's payment side).
+		paymentGatewayRefs: map[string]bool{},
+		invoiceBalance:     map[string]int64{},
+		parked:             map[string]ParkedTicket{},
+		pricingDocs:        map[string]PricingOrder{},
+		products:           map[string][2]string{},
+		stockMeta:          map[string]fakeStockMeta{},
+		staff:              map[string]string{},
+		pickups:            map[string]ReturnPickup{},
+		returnRequests:     map[string]ReturnRequest{},
+		owing:              map[string]payBalanceOrderFacts{},
+		payByKey:           map[string]payBalanceReplayRow{},
 	}
 }
 
@@ -199,6 +219,7 @@ func (f *fakeStore) restore(s txSnap) {
 	f.events = f.events[:s.ev]
 	f.eventLoads = f.eventLoads[:s.ev]
 	f.returnRows = f.returnRows[:s.rr]
+	f.returnRowIDs = f.returnRowIDs[:s.rr]
 	f.returnLineRows = f.returnLineRows[:s.rl]
 	f.creditApplies = f.creditApplies[:s.ca]
 }
@@ -494,9 +515,14 @@ func (f *fakeStore) ListCustomerReturnableOrders(_ context.Context, customerID s
 	return out, nil
 }
 
-func (f *fakeStore) SumCardRefundedTx(_ context.Context, _ pgx.Tx, orderID, _ string) (int64, error) {
+func (f *fakeStore) SumCardRefundedTx(_ context.Context, _ pgx.Tx, orderID, exceptReturnID string) (int64, error) {
 	var sum int64
-	for _, r := range f.returnRows {
+	for i, r := range f.returnRows {
+		// The real read leaves out the return whose own booking is being
+		// checked (the cap check runs after the row's insert inside tx 2).
+		if i < len(f.returnRowIDs) && f.returnRowIDs[i] == exceptReturnID {
+			continue
+		}
 		if r.OrderID == orderID && r.RefundMethod == RefundCard {
 			sum += r.TotalCents - r.FeeCents
 		}
@@ -559,7 +585,11 @@ func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRef
 	for _, fact := range facts {
 		if a, ok := f.cardAttempts[fact.RefundKey]; ok {
 			// A row that already carries the processor's reversal ref keeps that ref and its
-			// amount whatever the new fact says (HH-690 round 2, P1-1).
+			// amount whatever the new fact says (HH-690 round 2, P1-1), and a row that
+			// already names its initiator keeps the name (HH-767).
+			if a.fact.InitiatedBy != "" {
+				fact.InitiatedBy = a.fact.InitiatedBy
+			}
 			if a.fact.RefundRef != "" {
 				a.status = "UNBOOKED"
 			} else {
@@ -568,7 +598,7 @@ func (f *fakeStore) RecordUnbookedCardRefunds(_ context.Context, facts []cardRef
 			f.cardAttempts[fact.RefundKey] = a
 			continue
 		}
-		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "UNBOOKED"}
+		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "UNBOOKED", id: f.freshAttemptID()}
 	}
 	_ = reason
 	return nil
@@ -605,22 +635,60 @@ func (f *fakeStore) StageCardRefundAttemptTx(_ context.Context, _ pgx.Tx, fact c
 		}
 	}
 	fact.RefundRef = ""
-	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT"}
+	if prior, ok := f.cardAttempts[fact.RefundKey]; ok && prior.id != "" {
+		// The restage keeps the row's own id and re-attributes the initiator
+		// (a FAILED row or one with no initiator), clearing the resolution.
+		f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: prior.id,
+			attemptedAt: liveStamp()}
+		return "", 0, nil
+	}
+	f.cardAttempts[fact.RefundKey] = fakeCardAttempt{fact: fact, status: "IN_FLIGHT", id: f.freshAttemptID(),
+		attemptedAt: liveStamp()}
 	return "", 0, nil
 }
 
+// freshAttemptID mints one row id of the fake pos_card_refund_attempts.
+func (f *fakeStore) freshAttemptID() string {
+	f.seq++
+	return fmt.Sprintf("22222222-0000-4000-9000-%012d", f.seq)
+}
+
+func (f *fakeStore) StampCardRefundCallStart(_ context.Context, keys []string) (bool, error) {
+	started := false
+	for i, k := range keys {
+		if a, ok := f.cardAttempts[k]; ok && a.status == "IN_FLIGHT" {
+			a.attemptedAt = liveStamp()
+			f.cardAttempts[k] = a
+			started = started || i == 0
+		}
+	}
+	return started, nil
+}
+
+func (f *fakeStore) MarkCardRefundCallNotSent(context.Context, string) error { return nil }
+
 func (f *fakeStore) HoldCardRefundAttemptInFlight(_ context.Context, refundKey, reason string) error {
-	// The real row keeps its status IN_FLIGHT and records the reason; the fake's
-	// status IS the record, so an IN_FLIGHT row is simply left as it stands.
-	_ = refundKey
+	// The real row keeps its status IN_FLIGHT, records the reason and stamps
+	// processor_at (the unknown outcome is a recorded fact); the fake mirrors
+	// the stamp, which the live-request fence reads.
 	_ = reason
+	if a, ok := f.cardAttempts[refundKey]; ok && a.status == "IN_FLIGHT" {
+		if a.processorAt == nil {
+			now := liveStamp()
+			a.processorAt = &now
+		}
+		f.cardAttempts[refundKey] = a
+	}
 	return nil
 }
 
 func (f *fakeStore) RecordCardRefundDispatched(_ context.Context, fact cardRefundFact) error {
 	a, ok := f.cardAttempts[fact.RefundKey]
 	if !ok {
-		a = fakeCardAttempt{fact: fact}
+		a = fakeCardAttempt{fact: fact, id: f.freshAttemptID()}
+	}
+	if a.fact.InitiatedBy != "" {
+		fact.InitiatedBy = a.fact.InitiatedBy
 	}
 	a.status, a.fact = "UNBOOKED", fact
 	f.cardAttempts[fact.RefundKey] = a
@@ -633,6 +701,108 @@ func (f *fakeStore) FailCardRefundAttempt(_ context.Context, refundKey, _ string
 		f.cardAttempts[refundKey] = a
 	}
 	return nil
+}
+
+// fakeCardAttemptView is the manager-facing row of the fake ledger.
+func (f *fakeStore) fakeCardAttemptView(a fakeCardAttempt, refundKey string) CardRefundAttempt {
+	attemptedAt := a.attemptedAt
+	if attemptedAt == "" {
+		attemptedAt = "2026-06-29T12:00:00Z"
+	}
+	return CardRefundAttempt{
+		ID: a.id, RefundKey: refundKey, OrderID: a.fact.OrderID, OrderNo: "#SO-1",
+		BranchID: a.fact.BranchID, CustomerID: a.fact.CustomerID, CustomerName: "Seeded Customer",
+		GatewayRef: a.fact.GatewayRef, RefundRef: a.fact.RefundRef, AmountCents: a.fact.AmountCents,
+		Status: a.status, InitiatedBy: a.fact.InitiatedBy, ResolvedBy: a.resolvedBy,
+		ProcessorAt:    a.processorAt,
+		ResolutionNote: a.resolutionNote, AttemptedAt: attemptedAt, CreatedAt: "2026-06-29T12:00:00Z",
+	}
+}
+
+// ListOpenCardRefundAttempts mirrors the real read (repository_w7.go): the
+// open statuses (or the one named status) inside the branch reach, newest
+// row id first for a deterministic order.
+func (f *fakeStore) ListOpenCardRefundAttempts(_ context.Context, statusFilter string, branches []string) ([]CardRefundAttempt, error) {
+	reach := map[string]bool{}
+	global := branches == nil
+	for _, b := range branches {
+		reach[b] = true
+	}
+	var ids []string
+	byID := map[string]CardRefundAttempt{}
+	for k, a := range f.cardAttempts {
+		if statusFilter == "" {
+			if a.status != "IN_FLIGHT" && a.status != "UNBOOKED" {
+				continue
+			}
+		} else if a.status != statusFilter {
+			continue
+		}
+		if !global && !reach[a.fact.BranchID] {
+			continue
+		}
+		ids = append(ids, a.id)
+		byID[a.id] = f.fakeCardAttemptView(a, k)
+	}
+	sortStringsDesc(ids)
+	out := make([]CardRefundAttempt, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, byID[id])
+	}
+	return out, nil
+}
+
+func (f *fakeStore) CardRefundAttemptForUpdateTx(_ context.Context, _ pgx.Tx, attemptID string) (CardRefundAttempt, bool, error) {
+	for k, a := range f.cardAttempts {
+		if a.id == attemptID {
+			return f.fakeCardAttemptView(a, k), true, nil
+		}
+	}
+	return CardRefundAttempt{}, false, nil
+}
+
+func (f *fakeStore) ApplyCardRefundResolutionTx(_ context.Context, _ pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error {
+	for k, a := range f.cardAttempts {
+		if a.id != attemptID || (a.status != "IN_FLIGHT" && a.status != "UNBOOKED") {
+			continue
+		}
+		a.status = status
+		if refundRef != "" {
+			a.fact.RefundRef = refundRef
+		}
+		a.resolvedBy, a.resolutionNote = resolvedBy, note
+		f.cardAttempts[k] = a
+		return nil
+	}
+	return clientErr(http.StatusConflict, "pos: card refund attempt is already resolved")
+}
+
+// CardRefundRefUsedElsewhereTx mirrors the real duplicate-ref fence
+// (repository_w7.go): the ref on another attempt row, or on a booked
+// refund payment (the fake's refundPayments values).
+func (f *fakeStore) CardRefundRefUsedElsewhereTx(_ context.Context, _ pgx.Tx, refundRef, exceptRefundKey string) (bool, bool, error) {
+	onAttempt, onPayment := false, false
+	for k, a := range f.cardAttempts {
+		if k != exceptRefundKey && a.fact.RefundRef == refundRef {
+			onAttempt = true
+		}
+	}
+	for _, u := range f.unbookedRefunds {
+		if u.RefundKey != exceptRefundKey && u.RefundRef == refundRef {
+			onAttempt = true
+		}
+	}
+	for ref := range f.paymentGatewayRefs {
+		if ref == refundRef {
+			onPayment = true
+		}
+	}
+	return onAttempt, onPayment, nil
+}
+
+// sortStringsDesc sorts in place, descending (the fake list's determinism).
+func sortStringsDesc(s []string) {
+	sort.Slice(s, func(i, j int) bool { return s[i] > s[j] })
 }
 
 func (f *fakeStore) InsertSwap(_ context.Context, _ pgx.Tx, w swapRow) (string, error) {
@@ -704,6 +874,7 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 	f.returnRows = append(f.returnRows, r)
 	f.seq++
 	id := "ret-" + itoa(f.seq)
+	f.returnRowIDs = append(f.returnRowIDs, id)
 	no := "#RET-" + itoa(f.seq)
 	// The real store replays by the idempotency key (ux_pos_returns_idem
 	// then FindReturnByKey); the fake mirrors that, so the replay paths are
@@ -1164,6 +1335,13 @@ type fakeRecorder struct{ rows []audit.SensitiveAccess }
 func (r *fakeRecorder) Record(_ context.Context, a audit.SensitiveAccess) error {
 	r.rows = append(r.rows, a)
 	return nil
+}
+
+// RecordTx is the transactional seam the manager's card refund resolution
+// writes its audit row through (PR #501 round 1 P2-2); the fake keeps the
+// row beside the pool-written ones.
+func (r *fakeRecorder) RecordTx(ctx context.Context, _ audit.Execer, a audit.SensitiveAccess) error {
+	return r.Record(ctx, a)
 }
 
 func (r *fakeRecorder) has(action string) bool {
