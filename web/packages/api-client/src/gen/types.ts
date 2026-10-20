@@ -2746,6 +2746,12 @@ export type IdentityLoginResponse = {
   token: string;
   user: IdentityUser;
 };
+export type IdentitySignOutRequest = {
+  token: string;
+};
+export type IdentitySignOutResponse = {
+  ok: boolean;
+};
 export type IdentityExchangeRequest = {
   jwt: string;
   org: string;

@@ -553,6 +553,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// scaffold mode (nil pool) every tile renders its labelled unwired
 	// state, the honest answer.
 	dashboardSvc := dashboard.NewService(dashboard.NewRepository(pool), log).WithZone(newDealerZone(pool))
+	bindTileAccess(dashboardSvc, spine.paymentTrail)
 	if pool != nil {
 		for _, reg := range []struct {
 			tile     string
@@ -796,4 +797,18 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	// the attempt rows through it on the seam's read-only arm, the same
 	// store the service's own captures write.
 	return paySvc, payStore, payVault
+}
+
+// bindTileAccess binds the dashboard's tile access rules (HH-777). The money tile's rule is the payment
+// trail reader the register and the order activity already use (the role gate's own admission to the
+// trail routes), asked with the caller's platform identity and org the handler stamps on the scope. The
+// reader is the money spine's late one: unbound it answers no, so the tile stays closed until the role
+// gate exists.
+func bindTileAccess(svc *dashboard.Service, trail billing.PaymentTrailReader) {
+	svc.WithTileAccess(dashboard.AccessPaymentTrail, func(ctx context.Context, sc dashboard.Scope) (bool, error) {
+		if trail == nil || sc.PlatformUserID == "" || sc.OrgID == "" {
+			return false, nil
+		}
+		return trail.HoldsPaymentTrail(ctx, sc.PlatformUserID, sc.OrgID)
+	})
 }

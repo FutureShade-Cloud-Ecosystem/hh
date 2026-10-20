@@ -3251,6 +3251,14 @@ type IdentityLoginResponse struct {
 	User  IdentityUser `json:"user"`
 }
 
+type IdentitySignOutRequest struct {
+	Token string `json:"token"`
+}
+
+type IdentitySignOutResponse struct {
+	Ok bool `json:"ok"`
+}
+
 type IdentityExchangeRequest struct {
 	Jwt   string  `json:"jwt"`
 	Org   string  `json:"org"`

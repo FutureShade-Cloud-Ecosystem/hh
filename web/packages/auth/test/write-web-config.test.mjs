@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseRuntimeConfig } from "../src/runtime-config.ts";
@@ -142,22 +142,36 @@ test("a console variable without console mode is a refusal, never a quiet demo",
 });
 
 test("the entrypoint refuses a bad web config before the database wait and names the variable", () => {
-  const run = spawnSync("sh", [ENTRYPOINT], {
-    env: {
-      PATH: process.env.PATH,
-      DEMO_GATE_BCRYPT_HASH: "$2a$10$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234",
-      DATABASE_URL: "postgres://unused:unused@127.0.0.1:1/unused",
-      PAYMENT_VAULT_KEY: "0".repeat(64),
-      HH_ACCEPTANCE_SIGN_KEY_ID: "webcfg-test",
-      HH_ACCEPTANCE_SIGN_KEY: "0".repeat(64),
-      CORE_SIGNIN_MODE: "console",
-      ...CONSOLE_ENV,
-      HH_WEB_CONSOLE_ENDPOINT: "not a url at all",
-    },
-    encoding: "utf8",
-    timeout: 20000,
-  });
-  assert.notEqual(run.status, 0);
-  assert.ok(run.stderr.includes("HH_WEB_CONSOLE_ENDPOINT"), run.stderr);
-  assert.ok(!run.stderr.includes("not a url at all"), "the refusal repeats the value");
+  // The entrypoint's console key check runs before the web config block, so
+  // the boot needs a readable owner-only key file to get past it and reach
+  // the web config refusal this test proves. Throwaway, private, removed
+  // in the finally; never a real key.
+  const keyDir = mkdtempSync(join(tmpdir(), "webcfg-key-"));
+  const keyFile = join(keyDir, "session-signing-key");
+  writeFileSync(keyFile, "test-only-not-a-real-key");
+  chmodSync(keyFile, 0o400);
+  let run;
+  try {
+    run = spawnSync("sh", [ENTRYPOINT], {
+      env: {
+        PATH: process.env.PATH,
+        DEMO_GATE_BCRYPT_HASH: "$2a$10$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234",
+        DATABASE_URL: "postgres://unused:unused@127.0.0.1:1/unused",
+        PAYMENT_VAULT_KEY: "0".repeat(64),
+        HH_ACCEPTANCE_SIGN_KEY_ID: "webcfg-test",
+        HH_ACCEPTANCE_SIGN_KEY: "0".repeat(64),
+        CORE_SIGNIN_MODE: "console",
+        CORE_SESSION_SIGNING_KEY_FILE: keyFile,
+        ...CONSOLE_ENV,
+        HH_WEB_CONSOLE_ENDPOINT: "not a url at all",
+      },
+      encoding: "utf8",
+      timeout: 20000,
+    });
+    assert.notEqual(run.status, 0);
+    assert.ok(run.stderr.includes("HH_WEB_CONSOLE_ENDPOINT"), run.stderr);
+    assert.ok(!run.stderr.includes("not a url at all"), "the refusal repeats the value");
+  } finally {
+    rmSync(keyDir, { recursive: true, force: true });
+  }
 });

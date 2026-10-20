@@ -405,6 +405,8 @@ export const SCHEMA_DESCRIPTORS = {
   "IdentityLoginRequest": {"k":"object","req":["email","password"],"props":{"email":{"k":"string"},"password":{"k":"string"}}},
   "IdentityUser": {"k":"object","req":["user_id","email","display_name","role_code","role_name","tier","scope"],"props":{"user_id":{"k":"string"},"email":{"k":"string"},"display_name":{"k":"string"},"role_code":{"k":"string"},"role_name":{"k":"string"},"tier":{"k":"integer"},"scope":{"k":"lit","v":["GLOBAL","BRANCH","TENANT"]}}},
   "IdentityLoginResponse": {"k":"object","req":["token","user"],"props":{"token":{"k":"string"},"user":{"k":"ref","name":"IdentityUser"}}},
+  "IdentitySignOutRequest": {"k":"object","req":["token"],"props":{"token":{"k":"string"}},"closed":true},
+  "IdentitySignOutResponse": {"k":"object","req":["ok"],"props":{"ok":{"k":"boolean"}}},
   "IdentityExchangeRequest": {"k":"object","req":["jwt","org"],"props":{"jwt":{"k":"string"},"org":{"k":"string"},"class":{"k":"lit","v":["staff","tenant"]}},"closed":true},
   "IdentityPersonaRequest": {"k":"object","req":["persona"],"props":{"persona":{"k":"string"}},"closed":true},
   "IdentityExchangeResponse": {"k":"object","req":["token","expiresAtMs","user"],"props":{"token":{"k":"string"},"expiresAtMs":{"k":"integer"},"user":{"k":"ref","name":"IdentityUser"}}},
