@@ -135,12 +135,13 @@ var demoSeqTables = []seqTable{
 
 // demoSeqNotScoped is every seq table the repair leaves alone, with the reason.
 var demoSeqNotScoped = map[string]string{
-	"audit_log":           "its seq is the audit chain's own series (migration 0078)",
-	"msg_channels":        "its seq is a serial the messaging repository advances",
-	"msg_messages":        "its seq is a serial the messaging repository advances",
-	"purchasing_receipts": "its seq is the receipt number within one purchase order",
-	"stock_moves":         "an append-only ledger (trigger trg_stock_moves_no_update refuses any update) that no sync pull reads",
-	"tasks":               "stamped into the pick_tasks and weights feeds by repairDemoTaskSync",
+	"assist_conversation_exchanges": "its seq is an identity primary key, a turn order (migration 0416), not a sync scope",
+	"audit_log":                     "its seq is the audit chain's own series (migration 0078)",
+	"msg_channels":                  "its seq is a serial the messaging repository advances",
+	"msg_messages":                  "its seq is a serial the messaging repository advances",
+	"purchasing_receipts":           "its seq is the receipt number within one purchase order",
+	"stock_moves":                   "an append-only ledger (trigger trg_stock_moves_no_update refuses any update) that no sync pull reads",
+	"tasks":                         "stamped into the pick_tasks and weights feeds by repairDemoTaskSync",
 }
 
 // seqRepairSQL sequences one table's unsequenced rows. %[1]s is the table, %[2]s the scope, %[3]s the
