@@ -23,6 +23,18 @@ async function openAccount(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("heading", { name })).toBeVisible();
 }
 
+/**
+ * Opens an account to take a payment on it. The heading paints from the register row at once, but the
+ * invoices, the picked invoice and the amount (filled with what is owing) arrive with the account's own
+ * read of the register, which overwrites the amount field and the picks when it lands. A spec that types
+ * the amount or presses Record payment first loses its typing or is told to pick the invoices, so it waits
+ * for the fill, never for the heading alone.
+ */
+async function openAccountToPay(page: Page, name: string): Promise<void> {
+  await openAccount(page, name);
+  await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
+}
+
 async function noSidewaysScroll(page: Page): Promise<void> {
   const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(wide).toBe(false);
@@ -304,9 +316,7 @@ test("a dispute is checked, opened, shown on the invoice and the register, and c
 
 test("a payment is reversed with a reason, and the invoice is owing what it was", async ({ page, request }) => {
   await openDesk(page, request);
-  await openAccount(page, "Riverstone Paving (demo)");
-  // The form fills the amount with what is owing once the account has loaded; typing before that is overwritten.
-  await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
+  await openAccountToPay(page, "Riverstone Paving (demo)");
   await page.locator("[data-field='receive-amount']").fill("250.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
   await page.getByRole("button", { name: "Record payment" }).click();
@@ -409,7 +419,7 @@ test("the returned payment fee is saved in dollars and is the fee the next bounc
   await page.getByRole("button", { name: "Save the fee" }).click();
   await expect(page.locator("[data-notice]")).toContainText("The returned payment fee is saved.");
   await openTab(page, "Receivables");
-  await openAccount(page, "Riverstone Paving (demo)");
+  await openAccountToPay(page, "Riverstone Paving (demo)");
   await page.locator("[data-field='receive-amount']").fill("250.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 7783");
   await page.getByRole("button", { name: "Record payment" }).click();

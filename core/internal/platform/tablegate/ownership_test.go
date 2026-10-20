@@ -456,6 +456,7 @@ var ownedObjects = map[string]string{
 	"locations":                       "branches",          // 0003_locations_and_branches
 	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
 	"console_jwt_claim":               "identity",          // 0387_console_jwt_claim
+	"revoked_sessions":                "identity",          // 0413_revoked_sessions
 	"org_signin_method":               "identity",          // 0388_org_signin_method
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
