@@ -1,7 +1,7 @@
 // The Quotes surface: the dealer's quotes, listed, read line by line, and
 // answered. Reject and convert are the moves the core serves; acceptance
-// happens on the link the dealer sent, and the core says so in its own words
-// when Accept is tried here, which the modal shows rather than hides. A
+// happens on the link the dealer sent, and a sent quote says so in the core's
+// words rather than offering a button the core always refuses. A
 // conversion takes how the order will be collected (pickup or will call; a
 // delivery is booked by scheduling a stop, and the core refuses it with that
 // sentence). Visual references: the original portal's quotes screen
@@ -10,14 +10,17 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantQuotes, type TenantQuote, type TenantQuoteDetail } from "@hardscapehouse/api-client";
 import { calendarDay, houseDay, money, qtyWithUnit, statusChip, totalsLine } from "@hardscapehouse/pro-kit";
-import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
+import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, readCursorPages, LIST_CUT_WORDS, type Page, type SurfaceAnswer } from "./views.js";
 
 export const QUOTES_EMPTY = "No quotes yet. Submit an RFQ and the dealer's quotes land here.";
+export const ACCEPT_ON_LINK_WORDS =
+  "A quote is accepted through the link the dealer sent you, where you confirm the quantities and type your name; ask the dealer for the link.";
 const NO_QUOTE_WORDS = "That quote is not here anymore.";
 
 export interface QuoteListData {
   view: "list";
   quotes: TenantQuote[];
+  cut?: boolean;
 }
 
 export interface QuoteDetailData {
@@ -36,10 +39,10 @@ export async function quotesLoad(page: Page): Promise<SurfaceAnswer> {
     if (answer.status === 403) return { kind: "refusal" };
     return { kind: "error", status: answer.status };
   }
-  const answer = await tenantQuotes.tenantListQuotes(page.client);
+  const answer = await readCursorPages((cursor) => tenantQuotes.tenantListQuotes(page.client, cursor === undefined ? undefined : { cursor }));
   if (answer.ok) {
-    if (answer.value.items.length === 0) return { kind: "empty" };
-    return { kind: "ready", data: { view: "list", quotes: answer.value.items } };
+    if (answer.items.length === 0) return { kind: "empty" };
+    return { kind: "ready", data: { view: "list", quotes: answer.items, cut: answer.cut } };
   }
   if (answer.status === 403) return { kind: "refusal" };
   return { kind: "error", status: answer.status };
@@ -62,7 +65,7 @@ function lineRow(line: TenantQuoteDetail["lines"][number]): TemplateResult {
 
 function quoteBody(quote: TenantQuoteDetail): TemplateResult {
   const totals = totalsLine(quote);
-  const canAccept = quote.status === "SENT";
+  const isSent = quote.status === "SENT";
   const canReject = quote.status === "SENT" || quote.status === "ACCEPTED";
   const canConvert = quote.status === "ACCEPTED";
   return html`<div class="card">
@@ -78,10 +81,10 @@ function quoteBody(quote: TenantQuoteDetail): TemplateResult {
         <div class="rowline"><span class="figure">Total</span><span class="grow"></span><span class="mono figure">${totals.total}</span></div>
       </div>
     </div>
-    ${canAccept || canReject || canConvert
+    ${isSent ? html`<p class="emptyline" data-testid="accept-quote-note">${ACCEPT_ON_LINK_WORDS}</p>` : nothing}
+    ${canReject || canConvert
       ? html`<div class="actions" data-testid="quote-actions">
           ${canReject ? html`<button type="button" class="btn btn-secondary" data-action="reject-quote-open" data-testid="reject-quote">Reject</button>` : nothing}
-          ${canAccept ? html`<button type="button" class="btn btn-primary" data-action="accept-quote-open" data-testid="accept-quote">Accept</button>` : nothing}
           ${canConvert ? html`<button type="button" class="btn btn-primary" data-action="convert-quote-open" data-testid="convert-quote">Convert to order</button>` : nothing}
         </div>`
       : nothing}`;
@@ -92,15 +95,16 @@ export function quotesView(dataRaw: unknown, page: Page): TemplateResult {
   const data = dataRaw as QuotesData;
   if (data.view === "list") {
     return html`<ul class="cards" data-testid="quotes-rows">
-      ${data.quotes.map(
-        (quote) => html`<li>
-          <button type="button" class="card" data-action="open-quote" data-quote="${quote.id}" data-testid="quotes-row">
-            <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${money(quote.total_cents)}</span></span>
-            <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${calendarDay(quote.valid_until)}</span></span>
-          </button>
-        </li>`,
-      )}
-    </ul>`;
+        ${data.quotes.map(
+          (quote) => html`<li>
+            <button type="button" class="card" data-action="open-quote" data-quote="${quote.id}" data-testid="quotes-row">
+              <span class="rowline"><span class="mono figure">${quote.quote_no}</span><span class="grow"></span><span class="mono figure">${money(quote.total_cents)}</span></span>
+              <span class="rowline">${statusChip("quote", quote.status)}<span class="grow"></span><span class="dim">Valid until ${calendarDay(quote.valid_until)}</span></span>
+            </button>
+          </li>`,
+        )}
+      </ul>
+      ${data.cut === true ? html`<p class="emptyline" data-testid="quotes-cut">${LIST_CUT_WORDS}</p>` : nothing}`;
   }
   return html`${backHeader("Quotes", "open-quotes")}${quoteBody(data.quote)}`;
 }
@@ -152,10 +156,16 @@ function quoteModal(ui: QuoteUi): TemplateResult {
 
 // ---- the moves -----------------------------------------------------------------------------------
 
+function sayFailure(page: Page, words: string): void {
+  // When a modal is open, runQuoteAction shows the refusal inside the modal;
+  // do not also set the page notice behind it.
+  if (quoteUi(page).modal === null) page.say("alert", words);
+}
+
 function toAnswer(result: { ok: boolean; error?: string; status?: number }, page: Page): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
   if (result.ok) return Promise.resolve({ ok: true } as { ok: true });
   return actionFailure(page, result).then((words) => {
-    page.say("alert", words);
+    sayFailure(page, words);
     return { ok: false, error: words, status: result.status };
   });
 }
@@ -184,7 +194,7 @@ export async function quotesConvert(page: Page, id: string, fulfillment: string)
   // A conversion the transport lost may stand on the core's side: the words
   // send the person to look, they never promise nothing changed.
   const words = await actionFailure(page, answer, true);
-  page.say("alert", words);
+  sayFailure(page, words);
   return { ok: false, error: words, status: answer.status };
 }
 

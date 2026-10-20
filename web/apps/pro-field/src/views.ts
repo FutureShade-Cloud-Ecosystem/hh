@@ -29,6 +29,7 @@ import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./tim
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 import { addressKindWords } from "./account.js";
+import { roleChangeConfirmWords } from "./team.js";
 
 // ---- the section row ----------------------------------------------------------------------------
 
@@ -85,14 +86,18 @@ export interface OrdersListProps {
   phase: Phase;
   orders: readonly TenantOrder[];
   emptyWords: string;
+  truncated?: boolean;
 }
 
+export const ORDERS_TRUNCATED_WORDS = "Showing your newest orders. Older orders are not in this list; ask the dealer for an older order.";
+
 export function ordersList(props: OrdersListProps): TemplateResult {
+  const truncatedNote = props.truncated ? html`<p class="dim" role="status" data-testid="orders-truncated">${ORDERS_TRUNCATED_WORDS}</p>` : nothing;
   switch (props.phase) {
     case "ready":
-      return html`<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
+      return html`${truncatedNote}<ul class="orows" data-testid="landing-rows">${props.orders.map((order) => orderRow(order))}</ul>`;
     case "empty":
-      return html`<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
+      return html`${truncatedNote}<hh-pro-state data-state="empty" data-testid="landing-state">${props.emptyWords}</hh-pro-state>`;
     case "error":
       return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
     case "refusal":
@@ -299,6 +304,8 @@ export interface TeamProps {
   phase: Phase;
   users: readonly TenantUser[];
   invites: readonly TenantInvite[];
+  currentUserId: string;
+  roleDraft: { userId: string; role: string } | null;
   inviteBusy: boolean;
   inviteEmail: string;
   notice: string;
@@ -316,7 +323,7 @@ export function teamView(props: TeamProps): TemplateResult {
       ${props.notice === "" ? nothing : html`<p class="notice" role="status" data-testid="team-notice">${props.notice}</p>`}
       ${props.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="team-error">${props.error}</p>`}
       <ul class="lines" data-testid="team-members">
-        ${props.users.map((user) => memberRow(user))}
+        ${props.users.map((user) => memberRow(user, props.currentUserId, props.roleDraft))}
       </ul>
     </div>
     <div class="card">
@@ -353,7 +360,7 @@ export function teamView(props: TeamProps): TemplateResult {
     </div>`;
 }
 
-function memberRow(user: TenantUser): TemplateResult {
+function memberRow(user: TenantUser, currentUserId: string, roleDraft: { userId: string; role: string } | null): TemplateResult {
   return html`<li class="line" data-user-id="${user.id}" data-testid="member-row">
     <span class="linehead"><span class="name">${user.name}</span><span class="dim">${statusChip("team", user.status)}</span></span>
     <span class="dim mono">${user.email}</span>
@@ -363,8 +370,19 @@ function memberRow(user: TenantUser): TemplateResult {
       </select>
       ${user.status === "active"
         ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="inactive" data-testid="member-deactivate">Deactivate</button>`
-        : html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`}
+        : user.status === "inactive"
+          ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`
+          : nothing}
     </div>
+    ${roleDraft !== null && roleDraft.userId === user.id
+      ? html`<div class="form" data-testid="role-confirm">
+          <p class="dim">${roleChangeConfirmWords(user, roleDraft.role, currentUserId)}</p>
+          <div class="formrow">
+            <button type="button" class="btn btn-primary" data-action="confirm-role" data-user-id="${user.id}" data-testid="confirm-role">Confirm role change</button>
+            <button type="button" class="btn btn-secondary" data-action="cancel-role" data-user-id="${user.id}" data-testid="cancel-role">Cancel</button>
+          </div>
+        </div>`
+      : nothing}
   </li>`;
 }
 
@@ -487,6 +505,7 @@ export interface InstructionsProps {
   editable: boolean;
   /** The read-only reason, empty when the form shows. */
   note: string;
+  countWords?: string;
   dirty: boolean;
   busy: boolean;
   saved: boolean;
@@ -503,8 +522,11 @@ export function instructionsCard(props: InstructionsProps): TemplateResult {
     ${props.editable
       ? html`<div class="form">
           <label for="instructions-input">Notes for the delivery</label>
-          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
+          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" maxlength="2000" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
           <div class="formrow">
+            ${props.countWords !== undefined && props.countWords !== ""
+              ? html`<span class="dim" data-testid="instructions-count">${props.countWords}</span>`
+              : nothing}
             <span class="grow"></span>
             ${button({ label: "Save notes", kind: "secondary", action: "save-instructions", disabled: props.busy || !props.dirty })}
           </div>
