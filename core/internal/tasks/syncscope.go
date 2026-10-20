@@ -67,7 +67,9 @@ type SyncStore struct {
 	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
 	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
 	tickets PickSource
-	log     *slog.Logger
+	// claimerRoles labels a row's claimer by role on the rows a device reads (claimer_role.go).
+	claimerRoles ClaimerRoleReader
+	log          *slog.Logger
 }
 
 // NewSyncStore wires the adapter; nil seams are legal only where the
@@ -224,6 +226,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	reach := s.ticketReach(ctx, f)
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
+	datas := make([]map[string]any, 0, len(page))
 	for _, r := range page {
 		if r.deleted {
 			tombstones = append(tombstones, sync.Tombstone{ID: r.task.ID, Seq: r.seq})
@@ -233,6 +236,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		if err != nil {
 			return nil, nil, err
 		}
+		datas = append(datas, data)
 		// A transient source fault fails the page: the engine answers 503 and the device retries this
 		// cursor, where a ticket-less row would be cached until the task next moves (its seq is the
 		// only thing that re-sends it).
@@ -242,6 +246,8 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		}
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
 	}
+	// The page's claimers are labelled by role in one read (UX-75); a fault leaves the label off.
+	s.attachClaimerRoles(ctx, datas)
 	return items, tombstones, nil
 }
 
@@ -290,6 +296,9 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 // reply to a write, not a cursor feed, so it degrades and logs). It is the engine's one call for it.
 func (s *SyncStore) DecorateServerState(ctx context.Context, f sync.ScopeFilter, row *sync.RowState) {
 	s.attachTicket(ctx, s.ticketReach(ctx, f), row)
+	if !row.Deleted && row.Data != nil {
+		s.attachClaimerRoles(ctx, []map[string]any{row.Data})
+	}
 }
 
 // pickQuerier is the read surface a pool and a transaction share, so one

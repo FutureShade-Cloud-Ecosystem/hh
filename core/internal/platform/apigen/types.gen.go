@@ -5084,6 +5084,7 @@ type Task struct {
 	CreatedBy        *string    `json:"created_by,omitempty"`
 	AssignedTo       *string    `json:"assigned_to,omitempty"`
 	ClaimedBy        *string    `json:"claimed_by,omitempty"`
+	ClaimedByRole    *string    `json:"claimed_by_role,omitempty"`
 	ClaimedAt        *time.Time `json:"claimed_at,omitempty"`
 	PushedAt         *time.Time `json:"pushed_at,omitempty"`
 	AcceptDeadlineAt *time.Time `json:"accept_deadline_at,omitempty"`

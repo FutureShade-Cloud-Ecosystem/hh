@@ -4332,6 +4332,7 @@ export type Task = {
   created_by?: string;
   assigned_to?: string;
   claimed_by?: string;
+  claimed_by_role?: string;
   claimed_at?: string | null;
   pushed_at?: string | null;
   accept_deadline_at?: string | null;
