@@ -290,3 +290,13 @@ test('the new sources carry no em or en dash', () => {
     assert.ok(!/[\u2013\u2014]/.test(text), `${f} has a dash`);
   }
 });
+
+test('a citation of a kind the host cannot open still shows its label, as quiet text with no Open button', () => {
+  const view = answerView(
+    answer({ text: 'Invoice total is $900.00 [1].', citations: [{ n: 1, label: 'Invoice INV-1001', ref: { kind: 'invoice', id: 'i-1' } }] }),
+  );
+  const markup = renderTemplate(renderAnswer(view, 0, (kind) => kind === 'customer'));
+  assert.match(markup, /Invoice INV-1001/);
+  assert.match(markup, /Where these figures came from/);
+  assert.ok(!/data-action="open-citation"/.test(markup), 'no Open button for a kind the host cannot open');
+});

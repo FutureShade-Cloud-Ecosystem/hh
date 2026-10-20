@@ -54,7 +54,7 @@ export function renderAnswer(view: AnswerView, turn = 0, canOpen: CanOpen = () =
         ? html`<p class="notice" role="note" data-notice=${view.notice.code} data-tone=${view.notice.tone}>${view.notice.words}</p>`
         : nothing}
       ${view.text !== '' ? html`<p class="text">${view.text}</p>` : nothing}
-      ${view.citations.some((c) => canOpen(c.ref.kind))
+      ${view.citations.length > 0
         ? html`
             <ol class="cites" aria-label="Where these figures came from">
               ${view.citations.map(
