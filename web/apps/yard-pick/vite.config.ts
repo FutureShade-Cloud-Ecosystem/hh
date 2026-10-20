@@ -32,6 +32,9 @@ export default defineConfig(({ mode }) => ({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    // YARD_NO_WATCH: the harness runs the dev server with the file watcher off, so a Playwright leg survives a box
+    // whose inotify instances other lanes' watchers have exhausted (EMFILE on boot).
+    watch: process.env.YARD_NO_WATCH ? null : undefined,
     // The offline store's sync statechart (statecharts/sync/machine.ts) sits
     // beside the web workspace, not inside it; the data layer imports it, so
     // the dev server serves that one folder of the repository beside the

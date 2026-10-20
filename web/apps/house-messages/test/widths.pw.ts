@@ -1,6 +1,6 @@
 // One codebase, two widths: the Work shell's two panes at 1440 and the Field shell's one column at
 // 390, with a Back control, 44 pixel targets, no sideways scroll, and the brand theme one tap away.
-import { test, expect, openAs, channel, CH, says } from "./helpers.js";
+import { test, expect, accountItem, openAs, channel, CH, says } from "./helpers.js";
 import type { Page } from "@playwright/test";
 
 async function boxes(page: Page, selector: string): Promise<{ x: number; y: number; width: number; height: number }> {
@@ -71,8 +71,12 @@ test("the brand theme is one tap away at both widths and the desk follows it", a
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await openAs(page, request, "sales");
-    await page.getByRole("button", { name: "Theme: Light" }).click();
-    await expect(page.getByRole("button", { name: "Theme: Brand" })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await accountItem(page, "Brand theme");
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", "light");
+    await page.getByRole("button", { name: /^Account/ }).click();
+    await expect(page.getByRole("menuitem", { name: "Light theme" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.locator("[data-channel-list]")).toBeVisible();
   }
 });
