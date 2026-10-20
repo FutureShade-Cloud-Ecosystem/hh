@@ -886,7 +886,7 @@ export class QdClient {
     return answer === null ? err("the decision answer is not readable") : ok(answer);
   }
 
-  /** Mint the share link: minting IS the email send, DRAFT moves to SENT. */
+  /** Mint the share link. A link is not a send: the quote stays a draft until a text is queued or the dealer says they sent it. */
   async mintShareLink(quoteId: string): Promise<Result<string>> {
     const result = await staffQuote.quoteMintShareLink(this.#client, quoteId, {});
     if (!result.ok) return result;
@@ -894,6 +894,22 @@ export class QdClient {
     if (!isRecord(record)) return err("the share link could not be read");
     const token = stringAt(record, "token");
     return token === null ? err("the share link did not carry its code") : ok(token);
+  }
+
+  /** The customer's texting permission, with the number masked by the core. A refused or unreadable answer is data. */
+  async smsConsent(customerId: string): Promise<Result<{ consent: boolean; phoneMasked: string }>> {
+    const result = await staffCustomer.customerGetSMSConsent(this.#client, customerId);
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record) || typeof record["consent"] !== "boolean") return err("the text permission could not be read");
+    const masked = record["phone_masked"];
+    return ok({ consent: record["consent"], phoneMasked: typeof masked === "string" ? masked : "" });
+  }
+
+  /** "I sent it myself": the dealer's word that the copied link went out. The core records it as theirs. */
+  async markSent(quoteId: string): Promise<Result<true>> {
+    const result = await staffQuote.quoteMarkSent(this.#client, quoteId);
+    return result.ok ? ok(true) : result;
   }
 
   /**

@@ -5,6 +5,8 @@ package boot
 import (
 	"fmt"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 )
 
 // ProviderDeny is the demo box's outbound-provider deny set (G4): the
@@ -86,4 +88,21 @@ func contains(list []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// RefuseAssistKeyWithoutCap is the assistant's cap condition (TanyAI slice
+// 3): a demo box that carries the assistant's key must also carry a positive
+// dealer cap, or the boot stops. The cap is FutureBuild's hard bound on the
+// demo's spend (row 2496); a key with no cap, a zero, a negative number or a
+// value that is not a whole number would spend with nothing above it. The
+// message names the cap's variable and never the key's value. With no key
+// there is nothing to bound: the demo serves the stub.
+func RefuseAssistKeyWithoutCap(getenv func(string) string) error {
+	if strings.TrimSpace(getenv(assist.EnvAPIKey)) == "" {
+		return nil
+	}
+	if assist.ParseDealerCap(getenv(assist.EnvDealerCap)) <= 0 {
+		return fmt.Errorf("%s is missing or not a positive whole number of micro cents: the demo box carries the assistant's key, and a key is never carried without the dealer cap that bounds its spend", assist.EnvDealerCap)
+	}
+	return nil
 }

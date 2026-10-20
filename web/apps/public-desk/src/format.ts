@@ -67,24 +67,19 @@ export function quoteNumberLabel(quoteNo: string): string {
 }
 
 /**
- * A moment in the page's own words for a customer ("October 6, 2026 at 7:49 p.m. EDT"), never the raw
- * stamp with its seconds. The viewer's own zone is named, so a customer in another zone reads the
- * moment right. An unreadable stamp comes back as it arrived rather than as an invented time.
+ * A moment in the glossary's one date family ("Oct 6, 2026, 7:49 PM"), never the raw stamp with its
+ * seconds. It is read in the viewer's own zone. An unreadable stamp comes back as it arrived rather
+ * than as an invented time.
  */
 export function plainWhen(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-      });
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 /**
- * A calendar day ("2026-10-27") in the page's own words ("October 27, 2026"). Read as the day it
+ * A calendar day ("2026-10-27") in the glossary's one date family ("Oct 27, 2026"). Read as the day it
  * names, never as a moment, so no time zone can move it; anything that is not a plain day comes back
  * as it arrived.
  */
@@ -93,5 +88,38 @@ export function plainDay(day: string): string {
   if (m === null) return day;
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) return day;
-  return d.toLocaleDateString("en-CA", { dateStyle: "long" });
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** The catalogue's unit codes said the way a customer reads them; a code not listed shows as served. */
+const UNIT_WORDS: Record<string, string> = {
+  SF: "sq ft",
+  SQFT: "sq ft",
+  CYD: "cu yd",
+  CY: "cu yd",
+  YD: "yd",
+  LF: "ft",
+  PC: "pc",
+  EA: "ea",
+  BAG: "bag",
+  T: "T",
+  TON: "T",
+};
+
+/**
+ * One quantity with its unit ("200 sq ft", "1.5 T"): the core's decimal string with the trailing zeros
+ * of its fraction taken off (and the point with them), thousands grouped, the unit after it. A figure
+ * that is not a plain decimal is shown as served; no figure gives no text, never an invented zero.
+ */
+export function quantityLabel(qty: string, uom: string): string {
+  const q = qty.trim();
+  if (q === "") return "";
+  const m = /^(-?)(\d+)(?:\.(\d*))?$/.exec(q);
+  const figure =
+    m === null
+      ? q
+      : `${m[1]}${m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${(m[3] ?? "").replace(/0+$/, "") === "" ? "" : `.${(m[3] ?? "").replace(/0+$/, "")}`}`;
+  const code = uom.trim();
+  if (code === "") return figure;
+  return `${figure} ${UNIT_WORDS[code.toUpperCase()] ?? code}`;
 }

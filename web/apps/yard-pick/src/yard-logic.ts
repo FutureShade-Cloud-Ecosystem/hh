@@ -760,8 +760,6 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
-  const rule = holderRuleWords(plain);
-  if (rule !== "") return rule;
   // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
   if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;

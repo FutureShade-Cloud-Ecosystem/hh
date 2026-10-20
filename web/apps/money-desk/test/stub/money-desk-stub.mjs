@@ -952,6 +952,10 @@ async function handle(req, res) {
   const method = req.method;
 
   if (path === "/healthz") return send(res, 200, { ok: true });
+  // The public tenant config route (no credential): the dealer the band and the tab name.
+  if (method === "GET" && path === "/api/v1/tenant/config") {
+    return send(res, 200, { id: "demo-dealer", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "#3a7d56", support_email: "support@gablelandscape.invalid", support_phone: "" });
+  }
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     glWorld.reset();

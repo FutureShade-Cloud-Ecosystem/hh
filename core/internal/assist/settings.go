@@ -176,3 +176,12 @@ func NewProviderFromConfig(s Settings, apiKey, baseURL string, log *slog.Logger)
 	}
 	return p
 }
+
+// DemoSettings pins a resolved configuration to the demo's route: the native Anthropic provider
+// through the tanyai-premium alias, whatever the table said. The demo composition applies it to
+// the settings it builds providers from, and the service applies the same pin to every read
+// (Service.WithPinnedRoute), so neither a settings row nor a request moves the demo.
+func DemoSettings(s Settings) Settings {
+	s.Provider, s.Model, s.Route = ProviderAnthropic, AliasPremium, ""
+	return s
+}

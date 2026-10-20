@@ -65,9 +65,9 @@ test("a card links to the live app that owns it, and only a source with no app s
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const hero = page.locator("[data-widget='hero.deliveries']");
-  await expect(hero.locator(".tile-foot")).toHaveText("not on this box yet");
+  await expect(hero.locator(".tile-foot")).toHaveText("Not available yet");
   await expect(hero.locator(".tile-foot")).toBeVisible();
-  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("not on this box yet");
+  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("Not available yet");
   // Pick queue and Queue depth are the yard's (Yard Pick); Open claims is this app's Warranty view.
   const footLinks = page.locator(".tile-foot button");
   await expect(footLinks).toHaveCount(3);

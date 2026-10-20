@@ -46,6 +46,7 @@ import { scopeLoad, scopeView, scopeCommand, scopeHeading, scopeInput, SCOPE_MIS
 import { catalogLoad, catalogView, catalogCommand, catalogInput, CATALOG_WORDS } from "./catalog.js";
 import { productLoad, productView, productCommand, productHeading } from "./product.js";
 import { quotesLoad, quotesView, quotesCommand, quotesHeading, QUOTES_EMPTY } from "./quotes.js";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export class ProProcurementApp extends HHElement {
   static styles = [
@@ -378,6 +379,7 @@ export class ProProcurementApp extends HHElement {
   async #loadDealer(): Promise<void> {
     const answer = await tenantAuth.tenantGetConfig(this.#client);
     if (answer.ok) {
+      serveHouseZoneFrom(answer.value);
       this.#dealerName = answer.value.dealer_name;
       this.requestUpdate();
     }

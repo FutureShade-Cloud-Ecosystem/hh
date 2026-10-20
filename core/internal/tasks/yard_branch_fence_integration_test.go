@@ -299,3 +299,24 @@ func TestYardBranchFence_SyncShortageWritesAndSettle(t *testing.T) {
 
 // as makes the next calls come from user B, the one scoped to the other branch.
 func (g *branchFence) as() { g.user = g.userB }
+
+// TestYardBranchFence_TheFenceAnswersBeforeTheHolderGuard: a pick on branch A is claimed by a branch A user;
+// a user from branch B stages it. The answer is the branch refusal, never the holder's 409, so a caller from
+// another branch cannot learn that the pick exists or who is on it (UX-77 after UX-76).
+func TestYardBranchFence_TheFenceAnswersBeforeTheHolderGuard(t *testing.T) {
+	g := newBranchFence(t)
+	if _, err := g.pool.Exec(context.Background(), `UPDATE tasks SET claimed_by = $2::uuid WHERE id = $1::uuid`, g.task, g.userA); err != nil {
+		t.Fatalf("claim the pick for A: %v", err)
+	}
+	g.as()
+	code, body := g.rest("B", g.userB, http.MethodPost, "/api/v1/yard/picks/{id}/stage", `{"location":"Bay 3"}`, g.h.stage)
+	if code != http.StatusForbidden || !strings.Contains(body, "branch out of scope") {
+		t.Errorf("REST stage from another branch on a claimed pick must answer the branch refusal, got %d %s", code, body)
+	}
+	stage := g.syncPush("B", "pick_tasks", apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update",
+		Payload: map[string]any{"id": g.task, "status": "STAGED", "stage_location": "Bay 3"}})
+	if stage.Status != "rejected" || stage.Error == nil || !strings.Contains(*stage.Error, "branch out of scope") {
+		t.Errorf("sync stage from another branch on a claimed pick must be rejected with the branch refusal, got %+v", stage)
+	}
+	g.untouched(t)
+}

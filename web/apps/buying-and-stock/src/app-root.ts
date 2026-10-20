@@ -16,7 +16,8 @@ import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
-import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
@@ -268,8 +269,17 @@ export class BuyingAndStockApp extends HHElement {
     if (widget instanceof HHFeedback) widget.show();
   }
 
+  /** The dealer's name for the band, from the tenant config (one cached read a session); empty until it lands. */
+  #dealerName = "";
+
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      if (name !== this.#dealerName) {
+        this.#dealerName = name;
+        this.requestUpdate();
+      }
+    });
     if (this.#framed) {
       window.addEventListener("message", this.#onChromeAction);
       announceChromeControls(window, ["theme", "feedback"]);
@@ -352,7 +362,7 @@ export class BuyingAndStockApp extends HHElement {
     if (this.#framed) applyDocumentTheme(this.#theme);
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
-      band.org = FRAMED_BAND_ORG;
+      band.org = this.#dealerName;
       band.demo = true;
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
