@@ -79,6 +79,8 @@ export interface DeskHost {
   readonly findAll: (selector: string) => Element[];
   /** The day the board opens on; the root reads the clock, tests pin it. */
   readonly today: () => string;
+  /** The instant a read finishes; tests can pin it. */
+  readonly now?: () => Date;
 }
 
 type Failure = Extract<Result<unknown>, { ok: false }>;
@@ -98,10 +100,12 @@ export class DispatchDesk {
   #branchId = "";
   #busy = false;
   #error = "";
+  #canRetry = true;
   #info = "";
   #notice = "";
   #refusals: readonly string[] = [];
   #view: DispatchLoadBoardView | null = null;
+  #readAt = "";
   #card: CardId | "" = "";
   #axis: Axis = "TRUCK";
   #selected: ReadonlySet<string> = new Set();
@@ -147,6 +151,7 @@ export class DispatchDesk {
     this.#host = host;
     this.#today = host.today();
     this.#date = this.#today;
+    api.watchZone?.(() => host.repaint());
   }
 
   // ---- loads ------------------------------------------------------------------------------------
@@ -161,7 +166,8 @@ export class DispatchDesk {
     const first = this.#branches[0];
     if (first === undefined) {
       this.#phase = "error";
-      this.#error = "No yard is open to this login, so there is no board to read.";
+      this.#canRetry = false;
+      this.#error = "No yard is open to this sign-in, so there is no board to read. A Branch Manager or the Logistics Manager can open a yard for your account.";
       this.#host.repaint();
       return;
     }
@@ -174,7 +180,9 @@ export class DispatchDesk {
 
   #loadFailed(what: string, result: Failure): void {
     this.#phase = "error";
-    this.#error = refusalWords(what, result.error, result.status ?? null);
+    const status = result.status ?? null;
+    this.#canRetry = status === null || status === 0 || status >= 500;
+    this.#error = refusalWords(what, result.error, status);
     this.#host.repaint();
   }
 
@@ -195,6 +203,7 @@ export class DispatchDesk {
         return false;
       }
       this.#view = view.value;
+      this.#readAt = (this.#host.now?.() ?? new Date()).toISOString();
       this.#trucks = trucks.ok ? (trucks.value.items ?? []) : [];
       this.#drivers = drivers.ok ? (drivers.value.items ?? []) : [];
       // The gaps and the week are the board's company: a refusal leaves them out, and says so.
@@ -286,10 +295,12 @@ export class DispatchDesk {
       branchId: this.#branchId,
       busy: this.#busy,
       error: this.#error,
+      canRetry: this.#canRetry,
       info: this.#info,
       notice: this.#notice,
       refusals: this.#refusals,
       view: this.#view,
+      readAt: this.#readAt,
       card: this.#card,
       axis: this.#axis,
       selected: this.#selected,

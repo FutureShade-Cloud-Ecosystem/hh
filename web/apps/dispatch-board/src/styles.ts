@@ -53,6 +53,7 @@ export const boardStyles = css`
   .tile .kicker, .day .kicker { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; }
   .tile .figure { font-size: 32px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .tile .small { color: var(--hh-text-dim); font-size: 13px; }
+  .qcards-as-of { grid-column: 1 / -1; margin: 0; font-variant-numeric: tabular-nums; }
   .filter { margin: 0 0 var(--hh-s-12); }
   .link { background: transparent; border: 0; padding: 0 var(--hh-s-4); min-height: 44px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; cursor: pointer; }
   .link:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
@@ -187,6 +188,8 @@ export const boardStyles = css`
   .sched-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12) var(--hh-s-16); }
   .sched-form .wide { grid-column: 1 / -1; }
   .sched-form .alert, .sched-form p { margin: 0; }
+  .map-pin { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; }
+  .map-pin-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12) var(--hh-s-16); }
 
   /* The scan trail: five stages in one row per pallet; reached ones are filled and the furthest is ringed, so it reads in greyscale. */
   .trail-summary { margin: 0 0 var(--hh-s-8); font-weight: 700; font-size: 18px; }
@@ -271,7 +274,7 @@ export const boardStyles = css`
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
     .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .columns, .status-lanes, .sheet-grid, .sched-form, .wc-form { grid-template-columns: minmax(0, 1fr); }
+    .columns, .status-lanes, .sheet-grid, .sched-form, .map-pin-pair, .wc-form { grid-template-columns: minmax(0, 1fr); }
     .strip { display: flex; }
     .col.none { display: none; }
     .did-not .count { margin-inline-start: var(--hh-s-8); }
