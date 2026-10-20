@@ -57,17 +57,25 @@ async function openApp(page: Page, appId: string): Promise<void> {
 
 for (const [id, path, name, role] of APPS) {
   test(`${name}: standalone it wears its own band; framed by the Work shell it wears none`, async ({ page, shellUrl }) => {
-    // Standalone: the band is there (the brand lockup, the Demo badge).
+    // Standalone: the band is there (the dealer lockup, the DEMO chip).
     const standalone = await page.context().newPage();
     await openStandalone(standalone, shellUrl, role, path);
-    await expect(standalone.locator(BAND_MARK).first()).toBeVisible();
-    await expect(standalone.getByText("Everything on this box is invented demo data").first()).toBeVisible();
+    // PR 503 round 1: the ONE band, the dealer lockup and the DEMO chip, with no app-local header and no amber
+    // strip. The Dispatch Board is not part of that change and keeps its own header band.
+    if (id === "dispatch-board") {
+      await expect(standalone.locator(BAND_MARK).first()).toBeVisible();
+      await expect(standalone.getByText("Everything on this box is invented demo data").first()).toBeVisible();
+    } else {
+      await expect(standalone.locator("hh-shell-header").first()).toContainText("Gable Landscape Supply");
+      await expect(standalone.locator("hh-shell-header").first()).toContainText("DEMO");
+      await expect(standalone.getByText("Everything on this box is invented demo data")).toHaveCount(0);
+    }
     await standalone.close();
 
     // The flag on a top level page enables nothing: the band stays.
     const topLevel = await page.context().newPage();
     await openStandalone(topLevel, shellUrl, role, `${path}?${FLAG}`);
-    await expect(topLevel.locator(BAND_MARK).first()).toBeVisible();
+    await expect(topLevel.locator(id === "dispatch-board" ? BAND_MARK : "hh-shell-header").first()).toBeVisible();
     await topLevel.close();
 
     // Framed by the host: no band inside the frame, and the host's band is the one band on screen.
@@ -88,6 +96,7 @@ for (const [id, path, name, role] of APPS) {
       .toBeGreaterThan(0);
     await page.waitForTimeout(1200);
     await expect(frame.locator(BAND_MARK)).toHaveCount(0);
+    await expect(frame.locator("hh-shell-header")).toHaveCount(0);
     await expect(frame.getByText("Everything on this box is invented demo data")).toHaveCount(0);
     await expect(frame.getByRole("button", { name: "Sign out" })).toHaveCount(0);
     await expect(frame.getByText("HH Yard")).toHaveCount(0);
@@ -134,6 +143,8 @@ test("the shell's band carries the Demo badge and the tenant, never another bran
   await expect(page.locator("hh-shell-header")).toContainText("Gable Landscape Supply");
   await expect(page.locator("hh-shell-header")).toContainText("Demo");
   await expect(page.locator("hh-shell-header")).not.toContainText("HH Yard");
+  // The host mounts no TanyAI panel of its own, so its band carries no Ask TanyAI button (PR 503 round).
+  await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
 });
 
 test("the rail's first control is a visible, named toggle at desktop and tablet widths", async ({ page, shellUrl }) => {

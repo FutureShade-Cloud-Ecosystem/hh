@@ -9,6 +9,7 @@ import {
   DEFAULT_HOUSE_ZONE,
   houseDay,
   houseZone,
+  stampDay,
   resetHouseZone,
   serveHouseZoneFrom,
 } from './host-facts.ts';
@@ -48,4 +49,15 @@ test('a later read replaces the zone (a dealer change is live at the next config
   serveHouseZoneFrom({ business_zone: 'America/Los_Angeles' });
   serveHouseZoneFrom({ business_zone: 'America/Halifax' });
   assert.equal(houseZone(), 'America/Halifax');
+});
+
+test('a date only value stays its calendar day; a timestamp reads as its day in the house zone', () => {
+  serveHouseZoneFrom({ business_zone: 'America/Los_Angeles' });
+  assert.equal(stampDay('2026-07-03'), '2026-07-03');
+  assert.equal(stampDay(PACIFIC_EVENING.toISOString()), '2026-07-02');
+  assert.equal(stampDay('2026-07-03T04:30:00'), '2026-07-02');
+  assert.equal(stampDay(''), '');
+  assert.equal(stampDay(null), '');
+  assert.equal(stampDay(undefined), '');
+  assert.equal(stampDay('not a day'), 'not a day');
 });

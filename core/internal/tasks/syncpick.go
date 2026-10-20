@@ -139,7 +139,7 @@ func classifyRecordErr(err error) error {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return sync.ErrRowNotFound
-	case errors.Is(err, ErrAboveOrdered), errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask), errors.As(err, &bad):
+	case errors.Is(err, ErrAboveOrdered), errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.Is(err, ErrNotPickTask), errors.Is(err, ErrNotHolder), errors.As(err, &bad):
 		return refused(err)
 	}
 	return err

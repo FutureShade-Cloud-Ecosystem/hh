@@ -58,7 +58,7 @@ export function systemEventDetails(msg: {
   let icon: "truck" | "box" | "shield" | "notice" = "notice";
 
   if (topic.includes("yard") || topic.includes("picking") || topic.includes("dispatch") || topic.includes("delivery") || slug.startsWith("yard-")) {
-    source = "Yard, Point Loma";
+    source = slug.startsWith("yard-") ? (dealerLabelForSlug(slug) ?? "Yard") : "Yard";
     icon = "truck";
   } else if (topic.includes("receiving") || topic.includes("stock") || topic.includes("receipt") || topic.includes("po.") || topic.includes("po_")) {
     source = "Receiving";
@@ -67,7 +67,7 @@ export function systemEventDetails(msg: {
     source = "Credit";
     icon = "shield";
   } else if (slug.startsWith("branch-")) {
-    source = "Point Loma";
+    source = titleCaseSlug(slug.slice("branch-".length)) || "Branch";
     icon = "notice";
   }
 
@@ -162,7 +162,7 @@ export interface ChannelGroup {
 
 const GROUPS: readonly { label: string; kinds: readonly Channel["kind"][] }[] = [
   { label: "Direct messages", kinds: ["DM"] },
-  { label: "Rooms", kinds: ["TEAM", "TOPIC"] },
+  { label: "", kinds: ["TEAM", "TOPIC"] },
   { label: "Branch", kinds: ["BRANCH"] },
   { label: "Approvals", kinds: ["APPROVAL"] },
 ];
@@ -174,8 +174,69 @@ export function channelGroups(channels: readonly Channel[]): ChannelGroup[] {
   );
 }
 
-export function channelTitle(channel: Channel): string {
-  if (channel.name.trim() !== "") return channel.name;
+const DEALER_ROOM_SLUGS: Readonly<Record<string, string>> = {
+  "portal-inbox": "Portal inbox",
+  "alerts-all": "All alerts",
+  "house-unassigned": "Unassigned",
+  office: "Office",
+  finance: "Finance",
+  escalations: "Escalations",
+  feedback: "Feedback",
+};
+
+const DEALER_ROLE_PREFIXES: Readonly<Record<string, string>> = {
+  house: "House",
+  drivers: "Drivers",
+  sales: "Sales",
+  yard: "Yard",
+  payments: "Payments",
+  branch: "Branch",
+};
+
+function titleCaseSlug(raw: string): string {
+  return raw
+    .split(/[-_\s]+/)
+    .filter((w) => w.length > 0)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function dealerLabelForSlug(rawSlug: string): string | null {
+  const clean = rawSlug.trim().replace(/^#+/, "").toLowerCase();
+  if (clean === "") return null;
+  const direct = DEALER_ROOM_SLUGS[clean];
+  if (direct !== undefined) return direct;
+  const dashIdx = clean.indexOf("-");
+  if (dashIdx > 0) {
+    const prefix = clean.slice(0, dashIdx);
+    const rest = clean.slice(dashIdx + 1);
+    const roleLabel = DEALER_ROLE_PREFIXES[prefix];
+    if (roleLabel !== undefined && rest !== "") {
+      const resolvedBranch = titleCaseSlug(rest);
+      if (resolvedBranch !== "") return `${roleLabel}, ${resolvedBranch}`;
+    }
+  }
+  return null;
+}
+
+export function channelTitle(channel: Pick<Channel, "name"> & Partial<Pick<Channel, "kind" | "slug">>): string {
+  const rawName = channel.name.trim();
+  const rawSlug = (channel.slug ?? "").trim();
+  if (rawName.startsWith("#")) {
+    const mapped = dealerLabelForSlug(rawName) ?? dealerLabelForSlug(rawSlug);
+    if (mapped !== null) return mapped;
+    const stripped = rawName.replace(/^#+/, "").replace(/-/g, " ").trim();
+    if (stripped !== "") return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  }
+  if (rawSlug !== "" && rawName.toLowerCase() === rawSlug.toLowerCase() && channel.kind !== "TOPIC") {
+    const mapped = dealerLabelForSlug(rawSlug);
+    if (mapped !== null) return mapped;
+  }
+  if (rawName !== "") return rawName;
+  if (rawSlug !== "") {
+    const mapped = dealerLabelForSlug(rawSlug);
+    if (mapped !== null) return mapped;
+  }
   return channel.kind === "DM" ? "Direct message" : "Untitled room";
 }
 
@@ -497,11 +558,12 @@ export function toggleReactionList(
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 export function canEditMessage(
-  message: Pick<Message, "author_id" | "kind" | "created_at" | "requires_ack">,
+  message: Pick<Message, "author_id" | "kind" | "created_at" | "requires_ack"> & { readonly deleted_at?: string | null },
   meId: string,
   now: number
 ): boolean {
   if (message.author_id !== meId) return false;
+  if (message.deleted_at) return false;
   if (message.kind !== "TEXT") return false;
   if (message.requires_ack) return false;
   const createdMs = Date.parse(message.created_at);

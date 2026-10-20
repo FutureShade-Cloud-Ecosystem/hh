@@ -1,6 +1,7 @@
 // Round 5: the principal's two P2s and the folded P3s (decision row 783). Each test holds an answer back behind a
 // gate, so the order of events is exact and never depends on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { hold, open, quiet, row, seed, settle, signIn, writes, showList } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
@@ -40,6 +41,7 @@ test("P2-1 a queued layout save is never sent under the next person's session", 
   await swap.click();
   await page.waitForTimeout(700);
   // Sign out cannot wait for the held save: the bounded wait gives up and the session ends with the save still out.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();

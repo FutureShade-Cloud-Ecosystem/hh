@@ -5,6 +5,7 @@
 // customer prices and quantity breaks tabs already carry every action the API offers (the
 // audit legs pin that), and the pricing log is read only. Sales sees none of it.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { shot } from "./shot";
 import { openPricing, openTab, pricingState, setMode, signIn } from "./pricing-helpers";
 
@@ -26,11 +27,16 @@ test.use({ viewport: { width: 1440, height: 900 } });
 
 async function setLight(page: Page): Promise<void> {
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let i = 0; i < 3; i += 1) {
-    if ((await control.textContent())?.includes("Light")) return;
+    if ((await control.textContent())?.includes("Light")) {
+      await page.keyboard.press("Escape");
+      return;
+    }
     await control.click();
   }
   await expect(control).toContainText("Light");
+  await page.keyboard.press("Escape");
 }
 
 /**
