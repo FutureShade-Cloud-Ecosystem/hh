@@ -220,22 +220,31 @@ export interface SendPolicyIn {
 }
 
 /**
- * sendChannels: which channels the send control offers, from the dealer
- * policy. Email leads (the channel that always works); a policy that
- * disables both still offers email so the send button is never a dead end.
+ * Whether Send can text this customer: the dealer policy allows texts and the core reports the customer's
+ * permission. The desk cannot email a quote (the core has no email send), so there is no email choice; a quote
+ * the desk cannot text is sent by copying the link.
  */
-export function sendChannels(p: SendPolicyIn | null | undefined): Array<"EMAIL" | "SMS"> {
-  const out: Array<"EMAIL" | "SMS"> = [];
-  if (!p || p.send_email_enabled !== false) out.push("EMAIL");
-  if (p?.send_sms_enabled) out.push("SMS");
-  if (out.length === 0) out.push("EMAIL");
-  return out;
+export interface TextAllowance {
+  allowed: boolean;
+  /** The customer's number on file, masked by the core; empty when none is known. */
+  phoneMasked: string;
+  /** Why not, in the dealer's words, when not allowed. */
+  why: string;
 }
 
-/** The Send button's channel caption: "Email + Text", "Email". */
-export function sendCaption(chosen: Array<"EMAIL" | "SMS">): string {
-  const words = chosen.map((c) => (c === "EMAIL" ? "Email" : "Text"));
-  return words.join(" + ") || "Email";
+export function textAllowance(
+  p: SendPolicyIn | null | undefined,
+  consent: { consent: boolean; phoneMasked: string } | "unknown" | null,
+): TextAllowance {
+  if (p?.send_sms_enabled === false) return { allowed: false, phoneMasked: "", why: "texts are switched off for this dealer" };
+  if (consent === null || consent === "unknown") return { allowed: false, phoneMasked: "", why: "this customer's text permission could not be checked" };
+  if (!consent.consent) return { allowed: false, phoneMasked: consent.phoneMasked, why: "texts are not allowed for this customer" };
+  return { allowed: true, phoneMasked: consent.phoneMasked, why: "" };
+}
+
+/** The Send button's caption: how Send will reach the customer. */
+export function sendCaption(t: TextAllowance): string {
+  return t.allowed ? "Sends by text" : "Gives you the link to copy";
 }
 
 // ── refusals and confirmations in counter words ───────────────────────────────
@@ -268,17 +277,23 @@ export function spokenRefusal(msg: string): string {
 }
 
 /**
- * sentConfirmation: the send outcome in plain words, naming only what is
- * true. The core's send mints a share link, moves DRAFT to SENT and starts the
- * follow-up cadence; it sends no email. The text leg is claimed only when its
- * call succeeded, and a refused text is named with the server's spoken sentence.
+ * sentByText: the success words, only for a text the core queued. They name the channel and the number on
+ * file (masked by the core), and say what the status and the reminders now are.
  */
-export function sentConfirmation(smsChosen: boolean, smsOk: boolean, smsRefusal: string): string {
-  const base = "Quote sent: a link was created, the quote is now Sent and its follow-ups have started.";
-  if (!smsChosen) return `${base} Nothing was emailed: copy the link to the customer.`;
-  if (smsOk) return `${base} The link was texted to the customer. Nothing was emailed.`;
-  const why = spokenRefusal(smsRefusal || "refused");
-  return `${base} Nothing was emailed, and the text could not be sent: ${why}.`;
+export function sentByText(phoneMasked: string, draft = true): string {
+  const where = phoneMasked === "" ? "the customer's number on file" : `the customer's number on file (${phoneMasked})`;
+  return draft ? `Sent by text to ${where}. The quote is now Sent and its follow-ups have started.` : `Sent by text to ${where}.`;
+}
+
+/**
+ * notSentWords: a send that reached no one leads with that. Nothing was marked Sent and no follow-up started.
+ * why is a clause such as "texts are not allowed for this customer"; a refused text passes the server's
+ * spoken sentence.
+ */
+export function notSentWords(why: string, draft: boolean): string {
+  const clause = why.replace(/[.\s]+$/, "");
+  const cap = clause.charAt(0).toUpperCase() + clause.slice(1);
+  return `Not sent yet. ${cap}, and the desk cannot email a quote.${draft ? " The quote is still a draft and no follow-ups have started." : ""}`;
 }
 
 // ── display formatting ─────────────────────────────────────────────────────────

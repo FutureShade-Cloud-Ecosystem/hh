@@ -648,6 +648,11 @@ func serve(getenv func(string) string) error {
 	if err := tasks.RequireRecordPool(graph.pool); err != nil {
 		return err
 	}
+	// The assistant's database boundary: row security on its tables must not filter the app's own reads,
+	// and the serving role must hold the functions 0418 closed to PUBLIC (assist_startup.go).
+	if err := assistRequireServingRole(ctx, graph.pool); err != nil {
+		return err
+	}
 
 	// healthz: a LIVE database ping, not a startup nil-check, so a deploy
 	// gate fails honestly when the database is down.

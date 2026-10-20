@@ -15,6 +15,12 @@ async function signIn(page: Page, role = "Sales"): Promise<void> {
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 
+/** A sent quote of the Sales flow: a link no longer makes one (UX-48), so the tests that need one seed it. */
+async function seedSent(page: Page): Promise<void> {
+  const r = await page.request.post("/_stub/seed-quote", { data: { status: "SENT", customer_id: "c-fenwick" } });
+  expect(r.ok()).toBe(true);
+}
+
 /** Open a row of the list by its text, then the detail disclosure that hosts the panel. */
 async function openQuote(page: Page, text: string): Promise<void> {
   await showList(page);
@@ -225,14 +231,14 @@ test("share links: mint once with the token shown once, list without it, revoke"
   const url = panel(page).locator('[data-field="link-url"]');
   await expect(url).toHaveValue(/\/quote\.html\?t=qd-demo-/);
   await expect(panel(page).getByText("it is not shown again")).toBeVisible();
-  // Minting is the send: the quote reads Sent now.
-  await expect(page.getByTestId("qe-title")).toContainText("Sent");
+  // UX-48: a link is not a send, so the quote still reads Draft.
+  await expect(page.getByTestId("qe-title")).toContainText("Draft");
   await expect(panel(page).getByTestId("qe-link")).toHaveCount(1);
   await expect(panel(page).getByTestId("qe-link")).toContainText("Active");
   // A fresh load lists the link and never shows its token again.
   await page.reload();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await openQuote(page, "Sent");
+  await openQuote(page, "Draft");
   await expect(panel(page).getByTestId("qe-link")).toHaveCount(1);
   await expect(panel(page).locator('[data-field="link-url"]')).toHaveCount(0);
   await panel(page).getByRole("button", { name: "Revoke" }).click();
@@ -244,6 +250,7 @@ test("share links: mint once with the token shown once, list without it, revoke"
 // its button, the URL box has room for a link, and the Issued column says
 // when, not a raw id.
 test("the link area: the created notice beside its button, a roomy URL box, Issued as a date", async ({ page }) => {
+  await seedSent(page);
   await signIn(page);
   await openQuote(page, "Sent");
   const create = panel(page).getByRole("button", { name: "Create link to copy" });
@@ -262,6 +269,7 @@ test("the link area: the created notice beside its button, a roomy URL box, Issu
 });
 
 test("compare scores alternates read only: the current line, a priced alternate, an unavailable one", async ({ page }) => {
+  await seedSent(page);
   await signIn(page);
   await openQuote(page, "Sent");
   await panel(page).getByTestId("qe-line").first().getByRole("button", { name: "Compare" }).click();
@@ -333,6 +341,7 @@ test("the Sales manager edits any quote in its branch", async ({ page }) => {
 // Visual review round 1, P3: the compare table's Basis column words the pricing
 // source as the ERP does, not the raw enum.
 test("the compare table words its basis, not the raw enum", async ({ page }) => {
+  await seedSent(page);
   await signIn(page);
   await openQuote(page, "Sent");
   await panel(page).getByTestId("qe-line").first().getByRole("button", { name: "Compare" }).click();

@@ -102,6 +102,20 @@ test("the unclaimed half of the board is the queue's own split", () => {
   assert.equal(claimedByWords("anything-at-all", ""), "Claimed by a teammate");
 });
 
+test("a served role label names the claimer; yours stays you; none stays a teammate; an id never prints", () => {
+  const MINE = "d0200000-0000-4000-9000-000000000002";
+  const THEIRS = "d0200000-0000-4000-9000-000000000009";
+  assert.equal(claimedByWords(THEIRS, MINE, "Yard Manager"), "Claimed by the Yard Manager");
+  assert.equal(claimedByWords(THEIRS, MINE, "  Yard Manager  "), "Claimed by the Yard Manager");
+  assert.equal(claimedByWords(THEIRS, MINE, ""), "Claimed by a teammate");
+  assert.equal(claimedByWords(THEIRS, MINE, undefined), "Claimed by a teammate");
+  assert.equal(claimedByWords(THEIRS, MINE, null), "Claimed by a teammate");
+  assert.equal(claimedByWords(MINE, MINE, "Yard Manager"), "Claimed by you");
+  assert.equal(claimedByWords("", MINE, "Yard Manager"), "");
+  assert.equal(claimedByWords(THEIRS, MINE, THEIRS), "Claimed by a teammate");
+  assert.equal(claimedByWords(THEIRS, MINE, "user@example.com"), "Claimed by a teammate");
+});
+
 // ---- the board's order and its words ----
 
 test("queueOrder puts an open shortage first, then open work, priority, oldest", () => {
@@ -460,4 +474,15 @@ test("the core's holder refusal reads as one plain line on both doors (UX-76)", 
   assert.equal(yardError("Someone else is on this pick.", 409, "fallback"), "Someone else is on this pick.");
   assert.equal(yardError("tasks: someone else is on this pick", 409, "fallback"), "Someone else is on this pick.");
   assert.equal(recordRefusalWords("sync: operation refused: tasks: someone else is on this pick"), "Someone else is on this pick.");
+});
+
+test("the cancel refusal and the no actor refusal read as plain lines on both doors (UX-76b)", () => {
+  const cancel = "Only the person on this pick or a yard manager can cancel it.";
+  assert.equal(yardError("Only the person on this pick or a yard manager can cancel it.", 409, "fallback"), cancel);
+  assert.equal(yardError("tasks: only the holder or a yard manager may cancel this pick", 409, "fallback"), cancel);
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: only the holder or a yard manager may cancel this pick"), cancel);
+  const noActor = "Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.";
+  assert.equal(yardError("Your sign in is not linked to a staff account, so nothing was changed. Ask a manager to link it.", 403, "fallback"), noActor);
+  assert.equal(yardError("tasks: this sign in is not linked to a staff account", 403, "fallback"), noActor);
+  assert.equal(recordRefusalWords("sync: operation refused: tasks: this sign in is not linked to a staff account"), noActor);
 });

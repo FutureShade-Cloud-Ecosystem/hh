@@ -244,6 +244,9 @@ func TestRegistry_CodeFloorsAreTheOnesTheMigrationSeeded(t *testing.T) {
 		// DIB-494. The same floor as order.lookup and the staff-gated order history/edits routes:
 		// the trail is a counter-level read, and the branch fence inside the read does the rest.
 		"order.activity": 3,
+		// TanyAI slice 5. The structured data tool: managers and above, since it reads the orders
+		// views; the claim and the row policies narrow it further to the asker's own branches.
+		"data.query": 2,
 	}
 	for k, v := range seeded {
 		floors[k] = v

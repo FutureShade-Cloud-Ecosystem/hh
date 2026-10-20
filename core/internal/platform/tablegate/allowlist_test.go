@@ -75,6 +75,15 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "assist",
+		file:   "core/internal/assist/readtx/revoke.go",
+		tables: []string{"pg_catalog"},
+		// the file's own comment: the provisioning oneshot that closes the extensions' functions to PUBLIC
+		// has to find them, which only the system catalogue can say. Read only; run by the operator as the
+		// extensions' owner.
+		reason: "assist provisioning oneshot reads the system catalogue to find the extensions' functions (no module's data, read only, operator run)",
+	},
+	{
+		module: "assist",
 		file:   "core/internal/assist/repository.go",
 		tables: []string{"roles", "user_roles", "users"},
 		// the file's own header: the admin spend list has to name the people

@@ -244,7 +244,7 @@ function renderCreate(roles: readonly RoleRow[], branches: readonly BranchRow[])
         </label>
         <label class="field">
           <span class="field-label">Email</span>
-          <input class="text-field" type="email" value="jordan@gablelandscape.example" placeholder="jordan@gablelandscape.example" disabled />
+          <input class="text-field" type="email" value="name@example.com" placeholder="name@example.com" disabled />
         </label>
         <label class="field">
           <span class="field-label">Role</span>

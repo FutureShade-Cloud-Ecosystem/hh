@@ -62,7 +62,7 @@ type View<T> =
   | { kind: "loading" }
   | { kind: "ready"; items: readonly T[] }
   | { kind: "empty" }
-  | { kind: "error" }
+  | { kind: "error"; words?: string }
   | { kind: "refusal" };
 
 export abstract class ProAppBase<T> extends HHElement {
@@ -99,13 +99,16 @@ export abstract class ProAppBase<T> extends HHElement {
     super();
     this.#config = this.config();
     this.#surface = this.#config.landing.surface;
-    this.#session = new InMemoryTenantSession({ adapter: this.#config.adapter });
+    this.#session = new InMemoryTenantSession({ adapter: this.#config.adapter, onCustody: () => this.requestUpdate() });
     this.#client = tenantClient(this.#session);
   }
 
   readonly #onClick = (event: Event): void => {
     const control = event.composedPath().find((node): node is Element => node instanceof Element && node.getAttribute("data-action") === "retry");
-    if (control !== undefined) void this.#loadLanding();
+    if (control !== undefined) {
+      if (this.#session.profile() === null) void this.#retrySession();
+      else void this.#loadLanding();
+    }
   };
 
   readonly #onSignIn = (event: Event): void => {
@@ -164,12 +167,30 @@ export abstract class ProAppBase<T> extends HHElement {
   async #signIn(input: SignInSubmit): Promise<void> {
     this.#busy = true;
     this.#message = "";
+    this.#view = { kind: "loading" };
     this.requestUpdate();
     const result = await this.#session.signIn(input.email, input.password);
     this.#busy = false;
     if (result.ok) {
       this.#message = "";
       void this.#loadLanding();
+    } else if (this.#session.current() !== null) {
+      this.#view = { kind: "error", words: result.error };
+    } else {
+      this.#message = result.error;
+    }
+    this.requestUpdate();
+  }
+
+  async #retrySession(): Promise<void> {
+    this.#view = { kind: "loading" };
+    this.requestUpdate();
+    const result = await this.#session.check();
+    if (result.ok) {
+      this.#message = "";
+      void this.#loadLanding();
+    } else if (this.#session.current() !== null) {
+      this.#view = { kind: "error", words: result.error };
     } else {
       this.#message = result.error;
     }
@@ -198,7 +219,7 @@ export abstract class ProAppBase<T> extends HHElement {
     } else if (answer.status === 403) {
       this.#view = { kind: "refusal" };
     } else {
-      this.#view = { kind: "error" };
+      this.#view = { kind: "error", words: answer.status === undefined ? "Pro is not reachable right now. Try again in a moment." : undefined };
     }
     this.requestUpdate();
   }
@@ -209,7 +230,7 @@ export abstract class ProAppBase<T> extends HHElement {
     super.updated(changed);
     const root = document.documentElement;
     root.setAttribute("data-brand", "hh-pro");
-    if (this.#session.profile() === null) root.removeAttribute("data-theme");
+    if (this.#session.current() === null) root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", "light");
     const signin = this.renderRoot.querySelector("hh-pro-signin") as HHProSignIn | null;
     if (signin !== null) {
@@ -228,7 +249,7 @@ export abstract class ProAppBase<T> extends HHElement {
       case "empty":
         return html`<hh-pro-state data-state="empty" data-testid="landing-state">${landing.emptyWords}</hh-pro-state>`;
       case "error":
-        return html`<hh-pro-state data-state="error" data-testid="landing-state">This did not load. Nothing was changed.</hh-pro-state>`;
+        return html`<hh-pro-state data-state="error" data-testid="landing-state">${view.words ?? "This did not load. Nothing was changed."}</hh-pro-state>`;
       case "refusal":
         return html`<hh-pro-state data-state="refusal" data-testid="landing-state"></hh-pro-state>`;
       default:
@@ -237,13 +258,13 @@ export abstract class ProAppBase<T> extends HHElement {
   }
 
   render(): TemplateResult {
+    if (this.#session.current() === null) return html`<hh-pro-signin></hh-pro-signin>`;
     const profile = this.#session.profile();
-    if (profile === null) return html`<hh-pro-signin></hh-pro-signin>`;
     const appKey = this.#config.app;
     const surface = surfaceOf(appKey, this.#surface);
     const held = CAPABILITIES.filter((c) => this.#session.can(c)).join(" ");
     const isLanding = this.#surface === this.#config.landing.surface;
-    return html`<hh-pro-frame data-app="${appKey}" data-surface="${this.#surface}" data-dealer="${this.#dealerName}" data-role="${roleLabel(profile.role)}" data-capabilities="${held}">
+    return html`<hh-pro-frame data-app="${appKey}" data-surface="${this.#surface}" data-dealer="${this.#dealerName}" data-role="${profile === null ? "" : roleLabel(profile.role)}" data-capabilities="${held}">
       <h1 data-testid="surface-title">${surface === undefined ? "" : surface.label}</h1>
       ${isLanding ? this.#renderLanding() : html`<hh-pro-state data-state="empty" data-testid="landing-state">This surface is not open yet.</hh-pro-state>`}
     </hh-pro-frame>`;

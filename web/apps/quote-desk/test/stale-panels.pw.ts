@@ -27,7 +27,8 @@ test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });
 
-test("the follow-ups refusal of one quote is gone when another opens", async ({ page }) => {
+test("the follow-ups refusal of one quote is gone when another opens", async ({ page, request }) => {
+  await request.post("/_stub/sms-consent", { data: { customer: "c-fenwick", consent: false } });
   await signIn(page);
   await openQuote(page, "Q-1002");
   const panel = page.locator("qd-quote-followups");
