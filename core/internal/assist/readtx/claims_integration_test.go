@@ -206,3 +206,35 @@ func TestVerifierAndKeyAreOwnedByTheClaimsOwnerAndBuiltHard(t *testing.T) {
 		t.Errorf("PUBLIC can execute ai.claims() (public=%v err=%v)", public, err)
 	}
 }
+
+// P2-1 of the PR 536 read: expiry is checked against the clock, not the
+// transaction's start, so one long transaction cannot keep an expired claim alive.
+func TestClaimExpiresInsideOneTransaction(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	kid, secret := testKey(t, conn)
+	pid := backendPID(t, conn)
+	tx, err := conn.Begin(ctxT(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctxT(t))
+	p := goodPayload(pid)
+	p["exp"] = time.Now().Add(1 * time.Second).Unix()
+	if _, err := tx.Exec(ctxT(t), `SELECT set_config('ai.claims', $1, true)`, rawSigned(kid, secret, p)); err != nil {
+		t.Fatal(err)
+	}
+	read := func() *string {
+		var a *string
+		if err := tx.QueryRow(ctxT(t), `SELECT (ai.claims()).asker_id`).Scan(&a); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	if read() == nil {
+		t.Fatal("a fresh short lived claim must verify")
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if a := read(); a != nil {
+		t.Fatalf("the claim verified %q in the same transaction after its expiry", *a)
+	}
+}

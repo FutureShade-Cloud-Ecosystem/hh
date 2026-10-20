@@ -220,7 +220,7 @@ BEGIN
       IF c.pid IS DISTINCT FROM pg_catalog.pg_backend_pid() THEN
         RETURN NULL;
       END IF;
-      IF c.exp IS NULL OR c.exp < pg_catalog.date_part('epoch', pg_catalog.now())::pg_catalog.int8 THEN
+      IF c.exp IS NULL OR c.exp < pg_catalog.floor(pg_catalog.date_part('epoch', pg_catalog.clock_timestamp()))::pg_catalog.int8 THEN
         RETURN NULL;
       END IF;
       IF c.audience IS NULL OR c.audience NOT IN ('staff', 'pro') OR c.asker_id IS NULL THEN
