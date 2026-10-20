@@ -1,5 +1,7 @@
 package assist
 
+import "sort"
+
 // dataquery_registry.go, the classification registry (plan r3 section 3.4): the single source of the class of
 // every column of every view the assistant can read. The per asker catalogue and the compiler's class check
 // read it, and two tests hold it to the database: every column of every view in schema ai is registered, and
@@ -50,6 +52,27 @@ var columnRegistry = map[string]string{
 	"ai.stock_balances.avg_cost_cents": ClassCost,
 }
 
+// personalColumns is the sensitivity tag, separate from the class (PII-CLASSES-r2): a column that holds personal
+// data carries it whatever its visibility class. The tag does not gate reading (most personal data is shown to
+// every asker who reaches the row, so the class stays plain). It governs what TanyAI does with the value beyond
+// the answer: never embedded off the box, never in a citation label, never written to the query log beyond what
+// the asker typed, and counted for the retention purge. Free text columns that may hold anything typed carry it
+// too and stay plain; they are never indexed unless the scrubber has run on them.
+var personalColumns = map[string]bool{
+	"ai.orders.customer_name": true, // customers.name: may be a person for a sole trader
+}
+
+// PersonalColumns is the tag list, exported for the text index and the egress slices: every "view.column" that
+// holds personal data, sorted.
+func PersonalColumns() []string {
+	out := make([]string, 0, len(personalColumns))
+	for k := range personalColumns {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // RegisteredColumns is a copy of the registry, for the tests that hold it to the database.
 func RegisteredColumns() map[string]string {
 	out := make(map[string]string, len(columnRegistry))
@@ -72,6 +95,7 @@ func classify(v ViewDef) ViewDef {
 	cols := make([]ColumnDef, len(v.Columns))
 	for i, c := range v.Columns {
 		c.Class = classOf(v.Name, c.Name)
+		c.Personal = personalColumns[v.Name+"."+c.Name]
 		cols[i] = c
 	}
 	v.Columns = cols

@@ -49,6 +49,9 @@ type ColumnDef struct {
 	Search bool // may use the contains operator
 	Agg    bool // may be summed, averaged, minimised or maximised
 	Hidden bool // never selected by a question (record id columns used for citations)
+	// Personal is the sensitivity tag of the registry (not a class, it gates nothing): the column holds personal
+	// data. Set from the registry, never in a view definition.
+	Personal bool
 }
 
 // ViewDef is one allow listed view.

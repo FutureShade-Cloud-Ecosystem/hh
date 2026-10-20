@@ -261,3 +261,21 @@ func TestQueryForAGlobalCallerScopesAllBranches(t *testing.T) {
 		t.Errorf("scope = %+v empty=%v", res.Scope, res.Empty)
 	}
 }
+
+// A citation label is the record's own label column, whatever personal text the row carries.
+func TestQueryLabelNeverCarriesAPersonalColumn(t *testing.T) {
+	tx := &scriptTx{plan: cheapPlan, names: []string{"order_no", "customer_name", "__id", "__label"}, data: [][]any{
+		{"SO-1", "Pat Example", "11111111-1111-1111-1111-111111111111", "SO-1"},
+	}}
+	q, _, l := newQuerier(tx)
+	res, err := q.Query(context.Background(), dqManager, `{"view":"ai.orders","select":["order_no","customer_name"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Items[0].Ref.Label; got != "Order SO-1" || strings.Contains(got, "Pat") {
+		t.Errorf("label = %q", got)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", l.rows), "Pat Example") {
+		t.Errorf("a personal value reached the query log: %+v", l.rows)
+	}
+}
