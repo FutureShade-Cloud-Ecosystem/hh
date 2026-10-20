@@ -228,13 +228,14 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 			return "", fmt.Errorf("customer: load update: %w", err)
 		}
 	}
-	err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, customerSeqCTE+`
 		UPDATE customers SET
 			name = $3, customer_type = $4,
 			home_branch_id = NULLIF($5, '')::uuid, payment_terms_days = $6, credit_limit_cents = $7,
 			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address),
 			metadata = (metadata - 'sales_rep_user_ids') || $10::jsonb,
-			org_id = $11::uuid, idempotency_key = NULLIF($12, '')::uuid, updated_at = now()
+			org_id = $11::uuid, seq = (SELECT next_value FROM cseq),
+			idempotency_key = NULLIF($12, '')::uuid, updated_at = now()
 		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $11::uuid)
 		  AND account_no = COALESCE(NULLIF($2, ''), account_no)
 		RETURNING id::text`,

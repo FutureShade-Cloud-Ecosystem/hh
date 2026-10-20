@@ -124,8 +124,9 @@ const invoiceWriterSeqCTE = `WITH iseq AS (
 // settlement's own close (deposit_cancel.go), never a credit memo.
 func (w *InvoiceWriter) clearDepositDocument(ctx context.Context, tx pgx.Tx, invoiceID, status string) error {
 	tag, err := tx.Exec(ctx,
-		`
-		UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now()
+		invoiceWriterSeqCTE+`
+		UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now(),
+		                    seq = (SELECT next_value FROM iseq)
 		 WHERE id = $1::uuid`,
 		invoiceID, status)
 	if err != nil {
