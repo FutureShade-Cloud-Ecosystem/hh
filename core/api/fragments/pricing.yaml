@@ -486,6 +486,10 @@ paths:
         log. The request trail the server keeps of every POST still records
         the call itself. Refuses what the write itself
         would refuse (an override needs a customer, a category and a price unit).
+        The margin legs of an item (margin_bps, floor_bps, previous_margin_bps)
+        name a cost beside the unit price, so they ride only to a caller on the
+        cost_visibility list and are absent for any other pricing editor; the
+        names, unit prices and the under the floor flag ride to every editor.
       x-addition: "the editors' floor warning (plan CP0-6, QD-4); no ERP source route"
       x-role: requireManager
       x-access:
@@ -925,6 +929,7 @@ paths:
       operationId: pricingListBatchLines
       tags: [staff-pricing]
       summary: List the derived change lines of one batch
+      description: Cost figures (before_cost_cents, after_cost_cents) ride only to a caller on the cost_visibility list and are absent for any other reader; the retail figures ride to every reader.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -1147,6 +1152,7 @@ paths:
       operationId: pricingListChangeLog
       tags: [staff-pricing]
       summary: Read the append-only price change log, newest first
+      description: Rows of the cost_cents field ride only to a caller on the cost_visibility list; a reader off the list receives the retail_cents rows alone.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -1679,6 +1685,7 @@ paths:
       operationId: pricingVendorRebateLedger
       tags: [staff-pricing]
       summary: Read one vendor's rebate accrual ledger with totals
+      description: On a cost basis row (a percent of cost program) basis_cents is the extended cost and rides only to a caller on the cost_visibility list; it is absent for any other reader. accrual_cents and rate_note are likewise absent on a cost basis row, and total_cents counts only the rows the caller sees, because the accrual with its percent gives the cost back. A cost reader receives the whole claim.
       x-role: requireStaff
       x-access:
         surfaces: [dealer-admin]
@@ -2204,7 +2211,7 @@ components:
     PricingFloorPreviewItem:
       type: object
       description: One product the proposed price leaves under the margin floor
-      required: [product_id, sku, name, final_cents, margin_bps, floor_bps, price_uom, source, previous_final_cents, previous_margin_bps, already_under_floor]
+      required: [product_id, sku, name, final_cents, price_uom, source, previous_final_cents, already_under_floor]
       properties:
         product_id: { type: string, format: uuid }
         sku: { type: string }
@@ -2215,14 +2222,14 @@ components:
         branch_code: { type: string, description: "That branch's code, so a warning line stays short; the full name is in branch_name" }
         branch_name: { type: string, description: "That branch's name, so an editor who named no branch still sees which yard breaches; empty when the change named its branch" }
         final_cents: { type: integer, format: int64, description: "The unit price with the change" }
-        margin_bps: { type: integer, format: int64 }
-        floor_bps: { type: integer, format: int64 }
+        margin_bps: { type: integer, format: int64, description: "The margin the unit price carries with the change. Present only for callers the cost_visibility list allows, absent otherwise (never zero, which would read as a break-even product): with the price it names the cost." }
+        floor_bps: { type: integer, format: int64, description: "The margin floor the product was graded against. Present only for callers the cost_visibility list allows, absent otherwise." }
         price_uom: { type: string }
         source:
           type: string
           enum: [CUSTOMER_PRODUCT_RULE, QUANTITY_BREAK, CUSTOMER_CATEGORY_RULE, CUSTOMER_OVERRIDE, TIER_CATEGORY, TIER_DEFAULT, LIST, PROMOTION]
         previous_final_cents: { type: integer, format: int64, description: "The unit price today" }
-        previous_margin_bps: { type: integer, format: int64 }
+        previous_margin_bps: { type: integer, format: int64, description: "The margin the unit price carries today. Present only for callers the cost_visibility list allows, absent otherwise." }
         already_under_floor: { type: boolean, description: "True when the product was under the floor before the change too" }
 
     PricingFloorPreview:
@@ -3085,7 +3092,7 @@ components:
     PricingRebateAccrual:
       type: object
       description: One rebate_accruals row
-      required: [id, program_id, vendor_id, product_id, source_type, qty_base, basis_cents, accrual_cents, rate_note, accrued_at]
+      required: [id, program_id, vendor_id, product_id, source_type, qty_base, accrued_at]
       properties:
         id: { type: string, format: uuid }
         program_id: { type: string, format: uuid }
@@ -3103,9 +3110,9 @@ components:
           enum: [POS_SALE, ORDER, ADJUSTMENT]
         source_id: { type: string }
         qty_base: { type: number }
-        basis_cents: { type: integer, format: int64 }
-        accrual_cents: { type: integer, format: int64 }
-        rate_note: { type: string }
+        basis_cents: { type: integer, format: int64, description: "The extended basis the accrual was struck on. On the ledger read it is absent for a cost basis row unless the caller is on the cost_visibility list (never zero): there it is the extended cost." }
+        accrual_cents: { type: integer, format: int64, description: "The vendor claim for this row. On the ledger read it is absent for a cost basis row unless the caller is on the cost_visibility list: with the rate it gives the cost back." }
+        rate_note: { type: string, description: "The rate in words. Absent on a cost basis ledger row for a caller off the cost_visibility list." }
         accrued_at: { type: string, format: date-time }
 
     PricingRebateAccrualResult:

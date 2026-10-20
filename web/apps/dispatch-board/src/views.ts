@@ -32,6 +32,7 @@ import type {
 import {
   BOARD_COLUMNS,
   LOAD_VALUE_CHOICES,
+  PUT_ON_TRUCK_COMMIT_NOTE,
   REOPEN_CHOICES,
   TIME_AXIS_HOURS,
   TRUCK_TYPES,
@@ -41,6 +42,7 @@ import {
   carriesMoffett,
   capacityText,
   deckSlotsForStops,
+  dispatchConfirmWords,
   driverLine,
   fleetStateWord,
   gaugeLabel,
@@ -109,7 +111,7 @@ export type Axis = "TRUCK" | "STATUS";
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
 export interface Sheet {
   readonly kind:
-    | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
+    | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run" | "dispatch-run"
     | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy" | "scan-trail" | "split-freight";
   readonly id: string;
   /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
@@ -433,6 +435,24 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
       </form>
     `;
   }
+  if (sheet.kind === "dispatch-run") {
+    const runs = [...(model.view?.loads.map((r) => r.run) ?? []), ...(model.day?.runs ?? [])];
+    const run = runs.find((r) => r.id === sheet.id);
+    const stops = model.view?.loads.find((r) => r.run.id === sheet.id)?.stops ?? model.day?.stops.filter((s) => s.run_id === sheet.id);
+    const words = dispatchConfirmWords(run, stops, model.holds);
+    return html`
+      <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
+        <h4>${words.title}</h4>
+        <p class="small">${words.body}</p>
+        ${words.holds.map((line) => html`<p class="small hold-words" data-sheet-hold>${line}</p>`)}
+        ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
+        <div class="actions">
+          <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Send the run</button>
+          <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Cancel</button>
+        </div>
+      </form>
+    `;
+  }
   const dated = sheet.kind === "reschedule-stop" || sheet.kind === "reschedule-run";
   const title =
     sheet.kind === "reschedule-stop"
@@ -632,6 +652,7 @@ function loadCard(model: BoardModel, view: DispatchLoadBoardView, stop: Dispatch
       ${holdLine !== "" ? html`<p class="small hold-words" data-hold-words>${holdLine}</p>` : nothing}
       ${stop.failure_reason ? html`<p class="small bad">${stop.failure_reason}</p>` : nothing}
       ${!editable && opts.lane !== true ? html`<p class="small dim" data-blocked>${blocked}</p>` : nothing}
+      ${targets.length > 0 ? html`<p class="small dim" data-commit-note>${PUT_ON_TRUCK_COMMIT_NOTE}</p>` : nothing}
       <div class="actions">
         ${targets.length > 0
           ? html`<select class="control pick" data-action="assign-pick" data-stop-id=${stop.id} aria-label=${`Put ${stop.order_no ?? "this load"} on a truck`}>
@@ -743,7 +764,7 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="clear-reopen" data-run-id=${run.id} ?disabled=${model.busy}>Clear the reopen marker</button>`
           : nothing}
       </div>
-      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run"], run.id)}
+      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run", "dispatch-run"], run.id)}
     </section>
   `;
 }
@@ -1061,6 +1082,7 @@ function dayStopCard(model: BoardModel, stop: DispatchStop, runs: readonly Dispa
         ? html`<p class="small good">Signed by ${stop.pod_received_by}${stop.pod_at ? ` at ${formatTime(stop.pod_at)}` : ""}${stop.handoff_at ? " · handed to billing" : ""}</p>`
         : nothing}
       ${stop.failure_reason ? html`<p class="small bad">${stop.failure_reason}</p>` : nothing}
+      ${!stop.run_id && stop.status === "READY" && planned.length > 0 ? html`<p class="small dim" data-commit-note>${PUT_ON_TRUCK_COMMIT_NOTE}</p>` : nothing}
       <div class="actions">
         ${actions.map((a) =>
           a.action === "POD"
@@ -1129,7 +1151,7 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
         ? html`<div class="col did-not" data-col="DID_NOT_GO"><h4>Did not go<span class="count">${didNot.length}</span></h4>
             <ul class="loads">${didNot.map((s) => dayStopCard(model, s, day.runs))}</ul></div>`
         : nothing}
-      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run"], run.id)}
+      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run", "dispatch-run"], run.id)}
     </section>
   `;
 }
@@ -1178,7 +1200,7 @@ function scheduleForm(model: BoardModel): TemplateResult {
         <label>Latitude, optional<input class="control" type="text" inputmode="decimal" data-field="lat" autocomplete="off" /></label>
         <label>Longitude, optional<input class="control" type="text" inputmode="decimal" data-field="lon" autocomplete="off" /></label>
         <label class="wide">Instructions for the driver<input class="control" type="text" data-field="instructions" maxlength="400" autocomplete="off" /></label>
-        <p class="small dim wide">A date scheduled here is a request. Putting the load on a truck commits it.</p>
+        <p class="small dim wide">A date scheduled here is a request. ${PUT_ON_TRUCK_COMMIT_NOTE}</p>
         ${model.scheduleError !== "" ? html`<p class="alert alert-error wide" role="alert" data-schedule-error>${model.scheduleError}</p>` : nothing}
         <div class="actions wide">
           <button type="button" class="btn btn-primary" data-action="schedule-submit" ?disabled=${model.busy}>Schedule delivery</button>
