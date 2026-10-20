@@ -184,7 +184,7 @@ export function renderConflicts(model: { cards: number }): TemplateResult {
   return html`
     <button type="button" class="back" data-action="back" data-tap>Back to the run</button>
     <h1>Review</h1>
-    <p class="dim small">What the server answered while you drove. A card is dismissed when you have read it; the record stays.</p>
+    <p class="dim small">What happened to the changes you made while you drove. A card goes away when you have read it; the record stays.</p>
     <hh-shell-conflict-list data-conflict-list></hh-shell-conflict-list>
   `;
 }
