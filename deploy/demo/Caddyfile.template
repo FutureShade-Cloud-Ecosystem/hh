@@ -47,14 +47,12 @@ handle /api/v1/demo/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
-	encode zstd gzip
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
 }
 
 handle /api/* {
-	encode zstd gzip
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}

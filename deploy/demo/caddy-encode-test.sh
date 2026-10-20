@@ -1,8 +1,10 @@
 #!/bin/sh
-# The Caddyfile leg for response compression (UX-52a): requests to an app page,
-# a JS bundle asset and an API route with Accept-Encoding: gzip (or zstd) must
-# answer with Content-Encoding: gzip (or zstd) and fewer bytes than the plain
-# file, while requests without Accept-Encoding answer plain. The phrase gate
+# The Caddyfile leg for response compression (UX-52a): requests to an app page
+# and a JS bundle asset with Accept-Encoding: gzip (or zstd) must answer with
+# Content-Encoding: gzip (or zstd) and fewer bytes than the plain file, while
+# requests without Accept-Encoding answer plain. API routes answer without
+# Content-Encoding even when Accept-Encoding is sent (SSE streams must not be
+# buffered and token bearing responses must not be compressed). The phrase gate
 # still answers 401 without the phrase, the JWK Set still answers with no
 # phrase, and the forwarded address overwrite is preserved.
 #
@@ -174,25 +176,25 @@ if [ -n "$WASM_NAME" ]; then
 	echo "MEASURE: source=$ASSET_SOURCE asset=$WASM_NAME plain_bytes=$wasm_plain_bytes gzip_bytes=$wasm_gzip_bytes zstd_bytes=$wasm_zstd_bytes"
 fi
 
-# 4. API handles (/api/* and /api/v1/demo/*) compress when requested and keep X-Forwarded-For overwrite.
+# 4. API handles (/api/* and /api/v1/demo/*) answer with NO Content-Encoding even when Accept-Encoding is sent, and keep X-Forwarded-For overwrite.
 api_gzip_hdr="$(docker exec "$NAME" sh -c 'wget -S -q -O /dev/null --header="Accept-Encoding: gzip" --header="X-Forwarded-For: 9.9.9.9" http://127.0.0.1:8080/api/v1/catalog/items 2>&1' || true)"
-if printf '%s\n' "$api_gzip_hdr" | grep -qi 'Content-Encoding:[[:space:]]*gzip'; then
-	pass "API route (/api/v1/catalog/items) with Accept-Encoding: gzip answers Content-Encoding: gzip"
+if printf '%s\n' "$api_gzip_hdr" | grep -qi 'Content-Encoding:'; then
+	fail "API route (/api/v1/catalog/items) with Accept-Encoding: gzip answered with a Content-Encoding header"
 else
-	fail "API route (/api/v1/catalog/items) with Accept-Encoding: gzip did not answer Content-Encoding: gzip"
+	pass "API route (/api/v1/catalog/items) with Accept-Encoding: gzip answers with no Content-Encoding"
 fi
 
-api_body="$(docker exec "$NAME" sh -c 'wget -q -O - --header="Accept-Encoding: gzip" --header="X-Forwarded-For: 9.9.9.9" http://127.0.0.1:8080/api/v1/catalog/items 2>/dev/null | gunzip -c 2>/dev/null' || true)"
+api_body="$(docker exec "$NAME" sh -c 'wget -q -O - --header="Accept-Encoding: gzip" --header="X-Forwarded-For: 9.9.9.9" http://127.0.0.1:8080/api/v1/catalog/items 2>/dev/null' || true)"
 case "$api_body" in
-	*'"seen_xff":"127.0.0.1"'*) pass "API route preserves the X-Forwarded-For overwrite under compression" ;;
-	*) fail "API route did not preserve X-Forwarded-For overwrite under compression: $api_body" ;;
+	*'"seen_xff":"127.0.0.1"'*) pass "API route preserves the X-Forwarded-For overwrite" ;;
+	*) fail "API route did not preserve X-Forwarded-For overwrite: $api_body" ;;
 esac
 
 mint_gzip_hdr="$(docker exec "$NAME" sh -c "wget -S -q -O /dev/null --header='Authorization: Basic $AUTH' --header='Accept-Encoding: gzip' --header='X-Forwarded-For: 9.9.9.9' http://127.0.0.1:8080/api/v1/demo/mint 2>&1" || true)"
-if printf '%s\n' "$mint_gzip_hdr" | grep -qi 'Content-Encoding:[[:space:]]*gzip'; then
-	pass "demo mint route (/api/v1/demo/mint) with phrase and Accept-Encoding: gzip answers Content-Encoding: gzip"
+if printf '%s\n' "$mint_gzip_hdr" | grep -qi 'Content-Encoding:'; then
+	fail "demo mint route (/api/v1/demo/mint) with phrase and Accept-Encoding: gzip answered with a Content-Encoding header"
 else
-	fail "demo mint route (/api/v1/demo/mint) with phrase and Accept-Encoding: gzip did not answer Content-Encoding: gzip"
+	pass "demo mint route (/api/v1/demo/mint) with phrase and Accept-Encoding: gzip answers with no Content-Encoding"
 fi
 
 # 5. The phrase gate still answers 401 without the phrase, and JWK Set still answers with no phrase.
@@ -224,12 +226,12 @@ case "$jwks_body" in
 	*) fail "the JWK Set forwarded address is wrong: $jwks_body" ;;
 esac
 
-# 6. Every file and API handle in Caddyfile.template carries encode zstd gzip.
+# 6. Every file handle in Caddyfile.template carries encode zstd gzip (17 handles; API handles do not).
 encode_count="$(grep -c '^[[:space:]]*encode zstd gzip$' "$HERE/Caddyfile.template" || true)"
-if [ "$encode_count" = "19" ]; then
-	pass "all 19 file and API handles in Caddyfile.template carry encode zstd gzip"
+if [ "$encode_count" = "17" ]; then
+	pass "all 17 file handles in Caddyfile.template carry encode zstd gzip (API handles excluded)"
 else
-	fail "Caddyfile.template carries $encode_count encode zstd gzip directives, want 19"
+	fail "Caddyfile.template carries $encode_count encode zstd gzip directives, want 17"
 fi
 
 [ "$fails" = "0" ] || exit 1
