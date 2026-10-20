@@ -410,6 +410,13 @@ export const consoleStyles = css`
       min-width: 0;
     }
   }
+  @media (pointer: coarse), (max-width: 768px) {
+    .quiet-control {
+      min-height: 44px;
+      min-width: 44px;
+      padding: var(--hh-s-12) var(--hh-s-8);
+    }
+  }
   @media (max-width: 480px) {
     .signin-stage {
       padding-top: var(--hh-s-24);

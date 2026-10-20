@@ -126,6 +126,20 @@ test.describe("the sign in screen", () => {
     await expect(page.getByTestId("feedback-button")).toHaveAttribute("aria-expanded", "true");
   });
 
+  test("quiet Theme and Feedback controls at 390x844 are at least 44 by 44 px", async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await serve(page, baseURL!);
+    await page.goto("/");
+    await expect(page.getByTestId("theme-control")).toBeVisible();
+    await expect(page.getByTestId("feedback-button")).toBeVisible();
+    for (const locator of [page.getByTestId("theme-control"), page.getByTestId("feedback-button")]) {
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+    }
+  });
+
   test("focus order follows the page: email, password, Sign in, Continue with Google; every control is named", async ({ page, baseURL }) => {
     await serve(page, baseURL!);
     await page.goto("/");
