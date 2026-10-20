@@ -374,15 +374,15 @@
   {
     "id": "wa-copy-clipboard",
     "file": "src/quote-workarea.ts",
-    "find": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.\n      if (ctx.stale) return;",
-    "replace": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // Creating a link emails nothing: sending is a different button.",
+    "find": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // A link is not a send: the quote keeps its status until a text goes or the dealer says they sent it.\n      if (ctx.stale) return;",
+    "replace": "      await navigator.clipboard.writeText(this.shareUrl(token));\n      // A link is not a send: the quote keeps its status until a text goes or the dealer says they sent it.",
     "test": "guard copy link clipboard:"
   },
   {
     "id": "wa-copy-reload",
     "file": "src/quote-workarea.ts",
-    "find": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();\n      if (ctx.stale) return;",
-    "replace": "      this.notice = \"Link copied. Nothing was emailed. Paste the link, or use Send quote.\";\n      await this.loadAll();",
+    "find": "        : \"Link copied. Nothing was emailed. Paste the link to the customer.\";\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "        : \"Link copied. Nothing was emailed. Paste the link to the customer.\";\n      await this.loadAll();",
     "test": "guard copy link reload:"
   },
   {
@@ -409,8 +409,8 @@
   {
     "id": "wa-send-reload",
     "file": "src/quote-workarea.ts",
-    "find": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();\n      if (ctx.stale) return;",
-    "replace": "      this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);\n      await this.loadAll();",
+    "find": "      this.notice = sentByText(text.phoneMasked);\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = sentByText(text.phoneMasked);\n      await this.loadAll();",
     "test": "guard send reload:"
   },
   {
@@ -1522,8 +1522,8 @@
   {
     "id": "sender-capture-inline-helper",
     "file": "src/quote-workarea.ts",
-    "find": "    const capture = this.captureFor(ctx);\n    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, capture); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
-    "replace": "    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.\n    const release = this.holdBusy(ctx);\n    this.sendOpen = false;\n    this.error = \"\";\n    this.notice = \"\";\n    const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      await this.ensureLink(ctx, this.captureFor(ctx)); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email (it throws once the quote was left)\n      let smsOk = false;\n      let smsWhy = \"\";\n      const smsChosen = channels.includes(\"SMS\");\n      if (smsChosen) {\n        const sms = await ctx.guarded(deferredSend(this.captureFor(ctx), () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));",
+    "find": "    const capture = this.captureFor(ctx);\n    // One send at a time: a second press while the first is out would queue the text twice.\n    const release = this.holdBusy(ctx);\n    this.error = \"\";\n    this.notice = \"\";\n    this.notSent = \"\";\n    const wasDraft = this.view?.status === \"DRAFT\";\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      // The desk cannot email, so a send is a text, and only where the customer allows one. Nothing is called\n      // when it is not allowed: no link, no status change, no follow-ups.\n      const consent = await this.consentFor(ctx);\n      if (ctx.stale) return;\n      const text = textAllowance(this.#sendPolicy(), consent);\n      if (!text.allowed) {\n        this.notSent = notSentWords(text.why, wasDraft);\n        return;\n      }\n      // The core makes the text call and only a queued text moves the quote to Sent and starts the follow ups.\n      const sms = await ctx.guarded(deferredSend(capture, () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));\n      if (sms === undefined || wasUnsent(sms)) return;\n",
+    "replace": "    // One send at a time: a second press while the first is out would queue the text twice.\n    const release = this.holdBusy(ctx);\n    this.error = \"\";\n    this.notice = \"\";\n    this.notSent = \"\";\n    const wasDraft = this.view?.status === \"DRAFT\";\n    try {\n      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.\n      if (this.termsPendingCount() > 0) {\n        await this.putTermsNow();\n        if (ctx.stale) return;\n        if (this.error !== \"\") return;\n      }\n      // The desk cannot email, so a send is a text, and only where the customer allows one. Nothing is called\n      // when it is not allowed: no link, no status change, no follow-ups.\n      const consent = await this.consentFor(ctx);\n      if (ctx.stale) return;\n      const text = textAllowance(this.#sendPolicy(), consent);\n      if (!text.allowed) {\n        this.notSent = notSentWords(text.why, wasDraft);\n        return;\n      }\n      // The core makes the text call and only a queued text moves the quote to Sent and starts the follow ups.\n      const sms = await ctx.guarded(deferredSend(this.captureFor(ctx), () => client.shareBySMS(ctx.id)), this.lateWrite(ctx, \"send the text\"));\n      if (sms === undefined || wasUnsent(sms)) return;\n",
     "test": "no write of the src is sent from a deferred position",
     "runner": "node",
     "testFile": "test/write-census.test.mjs"
@@ -2220,5 +2220,19 @@
     "find": "    const reopened = this.reopenedFrom.get(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
     "replace": "    const reopened = this.reopenedFrom.get(quoteId);\n    this.reopenedFrom.delete(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
     "test": "the sign out wait and a late answer both meeting one no signal answer, in either order, keep the open attempt unsettled"
+  },
+  {
+    "id": "wa-sentmyself-answer",
+    "file": "src/quote-workarea.ts",
+    "find": "const result = await ctx.guarded(deferredSend(capture, () => client.markSent(ctx.id)), this.lateWrite(ctx, \"record that you sent the quote\"));",
+    "replace": "const result = await client.markSent(ctx.id);",
+    "test": "guard sent myself answer:"
+  },
+  {
+    "id": "wa-sentmyself-reload",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = \"Marked Sent on your word that you sent the link. Its follow-ups have started.\";\n      await this.loadAll();\n      if (ctx.stale) return;",
+    "replace": "      this.notice = \"Marked Sent on your word that you sent the link. Its follow-ups have started.\";\n      await this.loadAll();",
+    "test": "guard sent myself reload:"
   }
 ]

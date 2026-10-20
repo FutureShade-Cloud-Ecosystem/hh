@@ -182,12 +182,12 @@ for (const scheme of ["light", "dark"] as const) {
           }
           return false;
         }
-        const ids = ["qb-send", "qb-send-channel", "qb-fulfil-pickup", "qb-fulfil-delivery"];
+        const ids = ["qb-send", "qb-fulfil-pickup", "qb-fulfil-delivery"];
         const controls: Element[] = [];
         for (const id of ids) controls.push(...deepAll(document, `[data-testid="${id}"]`));
         controls.push(...deepAll(document, 'nav[aria-label="Quote sections"] button, nav[aria-label="Quote sections"] a'));
         const problems: string[] = [];
-        if (controls.length < 7) problems.push(`only ${controls.length} controls found`);
+        if (controls.length < 6) problems.push(`only ${controls.length} controls found`);
         // Every fixed or sticky box the widget owns, shown or not.
         const host = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("hh-feedback") ?? null;
         const boxes = host?.shadowRoot === null || host === null
@@ -214,7 +214,7 @@ for (const scheme of ["light", "dark"] as const) {
         }
         return { problems, found: controls.length };
       });
-      expect(verdict.found).toBeGreaterThanOrEqual(7);
+      expect(verdict.found).toBeGreaterThanOrEqual(6);
       expect(verdict.problems).toEqual([]);
 
       // The open panel sits wholly inside the viewport.

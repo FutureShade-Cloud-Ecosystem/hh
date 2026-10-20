@@ -32,7 +32,7 @@ test("a column box keeps a good save when the config re-read after it fails", as
   expect(await box.isChecked()).toBe(!before);
 });
 
-test("Send sends an unsaved terms edit before it mints the link", async ({ page }) => {
+test("Send sends an unsaved terms edit before it texts the quote", async ({ page }) => {
   await signIn(page);
   await open(page, "Q-1001");
   const po = page.getByTestId("qb-po");
@@ -40,9 +40,9 @@ test("Send sends an unsaved terms edit before it mints the link", async ({ page 
   const seen = writes(page);
   await po.fill("PO-BEFORE-SEND");
   await po.press("Control+Enter");
-  await expect(page.getByTestId("qb-notice")).toContainText("Quote sent");
-  const order = seen.map((w) => (w.includes("/terms") ? "terms" : w.includes("/share-links") ? "mint" : "other"));
-  expect(order.slice(0, 2)).toEqual(["terms", "mint"]);
+  await expect(page.getByTestId("qb-notice")).toContainText("Sent by text");
+  const order = seen.map((w) => (w.includes("/terms") ? "terms" : w.includes("/sms-share") ? "text" : "other"));
+  expect(order.slice(0, 2)).toEqual(["terms", "text"]);
   expect(seen[0]).toContain("PO-BEFORE-SEND");
 });
 
@@ -50,11 +50,11 @@ test("a scan's add does not re-enable Send while a send is still out", async ({ 
   await signIn(page);
   await open(page, "Q-1001");
   const held = gate();
-  await page.route(/\/api\/v1\/quotes\/q-1001\/share-links$/, async (route) => {
+  await page.route(/\/api\/v1\/quotes\/q-1001\/sms-share$/, async (route) => {
     if (route.request().method() === "POST") await held.opened;
     await route.continue();
   });
-  const asked = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/quotes/q-1001/share-links"));
+  const asked = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/quotes/q-1001/sms-share"));
   await page.getByTestId("qb-send").click();
   await asked;
   await expect(page.getByTestId("qb-send")).toBeDisabled();
@@ -64,10 +64,10 @@ test("a scan's add does not re-enable Send while a send is still out", async ({ 
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
   await settle(page);
   await expect(page.getByTestId("qb-send")).toBeDisabled();
-  const minted = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1001/share-links"));
+  const texted = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/quotes/q-1001/sms-share"));
   held.open();
-  await minted;
-  await expect(page.getByTestId("qb-notice")).toContainText("Quote sent");
+  await texted;
+  await expect(page.getByTestId("qb-notice")).toContainText("Sent by text");
 });
 
 test("a refusal on one quote is not shown on the next quote opened", async ({ page }) => {
