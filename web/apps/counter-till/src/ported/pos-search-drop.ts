@@ -15,6 +15,7 @@ import {
   type CounterQuote,
 } from '@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js';
 import { AddOnce } from '@hardscapehouse/pos-kit/src/ported/_pos-add-dedupe.js';
+import { onHandStatus } from './_pos-stock.js';
 
 /**
  * hos-pos-search-drop: the counter's search RESULTS, as five rows under the field.
@@ -148,6 +149,9 @@ export class HosPosSearchDrop extends LitElement {
       }
       .meta .sku {
         font-family: var(--hos-font-mono);
+      }
+      .meta .out {
+        color: var(--hos-safety-red);
       }
       /* The money column has a fixed floor and is right-aligned, so five prices form one edge
          instead of five (the DIB-512 finding, held here from the start). */
@@ -416,7 +420,7 @@ export class HosPosSearchDrop extends LitElement {
   }
 
   private renderRow(h: CounterHit, i: number) {
-    const onHand = h.on_hand_branch;
+    const stock = onHandStatus(h.on_hand_branch);
     return html`<button
       class="row"
       role="option"
@@ -431,7 +435,11 @@ export class HosPosSearchDrop extends LitElement {
       <span class="id">
         <span class="name">${h.name}</span>
         <span class="meta"
-          ><span class="sku">${h.sku}</span>${onHand === undefined ? nothing : html` · ${onHand} on hand`}</span
+          ><span class="sku">${h.sku}</span>${stock === null
+            ? nothing
+            : stock.tone === 'out'
+              ? html` · <span class="out">${stock.label}</span>`
+              : html` · ${stock.label}`}</span
         >
       </span>
       ${this.renderPrice(h)}
