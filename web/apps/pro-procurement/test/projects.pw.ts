@@ -41,10 +41,10 @@ test("Projects opens from the selector and lists every project, the QUOTING one 
   const quoting = rows.filter({ hasText: "Santa Fe courtyard stone" });
   await expect(quoting).toContainText("Quoting");
   await expect(quoting).toContainText("2 lines");
-  await expect(quoting).toContainText("Indicative");
+  await expect(quoting).toContainText("Estimated");
   const planning = rows.filter({ hasText: "Backyard planting beds" });
   await expect(planning).toContainText("Planning");
-  await expect(planning).toContainText("Awaiting price");
+  await expect(planning).toContainText("Not priced");
   await page.screenshot({ path: join(SHOTS, "projects-phone.png"), fullPage: true });
 });
 

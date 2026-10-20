@@ -89,8 +89,8 @@ test("each card carries its status word and line count, and the indicative subto
   assert.ok(text.includes("Ordered"), text);
   assert.ok(/\b3 lines\b/.test(text), `the line count is missing: ${text}`);
   // The scope page's rule: a PLANNING project awaits its price; past PLANNING the indicative subtotal shows.
-  assert.ok(text.includes("Awaiting price"), text);
-  assert.ok(text.includes("Indicative"), text);
+  assert.ok(text.includes("Not priced"), text);
+  assert.ok(text.includes("Estimated"), text);
   const quoting = answer.data.find((p) => p.status === "QUOTING");
   assert.ok(quoting.subtotal_cents > 0);
   assert.ok(text.includes(money(quoting.subtotal_cents)), "the quoting project's indicative subtotal is missing");

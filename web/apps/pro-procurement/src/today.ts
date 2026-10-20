@@ -8,8 +8,14 @@
 // the kit's placeholder, never a confident zero.
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantDashboard, type TenantDashboard } from "@hardscapehouse/api-client";
+import { priceWords } from "./figures.js";
 import { calendarDay, money, statusChip, trackingChip, trackingOf } from "@hardscapehouse/pro-kit";
 import { metaLine, type Page, type SurfaceAnswer } from "./views.js";
+
+// An account figure the core did not send says so in words, never "n/a" and never a zero.
+function standing(cents: number | null | undefined): string {
+  return typeof cents === "number" && Number.isFinite(cents) ? money(cents) : "Not available";
+}
 
 export const TODAY_EMPTY = "No orders yet. Your orders and quotes will land here.";
 
@@ -28,7 +34,7 @@ function orderRow(order: TenantDashboard["recent_orders"][number]): TemplateResu
     ${tracking === null ? nothing : trackingChip(tracking)}
     <span class="grow"></span>
     <span>${calendarDay(order.requested_date)}</span>
-    <span class="mono">${money(order.total_cents)}</span>
+    <span class="mono">${priceWords(order.total_cents)}</span>
   </div>`;
 }
 
@@ -45,8 +51,8 @@ export function todayView(dataRaw: unknown, page: Page): TemplateResult {
             <span class="mono dim">${data.account.account_no}</span>
           </div>
           ${metaLine([
-            html`<span>Open balance <span class="mono">${money(data.open_balance_cents)}</span></span>`,
-            html`<span>Available credit <span class="mono">${money(data.available_credit_cents)}</span></span>`,
+            html`<span>Balance <span class="mono">${standing(data.open_balance_cents)}</span></span>`,
+            html`<span>Available credit <span class="mono">${standing(data.available_credit_cents)}</span></span>`,
             html`<span>Net ${data.account.payment_terms_days}</span>`,
             hold ? html`<span class="pchip pchip-stop" data-status="HOLD">On hold</span>` : nothing,
           ])}

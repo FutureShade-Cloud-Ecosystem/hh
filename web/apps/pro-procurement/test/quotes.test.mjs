@@ -81,6 +81,7 @@ test("the list holds the dealer's quotes with their words, and empties with its 
   const emptied = await quotesLoad(page);
   assert.equal(emptied.kind, "empty");
   assert.match(QUOTES_EMPTY, /^No quotes yet/);
+  assert.doesNotMatch(QUOTES_EMPTY, /RFQ/, "the empty words never name an RFQ");
   await fetch(`${base}/_stub/reset`, { method: "POST" });
 });
 

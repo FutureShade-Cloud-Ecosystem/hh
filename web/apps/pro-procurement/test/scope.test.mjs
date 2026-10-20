@@ -6,6 +6,7 @@
 // words.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { SURFACES } from "../src/registry.ts";
 import { scopeLoad, scopeView, scopeCommand, scopeSubmitRfq, scopeAddLine, SCOPE_MISSING } from "../src/scope.ts";
 import { InMemoryTenantSession, tenantClient, stubAdapter, money } from "@hardscapehouse/pro-kit";
 import { tenantProcurement } from "@hardscapehouse/api-client";
@@ -97,14 +98,14 @@ test("a priced line shows its indicative price, an unpriced line the placeholder
   assert.ok(text.includes("CPV-1204"), "the sku is missing");
   assert.ok(text.includes("850 SF"), "the quantity with its unit is missing");
   assert.ok(text.includes(money(435200)), "the indicative line total is missing");
-  assert.ok(text.includes("Indicative"), "the indicative note is missing");
-  assert.ok(text.includes("Submit RFQ"), "a planning project offers Submit RFQ");
+  assert.ok(text.includes("Estimated subtotal"), "the estimate note is missing");
+  assert.ok(text.includes("Request a quote"), "a planning project offers Request a quote");
   assert.ok(text.includes("Add material"), "a planning project offers Add material");
   assert.doesNotMatch(text, /\b[A-Z]{2,}_[A-Z]{2,}\b/, "a stored status string reached the screen");
   assert.doesNotMatch(text, /undefined|NaN|!/);
 });
 
-test("a fresh line with no price reads as n/a until the RFQ prices it", async () => {
+test("a fresh line with no price reads Not priced until the quote request prices it", async () => {
   const page = await makePage("owner", { surface: "scope", projectId: EMPTY_PLAN_ID });
   const created = await scopeAddLine(page, PRODUCTS[0].id, "10", PRODUCTS[0].base_uom);
   assert.equal(created.ok, true);
@@ -112,15 +113,15 @@ test("a fresh line with no price reads as n/a until the RFQ prices it", async ()
   assert.equal(answer.kind, "ready");
   if (answer.kind !== "ready") return;
   const text = words(scopeView(answer.data, page)).replace(/<[^>]*>/g, " ");
-  assert.ok(text.includes("Awaiting price"), text);
-  assert.ok(text.includes("n/a"), "an unpriced line must read as the placeholder");
+  assert.ok(text.includes("Not priced"), text);
+  assert.ok(text.includes("Not priced") && !text.includes("n/a"), "an unpriced line must say Not priced, never n/a");
   // The RFQ prices the lines; the server's numbers come back and the page shows them.
   await scopeSubmitRfq(page);
   const priced = await scopeLoad(page);
   if (priced.kind !== "ready") throw new Error("the project did not reload");
   const pricedText = words(scopeView(priced.data, page)).replace(/<[^>]*>/g, " ");
   assert.ok(pricedText.includes(money(5120)), `the RFQ price did not land: ${pricedText}`);
-  assert.ok(pricedText.includes("Quoting"), "the project is not quoting after the RFQ");
+  assert.ok(pricedText.includes("Quoting"), "the project is not quoting after the quote request");
 });
 
 test("submitting the RFQ on an empty plan carries the server's refusal in plain words", async () => {
@@ -152,7 +153,7 @@ test("submitting the RFQ when any line comes back unpriced says lines without a 
   assert.ok(last, "no notice was given");
   assert.equal(last.kind, "ok");
   assert.match(last.words, /Lines without a price wait for the dealer/, last.words);
-  assert.doesNotMatch(last.words, /Lines priced indicatively/, last.words);
+  assert.doesNotMatch(last.words, /priced as an estimate/, last.words);
   await fetch(`${base}/_stub/reset`, { method: "POST" });
 });
 
@@ -192,3 +193,16 @@ function document_like(action) {
   // only reads its data attributes.
   return { getAttribute: (name) => (name === "data-action" ? action : null) };
 }
+
+test("the plan page uses the plan words: no RFQ, no indicative, no order scope", async () => {
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+  const page = await makePage("owner", { surface: "scope", projectId: EMPTY_PLAN_ID });
+  await scopeAddLine(page, PRODUCTS[0].id, "10", PRODUCTS[0].base_uom);
+  const answer = await scopeLoad(page);
+  if (answer.kind !== "ready") throw new Error("the plan did not load");
+  const text = words(scopeView(answer.data, page)).replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(text, /RFQ|ndicative|Awaiting price/, text);
+  assert.equal(SURFACES.scope.label, "Plan");
+  await scopeSubmitRfq(page);
+  assert.doesNotMatch(page.notices.at(-1).words, /RFQ|ndicative/, page.notices.at(-1).words);
+});

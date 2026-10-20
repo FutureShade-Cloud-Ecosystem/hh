@@ -10,7 +10,8 @@
 // original editor's lines table, on the design system's cards.
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantCatalog, tenantProcurement, type TenantCatalogResult, type TenantProjectDetail, type TenantProjectLine } from "@hardscapehouse/api-client";
-import { money, qtyWithUnit, statusChip } from "@hardscapehouse/pro-kit";
+import { statusChip } from "@hardscapehouse/pro-kit";
+import { priceWords, qtyWords } from "./figures.js";
 import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
 
 export const SCOPE_MISSING = "That plan is not here anymore. It may have been deleted.";
@@ -30,7 +31,7 @@ export async function scopeLoad(page: Page): Promise<SurfaceAnswer> {
 
 export function scopeHeading(dataRaw: unknown): string {
   const data = dataRaw as TenantProjectDetail | null;
-  return data === null || data === undefined ? "Order scope" : data.name;
+  return data === null || data === undefined ? "Plan" : data.name;
 }
 
 // ---- the surface's own state, per open picker, editor and confirm -------------------------------
@@ -61,15 +62,15 @@ function lineRow(line: TenantProjectLine, editable: boolean): TemplateResult {
     <div class="card" data-testid="scope-line">
       <span class="rowline">
         <span class="name">${line.description}</span>
-        ${line.priced ? nothing : html`<span class="pchip" data-status="UNPRICED">Awaiting price</span>`}
+        ${line.priced ? nothing : html`<span class="pchip" data-status="UNPRICED">Not priced</span>`}
         <span class="grow"></span>
-        <span class="mono figure">${line.priced ? money(line.indicative_line_total_cents) : money(null)}</span>
+        <span class="mono figure">${line.priced ? priceWords(line.indicative_line_total_cents) : priceWords(null)}</span>
       </span>
       <span class="rowline dim">
         <span class="mono">${line.sku}</span>
-        <span>${qtyWithUnit(line.qty_entered, line.uom)}</span>
+        <span>${qtyWords(line.qty_entered, line.uom)}</span>
         <span class="grow"></span>
-        <span class="mono">${line.priced ? money(line.indicative_unit_price_cents) : money(null)}</span>
+        <span class="mono">${line.priced ? priceWords(line.indicative_unit_price_cents) : priceWords(null)}</span>
       </span>
       ${editable
         ? html`<span class="rowline line-actions">
@@ -89,7 +90,7 @@ export function scopeView(dataRaw: unknown, page: Page): TemplateResult {
   return html`${backHeader(fromProjects ? "Projects" : "Board", fromProjects ? "open-projects" : "open-board")}
     ${metaLine([
       statusChip("project", data.status),
-      html`<span>Indicative subtotal <span class="mono figure">${money(data.subtotal_cents)}</span></span>`,
+      html`<span>Estimated subtotal <span class="mono figure">${priceWords(data.subtotal_cents)}</span></span>`,
       html`<span>${data.line_count} lines</span>`,
     ])}
     ${editable
@@ -105,7 +106,7 @@ export function scopeView(dataRaw: unknown, page: Page): TemplateResult {
     <ul class="cards" data-testid="scope-lines">${data.lines.map((line) => lineRow(line, editable))}</ul>
     ${editable
       ? html`<div class="actions">
-          <button type="button" class="btn btn-primary" data-action="submit-rfq" data-testid="submit-rfq" ?disabled=${data.lines.length === 0}>Submit RFQ</button>
+          <button type="button" class="btn btn-primary" data-action="submit-rfq" data-testid="submit-rfq" ?disabled=${data.lines.length === 0}>Request a quote</button>
         </div>`
       : nothing}`;
 }
@@ -358,7 +359,7 @@ export async function scopeSubmitRfq(page: Page): Promise<void> {
   const answer = await tenantProcurement.tenantSubmitProcurementRFQ(page.client, page.route.projectId ?? "");
   if (answer.ok) {
     const anyUnpriced = answer.value.lines.some((line) => !line.priced);
-    page.say("ok", anyUnpriced ? "RFQ submitted. Lines without a price wait for the dealer." : "RFQ submitted. Lines priced indicatively.");
+    page.say("ok", anyUnpriced ? "Quote requested. Lines without a price wait for the dealer." : "Quote requested. Every line is priced as an estimate.");
     page.refresh();
   } else {
     page.say("alert", await actionFailure(page, answer));

@@ -88,6 +88,8 @@ test("the board groups by the contract's stage map: Plan, Quote, Order, Invoice"
   assert.ok(text.includes("Q-7002") === false, "an ACCEPTED quote has no quote stage");
   // Order: the confirmed through fulfilled orders.
   assert.ok(text.includes("SO-30506"), text);
+  assert.ok(text.includes("Wanted by"), "the order card says Wanted by");
+  assert.ok(text.includes("Not priced") && !text.includes("Awaiting price") && !text.includes("n/a"), "an unpriced plan says Not priced");
   assert.ok(text.includes("SO-30504"), text);
   // Invoice: the invoiced order.
   assert.ok(text.includes("SO-30501"), text);
