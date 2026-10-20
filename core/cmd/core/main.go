@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed|assist-billing-export> [flags]")
 		os.Exit(2)
 	}
 	// Demo-only roles (the demo build's serve, the demo one-shots) answer
@@ -86,13 +86,21 @@ func main() {
 			fmt.Fprintln(os.Stderr, "core: seed:", err)
 			os.Exit(1)
 		}
+	case "assist-billing-export":
+		if err := assistBillingExportRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: assist-billing-export:", err)
+			os.Exit(1)
+		}
 	case "demoseed":
 		if err := demoseedRole(os.Args[2:], os.Stdout, os.Getenv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed or demoseed)\n", role)
+		if assistRoleDispatch(role) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, demoseed, assist-billing-export, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
 		os.Exit(2)
 	}
 }

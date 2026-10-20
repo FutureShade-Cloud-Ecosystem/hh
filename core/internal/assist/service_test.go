@@ -27,8 +27,10 @@ func chatService(p Provider, led *fakeLedger, lim *fakeLimits, set StaticSetting
 		set = StaticSettings{}
 	}
 	reg := NewRegistry(rd.deps(), nil)
-	return NewService(reg, p, led, lim, set, nil).
+	svc := NewService(reg, p, led, lim, set, nil).
 		WithClock(func() time.Time { return at(11) })
+	svc.withTestMeter()
+	return svc
 }
 
 // -- the loop -----------------------------------------------------------------------------------

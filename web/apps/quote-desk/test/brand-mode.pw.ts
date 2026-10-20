@@ -18,13 +18,23 @@ const SIZES = [
   { name: "390", width: 390, height: 844 },
 ] as const;
 
+async function openAccountMenu(page: Page): Promise<void> {
+  const menu = page.locator("hh-shell-header .account-menu");
+  if (!(await menu.isVisible())) await page.locator("hh-shell-header button.account").click();
+}
+
 async function brand(page: Page): Promise<void> {
   const control = page.getByTestId("theme-control");
+  await openAccountMenu(page);
   for (let i = 0; i < 3; i += 1) {
-    if ((await control.textContent())?.includes("Brand")) return;
+    if ((await control.textContent())?.includes("Brand")) {
+      await page.keyboard.press("Escape");
+      return;
+    }
     await control.click();
   }
   await expect(control).toContainText("Brand");
+  await page.keyboard.press("Escape");
 }
 
 /** Every visible text run below the bar's measure: [text, ratio, needed], worst first, only the ones short of the bar. */
@@ -109,7 +119,9 @@ for (const size of SIZES) {
     await page.setViewportSize({ width: size.width, height: size.height });
     await signIn(page);
     await brand(page);
+    await openAccountMenu(page);
     await expect(page.getByTestId("theme-control")).toContainText("Brand");
+    await page.keyboard.press("Escape");
     await showList(page);
     await look(page, "list", size.name);
     await page.getByTestId("qb-list-row").filter({ hasText: "Q-1003" }).first().click();
@@ -128,6 +140,7 @@ for (const size of SIZES) {
 
 test("no theme word a person sees says Dark", async ({ page }) => {
   await signIn(page);
+  await openAccountMenu(page);
   const control = page.getByTestId("theme-control");
   const seen: string[] = [];
   for (let i = 0; i < 3; i += 1) {

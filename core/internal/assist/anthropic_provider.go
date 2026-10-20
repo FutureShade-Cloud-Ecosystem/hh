@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"net/http"
 	"sort"
 	"strings"
@@ -51,7 +52,7 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicProvider talks to an Anthropic-style Messages API.
 type AnthropicProvider struct {
-	key     Secret // never logged, never rendered, never serialised
+	key     redact.Secret // never logged, never rendered, never serialised
 	model   string
 	baseURL string
 	http    *http.Client
@@ -68,7 +69,7 @@ func NewAnthropicProvider(key, model, baseURL string) *AnthropicProvider {
 		baseURL = "https://api.anthropic.com"
 	}
 	return &AnthropicProvider{
-		key:     Secret(key),
+		key:     redact.NewSecret(key),
 		model:   model,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		// A bounded timeout, because an assistant that hangs holds a request goroutine and a user's

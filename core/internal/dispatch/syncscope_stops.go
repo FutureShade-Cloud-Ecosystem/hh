@@ -9,6 +9,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +28,7 @@ type StopsSyncStore struct {
 	orders OrderReader
 	link   syncLinker
 	role   SyncRoleResolver
+	lines  OrderLineReader
 }
 
 // NewStopsSyncStore wires the adapter. The order seam is the module's
@@ -42,6 +44,15 @@ func NewStopsSyncStore(pool *pgxpool.Pool, orders OrderReader, link syncLinker) 
 // fence. The composition test in cmd/core pins the wiring.
 func (s *StopsSyncStore) WithDriverRole(role SyncRoleResolver) *StopsSyncStore {
 	s.role = role
+	return s
+}
+
+// WithOrderLines wires the seam that answers "what comes off the truck at
+// this stop" for the driver arm of the stops scope. Only the drive-run stops
+// scope wires it; the board scopes that embed this store's reads do not, so
+// a desk caller's stop never carries a load list.
+func (s *StopsSyncStore) WithOrderLines(r OrderLineReader) *StopsSyncStore {
+	s.lines = r
 	return s
 }
 
@@ -93,6 +104,49 @@ func scanSyncStop(row pgx.Row) (syncStopRow, error) {
 		return syncStopRow{}, err
 	}
 	return syncStopRow{stop: st, seq: seq, deleted: deleted}, nil
+}
+
+// driverLoadList answers "what comes off the truck at this stop" as the
+// wire list the contract's DispatchDriverLine declares, or nil when the
+// caller is not a linked driver, the seam is not wired, or the read fails
+// or answers nothing (the device then shows "not recorded", never an empty
+// truck: the same posture Service.driverStopLines holds). byOrder caches
+// one read per order across a page.
+//
+// NO MONEY CAN ARRIVE HERE: DriverLine has no money member and the yard's
+// bin (PickFeedLine.Location) is dropped by the conversion.
+func (s *StopsSyncStore) driverLoadList(ctx context.Context, d driverFence, orderID string, byOrder map[string][]any) []any {
+	if s.lines == nil || !d.driver || d.driverID == "" || orderID == "" {
+		return nil
+	}
+	if cached, seen := byOrder[orderID]; seen {
+		return cached
+	}
+	var out []any
+	if raw, err := s.lines.OrderPickLines(ctx, orderID); err == nil && len(raw) > 0 {
+		lines := make([]DriverLine, 0, len(raw))
+		for _, l := range raw {
+			lines = append(lines, DriverLine{LineNo: l.LineNo, SKU: l.SKU, Description: l.Description, Qty: l.QtyOrdered, UOM: l.UOM})
+		}
+		if b, err := json.Marshal(lines); err == nil {
+			_ = json.Unmarshal(b, &out)
+		}
+	}
+	byOrder[orderID] = out
+	return out
+}
+
+// stateOf is stopStateOf plus the driver arm's load list. Callers hold no
+// transaction (the line read goes through another module's pool).
+func (s *StopsSyncStore) stateOf(ctx context.Context, d driverFence, r syncStopRow) (sync.RowState, error) {
+	rs, err := stopStateOf(r)
+	if err != nil || r.deleted {
+		return rs, err
+	}
+	if lines := s.driverLoadList(ctx, d, r.stop.OrderID, map[string][]any{}); lines != nil {
+		rs.Data["lines"] = lines
+	}
+	return rs, nil
 }
 
 // stopsSyncRowByID reads the full sync projection for one stop id on
@@ -160,6 +214,7 @@ func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int
 	defer rows.Close()
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
+	byOrder := map[string][]any{}
 	for rows.Next() {
 		r, err := scanSyncStop(rows)
 		if err != nil {
@@ -177,6 +232,15 @@ func (s *StopsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("dispatch: stops sync pull: %w", err)
+	}
+	// The load lists are read after the page's cursor closes: the order
+	// module's read takes its own connection, and a held cursor must not
+	// wait on a second acquisition from the same pool.
+	rows.Close()
+	for i := range items {
+		if lines := s.driverLoadList(ctx, d, fmt.Sprint(items[i].Data["order_id"]), byOrder); lines != nil {
+			items[i].Data["lines"] = lines
+		}
 	}
 	return items, tombstones, nil
 }
@@ -204,7 +268,7 @@ func (s *StopsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, ke
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("dispatch: stops sync find applied: %w", err)
 	}
-	rs, err := stopStateOf(r)
+	rs, err := s.stateOf(ctx, d, r)
 	return rs, true, err
 }
 
@@ -214,7 +278,15 @@ func (s *StopsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string
 	if err != nil {
 		return sync.RowState{}, false, err
 	}
-	return s.load(ctx, s.pool, f, d, id)
+	rs, found, err := s.load(ctx, s.pool, f, d, id)
+	if err != nil || !found {
+		return rs, found, err
+	}
+	// The driver arm's load list, read outside any transaction.
+	if lines := s.driverLoadList(ctx, d, fmt.Sprint(rs.Data["order_id"]), map[string][]any{}); lines != nil {
+		rs.Data["lines"] = lines
+	}
+	return rs, true, nil
 }
 
 // stopsQuerier is the read surface a pool and a transaction share, so one
@@ -442,7 +514,7 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	if err := tx.Commit(ctx); err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: commit stops sync create: %w", err)
 	}
-	return stopStateOf(r)
+	return s.stateOf(ctx, d, r)
 }
 
 // Write applies exactly the declared fields to one stop under the
@@ -542,7 +614,7 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 		if err := tx.Commit(ctx); err != nil {
 			return sync.RowState{}, fmt.Errorf("dispatch: commit stops sync write: %w", err)
 		}
-		return stopStateOf(r)
+		return s.stateOf(ctx, d, r)
 	}
 	to := from
 	if hasStatus {
@@ -581,7 +653,7 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 	if err := tx.Commit(ctx); err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: commit stops sync write: %w", err)
 	}
-	return stopStateOf(r)
+	return s.stateOf(ctx, d, r)
 }
 
 // Delete tombstones one stop: deleted_at set, the row retained, a

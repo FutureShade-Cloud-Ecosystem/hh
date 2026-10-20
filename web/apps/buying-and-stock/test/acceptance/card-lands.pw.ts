@@ -23,7 +23,7 @@ test("the front door's Procurement manager card opens the Buying and Stock app o
   await expect(page).toHaveURL(/\/buying-and-stock\/$/);
   await expect(page.getByRole("heading", { name: "Buying and Stock", level: 1 })).toBeVisible();
   await expect(page.locator("[data-flow]")).toHaveCount(0);
-  await expect(page.locator("hos-app-header")).toBeVisible();
-  await expect(page.locator("hos-app-header")).toContainText("Procurement manager (demo)");
+  await expect(page.locator("hh-shell-header")).toBeVisible();
+  await expect(page.locator("hh-shell-header")).toContainText("Procurement manager");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
 });

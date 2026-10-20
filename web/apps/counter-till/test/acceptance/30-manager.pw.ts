@@ -1,4 +1,5 @@
 import { openReturns } from "./helpers.js";
+import { closeAccountMenu, openAccountMenu } from "../account-menu";
 import {
   expect,
   SEEDED,
@@ -36,7 +37,9 @@ test("the way in: the manager's card opens the same till under its own name", as
   // lands on the role home, the Counter Till tile opens the till.
   await tapRoleCard(page, "Sales manager");
   await openCounterTill(page);
+  await openAccountMenu(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
+  await closeAccountMenu(page);
   // The till has loaded under the manager's name: the drawer open, the
   // identity line, the parked button's count.
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
@@ -161,12 +164,16 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   await resumeFirst();
 
   // The manager's ticket waits; the clerk picks it up.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await signIn(page, "Sales");
   await resumeFirst();
 
   // And the clerk's ticket waits; the manager picks it up.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await signIn(page, "Sales manager");
   await resumeFirst();
 });
@@ -200,7 +207,9 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   expect([400, 422]).toContain(managerWrite.status);
   // Sign out: the front door picker comes back with the manager's card on it
   // and no coming roles.
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
+  await closeAccountMenu(page);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
