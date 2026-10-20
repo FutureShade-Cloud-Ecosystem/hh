@@ -27,6 +27,8 @@ package assist
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -257,7 +259,9 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		return Answer{Text: res.Refusal, Results: []Result{}, Usage: usageOf(id, 0, 0)}, nil
 	}
 
-	run := &askRun{msgs: append(sanitizeHistory(history), Message{Role: RoleUser, Text: question})}
+	tag := newExchangeTag()
+	msgs := append([]Message{{Role: RoleSystem, Text: systemPromptFor(tag)}}, sanitizeHistory(history)...)
+	run := &askRun{tag: tag, msgs: append(msgs, Message{Role: RoleUser, Text: question})}
 
 	if len(res.Calls) > 0 {
 		// A RESOLVED FOLLOW-UP SKIPS THE PROVIDER'S FIRST ROUND. The resolver already decided which
@@ -307,6 +311,23 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	}, nil
 }
 
+// newExchangeTag is the random tag of one exchange's data envelope: 64 bits from the system's
+// random source, so a record written before the exchange cannot contain the closing marker.
+func newExchangeTag() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// The system source failing is not survivable for a boundary that depends on it.
+		panic("assist: no randomness for the data envelope tag: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// envelope wraps a tool result for the model: a labelled data block with the exchange's tag. See
+// systemPromptFor for the rule the model is given about what is inside.
+func envelope(tag, command, body string) string {
+	return "[[DATA " + tag + " " + command + "]]\n" + body + "\n[[END DATA " + tag + "]]"
+}
+
 // askRun is the state of one Ask across its rounds: the conversation as it will be sent, what the
 // commands returned, and what the provider calls cost.
 type askRun struct {
@@ -321,6 +342,8 @@ type askRun struct {
 	filled   bool
 	// alias is the route entry the next provider call is for; note is OUR text naming the check the
 	// last reply failed, sent once with the retry.
+	// tag is this exchange's random envelope tag.
+	tag       string
 	alias     string
 	note      string
 	answerNow bool
@@ -408,14 +431,14 @@ func (s *Service) exec(ctx context.Context, c Caller, run *askRun, text string, 
 				Role:       RoleTool,
 				ToolCallID: call.ID,
 				ToolName:   call.Command,
-				Text:       msg,
+				Text:       envelope(run.tag, call.Command, msg),
 				Result:     &Result{Command: call.Command, Headline: msg, Empty: true},
 			})
 			continue
 		}
 		run.results = append(run.results, out)
 		run.ran = append(run.ran, Invocation{Command: call.Command, Args: call.Args})
-		run.msgs = append(run.msgs, Message{Role: RoleTool, ToolCallID: call.ID, ToolName: call.Command, Text: renderResult(out), Result: &out})
+		run.msgs = append(run.msgs, Message{Role: RoleTool, ToolCallID: call.ID, ToolName: call.Command, Text: envelope(run.tag, call.Command, renderResult(out)), Result: &out})
 	}
 }
 

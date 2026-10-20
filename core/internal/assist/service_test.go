@@ -182,7 +182,7 @@ func TestAsk_HistoryIsBoundedSoTheBillDoesNotGrowQuadratically(t *testing.T) {
 	if _, err := svc.Ask(context.Background(), manager(), "the new one", history); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
-	sent := p.seen[0].Messages
+	sent := withoutSystem(p.seen[0].Messages)
 	if len(sent) != maxHistory+1 {
 		t.Fatalf("sent %d messages, want %d trimmed turns plus the new question", len(sent), maxHistory)
 	}
