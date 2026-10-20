@@ -103,6 +103,7 @@ type demoServeConfig struct {
 	tokenTTL         time.Duration
 	listenAddr       string
 	visitorAllowance int
+	addressCeiling   int
 }
 
 func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
@@ -133,13 +134,15 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 	if err != nil {
 		return demoServeConfig{}, err
 	}
+	visitorAllowance := demo.VisitorAllowance(getenv(demo.VisitorAllowanceVar))
 	cfg := demoServeConfig{
 		signin:           mode,
 		databaseURL:      databaseURL,
 		staffAudience:    staff,
 		tenantAudience:   tenant,
 		listenAddr:       addr,
-		visitorAllowance: demo.VisitorAllowance(getenv(demo.VisitorAllowanceVar)),
+		visitorAllowance: visitorAllowance,
+		addressCeiling:   demo.AddressCeiling(getenv(demo.AddressCeilingVar), visitorAllowance),
 	}
 	if mode == signinConsole {
 		// The console mode runs the real issuer and FB Console membership,
@@ -521,9 +524,9 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// issuer, the org resolver and the staff resolver above, the audit
 	// recorder the money spine already writes its trail with, and the
 	// closed flow table; the per-visitor limit arrives by constructor too,
-	// read from HH_DEMO_MINT_VISITOR_ALLOWANCE once at boot, while the
-	// address ceiling stays at DefaultAddressCeiling whatever the visitor
-	// allowance is set to.
+	// read from HH_DEMO_MINT_VISITOR_ALLOWANCE once at boot, and the
+	// address ceiling from HH_DEMO_MINT_ADDRESS_CEILING the same way (the
+	// default when unset, capped, never below the visitor allowance).
 	//
 	// Registered in the demo mode only. Under the console mode the old mint
 	// routes are not registered and answer 404: a copy that signs real
@@ -532,7 +535,8 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	if demoCfg.signin == signinDemo {
 		mint, err := demo.NewMint(demo.MintDeps{
 			Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc,
-			Limit: demo.NewAddressLimit(demoCfg.visitorAllowance, 0, nil),
+			Limit:   demo.NewAddressLimit(demoCfg.visitorAllowance, 0, nil),
+			Ceiling: demo.NewAddressLimit(demoCfg.addressCeiling, 0, nil),
 		})
 		if err != nil {
 			pool.Close()
