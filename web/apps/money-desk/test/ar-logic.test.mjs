@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -311,4 +311,9 @@ test("the money desk surface config read serves the dealer's zone for the day wo
   } finally {
     resetHouseZone();
   }
+});
+
+test("the statement's over band notice says over 60 days, the strip's own word, and never more than", () => {
+  assert.equal(STATEMENT_OVERDUE_NOTE, "of this balance is over 60 days past due. Please contact our office to arrange payment.");
+  assert.ok(!STATEMENT_OVERDUE_NOTE.includes("more than"));
 });

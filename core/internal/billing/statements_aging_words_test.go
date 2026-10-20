@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,21 @@ func TestGenerateRun_NoticeReferenceReadsInTheGlossaryForm(t *testing.T) {
 	}
 	if got, want := StatementRef(store.notice.AsOfDate), "STMT Mar 31, 2026"; got != want {
 		t.Errorf("notice reference = %q, want %q", got, want)
+	}
+}
+
+// An activity line's date is the dealer's day, the same day the statement's cut off uses. A 9 pm sale
+// on Mar 1 in a zone west of UTC is Mar 2 in UTC and must still print Mar 1 under "As of Mar 1".
+// StatementLines needs a database, so the conversion is tested where it is made, in statementLineDate.
+func TestStatementLineDate_IsTheDealersDay(t *testing.T) {
+	zone, err := houseday.NewZone("America/Toronto")
+	if err != nil {
+		t.Fatalf("zone: %v", err)
+	}
+	at := time.Date(2026, time.March, 2, 2, 0, 0, 0, time.UTC) // 9 pm on Mar 1, Toronto
+	lines := []StatementLine{{Date: statementLineDate(zone, at)}}
+	out := RenderStatementHTML(StatementHeader{BranchName: "Branch"}, AgingRow{}, lines, houseClockIn(zone, at))
+	if !strings.Contains(out, ">Mar 1, 2026<") || strings.Contains(out, ">Mar 2, 2026<") {
+		t.Errorf("a 9 pm Mar 1 sale must print Mar 1: %s", out)
 	}
 }
