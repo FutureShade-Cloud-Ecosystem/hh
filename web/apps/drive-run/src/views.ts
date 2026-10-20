@@ -483,12 +483,12 @@ export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
   } else if (view.flows.kind === "unavailable") {
-    body = html`<p class="alert alert-error" role="alert">The demo way in is not available on this box.</p>`;
+    body = html`<p class="alert alert-error" role="alert">This way in is not available here. Sign in from your role's own start.</p>`;
   } else {
     const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
     body =
       flow === undefined
-        ? html`<p class="alert alert-error" role="alert">The Driver card is not on this box yet.</p>`
+        ? html`<p class="alert alert-error" role="alert">The Driver role is not available here yet.</p>`
         : html`<button type="button" class="btn btn-primary big" data-action="choose" data-flow=${flow.flow} ?disabled=${view.busy} data-tap>${flow.label}</button>`;
   }
   return html`
