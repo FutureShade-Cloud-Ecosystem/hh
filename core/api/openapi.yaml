@@ -1219,7 +1219,7 @@ paths:
       tags:
         - staff-billing
       summary: Record one received payment across the account's open invoices
-      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable, an invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 422, and the same body under the same key answers the first result and writes nothing."
+      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable, an invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body, and the replay judgement runs before the body is validated: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 409 Conflict, and the same body under the same key answers the first result and writes nothing. Pre-write validation refusals (the shape of the body itself) answer 422, so a client tells a spent key from a malformed body by status alone."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -1240,14 +1240,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingApplyPaymentAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
-          description: "The payment is refused in words with nothing applied: an amount over the selected invoices' payable, an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch, or a key already spent on another account's payment or on a different payment"
+          description: "The payment is refused in words with nothing applied: an amount over the selected invoices' payable, an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch"
           content:
             application/json:
               schema:

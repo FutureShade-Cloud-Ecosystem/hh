@@ -229,12 +229,41 @@ func (s *Service) ShortfallWorklist(ctx context.Context, reach BranchReach, bran
 	return Worklist{Rows: rows, OnOrderDegraded: degraded}, nil
 }
 
-// ListReorderPoints returns the managed lines at a branch.
-func (s *Service) ListReorderPoints(ctx context.Context, branchID string, limit int) ([]ReorderPoint, error) {
+// reorderPointStore is the persistence seam for the managed-lines read, discovered off the base
+// store like every other optional read in this package so a unit test can state the fence without a
+// database.
+type reorderPointStore interface {
+	ListReorderPoints(ctx context.Context, reach BranchReach, branchID string, limit int) ([]ReorderPoint, error)
+}
+
+// ListReorderPoints returns the managed lines at a branch, fenced by the caller's reach exactly as
+// ShortfallWorklist is: a named branch out of reach is a 403 in words, a scoped caller with no
+// grants gets an empty page without touching the database, and the reach rides into the SQL as a
+// branch set so the WHERE and the LIMIT both run inside it.
+func (s *Service) ListReorderPoints(ctx context.Context, reach BranchReach, branchID string, limit int) ([]ReorderPoint, error) {
+	branchID, err := fenceNamedBranch(reach, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if reach.reachesNothing() {
+		return []ReorderPoint{}, nil
+	}
 	if limit <= 0 || limit > 1000 {
 		limit = 500
 	}
-	return s.repo.ListReorderPoints(ctx, branchID, limit)
+	st, ok := s.db().(reorderPointStore)
+	if !ok {
+		return nil, ErrStockLookupNotConfigured
+	}
+	rows, err := st.ListReorderPoints(ctx, reach, branchID, limit)
+	if err != nil {
+		return nil, err
+	}
+	// `[]`, never nil: "no managed lines" is an ordinary answer, not a null.
+	if rows == nil {
+		rows = []ReorderPoint{}
+	}
+	return rows, nil
 }
 
 // SetReorderPoint upserts one managed line.

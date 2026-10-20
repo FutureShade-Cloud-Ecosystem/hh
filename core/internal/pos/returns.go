@@ -17,6 +17,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 )
@@ -220,35 +221,36 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	}
 	var out Return
 	var replayedHere, approvedHere bool
+	// The two-transaction card refund (HH-690): short tx 1 locks the sale, guards the lines, runs
+	// the approval gate and stages the attempt IN_FLIGHT, then COMMITS and releases every DB lock;
+	// the processor call runs outside any DB transaction; short tx 2 (returnInTx below) books the
+	// return against the staged reversal ref. No restock row lock, invoice lock or payments counter
+	// is ever held across the processor call.
+	if in.RefundMethod == RefundCard && !in.railOptional {
+		err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+			var txErr error
+			out, replayedHere, _, txErr = s.stageCardReturnInTx(ctx, tx, plan)
+			return txErr
+		})
+		if err != nil {
+			return s.returnFailed(ctx, plan, err)
+		}
+		if replayedHere {
+			return out, nil
+		}
+		if derr := s.dispatchStagedCardRefunds(ctx, []*returnPlan{plan}); derr != nil {
+			return s.returnFailed(ctx, plan, derr)
+		}
+		out = Return{}
+		replayedHere = false
+	}
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
 		var txErr error
 		out, replayedHere, approvedHere, txErr = s.returnInTx(ctx, tx, plan)
 		return txErr
 	})
 	if err != nil {
-		// The approval refusal writes its own audit row naming the clerk,
-		// the sale and the amount (D49): the money asked for, refused at
-		// the counter, is exactly the fact the trail exists to keep.
-		var refusal ErrRefundApprovalRequired
-		if errors.As(err, &refusal) {
-			s.record(ctx, audit.SensitiveAccess{
-				Action: auditActionRefundApprovalRefused, EntityType: "pos.return", EntityID: plan.oc.OrderID,
-				ActorID: plan.actor, BranchID: plan.oc.BranchID, Purpose: "POS_RETURN",
-				Reason: refundApprovalRequiredError,
-				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
-			})
-			return Return{}, refusal
-		}
-		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay),
-		// judged against the winner's own sale by the same wall.
-		if isUniqueViolationErr(err) {
-			if cached, found, ferr := s.replayIfAllowed(ctx, in.IdempotencyKey, plan.caller); ferr == nil && found {
-				s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
-				return cached, nil
-			}
-		}
-		s.settleCardRefunds(ctx, []*returnPlan{plan}, err)
-		return Return{}, err
+		return s.returnFailed(ctx, plan, err)
 	}
 	s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
 	// The in-transaction duplicate answered its twin's replay: the twin's
@@ -283,6 +285,205 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	return out, nil
 }
 
+// returnFailed is the one failure path of the single return, shared by both transactions of the
+// two-transaction card refund and the plain single-transaction body: the approval refusal writes
+// its own audit row (D49), a concurrent duplicate surfaces the winner's replay, and the card
+// refund facts the dead attempt leaves behind are settled on record.
+func (s *Service) returnFailed(ctx context.Context, plan *returnPlan, err error) (Return, error) {
+	// The approval refusal writes its own audit row naming the clerk,
+	// the sale and the amount (D49): the money asked for, refused at
+	// the counter, is exactly the fact the trail exists to keep.
+	var refusal ErrRefundApprovalRequired
+	if errors.As(err, &refusal) {
+		s.record(ctx, audit.SensitiveAccess{
+			Action: auditActionRefundApprovalRefused, EntityType: "pos.return", EntityID: plan.oc.OrderID,
+			ActorID: plan.actor, BranchID: plan.oc.BranchID, Purpose: "POS_RETURN",
+			Reason: refundApprovalRequiredError,
+			Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+		})
+		return Return{}, refusal
+	}
+	// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay),
+	// judged against the winner's own sale by the same wall.
+	if isUniqueViolationErr(err) {
+		if cached, found, ferr := s.replayIfAllowed(ctx, plan.in.IdempotencyKey, plan.caller); ferr == nil && found {
+			s.settleCardRefunds(ctx, []*returnPlan{plan}, nil)
+			return cached, nil
+		}
+	}
+	s.settleCardRefunds(ctx, []*returnPlan{plan}, err)
+	return Return{}, err
+}
+
+// stageCardReturnInTx is short tx 1 of the two-transaction card refund (HH-690): the per-sale lock,
+// the in-transaction replay re-check, the line guard, the approval gate and the capture ceiling all
+// run HERE, then the attempt is staged IN_FLIGHT in pos_card_refund_attempts and the transaction
+// commits, releasing every DB lock before the processor is called. It answers the replay when the
+// key's twin already committed, and whether a card amount was staged.
+func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (Return, bool, bool, error) {
+	in, oc, caller := plan.in, plan.oc, plan.caller
+	if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
+		return Return{}, false, false, err
+	}
+	cached, found, rerr := s.replayIfAllowedTx(ctx, tx, in.IdempotencyKey, caller)
+	if rerr != nil {
+		return Return{}, false, false, rerr
+	}
+	if found {
+		return cached, true, false, nil
+	}
+	g, gerr := s.guardReturnLines(ctx, tx, oc, in.Lines, in.Restock)
+	if gerr != nil {
+		return Return{}, false, false, gerr
+	}
+	total := g.subtotal + g.taxTotal
+	if _, aerr := s.returnApprovalGateTx(ctx, tx, plan, total); aerr != nil {
+		return Return{}, false, false, aerr
+	}
+	// The rail amount tx 2 will book: the split of an order that is not fully paid decides it the
+	// same way commitReturnTx does, so the staged amount and the booked amount can be compared.
+	railTotal := total - plan.applied
+	if plan.applied == 0 {
+		sp, serr := s.railSplitFor(ctx, tx, oc, in.RefundMethod, total)
+		if serr != nil {
+			return Return{}, false, false, serr
+		}
+		if sp.rail == 0 && sp.offset > 0 {
+			return Return{}, false, false, clientErr(http.StatusUnprocessableEntity, "%s", sp.note)
+		}
+		railTotal = total - sp.offset
+	}
+	plan.stagedRailTotal = railTotal
+	if railTotal > 0 {
+		if err := s.checkCardCapTx(ctx, tx, oc, "", "refund:"+in.IdempotencyKey, railTotal); err != nil {
+			return Return{}, false, false, err
+		}
+		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
+			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID,
+			CustomerID: oc.CustomerID, GatewayRef: oc.GatewayRef, AmountCents: railTotal,
+		})
+		if err != nil {
+			return Return{}, false, false, err
+		}
+		plan.stagedRefundRef = existing
+		plan.stagedRefundCents = stored
+	}
+	return Return{}, false, true, nil
+}
+
+// returnApprovalGateTx is the single return's refund approval gate (X7, the CUMULATIVE rule) on the
+// open transaction after the per-sale lock: the exact block returnInTx has always run, shared with
+// short tx 1 of the two-transaction card refund so the refusal lands before any processor call. It
+// answers whether a manager's decision stands behind the return (the caller proceeds), or the
+// refusal.
+func (s *Service) returnApprovalGateTx(ctx context.Context, tx pgx.Tx, plan *returnPlan, total int64) (bool, error) {
+	if plan.in.internalRail {
+		return false, nil
+	}
+	prior, err := s.store.SumCommittedReturnTotalsTx(ctx, tx, plan.oc.OrderID)
+	if err != nil {
+		return false, err
+	}
+	cumulative := prior + total
+	refusal, refused := s.refundApprovalRefusal(cumulative, total, plan.caller)
+	// Above the amount, a presented credential must qualify, whoever carried it (the lead's P2-B
+	// ruling): a failed judgment refuses on its own family, a credential that does not qualify
+	// refuses with the contract's body, the configured amount and the configured approvers.
+	if plan.credentialJudged && s.roles.RefundRequiresApproval(cumulative) {
+		if plan.judgeErr != nil {
+			return false, plan.judgeErr
+		}
+		if !plan.decision.pending {
+			refusal = s.standingRefusalFor(total)
+			refused = true
+		}
+	}
+	if refused {
+		if !plan.decision.pending {
+			return false, refusal
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// dispatchStagedCardRefunds is the BETWEEN-transactions step of the two-transaction card refund
+// (HH-690): NO DB transaction is open and NO DB lock is held. Each staged plan calls the processor
+// with tx nil (the pool-backed entry point), records the reversal's ref UNBOOKED on the pool the
+// moment the processor answers, and keeps the fact for tx 2's settle. A plan whose staging already
+// found an earlier UNBOOKED attempt's ref reuses it and never calls the processor a second time. A
+// processor refusal closes its own and every later still-IN_FLIGHT attempt FAILED (no money moved),
+// leaves the earlier dispatched children UNBOOKED on record, and answers the 502.
+func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*returnPlan) error {
+	for i, p := range plans {
+		if p.in.RefundMethod != RefundCard || p.in.railOptional || p.stagedRailTotal <= 0 {
+			continue
+		}
+		refundKey := "refund:" + p.in.IdempotencyKey
+		fact := cardRefundFact{
+			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.oc.BranchID,
+			CustomerID: p.oc.CustomerID, GatewayRef: p.oc.GatewayRef, AmountCents: p.stagedRailTotal,
+		}
+		// An earlier attempt under the same key already refunded at the processor: reuse its ref
+		// and ITS amount (the staging compared the bodies, so the two agree here).
+		if p.stagedRefundRef != "" {
+			fact.RefundRef = p.stagedRefundRef
+			fact.AmountCents = p.stagedRefundCents
+			p.cardRefunds = append(p.cardRefunds, fact)
+			continue
+		}
+		refundRef, err := s.cardRefund.RefundCard(ctx, nil, p.oc.GatewayRef, p.stagedRailTotal, p.oc.OrderNo, refundKey)
+		if err != nil {
+			reason := trimReason(err.Error())
+			// The failed child: only a decline or a not-dispatched failure is KNOWN to have
+			// moved no money, so only those close FAILED. Anything else (an unknown outcome, a
+			// transport timeout, an unclassified error) holds the attempt IN_FLIGHT with its
+			// reason: the amount stays reserved against the capture ceiling and the same-key
+			// retry refuses instead of refunding again (HH-690 round 2, P1-2).
+			if isCardRefundNoMoneyMoved(err) {
+				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), refundKey, reason); ferr != nil {
+					slog.Default().Warn("pos: the refused card refund attempt could not be closed", "err", ferr)
+				}
+			} else if herr := s.store.HoldCardRefundAttemptInFlight(context.WithoutCancel(ctx), refundKey, reason); herr != nil {
+				slog.Default().Warn("pos: the unknown-outcome card refund attempt could not be held", "err", herr)
+			}
+			// Every LATER child was never sent over the wire: no money can have moved for any
+			// of them, so they close FAILED whatever the failed child's own classification.
+			for _, late := range plans[i+1:] {
+				if late.in.RefundMethod != RefundCard || late.in.railOptional || late.stagedRailTotal <= 0 || late.stagedRefundRef != "" {
+					continue
+				}
+				if ferr := s.store.FailCardRefundAttempt(context.WithoutCancel(ctx), "refund:"+late.in.IdempotencyKey, reason); ferr != nil {
+					slog.Default().Warn("pos: the undispatched card refund attempt could not be closed", "err", ferr)
+				}
+			}
+			s.settleCardRefunds(ctx, plans, err)
+			return clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
+		}
+		p.stagedRefundRef = refundRef
+		p.stagedRefundCents = p.stagedRailTotal
+		fact.RefundRef = refundRef
+		p.cardRefunds = append(p.cardRefunds, fact)
+		if derr := s.store.RecordCardRefundDispatched(context.WithoutCancel(ctx), fact); derr != nil {
+			// Best effort by the same discipline as settleCardRefunds: the fact rides the plan,
+			// so tx 2's settle closes the row BOOKED on commit or UNBOOKED with the ref on rollback.
+			slog.Default().Warn("pos: the dispatched card refund record could not be written", "err", derr)
+		}
+	}
+	return nil
+}
+
+// isCardRefundNoMoneyMoved answers whether a card refund failure is KNOWN to have moved no money:
+// the processor's own decline, or a failure that happened before anything reached it (HH-690
+// round 2, P1-2). Every other failure (an unknown outcome, a transport timeout, an unclassified
+// error) may have refunded, so its attempt is held open, never closed FAILED.
+func isCardRefundNoMoneyMoved(err error) bool {
+	var decline *payment.DeclineError
+	return errors.As(err, &decline) ||
+		errors.Is(err, payment.ErrProcessorDeclined) ||
+		errors.Is(err, payment.ErrProcessorNotDispatched)
+}
+
 // returnPlan is everything the return resolves BEFORE any transaction
 // opens: the validated input, the original sale's context, the caller and
 // the approver facts. Every read here runs on the pool while no connection
@@ -296,6 +497,17 @@ type returnPlan struct {
 	// cardRefunds are the processor refunds this return made inside its transaction (D4): read by
 	// the caller after the transaction ended to record the ones a rollback left unbooked.
 	cardRefunds []cardRefundFact
+	// stagedRailTotal and stagedRefundRef are the two-transaction card refund's staging facts
+	// (HH-690): short tx 1 computed the rail total and staged the attempt, and the dispatch
+	// outside any DB transaction either holds the reversal's processor ref or an earlier
+	// UNBOOKED attempt's ref it reused. stagedRefundCents is the amount the processor actually
+	// refunded under that ref (the stored amount of the reused attempt, or the fresh dispatch's
+	// own amount): tx 2 compares against IT, never against the new body's figure alone
+	// (HH-690 round 2, P1-1). Tx 2 (commitReturnTx) reuses the ref instead of calling the
+	// processor again, and refuses in words if the sale's balance moved under it.
+	stagedRailTotal   int64
+	stagedRefundRef   string
+	stagedRefundCents int64
 	// applied is the part of this return\'s total spent on a swap\'s new order (10.5): the rail moves
 	// total less applied. Set inside the swap\'s transaction once the guard has priced the note.
 	applied int64
@@ -507,9 +719,6 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	in := plan.in
 	oc := plan.oc
 	caller := plan.caller
-	decision := plan.decision
-	judgeErr := plan.judgeErr
-	credentialJudged := plan.credentialJudged
 
 	// Serialize every return of the sale before any line lock: the line
 	// locks below serialize only returns of the SAME line, two concurrent
@@ -592,37 +801,14 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	// return carried again with the approver's credential in its header
 	// commits as the manager's decision when the credential qualified
 	// in the pre-transaction resolution (approver.go); anything short of
-	// that leaves the standing refusal in place.
-	if !in.internalRail {
-		prior, err := s.store.SumCommittedReturnTotalsTx(ctx, tx, oc.OrderID)
-		if err != nil {
-			return Return{}, false, false, err
-		}
-		cumulative := prior + total
-		refusal, refused := s.refundApprovalRefusal(cumulative, total, caller)
-		// Above the amount, a presented credential must qualify,
-		// whoever carried it (the lead's P2-B ruling): a failed
-		// judgment refuses on its own family, a credential that does
-		// not qualify refuses with the contract's body, the configured
-		// amount and the configured approvers, never null and never
-		// zero. Within the amount nothing here stirs: the header is
-		// inert, and under no limit (RefundRequiresApproval folding the
-		// switch in) it never stirs at all.
-		if credentialJudged && s.roles.RefundRequiresApproval(cumulative) {
-			if judgeErr != nil {
-				return Return{}, false, false, judgeErr
-			}
-			if !decision.pending {
-				refusal = s.standingRefusalFor(total)
-				refused = true
-			}
-		}
-		if refused {
-			if !decision.pending {
-				return Return{}, false, false, refusal
-			}
-			approvedHere = true
-		}
+	// that leaves the standing refusal in place. Short tx 1 of the
+	// two-transaction card refund runs the SAME gate (returnApprovalGateTx)
+	// so a refusal lands before any processor call, with zero rows in
+	// pos_card_refund_attempts.
+	var gerr2 error
+	approvedHere, gerr2 = s.returnApprovalGateTx(ctx, tx, plan, total)
+	if gerr2 != nil {
+		return Return{}, false, false, gerr2
 	}
 
 	// 2 through 5: the header, the rail, the restock and the events (the shared commit half).
@@ -954,24 +1140,42 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		}
 		refundPaymentID = res.PaymentID
 	case in.RefundMethod == RefundCard:
-		// The reversal rides THIS transaction (the CardRefunder seam's
-		// discipline): a pool read while the Return transaction holds a
-		// connection has the per-sale lock's holder wait for a second
-		// connection every other connection is a Return waiter that needs
-		// the holder's lock, deadlocking a full pool.
-		if err := s.checkCardCapTx(ctx, tx, oc, returnID, "refund:"+in.IdempotencyKey, railTotal); err != nil {
-			return Return{}, err
+		// The staged path (HH-690): the processor already refunded OUTSIDE any DB transaction
+		// (dispatchStagedCardRefunds), so tx 2 only re-checks the ceiling and books against the
+		// staged reversal ref. The sale's returnable balance moved under the in-flight refund:
+		// refuse in words and leave the attempt UNBOOKED for reconciliation, never book a return
+		// whose money no longer matches what the processor holds.
+		if plan.stagedRefundRef != "" {
+			if (plan.stagedRailTotal > 0 && railTotal != plan.stagedRailTotal) ||
+				(plan.stagedRefundCents > 0 && railTotal != plan.stagedRefundCents) {
+				return Return{}, clientErr(http.StatusConflict,
+					"pos: the sale's returnable balance changed while the card refund was in flight; review the sale")
+			}
+			if err := s.checkCardCapTx(ctx, tx, oc, returnID, "refund:"+in.IdempotencyKey, railTotal); err != nil {
+				return Return{}, err
+			}
+		} else {
+			// The reversal rides THIS transaction (the CardRefunder seam's
+			// discipline): a pool read while the Return transaction holds a
+			// connection has the per-sale lock's holder wait for a second
+			// connection every other connection is a Return waiter that needs
+			// the holder's lock, deadlocking a full pool.
+			if err := s.checkCardCapTx(ctx, tx, oc, returnID, "refund:"+in.IdempotencyKey, railTotal); err != nil {
+				return Return{}, err
+			}
+			var err error
+			plan.stagedRefundRef, err = s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, railTotal, returnNo, "refund:"+in.IdempotencyKey)
+			if err != nil {
+				return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
+			}
+			// The processor now holds this refund whatever becomes of the transaction: keep the fact so a
+			// rollback leaves a record of it (D4).
+			plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
+				RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+				GatewayRef: oc.GatewayRef, RefundRef: plan.stagedRefundRef, AmountCents: railTotal,
+			})
 		}
-		refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, railTotal, returnNo, "refund:"+in.IdempotencyKey)
-		if err != nil {
-			return Return{}, clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
-		}
-		// The processor now holds this refund whatever becomes of the transaction: keep the fact so a
-		// rollback leaves a record of it (D4).
-		plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
-			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
-			GatewayRef: oc.GatewayRef, RefundRef: refundRef, AmountCents: railTotal,
-		})
+		refundRef := plan.stagedRefundRef
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: railTotal, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
@@ -1172,6 +1376,15 @@ func centsWords(cents int64) string {
 	return fmt.Sprintf("%s$%d.%02d", sign, cents/100, cents%100)
 }
 
+// trimReason bounds a processor or transaction refusal kept on an attempt row: the record a manager
+// reads, never a log line, so it stops at 300 runes.
+func trimReason(reason string) string {
+	if r := []rune(reason); len(r) > 300 {
+		return string(r[:300])
+	}
+	return reason
+}
+
 // settleCardRefunds records, on the pool after the transaction ended, what the processor refunded
 // inside it: a rolled back transaction leaves each refund on record as UNBOOKED for a manager to
 // see, a committed one closes any earlier such record as BOOKED (D4). Best effort by design: the
@@ -1188,11 +1401,7 @@ func (s *Service) settleCardRefunds(ctx context.Context, plans []*returnPlan, tx
 	}
 	var err error
 	if txErr != nil {
-		reason := txErr.Error()
-		if r := []rune(reason); len(r) > 300 {
-			reason = string(r[:300])
-		}
-		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, reason)
+		err = s.store.RecordUnbookedCardRefunds(context.WithoutCancel(ctx), facts, trimReason(txErr.Error()))
 	} else {
 		keys := make([]string, len(facts))
 		for i, f := range facts {

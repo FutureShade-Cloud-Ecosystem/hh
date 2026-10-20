@@ -115,8 +115,13 @@ export class LookupDesk implements AreaDesk {
 
   /** Asks the public image read which of the products carry a picture; the misses stay slots. */
   #readImages(productIds: readonly string[]): void {
+    // Skip product ids the cache already names: a second search covers the same row again, and
+    // the public image read would otherwise redial for the answer the cache holds. The check sits
+    // before Promise.all so the network stays at "the rows that are new to the screen".
+    const fresh = productIds.filter((id) => !this.#images.has(id));
+    if (fresh.length === 0) return;
     void Promise.all(
-      productIds.map((id) =>
+      fresh.map((id) =>
         fetch(this.imageUrl(id))
           .then((r) => (r.ok ? id : null))
           .catch(() => null),
