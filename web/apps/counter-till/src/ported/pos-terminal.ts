@@ -4195,6 +4195,13 @@ export class HosPosTerminal extends LitElement {
     drop?.focusFirstRow?.();
   }
 
+  /** A result row was added (click or Enter on the row): the field behaves as after a scan, cleared and focused. */
+  private dropAdded(hit: { name: string; sku: string }): void {
+    this.renderRoot
+      .querySelector<HTMLElement & { commitDone?: (m: string) => void }>('hos-pos-scan-box')
+      ?.commitDone?.(`Added ${hit.name} · ${hit.sku}`);
+  }
+
   private focusScanBox(): void {
     void this.updateComplete.then(() => {
       this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>('hos-pos-scan-box')?.focusInput?.();
@@ -5735,6 +5742,9 @@ export class HosPosTerminal extends LitElement {
       case HK_SEARCH:
         if (s.rungDone) return false;
         this.openAccordion('items');
+        // openAccordion leaves the caret alone when focus is already inside Items (a result row,
+        // a line control): the search key always means the search, so ask the box directly.
+        this.focusScanBox();
         return true;
       default:
         return false;
@@ -6473,6 +6483,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         .term=${this.lookupTerm}
         .ticketEpoch=${this.ticketEpoch}
         @pos-drop-exit=${() => this.focusScanBox()}
+        @pos-drop-added=${(e: CustomEvent<{ name: string; sku: string }>) => this.dropAdded(e.detail)}
         @pos-add-product=${(e: CustomEvent<{ product: PosProduct }>) => this.addProduct(e.detail.product)}
         @pos-add-echo=${(e: CustomEvent<{ id: string }>) => this.onAddEcho(e.detail.id)}
       ></hos-pos-search-drop>

@@ -34,6 +34,36 @@ test("Enter on a typed name adds the highlighted result", async ({ page }) => {
   await expect(page.getByTestId("pos-scan-msg")).not.toContainText("No product");
 });
 
+test("after an add the search is empty and focused, and F2 always returns to it", async ({ page }) => {
+  await signIn(page);
+  const field = page.getByTestId("pos-scan-input");
+  await toSearch(page);
+  await page.keyboard.type("charcoal");
+  const row = page.getByTestId("drop-row").first();
+  await expect(row).toBeVisible();
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(lines(page)).toHaveCount(1);
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("");
+
+  // The next name does not append to the last one.
+  await page.keyboard.type("polymer");
+  await expect(field).toHaveValue("polymer");
+  await expect(page.getByTestId("drop-row").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(lines(page)).toHaveCount(2);
+  await expect(field).toHaveValue("");
+
+  // F2 from anywhere in the sale: here from a result row that holds focus.
+  await page.keyboard.type("charcoal");
+  await expect(page.getByTestId("drop-row").first()).toBeVisible();
+  await page.getByTestId("drop-row").first().focus();
+  await expect(page.getByTestId("drop-row").first()).toBeFocused();
+  await page.keyboard.press("F2");
+  await expect(field).toBeFocused();
+});
+
 test("a scanner's sequence still resolves a code on Enter, and an unknown code is still loud", async ({ page }) => {
   await signIn(page);
   await toSearch(page);

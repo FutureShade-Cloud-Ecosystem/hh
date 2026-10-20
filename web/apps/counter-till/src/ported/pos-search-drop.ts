@@ -80,7 +80,7 @@ export class HosPosSearchDrop extends LitElement {
   commitTop(): boolean {
     const top = this.topHit();
     if (!top) return false;
-    this.add(top);
+    this.add(top, false);
     return true;
   }
 
@@ -346,8 +346,18 @@ export class HosPosSearchDrop extends LitElement {
     this.adder.ticketAt(this.ticketEpoch);
   }
 
-  private add(h: CounterHit): void {
-    this.adder.add(this, h.product_id, counterHitToProduct(h));
+  /**
+   * `announce` is true for a row the person picked: the terminal clears the field and returns the
+   * caret to it, so the next name does not append to this one. The field's own Enter commits the
+   * top row through commitTop and ends it there itself, so it passes false.
+   */
+  private add(h: CounterHit, announce = true): void {
+    const sent = this.adder.add(this, h.product_id, counterHitToProduct(h));
+    if (sent && announce) {
+      this.dispatchEvent(
+        new CustomEvent('pos-drop-added', { detail: { name: h.name, sku: h.sku }, bubbles: true, composed: true }),
+      );
+    }
   }
 
   private focusRow(i: number): void {
