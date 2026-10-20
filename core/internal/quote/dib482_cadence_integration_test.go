@@ -35,12 +35,13 @@ func planCount(t *testing.T, quoteID string) int {
 	return n
 }
 
-// TestIntegration_DIB482_MintingAShareLinkStartsTheCadence is the ticket, stated as a fact about the
+// TestIntegration_DIB482_SendingAShareLinkStartsTheCadence is the ticket, stated as a fact about the
 // database: before the mint the quote has no plan, after it the quote has one.
 //
-// This is the mutation anchor. Remove the startCadenceOnShare call from MintShareLink and this test
+// UX-48: the send is the dealer's word after the link (a mint alone starts nothing, see ux48_send_integration_test.go).
+// Mutation anchor: remove the startCadenceOnShare call from markSent and this test
 // dies on the second assertion with "still 0 plans".
-func TestIntegration_DIB482_MintingAShareLinkStartsTheCadence(t *testing.T) {
+func TestIntegration_DIB482_SendingAShareLinkStartsTheCadence(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	_, quoteID, _, _ := seedQuote(t, pool, "DRAFT", nil)
@@ -52,7 +53,7 @@ func TestIntegration_DIB482_MintingAShareLinkStartsTheCadence(t *testing.T) {
 	}
 
 	svc := shareSvc(t, pool, now)
-	if _, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
+	if _, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 
@@ -73,7 +74,7 @@ func TestIntegration_DIB482_TheCadenceStartsOnTheHouseTerms(t *testing.T) {
 	cleanupPlans(t, quoteID)
 
 	svc := shareSvc(t, pool, now)
-	if _, err := svc.MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
+	if _, err := mintAndSend(svc, qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 
@@ -112,12 +113,12 @@ func TestIntegration_DIB482_ASecondShareDoesNotRestartTheClock(t *testing.T) {
 	cleanupShares(t, pool, quoteID)
 	cleanupPlans(t, quoteID)
 
-	if _, err := shareSvc(t, pool, first).MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
+	if _, err := mintAndSend(shareSvc(t, pool, first), qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
 		t.Fatalf("first mint: %v", err)
 	}
 	// Six days later the salesperson mints a second link for the same quote.
 	later := first.AddDate(0, 0, 6)
-	if _, err := shareSvc(t, pool, later).MintShareLink(qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
+	if _, err := mintAndSend(shareSvc(t, pool, later), qCtxAs(intStaff(intTrenton)), quoteID, 0); err != nil {
 		t.Fatalf("second mint: %v", err)
 	}
 
