@@ -49,6 +49,7 @@ import { instructionsCard, accountView, orderView, ordersList, projectStates, pr
 import { passwordProblem } from "./account.js";
 import { isLastActiveOwnerDemotion } from "./team.js";
 import { fieldStyles } from "./styles.js";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 interface OrdersState {
   phase: Phase;
@@ -460,6 +461,7 @@ export class ProFieldApp extends HHElement {
   async #loadDealer(): Promise<void> {
     const answer = await tenantAuth.tenantGetConfig(this.#client);
     if (answer.ok) {
+      serveHouseZoneFrom(answer.value);
       this.#dealerName = answer.value.dealer_name;
       this.requestUpdate();
     }
