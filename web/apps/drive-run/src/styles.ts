@@ -47,7 +47,36 @@ export const driveStyles = css`
   /* The run sheet. */
   .run-title { font-size: 20px; font-weight: 700; }
   .run-count { color: var(--hh-text-dim); margin: var(--hh-s-4) 0 0; }
-  .run-progress { font-weight: 700; margin: var(--hh-s-4) 0 var(--hh-s-12); }
+  .run-progress { font-weight: 700; margin: var(--hh-s-4) 0 var(--hh-s-8); }
+  .run-load-order {
+    margin: 0 0 var(--hh-s-12);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-row-alt);
+    border: 1px solid var(--hh-line);
+    color: var(--hh-text-dim);
+    font-size: 14px;
+  }
+  .stop-group { margin-top: var(--hh-s-12); }
+  .stop-group-empty { display: none; }
+  .stop-group-head {
+    margin: 0 0 var(--hh-s-8);
+    font-family: var(--hh-font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+  }
+  .stop-group[data-stop-group="NEXT STOP"] .stop-group-head {
+    color: var(--hh-accent-text);
+  }
+  .stop-group[data-stop-group="NEXT STOP"] .stop-list {
+    border-left: 3px solid var(--hh-accent);
+    padding-left: var(--hh-s-12);
+    background: var(--hh-row-alt);
+    border-radius: var(--hh-radius-control);
+  }
   .stop-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hh-line); }
   .stop-list li { border-bottom: 1px solid var(--hh-line); }
   .stop-list li:last-child { border-bottom: 0; }
@@ -235,5 +264,86 @@ export const driveStyles = css`
   .recap li:last-child { border-bottom: 0; }
   .blocked { padding: var(--hh-s-12); border-radius: var(--hh-radius-control); border: 2px solid var(--hh-control-line); margin: 0; }
   .run-sheet-end { margin-top: var(--hh-s-8); }
-  .card .btn + .hint, .card .big + .big { margin-top: var(--hh-s-12); }
+  .card .btn + .hint, .card .big + .big, .sheet-body .btn + .hint, .sheet-body .big + .big { margin-top: var(--hh-s-12); }
+
+  /* Modal sheets for proof of delivery and could not deliver: bottom sheet on phone, centred dialog on tablet. */
+  .sheet-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: var(--hh-z-modal);
+    background: var(--hh-scrim);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .sheet {
+    width: 100%;
+    max-width: 620px;
+    max-height: calc(100vh - var(--hh-s-64));
+    overflow-y: auto;
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border-top: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card) var(--hh-radius-card) 0 0;
+    box-shadow: var(--hh-elev-3);
+    padding: var(--hh-s-16) var(--hh-s-16) calc(var(--hh-s-24) + var(--hh-safe-bottom));
+    margin: 0;
+  }
+  .sheet-grab {
+    width: var(--hh-s-40);
+    height: var(--hh-s-4);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-control-line);
+    margin: 0 auto var(--hh-s-12);
+  }
+  .sheet-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    margin-bottom: var(--hh-s-12);
+  }
+  .sheet-titles { min-width: 0; }
+  .sheet-titles h1 {
+    margin: 0 0 var(--hh-s-4);
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .sheet-titles p { margin: 0; }
+  .sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 2px solid var(--hh-control-line);
+    background: transparent;
+    color: var(--hh-text);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    flex: none;
+  }
+  .sheet-close:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .sheet-body { margin-bottom: var(--hh-s-16); }
+  .sheet-photos {
+    border-top: 1px solid var(--hh-line);
+    padding-top: var(--hh-s-12);
+  }
+  @media (min-width: 768px) {
+    .sheet-scrim {
+      align-items: center;
+      padding: var(--hh-s-24);
+    }
+    .sheet {
+      max-width: 560px;
+      max-height: calc(100vh - var(--hh-s-64));
+      border: 1px solid var(--hh-line);
+      border-radius: var(--hh-radius-card);
+      padding: var(--hh-s-24);
+    }
+    .sheet-grab { display: none; }
+  }
 `;

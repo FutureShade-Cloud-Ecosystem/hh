@@ -24,6 +24,8 @@ import {
   closeLine,
   driverActions,
   formatTime,
+  groupStops,
+  loadOrderLine,
   qtyLabel,
   plainSentence,
   runClose,
@@ -32,6 +34,7 @@ import {
   stopsInOrder,
   weightLabel,
   type PodDraft,
+  type StopGroup,
 } from "./drive-logic.js";
 
 /** The status pill's tone, by status: colour never carries the meaning alone, the word is always there. */
@@ -67,12 +70,16 @@ export interface RunSheetModel {
 }
 
 /** The staleness words for a scope: reads answer from the device, so the sheet
- * says when the world last came down. Relative words only. */
-export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
+ * says when the world last came down, with the clock time in the dealer's zone. */
+export function stalenessWords(
+  staleness: { neverPulled: boolean; ageMs: number | null; lastPullAt?: string | null },
+  zone: string = houseZone(),
+): string {
   if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
   const minutes = Math.floor(staleness.ageMs / 60_000);
-  if (minutes < 1) return "Pulled just now";
-  return `Pulled ${minutes} min ago`;
+  const relative = minutes < 1 ? "Pulled just now" : `Pulled ${minutes} min ago`;
+  const clock = formatTime(staleness.lastPullAt, zone);
+  return clock !== "" ? `${relative} · as of ${clock}` : relative;
 }
 
 function stopRow(stop: DriverStop): TemplateResult {
@@ -91,15 +98,30 @@ function stopRow(stop: DriverStop): TemplateResult {
   `;
 }
 
+function stopGroupSection(group: StopGroup<DriverStop>): TemplateResult {
+  if (group.stops.length === 0) {
+    return html`<div class="stop-group stop-group-empty" data-stop-group=${group.heading}></div>`;
+  }
+  return html`
+    <div class="stop-group" data-stop-group=${group.heading}>
+      <h3 class="stop-group-head" data-group-head>${group.heading}</h3>
+      <ul class="stop-list">${group.stops.map(stopRow)}</ul>
+    </div>
+  `;
+}
+
 function runCard(run: DriverRun): TemplateResult {
   const stops = stopsInOrder(run.stops);
   const progress = runSummary(stops);
+  const loadOrder = loadOrderLine(stops);
+  const groups = groupStops(stops);
   return html`
     <section class="card run" data-run>
       <h2 class="run-title">${run.run_no}${run.truck_code ? ` · ${run.truck_code}` : ""}</h2>
       <p class="run-count">${stops.length} ${stops.length === 1 ? "stop" : "stops"}</p>
       <p class="run-progress" data-progress>${progress.sentence}</p>
-      <ul class="stop-list">${stops.map(stopRow)}</ul>
+      ${loadOrder !== "" ? html`<p class="run-load-order" data-load-order>${loadOrder}</p>` : nothing}
+      ${groups.map(stopGroupSection)}
     </section>
   `;
 }
@@ -270,28 +292,39 @@ export function renderPod(model: PodModel): TemplateResult {
   const { stop, draft } = model;
   const blocked = signBlockedReason(draft);
   return html`
-    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
-    <h1>Proof of delivery</h1>
-    <p class="dim" data-pod>Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
-    ${renderMessages(model.error, "")}
-    <section class="card">
-      <label class="field-label" for="pod-name">Full name of the person receiving</label>
-      <input id="pod-name" class="text-field" type="text" autocomplete="off" data-field="name" ?disabled=${draft.busy} />
-      <label class="confirm" for="pod-affirm">
-        <input id="pod-affirm" class="confirm-box" type="checkbox" data-field="affirm" ?disabled=${draft.busy} />
-        <span>${ATTESTATION}</span>
-      </label>
-      <button type="button" class="btn btn-primary big" data-action="sign" ?disabled=${blocked !== ""} data-tap>
-        ${draft.busy ? "Signing" : "Sign for this delivery"}
-      </button>
-      ${blocked !== "" ? html`<p class="hint" data-sign-hint>${blocked}</p>` : nothing}
-      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${draft.busy} data-tap>Not yet</button>
-    </section>
-    <section data-photos>
-      <h3 class="section-label">Photo of the drop · optional</h3>
-      ${photoTiles(stop, stop.photo_count > 0 ? "Add another" : "Add a photo", model.photoBusy)}
-      <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
-    </section>
+    <div class="sheet-scrim" data-sheet-scrim>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-sheet="pod">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h1 id="sheet-title">Proof of delivery</h1>
+            <p class="dim" data-pod>Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+          </div>
+          <button type="button" class="sheet-close" data-action="back-to-stop" aria-label="Close" ?disabled=${draft.busy} data-tap>
+            Close
+          </button>
+        </div>
+        ${renderMessages(model.error, "")}
+        <div class="sheet-body">
+          <label class="field-label" for="pod-name">Full name of the person receiving</label>
+          <input id="pod-name" class="text-field" type="text" autocomplete="off" data-field="name" ?disabled=${draft.busy} />
+          <label class="confirm" for="pod-affirm">
+            <input id="pod-affirm" class="confirm-box" type="checkbox" data-field="affirm" ?disabled=${draft.busy} />
+            <span>${ATTESTATION}</span>
+          </label>
+          <button type="button" class="btn btn-primary big" data-action="sign" ?disabled=${blocked !== ""} data-tap>
+            ${draft.busy ? "Signing" : "Sign for this delivery"}
+          </button>
+          ${blocked !== "" ? html`<p class="hint" data-sign-hint>${blocked}</p>` : nothing}
+          <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${draft.busy} data-tap>Not yet</button>
+        </div>
+        <section class="sheet-photos" data-photos>
+          <h3 class="section-label">Photo of the drop · optional</h3>
+          ${photoTiles(stop, stop.photo_count > 0 ? "Add another" : "Add a photo", model.photoBusy)}
+          <p class="dim small">Photos back the attestation. A photo that does not send never blocks the signature.</p>
+        </section>
+      </section>
+    </div>
   `;
 }
 
@@ -311,19 +344,30 @@ export interface FailModel {
 export function renderFail(model: FailModel): TemplateResult {
   const { stop } = model;
   return html`
-    <button type="button" class="back" data-action="back-to-stop" data-tap>Stop ${stop.stop_no}</button>
-    <h1>Could not deliver</h1>
-    <p class="dim">Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
-    ${renderMessages(model.error, "")}
-    <section class="card">
-      <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
-      <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
-      <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
-      <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
-        Could not deliver
-      </button>
-      <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${model.busy} data-tap>Back</button>
-    </section>
+    <div class="sheet-scrim" data-sheet-scrim>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-sheet="fail">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h1 id="sheet-title">Could not deliver</h1>
+            <p class="dim">Stop ${stop.stop_no} · ${stop.customer_name || "Customer"} · ${stop.order_no}</p>
+          </div>
+          <button type="button" class="sheet-close" data-action="back-to-stop" aria-label="Close" ?disabled=${model.busy} data-tap>
+            Close
+          </button>
+        </div>
+        ${renderMessages(model.error, "")}
+        <div class="sheet-body">
+          <label class="field-label" for="fail-why">${HANDBACK_PROMPT}</label>
+          <textarea id="fail-why" class="text-field text-area" rows="3" data-field="reason" ?disabled=${model.busy}></textarea>
+          <p class="handback-words" data-handback-words>${HANDBACK_BODY}</p>
+          <button type="button" class="btn btn-danger big" data-action="confirm-fail" ?disabled=${model.busy || !canRecordFailure(model.reason)} data-tap>
+            Could not deliver
+          </button>
+          <button type="button" class="btn btn-secondary big" data-action="back-to-stop" ?disabled=${model.busy} data-tap>Back</button>
+        </div>
+      </section>
+    </div>
   `;
 }
 

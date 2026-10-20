@@ -119,6 +119,59 @@ export function stopsInOrder<T extends { stop_no?: number; created_at?: string }
   });
 }
 
+export type StopGroupHeading = "LOADED AT THE YARD" | "DELIVERED" | "NEXT STOP" | "WAITING";
+
+export const STOP_GROUP_ORDER: readonly StopGroupHeading[] = [
+  "LOADED AT THE YARD",
+  "DELIVERED",
+  "NEXT STOP",
+  "WAITING",
+];
+
+export interface StopGroup<T> {
+  readonly heading: StopGroupHeading;
+  readonly stops: readonly T[];
+}
+
+function groupHeadingForStatus(status: string): StopGroupHeading {
+  if (status === "EN_ROUTE") return "NEXT STOP";
+  if (status === "LOADED") return "LOADED AT THE YARD";
+  if (status === "DELIVERED" || status === "FAILED") return "DELIVERED";
+  return "WAITING";
+}
+
+/**
+ * Partitions a run's stops into the four board groups (LOADED AT THE YARD,
+ * DELIVERED, NEXT STOP, WAITING) while preserving stop order inside each group.
+ */
+export function groupStops<T extends { status: string; stop_no?: number; created_at?: string }>(
+  stops: readonly T[] | null | undefined,
+): StopGroup<T>[] {
+  const ordered = stopsInOrder(stops);
+  const buckets = new Map<StopGroupHeading, T[]>();
+  for (const heading of STOP_GROUP_ORDER) buckets.set(heading, []);
+  for (const stop of ordered) {
+    const heading = groupHeadingForStatus(stop.status);
+    buckets.get(heading)?.push(stop);
+  }
+  return STOP_GROUP_ORDER.map((heading) => ({ heading, stops: buckets.get(heading) ?? [] }));
+}
+
+/**
+ * The yard's load order sentence for a run: the last stop in delivery order
+ * goes on the back of the truck first, and the first stop goes on last so it
+ * comes off first. Empty when the run has no stops.
+ */
+export function loadOrderLine(
+  stops: ReadonlyArray<{ stop_no?: number; created_at?: string }> | null | undefined,
+): string {
+  const ordered = stopsInOrder(stops);
+  if (ordered.length === 0) return "";
+  const first = ordered[ordered.length - 1]?.stop_no ?? ordered.length;
+  const last = ordered[0]?.stop_no ?? 1;
+  return `Checked once for the whole run. Load order: stop ${first} first, stop ${last} last.`;
+}
+
 /** The address as one line, blanks dropped; empty when nothing is known. */
 export function addressLine(parts: { address_line?: string; city?: string; postal_code?: string }): string {
   return [parts.address_line, parts.city, parts.postal_code]

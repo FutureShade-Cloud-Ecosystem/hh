@@ -262,3 +262,52 @@ test("a name the door would refuse blocks the sign control, with the words", () 
   assert.equal(canSign({ receivedBy: "A\u202eB", affirmed: true, busy: false }), false);
   assert.doesNotMatch(PROOF_QUEUED_NOTICE, /delivered|told/);
 });
+
+// ---- UX-17b: stop groups, load order line, and house-zone staleness ----
+import { groupStops, loadOrderLine } from "../src/drive-logic.ts";
+import { stalenessWords } from "../src/views.ts";
+
+test("loadOrderLine names the last stop in delivery order first (back of truck) and the first stop last", () => {
+  assert.equal(loadOrderLine([]), "");
+  assert.equal(loadOrderLine(null), "");
+  assert.equal(
+    loadOrderLine([{ stop_no: 1 }, { stop_no: 2 }, { stop_no: 3 }, { stop_no: 4 }]),
+    "Checked once for the whole run. Load order: stop 4 first, stop 1 last.",
+  );
+  assert.equal(
+    loadOrderLine([{ stop_no: 3 }, { stop_no: 1 }, { stop_no: 2 }]),
+    "Checked once for the whole run. Load order: stop 3 first, stop 1 last.",
+  );
+});
+
+test("groupStops partitions stops into LOADED AT THE YARD, DELIVERED, NEXT STOP, and WAITING in stop order", () => {
+  const grouped = groupStops([
+    { id: "s4", stop_no: 4, status: "READY" },
+    { id: "s2", stop_no: 2, status: "EN_ROUTE" },
+    { id: "s3", stop_no: 3, status: "LOADED" },
+    { id: "s1", stop_no: 1, status: "DELIVERED" },
+    { id: "s5", stop_no: 5, status: "FAILED" },
+  ]);
+  assert.deepEqual(
+    grouped.map((g) => [g.heading, g.stops.map((s) => s.id)]),
+    [
+      ["LOADED AT THE YARD", ["s3"]],
+      ["DELIVERED", ["s1", "s5"]],
+      ["NEXT STOP", ["s2"]],
+      ["WAITING", ["s4"]],
+    ],
+  );
+});
+
+test("stalenessWords includes the last pull clock time in the dealer's house zone", () => {
+  const pullInstant = new Date(Date.UTC(2026, 6, 3, 15, 30)).toISOString();
+  assert.equal(
+    stalenessWords({ neverPulled: false, ageMs: 10_000, lastPullAt: pullInstant }, "America/Toronto"),
+    "Pulled just now · as of 11:30",
+  );
+  assert.equal(
+    stalenessWords({ neverPulled: false, ageMs: 180_000, lastPullAt: pullInstant }, "America/Los_Angeles"),
+    "Pulled 3 min ago · as of 08:30",
+  );
+  assert.equal(stalenessWords({ neverPulled: true, ageMs: null }), "Never pulled");
+});

@@ -126,6 +126,11 @@ export class DriveRunApp extends HHElement {
   #failReason = "";
   #closing = false;
 
+  // Sheet focus management: which opener button launched the sheet, and which
+  // focus transition should run after the next render.
+  #sheetOpenerAction: "open-pod" | "open-fail" | null = null;
+  #sheetFocusPending: "dialog" | "opener" | null = null;
+
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
 
@@ -178,9 +183,7 @@ export class DriveRunApp extends HHElement {
       return;
     }
     if (action === "back-to-stop") {
-      if (this.#view.kind === "pod" || this.#view.kind === "fail") this.#view = { kind: "stop", id: this.#view.id };
-      this.#error = "";
-      this.requestUpdate();
+      this.#closeSheet();
       return;
     }
     if (action === "open-fail") {
@@ -188,6 +191,8 @@ export class DriveRunApp extends HHElement {
         this.#failReason = "";
         this.#error = "";
         this.#notice = "";
+        this.#sheetOpenerAction = "open-fail";
+        this.#sheetFocusPending = "dialog";
         this.#view = { kind: "fail", id: this.#view.id };
         this.requestUpdate();
       }
@@ -267,6 +272,7 @@ export class DriveRunApp extends HHElement {
       this.requestUpdate();
     });
     this.addEventListener("click", this.#onHostClick);
+    window.addEventListener("keydown", this.#onKeyDown);
     // input and change do not leave this element's own shadow root (change is
     // not composed), so the form listeners sit on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
@@ -324,6 +330,7 @@ export class DriveRunApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    window.removeEventListener("keydown", this.#onKeyDown);
     this.renderRoot.removeEventListener("input", this.#onField);
     this.renderRoot.removeEventListener("change", this.#onField);
     window.removeEventListener("online", this.#onConnectivity);
@@ -456,6 +463,26 @@ export class DriveRunApp extends HHElement {
       const number = link.getAttribute("data-tel") ?? "";
       if (/^[0-9+().\-\sx]+$/.test(number)) link.setAttribute("href", `tel:${number.replace(/\s+/g, "")}`);
     }
+    const sheetOpen = this.#view.kind === "pod" || this.#view.kind === "fail";
+    const pageBehind = this.renderRoot.querySelector<HTMLElement>("[data-page-behind]");
+    if (pageBehind !== null) pageBehind.inert = sheetOpen;
+    const frame = this.renderRoot.querySelector<HTMLElement>("hh-field-frame");
+    if (frame !== null) frame.inert = sheetOpen;
+    if (this.#sheetFocusPending === "dialog" && sheetOpen) {
+      this.#sheetFocusPending = null;
+      const firstField = this.renderRoot.querySelector<HTMLElement>(
+        '[role="dialog"] textarea:not([disabled]), [role="dialog"] input[type="text"]:not([disabled]), [role="dialog"] button:not([disabled])',
+      );
+      firstField?.focus();
+    } else if (this.#sheetFocusPending === "opener" && !sheetOpen) {
+      const action = this.#sheetOpenerAction;
+      this.#sheetFocusPending = null;
+      this.#sheetOpenerAction = null;
+      if (action !== null) {
+        const opener = this.renderRoot.querySelector<HTMLElement>(`button[data-action="${action}"]`);
+        opener?.focus();
+      }
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -572,9 +599,49 @@ export class DriveRunApp extends HHElement {
     this.#podBusy = false;
     this.#error = "";
     this.#notice = "";
+    this.#sheetOpenerAction = "open-pod";
+    this.#sheetFocusPending = "dialog";
     this.#view = { kind: "pod", id: found.stop.id };
     this.requestUpdate();
   }
+
+  #closeSheet(): void {
+    if (this.#view.kind !== "pod" && this.#view.kind !== "fail") return;
+    const busy = this.#view.kind === "pod" ? this.#podBusy : this.#busy;
+    if (busy) return;
+    this.#view = { kind: "stop", id: this.#view.id };
+    this.#error = "";
+    this.#sheetFocusPending = "opener";
+    this.requestUpdate();
+  }
+
+  readonly #onKeyDown = (event: KeyboardEvent): void => {
+    if (this.#view.kind !== "pod" && this.#view.kind !== "fail") return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.#closeSheet();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const dialog = this.renderRoot.querySelector<HTMLElement>('[role="dialog"]');
+    if (dialog === null) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusables.length === 0) return;
+    const active = (this.renderRoot as ShadowRoot).activeElement as HTMLElement | null;
+    const idx = active !== null ? focusables.indexOf(active) : -1;
+    event.preventDefault();
+    if (event.shiftKey) {
+      const prev = idx <= 0 ? focusables[focusables.length - 1] : focusables[idx - 1];
+      prev?.focus();
+    } else {
+      const next = idx < 0 || idx >= focusables.length - 1 ? focusables[0] : focusables[idx + 1];
+      next?.focus();
+    }
+  };
 
   async #recordFailure(): Promise<void> {
     if (this.#view.kind !== "fail" || this.#busy || !canRecordFailure(this.#failReason)) return;
@@ -734,7 +801,10 @@ export class DriveRunApp extends HHElement {
       const day = houseDay();
       const zoneDay = this.#drive.servedDealersDay();
       const answer = await this.#driveOffline.runs(day);
-      if (answer.ok) this.#runs = answer.value.runs;
+      if (answer.ok) {
+        this.#runs = answer.value.runs;
+        this.#runStaleness = answer.staleness;
+      }
       await this.#refreshOfflineChrome();
       void zoneDay.then(({ day: servedDay, served }) => {
         // A read that served keeps the stored zone current (a dealer's zone
@@ -800,30 +870,34 @@ export class DriveRunApp extends HHElement {
   }
 
   private renderWork(): TemplateResult {
-    if (this.#view.kind === "pod") {
-      const found = this.#findStop(this.#view.id);
-      if (found !== null) {
-        return renderPod({
-          stop: found.stop,
-          draft: { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy },
-          photoBusy: this.#photoBusy,
-          error: this.#error,
-        });
-      }
-    }
-    if (this.#view.kind === "fail") {
-      const found = this.#findStop(this.#view.id);
-      if (found !== null) {
-        return renderFail({ stop: found.stop, reason: this.#failReason, busy: this.#busy, error: this.#error });
-      }
-    }
     if (this.#view.kind === "close") {
       return renderClose({ runs: this.#runs, closing: this.#closing, error: this.#error, notice: this.#notice });
     }
-    if (this.#view.kind === "stop") {
+    if (this.#view.kind === "stop" || this.#view.kind === "pod" || this.#view.kind === "fail") {
       const found = this.#findStop(this.#view.id);
       if (found !== null) {
-        return renderStopDetail({ ...found, busy: this.#busy, photoBusy: this.#photoBusy, error: this.#error, notice: this.#notice });
+        const sheetOpen = this.#view.kind === "pod" || this.#view.kind === "fail";
+        return html`
+          <div class="page-behind" data-page-behind aria-hidden=${sheetOpen ? "true" : nothing}>
+            ${renderStopDetail({
+              ...found,
+              busy: this.#busy,
+              photoBusy: this.#photoBusy,
+              error: sheetOpen ? "" : this.#error,
+              notice: sheetOpen ? "" : this.#notice,
+            })}
+          </div>
+          ${this.#view.kind === "pod"
+            ? renderPod({
+                stop: found.stop,
+                draft: { receivedBy: this.#podName, affirmed: this.#podAffirmed, busy: this.#podBusy },
+                photoBusy: this.#photoBusy,
+                error: this.#error,
+              })
+            : this.#view.kind === "fail"
+              ? renderFail({ stop: found.stop, reason: this.#failReason, busy: this.#busy, error: this.#error })
+              : nothing}
+        `;
       }
     }
     if (this.#view.kind === "conflicts") {
