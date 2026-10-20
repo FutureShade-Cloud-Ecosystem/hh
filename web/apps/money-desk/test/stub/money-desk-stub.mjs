@@ -1177,16 +1177,34 @@ async function handle(req, res) {
 
   if (method === "GET" && path === "/api/v1/ar/register") {
     const customer = q.get("customer_id") ?? "";
-    const rows = world.invoices
-      .filter((i) => customer === "" || custId(i.acct) === customer)
-      .map(registerRow)
-      .filter((r) => r.balance_cents > 0 || q.get("chip") === "PAID");
-    const chip = q.get("chip") ?? "";
-    const shown = chip === "" || chip === "PAID" ? rows : rows.filter((r) => r.status === chip);
-    const count = (s) => rows.filter((r) => r.status === s).length;
+    // The core's reading (register_repository.go chipPredicates): no chip is every invoice document,
+    // paid ones too, unpaid ahead of settled; PAID is the paid ones only; "all" is every unpaid one;
+    // past_due, current and the legacy status names narrow the unpaid ones. The wire upper-cases the chip.
+    const chip = (q.get("chip") ?? "").toUpperCase();
+    const unpaid = (r) => r.stored_status === "FINALIZED" || r.stored_status === "PARTIALLY_PAID";
+    const chips = {
+      "": () => true,
+      PAID: (r) => r.stored_status === "PAID",
+      ALL: unpaid,
+      OPEN: unpaid,
+      PAST_DUE: (r) => unpaid(r) && r.days_overdue > 0,
+      OVERDUE: (r) => unpaid(r) && r.days_overdue > 0,
+      CURRENT: (r) => unpaid(r) && r.days_overdue <= 0,
+      DISPUTED: (r) => r.disputed,
+    };
+    const known = chips[chip];
+    if (known === undefined) return refuse(res, 400, `billing: unknown register filter "${chip}"`);
+    const mine = world.invoices.filter((i) => customer === "" || custId(i.acct) === customer).map(registerRow);
+    const filtered = mine.filter(known);
+    filtered.sort((a, b) => Number(unpaid(b)) - Number(unpaid(a)) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
+    const asked = Number(q.get("limit") ?? "50");
+    const limit = !Number.isInteger(asked) || asked <= 0 || asked > 200 ? 50 : asked;
+    const offset = Math.max(0, Number(q.get("offset") ?? "0") || 0);
+    const count = (s) => mine.filter((r) => r.status === s).length;
     return send(res, 200, {
-      items: shown,
+      items: filtered.slice(offset, offset + limit),
       counts: { open: count("OPEN"), due_soon: count("DUE_SOON"), overdue: count("OVERDUE"), disputed: 0, paid: 0, credits: 0 },
+      total: filtered.length,
       as_of: dayOffset(0),
     });
   }
