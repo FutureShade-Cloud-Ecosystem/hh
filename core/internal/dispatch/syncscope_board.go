@@ -76,6 +76,10 @@ import (
 // from the stops stream (the shared-stream note above).
 const willCallSyncScope = "will_call"
 
+// WillCallSeqScope is the scope every live writer of will_call_pickups draws its seq from, exported so
+// the demo seq repair names the same stream by this constant and not by a second literal.
+const WillCallSeqScope = willCallSyncScope
+
 // legacyPickupsSeqScope is the counter the contractor's pickups writes
 // drew from before there was one counter. It is read, never advanced:
 // rows it numbered sit in the table, and the will_call counter is lifted
