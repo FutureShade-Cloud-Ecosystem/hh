@@ -109,8 +109,6 @@ function holds(schemaName, value) {
   assert.deepEqual(undeclared(value, descriptor), [], `${schemaName} carries fields the contract does not declare`);
 }
 
-const sentence = (go) => go.replace(/^"|"$/g, "");
-
 test("me, the command list and a command answer fit the contract", async () => {
   const me = await call("GET", "/api/v1/assist/me");
   assert.equal(me.status, 200);
