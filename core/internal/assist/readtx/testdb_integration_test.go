@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -106,4 +107,41 @@ func loginPasswords(t *testing.T, admin *pgx.Conn) (staffURL, proURL string) {
 		})
 	}
 	return urls[roles.Login], urls[roles.ProLogin]
+}
+
+// freshMigratedDB creates an empty database on the cluster of the gate database,
+// installs pgcrypto and applies migration 0418 to it, and drops it (with its
+// roles) when the test ends. It returns an admin connection to it and its name.
+func freshMigratedDB(t *testing.T, prefix string) (*pgx.Conn, string) {
+	t.Helper()
+	gate := gateURL(t)
+	root := connect(t, gate)
+	name := prefix + "_" + randomHex(t, 4)
+	if _, err := root.Exec(ctxT(t), `CREATE DATABASE `+pgx.Identifier{name}.Sanitize()); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	roles := RolesFor(name)
+	t.Cleanup(func() {
+		c, err := pgx.Connect(ctxT(t), gate)
+		if err != nil {
+			return
+		}
+		defer c.Close(ctxT(t))
+		_, _ = c.Exec(ctxT(t), `DROP DATABASE IF EXISTS `+pgx.Identifier{name}.Sanitize()+` WITH (FORCE)`)
+		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner} {
+			_, _ = c.Exec(ctxT(t), `DROP ROLE IF EXISTS `+pgx.Identifier{r}.Sanitize())
+		}
+	})
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", "db", "migrations", "0418_assist_roles_and_claims.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := connect(t, withDatabase(t, gate, name))
+	if _, err := conn.Exec(ctxT(t), `CREATE EXTENSION pgcrypto`); err != nil {
+		t.Fatalf("pgcrypto: %v", err)
+	}
+	if _, err := conn.Exec(ctxT(t), string(body)); err != nil {
+		t.Fatalf("0418 on a fresh database: %v", err)
+	}
+	return conn, name
 }
