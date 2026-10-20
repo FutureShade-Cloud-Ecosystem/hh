@@ -113,6 +113,15 @@ test('a blank or spaces only dealer name draws no lockup rather than a blank one
   assert.equal(new HosAppHeader().compact, false, 'compact is off unless an app asks');
 });
 
+test('the lockup carries the full dealer name as its title, and the name truncates in its own cell', () => {
+  const markup = visible(renderKit(HosAppHeader, { dealerName: 'Gable Landscape Supply', productName: 'Dispatch' }));
+  assert.ok(markup.includes('aria-label="Gable Landscape Supply, Dispatch"'), 'the full name is in the accessible name');
+  assert.ok(/setAttribute\('title', name\)/.test(readPkg('src/header.ts')), 'the full name is set as the lockup title once rendered');
+  const css = HosAppHeader.styles.map((s) => s.cssText ?? String(s)).join('\n');
+  assert.ok(/grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/.test(css), 'the first track may shrink');
+  assert.ok(/\.brand-product,\s*\.brand-sub \{[^}]*text-overflow:\s*ellipsis/.test(css), 'the name ellipsis truncates');
+});
+
 test('a dealer with no surface label shows the name alone', () => {
   const markup = visible(renderKit(HosAppHeader, { dealerName: 'Gable Landscape Supply' }));
   assert.ok(markup.includes('aria-label="Gable Landscape Supply"'));

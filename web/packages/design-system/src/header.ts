@@ -61,9 +61,9 @@ const DEFAULT_WORD = 'Pick a role';
 const styles = css`
   header {
     display: grid;
-    /* The left cell takes the room its brand and the Demo pill need on one row (a longer role word in the middle
-       must not push the pill under the logo); where the screen is too narrow for that, the pill wraps as before. */
-    grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
+    /* The left cell shares the row with the role word and the controls: it may not outgrow its track, so a long
+       dealer name truncates inside the lockup (below) rather than push into them. */
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
     box-sizing: border-box;
@@ -76,6 +76,7 @@ const styles = css`
     flex-wrap: wrap;
     align-items: center;
     gap: var(--hh-s-12);
+    min-width: 0;
   }
   /* The dealer's lockup (decision log row 1858): the dealer's initial on the
      yellow square ground (the badge yellow IS --hh-accent), square cornered,
@@ -87,6 +88,7 @@ const styles = css`
     align-items: center;
     gap: 10px;
     min-width: 0;
+    max-width: min(100%, 32ch);
   }
   .brand-mark {
     width: 30px;
@@ -108,6 +110,12 @@ const styles = css`
     gap: 1px;
     min-width: 0;
   }
+  .brand-product,
+  .brand-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .brand-product {
     font-size: var(--hh-s-16);
     font-weight: 700;
@@ -120,7 +128,6 @@ const styles = css`
     letter-spacing: 0.055em;
     line-height: 1.2;
     color: var(--hh-text-dim);
-    white-space: nowrap;
   }
   .who {
     margin: 0;
@@ -379,6 +386,15 @@ export class HosAppHeader extends HHElement {
     const root = document.documentElement;
     if (this.theme === 'light') root.setAttribute('data-theme', 'light');
     else if (this.theme === 'dark') root.removeAttribute('data-theme');
+  }
+
+  /** The full dealer name rides the lockup's title (the position gate refuses a bound title attribute, so it is set here). */
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    const lockup = this.renderRoot.querySelector('[data-testid="dealer-lockup"]');
+    const name = this.dealerName.trim();
+    if (lockup === null) return;
+    if (lockup.getAttribute('title') !== name) lockup.setAttribute('title', name);
   }
 
   render(): Template {
