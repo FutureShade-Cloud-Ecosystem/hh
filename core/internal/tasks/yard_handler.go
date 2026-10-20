@@ -106,7 +106,7 @@ func (h *Handler) pickQueue(w http.ResponseWriter, r *http.Request, caller guard
 		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
 		return
 	}
-	items, err := h.svc.PickQueue(r.Context(), TaskFilter{
+	items, err := h.svc.PickQueue(withOrg(r.Context(), caller.StaffScope.OrgID), TaskFilter{
 		Status:          r.URL.Query().Get("status"),
 		BranchID:        r.URL.Query().Get("branch_id"),
 		Limit:           p.Limit + 1,
@@ -201,7 +201,7 @@ func (h *Handler) pickDetail(w http.ResponseWriter, r *http.Request, caller guar
 	if !h.taskBranchFence(w, r) {
 		return
 	}
-	e, err := h.svc.PickDetail(r.Context(), r.PathValue("id"))
+	e, err := h.svc.PickDetail(withOrg(r.Context(), caller.StaffScope.OrgID), r.PathValue("id"))
 	if err != nil {
 		h.writeYardErr(w, r, err)
 		return

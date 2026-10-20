@@ -623,7 +623,8 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 		t.Fatal("a GLOBAL caller must receive the other branch's ticket")
 	}
 
-	// Unresolvable authority (UX-81): nothing comes, fail closed; the pull does not fail.
+	// Unresolvable authority (UX-81): nothing comes, fail closed; an unknown or inactive caller's pull is empty and
+	// an unreadable authority fails the page so the device retries.
 	for name, auth := range map[string]func() (identity.StaffContext, bool, error){
 		"error":   func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, errors.New("down") },
 		"unknown": func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, nil },
@@ -633,6 +634,14 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 	} {
 		d.authority = auth
 		items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+		if name == "error" {
+			// UX-81 round 4: an authority that cannot be read is retryable, so the pull fails its page (HTTP 503)
+			// rather than answering an empty page that would hide the fault.
+			if err == nil {
+				t.Fatalf("%s: a pull whose authority cannot be read must fail, got %d rows", name, len(items))
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatalf("%s: pull must not fail: %v", name, err)
 		}

@@ -19,7 +19,31 @@ import (
 // WithPickSource injects the queue feed (see the PickSource doc in yard.go). Un-wired, the pick-queue
 // reads still work, they simply carry no ticket, and PickTicket-only calls return ErrNoPickSource.
 // Unwired never means "silently empty queue": the tasks themselves always come from the database.
-func (s *Service) WithPickSource(p PickSource) *Service { s.picks = p; return s }
+func (s *Service) WithPickSource(p PickSource) *Service {
+	s.picks = p
+	s.orgPicks, _ = p.(OrgPickSource) // the org held ticket read, taken from the source when it has one (UX-81 round 4)
+	return s
+}
+
+// orgCtxKey carries the caller's org from a REST handler to the ticket reads under it (UX-81 round 4).
+type orgCtxKey struct{}
+
+// withOrg binds the caller's org to a request context; an empty org binds nothing.
+func withOrg(ctx context.Context, orgID string) context.Context {
+	if orgID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, orgCtxKey{}, orgID)
+}
+
+// pickTicket reads one order's ticket under the org bound to the context when the source can hold it (every REST
+// door that reads a ticket binds its caller's org); a context with no org is a system read (the sweep, tests).
+func (s *Service) pickTicket(ctx context.Context, orderID string) (PickTicket, error) {
+	if org, _ := ctx.Value(orgCtxKey{}).(string); org != "" && s.orgPicks != nil {
+		return s.orgPicks.PickTicketInOrg(ctx, org, orderID)
+	}
+	return s.picks.PickTicket(ctx, orderID)
+}
 
 // Stage moves an IN_PROGRESS pick to STAGED and records WHERE the material is parked and under what
 // handle, then tells the COUNTER (not the yard) that the order is ready.
@@ -348,7 +372,7 @@ func (s *Service) PickDetail(ctx context.Context, taskID string) (PickQueueEntry
 	s.labelClaimers(ctx, []*Task{&t}) // the claimer by role, never by name (UX-75)
 	e := PickQueueEntry{Task: t}
 	if s.picks != nil {
-		if ticket, err := s.picks.PickTicket(ctx, t.OrderID); err == nil {
+		if ticket, err := s.pickTicket(ctx, t.OrderID); err == nil {
 			e.Ticket = &ticket
 			e.RunNo = ticket.RunNo
 			e.RunDepartsAt = ticket.RunDepartsAt
@@ -422,7 +446,7 @@ func (s *Service) SweepStalePicks(ctx context.Context, olderThan time.Duration, 
 func (s *Service) decorate(ctx context.Context, t Task) PickQueueEntry {
 	e := PickQueueEntry{Task: t}
 	if s.picks != nil {
-		if ticket, err := s.picks.PickTicket(ctx, t.OrderID); err == nil {
+		if ticket, err := s.pickTicket(ctx, t.OrderID); err == nil {
 			e.Ticket = &ticket
 			e.RunNo = ticket.RunNo
 			e.RunDepartsAt = ticket.RunDepartsAt

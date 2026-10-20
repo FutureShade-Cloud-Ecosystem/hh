@@ -12,6 +12,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -415,5 +416,45 @@ func TestCreateRefusesAnOrderOutsideTheCallersBranchReachAsUnknown(t *testing.T)
 	global.Scope, global.Tier, global.Branches = identity.ScopeGlobal, identity.TierLeadership, nil
 	if _, _, code, body := create(global, knownOrder); code != http.StatusCreated {
 		t.Errorf("a GLOBAL caller still creates: %d %s", code, body)
+	}
+}
+
+// orgOrderReader answers an order only inside the org that owns it, the shape of the real adapter (UX-81 round 4).
+type orgOrderReader struct{ owner map[string]string } // order id -> owning org
+
+func (o orgOrderReader) OrderBrief(_ context.Context, id string) (OrderBrief, error) {
+	return OrderBrief{ID: id, BranchID: branchA}, nil // the unscoped read, which a caller of the org held store never reaches
+}
+
+func (o orgOrderReader) OrderBriefInOrg(_ context.Context, orgID, id string) (OrderBrief, error) {
+	if o.owner[id] != orgID {
+		return OrderBrief{}, ErrUnknownOrder
+	}
+	return OrderBrief{ID: id, BranchID: branchA}, nil
+}
+
+// The REST create hands its caller's org to the order read: another org's order is the 422 an unknown order gets,
+// and no task is written (UX-81 round 4).
+func TestCreateReadsTheOrderUnderTheCallersOrg(t *testing.T) {
+	const north, south = "3ef10000-0000-4000-8000-000000000001", "3ef10000-0000-4000-8000-000000000002"
+	svc, store, _ := newSvc(t)
+	svc.WithOrderReader(orgOrderReader{owner: map[string]string{knownOrder: south}})
+	h := NewHandler(svc, nil)
+	global := identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive}
+	post := func(order, org string) (int, string) {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(`{"order_id":"`+order+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r = r.WithContext(identity.ContextWithStaff(r.Context(), global))
+		w := httptest.NewRecorder()
+		h.create(w, r, guards.StaffCaller{StaffScope: authz.StaffScope{OrgID: org}})
+		return w.Code, strings.TrimSpace(w.Body.String())
+	}
+	code, body := post(knownOrder, north)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(body, "order not found") || len(store.tasks) != 0 {
+		t.Errorf("a GLOBAL caller of org north naming org south's order gets the unknown order 422 and writes nothing: %d %s, %d tasks", code, body, len(store.tasks))
+	}
+	if code, body := post(knownOrder, south); code != http.StatusCreated {
+		t.Errorf("the owning org still creates: %d %s", code, body)
 	}
 }

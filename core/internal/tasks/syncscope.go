@@ -67,6 +67,10 @@ type SyncStore struct {
 	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
 	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
 	tickets PickSource
+	// orgOrders and orgTickets are the org held reads (UX-81 round 4): taken from the order seam and the pick
+	// source when they implement OrgOrderReader and OrgPickSource, which the composition root's adapters do.
+	orgOrders  OrgOrderReader
+	orgTickets OrgPickSource
 	// claimerRoles labels a row's claimer by role on the rows a device reads (claimer_role.go).
 	claimerRoles ClaimerRoleReader
 	log          *slog.Logger
@@ -76,7 +80,32 @@ type SyncStore struct {
 // caller knows creates and actor attribution will not run (tests),
 // production wires both.
 func NewSyncStore(pool *pgxpool.Pool, orders OrderReader, link identity.UserIDLinker) *SyncStore {
-	return &SyncStore{pool: pool, orders: orders, link: link}
+	s := &SyncStore{pool: pool, orders: orders, link: link}
+	s.orgOrders, _ = orders.(OrgOrderReader)
+	return s
+}
+
+// OrgScoped reports whether the create's order read and the ticket read are held to the caller's org, the leg the
+// composition root's boot check pins (UX-81 round 4). A store without a pick source has no ticket read to hold.
+func (s *SyncStore) OrgScoped() bool {
+	return s.orgOrders != nil && (s.tickets == nil || s.orgTickets != nil)
+}
+
+// orderBrief reads the order for a create under the caller's org when the seam can (the composition root's always
+// can): a foreign order is the same ErrUnknownOrder as a missing one.
+func (s *SyncStore) orderBrief(ctx context.Context, orgID, orderID string) (OrderBrief, error) {
+	if s.orgOrders != nil && orgID != "" {
+		return s.orgOrders.OrderBriefInOrg(ctx, orgID, orderID)
+	}
+	return s.orders.OrderBrief(ctx, orderID)
+}
+
+// pickTicket reads the order's ticket under the org when the source can.
+func (s *SyncStore) pickTicket(ctx context.Context, orgID, orderID string) (PickTicket, error) {
+	if s.orgTickets != nil && orgID != "" {
+		return s.orgTickets.PickTicketInOrg(ctx, orgID, orderID)
+	}
+	return s.tickets.PickTicket(ctx, orderID)
 }
 
 // pickScopePredicate is the WHERE predicate every adapter query runs
@@ -259,7 +288,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		// A transient source fault fails the page: the engine answers 503 and the device retries this
 		// cursor, where a ticket-less row would be cached until the task next moves (its seq is the
 		// only thing that re-sends it).
-		if err := s.attachTicketData(ctx, reach, r.task.BranchID, r.task.OrderID, data); err != nil {
+		if err := s.attachTicketData(ctx, f.OrgID, reach, r.task.BranchID, r.task.OrderID, data); err != nil {
 			s.logger().Error("tasks: sync pull ticket read failed", "task", r.task.ID, "order", r.task.OrderID, "err", err)
 			return nil, nil, fmt.Errorf("tasks: sync pull ticket: %w", err)
 		}
@@ -349,7 +378,7 @@ func (s *SyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branc
 // caller's branch reach and with a source fault leaving the envelope without it (an envelope is a
 // reply to a write, not a cursor feed, so it degrades and logs). It is the engine's one call for it.
 func (s *SyncStore) DecorateServerState(ctx context.Context, f sync.ScopeFilter, row *sync.RowState) {
-	s.attachTicket(ctx, s.ticketReach(ctx, f), row)
+	s.attachTicket(ctx, f.OrgID, s.ticketReach(ctx, f), row)
 	if !row.Deleted && row.Data != nil {
 		s.attachClaimerRoles(ctx, []map[string]any{row.Data})
 	}
@@ -470,15 +499,22 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("tasks: order reader not configured: %w", sync.ErrOpRefused)
 	}
-	ob, err := s.orders.OrderBrief(ctx, orderID)
+	// The order is read under the caller's org (UX-81 round 4): another org's order is an unknown order here.
+	ob, err := s.orderBrief(ctx, f.OrgID, orderID)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
 	}
 	// A pick is created only on a branch the caller reaches (UX-81 round 3), by the rule Load and the pull use
 	// (callerReaches). An order out of reach, or a branchless one a scoped caller must not learn of, is refused
-	// with exactly the words and status an unknown order gets, so the refusal tells nothing.
+	// with exactly the words and status an unknown order gets, so the refusal tells nothing. An authority that
+	// cannot be read is no verdict on the order (UX-81 round 4): the plain error fails the push, which the
+	// device retries, and is never the unknown order answer.
 	if s.staff != nil {
-		if reach, err := s.callerReaches(ctx, f, ob.BranchID); err != nil || !reach {
+		reach, err := s.callerReaches(ctx, f, ob.BranchID)
+		if err != nil {
+			return sync.RowState{}, err
+		}
+		if !reach {
 			return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, ErrUnknownOrder)
 		}
 	}
@@ -705,6 +741,7 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 // reads, so there is one builder of a ticket and the two doors cannot drift.
 func (s *SyncStore) WithPickSource(p PickSource) *SyncStore {
 	s.tickets = p
+	s.orgTickets, _ = p.(OrgPickSource)
 	return s
 }
 
@@ -725,7 +762,7 @@ func (s *SyncStore) ticketReach(ctx context.Context, f sync.ScopeFilter) func(br
 }
 
 // attachTicket sets the ticket on a read row's projection (see attachTicketData).
-func (s *SyncStore) attachTicket(ctx context.Context, reach func(string) bool, rs *sync.RowState) {
+func (s *SyncStore) attachTicket(ctx context.Context, orgID string, reach func(string) bool, rs *sync.RowState) {
 	if rs.Deleted || rs.Data == nil {
 		return
 	}
@@ -733,7 +770,7 @@ func (s *SyncStore) attachTicket(ctx context.Context, reach func(string) bool, r
 	branch, _ := rs.Data["branch_id"].(string)
 	// A one row read (a conflict envelope, a replay) degrades to the row without its ticket and logs,
 	// as the REST decorate does; only the cursor feed has to fail so a device retries.
-	if err := s.attachTicketData(ctx, reach, branch, orderID, rs.Data); err != nil {
+	if err := s.attachTicketData(ctx, orgID, reach, branch, orderID, rs.Data); err != nil {
 		s.logger().Warn("tasks: sync row ticket read failed", "task", rs.ID, "order", orderID, "err", err)
 	}
 }
@@ -755,11 +792,13 @@ func (s *SyncStore) logger() *slog.Logger {
 // as blankTicketMoney does for a role the rule refuses; the hold mark and its words stay. It runs only
 // on the pool reads (Pull, Load, FindApplied), never inside a write transaction, so it never asks the
 // pool for a second connection while holding one.
-func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) bool, branch, orderID string, data map[string]any) error {
+func (s *SyncStore) attachTicketData(ctx context.Context, orgID string, reach func(string) bool, branch, orderID string, data map[string]any) error {
 	if s.tickets == nil || reach == nil || orderID == "" || data == nil || !reach(branch) {
 		return nil
 	}
-	t, err := s.tickets.PickTicket(ctx, orderID)
+	// The ticket is read under the caller's org (UX-81 round 4): another org's order is an unknown order here, so
+	// its ticket never rides this org's pull.
+	t, err := s.pickTicket(ctx, orgID, orderID)
 	if errors.Is(err, ErrUnknownOrder) {
 		return nil
 	}
@@ -799,7 +838,7 @@ func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sy
 // (yardBranchFence: a branch scoped caller reaches its granted branches, a GLOBAL caller every one) and the
 // writes hold to through syncBranchFence. It answers (nil, true) for a GLOBAL caller (no fence), the granted
 // branch ids and true for a scoped one (a pick with no branch is in no scoped caller's reach), and
-// false for an absent, inactive or unreadable authority, which pulls nothing. An unwired seam fences nothing: the
+// false for an absent or inactive authority, which pulls nothing, and an error for an unreadable one, which is retried. An unwired seam fences nothing: the
 // composition root refuses to boot a pick door without it (PickDoorWired).
 func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string, bool, error) {
 	if s.staff == nil {
@@ -807,10 +846,12 @@ func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string
 	}
 	sc, has, err := s.staff(ctx, f.Actor, f.OrgID)
 	if err != nil {
-		// Fail closed: an authority that cannot be read pulls nothing. The empty page leaves the cursor where
-		// it was, so the device's next pull recovers once the authority answers.
-		s.logger().Error("tasks: sync pull authority unreadable, the page is empty", "err", err)
-		return nil, false, nil
+		// Fail closed, and retryable (UX-81 round 4): an authority that cannot be read is no verdict on the
+		// caller or the operation. The plain error is not one of the engine's declared refusals, so a push fails
+		// whole and a pull fails its page (HTTP 503 "sync unavailable"), and the device retries the same
+		// cursor or the same outbox.
+		s.logger().Error("tasks: sync reach authority unreadable", "err", err)
+		return nil, false, fmt.Errorf("tasks: sync reach authority: %w", err)
 	}
 	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
 		return nil, false, nil

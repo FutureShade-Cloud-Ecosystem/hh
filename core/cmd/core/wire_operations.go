@@ -702,6 +702,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// A shortage created through sync tells the counter as the REST report does, through the yard
 	// service's notifier.
 	shortageSync.WithNoticer(yardTasksSvc)
+	// The creates' order reads and the ticket reads are held to the caller's org (UX-81 round 4); a box that
+	// wired a seam without the org held read refuses to boot rather than read across orgs.
+	if pool != nil && (!pickSync.OrgScoped() || !yardTasksSvc.OrgScoped()) {
+		panic("tasks: the pick order and ticket reads are not org scoped - a caller could create on, or read the ticket of, another org's order")
+	}
 	if pool != nil && !pickSync.PickDoorWired() {
 		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
 	}

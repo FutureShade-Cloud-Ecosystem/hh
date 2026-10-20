@@ -94,7 +94,10 @@ type Service struct {
 	orders   OrderReader
 	notifier ChatNotifier
 	picks    PickSource // W2 yard queue feed (see yard.go); nil = no ticket decoration
-	log      *slog.Logger
+	// orgOrders and orgPicks are the org held reads (UX-81 round 4), taken from the seams when they implement them.
+	orgOrders OrgOrderReader
+	orgPicks  OrgPickSource
+	log       *slog.Logger
 
 	// - W3 (Swarm C) -
 	// lines is the DIB-324 order-line edit seam (weight.go). Nil = the weight is recorded and the
@@ -124,7 +127,17 @@ func NewService(store taskStore) *Service {
 }
 
 // WithOrderReader injects the order-validation seam (create-from-order rejects an unknown order).
-func (s *Service) WithOrderReader(r OrderReader) *Service { s.orders = r; return s }
+func (s *Service) WithOrderReader(r OrderReader) *Service {
+	s.orders = r
+	s.orgOrders, _ = r.(OrgOrderReader) // the org held read, taken from the seam when it has one (UX-81 round 4)
+	return s
+}
+
+// OrgScoped reports whether the create's order read and the ticket reads are held to the caller's org (the
+// composition root's boot check, UX-81 round 4).
+func (s *Service) OrgScoped() bool {
+	return s.orgOrders != nil && (s.picks == nil || s.orgPicks != nil)
+}
 
 // RoleLabeler answers the role label each given user holds. The identity resolver satisfies it.
 type RoleLabeler interface {
@@ -163,7 +176,15 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 	if s.orders == nil {
 		return Task{}, errNotConfigured
 	}
-	ob, err := s.orders.OrderBrief(ctx, in.OrderID)
+	// The order is read under the caller's org (UX-81 round 4): another org's order is an unknown order, the
+	// same 422 "order not found", so a GLOBAL caller of one org cannot create a pick on another org's order.
+	var ob OrderBrief
+	var err error
+	if s.orgOrders != nil && in.OrgID != "" {
+		ob, err = s.orgOrders.OrderBriefInOrg(ctx, in.OrgID, in.OrderID)
+	} else {
+		ob, err = s.orders.OrderBrief(ctx, in.OrderID)
+	}
 	if err != nil {
 		return Task{}, err // ErrUnknownOrder (or a transport error), surfaced as-is
 	}
