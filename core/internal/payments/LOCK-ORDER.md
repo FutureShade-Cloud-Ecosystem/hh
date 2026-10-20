@@ -182,6 +182,7 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
   BEFORE UPDATE trigger inside the counter upsert (red on the main shape), and beside credits on its invoices,
   parked past its first re-open
 - the multi-invoice `ReversePayment` against NSF bounces on its invoices
+- a reversal beside a bank match of the SAME payment, both orders (`lockorder_reversed_integration_test.go`): reversal first, the match is refused (the claim carries `reversed_at IS NULL` in the UPDATE that decides it), match first, the reversal proceeds (reversal.go refuses only a reversed, reversing or VOID payment); both take the payment row, then the payments counter, and neither deadlocks
 - the NSF pair against each settle (single invoice)
 - the multi-invoice NSF against a settle naming the invoices in the other order (red without the bounce's
   payments counter)
