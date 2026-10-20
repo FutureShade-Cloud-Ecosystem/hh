@@ -55,3 +55,9 @@ for (const [width, height] of [
     await shot(page, `buying-and-stock-${width}-dark.png`);
   });
 }
+
+test("this desk mounts no TanyAI panel, so its band carries no Ask TanyAI button", async ({ page }) => {
+  await boot(page, 1440, 900);
+  await expect(page.locator("hh-shell-header")).toBeVisible();
+  await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
+});

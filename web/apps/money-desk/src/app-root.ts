@@ -578,6 +578,8 @@ export class MoneyDeskApp extends HHElement {
     if (band !== null) {
       band.org = FRAMED_BAND_ORG;
       band.demo = true;
+      // This desk mounts the TanyAI panel and answers the press, so its band carries the Ask TanyAI button.
+      band.assist = true;
       band.user = framedBandAccount(this.#userName, this.#roleLabel);
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
       band.groups = [];

@@ -53,3 +53,51 @@ for (const [width, height] of [
     await shot(page, `manager-home-${width}-dark.png`);
   });
 }
+
+const WITH_ASSIST = false;
+const APP = "manager-home";
+
+// PR 503 round (P2-1): at 390 the dealer lockup, the DEMO marker and the other run controls never overlap.
+async function boxesOf(page: Page, selectors: string[]): Promise<Array<{ name: string; x: number; y: number; w: number; h: number }>> {
+  const out: Array<{ name: string; x: number; y: number; w: number; h: number }> = [];
+  for (const selector of selectors) {
+    const target = page.locator("hh-shell-header").locator(selector).first();
+    if ((await target.count()) === 0) continue;
+    if (!(await target.isVisible())) continue;
+    const box = (await target.boundingBox())!;
+    out.push({ name: selector, x: box.x, y: box.y, w: box.width, h: box.height });
+  }
+  return out;
+}
+
+function overlaps(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
+  return a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1;
+}
+
+for (const mode of ["light", "charcoal"] as const) {
+  test(`at 390 the lockup, DEMO${WITH_ASSIST ? " and the assist icon" : ""} have no overlapping boxes (${mode})`, async ({ page }) => {
+    await boot(page, 390, 844);
+    if (mode === "charcoal") {
+      await page.locator("hh-shell-header button.account").click();
+      await page.getByRole("button", { name: "Brand theme" }).click();
+      await page.keyboard.press("Escape");
+    }
+    await shot(page, `${APP}-390-${mode}.png`);
+    const boxes = await boxesOf(page, [".lockup", ".demo", ".chip", "button[data-action='assist']", "button[data-action='notifications']", "button.account"]);
+    const lockup = boxes.find((b) => b.name === ".lockup")!;
+    expect(lockup.w).toBeGreaterThan(40);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        expect(overlaps(boxes[i], boxes[j]), `${boxes[i].name} and ${boxes[j].name} overlap at 390 (${mode})`).toBe(false);
+      }
+    }
+    const scroll = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(scroll).toBeLessThanOrEqual(0);
+  });
+}
+
+test("this desk mounts no TanyAI panel, so its band carries no Ask TanyAI button", async ({ page }) => {
+  await boot(page, 1440, 900);
+  await expect(page.locator("hh-shell-header")).toBeVisible();
+  await expect(page.locator("hh-shell-header").locator("[data-action='assist']")).toHaveCount(0);
+});
