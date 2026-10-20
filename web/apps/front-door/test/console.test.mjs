@@ -498,3 +498,44 @@ test("the public copy lists no admin persona card and refuses to enter one; the 
   assert.equal(partner.session.personaRoles.length, LIVE_ROLES.length);
   assert.ok(partner.session.personaRoles.some((role) => role.flow === "financial-controller"));
 });
+
+test("role and branch picker state on ConsoleSession: heldRoles, chooseRole, setBranches, and chooseBranch", async () => {
+  const account = new FakeAccountSurface();
+  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+  account.script(ownAnswer("general_manager,sales_manager", "General Manager")(1, w.clock.now() + 900_000));
+  await w.session.submit(EMAIL, FAKE_PASSWORD);
+  assert.deepEqual(
+    w.session.heldRoles.map((r) => r.id),
+    ["general_manager", "sales_manager"],
+  );
+  assert.equal(w.session.chosenRole?.id, "general_manager");
+  assert.equal(w.session.isMultiBranchRole, true);
+
+  w.session.setBranches([
+    { id: "b-west", code: "WST", name: "West Yard" },
+    { id: "b-east", code: "EST", name: "East Yard" },
+  ]);
+  assert.equal(w.session.allBranchesChosen, true);
+  assert.equal(w.session.activeBranchOptionId, "__all__");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
+
+  // Choosing a single branch narrows to that branch; choosing the other adds it back.
+  w.session.chooseBranch("b-west");
+  assert.equal(w.session.allBranchesChosen, false);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"]);
+  assert.equal(w.session.activeBranchOptionId, "b-west");
+  w.session.chooseBranch("b-east");
+  assert.equal(w.session.allBranchesChosen, true);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
+
+  // Switching to a single-branch role narrows to one branch; switching back to General Manager selects all branches.
+  w.session.chooseRole("sales_manager");
+  assert.equal(w.session.chosenRole?.id, "sales_manager");
+  assert.equal(w.session.isMultiBranchRole, false);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"]);
+  w.session.chooseBranch("b-east");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-east"]);
+  w.session.chooseRole("general_manager");
+  assert.equal(w.session.allBranchesChosen, true);
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east"]);
+});

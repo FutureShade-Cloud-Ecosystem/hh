@@ -277,13 +277,154 @@ test.describe("the sign in screen", () => {
 });
 
 test.describe("after sign in", () => {
+  test("role and branch picker: greets by first name and period in houseZone, lists only held roles and granted branches from the core, and opens the chosen role's app with the chosen branch", async ({ page, baseURL }) => {
+    // 02:30 UTC is 22:30 (evening) in America/Toronto and 19:30 (evening) in America/Los_Angeles,
+    // even though UTC is 02:30 (morning).
+    await page.clock.install({ time: new Date(1_000_002_600_000) });
+    await page.route("**/api/v1/tenant/config", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "demo-dealer",
+          dealer_name: "Gable Landscape Supply",
+          logo_url: "",
+          primary_color: "#3a7d56",
+          support_email: "support@gablelandscape.invalid",
+          support_phone: "",
+          business_zone: "America/Los_Angeles",
+        }),
+      }),
+    );
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-north-yard", code: "NTH", name: "North Yard" },
+        ]),
+      }),
+    );
+    await serve(page, baseURL!, {}, { role: { role_code: "inside_sales", role_name: "Sales" } });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    await expect(page.locator("#entry-title")).toHaveText("Good evening, Partner. What are you working on today?");
+    await expect(page.getByTestId("entry-name")).toContainText("Partner One · Sales");
+    await expect(page.getByRole("button", { name: "Not you? Sign out" })).toBeVisible();
+
+    const roleGroup = page.getByRole("radiogroup", { name: /your role/i });
+    await expect(roleGroup).toBeVisible();
+    const roleRadios = roleGroup.getByRole("radio");
+    await expect(roleRadios).toHaveCount(1);
+    await expect(roleRadios.first()).toHaveAttribute("aria-checked", "true");
+    await expect(roleRadios.first()).toContainText("Sales");
+    await expect(roleRadios.first()).toContainText("Opens Counter Till");
+
+    const branchGroup = page.getByRole("radiogroup", { name: /your branch/i });
+    await expect(branchGroup).toBeVisible();
+    const branchRadios = branchGroup.getByRole("radio");
+    await expect(branchRadios).toHaveCount(1);
+    await expect(branchRadios.first()).toHaveAttribute("aria-checked", "true");
+    await expect(branchRadios.first()).toContainText("North Yard");
+
+    await expect(page.getByTestId("continue-own")).toContainText("Open Counter Till");
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByTestId("home-title")).toHaveText("Sales");
+    await expect(page.getByTestId("header-word")).toContainText("North Yard");
+  });
+
+  test("role and branch picker: General Manager may choose more than one branch, keyboard arrow keys move within radio groups with one tab stop each, and 44 px targets on a phone across light and charcoal at 1440x900, 1024x768, and 390x844", async ({ page, baseURL }) => {
+    await page.clock.install({ time: new Date(1_000_040_400_000) }); // 09:00 EDT morning in America/Toronto
+    await page.route("**/api/v1/branches", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "branch-west", code: "WST", name: "West Yard" },
+          { id: "branch-east", code: "EST", name: "East Yard" },
+        ]),
+      }),
+    );
+    await serve(
+      page,
+      baseURL!,
+      { personas: true },
+      { role: { role_code: "general_manager,sales_manager", role_name: "General Manager", scope: "GLOBAL" } },
+    );
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expect(page.getByTestId("role-entry")).toBeVisible();
+    await expect(page.locator("#entry-title")).toHaveText("Good morning, Partner. What are you working on today?");
+
+    const roleGroup = page.getByRole("radiogroup", { name: /your role/i });
+    const roleRadios = roleGroup.getByRole("radio");
+    await expect(roleRadios).toHaveCount(2);
+    await expect(roleRadios.nth(0)).toHaveAttribute("aria-checked", "true");
+    await expect(roleRadios.nth(0)).toHaveAttribute("tabindex", "0");
+    await expect(roleRadios.nth(1)).toHaveAttribute("tabindex", "-1");
+
+    // Arrow key navigation within YOUR ROLE radio group.
+    await roleRadios.nth(0).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(roleRadios.nth(1)).toBeFocused();
+    await expect(roleRadios.nth(1)).toHaveAttribute("aria-checked", "true");
+    await expect(roleRadios.nth(1)).toHaveAttribute("tabindex", "0");
+    await expect(roleRadios.nth(0)).toHaveAttribute("tabindex", "-1");
+    await page.keyboard.press("ArrowUp");
+    await expect(roleRadios.nth(0)).toHaveAttribute("aria-checked", "true");
+
+    // General Manager branch picker allows choosing one or more branches.
+    const branchGroup = page.getByRole("radiogroup", { name: /your branch/i });
+    const branchRadios = branchGroup.getByRole("radio");
+    await expect(branchRadios).toHaveCount(3); // All branches, West Yard, East Yard
+    await expect(branchGroup.getByRole("radio", { name: "All branches" })).toHaveAttribute("aria-checked", "true");
+    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
+    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "true");
+
+    // Selecting one branch narrows to West Yard; selecting East Yard adds it back so both are chosen.
+    await branchGroup.getByRole("radio", { name: "West Yard" }).click();
+    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
+    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "false");
+    await branchGroup.getByRole("radio", { name: "East Yard" }).click();
+    await expect(branchGroup.getByRole("radio", { name: "West Yard" })).toHaveAttribute("aria-checked", "true");
+    await expect(branchGroup.getByRole("radio", { name: "East Yard" })).toHaveAttribute("aria-checked", "true");
+
+    // Demo walk section below the card is collapsed by default.
+    const walkDetails = page.getByTestId("persona-walk");
+    await expect(walkDetails).toBeVisible();
+    await expect(walkDetails).not.toHaveAttribute("open", "");
+    await expect(walkDetails.locator("summary")).toContainText("Walk the demo as another role");
+
+    // Check 1440x900, 1024x768, and 390x844 in light and charcoal.
+    for (const [width, height] of [[1440, 900], [1024, 768], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ["light", "brand"] as const) {
+        await setTheme(page, theme);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(overflow).toBeLessThanOrEqual(0);
+      }
+    }
+    // At 390x844 on a phone, targets on the picker card are at least 44 px tall.
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const locator of [
+      page.getByRole("button", { name: "Not you? Sign out" }),
+      roleRadios.nth(0),
+      branchRadios.nth(0),
+      page.getByTestId("continue-own"),
+    ]) {
+      const box = await locator.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+  });
+
   test("the role entry names the person's own role, continuing lands them, and the header carries them", async ({ page, baseURL }) => {
     await serve(page, baseURL!);
     await page.goto("/");
     await signInAsPartner(page);
     await expect(page.getByTestId("role-entry")).toBeVisible();
-    await expect(page.getByTestId("entry-name")).toHaveText("Partner One");
-    await expect(page.getByTestId("continue-own")).toHaveText(/Continue as Sales Manager/);
+    await expect(page.getByTestId("entry-name")).toContainText("Partner One");
+    await expect(page.getByTestId("continue-own")).toContainText("Open Manager Home");
     await expect(page.getByTestId("persona-cards")).toHaveCount(0);
     await page.getByTestId("continue-own").click();
     await expect(page.getByTestId("home-title")).toHaveText("Sales manager");
@@ -386,6 +527,8 @@ test.describe("the persona cards", () => {
     await page.goto("/");
     await expect(page.getByTestId("persona-cards")).toHaveCount(0);
     await signInAsPartner(page);
+    await expect(page.getByTestId("persona-walk")).toBeVisible();
+    await page.getByTestId("persona-walk").locator("summary").click();
     await expect(page.getByTestId("persona-cards")).toBeVisible();
     await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(13);
     await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
@@ -400,7 +543,7 @@ test.describe("the persona cards", () => {
     await expect(page.getByRole("button", { name: "Switch role" })).toBeVisible();
     await page.getByRole("button", { name: "Switch role" }).click();
     await expect(page.getByTestId("role-entry")).toBeVisible();
-    await expect(page.getByTestId("continue-own")).toHaveText(/Continue as Sales Manager/);
+    await expect(page.getByTestId("continue-own")).toContainText("Open Manager Home");
   });
 
   test("the public copy shows no admin persona card; the testers' copy shows them all (ruling A6)", async ({ page, baseURL }) => {
@@ -415,6 +558,7 @@ test.describe("the persona cards", () => {
     await serve(page, baseURL!, { personas: true, personasOpen: false, personaCaller: "partner" });
     await page.goto("/");
     await signInAsPartner(page);
+    await page.getByTestId("persona-walk").locator("summary").click();
     await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(13);
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(1);
   });
@@ -533,6 +677,7 @@ for (const theme of THEMES) {
       await serve(page, baseURL!, { personas: true }, { personaStatus: { driver: 503 } });
       await page.goto("/");
       await signInAsPartner(page);
+      await page.getByTestId("persona-walk").locator("summary").click();
       await expect(page.getByTestId("persona-cards")).toBeVisible();
       await page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true }).click();
       await expect(page.getByTestId("persona-cards")).toContainText("not available right now");

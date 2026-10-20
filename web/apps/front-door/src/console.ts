@@ -31,9 +31,17 @@ import {
   SIGN_IN_WORDS,
   fetchMethods,
   focusAfter,
+  heldRolesFor,
   signInNotice,
   type SignInMethod,
 } from "./signin.js";
+
+/** One branch granted to the signed-in person by the core's branches route. */
+export interface GrantedBranch {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+}
 
 export type ConsolePhase = "starting" | "signed-out" | "signing-in" | "signed-in";
 
@@ -99,6 +107,10 @@ export class ConsoleSession {
   #persona: ExchangeUser | null = null;
   #personaBusy: string | null = null;
   #refusals = new Map<string, string>();
+  #chosenRoleId: string | null = null;
+  #branches: readonly GrantedBranch[] = [];
+  #chosenBranchIds: readonly string[] = [];
+  #activeBranchOption: string | null = null;
 
   constructor(deps: ConsoleDeps) {
     this.#deps = deps;
@@ -177,6 +189,134 @@ export class ConsoleSession {
   /** The refusal standing in one persona card, or the empty string. */
   personaRefusal(id: string): string {
     return this.#refusals.get(id) ?? "";
+  }
+
+  /** Only the live roles the signed-in person holds. */
+  get heldRoles(): readonly LiveRole[] {
+    const who = this.who;
+    return who === null ? [] : heldRolesFor(who.roleCode);
+  }
+
+  /** The currently chosen role from the person's held roles, or null when they hold none. */
+  get chosenRole(): LiveRole | null {
+    const roles = this.heldRoles;
+    if (roles.length === 0) return null;
+    if (this.#chosenRoleId !== null) {
+      const found = roles.find((role) => role.id === this.#chosenRoleId);
+      if (found !== undefined) return found;
+    }
+    return roles[0] ?? null;
+  }
+
+  /** Choose one of the person's held roles on the role picker. */
+  chooseRole(roleId: string): void {
+    const roles = this.heldRoles;
+    const found = roles.find((role) => role.id === roleId);
+    if (found === undefined) return;
+    this.#chosenRoleId = found.id;
+    if (found.id === "general_manager" && this.#branches.length > 1) {
+      this.#chosenBranchIds = [];
+      this.#activeBranchOption = null;
+    }
+    this.#syncChosenBranches();
+    this.#changed();
+  }
+
+  /** The person's granted branches from the core. */
+  get branches(): readonly GrantedBranch[] {
+    return this.#branches;
+  }
+
+  /** The ids of the currently chosen branch or branches. */
+  get chosenBranchIds(): readonly string[] {
+    return this.#chosenBranchIds;
+  }
+
+  /** The currently chosen branch objects, in the core's order. */
+  get chosenBranches(): readonly GrantedBranch[] {
+    return this.#branches.filter((branch) => this.#chosenBranchIds.includes(branch.id));
+  }
+
+  /** Whether the chosen role may choose more than one branch (General Manager). */
+  get isMultiBranchRole(): boolean {
+    return this.chosenRole?.id === "general_manager";
+  }
+
+  /** True when every granted branch is currently chosen. */
+  get allBranchesChosen(): boolean {
+    return this.#branches.length > 0 && this.#chosenBranchIds.length === this.#branches.length;
+  }
+
+  /** The option id in the branch radio group that carries the single roving tab stop (tabindex="0"). */
+  get activeBranchOptionId(): string {
+    const validIds =
+      this.isMultiBranchRole && this.#branches.length > 1
+        ? ["__all__", ...this.#branches.map((b) => b.id)]
+        : this.#branches.map((b) => b.id);
+    if (this.#activeBranchOption !== null && validIds.includes(this.#activeBranchOption)) {
+      return this.#activeBranchOption;
+    }
+    if (this.isMultiBranchRole && this.#branches.length > 1 && this.allBranchesChosen) {
+      return "__all__";
+    }
+    return this.#chosenBranchIds[0] ?? validIds[0] ?? "";
+  }
+
+  /** Record the person's granted branches from the core. */
+  setBranches(branches: readonly GrantedBranch[]): void {
+    this.#branches = [...branches];
+    this.#syncChosenBranches();
+    this.#changed();
+  }
+
+  /** Choose or toggle a branch option ("__all__" or a branch id) in the branch picker. */
+  chooseBranch(optionId: string): void {
+    if (this.#branches.length === 0) return;
+    if (optionId === "__all__") {
+      if (!this.isMultiBranchRole) return;
+      this.#chosenBranchIds = this.#branches.map((b) => b.id);
+      this.#activeBranchOption = "__all__";
+      this.#changed();
+      return;
+    }
+    if (!this.#branches.some((b) => b.id === optionId)) return;
+    this.#activeBranchOption = optionId;
+    if (this.isMultiBranchRole) {
+      if (this.#chosenBranchIds.length === this.#branches.length && this.#branches.length > 1) {
+        this.#chosenBranchIds = [optionId];
+      } else if (this.#chosenBranchIds.includes(optionId)) {
+        if (this.#chosenBranchIds.length > 1) {
+          this.#chosenBranchIds = this.#chosenBranchIds.filter((id) => id !== optionId);
+        }
+      } else {
+        const next = new Set([...this.#chosenBranchIds, optionId]);
+        this.#chosenBranchIds = this.#branches.filter((b) => next.has(b.id)).map((b) => b.id);
+      }
+      this.#changed();
+      return;
+    }
+    this.#chosenBranchIds = [optionId];
+    this.#changed();
+  }
+
+  #syncChosenBranches(): void {
+    if (this.#branches.length === 0) {
+      this.#chosenBranchIds = [];
+      this.#activeBranchOption = null;
+      return;
+    }
+    const valid = this.#chosenBranchIds.filter((id) => this.#branches.some((b) => b.id === id));
+    if (this.isMultiBranchRole) {
+      this.#chosenBranchIds = valid.length > 0 ? valid : this.#branches.map((b) => b.id);
+      if (this.#activeBranchOption === null) {
+        this.#activeBranchOption = this.#branches.length > 1 ? "__all__" : (this.#branches[0]?.id ?? null);
+      }
+      return;
+    }
+    const firstValid = valid[0];
+    const single = firstValid !== undefined ? firstValid : this.#branches[0]!.id;
+    this.#chosenBranchIds = [single];
+    this.#activeBranchOption = single;
   }
 
   // ── transitions ─────────────────────────────────────────────────────────
@@ -394,6 +534,10 @@ export class ConsoleSession {
     this.#tap.forget();
     this.#refusals = new Map();
     this.#personaBusy = null;
+    this.#chosenRoleId = null;
+    this.#branches = [];
+    this.#chosenBranchIds = [];
+    this.#activeBranchOption = null;
   }
 
   async #loadMethods(): Promise<void> {

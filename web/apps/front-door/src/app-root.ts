@@ -40,7 +40,7 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, staffDemo, staffFeedback, staffIdentity } from "@hardscapehouse/api-client";
+import { ApiClient, staffBranches, staffDemo, staffFeedback, staffIdentity, tenantAuth } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
   type FeedbackSender,
@@ -50,6 +50,8 @@ import {
 // pieces). Only type imports reach the kit's ports from here, so the front
 // door's bundle carries the registry and the drawing rules, not the till.
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { setBranches } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import {
   COMING_ROLES,
   comingHeading,
@@ -68,9 +70,9 @@ import {
 import { countMarginApprovals } from "./approvals-count.js";
 import { createAppwriteAccountSurface } from "@hardscapehouse/auth/appwrite-adapter";
 import { loadRuntimeConfig, type RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
-import { ConsoleSession, coreBaseFor } from "./console.js";
+import { ConsoleSession, coreBaseFor, type GrantedBranch } from "./console.js";
 import { consoleStyles } from "./console-styles.js";
-import { bootScreen, configErrorScreen, dealerLockup, personaCards, signInScreen } from "./console-views.js";
+import { bootScreen, configErrorScreen, dealerLockup, personaCards, roleEntryScreen, signInScreen } from "./console-views.js";
 import { landingFor } from "./signin.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 
@@ -737,6 +739,7 @@ export class FrontDoorApp extends HHElement {
     super.connectedCallback();
     this.addEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("keydown", this.#onHostKeyDown);
     // Light is the box's default unless the person chose otherwise in this tab (the choice is carried
     // between the front door, the till and the Quote Desk); Auto follows the system.
     this.#theme.start();
@@ -816,11 +819,40 @@ export class FrontDoorApp extends HHElement {
     });
     this.#console = session;
     this.#mode = "console";
+    resetHouseZone();
+    void this.#loadTenantZone();
     // A session that ended underneath the page (a refresh the core refused, a token that ran out) is noticed here.
     this.#watch = setInterval(() => session.tick(), 2000);
     this.requestUpdate();
     await session.start();
-    if (session.phase === "signed-in" && session.landed) void this.#loadApprovals();
+    if (session.phase === "signed-in") {
+      void this.#loadBranches();
+      if (session.landed) void this.#loadApprovals();
+    }
+  }
+
+  /** Adopt the dealer's business zone from the public tenant config so the picker greets in houseZone. */
+  async #loadTenantZone(): Promise<void> {
+    const answered = await tenantAuth.tenantGetConfig(this.#feedbackClient);
+    if (!answered.ok) return;
+    serveHouseZoneFrom(answered.value);
+    this.requestUpdate();
+  }
+
+  /** Load the signed-in person's granted branches from the core. */
+  async #loadBranches(): Promise<void> {
+    const session = this.#console;
+    if (session === null || session.phase !== "signed-in") return;
+    const answered = await staffBranches.branchesList(this.#staffClient);
+    if (!answered.ok) return;
+    const list: GrantedBranch[] = answered.value
+      .filter((row) => typeof row.id === "string" && typeof row.name === "string")
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        code: typeof row.code === "string" && row.code !== "" ? row.code : row.id,
+      }));
+    session.setBranches(list);
   }
 
   /** The org header the page's own calls carry: the demo box's constant, or the console copy's org. */
@@ -847,7 +879,12 @@ export class FrontDoorApp extends HHElement {
       const control = form.elements.namedItem(name);
       return control instanceof HTMLInputElement ? control.value : "";
     };
-    void this.#console?.submit(field("email"), field("password"));
+    void this.#console?.submit(field("email"), field("password")).then(() => {
+      if (this.#console?.phase === "signed-in") {
+        void this.#loadBranches();
+        void this.#loadTenantZone();
+      }
+    });
   };
 
   disconnectedCallback(): void {
@@ -859,8 +896,51 @@ export class FrontDoorApp extends HHElement {
     this.#theme.stop();
     this.removeEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("keydown", this.#onHostKeyDown);
     super.disconnectedCallback();
   }
+
+  readonly #onHostKeyDown = (event: KeyboardEvent): void => {
+    if (
+      event.key !== "ArrowDown" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "ArrowUp" &&
+      event.key !== "ArrowLeft"
+    ) {
+      return;
+    }
+    const path = event.composedPath();
+    const currentRadio = path.find(
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radio",
+    );
+    const group = path.find(
+      (node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "radiogroup",
+    );
+    if (currentRadio === undefined || group === undefined || this.#console === null) return;
+    const radios = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const index = radios.indexOf(currentRadio);
+    if (index < 0 || radios.length === 0) return;
+    event.preventDefault();
+    const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
+    const nextIndex = (index + step + radios.length) % radios.length;
+    const nextRadio = radios[nextIndex];
+    if (nextRadio === undefined) return;
+    const action = nextRadio.getAttribute("data-action");
+    const groupTestId = group.getAttribute("data-testid");
+    if (action === "select-role") {
+      const roleId = nextRadio.getAttribute("data-role");
+      if (typeof roleId === "string" && roleId !== "") this.#console.chooseRole(roleId);
+    } else if (action === "select-branch") {
+      const branchId = nextRadio.getAttribute("data-branch-id");
+      if (typeof branchId === "string" && branchId !== "") this.#console.chooseBranch(branchId);
+    }
+    void this.updateComplete.then(() => {
+      if (groupTestId === null) return;
+      const nextGroup = this.renderRoot.querySelector<HTMLElement>(`[data-testid="${groupTestId}"]`);
+      const updatedRadios = nextGroup === null ? [] : Array.from(nextGroup.querySelectorAll<HTMLElement>('[role="radio"]'));
+      updatedRadios[nextIndex]?.focus();
+    });
+  };
 
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
@@ -898,7 +978,10 @@ export class FrontDoorApp extends HHElement {
       if (this.#console !== null) {
         this.#approvalCount = 0;
         this.#screen = { kind: "home" };
-        void this.#console.switchRole();
+        void this.#console.switchRole().then(() => {
+          void this.#loadBranches();
+          void this.#loadTenantZone();
+        });
         return;
       }
       this.#endSession();
@@ -926,7 +1009,19 @@ export class FrontDoorApp extends HHElement {
     if (session === null) return;
     if (action === "google") void session.google();
     if (action === "methods-retry") void session.retryMethods();
+    if (action === "select-role") {
+      const roleId = control.getAttribute("data-role");
+      if (typeof roleId === "string" && roleId !== "") session.chooseRole(roleId);
+    }
+    if (action === "select-branch") {
+      const branchId = control.getAttribute("data-branch-id");
+      if (typeof branchId === "string" && branchId !== "") session.chooseBranch(branchId);
+    }
     if (action === "continue-own") {
+      const chosenBranches = session.chosenBranches;
+      if (chosenBranches.length > 0) {
+        setBranches(chosenBranches.map((branch) => ({ id: branch.id, name: branch.name, code: branch.code })));
+      }
       session.continueOwn();
       this.#screen = { kind: "home" };
       void this.#loadApprovals();
@@ -1088,31 +1183,21 @@ export class FrontDoorApp extends HHElement {
     );
   }
 
-  /** The role entry after sign in: continue as the person's own role, and the persona cards where the deployment has them. */
+  /** The role entry after sign in: greet by first name and period in houseZone, pick role and branch, and optionally walk demo personas. */
   #entry(session: ConsoleSession): TemplateResult {
-    const who = session.who;
-    const landing = who === null ? null : landingFor(who.roleCode);
-    return html`
-      <div class="stage">
-        <section class="entry-card" aria-labelledby="entry-title" data-testid="role-entry">
-          <h2 id="entry-title">You are signed in</h2>
-          <p data-testid="entry-name">${who?.name ?? ""}</p>
-          ${landing === null
-            ? html`<p data-testid="entry-no-screens">This site has no screens for your role yet. Ask your administrator.</p>`
-            : html`
-                <button type="button" class="btn btn-primary btn-wide" data-action="continue-own" data-testid="continue-own">
-                  Continue as ${who?.roleLabel ?? landing.label}
-                </button>
-                <span class="chips" aria-hidden="true">
-                  ${landing.tiles.map((tile) => html`<span class="chip">${tile.name}</span>`)}
-                </span>
-              `}
-        </section>
-        ${session.config.personas
-          ? html`<h3 class="entry-subhead">Or walk the demo as another role</h3>${this.#personaCards(session)}`
-          : nothing}
-      </div>
-    `;
+    return roleEntryScreen(
+      session,
+      session.config.personas
+        ? html`<details class="persona-walk" data-testid="persona-walk">
+            <summary class="persona-walk-summary">
+              <span>Walk the demo as another role</span>
+              <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
+            </summary>
+            <div class="persona-walk-body">${this.#personaCards(session)}</div>
+          </details>`
+        : nothing,
+      this.#quietSignInControls(),
+    );
   }
 
   /** The widget's sender rides the property, never a template binding (the
@@ -1127,6 +1212,9 @@ export class FrontDoorApp extends HHElement {
     for (const id of ["#signin-email", "#signin-password"]) {
       const field = this.renderRoot.querySelector<HTMLInputElement>(id);
       if (field !== null) field.readOnly = signingIn;
+    }
+    for (const radio of this.renderRoot.querySelectorAll<HTMLElement>('[role="radio"][data-tabstop]')) {
+      radio.tabIndex = radio.getAttribute("data-tabstop") === "true" ? 0 : -1;
     }
     // Focus returns to where the person was after a refused sign in: the
     // password field after wrong credentials, the button otherwise.
@@ -1177,8 +1265,16 @@ export class FrontDoorApp extends HHElement {
    */
   #consoleHeader(session: ConsoleSession): TemplateResult {
     const who = session.who;
-    const landing = who === null ? undefined : (landingFor(who.roleCode) ?? undefined);
+    const landing = this.#landingRole();
     const openable = landing === undefined ? [] : landing.tiles.filter((tile) => tile.href !== null);
+    const branchLabel = session.chosenBranches.map((branch) => branch.name).join(", ");
+    const roleText =
+      who === null
+        ? ""
+        : session.heldRoles.length > 1 && session.chosenRole !== null
+          ? session.chosenRole.label
+          : who.roleLabel || (landing?.label ?? "");
+    const subline = branchLabel !== "" ? `${roleText} · ${branchLabel}` : roleText;
     return html`
       <header>
         <div class="demo-banner-cell">
@@ -1201,7 +1297,7 @@ export class FrontDoorApp extends HHElement {
           ? html`<p class="who" data-testid="header-word">Sign in</p>`
           : html`<p class="person" data-testid="header-word">
               <span class="person-name">${who.name}</span>
-              <span class="person-role">${who.roleLabel}</span>
+              <span class="person-role">${subline}</span>
             </p>`}
         <div class="controls console-controls">
           <button
@@ -1258,7 +1354,7 @@ export class FrontDoorApp extends HHElement {
   #header(): TemplateResult | typeof nothing {
     if (this.#mode === "boot" || this.#mode === "config-error") return this.#plainHeader();
     if (this.#mode === "console" && this.#console !== null) {
-      if (this.#console.phase !== "signed-in") return nothing;
+      if (this.#console.phase !== "signed-in" || !this.#console.landed) return nothing;
       return this.#consoleHeader(this.#console);
     }
     const session = this.#session;
@@ -1409,15 +1505,22 @@ export class FrontDoorApp extends HHElement {
   #identity(): { label: string; roleCode: string; name: string } | null {
     if (this.#console !== null) {
       const who = this.#console.who;
-      return who === null ? null : { label: who.roleLabel, roleCode: who.roleCode, name: who.name };
+      if (who === null) return null;
+      const chosen = this.#console.chosenRole;
+      return {
+        label: chosen?.label ?? who.roleLabel,
+        roleCode: chosen?.id ?? who.roleCode,
+        name: who.name,
+      };
     }
     const session = this.#session;
     return session === null ? null : { label: session.roleLabel, roleCode: session.roleCode, name: session.user.name };
   }
 
-  /** The live role whose home the signed in person lands on: by the mint's flow in the demo, by the person's own role code in the console. */
+  /** The live role whose home the signed in person lands on: by the mint's flow in the demo, by the person's chosen or own role code in the console. */
   #landingRole(): LiveRole | undefined {
     if (this.#console !== null) {
+      if (this.#console.chosenRole !== null) return this.#console.chosenRole;
       const who = this.#console.who;
       return who === null ? undefined : (landingFor(who.roleCode) ?? undefined);
     }
