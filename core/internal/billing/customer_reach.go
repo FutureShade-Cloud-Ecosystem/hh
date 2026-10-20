@@ -20,7 +20,7 @@ type CustomerReach interface {
 }
 
 // FenceCustomer holds one named customer to the caller's reach and writes the one answer when it fails: 404
-// {"error":"customer not found"}, the same words for an unreachable account and an unknown one. It reports whether
+// the "customer not found" envelope (httpx.Error), the same words for an unreachable account and an unknown one. It reports whether
 // the request may go on. A nil reach (the DB free unit tests) lets the request through; the composition root
 // refuses to boot without one.
 func FenceCustomer(w http.ResponseWriter, r *http.Request, reach CustomerReach, customerID string) bool {
