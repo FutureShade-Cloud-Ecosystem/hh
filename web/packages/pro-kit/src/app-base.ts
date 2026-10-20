@@ -31,7 +31,6 @@ import { CAPABILITIES, roleLabel, type Capability } from "./capabilities.js";
 import { tenantClient } from "./client.js";
 import { InMemoryTenantSession, type TenantSession, type TenantSignInAdapter } from "./session.js";
 import { appOf, surfaceOf, type ProAppKey } from "./surfaces.js";
-import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { chipStyles } from "./chips.js";
 import { monoStyles } from "./format.js";
 import "./frame.js";
@@ -157,7 +156,6 @@ export abstract class ProAppBase<T> extends HHElement {
   async #loadDealer(): Promise<void> {
     const answer = await tenantAuth.tenantGetConfig(this.#client);
     if (answer.ok) {
-      serveHouseZoneFrom(answer.value);
       this.#dealerName = answer.value.dealer_name;
       this.requestUpdate();
     }
