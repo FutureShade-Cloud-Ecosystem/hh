@@ -15,9 +15,9 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
@@ -398,6 +398,13 @@ export class MoneyDeskApp extends HHElement {
 
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -408,8 +415,7 @@ export class MoneyDeskApp extends HHElement {
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "area") {
@@ -459,8 +465,18 @@ export class MoneyDeskApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the listener sits on the root itself.
@@ -521,6 +537,7 @@ export class MoneyDeskApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onInput);
     this.renderRoot.removeEventListener("change", this.#onChange);
@@ -545,6 +562,8 @@ export class MoneyDeskApp extends HHElement {
     // follow-up. The account chip's menu carries what the app-local header
     // used to (theme, sign out): the actions ride the band's accountMenu
     // template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     const signedIn = this.#sessions.current !== null;
     if (band !== null) {

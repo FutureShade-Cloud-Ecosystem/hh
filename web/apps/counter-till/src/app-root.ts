@@ -223,11 +223,14 @@ export class CounterTillApp extends HHElement {
          is for the entry page; this bar's controls take the till's chrome role. */
       main.on-till {
         padding-top: 0;
+        /* The one band takes 56px above the bar, so the stepper's tallest state at 1440x900 gives
+           the page's foot breathing room back (the counter PC's window is the target). */
+        padding-bottom: var(--hh-s-8);
       }
       .surfacebar {
-        min-height: 48px;
-        padding: var(--hh-s-8) var(--hh-s-20);
-        margin-bottom: var(--hh-s-8);
+        min-height: 36px;
+        padding: var(--hh-s-4) var(--hh-s-20);
+        margin-bottom: var(--hh-s-4);
         gap: var(--hh-s-12);
       }
       /* The entry page's header takes the same compact scale (visual NOTE 2): one row of about 48px,

@@ -15,8 +15,8 @@
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
-import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
@@ -208,6 +208,13 @@ export class BuyingAndStockApp extends HHElement {
 
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -218,13 +225,11 @@ export class BuyingAndStockApp extends HHElement {
       return;
     }
     if (action === "feedback") {
-      const widget = this.renderRoot.querySelector("hh-feedback");
-      if (widget instanceof HHFeedback) widget.show();
+      this.#openFeedback();
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "area") {
@@ -250,8 +255,25 @@ export class BuyingAndStockApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme and Feedback for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+    if (action === "feedback") this.#openFeedback();
+  };
+
+  /** Feedback's press: the shell's account menu asks for it too, when this desk is framed. */
+  #openFeedback(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback) widget.show();
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme", "feedback"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.addEventListener("input", this.#onHostInput);
@@ -302,6 +324,7 @@ export class BuyingAndStockApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
@@ -325,6 +348,8 @@ export class BuyingAndStockApp extends HHElement {
     // follow-up. The account chip's menu carries what the app-local header
     // used to (theme, feedback, switch role, sign out): the actions ride the
     // band's accountMenu template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
       band.org = FRAMED_BAND_ORG;

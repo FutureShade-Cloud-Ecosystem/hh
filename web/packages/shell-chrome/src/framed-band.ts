@@ -27,3 +27,14 @@ export function framedBandAccount(userName: string, roleLabel: string): string {
   if (role === '' || role === name) return name;
   return `${name}, ${role}`;
 }
+
+/** The theme a framed app applies to the document root itself: the standalone
+ * band carries it, but framed by the Work shell the app renders no band, and
+ * the shell's account menu only asks the app to press its Theme control.
+ * Light sets data-theme, dark removes it, the sheet's own contract. */
+export function applyDocumentTheme(theme: string): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (theme === 'light') root.setAttribute('data-theme', 'light');
+  else if (theme === 'dark') root.removeAttribute('data-theme');
+}

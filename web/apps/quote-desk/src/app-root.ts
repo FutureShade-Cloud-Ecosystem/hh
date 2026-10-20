@@ -16,7 +16,7 @@ import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./
 import { html, css, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
@@ -216,8 +216,19 @@ export class QuoteDeskApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme and Feedback for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+    if (action === "feedback") this.#showFeedback();
+  };
+
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme", "feedback"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
@@ -316,6 +327,7 @@ export class QuoteDeskApp extends HHElement {
   override disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
@@ -357,12 +369,15 @@ export class QuoteDeskApp extends HHElement {
     if (control.getAttribute("data-action") === "feedback") {
       this.#showFeedback();
     }
-    if (control.getAttribute("data-action") === "theme") {
-      this.#theme.cycle();
-      this.#themeStatus = themeStatusText(this.#theme.choice);
-      this.requestUpdate();
-    }
+    if (control.getAttribute("data-action") === "theme") this.#pressTheme();
   };
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme.cycle();
+    this.#themeStatus = themeStatusText(this.#theme.choice);
+    this.requestUpdate();
+  }
 
   #pricingHoldsLeave(): boolean {
     const panel = this.renderRoot.querySelector<HTMLElement & { holdLeave?: () => boolean }>("qd-pricing-panel");

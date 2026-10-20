@@ -242,6 +242,10 @@
   .band[data-variant='band'] {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
+    /* The board's band is 56px tall with its bottom rule inside: 44px controls
+     * and a 5px pad above and below. */
+    min-height: 56px;
+    padding-block: 5px;
   }
   .band[data-variant='band'] .brand {
     justify-self: start;
