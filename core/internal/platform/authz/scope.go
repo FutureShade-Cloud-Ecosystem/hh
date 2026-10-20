@@ -19,6 +19,10 @@ type StaffScope struct {
 	OrgID          string
 	IssuedAt       time.Time
 	ExpiresAt      time.Time
+	// SessionID is the verified bearer's jti, or empty when the token carries none. It is carried
+	// so a feature keyed to one sign in (TanyAI conversations) can tell two visitors on the same
+	// user apart; it is never an authority and nothing is decided from it here.
+	SessionID string
 }
 
 // TenantScope is the request scope of a verified tenant bearer. The org

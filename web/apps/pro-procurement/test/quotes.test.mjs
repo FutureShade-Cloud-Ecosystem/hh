@@ -81,6 +81,7 @@ test("the list holds the dealer's quotes with their words, and empties with its 
   const emptied = await quotesLoad(page);
   assert.equal(emptied.kind, "empty");
   assert.match(QUOTES_EMPTY, /^No quotes yet/);
+  assert.doesNotMatch(QUOTES_EMPTY, /RFQ/, "the empty words never name an RFQ");
   await fetch(`${base}/_stub/reset`, { method: "POST" });
 });
 
@@ -191,4 +192,17 @@ test("quotesLoad walks cursor pages so older quotes beyond the first page are ke
   assert.equal(answer.kind, "ready");
   if (answer.kind !== "ready") return;
   assert.equal(answer.data.quotes.length, 4, "all quote pages must be read");
+});
+
+test("a quote the core sent with no totals or days reads in words, never n/a", async () => {
+  const page = await makePage("pm", { surface: "quotes", quoteId: SENT_ID });
+  const answer = await quotesLoad(page);
+  if (answer.kind !== "ready") throw new Error("the quote did not load");
+  const quote = { ...answer.data.quote, subtotal_cents: null, tax_cents: null, total_cents: null, created_at: null, valid_until: null };
+  const text = words(quotesView({ view: "detail", quote }, page)).replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(text, /n\/a/, text);
+  assert.ok(text.includes("Not priced"), text);
+  assert.ok(text.includes("Created Not set") && text.includes("Valid until Not set"), text);
+  const list = words(quotesView({ view: "list", quotes: [quote] }, page)).replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(list, /n\/a/, list);
 });

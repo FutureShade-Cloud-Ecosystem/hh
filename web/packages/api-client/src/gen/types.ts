@@ -1129,6 +1129,7 @@ export type AssistMessage = {
 };
 export type AssistChatRequest = {
   question: string;
+  conversation_id?: string;
   history?: AssistMessage[];
 };
 export type AssistUsage = {
@@ -1146,6 +1147,7 @@ export type AssistAnswer = {
   clarify?: AssistClarify;
   carried?: string[];
   suggest?: string[];
+  conversation_id?: string;
 };
 export type AssistBudget = {
   tokens: number;
@@ -1201,8 +1203,9 @@ export type AssistUserLimitResetResult = {
   source: "role";
 };
 export type AssistSettings = {
-  provider: "stub" | "anthropic";
+  provider: "stub" | "anthropic" | "routed";
   model: string;
+  route?: string;
   chat_enabled: boolean;
   spend_visible_to_non_admin: boolean;
 };
@@ -1888,6 +1891,7 @@ export type DispatchStop = {
   committed_at?: string | null;
   reopened_at?: string | null;
   reopen_reason?: string;
+  lines?: DispatchDriverLine[];
 };
 export type DispatchPhotoMeta = {
   id: string;

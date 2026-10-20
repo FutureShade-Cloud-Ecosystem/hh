@@ -25,7 +25,7 @@ export const SURFACES: Readonly<Record<SurfaceId, SurfaceMeta>> = {
   projects: { label: "Projects", capability: "submit_rfq" },
   catalog: { label: "Catalog", capability: "submit_rfq" },
   quotes: { label: "Quotes", capability: "submit_rfq" },
-  scope: { label: "Order scope", capability: "submit_rfq" },
+  scope: { label: "Plan", capability: "submit_rfq" },
   product: { label: "Product", capability: "submit_rfq" },
 };
 

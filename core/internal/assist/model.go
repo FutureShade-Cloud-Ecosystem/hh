@@ -64,6 +64,10 @@ type Caller struct {
 	// PaymentTrail is the role gate's answer to "does this caller hold the payment trail reads"
 	// (ruling 87), set by the handler. False means the reads that list payments leave them out.
 	PaymentTrail bool
+	// SessionKey is the verified bearer's jti: one value per sign in. It keys server kept
+	// conversations (conversation_store.go) so two visitors on one persona user never share a
+	// history. Empty when the token carries none. It is never an authority.
+	SessionKey string
 }
 
 // HasRole reports whether the caller has any assigned role at all.
