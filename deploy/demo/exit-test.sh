@@ -57,7 +57,14 @@
 #     rotating forged values buy the mint's limit no bucket;
 #   the phrase's hash sits on no file in the container's writable layer,
 #     the scan bites on a planted value, and no served process's
-#     environment carries the hash variable.
+#     environment carries the hash variable;
+#   a session signing key mounted group or other readable (FB Deploy
+#     mounts files 0755 root:root and refuses chmod) is copied by the
+#     entrypoint into a private 0400 path on a console copy, a 0400 key
+#     is used as-is, and a missing key refuses the boot; the private
+#     directory comes only from the routine's argument (a hh_secrets_dir
+#     value in the environment changes nothing) and a directory outside
+#     /run/ is refused.
 #
 # The one clause the image cannot prove alone is recorded in
 # docs/BLOCKERS.md: two distinct client addresses behind the proxy hold
@@ -1000,6 +1007,128 @@ case "$codes" in
 esac
 [ "$forged" = "0" ] && pass "rotating forged forwarded values bought no bucket" \
 	|| fail "$forged mint(s) bought by forged forwarded values"
+
+# --------------------------------------------------------------------------
+# The mounted signing key's mode (row 2354): FB Deploy mounts secret
+# files as 0755 root:root and its API refuses chmod, while the core
+# refuses a key readable by group or other. The entrypoint's own routine
+# is extracted between its markers and run inside the image itself (as
+# root, no network, in a throwaway container), so what is tested is the
+# code the image runs with the environment the image has. The secrets
+# directory reaches the routine only as a function argument; a
+# hh_secrets_dir value in the environment must change nothing, and a
+# directory outside /run/ is refused. The key material below is
+# throwaway, made in the container, and never a real key; nothing prints
+# it.
+# --------------------------------------------------------------------------
+echo "== a mounted 0755 signing key is copied into a private 0400 path (in the image)"
+ensure_src="$(sed -n '/^# BEGIN ensure_signing_key$/,/^# END ensure_signing_key$/p' deploy/demo/entrypoint.sh)"
+keyleg="$(docker run --rm --network none -e ENSURE_SRC="$ensure_src" --entrypoint sh "$IMAGE" -c '
+	set -u
+	fail() { echo "entrypoint: $*" >&2; exit 1; }
+	log() { echo "entrypoint: $*"; }
+	printf "%s\n" "$ENSURE_SRC" > /tmp/routine.sh
+	. /tmp/routine.sh
+	key_body="throwaway mode probe, not a key"
+	printf "%s\n" "$key_body" > /tmp/mounted
+	chmod 0755 /tmp/mounted
+	printf "%s\n" "$key_body" > /tmp/tight
+	chmod 0400 /tmp/tight
+	cat > /tmp/one.sh <<"EOS"
+	set -u
+	fail() { echo "entrypoint: $*" >&2; exit 1; }
+	log() { echo "entrypoint: $*"; }
+	. /tmp/routine.sh
+	if [ "${1:-}" != "" ]; then
+		ensure_signing_key "$1"
+	else
+		ensure_signing_key
+	fi
+	echo "resolved=$CORE_SESSION_SIGNING_KEY_FILE"
+EOS
+	# runkey <signin mode> <key path> <secrets dir argument, "" for none> <env hh_secrets_dir>
+	runkey() {
+		CORE_SIGNIN_MODE="$1" CORE_SESSION_SIGNING_KEY_FILE="$2" hh_secrets_dir="${4:-}" 			sh /tmp/one.sh ${3:+"$3"}
+	}
+	say() { if [ "$1" = "0" ]; then echo "pass: $2"; else echo "fail: $2"; fi; }
+	wanthas() { case "$2" in *"$3"*) say 0 "$1" ;; *) say 1 "$1 (missing: $3, got: $2)" ;; esac; }
+
+	out="$(runkey console /tmp/mounted /run/wc-private 2>&1)" && rc=0 || rc=1
+	[ "$rc" = "0" ] && [ -f /run/wc-private/session.pem ] \
+		&& say 0 "a mounted 0755 signing key boots on a console copy (the entrypoint copies it private)" \
+		|| say 1 "a mounted 0755 signing key was refused by the entrypoint: $out"
+	wanthas "CORE_SESSION_SIGNING_KEY_FILE points at the private copy" "$out" "resolved=/run/wc-private/session.pem"
+	[ "$(stat -c %a /run/wc-private/session.pem 2>/dev/null)" = "400" ] \
+		&& say 0 "the private copy is mode 0400" \
+		|| say 1 "the private copy is not mode 0400 ($(stat -c %a /run/wc-private/session.pem 2>/dev/null))"
+	[ "$(stat -c %a /run/wc-private)" = "700" ] \
+		&& say 0 "the private directory is mode 0700" \
+		|| say 1 "the private directory is not mode 0700"
+	[ "$(stat -c %a /tmp/mounted)" = "755" ] \
+		&& say 0 "the mounted file itself is untouched (still 0755)" \
+		|| say 1 "the mounted file mode was changed"
+	cmp -s /tmp/mounted /run/wc-private/session.pem \
+		&& say 0 "the private copy holds the mounted file bytes" \
+		|| say 1 "the private copy differs from the mounted file"
+	case "$out" in
+		*"$key_body"*) say 1 "the run printed the key material" ;;
+		*) say 0 "the run printed no key material" ;;
+	esac
+
+	out="$(runkey console /tmp/tight /run/wc-private2 2>&1)" && rc=0 || rc=1
+	[ "$rc" = "0" ] && [ "$out" = "resolved=/tmp/tight" ] && [ ! -e /run/wc-private2/session.pem ] \
+		&& say 0 "a key already 0400 is used as-is (no copy, no path rewrite)" \
+		|| say 1 "a 0400 key was not used as-is: $out"
+
+	out="$(runkey console /tmp/absent /run/wc-private2 2>&1)" && rc=0 || rc=1
+	if [ "$rc" = "1" ]; then
+		wanthas "a missing key refuses the boot, naming the variable" "$out" "CORE_SESSION_SIGNING_KEY_FILE"
+	else
+		say 1 "a missing key did not refuse the boot"
+	fi
+
+	out="$(runkey demo /tmp/mounted /run/wc-private2 2>&1)" && rc=0 || rc=1
+	[ "$rc" = "0" ] && [ "$out" = "resolved=/tmp/mounted" ] && [ ! -e /run/wc-private2/session.pem ] \
+		&& say 0 "a demo copy leaves the mounted key alone (the copy is console only)" \
+		|| say 1 "a demo copy touched the signing key: $out"
+
+	# hh_secrets_dir in the environment must change nothing: the routine
+	# takes its directory from the argument alone, so a value pointing at
+	# the served web root neither moves the copy nor touches that root.
+	srv_mode_before="$(stat -c %a /srv/app)"
+	out="$(runkey console /tmp/mounted "" /srv/app 2>&1)" && rc=0 || rc=1
+	ign=0
+	[ "$rc" = "0" ] || ign=1
+	case "$out" in
+		*"resolved=/run/hh-secrets/session.pem") ;;
+		*) ign=1 ;;
+	esac
+	[ "$(stat -c %a /run/hh-secrets/session.pem 2>/dev/null)" = "400" ] || ign=1
+	[ ! -e /srv/app/session.pem ] || ign=1
+	[ "$(stat -c %a /srv/app)" = "$srv_mode_before" ] || ign=1
+	if [ "$ign" = "0" ]; then
+		say 0 "hh_secrets_dir in the environment is ignored: the copy still lands under /run and the served root is untouched"
+	else
+		say 1 "hh_secrets_dir in the environment moved the copy or touched the served root"
+	fi
+
+	out="$(runkey console /tmp/mounted /srv/app/wc 2>&1)" && rc=0 || rc=1
+	if [ "$rc" = "1" ]; then
+		wanthas "a secrets directory outside /run/ is refused" "$out" "under /run/"
+	else
+		say 1 "a secrets directory outside /run/ was accepted"
+	fi
+	rm -f /tmp/routine.sh /tmp/one.sh /tmp/mounted /tmp/tight
+')"
+while IFS= read -r keyline; do
+	case "$keyline" in
+		pass:*) pass "${keyline#pass: }" ;;
+		fail:*) fail "${keyline#fail: }" ;;
+		*) [ -n "$keyline" ] && fail "unexpected line from the signing key leg: $keyline" ;;
+	esac
+done <<KEYLEGEOF
+$(printf '%s\n' "$keyleg")
+KEYLEGEOF
 
 # Cleanup is the EXIT trap above: the containers, the databases of a
 # Postgres that was found, and the Postgres and network this run started.
