@@ -9,6 +9,8 @@
 // carries no resolved name, so the cell shows the actor's role label when
 // the row carries one, else the id's own block, never a blank.
 
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+
 /** One audit row as the list projects it. */
 export interface AuditEntryLike {
   readonly action?: string;
@@ -74,21 +76,26 @@ export function actorWords(entry: AuditEntryLike): string {
   return "No actor recorded";
 }
 
-const MONTH_WORD = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
-
 /**
- * A row's moment as a person reads it, in UTC so the trail reads the same in
- * every yard. An unparsable value shows as it came: the trail is evidence,
- * and evidence is never blanked by a formatter.
+ * A row's moment as a person reads it, in the dealer's own zone (served on the surface config
+ * read, the Ontario default until one is) with the zone's short name, so a row made this
+ * evening reads this evening's day, never tomorrow's. An unparsable value shows as it came: the
+ * trail is evidence, and evidence is never blanked by a formatter.
  */
 export function whenWords(iso: string, now: number | null = null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const month = MONTH_WORD[d.getUTCMonth()];
-  const day = d.getUTCDate();
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${month} ${day}, ${hh}:${mm} UTC`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: houseZone(),
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZoneName: "short",
+  }).formatToParts(d);
+  const part = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("month")} ${part("day")}, ${part("hour")}:${part("minute")} ${part("timeZoneName")}`;
 }
 
 /** The entity cell: the type and, when the row carries one, the id. */

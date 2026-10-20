@@ -1,6 +1,7 @@
 // PR 121 round 4 findings: each test holds one answer back behind a delayed route, so the order of events is exact
 // and does not depend on the machine's speed.
 import { expect, test, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { gate, hold, open, quiet, row, seed, settle, signIn, stubBrowserChannels, writes, showList } from "./switch-helpers.js";
 
 async function stubState(page: Page): Promise<{ workspaceWrites: { user_id: string; body: Record<string, unknown> | null }[] }> {
@@ -66,6 +67,7 @@ async function keptSays(page: Page): Promise<{ error: string; notice: string }> 
 }
 
 async function signOutAndInAs(page: Page, role: string): Promise<void> {
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: role, exact: true }).click();
@@ -106,6 +108,7 @@ test("A P2-1 an edit panel save still out at sign out sends no discount write un
   await line.getByRole("button", { name: "Save" }).click();
   await patch.asked;
   await keep(page, "qd-quote-edit");
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sales", exact: true }).click();

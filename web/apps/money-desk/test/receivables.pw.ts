@@ -37,11 +37,14 @@ test("the way in builds the role code from the session's own code, never from th
 test("the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words", async ({ page, request }) => {
   await openDesk(page, request);
   await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();
-  expect(await page.locator("[data-card] [data-card-title]").allTextContents()).toEqual(["Escalation", "Late", "Overdue", "Current"]);
+  expect(await page.locator("[data-card] [data-card-title]").allTextContents()).toEqual(["90 days and over", "61 to 89 days", "1 to 60 days", "Current"]);
+  await expect(page.locator("[data-card]").first()).toContainText("Past due");
+  await expect(page.locator("[data-card-asof]")).toHaveCount(0);
+  await expect(page.locator("[data-card-note]")).toHaveText("As of today · Grouped by your past due settings");
   await expect(page.locator("[data-register-row]")).toHaveCount(9);
   const first = page.locator("[data-register-row]").first();
   await expect(first).toContainText("INV-1001");
-  await expect(first).toContainText("104d overdue");
+  await expect(first).toContainText("104d past due");
   await expect(first).toContainText("promise open");
   await expect(first).toContainText("104 days ago");
   await expect(page.locator("[data-register-row]", { hasText: "INV-1004" })).toContainText("disputed");
@@ -69,8 +72,8 @@ test("the register's filters: overdue, promised, disputed and paid", async ({ pa
   await pick("Past due");
   await expect(page.locator("[data-register-row]")).toHaveCount(7);
   await expect(page.locator("[data-testid='c8-summary']")).toContainText("7 of 9 past due · $11,499.50");
-  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days late");
-  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("91 and over");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='overdue-line']")).toContainText("104 days past due");
+  await expect(page.locator("[data-register-row]").first().locator("[data-testid='bucket-pill']")).toHaveText("Over 90 days");
   await pick("Current");
   await expect(page.locator("[data-register-row]")).toHaveCount(2);
   await expect(page.locator("[data-testid='c8-summary']")).toHaveCount(0);
@@ -623,6 +626,7 @@ test("the held key survives a sign out and a sign in of the same user", async ({
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);
@@ -641,6 +645,7 @@ test("held keys are never shared across users: another user starts with none, an
   await fillCheque(page);
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='financial-controller']").click();
   await page.getByRole("button", { name: "Receivables", exact: true }).click();
@@ -652,6 +657,7 @@ test("held keys are never shared across users: another user starts with none, an
   expect(posts).toHaveLength(2);
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
   // The first user signs in again and still holds the first key: the route answers its replay.
+  await page.locator("hh-shell-header button.account").click();
   await page.locator("[data-action='sign-out']").click();
   await page.locator("[data-flow='payables-receivables']").click();
   await expect(page.locator("[data-card]")).toHaveCount(4);
@@ -945,7 +951,7 @@ test("the statement: none yet, run it, read the aging strip, send it; PDF reads 
   await page.getByRole("button", { name: "Run a statement" }).click();
   await expect(page.locator("[data-closing]")).toContainText("$623.00");
   await expect(page.locator("[data-statement]")).toContainText("As of today");
-  await expect(page.locator("[data-statement]")).toContainText("1 to 30");
+  expect(await page.locator("[data-statement] dl.strip dt").allTextContents()).toEqual(["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"]);
   await page.getByRole("button", { name: "Send to the AP contact" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Statement queued to the AP contact");
   await page.getByRole("button", { name: /Download PDF/ }).click({ force: true });

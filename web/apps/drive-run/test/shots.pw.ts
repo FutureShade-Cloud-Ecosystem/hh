@@ -75,6 +75,7 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Mark loaded" }).click();
       await page.getByRole("button", { name: "Mark en route" }).click();
       await page.getByRole("button", { name: "Could not deliver" }).click();
+      await page.getByRole("radio", { name: "Other, say what" }).check();
       await page.getByLabel("What stopped this delivery?").fill("Nobody on site and the gate is locked");
       await take("08", "could-not-deliver");
       await page.getByRole("button", { name: "Could not deliver" }).click();

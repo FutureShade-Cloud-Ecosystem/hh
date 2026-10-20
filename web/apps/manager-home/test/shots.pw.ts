@@ -34,7 +34,10 @@ for (const size of SIZES) {
       await useScenario(request, "plain-profile");
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
+        if (theme === "brand") {
+          await page.locator("hh-shell-header button.account").click();
+          await page.getByRole("button", { name: "Brand theme" }).click();
+        }
       };
 
       // The way in, with no handoff: the manager's own card among the live roles.

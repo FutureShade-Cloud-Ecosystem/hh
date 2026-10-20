@@ -10,11 +10,12 @@ package assist
 // or unconfigured resolves to the deterministic stub.
 //
 // Configuration comes from deployment environment (ModelConfig), set by the operator at deploy and
-// never by a dealer or a request. The names are HOS_ASSIST_*, which a demo box refuses until slice
-// 3 opens them (demoenv_inventory.go).
+// never by a dealer or a request. The names are HOS_ASSIST_*, of which a demo box admits only the
+// key and the dealer cap, behind the caps (demoenv_inventory.go).
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/redact"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -45,11 +46,11 @@ const (
 
 // ModelConfig is the deployment's model configuration.
 type ModelConfig struct {
-	AnthropicKey     Secret // HOS_ASSIST_ANTHROPIC_API_KEY
-	AnthropicBaseURL string // empty is the vendor's own endpoint
-	GatewayURL       string // HOS_ASSIST_GATEWAY_URL, the OpenAI compatible gateway, version prefix included
-	GatewayKey       Secret // HOS_ASSIST_GATEWAY_KEY, this dealer's key
-	DealerTag        string // HOS_ASSIST_DEALER_TAG, this dealer's tag
+	AnthropicKey     redact.Secret // HOS_ASSIST_ANTHROPIC_API_KEY
+	AnthropicBaseURL string        // empty is the vendor's own endpoint
+	GatewayURL       string        // HOS_ASSIST_GATEWAY_URL, the OpenAI compatible gateway, version prefix included
+	GatewayKey       redact.Secret // HOS_ASSIST_GATEWAY_KEY, this dealer's key
+	DealerTag        string        // HOS_ASSIST_DEALER_TAG, this dealer's tag
 }
 
 // String keeps every credential out of any log line that formats the config.
@@ -120,6 +121,31 @@ type Router struct {
 	stub    Provider
 	http    *http.Client
 	log     *slog.Logger
+	// only, when set, is the one alias this router will resolve; every other alias lands on the
+	// stub (a demo copy reaches tanyai-premium and nothing else).
+	only map[string]bool
+}
+
+// OnlyAlias is the one alias this router is restricted to, or empty when it is unrestricted or
+// restricted to more than one. The demo boot reads it off the wired router.
+func (r *Router) OnlyAlias() string {
+	if r == nil || len(r.only) != 1 {
+		return ""
+	}
+	for a := range r.only {
+		return a
+	}
+	return ""
+}
+
+// Only restricts the router to the named aliases: any other alias resolves to the stub with ok
+// false, whatever its row says. The demo composition uses it so the demo can reach one alias.
+func (r *Router) Only(aliases ...string) *Router {
+	r.only = map[string]bool{}
+	for _, a := range aliases {
+		r.only[a] = true
+	}
+	return r
 }
 
 // NewRouter builds the router. stub is the provider every unresolvable alias lands on.
@@ -145,6 +171,9 @@ func (r *Router) KeyPresent() bool { return strings.TrimSpace(r.cfg.AnthropicKey
 // in the table, disabled, of the stub kind, or missing its configuration resolves to the stub with
 // ok false: a model string that is not an alias row is never sent to any vendor.
 func (r *Router) Resolve(ctx context.Context, alias string) (p Provider, ok bool) {
+	if r.only != nil && !r.only[alias] {
+		return r.stub, false
+	}
 	rows, err := r.aliases.Aliases(ctx)
 	if err != nil {
 		if r.log != nil {

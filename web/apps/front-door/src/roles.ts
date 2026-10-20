@@ -324,3 +324,30 @@ export function contractorEntries(flows: unknown): readonly ContractorEntry[] {
   }
   return CONTRACTOR_ROLES.filter((role) => offered.has(role.roleCode)).map((role) => ({ ...role, href: `${role.prefix}?as=${role.roleCode}` }));
 }
+
+/**
+ * The primary app name each live role opens from the role and branch picker
+ * (DECISIONS.md D48: manager roles land on Manager Home; other roles land on
+ * the first app of their catalog order).
+ */
+export const PRIMARY_APP_NAME_BY_ROLE: Readonly<Record<LiveRole["id"], string>> = {
+  inside_sales: "Counter Till",
+  sales_manager: "Manager Home",
+  yard_manager: "Manager Home",
+  yard_team: "Yard Pick",
+  payables_receivables: "Money Desk",
+  procurement_manager: "Buying and Stock",
+  driver: "HH Drive",
+  financial_controller: "Money Desk",
+  logistics_manager: "Dispatch and Load Building",
+  general_manager: "Manager Home",
+  hr: "Dealer Admin",
+  branch_manager: "Manager Home",
+  outside_sales: "Quote Desk",
+};
+
+/** The primary module tile a live role opens from the role and branch picker. */
+export function primaryTileFor(role: LiveRole): ModuleTile {
+  const targetName = PRIMARY_APP_NAME_BY_ROLE[role.id];
+  return role.tiles.find((tile) => tile.name === targetName) ?? role.tiles[0]!;
+}

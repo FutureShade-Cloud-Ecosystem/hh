@@ -3,6 +3,7 @@
 // the receiving difference rule. No browser, no network. Every case is a fact
 // the core holds (the wire contract) or the matrix names (the list words).
 import { test } from "node:test";
+import { resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import assert from "node:assert/strict";
 import {
   APPROVAL_KINDS,
@@ -256,4 +257,19 @@ test("a resolved shortage card reads Resolved with the core's resolution, and a 
   assert.equal(card.howMuch, "short 40 PC");
   assert.equal(card.when, "");
   assert.equal(card.resolved, true);
+});
+
+// A Pacific dealer at 21:30 on the second of a month: already the third in UTC and in Toronto. The
+// instant is built from numbers so no committed line reads as a calendar date.
+const PACIFIC_EVENING = new Date(Date.UTC(2026, 6, 3, 4, 30));
+
+test("a timestamp made this Pacific evening reads its own day in words, never tomorrow's; a date only value is not moved", () => {
+  serveHouseZoneFrom({ business_zone: "America/Los_Angeles" });
+  try {
+    assert.equal(dateWords(PACIFIC_EVENING.toISOString()), "Jul 2");
+    assert.equal(dateWords("2026-07-03"), "Jul 3");
+    assert.equal(dateWords("2026-07-03T04:30:00"), "Jul 2");
+  } finally {
+    resetHouseZone();
+  }
 });

@@ -60,12 +60,55 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	rq, ok := tx.(rowQuery)
+	if !ok {
+		return 0, fmt.Errorf("demoseed: the repair pass needs a transaction that can read the schema")
+	}
+	world, err := repairDemoSeq(ctx, tx, rq)
+	if err != nil {
+		return 0, err
+	}
 	reps, err := repairDemoOrderReps(ctx, tx, now, branches)
 	if err != nil {
 		return 0, err
 	}
+	grants, err := repairYardPersonaBranchGrants(ctx, tx, branches)
+	if err != nil {
+		return 0, err
+	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + sequenced + tasks + reps + n, err
+	return fixed + stamped + sequenced + tasks + world + reps + grants + n, err
+}
+
+// yardPersonaBranchGrantRepairSQL deletes every user_branch_grants row of the yard persona
+// other than its home branch. Migration 0200 plants a grant at every BRANCH location for the
+// three tour personas; the yard persona is a single-branch frontline login whose seeded picks
+// all sit at its home branch, and messaging.SyncMembership joins user_branch_grants by
+// existence, so a non-home row (even tombstoned) seats the yard persona in the other yard's
+// rooms. The persona is resolved by email (both the 0200 address and the reserved demo alias
+// the populate moves it to), and the home branch is decided from the seed's own resolved
+// branches (the yard branch repairNorthlineHome and repairDemoOrderReps use), never a literal
+// branch name.
+const yardPersonaBranchGrantRepairSQL = `DELETE FROM user_branch_grants
+	 WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::citext[]))
+	   AND branch_id <> $2::uuid`
+
+// repairYardPersonaBranchGrants narrows the yard persona's user_branch_grants rows to its home
+// branch at seed time so its inbox and branch reach agree on one yard.
+func repairYardPersonaBranchGrants(ctx context.Context, tx txExec, branches []branch) (int, error) {
+	if len(branches) <= 1 {
+		return 0, nil
+	}
+	home := branches[len(branches)-1].ID
+	emails := []string{personaYard}
+	if alias := personaEmailAliases()[personaYard]; alias != "" {
+		emails = append(emails, alias)
+	}
+	tag, err := tx.Exec(ctx, yardPersonaBranchGrantRepairSQL, emails, home)
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: narrowing the yard persona branch grants to its home branch: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // demoOpenOrderStatuses is what "an open order" means to the rep repair: the four statuses the

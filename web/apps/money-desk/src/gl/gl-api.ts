@@ -38,6 +38,7 @@ import {
   type IdentityApproval,
   type Result,
 } from "@hardscapehouse/api-client";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 /** A hard stop on cursor following, so a server that never ends cannot hold the desk. */
 const MAX_PAGES = 50;
@@ -176,6 +177,8 @@ export class GlApi {
    */
   async legacyImportSource(): Promise<string> {
     const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "money-desk", {});
+    // The dealer's business day zone rides on this read; the desk's day words follow it.
+    if (config.ok) serveHouseZoneFrom(config.value);
     return config.ok ? (config.value.legacy_import_source ?? "") : "";
   }
 

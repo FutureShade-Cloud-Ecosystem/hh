@@ -44,6 +44,7 @@ package adapters
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -76,10 +77,13 @@ const KindQuoteExtract = "quote_extract"
 // is nothing here that could hold one.
 type QuoteExtractRails struct {
 	provider assist.Provider
-	ledger   assist.LedgerStore
-	limits   assist.LimitStore
-	log      *slog.Logger
-	now      func() time.Time
+	// completer is the metered call path (assist.Service.Complete): budget, dealer cap, reservation
+	// and settlement. Unbound, only the free stub provider may be called; a paid one is refused.
+	completer Completer
+	ledger    assist.LedgerStore
+	limits    assist.LimitStore
+	log       *slog.Logger
+	now       func() time.Time
 }
 
 var _ quoteassist.AIExtractor = (*QuoteExtractRails)(nil)
@@ -99,6 +103,31 @@ func NewQuoteExtractRails(p assist.Provider, ledger assist.LedgerStore, limits a
 
 // WithClock replaces the clock (tests only), so the month-window behaviour can be exercised without
 // waiting for a month.
+// Completer is the metered provider call the rails make; *assist.Service satisfies it.
+type Completer interface {
+	Complete(ctx context.Context, c assist.Caller, req assist.CompletionRequest) (assist.Reply, error)
+}
+
+// WithCompleter binds the metered call path. The composition root binds the assist service once it
+// exists (it is built after the rails).
+func (q *QuoteExtractRails) WithCompleter(c Completer) *QuoteExtractRails { q.completer = c; return q }
+
+// call is the one provider call of the rails. A refusal by the meter is mapped to the rails' own
+// vocabulary: a reached dealer cap reads as the over budget answer.
+func (q *QuoteExtractRails) call(ctx context.Context, c assist.Caller, req assist.CompletionRequest) (assist.Reply, error) {
+	if q.completer != nil {
+		r, err := q.completer.Complete(ctx, c, req)
+		if errors.Is(err, assist.ErrDealerCap) {
+			return r, assist.ErrOverBudget
+		}
+		return r, err
+	}
+	if q.provider.Name() == "stub" {
+		return q.provider.Complete(ctx, req)
+	}
+	return assist.Reply{}, assist.ErrMeterUnavailable
+}
+
 func (q *QuoteExtractRails) WithClock(f func() time.Time) *QuoteExtractRails { q.now = f; return q }
 
 // SegmentText asks the provider to split a job description into candidate lines.
@@ -134,7 +163,7 @@ func (q *QuoteExtractRails) SegmentText(ctx context.Context, c assist.Caller, te
 		return quoteassist.Segmentation{}, assist.ErrOverBudget
 	}
 
-	reply, callErr := q.provider.Complete(ctx, assist.CompletionRequest{
+	reply, callErr := q.call(ctx, c, assist.CompletionRequest{
 		Messages: []assist.Message{
 			{Role: assist.RoleUser, Text: segmentPrompt(text)},
 		},
@@ -145,6 +174,13 @@ func (q *QuoteExtractRails) SegmentText(ctx context.Context, c assist.Caller, te
 	})
 
 	// The row lands whether the provider answered or failed, see the file header.
+	if errors.Is(callErr, assist.ErrOverBudget) {
+		// Refused by the meter before the provider: the same answer as the gate above.
+		return quoteassist.Segmentation{}, assist.ErrOverBudget
+	}
+	if errors.Is(callErr, assist.ErrMeterUnavailable) {
+		return quoteassist.Segmentation{}, quoteassist.ErrAIUnavailable
+	}
 	q.record(ctx, c, reply.TokensIn, reply.TokensOut)
 
 	if callErr != nil {

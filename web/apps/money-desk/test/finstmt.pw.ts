@@ -234,7 +234,7 @@ test("a printed statement carries its title, period and scope and nothing around
   await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
   await expect(page.locator("[data-statement-sub]")).toContainText(POINT_LOMA);
   await page.emulateMedia({ media: "print" });
-  await expect(page.locator("hos-app-header")).toBeHidden();
+  await expect(page.locator("hos-app-header")).toHaveCount(0);
   await expect(page.locator("nav.areas")).toBeHidden();
   await expect(page.locator(".fs-tabs")).toBeHidden();
   await expect(page.locator(".fs-controls")).toBeHidden();

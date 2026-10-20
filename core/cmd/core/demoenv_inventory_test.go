@@ -421,3 +421,35 @@ func f() string { return stdos.Getenv("FAKE_ALIAS_PROVIDER_URL") }`, "FAKE_ALIAS
 		}
 	}
 }
+
+// Slice 3: the assistant's admission on a demo box is exactly two names,
+// each of them inventoried (so it is read by the core) and both under the
+// deny prefix they lift. Any third name, or a name outside the prefix,
+// changes this list and so fails here until someone rules on it.
+func TestAssistantAdmissionIsTwoExactNames(t *testing.T) {
+	want := []string{"HOS_ASSIST_ANTHROPIC_API_KEY", "HOS_ASSIST_DEALER_CAP_MICROCENTS"}
+	if strings.Join(demoEnvAssistAllowNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("demoEnvAssistAllowNames = %v, want exactly %v", demoEnvAssistAllowNames, want)
+	}
+	inventory := map[string]bool{}
+	for _, n := range envInventoryFixture {
+		inventory[n] = true
+	}
+	for _, n := range demoEnvAssistAllowNames {
+		if !inventory[n] {
+			t.Errorf("%s is admitted on the demo box but is not an inventoried read", n)
+		}
+	}
+	for _, n := range envInventoryFixture {
+		if strings.HasPrefix(n, "HOS_ASSIST_") {
+			admitted := n == want[0] || n == want[1]
+			excepted := false
+			for _, e := range demoEnvPrefixExceptions() {
+				excepted = excepted || e == n
+			}
+			if admitted != excepted {
+				t.Errorf("%s: admitted=%v but lifted by the deny prefix=%v", n, admitted, excepted)
+			}
+		}
+	}
+}

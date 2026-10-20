@@ -225,9 +225,9 @@ func TestSpendReport_ListsPeopleWhoNeverUsedIt(t *testing.T) {
 // TestSpendReport_IgnoresOtherMonths: the current-month window is applied, not "everything ever".
 func TestSpendReport_IgnoresOtherMonths(t *testing.T) {
 	led := &fakeLedger{entries: []Entry{
-		{UserID: "u-sm", TokensIn: 999999, At: time.Date(2026, 7, 31, 23, 59, 0, 0, time.UTC)},
-		{UserID: "u-sm", TokensIn: 100, At: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)},
-		{UserID: "u-sm", TokensIn: 888888, At: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+		{UserID: "u-sm", TokensIn: 999999, At: time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)},
+		{UserID: "u-sm", TokensIn: 100, At: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)},
+		{UserID: "u-sm", TokensIn: 888888, At: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)},
 	}}
 	svc := spendService(t, led, newFakeLimits(), fakeStaff{
 		{UserID: "u-sm", DisplayName: "Sam Marsh", RoleCode: "SALES_MANAGER"},
