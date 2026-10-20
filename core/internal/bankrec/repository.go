@@ -321,15 +321,9 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 		if int(ct.RowsAffected()) != len(claimPaymentIDs) {
 			// The UPDATE above decided: its row lock and its WHERE, re-checked after any concurrent
 			// commit (a reversal stamps reversed_at and leaves the status RECEIVED), refused these rows.
-			// This read only names WHY, after the decision; it decides nothing.
-			var reversed int
-			if rerr := tx.QueryRow(ctx,
-				`SELECT count(*) FROM payments WHERE id = ANY($1::uuid[]) AND reversed_at IS NOT NULL`,
-				claimPaymentIDs).Scan(&reversed); rerr == nil && reversed > 0 {
-				return "", conflict("bankrec: a payment has been reversed and cannot be matched to a bank line (%d of %d reversed)",
-					reversed, len(claimPaymentIDs))
-			}
-			return "", conflict("bankrec: payment already claimed or not RECEIVED (claimed %d of %d)",
+			// No read of the payments table follows to say which of the three it was (a second read of
+			// another module's table would be a new cross-module access); the message names all three.
+			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED (claimed %d of %d)",
 				ct.RowsAffected(), len(claimPaymentIDs))
 		}
 	}
