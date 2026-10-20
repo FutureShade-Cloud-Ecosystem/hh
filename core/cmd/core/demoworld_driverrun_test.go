@@ -590,21 +590,44 @@ func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
 	if len(today) != 1 {
 		t.Fatalf("the runs pull gives the Driver %d runs for %s, want exactly 1", len(today), date)
 	}
-	// A reseed on the same day draws no new seq (the sequence is not a mutation per apply), and a
-	// reseed on a later day gives that day its own run in the feed.
-	var seqBefore int64
-	if err := world.pool.QueryRow(context.Background(),
-		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqBefore); err != nil {
-		t.Fatalf("reading the runs sequence: %v", err)
+	// A reseed on the same day re-serves nothing: the day's rows keep their seq, so no device pulls
+	// them again. (The runs COUNTER may move: since migration 0422 the sync seq trigger draws for
+	// every proposed row of an INSERT ... ON CONFLICT DO NOTHING before the conflict is known, and
+	// that draw is a harmless gap. The property a device sees is the rows' own seq.) A reseed on a
+	// later day gives that day its own run in the feed.
+	todayID, _ := today[0]["id"].(string)
+	runSeqs := func() map[string]int64 {
+		rows, err := world.pool.Query(context.Background(),
+			`SELECT id::text, seq FROM delivery_runs WHERE run_no LIKE '#DEMO-%'`)
+		if err != nil {
+			t.Fatalf("reading the runs' seqs: %v", err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var id string
+			var seq *int64
+			if err := rows.Scan(&id, &seq); err != nil {
+				t.Fatalf("scanning a run seq: %v", err)
+			}
+			if seq == nil {
+				out[id] = -1
+				continue
+			}
+			out[id] = *seq
+		}
+		return out
+	}
+	seqsBefore := runSeqs()
+	if seqsBefore[todayID] <= 0 {
+		t.Fatalf("the Driver's run has no seq (%d) before the second apply", seqsBefore[todayID])
 	}
 	driveApplyAt(t, qwClock)
-	var seqAfter int64
-	if err := world.pool.QueryRow(context.Background(),
-		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqAfter); err != nil {
-		t.Fatalf("reading the runs sequence: %v", err)
-	}
-	if seqAfter != seqBefore {
-		t.Fatalf("a second apply moved the runs sequence from %d to %d", seqBefore, seqAfter)
+	seqsAfter := runSeqs()
+	for id, before := range seqsBefore {
+		if after := seqsAfter[id]; after != before {
+			t.Fatalf("a second apply re-served run %s: seq %d became %d", id, before, after)
+		}
 	}
 	nextDay := qwClock.AddDate(0, 0, 1)
 	driveApplyAt(t, nextDay)

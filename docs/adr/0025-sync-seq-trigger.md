@@ -46,6 +46,10 @@ The database draws the seq when the writer did not.
 - **An upsert draws twice.** `INSERT ... ON CONFLICT DO UPDATE` fires the BEFORE INSERT trigger for the proposed
   row and then the BEFORE UPDATE trigger on the conflict arm. The row ends on the second draw; the first is a gap.
   Gaps are allowed by 0213 and a device only ever needs `seq > cursor`.
+- **`INSERT ... ON CONFLICT DO NOTHING` burns a draw per proposed row.** The BEFORE INSERT trigger runs before
+  the conflict is known, so a re-run of an idempotent seed (the demo world's applier) advances each counter
+  by the rows it proposes. The rows keep their seq, so no device re-pulls them; only the counter gaps.
+  The demo world's driver run leg asserts the rows' own seq, not the counter.
 - **Updates to columns a feed does not serve now re-serve the row.** Harmless; one extra row on the next pull.
 - **A BEFORE UPDATE row trigger changes the row lock strength.** Postgres locks the row `FOR UPDATE`, not `FOR NO
   KEY UPDATE`, whenever the UPDATE's SET list names a key column (a column of a unique index), even when the
