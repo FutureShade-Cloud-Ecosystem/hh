@@ -167,6 +167,11 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 	if err != nil {
 		return Task{}, err // ErrUnknownOrder (or a transport error), surfaced as-is
 	}
+	// A pick is never born with no branch (UX-81 round 2): the repository would write a NULL for an empty
+	// branch, and a branchless pick belongs to no yard.
+	if ob.BranchID == "" {
+		return Task{}, httpx.BadRequestf("this order has no branch, so no pick was made")
+	}
 	t, err := s.store.CreateTask(ctx, NewTaskInput{
 		OrderID:         ob.ID,
 		BranchID:        ob.BranchID,

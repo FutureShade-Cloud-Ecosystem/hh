@@ -205,7 +205,9 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	}
 	reachSQL := ""
 	if branches != nil {
-		reachSQL = " AND (branch_id IS NULL OR branch_id = ANY($4::uuid[]))"
+		// A pick with no branch is the dealer wide caller's alone (GLOBAL adds no clause): no branch scoped caller
+		// reaches it (UX-81 round 2).
+		reachSQL = " AND branch_id = ANY($4::uuid[])"
 	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks
 		WHERE %s AND seq IS NOT NULL AND seq > $2%s
@@ -429,6 +431,11 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	ob, err := s.orders.OrderBrief(ctx, orderID)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
+	}
+	// A pick is never born with no branch (UX-81 round 2): the branch is what holds it to a yard, so an order
+	// that answers none is refused here, with no row written.
+	if ob.BranchID == "" {
+		return sync.RowState{}, fmt.Errorf("tasks: this order has no branch, so no pick was made: %w", sync.ErrOpRefused)
 	}
 	priority, _ := fields["priority"].(string)
 	if priority == "" {
@@ -741,7 +748,7 @@ func syncBranchFence(ctx context.Context, staff identity.SyncStaffResolver, f sy
 // pullReach resolves the caller's branch reach for a pull (UX-81), the shape the REST board holds to
 // (yardBranchFence: a branch scoped caller reaches its granted branches, a GLOBAL caller every one) and the
 // writes hold to through syncBranchFence. It answers (nil, true) for a GLOBAL caller (no fence), the granted
-// branch ids and true for a scoped one (a pick with no branch is held by no one, so it stays in reach), and
+// branch ids and true for a scoped one (a pick with no branch is in no scoped caller's reach), and
 // false for an absent, inactive or unreadable authority, which pulls nothing. An unwired seam fences nothing: the
 // composition root refuses to boot a pick door without it (PickDoorWired).
 func (s *SyncStore) pullReach(ctx context.Context, f sync.ScopeFilter) ([]string, bool, error) {
