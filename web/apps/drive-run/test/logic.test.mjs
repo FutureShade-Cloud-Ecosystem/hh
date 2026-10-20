@@ -266,7 +266,7 @@ test("a name the door would refuse blocks the sign control, with the words", () 
 
 // ---- UX-17b & UX-17c: stop groups, load order line, house-zone staleness, and preset failure reasons ----
 import * as driveLogic from "../src/drive-logic.ts";
-import { groupStops, loadOrderLine } from "../src/drive-logic.ts";
+import { loadOrderLine, nextStopOf, routeStops } from "../src/drive-logic.ts";
 import { stalenessWords } from "../src/views.ts";
 
 test("preset failure reasons list the five board choices and resolveFailureReason requires free text only for Other, say what", () => {
@@ -300,23 +300,33 @@ test("loadOrderLine names the last stop in delivery order first (back of truck) 
   );
 });
 
-test("groupStops partitions stops into NEXT STOP, LOADED AT THE YARD, WAITING, and DELIVERED in board order", () => {
-  const grouped = groupStops([
+test("routeStops keeps the run's order with one state chip per stop and the next stop marked", () => {
+  const rows = routeStops([
     { id: "s4", stop_no: 4, status: "READY" },
     { id: "s2", stop_no: 2, status: "EN_ROUTE" },
     { id: "s3", stop_no: 3, status: "LOADED" },
     { id: "s1", stop_no: 1, status: "DELIVERED" },
+    { id: "s6", stop_no: 6, status: "CANCELLED" },
     { id: "s5", stop_no: 5, status: "FAILED" },
   ]);
   assert.deepEqual(
-    grouped.map((g) => [g.heading, g.stops.map((s) => s.id)]),
+    rows.map((r) => [r.stop.id, r.chip, r.next]),
     [
-      ["NEXT STOP", ["s2"]],
-      ["LOADED AT THE YARD", ["s3"]],
-      ["WAITING", ["s4"]],
-      ["DELIVERED", ["s1", "s5"]],
+      ["s1", "Delivered", false],
+      ["s2", "Next stop", true],
+      ["s3", "Waiting", false],
+      ["s4", "Waiting", false],
+      ["s5", "Not delivered", false],
+      ["s6", "Cancelled", false],
     ],
   );
+});
+
+test("nextStopOf is the en route stop, else the first open stop, else none", () => {
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "READY" }, { id: "b", stop_no: 2, status: "EN_ROUTE" }]).id, "b");
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "DELIVERED" }, { id: "b", stop_no: 2, status: "LOADED" }]).id, "b");
+  assert.equal(nextStopOf([{ id: "a", stop_no: 1, status: "CANCELLED" }, { id: "b", stop_no: 2, status: "FAILED" }]), null);
+  assert.equal(nextStopOf([]), null);
 });
 
 test("stalenessWords includes the last pull clock time in the dealer's house zone using glossary 12-hour AM/PM form with a plain space", () => {

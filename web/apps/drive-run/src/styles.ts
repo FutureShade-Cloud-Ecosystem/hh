@@ -54,13 +54,9 @@ export const driveStyles = css`
     border-radius: var(--hh-radius-control);
     background: var(--hh-row-alt);
     border: 1px solid var(--hh-line);
-    color: var(--hh-text-dim);
-    font-size: 14px;
   }
-  .stop-group { margin-top: var(--hh-s-12); }
-  .stop-group-empty { display: none; }
-  .stop-group-head {
-    margin: 0 0 var(--hh-s-8);
+  .run-load-eyebrow {
+    margin: 0 0 var(--hh-s-4);
     font-family: var(--hh-font-mono);
     font-size: 12px;
     font-weight: 700;
@@ -68,15 +64,29 @@ export const driveStyles = css`
     text-transform: uppercase;
     color: var(--hh-text-dim);
   }
-  .stop-group[data-stop-group="NEXT STOP"] .stop-group-head {
-    color: var(--hh-accent-text);
-  }
-  .stop-group[data-stop-group="NEXT STOP"] .stop-list {
-    border-left: 3px solid var(--hh-accent);
-    padding-left: var(--hh-s-12);
-    background: var(--hh-row-alt);
+  .run-load-line { margin: 0; color: var(--hh-text); font-size: 14px; }
+  .stop-chip { text-transform: uppercase; letter-spacing: 0.04em; font-size: 12px; }
+  .stop-list .stop-item-next {
+    border: 2px solid var(--hh-accent);
     border-radius: var(--hh-radius-control);
+    background: var(--hh-row-alt);
+    padding: 0 var(--hh-s-12);
   }
+  .go-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--hh-s-64) + var(--hh-safe-bottom));
+    z-index: var(--hh-z-nav);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-card);
+    border-top: 1px solid var(--hh-line);
+  }
+  .go-bar-spacer { height: 96px; }
+  @media (min-width: 768px) {
+    .go-bar { bottom: 0; }
+  }
+  .go-bar .btn { max-width: 588px; margin: 0 auto; display: block; width: 100%; }
   .stop-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hh-line); }
   .stop-list li { border-bottom: 1px solid var(--hh-line); }
   .stop-list li:last-child { border-bottom: 0; }

@@ -27,17 +27,19 @@ import {
   closeLine,
   driverActions,
   formatGlossaryTime,
-  groupStops,
   loadOrderLine,
+  nextStopOf,
   qtyLabel,
   plainSentence,
   runClose,
+  routeStops,
   runSummary,
   signBlockedReason,
   stopsInOrder,
   weightLabel,
   type PodDraft,
-  type StopGroup,
+  type RouteStop,
+  type StopChip,
 } from "./drive-logic.js";
 
 /** The status pill's tone, by status: colour never carries the meaning alone, the word is always there. */
@@ -85,31 +87,28 @@ export function stalenessWords(
   return clock !== "" ? `${relative} · as of ${clock}` : relative;
 }
 
-function stopRow(stop: DriverStop): TemplateResult {
+const CHIP_TONE: Record<StopChip, string> = {
+  Delivered: "good",
+  "Next stop": "watch",
+  Waiting: "plain",
+  "Not delivered": "stop",
+  Cancelled: "stop",
+};
+
+function stopRow(entry: RouteStop<DriverStop>): TemplateResult {
+  const { stop } = entry;
   const where = addressLine(stop);
   return html`
-    <li>
+    <li class="stop-item ${entry.next ? "stop-item-next" : ""}" data-stop-card=${entry.chip}>
       <button type="button" class="stop-row" data-action="open-stop" data-stop-id=${stop.id} data-stop data-tap>
         <span class="stop-no" data-stop-no>${stop.stop_no}</span>
         <span class="stop-main">
           <span class="stop-who">${stop.customer_name || "Customer"}</span>
           <span class="stop-where">${where || "No address on file"}${stop.time_window ? ` · ${stop.time_window}` : ""}</span>
         </span>
-        ${statusPill(stop.status)}
+        <span class="status status-${CHIP_TONE[entry.chip]} stop-chip" data-stop-status>${entry.chip}</span>
       </button>
     </li>
-  `;
-}
-
-function stopGroupSection(group: StopGroup<DriverStop>): TemplateResult {
-  if (group.stops.length === 0) {
-    return html`<div class="stop-group stop-group-empty" data-stop-group=${group.heading}></div>`;
-  }
-  return html`
-    <div class="stop-group" data-stop-group=${group.heading}>
-      <h3 class="stop-group-head" data-group-head>${group.heading}</h3>
-      <ul class="stop-list">${group.stops.map(stopRow)}</ul>
-    </div>
   `;
 }
 
@@ -117,14 +116,18 @@ function runCard(run: DriverRun): TemplateResult {
   const stops = stopsInOrder(run.stops);
   const progress = runSummary(stops);
   const loadOrder = loadOrderLine(stops);
-  const groups = groupStops(stops);
   return html`
     <section class="card run" data-run>
       <h2 class="run-title">${run.run_no}${run.truck_code ? ` · ${run.truck_code}` : ""}</h2>
       <p class="run-count">${stops.length} ${stops.length === 1 ? "stop" : "stops"}</p>
       <p class="run-progress" data-progress>${progress.sentence}</p>
-      ${loadOrder !== "" ? html`<p class="run-load-order" data-load-order>${loadOrder}</p>` : nothing}
-      ${groups.map(stopGroupSection)}
+      ${loadOrder !== ""
+        ? html`<div class="run-load-order" data-load-order-banner>
+            <p class="run-load-eyebrow">Loaded at the yard</p>
+            <p class="run-load-line" data-load-order>${loadOrder}</p>
+          </div>`
+        : nothing}
+      <ul class="stop-list">${routeStops(stops).map(stopRow)}</ul>
     </section>
   `;
 }
@@ -142,9 +145,22 @@ export function renderRunSheet(model: RunSheetModel): TemplateResult {
       </div>
     `;
   } else if (model.phase === "ready") {
+    let nextStop: DriverStop | null = null;
+    for (const run of model.runs) {
+      nextStop = nextStopOf(run.stops);
+      if (nextStop !== null) break;
+    }
+    const goBar =
+      nextStop === null
+        ? nothing
+        : html`<div class="go-bar-spacer" aria-hidden="true"></div>
+          <div class="go-bar" data-go-bar>
+            <button type="button" class="btn btn-primary big" data-action="open-stop" data-stop-id=${nextStop.id} data-go-next data-tap>Go to stop ${nextStop.stop_no}</button>
+          </div>`;
     body = html`
       ${model.runs.map(runCard)}
       <button type="button" class="btn btn-secondary big" data-action="open-close" data-tap>End of run</button>
+      ${goBar}
     `;
   } else {
     body = html``;

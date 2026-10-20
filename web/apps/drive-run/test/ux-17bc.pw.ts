@@ -260,7 +260,7 @@ test("UX-17bc screenshot capture across 390x844, 1024x768, 1440x900 in light and
   }
 });
 
-test("UX-17b: my run shows NEXT STOP, LOADED AT THE YARD, WAITING and DELIVERED with the right stops in each, the load order line, and house-zone as-of time", async ({
+test("UX-17b: my run lists the stops in route order with a state chip each, the next stop highlighted, the load order banner and the Go to stop bar", async ({
   page,
 }) => {
   await routeFourStopRun(page);
@@ -275,42 +275,82 @@ test("UX-17b: my run shows NEXT STOP, LOADED AT THE YARD, WAITING and DELIVERED 
     await expect(card.locator("[data-load-order]")).toHaveText(
       "Checked once for the whole run. Load order: stop 4 first, stop 1 last.",
     );
+    await expect(card.locator(".run-load-eyebrow")).toHaveText("Loaded at the yard");
+    await expect(page.locator("[data-stop-group]")).toHaveCount(0);
+    await expect(page.locator("[data-group-head]")).toHaveCount(0);
 
-    const loadedGroup = card.locator('[data-stop-group="LOADED AT THE YARD"]');
-    const deliveredGroup = card.locator('[data-stop-group="DELIVERED"]');
-    const nextStopGroup = card.locator('[data-stop-group="NEXT STOP"]');
-    const waitingGroup = card.locator('[data-stop-group="WAITING"]');
+    await expect(card.locator("[data-stop-no]")).toHaveText(["1", "2", "3", "4"]);
+    await expect(card.locator("[data-stop-status]")).toHaveText(["Delivered", "Next stop", "Waiting", "Waiting"]);
+    await expect(card.locator(".stop-item-next")).toHaveCount(1);
+    await expect(card.locator(".stop-item-next")).toContainText("Bluffside Builders (demo)");
 
-    await expect(card.locator("[data-group-head]")).toHaveText([
-      "NEXT STOP",
-      "LOADED AT THE YARD",
-      "WAITING",
-      "DELIVERED",
-    ]);
-
-    await expect(deliveredGroup.locator("[data-stop]")).toHaveCount(1);
-    await expect(deliveredGroup.locator("[data-stop]")).toContainText("Coastline Hardscape (demo)");
-
-    await expect(nextStopGroup.locator("[data-stop]")).toHaveCount(1);
-    await expect(nextStopGroup.locator("[data-stop]")).toContainText("Bluffside Builders (demo)");
-
-    await expect(loadedGroup.locator("[data-stop]")).toHaveCount(1);
-    await expect(loadedGroup.locator("[data-stop]")).toContainText("Harbourview Builders (demo)");
-
-    await expect(waitingGroup.locator("[data-stop]")).toHaveCount(1);
-    await expect(waitingGroup.locator("[data-stop]")).toContainText("Valley Municipal Works (demo)");
+    const go = page.locator("[data-go-bar] button");
+    await expect(go).toHaveText("Go to stop 2");
+    await expect(page.getByRole("button", { name: "End of run" })).toBeVisible();
 
     await expect(page.locator("[data-staleness]")).toContainText("as of 8:30 PM");
 
-    await deliveredGroup.locator("[data-stop]").click();
+    await card.locator("[data-stop]").first().click();
     await expect(page.locator(".signed")).toHaveText("Signed by Site lead (demo) at 12:04 PM · 1 photo on the proof");
+    await page.getByRole("button", { name: "Back to my run" }).click();
+
+    await go.click();
+    await expect(page.getByRole("heading", { name: "Stop 2" })).toBeVisible();
     await page.getByRole("button", { name: "Back to my run" }).click();
   }
 });
 
-test("UX-17b: advancing a stop moves it across WAITING, LOADED AT THE YARD, NEXT STOP, and DELIVERED on my run", async ({
+test("UX-17b: a cancelled stop and a not delivered stop keep their own chips in route order, and a run with no next stop has no Go to stop bar", async ({
   page,
 }) => {
+  const closed = {
+    items: [
+      {
+        ...FOUR_STOP_RUN.items[0]!,
+        stops: FOUR_STOP_RUN.items[0]!.stops.map((stop) => ({
+          ...stop,
+          status: stop.stop_no === 1 ? "DELIVERED" : stop.stop_no === 2 ? "FAILED" : stop.stop_no === 3 ? "CANCELLED" : "DELIVERED",
+        })),
+      },
+    ],
+  };
+  const synced = syncItemsForFourStopRun();
+  await page.route(/\/api\/v1\/dispatch\/my-runs/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(closed) }),
+  );
+  await page.route(/\/api\/v1\/sync\/runs/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ scope: "runs", items: synced.runs, tombstones: [], last_seq: 100, next_cursor: null }),
+    }),
+  );
+  await page.route(/\/api\/v1\/sync\/stops/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        scope: "stops",
+        items: synced.stops.map((row) => ({
+          ...row,
+          data: { ...row.data, status: closed.items[0]!.stops.find((s) => s.id === row.id)!.status },
+        })),
+        tombstones: [],
+        last_seq: 104,
+        next_cursor: null,
+      }),
+    }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const card = page.locator("[data-run]").first();
+  await expect(card.locator("[data-stop-no]")).toHaveText(["1", "2", "3", "4"]);
+  await expect(card.locator("[data-stop-status]")).toHaveText(["Delivered", "Not delivered", "Cancelled", "Delivered"]);
+  await expect(page.locator("[data-go-bar]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "End of run" })).toBeVisible();
+});
+
+test("UX-17b: advancing a stop moves its chip and the Go to stop bar along the route", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
@@ -318,32 +358,21 @@ test("UX-17b: advancing a stop moves it across WAITING, LOADED AT THE YARD, NEXT
   await expect(card.locator("[data-load-order]")).toHaveText(
     "Checked once for the whole run. Load order: stop 3 first, stop 1 last.",
   );
-  await expect(card.locator('[data-stop-group="WAITING"] [data-stop]')).toHaveCount(3);
+  await expect(card.locator("[data-stop-status]")).toHaveText(["Next stop", "Waiting", "Waiting"]);
+  await expect(page.locator("[data-go-bar] button")).toHaveText("Go to stop 1");
 
   await card.locator("[data-stop]").first().click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
-  await page.getByRole("button", { name: "Back to my run" }).click();
-
-  await expect(card.locator('[data-stop-group="LOADED AT THE YARD"] [data-stop]')).toHaveCount(1);
-  await expect(card.locator('[data-stop-group="LOADED AT THE YARD"] [data-stop]')).toContainText("Bluffside Builders");
-  await expect(card.locator('[data-stop-group="WAITING"] [data-stop]')).toHaveCount(2);
-
-  await card.locator('[data-stop-group="LOADED AT THE YARD"] [data-stop]').click();
   await page.getByRole("button", { name: "Mark en route" }).click();
-  await page.getByRole("button", { name: "Back to my run" }).click();
-
-  await expect(card.locator('[data-stop-group="NEXT STOP"] [data-stop]')).toHaveCount(1);
-  await expect(card.locator('[data-stop-group="NEXT STOP"] [data-stop]')).toContainText("Bluffside Builders");
-
-  await card.locator('[data-stop-group="NEXT STOP"] [data-stop]').click();
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByLabel("Full name of the person receiving").fill("Site Foreman");
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
   await page.getByRole("button", { name: "Back to my run" }).click();
 
-  await expect(card.locator('[data-stop-group="DELIVERED"] [data-stop]')).toHaveCount(1);
-  await expect(card.locator('[data-stop-group="DELIVERED"] [data-stop]')).toContainText("Bluffside Builders");
+  await expect(card.locator("[data-stop-status]")).toHaveText(["Delivered", "Next stop", "Waiting"]);
+  await expect(card.locator(".stop-item-next")).toContainText("Harbourview Builders");
+  await expect(page.locator("[data-go-bar] button")).toHaveText("Go to stop 2");
 });
 
 async function focusInsideDialog(page: Page): Promise<boolean> {
@@ -505,4 +534,40 @@ test("UX-17c: reason sheet offers the five board preset reasons as a radio group
   await confirm.click();
   await expect(page.locator("[data-stop-status]")).toHaveText("Not delivered");
   await expect(page.locator("[data-handback]")).toContainText("Gate locked");
+});
+
+test("UX-17c: the reason radios are one tab stop; arrows move inside the group", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/");
+  await page.locator("[data-stop]").first().click();
+  await page.getByRole("button", { name: "Mark loaded" }).click();
+  await page.getByRole("button", { name: "Mark en route" }).click();
+  await page.locator('button[data-action="open-fail"]').click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect.poll(() => focusInsideDialog(page)).toBe(true);
+
+  const describeActive = () =>
+    page.evaluate(() => {
+      const a = document.querySelector("drive-run-app")?.shadowRoot?.activeElement as HTMLElement | null;
+      if (a === null || a === undefined) return "none";
+      if (a instanceof HTMLInputElement && a.type === "radio") return "radio";
+      return a.getAttribute("data-action") ?? a.tagName;
+    });
+
+  // Close, the radio group (once), Back, then round to Close: the confirm control is disabled until a reason is chosen.
+  const seen: string[] = [await describeActive()];
+  for (let step = 0; step < 3; step += 1) {
+    await page.keyboard.press("Tab");
+    seen.push(await describeActive());
+  }
+  expect(seen).toEqual(["back-to-stop", "radio", "back-to-stop", "back-to-stop"]);
+
+  // Arrows select inside the group, and Tab still leaves it in one press.
+  await page.getByRole("radio", { name: "Nobody on site" }).focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("radio", { name: "Gate locked" })).toBeChecked();
+  await page.keyboard.press("Tab");
+  expect(await describeActive()).toBe("confirm-fail");
+  await page.keyboard.press("Tab");
+  expect(await describeActive()).toBe("back-to-stop");
 });

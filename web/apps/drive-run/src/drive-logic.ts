@@ -119,42 +119,45 @@ export function stopsInOrder<T extends { stop_no?: number; created_at?: string }
   });
 }
 
-export type StopGroupHeading = "NEXT STOP" | "LOADED AT THE YARD" | "WAITING" | "DELIVERED";
+/** The chip a stop card carries on my run, in the board's words (the style sets the capitals). */
+export type StopChip = "Delivered" | "Next stop" | "Waiting" | "Not delivered" | "Cancelled";
 
-export const STOP_GROUP_ORDER: readonly StopGroupHeading[] = [
-  "NEXT STOP",
-  "LOADED AT THE YARD",
-  "WAITING",
-  "DELIVERED",
-];
-
-export interface StopGroup<T> {
-  readonly heading: StopGroupHeading;
-  readonly stops: readonly T[];
+export interface RouteStop<T> {
+  readonly stop: T;
+  readonly chip: StopChip;
+  /** True for the one stop the run goes to next: its card is highlighted. */
+  readonly next: boolean;
 }
 
-function groupHeadingForStatus(status: string): StopGroupHeading {
-  if (status === "EN_ROUTE") return "NEXT STOP";
-  if (status === "LOADED") return "LOADED AT THE YARD";
-  if (status === "DELIVERED" || status === "FAILED") return "DELIVERED";
-  return "WAITING";
-}
+const DONE_STATUSES: ReadonlySet<string> = new Set(["DELIVERED", "FAILED", "CANCELLED"]);
 
 /**
- * Partitions a run's stops into the four board groups (LOADED AT THE YARD,
- * DELIVERED, NEXT STOP, WAITING) while preserving stop order inside each group.
+ * The stop the run goes to next: the one already en route, else the first stop
+ * in route order that is not yet delivered, not delivered or cancelled.
  */
-export function groupStops<T extends { status: string; stop_no?: number; created_at?: string }>(
+export function nextStopOf<T extends { status: string; stop_no?: number; created_at?: string }>(
   stops: readonly T[] | null | undefined,
-): StopGroup<T>[] {
+): T | null {
   const ordered = stopsInOrder(stops);
-  const buckets = new Map<StopGroupHeading, T[]>();
-  for (const heading of STOP_GROUP_ORDER) buckets.set(heading, []);
-  for (const stop of ordered) {
-    const heading = groupHeadingForStatus(stop.status);
-    buckets.get(heading)?.push(stop);
-  }
-  return STOP_GROUP_ORDER.map((heading) => ({ heading, stops: buckets.get(heading) ?? [] }));
+  return (
+    ordered.find((s) => s.status === "EN_ROUTE") ?? ordered.find((s) => !DONE_STATUSES.has(s.status)) ?? null
+  );
+}
+
+/** A run's stops in route order, each with its state chip from the core's state; no grouping. */
+export function routeStops<T extends { status: string; stop_no?: number; created_at?: string }>(
+  stops: readonly T[] | null | undefined,
+): RouteStop<T>[] {
+  const ordered = stopsInOrder(stops);
+  const next = nextStopOf(ordered);
+  return ordered.map((stop) => {
+    let chip: StopChip = "Waiting";
+    if (stop === next) chip = "Next stop";
+    else if (stop.status === "DELIVERED") chip = "Delivered";
+    else if (stop.status === "FAILED") chip = "Not delivered";
+    else if (stop.status === "CANCELLED") chip = "Cancelled";
+    return { stop, chip, next: stop === next };
+  });
 }
 
 /**
