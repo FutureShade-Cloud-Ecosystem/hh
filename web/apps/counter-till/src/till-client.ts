@@ -31,7 +31,7 @@ export { DEFAULT_HOUSE_ZONE, houseDay, houseDayInZone, houseZone, serveHouseZone
 // This module's own ring path still swaps the card token onto the demo
 // constant, so the value rides in beside the re-export above.
 import { DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import { decideSessionBranch, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
+import { decideSessionBranch, readSessionBranchIds, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
 
 /**
  * The float a first use opens the drawer with: an invented, constant amount
@@ -240,7 +240,12 @@ export class TillClient {
       granted.push({ id, code, name });
     }
     const decided = decideSessionBranch(granted, store);
-    if (decided.kind === "ask") return ok({ kind: "ask", choices: granted });
+    if (decided.kind === "ask") {
+      // Several chosen on the front door: ask about those only; none or a stale key asks about every granted branch.
+      const chosen = new Set(readSessionBranchIds(granted, store));
+      const narrowed = granted.filter((row) => chosen.has(row.id));
+      return ok({ kind: "ask", choices: narrowed.length > 1 ? narrowed : granted });
+    }
     const branch = granted.find((row) => row.id === (decided.kind === "one" ? decided.id : ""));
     if (branch === undefined) return err("the branch list did not answer exactly the one branch this login reaches");
     return ok({ kind: "one", branch });

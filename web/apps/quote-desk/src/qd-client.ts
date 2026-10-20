@@ -15,7 +15,7 @@
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
 import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import { decideSessionBranch, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
+import { decideSessionBranch, readSessionBranchIds, type BranchKeyStore } from "@hardscapehouse/pos-kit/src/session-branches.js";
 import { isNoSignal } from "@hardscapehouse/work-offline";
 import type {
   IdentityApproval,
@@ -645,7 +645,12 @@ export class QdClient {
       granted.push({ id, code, name });
     }
     const decided = decideSessionBranch(granted, store);
-    if (decided.kind === "ask") return ok({ kind: "ask", choices: granted });
+    if (decided.kind === "ask") {
+      // Several chosen on the front door: ask about those only; none or a stale key asks about every granted branch.
+      const chosen = new Set(readSessionBranchIds(granted, store));
+      const narrowed = granted.filter((row) => chosen.has(row.id));
+      return ok({ kind: "ask", choices: narrowed.length > 1 ? narrowed : granted });
+    }
     const branch = granted.find((row) => row.id === (decided.kind === "one" ? decided.id : ""));
     if (branch === undefined) return err("the branch list did not answer exactly the one branch this login reaches");
     return ok({ kind: "one", branch });

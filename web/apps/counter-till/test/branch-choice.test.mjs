@@ -8,6 +8,7 @@ import { TillClient } from "../src/till-client.js";
 
 const WEST = { id: "b-west", code: "WST", name: "West Yard" };
 const EAST = { id: "b-east", code: "EST", name: "East Yard" };
+const NORTH = { id: "b-north", code: "NTH", name: "North Yard" };
 
 function rig(rows, keyValue) {
   const fetch = async () => ({ status: 200, ok: true, text: async () => JSON.stringify(rows), arrayBuffer: async () => new ArrayBuffer(0) });
@@ -52,4 +53,14 @@ test("resolveBranch for the panels refuses until a branch is chosen, never inven
   const chosen = rig([WEST, EAST], '{"ids":["b-west"]}');
   const ok = await chosen.client.resolveBranch(chosen.store);
   assert.deepEqual(ok, { ok: true, value: { id: "b-west", code: "WST", name: "West Yard" } });
+});
+
+test("a person who narrowed to two of three on the front door is asked about those two only", async () => {
+  const r = rig([WEST, EAST, NORTH], '{"ids":["b-north","b-west","forged"]}');
+  const got = await r.client.resolveBranchChoice(r.store);
+  assert.deepEqual(got.value, { kind: "ask", choices: [WEST, NORTH] }, "in the core's order, granted ids only");
+  const wide = rig([WEST, EAST, NORTH], '{"ids":["b-west","b-east","b-north"]}');
+  assert.deepEqual((await wide.client.resolveBranchChoice(wide.store)).value.choices, [WEST, EAST, NORTH]);
+  const none = rig([WEST, EAST, NORTH], undefined);
+  assert.deepEqual((await none.client.resolveBranchChoice(none.store)).value.choices, [WEST, EAST, NORTH], "no choice offers every granted branch");
 });
