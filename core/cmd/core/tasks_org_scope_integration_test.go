@@ -50,11 +50,14 @@ func newOrgScopeWorld(t *testing.T) *orgScopeWorld {
 	// Both orders are inserted exactly the way production inserts an order: NO org_id (no writer stamps it; UX-95
 	// owns that). The branch decides the dealer: north's order sits at north A, south's at south A, whose locations
 	// rows carry the org (UX-81 round 6).
-	for _, o := range []struct{ id, branch string }{{w.northOrder, testkit.BranchNorthAID}, {w.southOrder, testkit.BranchSouthAID}} {
+	for _, o := range []struct{ id, branch, customer string }{
+		{w.northOrder, testkit.BranchNorthAID, testkit.TenantAlphaID},
+		{w.southOrder, testkit.BranchSouthAID, testkit.TenantGammaID},
+	} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment)
 			VALUES ($1::uuid, 'FXORD-ORGSCOPE-'||substr($1::text,1,8), $2::uuid, $3::uuid, 'CONFIRMED', 'PICKUP')`,
-			o.id, testkit.TenantGammaID, o.branch); err != nil {
+			o.id, o.customer, o.branch); err != nil {
 			t.Fatalf("plant an order the production way: %v", err)
 		}
 	}

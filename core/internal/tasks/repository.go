@@ -89,6 +89,13 @@ func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, err
 	return t, nil
 }
 
+// taskInOrgSQL is the predicate that holds a tasks row to one dealer org through the row's BRANCH (UX-81 round 6):
+// no writer stamps tasks.org_id on every path (the REST weight request passes none, UX-95 owns that), but every pick
+// task carries a branch, and the branch's locations row carries the org. orgParam names the placeholder ("$2").
+func taskInOrgSQL(orgParam string) string {
+	return `EXISTS (SELECT 1 FROM locations l WHERE l.id = tasks.branch_id AND l.org_id = ` + orgParam + `::uuid)`
+}
+
 // GetTask loads one task by id. A malformed (non-UUID) id short-circuits to ErrNotFound before the
 // query (tasks.id is a uuid column, a non-UUID would raise SQLSTATE 22P02 → HTTP 500), mirroring the
 // order module's boundary guard.
@@ -105,7 +112,7 @@ func (r *Repository) GetTask(ctx context.Context, id string) (Task, error) {
 	var t Task
 	var err error
 	if org := orgFrom(ctx); org != "" {
-		t, err = scanYardTask(r.pool.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1 AND org_id = $2::uuid`, id, org))
+		t, err = scanYardTask(r.pool.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1 AND `+taskInOrgSQL("$2"), id, org))
 	} else {
 		t, err = scanYardTask(r.pool.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1`, id))
 	}
@@ -137,7 +144,7 @@ func (r *Repository) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error
 	if org == "" {
 		return nil, ErrNoOrg
 	}
-	where := "org_id = $1::uuid"
+	where := taskInOrgSQL("$1")
 	args := []any{org}
 	if f.Status != "" {
 		args = append(args, f.Status)
@@ -210,7 +217,7 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	// move another dealer's task even if a door's fence were missing.
 	lockSQL, lockArgs := `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, []any{in.TaskID}
 	if org := orgFrom(ctx); org != "" {
-		lockSQL = `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 AND org_id = $2::uuid FOR UPDATE`
+		lockSQL = `SELECT status, task_type, COALESCE(claimed_by::text, '') FROM tasks WHERE id = $1 AND ` + taskInOrgSQL("$2") + ` FOR UPDATE`
 		lockArgs = append(lockArgs, org)
 	}
 	if err := tx.QueryRow(ctx, lockSQL, lockArgs...).Scan(&from, &taskType, &claimedBy); err != nil {

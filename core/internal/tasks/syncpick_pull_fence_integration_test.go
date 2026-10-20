@@ -392,6 +392,16 @@ func TestPickPullFence_TheRESTReadsAreHeldToTheCallersOrg(t *testing.T) {
 		}
 		return row.ID
 	}()
+	// The dealer is the branch's org (UX-81 round 6): the two branches' locations rows carry the two orgs.
+	for branch, org := range map[string]string{d.branchA: d.org, d.branchB: d.other} {
+		if _, err := d.pool.Exec(context.Background(),
+			`INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address, org_id)
+			 VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', 'R6'||substr($1::text,1,6), 'round 6 leg', '{}', $2::uuid)
+			 ON CONFLICT (id) DO UPDATE SET org_id = EXCLUDED.org_id`, branch, org); err != nil {
+			t.Fatalf("stamp a branch's org: %v", err)
+		}
+		t.Cleanup(func() { _, _ = d.pool.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, branch) })
+	}
 	repo := NewRepository(d.pool)
 	inOrg := withOrg(context.Background(), d.org)
 	if _, err := repo.GetTask(inOrg, own); err != nil {

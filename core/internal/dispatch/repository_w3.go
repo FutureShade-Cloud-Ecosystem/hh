@@ -102,7 +102,8 @@ func (r *Repository) PickFeedStopForOrderInOrg(ctx context.Context, orgID, order
 		return pickFeedStop{}, ErrNotFound
 	}
 	p, err := scanPickFeedStop(pool.QueryRow(ctx, pickFeedSelect+`
- WHERE s.order_id = $1 AND o.org_id = $2::uuid AND s.status NOT IN ('CANCELLED','FAILED')
+ WHERE s.order_id = $1 AND s.status NOT IN ('CANCELLED','FAILED')
+   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = s.branch_id AND l.org_id = $2::uuid)
  ORDER BY s.created_at DESC LIMIT 1`, orderID, orgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pickFeedStop{}, ErrNotFound
@@ -129,10 +130,11 @@ func (r *Repository) PickFeedPendingStops(ctx context.Context, branchID string, 
 		q += ` AND s.branch_id = $2`
 		args = append(args, branchID)
 	}
-	// Held to the caller's org when the context carries one (UX-81 round 5), by the orders join's org stamp.
+	// Held to the caller's org when the context carries one (UX-81 rounds 5 and 6), through the stop's branch: the
+	// stop's branch row carries the dealer's org (orders.org_id is never written).
 	if org := orgFrom(ctx); org != "" {
 		args = append(args, org)
-		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+		q += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM locations l WHERE l.id = s.branch_id AND l.org_id = $%d::uuid)`, len(args))
 	}
 	q += ` ORDER BY s.scheduled_date, s.stop_no, s.created_at LIMIT $1`
 
@@ -226,7 +228,8 @@ func (r *Repository) PickFeedPickupForOrderInOrg(ctx context.Context, orgID, ord
 		return pickFeedPickup{}, ErrNotFound
 	}
 	p, err := scanPickFeedPickup(pool.QueryRow(ctx,
-		pickupFeedSelect+pickupAwaitingCollection+` AND o.id = $1 AND o.org_id = $2::uuid LIMIT 1`, orderID, orgID))
+		pickupFeedSelect+pickupAwaitingCollection+` AND o.id = $1
+		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = o.branch_id AND l.org_id = $2::uuid) LIMIT 1`, orderID, orgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pickFeedPickup{}, ErrNotFound
 	}
@@ -257,10 +260,10 @@ func (r *Repository) PickFeedPendingPickups(ctx context.Context, branchID string
 		q += ` AND o.branch_id = $2`
 		args = append(args, branchID)
 	}
-	// Held to the caller's org when the context carries one (UX-81 round 5).
+	// Held to the caller's org when the context carries one (UX-81 rounds 5 and 6), through the order's branch.
 	if org := orgFrom(ctx); org != "" {
 		args = append(args, org)
-		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+		q += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM locations l WHERE l.id = o.branch_id AND l.org_id = $%d::uuid)`, len(args))
 	}
 	q += ` ORDER BY o.requested_date ASC NULLS LAST, o.created_at LIMIT $1`
 
@@ -664,11 +667,10 @@ func (r *Repository) CountPickFeedPendingStops(ctx context.Context, branchID str
 		q += ` AND s.branch_id = $1`
 		args = append(args, branchID)
 	}
-	// Held to the caller's org when the context carries one (UX-81 round 5): the count joins orders for the stamp.
+	// Held to the caller's org when the context carries one (UX-81 rounds 5 and 6), through the stop's branch.
 	if org := orgFrom(ctx); org != "" {
 		args = append(args, org)
-		q = strings.Replace(q, "  LEFT JOIN delivery_runs r ON r.id = s.run_id", "  LEFT JOIN delivery_runs r ON r.id = s.run_id\n  LEFT JOIN orders o ON o.id = s.order_id", 1)
-		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+		q += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM locations l WHERE l.id = s.branch_id AND l.org_id = $%d::uuid)`, len(args))
 	}
 	var n int
 	err = pool.QueryRow(ctx, q, args...).Scan(&n)
@@ -690,9 +692,9 @@ func (r *Repository) CountPickFeedPendingPickups(ctx context.Context, branchID s
 		q += ` AND o.branch_id = $1`
 		args = append(args, branchID)
 	}
-	if org := orgFrom(ctx); org != "" { // held to the caller's org (UX-81 round 5)
+	if org := orgFrom(ctx); org != "" { // held to the caller's org through the order's branch (UX-81 rounds 5 and 6)
 		args = append(args, org)
-		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+		q += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM locations l WHERE l.id = o.branch_id AND l.org_id = $%d::uuid)`, len(args))
 	}
 	var n int
 	err = pool.QueryRow(ctx, q, args...).Scan(&n)

@@ -110,6 +110,14 @@ func plantMatrixStaff(t *testing.T, env *compEnv, pool *pgxpool.Pool) {
 		testkit.OrgNorthID, testkit.BranchNorthAID); err != nil {
 		t.Fatalf("plant matrix staff role grants: %v", err)
 	}
+	// The yard team principal is granted the kit's north A branch (user_branch_grants, the rows the resolver reads a
+	// scoped caller's branches from), so the response shape census has a caller that reaches its own dealer's page
+	// on the yard list doors and GET /api/v1/tasks (UX-81 round 6, item 117.2). Idempotent, never cleaned, as the
+	// rows above.
+	if _, err := pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, branch_id) DO NOTHING`, xrUserYardTeamID, testkit.BranchNorthAID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant the yard team's north A branch grant: %v", err)
+	}
 	orgNorth := "org-" + testkit.OrgNorthSlug
 	for _, sub := range []string{xrSubFinancialController, xrSubBranchManager, xrSubProcurementManager, xrSubYardTeam, xrSubHR, xrSubTwoGrants} {
 		env.appwrite.setTeam(sub, orgNorth)

@@ -255,9 +255,14 @@ func TestPickFeed_AScheduledStopReachesTheYardQueueWithRealLines(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool0.Exec(context.Background(), `DELETE FROM org WHERE id = $1`, orgID) }) // runs after the fixture's cleanup
 	f := newFeedFixture(t)
-	if _, err := f.pool.Exec(context.Background(), `UPDATE orders SET org_id = $2::uuid WHERE id = $1::uuid`, f.orderID, orgID); err != nil {
-		t.Fatalf("stamp the order's org: %v", err)
+	// The dealer is the branch's org (UX-81 round 6): the order and the task carry no org_id (production writes
+	// none), the yard's branch row does.
+	if _, err := f.pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, f.branch, orgID); err != nil {
+		t.Fatalf("stamp the branch's org: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1::uuid`, f.branch)
+	})
 	stop := f.schedule(t, todayUTC())
 
 	task, err := f.tasks.CreateFromOrder(context.Background(), CreateInput{

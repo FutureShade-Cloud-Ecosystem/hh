@@ -300,7 +300,7 @@ func (r *Repository) OrderBrief(ctx context.Context, orderID string) (Brief, err
 	return b, nil
 }
 
-// OrderBriefInOrg is OrderBrief held to the caller's org (UX-81 round 4): an order of another org is the same
+// OrderBriefInOrg is OrderBrief held to the caller's org (UX-81 round 4, held through the branch's org in round 6): an order of another org is the same
 // ErrNotFound as a missing or malformed one, so a consumer can never read, or tell that it exists, an order that
 // is not its org's. The tasks module's creates read through this; OrderBrief above stays for the carried callers
 // that name no org.
@@ -312,8 +312,13 @@ func (r *Repository) OrderBriefInOrg(ctx context.Context, orgID, orderID string)
 		return Brief{}, ErrNotFound
 	}
 	var b Brief
+	// The dealer is the order's BRANCH's org (UX-81 round 6): no writer stamps orders.org_id (the quote convert, the
+	// till, duplicate and reorder insert none, UX-95 owns that), but every order has a branch and the branch's
+	// locations row carries the org.
 	err := r.pool.QueryRow(ctx,
-		`SELECT id::text, branch_id::text, fulfillment, status FROM orders WHERE id = $1 AND org_id = $2`, orderID, orgID).
+		`SELECT o.id::text, o.branch_id::text, o.fulfillment, o.status FROM orders o
+		   JOIN locations l ON l.id = o.branch_id AND l.org_id = $2::uuid
+		  WHERE o.id = $1`, orderID, orgID).
 		Scan(&b.ID, &b.BranchID, &b.Fulfillment, &b.Status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

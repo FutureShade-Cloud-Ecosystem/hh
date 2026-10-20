@@ -226,11 +226,8 @@ var shapeCensusUncovered = map[string]string{
 	"warrantyListIntakePhotos":    "the kit plants no warranty claim row (the same callerScopedClaim (errClaimNotFound) (internal/warranty/intake.go), the same leg split)",
 	"warrantyListRecoveryActions": "the kit plants no warranty claim row (the same callerScopedClaim (errClaimNotFound) (internal/warranty/recovery.go), the same leg split)",
 
-	// The handler's own fence (beyond the role gate: the gate admits, the
-	// fence (a query the route's own vocabulary demands) still refuses).
-	"tasksList":              "the route's cells sit with yard_team alone (the yard-pick work cell per roleconfig), so every other planted caller 403s at the role gate, and the admitting leg itself is now refused by the handler's own branch fence (internal/tasks/handler.go, list calls yardBranchFence, UX-81 round 5: a branch scoped caller must name a reachable branch_id query, the handler's own 403, where the route had no fence at all before). The census sends no query string, so no planted caller reaches a 2xx",
-	"yardListPendingTickets": "the route's cells sit with yard_team alone (the yard-pick work cell per roleconfig), so every other planted caller 403s at the role gate, and the admitting leg itself is refused by the handler's own branch fence (internal/tasks/yard_handler.go, yardBranchFence: a branch scoped caller must name a reachable branch_id query, the handler's own 403). No planted caller reaches a 2xx: the kit's driver principal holds no yard-pick cell either (driver x yard-pick is LevelNone, internal/roleconfig/matrix_test.go), so the role gate 403s it before the fence",
-	"yardListPickQueue":      "the same shape as its sibling (yard-pick cells (yard_team alone), then the handler's own branch fence (yardBranchFence (a branch scoped caller must name a reachable branch_id query))); all legs 403 (the gate for six, the fence for the seventh)",
+	// The yard list doors (tasksList, yardListPickQueue, yardListPendingTickets) are covered again: the census names
+	// the kit's north A branch for them (scFixtureQuery, UX-81 round 6) and the yard_team leg reaches its own page.
 }
 
 // scPageOp is one page shape operation of the contract, every fact (but
@@ -822,6 +819,18 @@ func scFixturePath(t *testing.T, op scPageOp) string {
 	return path
 }
 
+// scFixtureQuery is the one conscious query fill the census carries (UX-81 round 6, item 117.2): the yard list doors
+// hold the yard branch fence (a branch scoped caller must name a reachable branch), so the census names the kit's
+// north A branch for them and the yard_team leg (granted north A) reaches its own dealer's page. Every other
+// operation still sends no query string.
+func scFixtureQuery(op scPageOp) string {
+	switch op.OperationID {
+	case "tasksList", "yardListPickQueue", "yardListPendingTickets":
+		return "?branch_id=" + testkit.BranchNorthAID
+	}
+	return ""
+}
+
 // scSnippet trims an answer body to the evidence length the failure
 // report carries (the shape sentence is the finding; the snippet names
 // the body).
@@ -984,7 +993,7 @@ func TestShapeCensusListPagesServed(t *testing.T) {
 		if ladder == nil {
 			t.Fatalf("page shape operation %s carries the derived bearer shape %q, which names no ladder (scLadderFor must be total over the bearer shapes the derivation returns)", op.OperationID, op.Bearer)
 		}
-		out := scDrive(t, fx, op, scFixturePath(t, op), ladder)
+		out := scDrive(t, fx, op, scFixturePath(t, op)+scFixtureQuery(op), ladder)
 		if out.status != 0 {
 			driven = append(driven, op.OperationID)
 		}
