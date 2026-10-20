@@ -8,6 +8,8 @@
 // here.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { boardLoad, boardView, BOARD_EMPTY } from "../src/board.ts";
 import { InMemoryTenantSession, tenantClient, stubAdapter } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
@@ -115,4 +117,11 @@ test("an empty world shows the board's own empty words", async () => {
   assert.equal(answer.kind, "empty");
   assert.match(BOARD_EMPTY, /^Nothing is in motion/);
   await fetch(`${base}/_stub/reset`, { method: "POST" });
+});
+
+test("board columns delegate order stages to stageOfOrder without a private status list", () => {
+  const source = readFileSync(fileURLToPath(new URL("../src/board.ts", import.meta.url)), "utf8");
+  assert.doesNotMatch(source, /\bORDERED\b/, "board.ts must not carry a private ORDERED status list");
+  assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"order"/, "Order column must filter by stageOfOrder === order");
+  assert.match(source, /stageOfOrder\(o\.status\)\s*===\s*"invoice"/, "Invoice column must filter by stageOfOrder === invoice");
 });

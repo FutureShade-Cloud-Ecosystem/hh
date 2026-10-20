@@ -33,8 +33,6 @@ export interface BoardData {
   orders: TenantOrder[];
 }
 
-const ORDERED: readonly string[] = ["CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED", "FULFILLED"];
-
 export async function boardLoad(page: Page): Promise<SurfaceAnswer> {
   // The gate before the wire: a role without the surface's capability makes no call at all.
   if (!page.session.can("submit_rfq")) return { kind: "refusal" };
@@ -99,8 +97,8 @@ export function boardView(dataRaw: unknown, page: Page): TemplateResult {
   const planProjects = data.projects.filter((p) => stageOfProject(p.status) === "plan");
   const draftOrders = data.orders.filter((o) => stageOfOrder(o.status) === "plan");
   const quoteCards = data.quotes.filter((q) => stageOfQuote(q.status) === "quote");
-  const orderCards = data.orders.filter((o) => ORDERED.includes(o.status));
-  const invoiceCards = data.orders.filter((o) => o.status === "INVOICED" || o.status === "CLOSED");
+  const orderCards = data.orders.filter((o) => stageOfOrder(o.status) === "order");
+  const invoiceCards = data.orders.filter((o) => stageOfOrder(o.status) === "invoice");
   const mayPlan = page.session.can("submit_rfq");
   return html`<p class="meta">
       <span class="figure">${planProjects.length + draftOrders.length} plans</span>
