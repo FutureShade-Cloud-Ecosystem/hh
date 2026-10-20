@@ -206,9 +206,19 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, fmt.Errorf("product: load sku collision read: %w", err)
 		}
+		// The SKU is a key column. An UPDATE whose SET list names a key column takes the row FOR
+		// UPDATE once the table carries a BEFORE UPDATE row trigger (the sync seq trigger, 0422),
+		// even when the value is unchanged, and that blocks a referencing insert (a barcode)
+		// for the whole batch. So the SKU moves in its own statement, and only when it changes;
+		// the content update below names no key column and keeps FOR NO KEY UPDATE.
+		if _, err := tx.Exec(ctx, `UPDATE products SET sku = $1, updated_at = now()
+			WHERE id = $2::uuid AND (org_id IS NULL OR org_id = $3::uuid) AND sku IS DISTINCT FROM $1`,
+			sku, in.RowID, in.OrgID); err != nil {
+			return "", false, fmt.Errorf("product: load update: %w", err)
+		}
 		err = tx.QueryRow(ctx, productSeqCTE+`
 			UPDATE products SET
-				sku = $1, name = $2, description = $3, category_id = NULLIF($4, '')::uuid,
+				name = $2, description = $3, category_id = NULLIF($4, '')::uuid,
 				base_uom = $5, price_uom = $6,
 				manufacturer = $7, collection = $8, color = $9, finish = $10, application = $11,
 				color_family = $12, texture = $13, product_size = $14, sold_by = $15,
@@ -218,7 +228,7 @@ func (ProductLoadWriter) ApplyAttached(ctx context.Context, tx pgx.Tx, in load.W
 				is_active = $25, metadata = $26::jsonb,
 				org_id = $27::uuid, seq = (SELECT next_value FROM pseq),
 				idempotency_key = NULLIF($28, '')::uuid, updated_at = now()
-			WHERE id = $29::uuid AND (org_id IS NULL OR org_id = $27::uuid)
+			WHERE id = $29::uuid AND (org_id IS NULL OR org_id = $27::uuid) AND sku = $1
 			RETURNING id::text`,
 			sku, name, description, category,
 			baseUOM, priceUOM,

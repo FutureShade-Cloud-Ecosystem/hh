@@ -29,7 +29,7 @@ func freshMemoWorld(t *testing.T) (*InvoiceWriter, harness.FreshCase) {
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE source_type = 'invoice' AND customer_id = $1::uuid
-			AND source_id IN (SELECT id FROM invoices WHERE invoice_no LIKE '#CM-%' AND idempotency_key LIKE 'fresh-memo-%')`, testkit.TenantAlphaID)
+			AND source_ref_id IN (SELECT id FROM invoices WHERE invoice_no LIKE '#CM-%' AND idempotency_key LIKE 'fresh-memo-%')`, testkit.TenantAlphaID)
 		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE idempotency_key LIKE 'fresh-memo-%')`)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE idempotency_key LIKE 'fresh-memo-%'`)
 		_ = testkit.Cleanup(c, testkit.PgxPool(pool))

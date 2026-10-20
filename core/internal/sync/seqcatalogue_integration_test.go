@@ -11,8 +11,13 @@ package sync
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/token"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	stdsync "sync"
 	"testing"
@@ -472,5 +477,121 @@ func TestIntegration_SeqTrigger_TwoTransactionsCommitInOrder(t *testing.T) {
 	wg.Wait()
 	if p.seq(t, 1) >= p.seq(t, 2) {
 		t.Fatalf("seq order is not commit order: first transaction %d, second %d", p.seq(t, 1), p.seq(t, 2))
+	}
+}
+
+// - (f) no UPDATE of a trigger table names a key column -
+//
+// A BEFORE UPDATE row trigger makes Postgres lock the row FOR UPDATE, not FOR NO KEY UPDATE,
+// whenever the UPDATE's SET list names a key column (a column of a unique index), even when the
+// value is unchanged. FOR UPDATE conflicts with the FOR KEY SHARE a referencing insert takes, so a
+// batch that reloads a row would block every child insert until it commits (the products reload
+// leg pins exactly that). The statements below name a key column and are accepted, each with its
+// reason; a new one is a finding.
+var keyColumnUpdateAccepted = map[string]string{
+	"attachment.idempotency_key":                     "the statement stamps a new key on every write, so the key changes and the row lock is FOR UPDATE with or without the trigger",
+	"customer_quote.idempotency_key":                 "same: a new key on every write",
+	"plan.idempotency_key":                           "same: a new key on every write",
+	"plan_line.idempotency_key":                      "same: a new key on every write",
+	"customers.account_no ../customer/loadwriter.go": "the loader's own statement, run only when the account number changes (then FOR UPDATE is the right strength)",
+	"products.sku ../product/productload.go":         "the loader's own statement, run only when the sku changes (then FOR UPDATE is the right strength)",
+	"dispatch_trucks.code":                           "the desk's truck edit is one statement on the pool (SF-6 owns the table); the lock is held for the statement only",
+}
+
+var updateSetRe = regexp.MustCompile(`(?is)\bUPDATE\s+([a-z_][a-z0-9_]*)\s+(?:[a-z_][a-z0-9_]*\s+)?SET\s+(.*?)(?:\bWHERE\b|\bFROM\b|\bRETURNING\b|$)`)
+var setColRe = regexp.MustCompile(`(?im)(?:^|,)\s*([a-z_][a-z0-9_]*)\s*=`)
+
+// keyColumnUpdates returns "table.column" for every UPDATE in the files that lists a key column of
+// a trigger table in its SET list, with the position.
+func keyColumnUpdates(files []goFile, keys map[string]map[string]bool) []string {
+	var out []string
+	for _, gf := range files {
+		if strings.Contains(filepath.ToSlash(gf.path), "/testkit/") {
+			continue
+		}
+		ast.Inspect(gf.file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			for _, m := range updateSetRe.FindAllStringSubmatch(s, -1) {
+				tb := strings.ToLower(m[1])
+				if keys[tb] == nil {
+					continue
+				}
+				for _, c := range setColRe.FindAllStringSubmatch(m[2], -1) {
+					col := strings.ToLower(c[1])
+					if keys[tb][col] {
+						out = append(out, fmt.Sprintf("%s.%s at %s", tb, col, gf.fset.Position(lit.Pos())))
+					}
+				}
+			}
+			return true
+		})
+	}
+	sort.Strings(out)
+	return out
+}
+
+func readKeyColumns(t *testing.T, pool *pgxpool.Pool, tables []string) map[string]map[string]bool {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT c.relname, a.attname
+		  FROM pg_index i
+		  JOIN pg_class c ON c.oid = i.indrelid
+		  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY (i.indkey)
+		 WHERE i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL AND a.attnum > 0
+		   AND c.relname = ANY ($1)`, tables)
+	if err != nil {
+		t.Fatalf("read key columns: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]map[string]bool{}
+	for rows.Next() {
+		var tb, col string
+		if err := rows.Scan(&tb, &col); err != nil {
+			t.Fatalf("scan key column: %v", err)
+		}
+		if out[tb] == nil {
+			out[tb] = map[string]bool{}
+		}
+		out[tb][col] = true
+	}
+	return out
+}
+
+func TestIntegration_SeqCatalogue_NoUpdateOfATriggerTableNamesAKeyColumn(t *testing.T) {
+	pool := seqPool(t)
+	keys := readKeyColumns(t, pool, mappedTableNames())
+	files := parseTree(t, coreRoots)
+	var bad []string
+	for _, h := range keyColumnUpdates(files, keys) {
+		tc := h[:strings.Index(h, " at ")]
+		file := h[strings.Index(h, " at ")+4:]
+		file = file[:strings.Index(file, ":")]
+		if _, ok := keyColumnUpdateAccepted[tc]; ok {
+			continue
+		}
+		if _, ok := keyColumnUpdateAccepted[tc+" "+file]; ok {
+			continue
+		}
+		bad = append(bad, h)
+	}
+	if len(bad) > 0 {
+		t.Fatalf("an UPDATE of a trigger table names a key column in its SET list (the row lock becomes FOR UPDATE and blocks referencing inserts):\n  %s", strings.Join(bad, "\n  "))
+	}
+}
+
+func TestIntegration_SeqCatalogue_BiteKeyColumnUpdate(t *testing.T) {
+	files := plantTree(t, "package p\nfunc bad() { _ = `UPDATE quotes SET quote_no = $2, status = 'X' WHERE id = $1`; _ = `UPDATE quotes SET status = 'X' WHERE id = $1` }\n")
+	keys := map[string]map[string]bool{"quotes": {"quote_no": true}}
+	got := keyColumnUpdates(files, keys)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "quotes.quote_no at ") {
+		t.Fatalf("a planted key column update was not found, or a clean one was: %v", got)
 	}
 }
