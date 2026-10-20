@@ -120,7 +120,8 @@ SELECT ps.order_id::text, o.order_no, COALESCE(ps.invoice_id::text,''), COALESCE
 const readCustomerQuery = `
 SELECT c.id::text, c.customer_type, c.payment_terms_days, c.credit_limit_cents,
        COALESCE((SELECT t.balance_after FROM customer_transactions t
-                  WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0)
+                  WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0),
+       COALESCE(c.home_branch_id::text, '')
   FROM customers c WHERE c.id = $1`
 
 func (r *Repository) ReadCustomer(ctx context.Context, customerID string) (customerRec, error) {
@@ -129,7 +130,7 @@ func (r *Repository) ReadCustomer(ctx context.Context, customerID string) (custo
 	}
 	var c customerRec
 	err := r.pool.QueryRow(ctx, readCustomerQuery, customerID).Scan(
-		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents,
+		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents, &c.HomeBranchID,
 	)
 	return c, err
 }

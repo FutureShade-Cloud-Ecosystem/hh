@@ -107,6 +107,10 @@ func TestBranchFence_ReturnRequestsQueue(t *testing.T) {
 	if len(list) != 1 || list[0].ID != "rr-trt" {
 		t.Fatalf("the queue shows only the branches the caller reaches: %+v", list)
 	}
+	// The reach goes into the store's query, so its row limit counts the caller's own rows (UX-89).
+	if !h.store.requestReachSet || len(h.store.requestReach) != 1 || h.store.requestReach[0] != "branch-trt" {
+		t.Fatalf("the queue read must hand the store the caller's branches, got %v", h.store.requestReach)
+	}
 	if _, err := h.svc.RejectReturnRequest(ctx, "rr-kgn", "no"); err == nil || statusOf(t, err) != http.StatusNotFound {
 		t.Fatalf("reject behind the wall: want what a missing request answers, got %v", err)
 	}
@@ -120,5 +124,41 @@ func TestBranchFence_ReturnRequestsQueue(t *testing.T) {
 	all, err := h.svc.ListReturnRequests(ctx, "")
 	if err != nil || len(all) != 2 {
 		t.Fatalf("a global caller reaches every branch's queue: %v %+v", err, all)
+	}
+	if h.store.requestReach != nil {
+		t.Fatalf("a global caller's read carries no branch list, got %v", h.store.requestReach)
+	}
+}
+
+// UX-89: a customer the caller cannot reach prices as not found on the counter prices read (with a branch
+// named, or none) and on pricing order create, the account read's own answer. An account homed to the
+// caller's branch, or to none, is answered as before.
+func TestBranchFence_CounterPricesCustomerWall(t *testing.T) {
+	h, q := counterHarness(t)
+	h.store.customers["cust-kgn"] = customerRec{ID: "cust-kgn", CustomerType: "CONTRACTOR", HomeBranchID: "branch-kgn"}
+	h.store.customers["cust-trt"] = customerRec{ID: "cust-trt", CustomerType: "CONTRACTOR", HomeBranchID: "branch-trt"}
+	h.store.customers["cust-any"] = customerRec{ID: "cust-any", CustomerType: "CONTRACTOR"}
+	scopedAtTrenton(h)
+	ctx := context.Background()
+	items := []CounterPriceItem{{ProductID: "prod-paver", QtyEntered: 1}}
+
+	for _, branch := range []string{"", "branch-trt"} {
+		_, err := h.svc.CounterPrices(ctx, CounterPriceInput{BranchID: branch, CustomerID: "cust-kgn", Items: items})
+		if err == nil || statusOf(t, err) != http.StatusNotFound {
+			t.Fatalf("an unreachable account (branch %q): want 404, got %v", branch, err)
+		}
+	}
+	if len(q.got) != 0 {
+		t.Fatalf("the engine was asked for an unreachable account: %+v", q.got)
+	}
+	for _, id := range []string{"cust-trt", "cust-any"} {
+		if _, err := h.svc.CounterPrices(ctx, CounterPriceInput{BranchID: "branch-trt", CustomerID: id, Items: items}); err != nil {
+			t.Fatalf("a reachable account %s is answered: %v", id, err)
+		}
+	}
+	_, err := h.svc.CreatePricingOrder(ctx, PricingOrderInput{BranchID: "branch-trt", CustomerID: "cust-kgn",
+		Lines: []PricingOrderLineInput{{ProductID: "prod-paver", QtyEntered: 1}}})
+	if err == nil || statusOf(t, err) != http.StatusNotFound {
+		t.Fatalf("pricing order for an unreachable account: want 404, got %v", err)
 	}
 }

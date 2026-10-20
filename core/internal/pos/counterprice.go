@@ -101,14 +101,12 @@ func (s *Service) CounterPrices(ctx context.Context, in CounterPriceInput) (Coun
 	// resolved authority does not reach is refused with the words create sale gives for it, never answered
 	// at that branch's rules and the named account's prices. A read naming no branch is the dealer wide
 	// picture and stays answered; a caller that cannot be resolved is the 401 the guard's door would give.
-	if branch := strings.TrimSpace(in.BranchID); branch != "" {
-		caller, err := s.caller(ctx)
-		if err != nil {
-			return CounterPrices{}, err
-		}
-		if !caller.CanAccessBranch(branch) {
-			return CounterPrices{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branch)
-		}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return CounterPrices{}, err
+	}
+	if branch := strings.TrimSpace(in.BranchID); branch != "" && !caller.CanAccessBranch(branch) {
+		return CounterPrices{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branch)
 	}
 	out := CounterPrices{CustomerType: "RETAIL", Prices: []pricing.CounterQuote{}}
 	quoter := s.counterQuoter()
@@ -129,6 +127,12 @@ func (s *Service) CounterPrices(ctx context.Context, in CounterPriceInput) (Coun
 		if err != nil || cust.CustomerType == "" {
 			customerID = "" // unknown account → walk-in pricing, never a guess
 		} else {
+			// THE CUSTOMER WALL, the account read's own rule (customer/account_read.go): an account homed to a
+			// branch the caller cannot reach answers as not found, never with its type or its contract prices.
+			// An account homed to no branch is company wide and stays visible.
+			if cust.HomeBranchID != "" && !caller.CanAccessBranch(cust.HomeBranchID) {
+				return CounterPrices{}, clientErr(http.StatusNotFound, "pos: customer not found")
+			}
 			out.CustomerType = cust.CustomerType
 		}
 	}

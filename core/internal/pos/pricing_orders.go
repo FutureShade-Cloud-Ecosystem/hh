@@ -48,6 +48,11 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 		if err != nil {
 			return PricingOrder{}, err
 		}
+		// THE CUSTOMER WALL, the account read's own rule: an account homed to a branch the caller cannot
+		// reach is not found, never priced at its type or contract prices.
+		if cust.HomeBranchID != "" && !caller.CanAccessBranch(cust.HomeBranchID) {
+			return PricingOrder{}, clientErr(http.StatusNotFound, "pos: customer not found")
+		}
 		customerType = cust.CustomerType
 	}
 
@@ -63,6 +68,11 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 			UOMEntered:   ln.UOMEntered,
 		})
 		if err != nil {
+			// A pricing gap (no conversion for the unit asked, no retail anchor) is a line to correct: a 4xx in
+			// words that names the line, as create sale gives it, never a bare 500.
+			if st, msg, ok := pricing.ClientStatus(err); ok {
+				return PricingOrder{}, clientErr(st, "line %d: %s", i+1, msg)
+			}
 			return PricingOrder{}, err
 		}
 		sku, name, err := s.store.ReadProductSnapshot(ctx, ln.ProductID)
