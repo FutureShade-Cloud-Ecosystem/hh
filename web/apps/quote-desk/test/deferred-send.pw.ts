@@ -2,6 +2,7 @@
 // session goes out under that session or not at all, and the layout store keeps the reset and the changes after it in
 // order. The subject of every request's bearer is read off the request, so a wrong person is seen on the wire.
 import { expect, test, type Page, type Request } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { hold, open, quiet, seed, settle, signIn } from "./switch-helpers.js";
 
 /** The compose page under the split-list navigation: the New quote button walks the desk to #/quotes/new. */
@@ -39,6 +40,7 @@ function record(page: Page, pattern: RegExp): { sent: string[]; bodies: string[]
 }
 
 async function signOutThenIn(page: Page, role: string): Promise<void> {
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("button", { name: role, exact: true }).click();

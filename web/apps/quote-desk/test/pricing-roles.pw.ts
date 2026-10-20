@@ -6,6 +6,7 @@
 // write is refused, with the prices still readable. A log the cost and margin list
 // refuses is refused on its own tab only.
 import { expect, test } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { shot } from "./shot";
 import { openPricing, openTab, setMode, signIn } from "./pricing-helpers";
 
@@ -101,6 +102,7 @@ test("a log the cost and margin list refuses is refused on its own tab only", as
 test("signing out closes the pricing screen, and the next login starts on the quotes", async ({ page }) => {
   await signIn(page, "Sales manager");
   await openPricing(page);
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();

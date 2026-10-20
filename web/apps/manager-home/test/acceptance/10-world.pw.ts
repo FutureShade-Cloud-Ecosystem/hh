@@ -9,7 +9,9 @@ test("the yard manager's card is the way in, and the landing is the profile's ro
   const card = page.locator("[data-flow='yard-manager']");
   await expect(card).toBeVisible();
   await card.click();
-  await expect(page.locator("hos-app-header")).toHaveAttribute("signed-in", "");
+  const band = page.locator("hh-shell-header");
+  await expect(band).toBeVisible();
+  await band.locator("button.account").click();
   await expect(page.getByTestId("header-word")).toHaveText("Yard manager");
   const widgets = page.locator("[data-widget]");
   await expect(widgets).toHaveCount(8);

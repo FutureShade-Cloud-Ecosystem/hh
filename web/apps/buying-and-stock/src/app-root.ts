@@ -12,12 +12,14 @@
 // refuses every "." and "@" binding and every bound value outside the data-
 // and aria- attributes in a dependent package. Its two buttons ride data-action names
 // and the host's click listener below acts on them.
-import { html, css, type TemplateResult } from "lit";
+import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
-import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
+import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb, FRAMED_BAND_ORG } from "@hardscapehouse/shell-chrome/src/framed-band.js";
+import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
+import "@hardscapehouse/shell-chrome/src/shell-header.js";
+import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
@@ -201,8 +203,18 @@ export class BuyingAndStockApp extends HHElement {
   // The signed in role's code: it decides which controls an area offers.
   #roleCode = "";
 
+  // Framed by the Work shell: the host's band is the one band, so this app renders none of its own.
+  readonly #framed = framedByShell();
+
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
+
+  /** The Theme control's press: the band's account menu presses it standalone, the Work shell's menu asks for it framed. */
+  #pressTheme(): void {
+    this.#theme = this.#theme === "light" ? "dark" : "light";
+    this.requestUpdate();
+  }
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -213,13 +225,11 @@ export class BuyingAndStockApp extends HHElement {
       return;
     }
     if (action === "feedback") {
-      const widget = this.renderRoot.querySelector("hh-feedback");
-      if (widget instanceof HHFeedback) widget.show();
+      this.#openFeedback();
       return;
     }
     if (action === "theme") {
-      this.#theme = this.#theme === "light" ? "dark" : "light";
-      this.requestUpdate();
+      this.#pressTheme();
       return;
     }
     if (action === "area") {
@@ -245,8 +255,25 @@ export class BuyingAndStockApp extends HHElement {
   /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
   #stopHostSignOut: (() => void) | null = null;
 
+  /** Framed by the Work shell: its account menu carries Theme and Feedback for this app and asks through one message. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+    if (action === "feedback") this.#openFeedback();
+  };
+
+  /** Feedback's press: the shell's account menu asks for it too, when this desk is framed. */
+  #openFeedback(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback) widget.show();
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme", "feedback"]);
+    }
     this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.addEventListener("input", this.#onHostInput);
@@ -297,6 +324,7 @@ export class BuyingAndStockApp extends HHElement {
   disconnectedCallback(): void {
     this.#stopHostSignOut?.();
     this.#stopHostSignOut = null;
+    window.removeEventListener("message", this.#onChromeAction);
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
@@ -307,11 +335,6 @@ export class BuyingAndStockApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
     // A draft's starting field values: set once per draft, after the render that drew them.
@@ -319,6 +342,39 @@ export class BuyingAndStockApp extends HHElement {
       const field = this.#fieldElement(name, key);
       if (field !== null && field.value !== value) field.value = value;
     });
+    // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
+    // when the app stands alone; framed by the Work shell, the host's band is
+    // the one band. The bell stands quiet: wiring its unread count is a
+    // follow-up. The account chip's menu carries what the app-local header
+    // used to (theme, feedback, switch role, sign out): the actions ride the
+    // band's accountMenu template and their clicks bubble back to #onHostClick.
+    // Framed, no band applies the theme: the app does.
+    if (this.#framed) applyDocumentTheme(this.#theme);
+    const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
+    if (band !== null) {
+      band.org = FRAMED_BAND_ORG;
+      band.demo = true;
+      band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
+      band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
+      band.groups = [];
+      band.currentKey = "";
+      band.syncState = "idle";
+      band.variant = "band";
+      band.theme = this.#theme;
+      const signedIn = this.#sessions.current !== null;
+      band.accountMenu = html`
+        ${signedIn
+          ? html`<p>Signed in as <strong data-testid="signed-in-role">${this.#roleLabel}</strong></p>`
+          : nothing}
+        ${this.renderThemeControl()}
+        ${signedIn
+          ? html`
+              <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
+              <button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>
+            `
+          : nothing}
+      `;
+    }
   }
 
   private async loadFlows(): Promise<void> {
@@ -369,11 +425,11 @@ export class BuyingAndStockApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
+  // The theme control now rides the band's account menu; its word names the
   // theme a tap moves to.
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
-    return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback" title="Send feedback about this screen">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
+    return html`<button type="button" class="theme-btn" data-action="feedback" title="Send feedback about this screen">Feedback</button><button type="button" class="theme-btn" data-action="theme" data-testid="theme-control">${label}</button>`;
   }
 
   // The area switcher: one tab per area, the open one a pill. The words are the areas' own.
@@ -385,7 +441,7 @@ export class BuyingAndStockApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <main class="desk">
         ${this.renderAreas()}
         ${this.#desk.render()}
@@ -398,12 +454,13 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
+      ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the buying seats; the stock lookup, read only, for Sales. Demo data only.</p>
         ${renderEntry(this.#entryView)}
       </main>
+      <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;
   }
 }
