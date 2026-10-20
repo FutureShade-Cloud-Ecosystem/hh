@@ -45,16 +45,20 @@ test.describe("phone 390", () => {
     await expect(page.getByTestId("surface-title")).toHaveText("Quotes");
   });
 
-  test("accepting here carries the core's words: the acceptance lives on the dealer's link", async ({ page }) => {
+  test("a sent quote shows the core's acceptance note in place of an Accept button, and a modal refusal prints once", async ({ page, request }) => {
     await signIn(page, "buyer");
     await openQuotes(page);
     await page.locator("[data-testid='quotes-row']", { hasText: "Q-7001" }).click();
     await expect(page.getByTestId("surface-title")).toHaveText("Quote Q-7001");
-    await page.getByTestId("accept-quote").click();
+    await expect(page.getByTestId("accept-quote")).toHaveCount(0);
+    await expect(page.getByTestId("accept-quote-note")).toContainText("link the dealer sent you");
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/quotes/7e0000-0000-4000-8000-000000000001/reject", status: 403 } } });
+    await page.getByTestId("reject-quote").click();
     const sheet = page.getByTestId("quote-modal-sheet");
-    await expect(sheet).toContainText("Accept this quote?");
-    await sheet.getByRole("button", { name: "Accept", exact: true }).click();
-    await expect(page.getByTestId("quote-modal-error")).toContainText("link the dealer sent you");
+    await expect(sheet).toContainText("Reject this quote?");
+    await sheet.getByRole("button", { name: "Reject", exact: true }).click();
+    await expect(page.getByTestId("quote-modal-error")).toContainText("Your role does not open this");
+    await expect(page.getByTestId("notice")).toHaveCount(0);
     await page.screenshot({ path: join(SHOTS, "quote-accept-refusal-phone.png"), fullPage: true });
     await sheet.getByRole("button", { name: "Cancel" }).click();
     await expect(sheet).toHaveCount(0);

@@ -64,6 +64,7 @@ function words(template) {
 
 const PLANNING_ID = "9a0000-0000-4000-8000-000000000001";
 const QUOTING_ID = "9a0000-0000-4000-8000-000000000002";
+const ORDERED_ID = "9a0000-0000-4000-8000-000000000003";
 const EMPTY_PLAN_ID = "9a0000-0000-4000-8000-000000000004";
 
 test("a role without submit_rfq is refused before any call; a holder reads the project and its lines", async () => {
@@ -133,6 +134,28 @@ test("submitting the RFQ on an empty plan carries the server's refusal in plain 
   assert.match(last.words, /no lines to quote/);
 });
 
+test("submitting the RFQ when any line comes back unpriced says lines without a price wait for the dealer", async () => {
+  const page = await makePage("owner", { surface: "scope", projectId: PLANNING_ID });
+  page.client = tenantClient(page.session, {
+    baseUrl: base,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      const body = await res.json();
+      body.lines = body.lines.map((l, i) =>
+        i === 0 ? { ...l, priced: false, indicative_unit_price_cents: 0, indicative_line_total_cents: 0 } : l,
+      );
+      return new Response(JSON.stringify(body), { status: res.status, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  await scopeSubmitRfq(page);
+  const last = page.notices.at(-1);
+  assert.ok(last, "no notice was given");
+  assert.equal(last.kind, "ok");
+  assert.match(last.words, /Lines without a price wait for the dealer/, last.words);
+  assert.doesNotMatch(last.words, /Lines priced indicatively/, last.words);
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+});
+
 test("a quoting project is read only: recall is offered, submit and the edit moves are not", async () => {
   const page = await makePage("buyer", { surface: "scope", projectId: QUOTING_ID });
   const answer = await scopeLoad(page);
@@ -142,6 +165,19 @@ test("a quoting project is read only: recall is offered, submit and the edit mov
   assert.ok(text.includes("Recall to planning"), text);
   assert.equal(/\bdata-action="submit-rfq"\b/.test(text), false, "a quoting project must not offer Submit RFQ");
   assert.equal(/\bdata-action="add-material"\b/.test(text), false, "a quoting project must not offer Add material");
+});
+
+test("recall to planning is offered on QUOTING only, never on ORDERED, FULFILLED, or CANCELLED", async () => {
+  const page = await makePage("buyer", { surface: "scope", projectId: ORDERED_ID });
+  const answer = await scopeLoad(page);
+  assert.equal(answer.kind, "ready");
+  if (answer.kind !== "ready") return;
+  assert.equal(answer.data.status, "ORDERED");
+  for (const status of ["ORDERED", "FULFILLED", "CANCELLED"]) {
+    const text = words(scopeView({ ...answer.data, status }, page));
+    assert.equal(/\bdata-action="recall"\b/.test(text), false, `${status} must not offer Recall to planning`);
+    assert.equal(text.includes("Recall to planning"), false, `${status} must not show Recall to planning`);
+  }
 });
 
 test("the surface commands answer only their own actions", async () => {
