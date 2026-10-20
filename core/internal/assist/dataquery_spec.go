@@ -95,6 +95,7 @@ type Output struct {
 	Label string
 	Type  colType
 	Agg   bool
+	Class string // the column's class; a cost or margin cell the database masked is left out of the row
 }
 
 // Compiled is a spec turned into a statement.
@@ -188,7 +189,7 @@ func (c *compiler) compile(sp Spec) (Compiled, error) {
 			return invalid("An aggregate query may only select the columns it groups by.")
 		}
 		seen[name] = true
-		outs = append(outs, Output{Name: name, Label: col.Label, Type: col.Type})
+		outs = append(outs, Output{Name: name, Label: col.Label, Type: col.Type, Class: col.Class})
 		selects = append(selects, fmt.Sprintf("(%s)::text AS %s", qi(name), qi(name)))
 		return nil
 	}
@@ -337,7 +338,7 @@ func (c *compiler) aggregate(a AggSpec) (Output, string, error) {
 		if err != nil {
 			return Output{}, "", err
 		}
-		return Output{Name: "count_" + a.Col, Label: "Count of " + strings.ToLower(col.Label), Type: typeInt, Agg: true}, "count(" + qi(a.Col) + ")", nil
+		return Output{Name: "count_" + a.Col, Label: "Count of " + strings.ToLower(col.Label), Type: typeInt, Agg: true, Class: col.Class}, "count(" + qi(a.Col) + ")", nil
 	case "sum", "avg", "min", "max":
 		if a.Col == "" {
 			return Output{}, "", invalid("That aggregate needs a column.")
@@ -358,7 +359,7 @@ func (c *compiler) aggregate(a AggSpec) (Output, string, error) {
 			typ = typeNumeric
 		}
 		label := map[string]string{"sum": "Total ", "avg": "Average ", "min": "Lowest ", "max": "Highest "}[a.Fn] + strings.ToLower(col.Label)
-		return Output{Name: a.Fn + "_" + a.Col, Label: label, Type: typ, Agg: true}, a.Fn + "(" + qi(a.Col) + ")", nil
+		return Output{Name: a.Fn + "_" + a.Col, Label: label, Type: typ, Agg: true, Class: col.Class}, a.Fn + "(" + qi(a.Col) + ")", nil
 	}
 	return Output{}, "", invalid("That aggregate function is not allowed.")
 }

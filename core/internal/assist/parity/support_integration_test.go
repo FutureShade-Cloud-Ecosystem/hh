@@ -115,3 +115,29 @@ func plantMany(t *testing.T, env *testsupport.Env, n int) {
 		_, _ = c.Exec(context.Background(), `DELETE FROM orders WHERE order_no LIKE $1`, "SO-S5P-"+tag+"-%")
 	})
 }
+
+// plantStrayStock leaves one stock row at a third location whose id sorts before every real branch's, the way
+// another package's fixtures do in CI's shared database. A test that picks its two branches from "every location
+// that holds stock, in id order" picks the stray one first. The row and the location are removed after.
+func plantStrayStock(t *testing.T, env *testsupport.Env) {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	const stray = "00000000-0000-4000-8000-0000000000aa"
+	if _, err := env.Admin.Exec(ctx, `INSERT INTO locations (id, branch_id, loc_type, code, name) VALUES ($1::uuid, $1::uuid, 'BRANCH', 'ZZSTRAY', 'Stray fixture branch')`, stray); err != nil {
+		t.Fatalf("plant the stray location: %v", err)
+	}
+	if _, err := env.Admin.Exec(ctx, `INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base)
+		SELECT product_id, $1::uuid, $1::uuid, 3 FROM stock_balances LIMIT 1`, stray); err != nil {
+		t.Fatalf("plant the stray stock row: %v", err)
+	}
+	dsn := env.AdminURL
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), `DELETE FROM stock_balances WHERE location_id = $1::uuid`, stray)
+		_, _ = c.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, stray)
+	})
+}

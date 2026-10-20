@@ -52,7 +52,7 @@ test("a manifest the server could not record is not printed", async ({ page, req
   await openBoard(page, request);
   await stubPost(request, "refuse", { status: 500, error: "internal error", path: "/manifest/print" });
   await truck(page, "RUN-PLM-1").getByRole("button", { name: "Print manifest" }).click();
-  await expect(page.locator("[data-error]")).toContainText("The server could not finish");
+  await expect(page.locator("[data-error]")).toContainText("The desk could not finish");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
 });
 

@@ -154,7 +154,13 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 		return finish(Result{}, ErrRefused)
 	}
 
-	type row map[string]string
+	// row holds one result row as text, and which cells came back NULL: a NULL cost or margin cell is the
+	// database masking it for this row (the branch is not one of the asker's cost branches), and the cell
+	// is then left out of the row altogether, never shown empty or as a zero.
+	type row struct {
+		vals  map[string]string
+		nulls map[string]bool
+	}
 	var rows []row
 	var cites []Ref
 	truncated := false
@@ -191,13 +197,15 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 			if err != nil {
 				return readtx.MapError(err)
 			}
-			r := row{}
+			r := row{vals: map[string]string{}, nulls: map[string]bool{}}
 			for i, fd := range dr.FieldDescriptions() {
 				s := ""
 				if vals[i] != nil {
 					s = fmt.Sprint(vals[i])
+				} else {
+					r.nulls[fd.Name] = true
 				}
-				r[fd.Name] = s
+				r.vals[fd.Name] = s
 				size += len(s)
 			}
 			if size > maxResultBytes {
@@ -231,15 +239,18 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 	for _, r := range rows {
 		it := Item{}
 		for i, out := range comp.Outputs {
-			v := formatValue(out, r[out.Name], loc)
-			if i == 0 {
+			if r.nulls[out.Name] && (out.Class == ClassCost || out.Class == ClassMargin) {
+				continue // masked for this row: absent, not blank
+			}
+			v := formatValue(out, r.vals[out.Name], loc)
+			if i == 0 || it.Title == "" {
 				it.Title = v
 			}
 			it.Fields = append(it.Fields, Field{Label: out.Label, Value: v})
 		}
-		if comp.Cites && r["__id"] != "" {
-			label := strings.TrimSpace(comp.View.CiteLabelPrefix + r["__label"])
-			ref := Ref{Kind: comp.View.CiteKind, ID: r["__id"], Label: label}
+		if comp.Cites && r.vals["__id"] != "" {
+			label := strings.TrimSpace(comp.View.CiteLabelPrefix + r.vals["__label"])
+			ref := Ref{Kind: comp.View.CiteKind, ID: r.vals["__id"], Label: label}
 			it.Ref = &ref
 			cites = append(cites, ref)
 		}

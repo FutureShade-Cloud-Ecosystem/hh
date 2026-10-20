@@ -66,6 +66,38 @@ EOF
 done
 
 cp "$ROOT/tauri/core/profiles/field.json" "$DIST/profile.json"
+
+# The native config the host page reads at boot (PRR-531): where the core and
+# the Console are for this build, public facts only, no secret. The webview
+# makes no network call itself (the CSP holds no network origin; sign in and
+# sign out revocation run on the Rust side), the page reads this only to know
+# the base. An empty coreBaseUrl (an unconfigured build) resolves nothing on
+# the page, exactly as before. The value is validated here the way the Rust
+# side's clean_base_url validates it: https, or loopback http for a dev build.
+CORE_URL="${HH_CORE_URL:-}"
+CONSOLE_ENDPOINT="${HH_CONSOLE_ENDPOINT:-https://api.futurebuild.ai/v1}"
+valid_url() {
+  case "$1" in
+    https://* | http://localhost:* | http://127.0.0.1:*)
+      case "$1" in
+        *[![:print:]]* | *'"'* | *'\'* | *'@'* | *'?'* | *'#'*) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if ! valid_url "$CORE_URL"; then
+  echo "assemble: refusing HH_CORE_URL (it must be https, or loopback http for a dev build)" >&2
+  exit 1
+fi
+if ! valid_url "$CONSOLE_ENDPOINT"; then
+  echo "assemble: refusing HH_CONSOLE_ENDPOINT (it must be https, or loopback http for a dev build)" >&2
+  exit 1
+fi
+printf '{\n  "coreBaseUrl": "%s",\n  "consoleEndpoint": "%s"\n}\n' "$CORE_URL" "$CONSOLE_ENDPOINT" > "$DIST/config.json"
+
 shipped=0
 for entry in "${LAUNCH_MAP[@]}"; do
   read -r app dir path <<EOF

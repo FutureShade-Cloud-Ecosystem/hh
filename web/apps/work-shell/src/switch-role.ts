@@ -17,6 +17,23 @@ import { clearHandoff } from "./handoff.js";
 import type { ConsoleSession } from "./console-session.js";
 import { readDoorSession } from "./handoff.js";
 
+/** The shell's invoke, when the page runs inside a native Tauri webview (a browser copy has none). */
+export type ShellInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+/**
+ * The command's error codes that are a final answer on this token (the same
+ * verdicts a 4xx gives the fetch path): anything else (offline, unavailable,
+ * rate limited) is held and retried, exactly as a 5xx is.
+ */
+const FINAL_IPC_CODES: ReadonlySet<string> = new Set(["bad_request", "unauthorized", "forbidden"]);
+
+function ipcErrorCode(error: unknown): string {
+  if (error !== null && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return "";
+}
+
 /** Tokens whose revocation post failed on the network or met a 5xx, held in memory until it can be retried. */
 const pendingRevocations = new Set<string>();
 
@@ -25,7 +42,23 @@ function revokeURL(coreBaseUrl?: string): string {
   return `${base}/api/v1/auth/sign-out`;
 }
 
-async function postRevocation(token: string, options?: { fetch?: typeof fetch; coreBaseUrl?: string }): Promise<void> {
+async function postRevocation(
+  token: string,
+  options?: { fetch?: typeof fetch; coreBaseUrl?: string; invoke?: ShellInvoke },
+): Promise<void> {
+  // In a native profile the page never posts to the network (the CSP holds no
+  // network origin): the shell's command holds the core URL and posts the
+  // revocation on the Rust side, like sign in.
+  const invoke = options?.invoke;
+  if (typeof invoke === "function") {
+    try {
+      await invoke("cmd_sign_out_revoke", { jwt: token });
+      return;
+    } catch (error) {
+      if (!FINAL_IPC_CODES.has(ipcErrorCode(error))) pendingRevocations.add(token);
+      return;
+    }
+  }
   const doFetch = options?.fetch ?? globalThis.fetch;
   if (typeof doFetch !== "function") return;
   let response: Response;
@@ -52,7 +85,7 @@ async function postRevocation(token: string, options?: { fetch?: typeof fetch; c
  * fresh token first) and whenever the host's connection comes back. Never
  * throws: a still-offline retry just stays pending.
  */
-export async function flushPendingRevocations(options?: { fetch?: typeof fetch; coreBaseUrl?: string }): Promise<void> {
+export async function flushPendingRevocations(options?: { fetch?: typeof fetch; coreBaseUrl?: string; invoke?: ShellInvoke }): Promise<void> {
   const held = [...pendingRevocations];
   if (held.length === 0) return;
   for (const token of held) pendingRevocations.delete(token);
@@ -75,6 +108,7 @@ export async function endSession(deps: {
   token?: string | null;
   fetch?: typeof fetch;
   coreBaseUrl?: string;
+  invoke?: ShellInvoke;
 }): Promise<void> {
   // Read the token BEFORE the handoff keys are cleared: after clearing,
   // the door record (and its token) is gone.
@@ -82,7 +116,7 @@ export async function endSession(deps: {
   clearHandoff(deps.storage === undefined ? undefined : { storage: deps.storage });
   if (deps.consoleSession !== null) await deps.consoleSession.signOut();
   if (token !== null && token !== "") {
-    await postRevocation(token, { fetch: deps.fetch, coreBaseUrl: deps.coreBaseUrl });
-    await flushPendingRevocations({ fetch: deps.fetch, coreBaseUrl: deps.coreBaseUrl });
+    await postRevocation(token, { fetch: deps.fetch, coreBaseUrl: deps.coreBaseUrl, invoke: deps.invoke });
+    await flushPendingRevocations({ fetch: deps.fetch, coreBaseUrl: deps.coreBaseUrl, invoke: deps.invoke });
   }
 }

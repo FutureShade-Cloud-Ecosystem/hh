@@ -92,7 +92,7 @@ test("a login that may not read the trail still reads the rules, and the trail s
   await stubPost(request, "caller", { can_manage: false });
   await page.locator("[data-tab-id='settings']").first().click();
   await expect(rule(page, "commit_horizon_weeks")).toHaveText("4 weeks");
-  await expect(page.locator("[data-history-fault]")).toHaveText("Managers read the change history. It is not shown to this login.");
+  await expect(page.locator("[data-history-fault]")).toHaveText("Managers read the change history. It is not shown to this sign-in.");
   await expect(page.locator("[data-history-row]")).toHaveCount(0);
 });
 

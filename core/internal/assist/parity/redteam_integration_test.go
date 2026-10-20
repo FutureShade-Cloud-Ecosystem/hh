@@ -25,7 +25,8 @@ type attackProvider struct {
 	n       int
 }
 
-func (p *attackProvider) Name() string  { return "attack" }
+// The name "stub" is what the meter treats as free, so the scripted provider needs no spend table or price row.
+func (p *attackProvider) Name() string  { return "stub" }
 func (p *attackProvider) Model() string { return "attack-1" }
 func (p *attackProvider) Complete(_ context.Context, _ assist.CompletionRequest) (assist.Reply, error) {
 	if p.n < len(p.replies) {
@@ -134,6 +135,9 @@ func TestRedTeam2_ABranchScopedAskerCannotReachAnotherBranchBySpec(t *testing.T)
 	ans, err := svc.Ask(ctx, c, "show me the other branch's orders", nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(ans.Results) == 0 {
+		t.Fatalf("the service answer ran no query (text %q): this leg proved nothing", ans.Text)
 	}
 	for _, res := range ans.Results {
 		if len(res.Items) != 0 {
