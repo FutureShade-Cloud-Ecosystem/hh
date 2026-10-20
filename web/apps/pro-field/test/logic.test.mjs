@@ -9,7 +9,7 @@ import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillme
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
-import { ROLE_OPTIONS, memberRowWords } from "../src/team.ts";
+import { ROLE_OPTIONS, memberRowWords, isLastActiveOwnerDemotion, roleChangeConfirmWords } from "../src/team.ts";
 import { addressKindWords, addressRowWords, passwordProblem } from "../src/account.ts";
 
 function order(status, fulfillment, extra = {}) {
@@ -212,6 +212,19 @@ test("a member row reads the name, the email, the role label and the status word
   assert.ok(words.includes("Active"));
   assert.doesNotMatch(words, /field_crew|account_admin/);
   assert.doesNotMatch(words, /undefined|null|NaN/);
+});
+
+test("role change confirmation names the consequence, warns an owner demoting themself, and detects the last active owner", () => {
+  const owner = { id: "u-owner", name: "Contractor owner", role: "account_admin", status: "active" };
+  const crew = { id: "u-crew", name: "Contractor field crew", role: "field_crew", status: "active" };
+  assert.equal(roleChangeConfirmWords(crew, "buyer", "u-owner"), "Change Contractor field crew from Field crew to Buyer?");
+  assert.equal(
+    roleChangeConfirmWords(owner, "buyer", "u-owner"),
+    "Change your role from Owner to Buyer? You will lose access to Team and user management as soon as this saves.",
+  );
+  assert.equal(isLastActiveOwnerDemotion([owner, crew], "u-owner", "buyer"), true);
+  assert.equal(isLastActiveOwnerDemotion([owner, { ...crew, role: "account_admin" }], "u-owner", "buyer"), false);
+  assert.equal(isLastActiveOwnerDemotion([owner, crew], "u-crew", "buyer"), false);
 });
 
 test("an address kind reads as the words a person uses, and the row reads its facts", () => {

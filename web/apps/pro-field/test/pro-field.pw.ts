@@ -258,9 +258,41 @@ test.describe("phone", () => {
     await expect(page.getByTestId("invites-empty")).toBeVisible();
     const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
     await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(page.getByTestId("team-notice")).toHaveCount(0);
+    await expect(crewRow.getByTestId("role-confirm")).toContainText("Change Contractor field crew from Field crew to Buyer?");
+    await crewRow.getByTestId("confirm-role").click();
     await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
     await expect(crewRow.getByTestId("member-role")).toHaveValue("buyer");
     await page.screenshot({ path: test.info().outputPath("team-phone.png") });
+  });
+
+  test("a role change can be cancelled without asking the server, and an owner demoting themself is warned of losing Team access", async ({ page }) => {
+    const rolePuts: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PUT" && req.url().includes("/role")) rolePuts.push(req.url());
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const members = page.getByTestId("team-members").getByTestId("member-row");
+    const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
+    await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(crewRow.getByTestId("role-confirm")).toBeVisible();
+    await crewRow.getByTestId("cancel-role").click();
+    await expect(crewRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(crewRow.getByTestId("member-role")).toHaveValue("field_crew");
+    expect(rolePuts).toHaveLength(0);
+
+    await crewRow.getByTestId("member-role").selectOption({ label: "Owner" });
+    await crewRow.getByTestId("confirm-role").click();
+    await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
+
+    const ownerRow = members.filter({ hasText: "contractor.owner@hh-demo.invalid" });
+    await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(ownerRow.getByTestId("role-confirm")).toContainText(
+      "Change your role from Owner to Buyer? You will lose access to Team and user management as soon as this saves.",
+    );
+    await ownerRow.getByTestId("cancel-role").click();
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
   });
 
   test("deactivating a member asks the server, and the row says so and offers to reactivate", async ({ page }) => {
@@ -305,6 +337,8 @@ test.describe("phone", () => {
     const ownerRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.owner@hh-demo.invalid" });
     await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
+    await expect(ownerRow.getByTestId("role-confirm")).toHaveCount(0);
+    await expect(ownerRow.getByTestId("member-role")).toHaveValue("account_admin");
     await ownerRow.getByTestId("member-deactivate").click();
     await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
     await expect(page.getByTestId("team-error")).not.toContainText("account_admin");

@@ -47,6 +47,7 @@ import { houseToday, instructionsEditable, instructionsNote } from "./timeline.j
 import { returnRequestLines } from "./returns.js";
 import { instructionsCard, accountView, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { passwordProblem } from "./account.js";
+import { isLastActiveOwnerDemotion } from "./team.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
@@ -93,6 +94,7 @@ interface TeamState {
   phase: Phase;
   users: TenantUser[];
   invites: TenantInvite[];
+  roleDraft: { userId: string; role: string } | null;
   inviteEmail: string;
   inviteRole: string;
   inviteBusy: boolean;
@@ -153,7 +155,7 @@ export class ProFieldApp extends HHElement {
   #order: OrderState | null = null;
   #projects: ProjectsState = { phase: "idle", items: [] };
   #project: ProjectState | null = null;
-  #team: TeamState = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+  #team: TeamState = { phase: "idle", users: [], invites: [], roleDraft: null, inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
   #account: AccountState = freshAccount();
   #ordersSeq = 0;
   #orderSeq = 0;
@@ -235,6 +237,20 @@ export class ProFieldApp extends HHElement {
       void this.#setUserStatus(control?.getAttribute("data-user-id") ?? "", control?.getAttribute("data-status") ?? "");
       return;
     }
+    if (action === "confirm-role") {
+      const draft = this.#team.roleDraft;
+      const userId = control?.getAttribute("data-user-id") ?? "";
+      if (draft !== null && draft.userId === userId) {
+        this.#team.roleDraft = null;
+        void this.#setUserRole(draft.userId, draft.role);
+      }
+      return;
+    }
+    if (action === "cancel-role") {
+      this.#team.roleDraft = null;
+      this.requestUpdate();
+      return;
+    }
     if (action === "save-profile") {
       void this.#saveProfile();
       return;
@@ -275,7 +291,7 @@ export class ProFieldApp extends HHElement {
       return;
     }
     if (field === "member-role" && target instanceof HTMLSelectElement) {
-      void this.#setUserRole(target.getAttribute("data-user-id") ?? "", target.value);
+      this.#stageUserRole(target.getAttribute("data-user-id") ?? "", target.value);
       return;
     }
     if (field === "name" && target instanceof HTMLInputElement) {
@@ -365,7 +381,7 @@ export class ProFieldApp extends HHElement {
         this.#order = null;
         this.#projects = { phase: "idle", items: [] };
         this.#project = null;
-        this.#team = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+        this.#team = { phase: "idle", users: [], invites: [], roleDraft: null, inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
         this.#account = freshAccount();
       }
       this.requestUpdate();
@@ -422,7 +438,9 @@ export class ProFieldApp extends HHElement {
     if (this.#section === "team" && this.#team.phase === "ready") {
       for (const select of Array.from(this.renderRoot.querySelectorAll<HTMLSelectElement>("select[data-field=member-role]"))) {
         const user = this.#team.users.find((candidate) => candidate.id === select.getAttribute("data-user-id"));
-        if (user !== undefined) select.value = user.role;
+        if (user !== undefined) {
+          select.value = this.#team.roleDraft !== null && this.#team.roleDraft.userId === user.id ? this.#team.roleDraft.role : user.role;
+        }
       }
       const inviteRole = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=invite-role]");
       if (inviteRole !== null) inviteRole.value = this.#team.inviteRole;
@@ -644,6 +662,7 @@ export class ProFieldApp extends HHElement {
     }
     if (this.#section === "team") {
       this.#team.inviteBusy = false;
+      this.#team.roleDraft = null;
     }
     this.#section = to;
     this.#order = null;
@@ -653,6 +672,7 @@ export class ProFieldApp extends HHElement {
     if (to === "team") {
       this.#team.notice = "";
       this.#team.error = "";
+      this.#team.roleDraft = null;
       void this.#loadTeam();
     }
     if (to === "account") {
@@ -793,6 +813,27 @@ export class ProFieldApp extends HHElement {
     } else if (users.ok && invites.ok) {
       this.#team = { ...this.#team, phase: "ready", users: users.value, invites: invites.value };
     }
+    this.requestUpdate();
+  }
+
+  #stageUserRole(id: string, role: string): void {
+    if (id === "" || role === "") return;
+    const target = this.#team.users.find((user) => user.id === id);
+    if (target === undefined) return;
+    this.#team.notice = "";
+    this.#team.error = "";
+    if (role === target.role) {
+      this.#team.roleDraft = null;
+      this.requestUpdate();
+      return;
+    }
+    if (isLastActiveOwnerDemotion(this.#team.users, id, role)) {
+      this.#team.roleDraft = null;
+      this.#team.error = LAST_OWNER_WORDS;
+      this.requestUpdate();
+      return;
+    }
+    this.#team.roleDraft = { userId: id, role };
     this.requestUpdate();
   }
 
@@ -975,6 +1016,8 @@ export class ProFieldApp extends HHElement {
         phase: this.#team.phase,
         users: this.#team.users,
         invites: this.#team.invites,
+        currentUserId: this.#session.profile()?.userId ?? "",
+        roleDraft: this.#team.roleDraft,
         inviteBusy: this.#team.inviteBusy,
         inviteEmail: this.#team.inviteEmail,
         notice: this.#team.notice,

@@ -29,6 +29,7 @@ import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./tim
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 import { addressKindWords } from "./account.js";
+import { roleChangeConfirmWords } from "./team.js";
 
 // ---- the section row ----------------------------------------------------------------------------
 
@@ -299,6 +300,8 @@ export interface TeamProps {
   phase: Phase;
   users: readonly TenantUser[];
   invites: readonly TenantInvite[];
+  currentUserId: string;
+  roleDraft: { userId: string; role: string } | null;
   inviteBusy: boolean;
   inviteEmail: string;
   notice: string;
@@ -316,7 +319,7 @@ export function teamView(props: TeamProps): TemplateResult {
       ${props.notice === "" ? nothing : html`<p class="notice" role="status" data-testid="team-notice">${props.notice}</p>`}
       ${props.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="team-error">${props.error}</p>`}
       <ul class="lines" data-testid="team-members">
-        ${props.users.map((user) => memberRow(user))}
+        ${props.users.map((user) => memberRow(user, props.currentUserId, props.roleDraft))}
       </ul>
     </div>
     <div class="card">
@@ -353,7 +356,7 @@ export function teamView(props: TeamProps): TemplateResult {
     </div>`;
 }
 
-function memberRow(user: TenantUser): TemplateResult {
+function memberRow(user: TenantUser, currentUserId: string, roleDraft: { userId: string; role: string } | null): TemplateResult {
   return html`<li class="line" data-user-id="${user.id}" data-testid="member-row">
     <span class="linehead"><span class="name">${user.name}</span><span class="dim">${statusChip("team", user.status)}</span></span>
     <span class="dim mono">${user.email}</span>
@@ -367,6 +370,15 @@ function memberRow(user: TenantUser): TemplateResult {
           ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`
           : nothing}
     </div>
+    ${roleDraft !== null && roleDraft.userId === user.id
+      ? html`<div class="form" data-testid="role-confirm">
+          <p class="dim">${roleChangeConfirmWords(user, roleDraft.role, currentUserId)}</p>
+          <div class="formrow">
+            <button type="button" class="btn btn-primary" data-action="confirm-role" data-user-id="${user.id}" data-testid="confirm-role">Confirm role change</button>
+            <button type="button" class="btn btn-secondary" data-action="cancel-role" data-user-id="${user.id}" data-testid="cancel-role">Cancel</button>
+          </div>
+        </div>`
+      : nothing}
   </li>`;
 }
 
