@@ -63,8 +63,7 @@ export function timelineSteps(order: Pick<TenantOrder, "status" | "fulfillment">
 
 // The submitted step's day: created_at is an instant, so it reads as the dealer's own day.
 function houseDayOf(iso: string): string | undefined {
-  const words = houseDay(iso);
-  return words === "n/a" ? undefined : words;
+  return Number.isNaN(new Date(iso).getTime()) ? undefined : houseDay(iso);
 }
 
 const FULFILLMENT_WORDS: Readonly<Record<string, string>> = { PICKUP: "Pickup", DELIVERY: "Delivery", WILL_CALL: "Will call" };
@@ -83,7 +82,7 @@ export interface PromisedWords {
 export function promisedWords(order: Pick<TenantOrder, "fulfillment" | "requested_date">): PromisedWords {
   return {
     label: order.fulfillment === "DELIVERY" ? "Promised for" : "Ready by",
-    day: calendarDay(order.requested_date),
+    day: /^\d{4}-\d{2}-\d{2}/.test(order.requested_date ?? "") ? calendarDay(order.requested_date) : "Not set",
   };
 }
 

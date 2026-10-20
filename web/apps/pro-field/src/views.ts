@@ -15,7 +15,6 @@ import type { TenantAddress, TenantInvite, TenantMe, TenantOrder, TenantOrderDet
 import {
   houseDay,
   money,
-  qtyWithUnit,
   roleLabel,
   statusChip,
   statusWords,
@@ -26,6 +25,7 @@ import {
 import { button, segmented } from "@hardscapehouse/design-system/src/primitives.js";
 import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
+import { priceWords, qtyWords } from "./figures.js";
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 import { addressKindWords } from "./account.js";
@@ -53,7 +53,7 @@ export function orderRowWords(order: TenantOrder): string {
     order.order_no,
     tracking === null ? statusWords("order", order.status) : TRACKING_WORDS[tracking],
     fulfillmentWords(order.fulfillment),
-    money(order.total_cents),
+    priceWords(order.total_cents),
     shortDay2(order.requested_date),
   ].join(" ");
 }
@@ -63,10 +63,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /** The dealer's short day for a bare day the core ships; anything else reads as nothing. */
 function shortDay2(value: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (m === null) return "";
+  if (m === null) return "Not set";
   const month = Number(m[2]);
   const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+  if (month < 1 || month > 12 || day < 1 || day > 31) return "Not set";
   return `${MONTHS[month - 1]} ${day}`;
 }
 
@@ -75,7 +75,7 @@ export function orderRow(order: TenantOrder): TemplateResult {
   return html`<li class="orow">
     <button type="button" class="rowbtn" data-action="open-order" data-order-id="${order.id}" data-testid="order-row">
       <span class="cell head"><span class="mono name">${order.order_no}</span>${tracking === null ? statusChip("order", order.status) : trackingChip(tracking)}</span>
-      <span class="cell"><span class="dim">${fulfillmentWords(order.fulfillment)}</span><span class="dim">Asked for ${shortDay2(order.requested_date)}</span><span class="mono total">${money(order.total_cents)}</span></span>
+      <span class="cell"><span class="dim">${fulfillmentWords(order.fulfillment)}</span><span class="dim">Wanted by ${shortDay2(order.requested_date)}</span><span class="mono total">${priceWords(order.total_cents)}</span></span>
     </button>
   </li>`;
 }
@@ -142,7 +142,7 @@ export function orderView(props: OrderViewProps): TemplateResult {
       <p class="facts">
         <span>${fulfillmentWords(o.fulfillment)}</span>
         <span class="dim" data-testid="order-placed">Placed ${placedDay(o.created_at)}</span>
-        <span class="mono">${money(o.total_cents)}</span>
+        <span class="mono">${priceWords(o.total_cents)}</span>
       </p>
       ${late === "" ? nothing : html`<p class="late" role="note">${late}</p>`}
       ${o.status === "CANCELLED" ? html`<p class="dim">${o.order_no} was cancelled. Nothing further is scheduled.</p>` : nothing}
@@ -191,15 +191,15 @@ function itemsCard(o: TenantOrderDetail): TemplateResult {
     <ul class="lines" data-testid="order-lines">
       ${o.lines.map(
         (line) => html`<li class="line">
-          <span class="linehead"><span>${line.description}</span><span class="mono">${money(line.line_total_cents)}</span></span>
-          <span class="dim">${qtyWithUnit(line.qty_entered, line.uom_entered)} at ${money(line.unit_price_cents)}</span>
+          <span class="linehead"><span>${line.description}</span><span class="mono">${priceWords(line.line_total_cents)}</span></span>
+          <span class="dim">${qtyWords(line.qty_entered, line.uom_entered)} at ${priceWords(line.unit_price_cents)}</span>
         </li>`,
       )}
     </ul>
     <p class="totals" data-testid="order-totals">
-      <span><span class="dim">Subtotal</span> <span class="mono">${money(o.subtotal_cents)}</span></span>
-      <span><span class="dim">Tax</span> <span class="mono">${money(o.tax_cents)}</span></span>
-      <span><span class="dim">Total</span> <span class="mono">${money(o.total_cents)}</span></span>
+      <span><span class="dim">Subtotal</span> <span class="mono">${priceWords(o.subtotal_cents)}</span></span>
+      <span><span class="dim">Tax</span> <span class="mono">${priceWords(o.tax_cents)}</span></span>
+      <span><span class="dim">Total</span> <span class="mono">${priceWords(o.total_cents)}</span></span>
     </p>
   </div>`;
 }
@@ -266,7 +266,7 @@ export function projectView(data: TenantProjectDashboard): TemplateResult {
             ${data.orders.map(
               (order) => html`<li class="line">
                 <button type="button" class="rowbtn slim" data-action="open-order" data-order-id="${order.id}" data-testid="project-order-row">
-                  <span class="cell"><span class="mono name">${order.order_no}</span>${statusChip("order", order.status)}<span class="mono total">${money(order.total_cents)}</span></span>
+                  <span class="cell"><span class="mono name">${order.order_no}</span>${statusChip("order", order.status)}<span class="mono total">${priceWords(order.total_cents)}</span></span>
                 </button>
               </li>`,
             )}
@@ -468,7 +468,7 @@ function addressesCard(props: AccountProps): TemplateResult {
   return html`<div class="card" data-testid="account-addresses">
     <h3>Addresses</h3>
     ${props.addresses.length === 0
-      ? html`<p class="dim">No addresses yet. The dealer's ones appear here.</p>`
+      ? html`<p class="dim">No addresses yet. The addresses your dealer holds for you appear here.</p>`
       : html`<ul class="lines" data-testid="address-rows">
           ${props.addresses.map(
             (address) => html`<li class="line">
@@ -488,7 +488,7 @@ function addressDetail(address: TenantAddress): TemplateResult {
     ${button({ label: "Back", kind: "secondary", action: "back-to-addresses" })}
     <h2>${address.label}</h2>
     <p class="facts">
-      <span><span class="dim">Kind</span> ${addressKindWords(address.kind)}</span>
+      <span><span class="dim">Type</span> ${addressKindWords(address.kind)}</span>
       <span><span class="dim">Last used</span> ${used}</span>
     </p>
     <p class="readonly-note">

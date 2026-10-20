@@ -75,7 +75,7 @@ test("a cancelled order stops rather than promising steps", () => {
 test("the promised line reads the asked-for day, and says ready-by for a pickup", () => {
   assert.deepEqual(promisedWords(order("PICKING", "DELIVERY")), { label: "Promised for", day: "May 1" });
   assert.deepEqual(promisedWords(order("READY", "WILL_CALL")), { label: "Ready by", day: "May 1" });
-  assert.equal(promisedWords({ status: "PICKING", fulfillment: "DELIVERY", requested_date: "" }).day, "n/a");
+  assert.equal(promisedWords({ status: "PICKING", fulfillment: "DELIVERY", requested_date: "" }).day, "Not set");
 });
 
 test("a live order past its asked-for day reads as late, a finished one does not", () => {
