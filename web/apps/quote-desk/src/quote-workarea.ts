@@ -997,6 +997,11 @@ export class QdQuoteWorkarea extends LitElement {
       font-size: var(--qb-caption);
       color: var(--hos-text-dim, var(--hh-text-dim));
     }
+    .fieldhint {
+      margin: var(--hos-s-4, 4px) 0 0;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+    }
     .previewpane {
       border: 1px solid var(--hos-line, var(--hh-line));
       border-radius: var(--hh-radius-card, 8px);
@@ -3611,16 +3616,20 @@ export class QdQuoteWorkarea extends LitElement {
             Include product images
           </label>
         </div>
-        <div>
-          <label class="f" for="qb-notes">Customer notes</label>
+        <div class="wide">
+          <label class="f" for="qb-notes">Note to the customer</label>
           <input
             id="qb-notes"
             data-field="terms-notes"
             data-terms-field="notes"
             data-testid="qb-terms-notes"
+            aria-describedby="qb-notes-hint"
             maxlength="500"
             placeholder="Printed on the quote"
           />
+          <p class="fieldhint" id="qb-notes-hint" data-testid="qb-terms-notes-hint">
+            The customer sees this on their quote.
+          </p>
         </div>
       </div>
     </div>`;
