@@ -94,6 +94,10 @@ func lockStopsSeqTx(ctx context.Context, tx pgx.Tx) error {
 // statement (no wrapping transaction exists on those paths, and a
 // separate allocate-then-write round trip could interleave two writers).
 // Gaps from no-op updates are allowed by the 0213 convention.
+//
+// Since migration 0422 the database also draws a seq on its own whenever a write to a served table
+// leaves seq alone (the sync_seq_draw trigger, docs/adr/0025-sync-seq-trigger.md). An explicit draw
+// like this one stays exactly as it is: the trigger sees seq change and does nothing.
 const syncSeqCTE = `WITH seq AS (
 	INSERT INTO scope_sequences (scope) VALUES ('%s')
 	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1

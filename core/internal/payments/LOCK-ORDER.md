@@ -133,6 +133,39 @@ the counter with no lock at all on its second invoice, and met the POS return's 
 an NSF bounce) holding that row head on. The reversal now takes the same explicit `FOR NO KEY
 UPDATE` on every allocated invoice, in ascending id order, before its first counter draw.
 
+## The sync seq trigger (migration 0422): the audit of the counters it takes
+
+Every served table now carries a BEFORE INSERT OR UPDATE row trigger that draws the table's stream counter when
+the statement did not (docs/adr/0025-sync-seq-trigger.md). The draw takes the counter row to commit, so it is one
+more place a counter is taken. The rule that keeps the order: **a table written inside a transaction that takes
+other counters gets its counter's place in this order before it gets a trigger, and a writer that touches a row
+ahead of a counter it needs takes that counter first, without advancing it.**
+
+How the audit was done. Every non test write to the 25 trigger tables was listed from source (functions that
+write two or more of them, and every function that takes a caller's transaction and writes one), the whole money
+and sync integration suites were run once with a log trigger on `scope_sequences` that records every counter take
+with its transaction (the trigger's own draws separate from the app's by trigger depth), and the order of takes
+in each transaction was compared pairwise across transactions. What it found:
+
+| Transaction | Counter the trigger now takes | Where it falls against the four steps | Verdict |
+|---|---|---|---|
+| `payments` and `invoices` writers with an explicit draw (settle, apply, ring, return, credit across orders, cancel's settlement, door, `ReversePayment`) | none: seq changes in the same statement, the trigger does nothing | unchanged | nothing added |
+| `MarkNSF`: `UPDATE payments SET status = 'BOUNCED'` | `payments`, advancing (the bounce is now a payments feed row) | after the payment row (step 0), before `LockPaymentsSequenceTx`, which re-enters it, before the invoice rows (step 3) and the invoices counter (step 4) | re-entrant, in order. The bounce used to take the counter without advancing it; it now also advances it |
+| `MarkDeposited` (till), bankrec `PersistMatch` claim and `Unmatch` release: `UPDATE payments SET status` | `payments`, advancing | after the payment row; these transactions take no other counter and no invoice row | the one counter they take; no pair to cross |
+| Credit memo (`IssueCreditMemo`, own transaction): `INSERT INTO invoices` with no seq | `invoices` | step 4; the transaction holds no other counter and no existing invoice row | the one counter; no pair to cross |
+| `RemoveMethod`, `AddMethod`, `SetDefaultMethod`: `portal_payment_methods` | `payment_methods` | not a money transaction: no payments or invoices counter, no money row | none |
+| `UpdateTermsGuarded`: `quotes` terms and refold | `quotes` | not inside a money transaction (the quote order-payment door takes `quotes` by an explicit draw before `LockPaymentsSequenceTx`, which is the order it already ran in) | none new |
+| customers, pos_parked_tickets, warranty_claims | `customers`, `parked_tickets`, `warranty_claims` | none of the POS ring, returns, order cancel, `MarkNSF`, `ReversePayment` or the credit memo writes these tables in its transaction (checked at source; the warranty credit memo runs in the billing writer's own transaction, and warranty updates its claim afterward) | none |
+| `MarkSheetPostedTx` (count sheet post, inside the stock adjust transaction) | none: explicit draw | n/a | nothing added |
+| `ReopenRun`, `MoveRunDate` (dispatch): `UPDATE delivery_runs` then `delivery_stops` | `runs` then `stops` | not money, but a new crossing: the sync cancel of a run un-assigns its stops (`stops`) and then draws the run's seq (`runs`) | **deadlock** (red test `TestIntegration_SeqTrigger_RunFirstWritersTakeStopsBeforeRuns`). Fixed the C1 way: `lockStopsSeqTx`, a non advancing take of `stops`, first in both |
+
+The pairwise comparison over every non fixture transaction in the run found one opposite order among the
+trigger's draws, and it is the dispatch pair above. (`payments` before `invoices` is the only order the money
+transactions take them in, and the trigger's `payments` draws all sit in front of an `invoices` take; the
+`invoices` before `payments` entries in the log are the non advancing `payments` lock logged after an invoice
+raise inside one transaction, the order this file documents.) `stock_balances` is not in the trigger: SF-7 adds
+it with a take of the counter right after its stock rows, and a concurrent sale beside a restocking return.
+
 ## The legs
 
 `lockorder_integration_test.go` (this package) and `lockorder_pos_return_test.go` (cmd/core, the ones that need the
