@@ -12,6 +12,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
+	hhsync "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
 // pullAs makes the pick store's staff authority answer a caller scoped as given, then pulls one page.
@@ -56,6 +58,17 @@ func scopedTo(user string, branches ...string) identity.StaffContext {
 		Status: identity.StatusActive, Branches: b}
 }
 
+// branchlessTask is a pick with no branch, the shape a row older than the branch copy would have: a sync create
+// refuses one now (UX-81 round 2), so the fixture is born on a branch and the branch is taken off in SQL.
+func (d *pickDoor) branchlessTask() string {
+	d.t.Helper()
+	id := d.task(d.branchA)
+	if _, err := d.pool.Exec(context.Background(), `UPDATE tasks SET branch_id = NULL WHERE id = $1::uuid`, id); err != nil {
+		d.t.Fatalf("take the branch off: %v", err)
+	}
+	return id
+}
+
 func contains(ids []string, id string) bool {
 	for _, x := range ids {
 		if x == id {
@@ -67,7 +80,7 @@ func contains(ids []string, id string) bool {
 
 func TestPickPullFence_ABranchScopedDeviceDoesNotPullAnotherBranchsPicks(t *testing.T) {
 	d := newPickDoor(t)
-	pickA, pickB, pickNone := d.task(d.branchA), d.task(d.branchB), d.task("")
+	pickA, pickB, pickNone := d.task(d.branchA), d.task(d.branchB), d.branchlessTask()
 	// A claims branch A's pick, so its row carries the claimer's id.
 	d.authority = func() (identity.StaffContext, bool, error) { return scopedTo(d.user, d.branchA), true, nil }
 	if res := d.push(apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update", Payload: map[string]any{"id": pickA, "status": "ACCEPTED"}}); res[0].Status != "applied" {
@@ -82,8 +95,11 @@ func TestPickPullFence_ABranchScopedDeviceDoesNotPullAnotherBranchsPicks(t *test
 	if contains(ids, pickA) {
 		t.Errorf("a branch B device must not pull branch A's pick")
 	}
-	if !contains(ids, pickB) || !contains(ids, pickNone) {
-		t.Errorf("a branch B device pulls its own branch's pick and a pick with no branch: %v", ids)
+	if !contains(ids, pickB) {
+		t.Errorf("a branch B device pulls its own branch's pick: %v", ids)
+	}
+	if contains(ids, pickNone) {
+		t.Errorf("a branch scoped device does not pull a pick with no branch (UX-81 round 2): %v", ids)
 	}
 	if raw := d.pullRaw(b); strings.Contains(raw, claimer) || strings.Contains(raw, pickA) {
 		t.Errorf("another branch's claimer id and pick id must not ride the pull")
@@ -91,8 +107,8 @@ func TestPickPullFence_ABranchScopedDeviceDoesNotPullAnotherBranchsPicks(t *test
 
 	a := scopedTo(claimer, d.branchA)
 	ids = d.pullAs(a, true, 0, 100)
-	if !contains(ids, pickA) || contains(ids, pickB) || !contains(ids, pickNone) {
-		t.Errorf("a branch A device pulls A's pick and the branchless pick, not B's: %v", ids)
+	if !contains(ids, pickA) || contains(ids, pickB) || contains(ids, pickNone) {
+		t.Errorf("a branch A device pulls A's pick, not B's and not the branchless pick: %v", ids)
 	}
 
 	global := scopedTo(uuid.NewString())
@@ -102,18 +118,18 @@ func TestPickPullFence_ABranchScopedDeviceDoesNotPullAnotherBranchsPicks(t *test
 		t.Errorf("a GLOBAL caller still pulls every branch: %v", ids)
 	}
 
-	// A scoped caller who holds no branch grant pulls only the branchless pick.
+	// A scoped caller who holds no branch grant pulls nothing.
 	none := scopedTo(uuid.NewString())
 	ids = d.pullAs(none, true, 0, 100)
-	if contains(ids, pickA) || contains(ids, pickB) || !contains(ids, pickNone) {
-		t.Errorf("a scoped caller with no grant pulls only the branchless pick: %v", ids)
+	if len(ids) != 0 {
+		t.Errorf("a scoped caller with no grant pulls nothing: %v", ids)
 	}
 }
 
 func TestPickPullFence_NoActiveAuthorityPullsNothing(t *testing.T) {
 	d := newPickDoor(t)
 	d.task(d.branchA)
-	d.task("")
+	d.branchlessTask()
 	if ids := d.pullAs(identity.StaffContext{}, false, 0, 100); len(ids) != 0 {
 		t.Errorf("an absent authority pulls nothing: %v", ids)
 	}
@@ -165,5 +181,23 @@ func TestPickPullFence_TheCursorStaysExact(t *testing.T) {
 	}
 	if pages != 3 {
 		t.Errorf("four rows at two a page is two full pages and an empty one, got %d pages", pages)
+	}
+}
+
+// TestPickPullFence_ASyncCreateWithNoBranchIsRefused: the order brief answers no branch; the sync create refuses
+// with a plain refusal and writes no row, so no pick is born branchless through the door (UX-81 round 2).
+func TestPickPullFence_ASyncCreateWithNoBranchIsRefused(t *testing.T) {
+	d := newPickDoor(t)
+	s := NewSyncStore(d.pool, pickDoorOrders{branch: ""}, nil)
+	_, err := s.Create(context.Background(), d.f, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+	if err == nil || !errors.Is(err, hhsync.ErrOpRefused) {
+		t.Fatalf("a sync create for an order with no branch must be refused, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "no branch") {
+		t.Errorf("the refusal is plain: %v", err)
+	}
+	var n int
+	if err := d.pool.QueryRow(context.Background(), `SELECT count(*) FROM tasks WHERE org_id = $1::uuid`, d.org).Scan(&n); err != nil || n != 0 {
+		t.Errorf("no row is written: %d rows, %v", n, err)
 	}
 }

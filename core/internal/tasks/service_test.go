@@ -3,8 +3,11 @@ package tasks
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // - fakes -
@@ -351,5 +354,20 @@ func TestListTasks_RejectsBadStatus(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	if _, err := svc.ListTasks(context.Background(), TaskFilter{Status: "BOGUS"}); err == nil {
 		t.Fatal("want bad-request for unknown status filter, got nil")
+	}
+}
+
+// UX-81 round 2: a task is never born with no branch. An order brief that answers none is refused, with words
+// the caller can show, and no task is written.
+func TestCreateFromOrderRefusesAnOrderWithNoBranch(t *testing.T) {
+	svc, store, notifier := newSvc(t)
+	svc.WithOrderReader(fakeOrderReader{orders: map[string]OrderBrief{knownOrder: {ID: knownOrder, BranchID: ""}}})
+	_, err := svc.CreateFromOrder(context.Background(), CreateInput{OrderID: knownOrder})
+	var br httpx.BadRequestError
+	if !errors.As(err, &br) || !strings.Contains(br.Msg, "no branch") {
+		t.Fatalf("an order with no branch must be refused in plain words, got %v", err)
+	}
+	if len(store.tasks) != 0 || len(notifier.posts) != 0 {
+		t.Fatalf("a refused create writes nothing and tells no one: %d tasks, %d posts", len(store.tasks), len(notifier.posts))
 	}
 }
