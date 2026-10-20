@@ -727,6 +727,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		// Server kept conversations keyed by user and session (the jti), on the append only log.
 		WithConversations(assistConvs).
 		WithResolver(assist.NewResolver(assistDeps.Catalogue, assistDeps.Branches))
+	// A demo copy answers on the stub, and says so, when the model cannot be used.
+	if cfg.DemoMode {
+		assistSvc = assistSvc.WithStubFallback()
+	}
 	// The quote rails call the provider only through the assist service's meter (reservation,
 	// dealer cap, settlement); bound here because the service is built after them.
 	if quoteRails != nil {

@@ -87,11 +87,26 @@ type Answer struct {
 	// numbers in it does not need a menu under it.
 	Suggest []string `json:"suggest,omitempty"`
 
+	// Notice is the one quiet note an answer may carry, `{code, class}`. This slice sends one code,
+	// model_unavailable: a demo copy answered on the stub because the model could not be used (no
+	// key, or a cap reached). The panel words it; the core sends no words of its own.
+	Notice *Notice `json:"notice,omitempty"`
+
 	// ConversationID is the opaque, server issued id of the conversation this exchange belongs to.
 	// The client sends it back on the next turn instead of its own history. Absent when the bearer
 	// has no session id or no store is wired.
 	ConversationID string `json:"conversation_id,omitempty"`
 }
+
+// Notice is an answer's notice: a code, and a class where the code has classes.
+type Notice struct {
+	Code  string `json:"code"`
+	Class string `json:"class,omitempty"`
+}
+
+// NoticeModelUnavailable is the notice of an answer given on the stub because the model could not
+// be used (PANEL-API: "fell back to the stub or to commands only").
+const NoticeModelUnavailable = "model_unavailable"
 
 // LimitReachedMessage is the exact sentence an over-budget user sees. It is a constant so the test,
 // the frontend fixture and the screenshot in walkthrough-431/ are provably the same words.
@@ -136,6 +151,11 @@ type Service struct {
 	// additive rather than load-bearing.
 	resolver *Resolver
 
+	// stubFallback is the demo copy's rule: when the model cannot be used (no key, no dealer cap, a
+	// cap reached, no price row) the question is answered on the stub and the answer says so,
+	// instead of the plain unavailable or over limit answer other builds give.
+	stubFallback bool
+
 	// keyPresent is set at boot from the environment, see WithKeyPresent. It is never the key.
 	keyPresent bool
 
@@ -170,6 +190,12 @@ func (s *Service) WithRouter(r *Router) *Service { s.router = r; return s }
 // make the whole assistant refuse to start over an optional feature. Nil resolver = every question
 // answered as a fresh one.
 func (s *Service) WithResolver(r *Resolver) *Service { s.resolver = r; return s }
+
+// WithStubFallback switches on the demo copy's rule: a paid call refused by the meter for a cap,
+// a missing cap or a missing price row is answered on the stub with the model_unavailable notice,
+// and so is any exchange the stub answered because no key or route was usable. A user's own
+// allowance running out is still the plain limit answer. Set on a demo copy only.
+func (s *Service) WithStubFallback() *Service { s.stubFallback = true; return s }
 
 // WithKeyPresent records whether the provider API key was found in the environment at boot.
 //
@@ -325,6 +351,10 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 	// Steps 4 to 6: the model rounds. The provider is offered the caller's tools; whatever it asks
 	// for runs through the gate; its next reply sees the results. Bounded, see maxToolRounds.
 	out, err := s.converse(ctx, c, cfg, tools, window, &res, run)
+	if err != nil && s.stubFallback && paidCallRefused(err) {
+		// The demo's rule: the model cannot be used, so the stub answers and the answer says so.
+		out, err = s.stubOutcome(ctx, c, tools, window, &res, run)
+	}
 	if err != nil {
 		// A refusal by the meter (budget, dealer cap, unrecordable spend) is an ordinary answer.
 		if ans, ok := refusalAnswer(err); ok {
@@ -345,6 +375,7 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 			Results: []Result{},
 			Suggest: out.suggest,
 			Usage:   usageOf(run.ident(id), run.in, run.out),
+			Notice:  s.fallbackNotice(run.ident(id)),
 		}, nil
 	}
 
@@ -357,7 +388,22 @@ func (s *Service) Ask(ctx context.Context, c Caller, question string, history []
 		Ran:     run.ran,
 		Carried: res.Carried,
 		Usage:   usageOf(run.ident(id), run.in, run.out),
+		Notice:  s.fallbackNotice(run.ident(id)),
 	}, nil
+}
+
+// paidCallRefused reports a metering refusal that stops a paid call and is not the asker's own
+// allowance: the dealer cap, or a call that could not be priced or recorded.
+func paidCallRefused(err error) bool {
+	return errors.Is(err, ErrDealerCap) || errors.Is(err, ErrMeterUnavailable)
+}
+
+// fallbackNotice is the model_unavailable notice for an exchange the stub answered on a demo copy.
+func (s *Service) fallbackNotice(who ident) *Notice {
+	if s.stubFallback && who.provider == "stub" {
+		return &Notice{Code: NoticeModelUnavailable}
+	}
+	return nil
 }
 
 // newExchangeTag is the random tag of one exchange's data envelope: 64 bits from the system's
@@ -604,8 +650,13 @@ func (s *Service) converse(ctx context.Context, c Caller, cfg Settings, tools []
 			}
 		}
 	}
-	// Every alias failed: the stub's plain results. The commands that already ran are good, so they
-	// stand; the stub answers the question itself when nothing ran yet.
+	// Every alias failed: the stub's plain results.
+	return s.stubOutcome(ctx, c, tools, window, res, run)
+}
+
+// stubOutcome is the last step of every route: the deterministic stub answers. The commands that
+// already ran are good, so they stand; the stub answers the question itself when nothing ran yet.
+func (s *Service) stubOutcome(ctx context.Context, c Caller, tools []ToolSpec, window Window, res *Resolution, run *askRun) (outcome, error) {
 	run.alias, run.note = aliasStubFallback, ""
 	out, err := s.drive(ctx, c, tools, window, res, run)
 	if err != nil || out.fail != "" {
