@@ -67,18 +67,22 @@ function domainKey(res, key, rowDescriptor, listDescriptor) {
   return res.json[key];
 }
 
-// The core's transfer eta is the ship day plus the transit days in the house zone
+// The core's transfer eta is the ship date plus the transit offset in the served business_zone
 // (core/internal/inventory/transfer_eta.go etaZone), whatever zone this runner is in.
-const HOUSE_ZONE = "America/Toronto";
-const later = (days) => {
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: HOUSE_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const at = new Date(`${day}T12:00:00Z`);
-  at.setUTCDate(at.getUTCDate() + days);
+let servedZone = "";
+const later = (offset) => {
+  const cur = new Intl.DateTimeFormat("en-CA", { timeZone: servedZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const at = new Date(`${cur}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + offset);
   return at.toISOString().slice(0, 10);
 };
 
 const world = async () => {
   await reset();
+  const cfg = await call("GET", "/api/v1/surfaces/buying-and-stock/config");
+  assert.equal(cfg.status, 200);
+  holds("SettingsSurfaceConfig", cfg.json);
+  servedZone = cfg.json.business_zone;
   const branches = (await call("GET", "/api/v1/branches")).json;
   return {
     plm: branches.find((b) => b.code === "PLM").id,

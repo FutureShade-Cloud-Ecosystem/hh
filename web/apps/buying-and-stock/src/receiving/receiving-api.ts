@@ -19,6 +19,8 @@ import {
   type PurchasingReceipt,
   type Result,
 } from "@hardscapehouse/api-client";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
 
 export type { PurchasingReceiptLine };
 
@@ -29,12 +31,25 @@ export class ReceivingApi {
     this.#client = client;
   }
 
-  branches(): Promise<Result<Branch[]>> {
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
+  /** The dealer's day, after refreshing the served business zone from the surface config read. */
+  async dealersDay(now: Date = new Date()): Promise<string> {
+    await serveBuyingZone(this.#client);
+    return houseDay(now);
+  }
+
+  async branches(): Promise<Result<Branch[]>> {
+    serveBuyingZoneBeside(this.#client);
     return staffBranches.branchesList(this.#client);
   }
 
   /** The receiving queue: the orders with something still to arrive. A scoped caller's reach applies itself. */
-  worklist(): Promise<Result<PurchasingWorklistItemPage>> {
+  async worklist(): Promise<Result<PurchasingWorklistItemPage>> {
+    serveBuyingZoneBeside(this.#client);
     return staffPurchasing.purchasingListReceivingWorklist(this.#client);
   }
 
