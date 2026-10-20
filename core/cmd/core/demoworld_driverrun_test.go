@@ -214,8 +214,8 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		if run.DispatchedAt == nil || *run.DispatchedAt == "" {
 			t.Fatalf("%s: the dispatched run %s carries no departure stamp, the core's own dispatch always sets one", label, run.RunNo)
 		}
-		if len(run.Stops) < 2 {
-			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs one to deliver and one to hand back",
+		if len(run.Stops) != 3 {
+			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs three: two to deliver and one to hand back",
 				label, run.RunNo, len(run.Stops))
 		}
 
@@ -254,6 +254,16 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 			t.Fatalf("%s: the handback left stop %d %q with reason %q, want FAILED with %q",
 				label, second.StopNo, failed.Status, failed.FailureReason, reason)
 		}
+
+		// Stop three: loaded, en route, delivered with a typed proof of delivery.
+		third := run.Stops[2]
+		for _, move := range []string{"LOADED", "EN_ROUTE"} {
+			m := driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/status",
+				map[string]string{"status": move, "reason": ""})
+			m.ok(t, http.StatusOK)
+		}
+		driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/pod",
+			map[string]any{"received_by": receiver, "affirmed": true}).ok(t, http.StatusOK)
 
 		// The run closes, by the driver who drove it.
 		done := driver.call("POST", "/api/v1/dispatch/runs/"+run.ID+"/complete", nil)
@@ -482,4 +492,113 @@ func driveScanPayloadKeys(t *testing.T, label string, body []byte) {
 		}
 	}
 	walk("$", v)
+}
+
+// -- the sync half (audit B3) ---------------------------------------------------------------------
+//
+// TestDemoWorld_DriverRunReachesTheSyncPull proves the run reaches HH Drive the way HH Drive reads it:
+// the runs and stops sync scopes pulled as the Driver persona, not the my-runs route. A seeded row
+// carries seq NULL (migration 0213 keeps carried rows unsequenced) and both scopes' pulls serve only
+// rows with a seq, so a run the seed wrote straight into delivery_runs was visible on the REST read
+// and absent from the device's feed: HH Drive opened on "No run assigned to you today."
+func TestDemoWorld_DriverRunReachesTheSyncPull(t *testing.T) {
+	world := bootDriveWorld(t)
+	driver := world.driver
+
+	pull := func(scope string) []map[string]any {
+		t.Helper()
+		rsp := driver.call("GET", "/api/v1/sync/"+scope+"?since=0", nil)
+		rsp.ok(t, http.StatusOK)
+		var page struct {
+			Items []struct {
+				ID   string         `json:"id"`
+				Data map[string]any `json:"data"`
+			} `json:"items"`
+		}
+		rsp.decode(t, &page)
+		out := make([]map[string]any, 0, len(page.Items))
+		for _, it := range page.Items {
+			out = append(out, it.Data)
+		}
+		return out
+	}
+
+	date := qwClock.In(seedLocation()).Format("2006-01-02")
+	onDay := func(day string) []map[string]any {
+		var out []map[string]any
+		for _, r := range pull("runs") {
+			if d, _ := r["scheduled_date"].(string); strings.HasPrefix(d, day) {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	today := onDay(date)
+	if len(today) != 1 {
+		t.Fatalf("the runs pull gives the Driver %d runs for %s, want exactly 1", len(today), date)
+	}
+	// A reseed on the same day draws no new seq (the sequence is not a mutation per apply), and a
+	// reseed on a later day gives that day its own run in the feed.
+	var seqBefore int64
+	if err := world.pool.QueryRow(context.Background(),
+		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqBefore); err != nil {
+		t.Fatalf("reading the runs sequence: %v", err)
+	}
+	driveApplyAt(t, qwClock)
+	var seqAfter int64
+	if err := world.pool.QueryRow(context.Background(),
+		`SELECT next_value FROM scope_sequences WHERE scope = 'runs'`).Scan(&seqAfter); err != nil {
+		t.Fatalf("reading the runs sequence: %v", err)
+	}
+	if seqAfter != seqBefore {
+		t.Fatalf("a second apply moved the runs sequence from %d to %d", seqBefore, seqAfter)
+	}
+	nextDay := qwClock.AddDate(0, 0, 1)
+	driveApplyAt(t, nextDay)
+	if got := onDay(nextDay.In(seedLocation()).Format("2006-01-02")); len(got) != 1 {
+		t.Fatalf("after the next day's apply the runs pull gives %d runs for that day, want 1", len(got))
+	}
+	if st, _ := today[0]["status"].(string); st != "DISPATCHED" {
+		t.Fatalf("the Driver's run is %q, want DISPATCHED", st)
+	}
+	runID, _ := today[0]["id"].(string)
+
+	var mine []map[string]any
+	gate := 0
+	for _, s := range pull("stops") {
+		if rid, _ := s["run_id"].(string); rid != runID {
+			continue
+		}
+		mine = append(mine, s)
+		if g, _ := s["gate_code"].(string); g != "" {
+			gate++
+		}
+	}
+	if len(mine) != 3 {
+		t.Fatalf("the stops pull gives the Driver %d stops on the run, want 3", len(mine))
+	}
+	if gate != 1 {
+		t.Fatalf("%d stops on the run carry a gate code, want exactly 1", gate)
+	}
+
+	// The load list rides the driver's own read (stop_lines), one short list per stop.
+	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+date, nil)
+	rsp.ok(t, http.StatusOK)
+	var list struct {
+		Items []struct {
+			ID        string                      `json:"id"`
+			StopLines map[string][]map[string]any `json:"stop_lines"`
+		} `json:"items"`
+	}
+	rsp.decode(t, &list)
+	for _, it := range list.Items {
+		if it.ID != runID {
+			continue
+		}
+		for _, s := range mine {
+			if id, _ := s["id"].(string); len(it.StopLines[id]) == 0 {
+				t.Fatalf("stop %v carries no load list on the driver's read", s["stop_no"])
+			}
+		}
+	}
 }

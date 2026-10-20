@@ -202,6 +202,15 @@ function dayNumber(date: string): number {
 }
 
 /** A calendar date as a count from the server's own day: "122 days ago", "in 12 days", "today". */
+/**
+ * Whether an invoice document still has to be collected: the core's own unpaid set (stored status
+ * FINALIZED or PARTIALLY_PAID). A draft and a void invoice are not owed, and a paid one is settled, so
+ * none of them is listed as open, picked, allocated to or put on a statement.
+ */
+export function isUnpaidInvoice(row: { stored_status: string; doc_type?: string | undefined }): boolean {
+  return (row.stored_status === "FINALIZED" || row.stored_status === "PARTIALLY_PAID") && (row.doc_type === undefined || row.doc_type === "INVOICE");
+}
+
 export function relativeDay(date: string, asOf: string): string {
   const gap = dayNumber(asOf) - dayNumber(date);
   if (gap === 0) return "today";

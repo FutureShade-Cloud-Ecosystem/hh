@@ -20,6 +20,8 @@ export interface DealerBrand {
   name: string;
   /** A built in tenant mark by its code ("gable"); absent means a plain initial. */
   mark?: string;
+  /** Optional branch name from the tenant configuration. */
+  branch?: string;
 }
 
 export type PersonaCaller = "public" | "partner";
@@ -102,9 +104,13 @@ function dealerOf(value: unknown): DealerBrand | null {
   const name = value["name"];
   if (typeof name !== "string" || name.trim() === "") return null;
   const mark = value["mark"];
-  if (mark === undefined) return { name };
-  if (typeof mark !== "string" || mark === "") return null;
-  return { name, mark };
+  if (mark !== undefined && (typeof mark !== "string" || mark === "")) return null;
+  const branch = value["branch"];
+  if (branch !== undefined && (typeof branch !== "string" || branch.trim() === "")) return null;
+  const out: DealerBrand = { name };
+  if (mark !== undefined) out.mark = mark;
+  if (branch !== undefined) out.branch = branch.trim();
+  return out;
 }
 
 /** Read the parsed JSON field by field; never cast. */

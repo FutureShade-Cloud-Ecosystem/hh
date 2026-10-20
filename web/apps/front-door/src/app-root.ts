@@ -241,7 +241,7 @@ export class FrontDoorApp extends HHElement {
       .controls button {
         white-space: nowrap;
         min-height: 0;
-        padding: 7px 12px;
+        padding: var(--hh-s-8) var(--hh-s-12);
         font-size: 11px;
         line-height: normal;
         color: var(--hh-text-dim);
@@ -1064,6 +1064,7 @@ export class FrontDoorApp extends HHElement {
               ${this.#personaCards(consoleSession)}
             </div>`
           : nothing,
+        this.#quietSignInControls(),
       );
     }
     if (this.#screen.kind === "picker") return this.#picker();
@@ -1225,9 +1226,41 @@ export class FrontDoorApp extends HHElement {
     `;
   }
 
-  #header(): TemplateResult {
+  #quietSignInControls(): TemplateResult {
+    return html`
+      <div class="signin-quiet-controls" role="group" aria-label="Page controls">
+        <button
+          type="button"
+          class="quiet-control"
+          data-action="theme"
+          data-testid="theme-control"
+          aria-label=${themeControlLabel(this.#theme.choice)}
+          title="Cycle the theme: Auto, Light, Brand"
+        >
+          Theme: ${THEME_LABEL[this.#theme.choice]}
+        </button>
+        <span class="quiet-sep" aria-hidden="true">·</span>
+        <button
+          type="button"
+          class="quiet-control"
+          data-action="feedback"
+          data-testid="feedback-button"
+          aria-haspopup="dialog"
+          aria-expanded=${this.#feedbackOpen ? "true" : "false"}
+          title="Send feedback about this screen"
+        >
+          Feedback
+        </button>
+      </div>
+    `;
+  }
+
+  #header(): TemplateResult | typeof nothing {
     if (this.#mode === "boot" || this.#mode === "config-error") return this.#plainHeader();
-    if (this.#mode === "console" && this.#console !== null) return this.#consoleHeader(this.#console);
+    if (this.#mode === "console" && this.#console !== null) {
+      if (this.#console.phase !== "signed-in") return nothing;
+      return this.#consoleHeader(this.#console);
+    }
     const session = this.#session;
     const signedIn = session !== null;
     return html`

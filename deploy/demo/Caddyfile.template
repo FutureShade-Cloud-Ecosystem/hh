@@ -85,6 +85,7 @@ handle /till/* {
 	}
 	root * /srv/app
 	try_files {path} /till/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -94,6 +95,7 @@ handle /buying-and-stock/* {
 	}
 	root * /srv/app
 	try_files {path} /buying-and-stock/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -103,6 +105,7 @@ handle /drive/* {
 	}
 	root * /srv/app
 	try_files {path} /drive/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -112,6 +115,7 @@ handle /home/* {
 	}
 	root * /srv/app
 	try_files {path} /home/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -121,6 +125,7 @@ handle /yard/* {
 	}
 	root * /srv/app
 	try_files {path} /yard/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -130,6 +135,7 @@ handle /money-desk/* {
 	}
 	root * /srv/app
 	try_files {path} /money-desk/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -139,6 +145,7 @@ handle /dispatch/* {
 	}
 	root * /srv/app
 	try_files {path} /dispatch/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -148,6 +155,7 @@ handle /dealer-admin/* {
 	}
 	root * /srv/app
 	try_files {path} /dealer-admin/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -157,6 +165,7 @@ handle /messages/* {
 	}
 	root * /srv/app
 	try_files {path} /messages/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -167,6 +176,7 @@ handle /pro-procurement/* {
 	}
 	root * /srv/app
 	try_files {path} /pro-procurement/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -176,6 +186,7 @@ handle /pro-pay/* {
 	}
 	root * /srv/app
 	try_files {path} /pro-pay/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -185,6 +196,7 @@ handle /pro-field/* {
 	}
 	root * /srv/app
 	try_files {path} /pro-field/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -194,6 +206,7 @@ handle /q/* {
 	}
 	root * /srv/app
 	try_files {path} /q/index.html
+	encode zstd gzip
 	file_server
 }
 
@@ -202,6 +215,7 @@ handle /quote/* {
 		demo __GATE_HASH__
 	}
 	root * /srv/app
+	encode zstd gzip
 	file_server
 }
 
@@ -214,6 +228,7 @@ handle /quote.html {
 	}
 	root * /srv/app
 	rewrite * /q/index.html?{query}
+	encode zstd gzip
 	file_server
 }
 
@@ -226,6 +241,7 @@ handle /config.json {
 		demo __GATE_HASH__
 	}
 	root * /srv/app
+	encode zstd gzip
 	file_server
 }
 
@@ -235,5 +251,6 @@ handle {
 	}
 	root * /srv/app
 	try_files {path} /index.html
+	encode zstd gzip
 	file_server
 }
