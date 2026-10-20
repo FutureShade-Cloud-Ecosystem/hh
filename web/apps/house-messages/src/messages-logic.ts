@@ -227,7 +227,7 @@ export function channelTitle(
   const rawSlug = (channel.slug ?? "").trim();
   const branchName = channel.branch_id ? branchNames?.[channel.branch_id] : undefined;
   if (rawName.startsWith("#")) {
-    const mapped = dealerLabelForSlug(rawSlug || rawName, branchName);
+    const mapped = dealerLabelForSlug(rawName, branchName) ?? dealerLabelForSlug(rawSlug, branchName);
     if (mapped !== null) return mapped;
     const stripped = rawName.replace(/^#+/, "").replace(/-/g, " ").trim();
     if (stripped !== "") return stripped.charAt(0).toUpperCase() + stripped.slice(1);

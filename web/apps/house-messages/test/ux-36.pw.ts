@@ -89,6 +89,28 @@ test("B15: a message with zero replies shows a single Reply action", async ({ pa
   await expect(noReplyMsg.getByRole("button", { name: "Reply", exact: true })).toHaveCount(1);
 });
 
+const YARD_DEMO_CHANNELS = [
+  { id: "a5000000-0000-4000-9000-000000000001", kind: "BRANCH", branch_id: "5d1b3f6e-0000-4000-9000-000000000001", slug: "yard-plm", name: "#yard-point-loma", topic: "Point Loma yard, releases, receiving, delivery scheduling", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000271", kind: "TEAM", branch_id: "5d1b3f6e-0000-4000-9000-000000000001", slug: "house-plm", name: "#house-point-loma", topic: "Unassigned customer messages, Point Loma. Claim one to make it yours.", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000003", kind: "TEAM", slug: "office", name: "#office", topic: "Company-wide office channel, announcements and cross-branch coordination", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000006", kind: "TOPIC", slug: "portal-inbox", name: "#portal-inbox", topic: "Contractor portal inbound, new portal contacts land here", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000269", kind: "TEAM", slug: "escalations", name: "#escalations", topic: "Escalations, events that must never be missed. This channel cannot be muted.", tier: "ESCALATION", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000005", kind: "TEAM", slug: "alerts-all", name: "#alerts-all", topic: "Company-wide critical alerts, escalations reach everyone", tier: "FIREHOSE", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+  { id: "a5000000-0000-4000-9000-000000000270", kind: "TEAM", slug: "house-unassigned", name: "#house-unassigned", topic: "Unassigned customer messages with no branch, the last-resort house queue.", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, unread_count: 0, mentioned: false },
+];
+
+test("item 33 (r2): yard.demo sees only its home branch rooms in House Messages", async ({ page, request }) => {
+  await page.route("**/api/v1/messaging/channels", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({ status: 200, json: { channels: YARD_DEMO_CHANNELS } });
+  });
+  await openAs(page, request, "yard-team");
+  const list = page.locator("[data-channel-list]");
+  await expect(list.locator(".ch-name", { hasText: "Yard, Point Loma" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "House, Point Loma" })).toBeVisible();
+  await expect(list.locator(".ch-name", { hasText: "Julian" })).toHaveCount(0);
+});
+
 const shotDir = process.env.UX36_SHOT_DIR ?? "";
 for (const size of [
   { width: 390, height: 844 },
@@ -112,6 +134,22 @@ for (const size of [
       await ownMsg.locator("[data-action='delete-msg']").click();
       await expect(ownMsg.locator("[data-delete-confirm]")).toBeVisible();
       await page.screenshot({ path: join(shotDir, `ux36-delete-confirm-${theme}-${size.width}x${size.height}.png`), fullPage: true });
+    });
+
+    test(`UX-36 r2 yard.demo screenshots at ${size.width}x${size.height} (${theme})`, async ({ page, request }) => {
+      test.skip(shotDir === "", "set UX36_SHOT_DIR to capture screenshots");
+      await page.setViewportSize(size);
+      await page.route("**/api/v1/messaging/channels", async (route) => {
+        if (route.request().method() !== "GET") return route.continue();
+        await route.fulfill({ status: 200, json: { channels: YARD_DEMO_CHANNELS } });
+      });
+      await openAs(page, request, "yard-team");
+      await stubPost(request, "tickets", { enabled: false });
+      await page.reload();
+      await expect(page.locator("[data-live-words]")).toHaveText("Updates while this page is open");
+      if (theme === "brand") await accountItem(page, "Brand theme");
+      const modeName = theme === "brand" ? "charcoal" : "light";
+      await page.screenshot({ path: join(shotDir, `r2-yard-demo-${modeName}-${size.width}x${size.height}.png`), fullPage: true });
     });
   }
 }

@@ -28,7 +28,7 @@ test("L-wall: no credential is refused, and one person's own rooms are not anoth
 });
 
 test("L-branch: every room that names a branch names the persona's own", async ({ page }) => {
-  for (const flow of ["sales", "yard-manager"] as const) {
+  for (const flow of ["sales", "yard-manager", "yard-team"] as const) {
     const branches = await staff(page, flow, "GET", "/api/v1/branches");
     expect(branches.status).toBe(200);
     const rows = (Array.isArray(branches.body) ? branches.body : branches.body.items) as Array<{ id: string }>;

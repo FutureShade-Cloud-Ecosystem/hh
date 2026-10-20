@@ -135,6 +135,8 @@ test("a channel's title uses its display name when given, or maps core slugs to 
   assert.equal(channelTitle(ch({ slug: "house-unassigned", name: "#house-unassigned" })), "Unassigned");
   assert.equal(channelTitle(ch({ slug: "drivers-point-loma", name: "#drivers-point-loma" })), "Drivers, Point Loma");
   assert.equal(channelTitle(ch({ slug: "yard-point-loma", name: "#yard-point-loma" })), "Yard, Point Loma");
+  assert.equal(channelTitle(ch({ slug: "yard-plm", name: "#yard-point-loma" })), "Yard, Point Loma");
+  assert.equal(channelTitle(ch({ slug: "house-plm", name: "#house-point-loma" })), "House, Point Loma");
   assert.equal(channelTitle(ch({ slug: "house-coastal-bend", name: "#house-coastal-bend" })), "House, Coastal Bend");
   assert.equal(channelTitle(ch({ slug: "house-coastal-bend", name: "" })), "House, Coastal Bend");
   assert.equal(
