@@ -62,6 +62,9 @@ var personalColumns = map[string]bool{
 	"ai.orders.customer_name": true, // customers.name: may be a person for a sole trader
 }
 
+// columnGates names the vocabulary that gates a cost column when it is not the role list.
+var columnGates = map[string]string{}
+
 // PersonalColumns is the tag list, exported for the text index and the egress slices: every "view.column" that
 // holds personal data, sorted.
 func PersonalColumns() []string {
@@ -96,6 +99,7 @@ func classify(v ViewDef) ViewDef {
 	for i, c := range v.Columns {
 		c.Class = classOf(v.Name, c.Name)
 		c.Personal = personalColumns[v.Name+"."+c.Name]
+		c.Gate = columnGates[v.Name+"."+c.Name]
 		cols[i] = c
 	}
 	v.Columns = cols

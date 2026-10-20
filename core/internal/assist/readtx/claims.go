@@ -37,11 +37,15 @@ type Claims struct {
 	Global        bool     `json:"global"`
 	BranchIDs     []string `json:"branch_ids"`
 	CostBranchIDs []string `json:"cost_branch_ids"`
-	Margin        bool     `json:"margin"`
-	PaymentTrail  bool     `json:"payment_trail"`
-	PIIClasses    []string `json:"pii_classes"`
-	Capabilities  []string `json:"capabilities"`
-	ChannelIDs    []string `json:"channel_ids"`
+	// POCostBranchIDs are the branches where the asker may see what the dealer pays on a purchase order,
+	// decided by the per branch purchasing policy (the second vocabulary), not by the cost and margin role
+	// list. An old claim without the field reads as no purchase cost anywhere.
+	POCostBranchIDs []string `json:"po_cost_branch_ids"`
+	Margin          bool     `json:"margin"`
+	PaymentTrail    bool     `json:"payment_trail"`
+	PIIClasses      []string `json:"pii_classes"`
+	Capabilities    []string `json:"capabilities"`
+	ChannelIDs      []string `json:"channel_ids"`
 
 	// Set by the signer, never by a caller.
 	PID   int    `json:"pid"`
@@ -100,7 +104,7 @@ func (s *Signer) Sign(c Claims, pid int) (redact.Secret, error) {
 		return redact.Secret{}, fmt.Errorf("readtx: nonce: %w", err)
 	}
 	c.Nonce = hex.EncodeToString(n[:])
-	for _, l := range []*[]string{&c.BranchIDs, &c.CostBranchIDs, &c.PIIClasses, &c.Capabilities, &c.ChannelIDs} {
+	for _, l := range []*[]string{&c.BranchIDs, &c.CostBranchIDs, &c.POCostBranchIDs, &c.PIIClasses, &c.Capabilities, &c.ChannelIDs} {
 		if *l == nil {
 			*l = []string{}
 		}

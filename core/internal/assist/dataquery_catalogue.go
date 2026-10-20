@@ -52,6 +52,10 @@ type ColumnDef struct {
 	// Personal is the sensitivity tag of the registry (not a class, it gates nothing): the column holds personal
 	// data. Set from the registry, never in a view definition.
 	Personal bool
+	// Gate names which of the two cost vocabularies decides a cost column: "" or GateRoleList for the dealer's
+	// cost and margin role list (stock, quote margin), GatePurchasePolicy for the per branch purchasing policy
+	// (what the dealer pays on a purchase order). Set from the registry.
+	Gate string
 }
 
 // ViewDef is one allow listed view.
@@ -91,6 +95,20 @@ func (v ViewDef) col(name string) (ColumnDef, bool) {
 // held by a caller with at least one cost branch and margin by one the dealer's cost rule gives margin (both
 // resolved in Go from the dealer's cost and margin role list, see Handler.costFor); the database then masks
 // cost per row by branch. The payment trail is the role gate's answer. The personal data classes wait for 6b.
+// The two cost vocabularies.
+const (
+	GateRoleList       = "role_list"
+	GatePurchasePolicy = "purchase_policy"
+)
+
+// columnHeld is classHeld for one column: a cost column is held according to the vocabulary that governs it.
+func columnHeld(c Caller, col ColumnDef) bool {
+	if col.Class == ClassCost && col.Gate == GatePurchasePolicy {
+		return c.HasRole() && len(c.POCostBranchIDs) > 0
+	}
+	return classHeld(c, col.Class)
+}
+
 func classHeld(c Caller, class string) bool {
 	switch class {
 	case ClassPlain:
@@ -176,7 +194,7 @@ func filterCatalogue(all []ViewDef, c Caller) []ViewDef {
 		fv := v
 		fv.Columns = nil
 		for _, col := range v.Columns {
-			if classHeld(c, col.Class) {
+			if columnHeld(c, col) {
 				fv.Columns = append(fv.Columns, col)
 			}
 		}
