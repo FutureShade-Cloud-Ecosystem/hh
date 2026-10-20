@@ -691,3 +691,18 @@ test("UX-37d round 2 P2-4: As of carries the glossary date when the read time is
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.locator("[data-cards-as-of]")).toHaveText("As of 8:15 AM");
 });
+
+test("UX-37d round 2 P2-4 TZ: with machine TZ Asia/Tokyo and dealer America/Los_Angeles, a read that is today in Pacific renders As of 8:15 AM with no date", async ({ browser, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const context = await browser.newContext({ timezoneId: "Asia/Tokyo" });
+  try {
+    const page = await context.newPage();
+    await page.clock.setFixedTime(new Date("2026-03-02T16:15:00Z"));
+    await page.addInitScript(dispatchHandoff);
+    await page.goto("/");
+    await expect(page.locator("[data-cards-as-of]")).toHaveText("As of 8:15 AM");
+  } finally {
+    await context.close();
+  }
+});

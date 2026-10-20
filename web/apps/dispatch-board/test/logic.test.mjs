@@ -245,6 +245,33 @@ test("a card's scope is named: the day, the working window or open now", () => {
   assert.equal(asOfLabel(""), "");
 });
 
+test("asOfLabel compares against the dealer's today in houseDayInZone(zone), not the machine's local TZ", () => {
+  const prevTz = process.env.TZ;
+  const RealDate = globalThis.Date;
+  const fixedNow = new RealDate("2026-03-02T16:15:00Z");
+  class FixedDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fixedNow.getTime());
+      } else {
+        super(...args);
+      }
+    }
+    static now() {
+      return fixedNow.getTime();
+    }
+  }
+  process.env.TZ = "Asia/Tokyo";
+  globalThis.Date = FixedDate;
+  try {
+    assert.equal(asOfLabel("2026-03-02T16:15:00Z", "America/Los_Angeles"), "As of 8:15 AM");
+  } finally {
+    globalThis.Date = RealDate;
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  }
+});
+
 test("a day card holds its drill down to the board's day, and an absent date stays", () => {
   const v = view({
     staging: [stop({ id: "today" }), stop({ id: "later", scheduled_date: "2026-01-20" }), stop({ id: "nodate", scheduled_date: "" })],

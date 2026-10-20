@@ -676,7 +676,7 @@ export function asOfLabel(
   const isToday =
     today !== undefined
       ? readDay === today
-      : readDay === houseDayInZone(zone) && readDay === todayISO();
+      : readDay === houseDayInZone(zone);
   if (isToday) return `As of ${time}`;
   const day = new Intl.DateTimeFormat("en-US", {
     timeZone: zone,
@@ -999,7 +999,7 @@ export function willCallWord(status: string): string {
 function shortDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-US", { timeZone: houseZone(), month: "short", day: "numeric", year: "numeric" });
 }
 
 /** One code in a sentence: how long it is good, who collected, or that it was cancelled. */
