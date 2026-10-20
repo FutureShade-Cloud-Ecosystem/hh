@@ -247,6 +247,12 @@ jobs:
           node-version: 22
       - name: Install the web workspace
         run: npm --prefix web ci
+      - name: Install the contract tools
+        # The api-client package's idempotence test runs the client generator
+        # (scripts/gen-client/gen-client.mjs), which needs the contract tools'
+        # dependencies (the yaml package); the single job had them from its
+        # contract step, so each shard installs them itself.
+        run: npm --prefix core/api/tools ci
       - name: Shard assignment test
         working-directory: web
         run: node --test scripts/ci-web-shards.node-test.mjs
