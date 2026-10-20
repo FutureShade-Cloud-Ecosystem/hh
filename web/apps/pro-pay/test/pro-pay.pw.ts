@@ -128,6 +128,22 @@ test.describe("phone", () => {
     await shot(page, "pay-select-phone");
   });
 
+  test("Select all and each payable invoice toggle are at least 44 high, and tapping the row text checks the invoice", async ({ page }) => {
+    await signIn(page, "ap");
+    const selectAll = page.getByRole("button", { name: "Select all 2" });
+    await expect(selectAll).toBeVisible();
+    await expect.poll(async () => (await selectAll.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+    for (const no of ["INV-20403", "INV-20402"]) {
+      const row = page.getByTestId("invoice-row").filter({ hasText: no });
+      const box = row.getByRole("checkbox");
+      await expect.poll(async () => (await box.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await expect.poll(async () => (await box.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(44);
+      await row.locator(".inv-sub").click();
+      await expect(box).toHaveAttribute("aria-checked", "true");
+    }
+    await expect(page.getByTestId("picked-count")).toHaveText("2 of 2 selected");
+  });
+
   test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
