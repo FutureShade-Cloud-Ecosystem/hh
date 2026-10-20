@@ -306,6 +306,7 @@ var migrationTopics = map[string]string{
 	"0404_warranty_vendor_agreements":      "warranty",
 	"0409_ar_account_payment_policy":       "billing",
 	"0410_ar_reminder_paylink_enrol":       "billing",
+	"0417_assist_metering":                 "assist",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -368,8 +369,11 @@ var ownedObjects = map[string]string{
 	"ar_statement_runs":               "billing",           // 0105_ar_statements
 	"ar_statements":                   "billing",           // 0105_ar_statements
 	"assist_command_policy":           "assist",            // 0153_assist_commands_config
+	"assist_model_prices":             "assist",            // 0417_assist_metering
+	"assist_pro_caps":                 "assist",            // 0417_assist_metering
 	"assist_role_limits":              "assist",            // 0155_assist_limits
 	"assist_settings":                 "assist",            // 0153_assist_commands_config
+	"assist_spend":                    "assist",            // 0417_assist_metering
 	"assist_token_ledger":             "assist",            // 0154_assist_token_ledger
 	"assist_user_limits":              "assist",            // 0155_assist_limits
 	"attachment":                      "attachments",       // 0214_new_entities_and_pricing
