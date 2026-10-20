@@ -65,6 +65,26 @@ export function houseDayInZone(zone: string, now: Date = new Date()): string {
   }).format(now);
 }
 
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TIMESTAMP_PREFIX = /^\d{4}-\d{2}-\d{2}[T ]/;
+
+/**
+ * The calendar day a wire value names, in the dealer's served zone. A date only value ("2026-01-31")
+ * is already a calendar day and is never parsed as UTC midnight; a timestamp converts to the day it
+ * falls on in the house zone, so a stamp made this evening reads today, never tomorrow. An empty or
+ * missing value answers "".
+ */
+export function stampDay(stamp: string | null | undefined): string {
+  if (stamp === null || stamp === undefined || stamp === "") return "";
+  const trimmed = stamp.trim();
+  if (DATE_ONLY.test(trimmed)) return trimmed;
+  if (TIMESTAMP_PREFIX.test(trimmed)) {
+    const ms = Date.parse(trimmed);
+    if (!Number.isNaN(ms)) return houseDay(new Date(ms));
+  }
+  return trimmed.slice(0, 10);
+}
+
 /**
  * The card tender's token: the fixed demo token the simulator requires to be
  * non-empty. No field in this app takes a card's digits, and no script that
