@@ -187,7 +187,7 @@ func TestAggregateShapes(t *testing.T) {
 }
 
 func TestCatalogueIsPerAskerAndDropsWhatTheTierFloorRefuses(t *testing.T) {
-	if len(CatalogueFor(dqManager)) != 2 {
+	if len(CatalogueFor(dqManager)) != 3 {
 		t.Fatalf("a dqManager sees %d views", len(CatalogueFor(dqManager)))
 	}
 	frontline := Caller{UserID: "u", Tier: 3, BranchIDs: []string{"22222222-2222-2222-2222-222222222222"}}

@@ -67,6 +67,13 @@ func (h *Handler) WithPaymentTrail(t PaymentTrailReader) *Handler {
 	return h
 }
 
+// CallerFor is the Caller a request resolves to on the routes that run commands: the guard-resolved staff
+// context, the cost and margin fields from the dealer's cost rule, and the payment trail answer. Exported so
+// the parity suite builds callers by the same path the routes do.
+func (h *Handler) CallerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
+	return h.callerFor(r, sc)
+}
+
 // callerFor is CallerFrom plus the payment trail answer, for the routes that run commands.
 func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
 	c := CallerFrom(r)

@@ -81,13 +81,18 @@ func (v ViewDef) col(name string) (ColumnDef, bool) {
 	return ColumnDef{}, false
 }
 
-// classHeld reports whether the caller holds a column class. Plain is held by everyone with a role;
-// every other class waits for slice 6's registry, so it is held by no one yet. Written as a function
-// of the Caller so the later slice changes one place.
+// classHeld reports whether the caller holds a column class. Plain is held by everyone with a role. Cost is
+// held by a caller with at least one cost branch and margin by one the dealer's cost rule gives margin (both
+// resolved in Go from the dealer's cost and margin role list, see Handler.costFor); the database then masks
+// cost per row by branch. The payment trail is the role gate's answer. The personal data classes wait for 6b.
 func classHeld(c Caller, class string) bool {
 	switch class {
 	case ClassPlain:
 		return c.HasRole()
+	case ClassCost:
+		return c.HasRole() && len(c.CostBranchIDs) > 0
+	case ClassMargin:
+		return c.HasRole() && c.Margin
 	case ClassPayment:
 		return c.PaymentTrail
 	}
@@ -96,7 +101,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -173,4 +178,28 @@ func filterCatalogue(all []ViewDef, c Caller) []ViewDef {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func stockBalancesView() ViewDef { return classify(rawStockBalancesView()) }
+
+func rawStockBalancesView() ViewDef {
+	return ViewDef{
+		Name: "ai.stock_balances", Schema: "ai", Table: "stock_balances", Title: "Stock", MinTier: 2, Large: true,
+		About: "One row per product and branch: on hand, reserved (hard holds) and available quantities in the product's unit, and the branch average cost where you may see it.",
+		Columns: []ColumnDef{
+			{Name: "product_id", Label: "Product id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "sku", Label: "SKU", Type: typeText, Filter: true, Group: true},
+			{Name: "product_name", Label: "Product", Type: typeText, Filter: true, Group: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "on_hand_base", Label: "On hand", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "reserved_base", Label: "Reserved", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "available_base", Label: "Available", Type: typeNumeric, Filter: true, Agg: true},
+			{Name: "uom", Label: "Unit", Type: typeText, Filter: true, Group: true},
+			{Name: "avg_cost_cents", Label: "Average cost", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"sku", "product_name", "branch_label", "on_hand_base", "reserved_base", "available_base", "uom"},
+		DefaultOrder: []OrderBy{{Col: "sku", Dir: "asc"}, {Col: "branch_label", Dir: "asc"}},
+		CiteKind:     RefProduct, CiteIDCol: "product_id", CiteLabelCol: "sku", CiteLabelPrefix: "Stock ",
+	}
 }

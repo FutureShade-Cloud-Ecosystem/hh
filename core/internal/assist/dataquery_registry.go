@@ -37,6 +37,17 @@ var columnRegistry = map[string]string{
 	"ai.order_lines.uom":              ClassPlain,
 	"ai.order_lines.unit_price_cents": ClassPlain,
 	"ai.order_lines.line_total_cents": ClassPlain,
+	// ai.stock_balances: quantities are plain; the branch average cost is the one cost class column.
+	"ai.stock_balances.product_id":     ClassPlain,
+	"ai.stock_balances.sku":            ClassPlain,
+	"ai.stock_balances.product_name":   ClassPlain,
+	"ai.stock_balances.branch_id":      ClassPlain,
+	"ai.stock_balances.branch_label":   ClassPlain,
+	"ai.stock_balances.on_hand_base":   ClassPlain,
+	"ai.stock_balances.reserved_base":  ClassPlain,
+	"ai.stock_balances.available_base": ClassPlain,
+	"ai.stock_balances.uom":            ClassPlain,
+	"ai.stock_balances.avg_cost_cents": ClassCost,
 }
 
 // RegisteredColumns is a copy of the registry, for the tests that hold it to the database.
@@ -70,7 +81,7 @@ func classify(v ViewDef) ViewDef {
 // RawViewColumns lists the columns each built-in view declares, before classification, as "view.column".
 func RawViewColumns() []string {
 	var out []string
-	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView()} {
+	for _, v := range []ViewDef{rawOrdersView(), rawOrderLinesView(), rawStockBalancesView()} {
 		for _, c := range v.Columns {
 			out = append(out, v.Name+"."+c.Name)
 		}
