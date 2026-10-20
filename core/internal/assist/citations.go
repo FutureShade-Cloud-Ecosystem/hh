@@ -37,7 +37,12 @@ func (r *askRun) absorb(command string, out *Result) {
 		}
 		r.citeN++
 		out.Items[i].Cite = r.citeN
-		r.cites = append(r.cites, Citation{N: r.citeN, Label: out.Items[i].Ref.Label, Ref: *out.Items[i].Ref})
+		label := out.Items[i].Ref.Label
+		if label == "" {
+			// The panel requires a label on every citation: name the record by its kind when nothing better exists.
+			label = strings.ToUpper(out.Items[i].Ref.Kind[:1]) + out.Items[i].Ref.Kind[1:]
+		}
+		r.cites = append(r.cites, Citation{N: r.citeN, Label: label, Ref: *out.Items[i].Ref})
 	}
 	if r.notice == nil && out.Notice != nil {
 		n := *out.Notice

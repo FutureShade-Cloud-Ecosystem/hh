@@ -1278,21 +1278,26 @@ type AssistNotice struct {
 }
 
 type AssistScopeBranch struct {
-	Id    string  `json:"id"`
-	Label *string `json:"label,omitempty"`
+	Id    string `json:"id"`
+	Label string `json:"label"`
 }
 
 type AssistScopePeriod struct {
-	From  *string `json:"from,omitempty"`
-	To    *string `json:"to,omitempty"`
-	Label *string `json:"label,omitempty"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label"`
+}
+
+type AssistScopeAccount struct {
+	Label string `json:"label"`
 }
 
 type AssistScope struct {
 	Branches    *[]AssistScopeBranch `json:"branches,omitempty"`
 	AllBranches *bool                `json:"all_branches,omitempty"`
+	Account     *AssistScopeAccount  `json:"account,omitempty"`
 	Period      *AssistScopePeriod   `json:"period,omitempty"`
-	AsOf        *string              `json:"as_of,omitempty"`
+	AsOf        string               `json:"as_of"`
 }
 
 type AssistCitation struct {

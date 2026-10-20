@@ -142,7 +142,7 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 		if errors.As(err, &se) && se.Kind == "class" {
 			return refuse("class:"+se.Class, Result{
 				Command: DataQueryCode, Headline: ClassRefusedMessage, Empty: true,
-				Notice: &Notice{Code: NoticeRefused, Class: se.Class},
+				Notice: &Notice{Code: NoticeRefused, Class: noticeClassFor(se.Class)},
 			})
 		}
 		entry.Refusal = "invalid"
@@ -321,11 +321,20 @@ func (q *ReadQuerier) scope(ctx context.Context, c Caller, comp Compiled, loc *t
 			}
 		}
 		for _, id := range c.BranchIDs {
-			sc.Branches = append(sc.Branches, ScopeBranch{ID: id, Label: labels[id]})
+			label := labels[id]
+			if label == "" {
+				label = unnamedBranch
+			}
+			sc.Branches = append(sc.Branches, ScopeBranch{ID: id, Label: label})
 		}
 	}
 	if comp.PeriodFrom != "" {
-		p := &ScopePeriod{From: comp.PeriodFrom, To: comp.PeriodTo}
+		// An open ended period ("from the start of the month") runs to the day the query ran.
+		to := comp.PeriodTo
+		if to == "" {
+			to = now.In(loc).Format("2006-01-02")
+		}
+		p := &ScopePeriod{From: comp.PeriodFrom, To: to}
 		switch {
 		case comp.PeriodTo != "" && comp.PeriodTo != comp.PeriodFrom:
 			p.Label = comp.PeriodFrom + " to " + comp.PeriodTo

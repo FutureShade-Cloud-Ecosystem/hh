@@ -32760,15 +32760,15 @@ components:
           enum:
             - cost
             - margin
-            - payment
-            - pii_contact
-            - pii_location
+            - payment_trail
+            - pii
             - capability
             - disabled
     AssistScopeBranch:
       type: object
       required:
         - id
+        - label
       properties:
         id:
           type: string
@@ -32776,6 +32776,11 @@ components:
           type: string
     AssistScopePeriod:
       type: object
+      description: The period a query filtered on, in the dealer's zone; an open ended period runs to the day the query ran
+      required:
+        - from
+        - to
+        - label
       properties:
         from:
           type: string
@@ -32783,9 +32788,19 @@ components:
           type: string
         label:
           type: string
+    AssistScopeAccount:
+      type: object
+      description: The contractor's own account (slice 10); absent on a staff answer
+      required:
+        - label
+      properties:
+        label:
+          type: string
     AssistScope:
       type: object
       description: What an answer's figures cover, built by the core from the asker's claims and the query, in the dealer's time zone. It never counts what is withheld.
+      required:
+        - as_of
       properties:
         branches:
           type: array
@@ -32793,10 +32808,13 @@ components:
             $ref: "#/components/schemas/AssistScopeBranch"
         all_branches:
           type: boolean
+        account:
+          $ref: "#/components/schemas/AssistScopeAccount"
         period:
           $ref: "#/components/schemas/AssistScopePeriod"
         as_of:
           type: string
+          description: The time the query ran, in the dealer's zone (RFC 3339)
     AssistCitation:
       type: object
       description: "A verified citation: n is the number written as [n] in the text; label and ref are built by the server from this exchange's own results."

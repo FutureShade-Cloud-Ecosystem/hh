@@ -1109,22 +1109,26 @@ export type AssistResult = {
 };
 export type AssistNotice = {
   code: "refused" | "too_broad";
-  class?: "cost" | "margin" | "payment" | "pii_contact" | "pii_location" | "capability" | "disabled";
+  class?: "cost" | "margin" | "payment_trail" | "pii" | "capability" | "disabled";
 };
 export type AssistScopeBranch = {
   id: string;
-  label?: string;
+  label: string;
 };
 export type AssistScopePeriod = {
-  from?: string;
-  to?: string;
-  label?: string;
+  from: string;
+  to: string;
+  label: string;
+};
+export type AssistScopeAccount = {
+  label: string;
 };
 export type AssistScope = {
   branches?: AssistScopeBranch[];
   all_branches?: boolean;
+  account?: AssistScopeAccount;
   period?: AssistScopePeriod;
-  as_of?: string;
+  as_of: string;
 };
 export type AssistCitation = {
   n: number;

@@ -1439,20 +1439,29 @@ components:
           enum: [refused, too_broad]
         class:
           type: string
-          enum: [cost, margin, payment, pii_contact, pii_location, capability, disabled]
+          enum: [cost, margin, payment_trail, pii, capability, disabled]
 
     AssistScopeBranch:
       type: object
-      required: [id]
+      required: [id, label]
       properties:
         id: { type: string }
         label: { type: string }
 
     AssistScopePeriod:
       type: object
+      description: The period a query filtered on, in the dealer's zone; an open ended period runs to the day the query ran
+      required: [from, to, label]
       properties:
         from: { type: string }
         to: { type: string }
+        label: { type: string }
+
+    AssistScopeAccount:
+      type: object
+      description: The contractor's own account (slice 10); absent on a staff answer
+      required: [label]
+      properties:
         label: { type: string }
 
     AssistScope:
@@ -1460,13 +1469,17 @@ components:
       description: >-
         What an answer's figures cover, built by the core from the asker's claims
         and the query, in the dealer's time zone. It never counts what is withheld.
+      required: [as_of]
       properties:
         branches:
           type: array
           items: { $ref: "#/components/schemas/AssistScopeBranch" }
         all_branches: { type: boolean }
+        account: { $ref: "#/components/schemas/AssistScopeAccount" }
         period: { $ref: "#/components/schemas/AssistScopePeriod" }
-        as_of: { type: string }
+        as_of:
+          type: string
+          description: The time the query ran, in the dealer's zone (RFC 3339)
 
     AssistCitation:
       type: object

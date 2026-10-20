@@ -35,14 +35,14 @@ type Citation struct {
 // ScopeBranch is one branch an answer's figures cover.
 type ScopeBranch struct {
 	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
+	Label string `json:"label"` // always set: the panel's type requires it (PANEL-API 8.2)
 }
 
 // ScopePeriod is the period a query filtered on, in the dealer's zone.
 type ScopePeriod struct {
-	From  string `json:"from,omitempty"`
-	To    string `json:"to,omitempty"`
-	Label string `json:"label,omitempty"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label"`
 }
 
 // Scope says plainly what an answer's figures cover, without counting what is withheld.
@@ -50,7 +50,7 @@ type Scope struct {
 	Branches    []ScopeBranch `json:"branches,omitempty"`
 	AllBranches bool          `json:"all_branches,omitempty"`
 	Period      *ScopePeriod  `json:"period,omitempty"`
-	AsOf        string        `json:"as_of,omitempty"`
+	AsOf        string        `json:"as_of"`
 }
 
 // newAnswerID is opaque: 16 random bytes.
@@ -59,3 +59,21 @@ func newAnswerID() string {
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
+
+// noticeClassFor names a column class in the vocabulary PANEL-API 8.2 and the panel's glossary use for a
+// refusal: cost, margin, payment_trail, pii, capability, disabled. The registry's finer classes (the
+// payment trail's "payment", the two kinds of personal data) collapse to the panel's words here, so a
+// refusal is always worded and never falls back to the generic sentence.
+func noticeClassFor(class string) string {
+	switch class {
+	case ClassPayment:
+		return "payment_trail"
+	case ClassPIIContact, ClassPIILoc:
+		return "pii"
+	}
+	return class
+}
+
+// unnamed is the label of a branch or record the core could not name: set, so a required field never
+// goes out empty.
+const unnamedBranch = "Branch"

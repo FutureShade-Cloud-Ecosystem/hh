@@ -149,6 +149,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "AssistNotice",
   "AssistScopeBranch",
   "AssistScopePeriod",
+  "AssistScopeAccount",
   "AssistScope",
   "AssistCitation",
   "AssistInvocation",
