@@ -6,6 +6,7 @@
 // are what the server saw, across both sessions. Money never queues: the offline retry reaches no
 // server at all.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { openAccountMenu } from "./account-menu";
 import { signIn, showList } from "./switch-helpers.js";
 
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -43,6 +44,7 @@ function dialedPayments(page: Page): string[] {
 }
 
 async function signOutAndIn(page: Page): Promise<void> {
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Sales", exact: true }).click();
