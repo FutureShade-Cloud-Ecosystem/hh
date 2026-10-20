@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/jackc/pgx/v5"
@@ -560,10 +562,17 @@ func (r *Repository) SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, or
 func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f cardRefundFact) (string, int64, error) {
 	var status, refundRef, gatewayRef, orderID string
 	var amount int64
+	var callNotSent bool
 	err := tx.QueryRow(ctx,
-		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
-		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID)
+		`SELECT status, refund_ref, amount_cents, gateway_ref, order_id, call_not_sent FROM pos_card_refund_attempts WHERE refund_key = $1 FOR UPDATE`,
+		f.RefundKey).Scan(&status, &refundRef, &amount, &gatewayRef, &orderID, &callNotSent)
 	if err == nil {
+		if status == "UNBOOKED" && refundRef != "" && callNotSent {
+			// The ref is a manager's word for a refund whose processor call was never made
+			// (PR #501 round 3): it is never booked from here; it goes back to a manager.
+			return "", 0, clientErr(http.StatusConflict,
+				"pos: the processor ref on this card refund was typed by a manager for a call that was never sent; a manager must check the processor and resolve it again before it can be booked")
+		}
 		if status == "UNBOOKED" && refundRef != "" {
 			if amount != f.AmountCents || gatewayRef != f.GatewayRef || orderID != f.OrderID {
 				return "", 0, clientErr(http.StatusConflict,
@@ -579,12 +588,20 @@ func (r *Repository) StageCardRefundAttemptTx(ctx context.Context, tx pgx.Tx, f 
 		return "", 0, err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, attempted_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, '', $6, 'IN_FLIGHT', '', now(), now())
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, attempted_at, updated_at, initiated_by)
+VALUES ($1, $2, $3, $4, $5, '', $6, 'IN_FLIGHT', '', now(), now(), $7)
 ON CONFLICT (refund_key) DO UPDATE
    SET status = 'IN_FLIGHT', refund_ref = '', amount_cents = EXCLUDED.amount_cents,
-       last_error = '', attempted_at = now(), updated_at = now()`,
-		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.AmountCents); err != nil {
+       last_error = '', attempted_at = now(), updated_at = now(),
+       initiated_by = CASE WHEN pos_card_refund_attempts.status = 'FAILED' OR pos_card_refund_attempts.initiated_by = ''
+                           THEN EXCLUDED.initiated_by ELSE pos_card_refund_attempts.initiated_by END,
+       processor_at = NULL, call_not_sent = false,
+       resolution_log = CASE WHEN pos_card_refund_attempts.resolved_by <> ''
+                             THEN pos_card_refund_attempts.resolution_log || jsonb_build_array(jsonb_build_object(
+                                  'event', 'RESTAGED', 'at', now(), 'prior_resolved_by', pos_card_refund_attempts.resolved_by))
+                             ELSE pos_card_refund_attempts.resolution_log END,
+       resolved_by = '', resolved_at = NULL, resolution_note = ''`,
+		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.AmountCents, f.InitiatedBy); err != nil {
 		return "", 0, err
 	}
 	return "", 0, nil
@@ -598,10 +615,83 @@ func (r *Repository) HoldCardRefundAttemptInFlight(ctx context.Context, refundKe
 	if r.pool == nil {
 		return errNoPool
 	}
-	_, err := r.pool.Exec(ctx,
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE pos_card_refund_attempts SET last_error = $2, processor_at = now(), updated_at = now()
  WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
+	if err != nil {
+		return err
+	}
+	return r.flagResolvedByManager(ctx, tag.RowsAffected(), refundKey, "unknown outcome", reason)
+}
+
+// StampCardRefundCallStart refreshes attempted_at, immediately before one child's processor call,
+// on the child about to be called AND every child still waiting its turn in the same dispatch
+// (PR #501 round 2 P2-1, round 3 fix 1): the manager's live request fence measures from this
+// stamp, so a waiting child is never older than one call plus the margin. keys[0] is the child
+// about to be called. False means that row is no longer IN_FLIGHT (a manager settled it before
+// the call began), and the caller must not call the processor.
+func (r *Repository) StampCardRefundCallStart(ctx context.Context, keys []string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoPool
+	}
+	if len(keys) == 0 {
+		return false, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`UPDATE pos_card_refund_attempts SET attempted_at = now(), updated_at = now()
+ WHERE refund_key = ANY($1::text[]) AND status = 'IN_FLIGHT' RETURNING refund_key`, keys)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	started := false
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return false, err
+		}
+		if k == keys[0] {
+			started = true
+		}
+	}
+	return started, rows.Err()
+}
+
+// MarkCardRefundCallNotSent writes, on the row itself, that the dispatch found it already settled
+// by a manager and so never sent its processor call (PR #501 round 3 fix 2): last_error says so,
+// the resolution_log gets a CALL_NOT_SENT event, and call_not_sent makes the same key retry refuse
+// to book the manager's typed ref.
+func (r *Repository) MarkCardRefundCallNotSent(ctx context.Context, refundKey string) error {
+	if r.pool == nil {
+		return errNoPool
+	}
+	_, err := r.pool.Exec(ctx, `
+UPDATE pos_card_refund_attempts
+   SET call_not_sent = true, updated_at = now(),
+       last_error = 'the processor call was never sent: a manager settled this attempt before the call began',
+       resolution_log = resolution_log || jsonb_build_array(jsonb_build_object('event', 'CALL_NOT_SENT', 'at', now()))
+ WHERE refund_key = $1 AND resolved_by <> '' AND status IN ('UNBOOKED', 'FAILED')`, refundKey)
 	return err
+}
+
+// flagResolvedByManager is the defence in depth of the dispatch-side closes: a write that matched
+// no IN_FLIGHT row is silent when nobody resolved the row, but when a manager already did, the
+// processor's answer contradicts the manager's word. It logs that loudly for reconciliation and
+// returns the typed errCardRefundAlreadyResolved.
+func (r *Repository) flagResolvedByManager(ctx context.Context, matched int64, refundKey, answer, reason string) error {
+	if matched > 0 {
+		return nil
+	}
+	var status, resolvedBy, refundRef string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT status, resolved_by, refund_ref FROM pos_card_refund_attempts WHERE refund_key = $1`, refundKey).
+		Scan(&status, &resolvedBy, &refundRef); err != nil || resolvedBy == "" {
+		return nil
+	}
+	slog.Default().Error("pos: the processor answered a card refund attempt a manager already resolved; reconcile it against the processor console",
+		"refund_key", refundKey, "processor_answer", answer, "reason", reason,
+		"status", status, "resolved_by", resolvedBy, "manager_refund_ref", refundRef)
+	return errCardRefundAlreadyResolved
 }
 
 // RecordCardRefundDispatched persists, on the pool and immediately after the processor answered
@@ -613,12 +703,14 @@ func (r *Repository) RecordCardRefundDispatched(ctx context.Context, f cardRefun
 		return errNoPool
 	}
 	_, err := r.pool.Exec(ctx, `
-INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, processor_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', '', now(), now())
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, processor_at, updated_at, initiated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', '', now(), now(), $8)
 ON CONFLICT (refund_key) DO UPDATE
    SET status = 'UNBOOKED', refund_ref = EXCLUDED.refund_ref, amount_cents = EXCLUDED.amount_cents,
-       processor_at = now(), updated_at = now()`,
-		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents)
+       processor_at = now(), updated_at = now(),
+       initiated_by = CASE WHEN pos_card_refund_attempts.initiated_by <> ''
+                           THEN pos_card_refund_attempts.initiated_by ELSE EXCLUDED.initiated_by END`,
+		f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, f.InitiatedBy)
 	return err
 }
 
@@ -628,10 +720,13 @@ func (r *Repository) FailCardRefundAttempt(ctx context.Context, refundKey, reaso
 	if r.pool == nil {
 		return errNoPool
 	}
-	_, err := r.pool.Exec(ctx,
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE pos_card_refund_attempts SET status = 'FAILED', last_error = $2, processor_at = now(), updated_at = now()
  WHERE refund_key = $1 AND status = 'IN_FLIGHT'`, refundKey, reason)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.flagResolvedByManager(ctx, tag.RowsAffected(), refundKey, "refused", reason)
 }
 
 // RecordUnbookedCardRefunds files, on the pool and AFTER the failed transaction ended, every
@@ -644,14 +739,16 @@ func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []card
 		return errNoPool
 	}
 	const q = `
-INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8)
+INSERT INTO pos_card_refund_attempts (refund_key, order_id, branch_id, customer_id, gateway_ref, refund_ref, amount_cents, status, last_error, initiated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNBOOKED', $8, $9)
 ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDED.last_error,
        refund_ref = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.refund_ref ELSE EXCLUDED.refund_ref END,
        amount_cents = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.amount_cents ELSE EXCLUDED.amount_cents END,
+       initiated_by = CASE WHEN pos_card_refund_attempts.initiated_by <> ''
+                           THEN pos_card_refund_attempts.initiated_by ELSE EXCLUDED.initiated_by END,
        updated_at = now()`
 	for _, f := range facts {
-		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason); err != nil {
+		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason, f.InitiatedBy); err != nil {
 			return err
 		}
 	}
@@ -668,6 +765,139 @@ func (r *Repository) MarkCardRefundsBooked(ctx context.Context, refundKeys []str
 	_, err := r.pool.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', booked_at = now(), updated_at = now()
  WHERE refund_key = ANY($1::text[]) AND status IN ('IN_FLIGHT', 'UNBOOKED')`, refundKeys)
 	return err
+}
+
+// -- the manager resolution of open attempts (HH-767) ------------------------
+
+// cardRefundAttemptColumns is the attempt row as the manager's list and
+// resolve answer it: the ledger's own facts joined with the order's number
+// and the customer's name.
+const cardRefundAttemptColumns = `a.id::text, a.refund_key, a.order_id::text, COALESCE(o.order_no, ''),
+       a.branch_id::text, COALESCE(a.customer_id::text, ''), COALESCE(c.name, ''),
+       a.gateway_ref, a.refund_ref, a.amount_cents, a.status, a.last_error,
+       a.initiated_by, a.resolved_by, a.resolved_at, a.resolution_note,
+       a.attempted_at, a.processor_at, a.booked_at, a.created_at, a.updated_at, a.call_not_sent`
+
+// scanCardRefundAttempt reads one row of cardRefundAttemptColumns into the
+// manager-facing shape (times as RFC3339 strings, the nullable ones nil).
+func scanCardRefundAttempt(row pgx.Row) (CardRefundAttempt, error) {
+	var a CardRefundAttempt
+	var resolvedAt, processorAt, bookedAt *time.Time
+	var attemptedAt, createdAt, updatedAt time.Time
+	if err := row.Scan(&a.ID, &a.RefundKey, &a.OrderID, &a.OrderNo, &a.BranchID, &a.CustomerID, &a.CustomerName,
+		&a.GatewayRef, &a.RefundRef, &a.AmountCents, &a.Status, &a.LastError,
+		&a.InitiatedBy, &a.ResolvedBy, &resolvedAt, &a.ResolutionNote,
+		&attemptedAt, &processorAt, &bookedAt, &createdAt, &updatedAt, &a.CallNotSent); err != nil {
+		return CardRefundAttempt{}, err
+	}
+	tfmt := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	tptr := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		s := tfmt(*t)
+		return &s
+	}
+	a.AttemptedAt, a.CreatedAt, a.UpdatedAt = tfmt(attemptedAt), tfmt(createdAt), tfmt(updatedAt)
+	a.ResolvedAt, a.ProcessorAt, a.BookedAt = tptr(resolvedAt), tptr(processorAt), tptr(bookedAt)
+	return a, nil
+}
+
+// ListOpenCardRefundAttempts reads the open attempts a manager's branch
+// reach covers (HH-767): both open statuses by default or the one named
+// status, newest attempted first. A NULL branch slice is the global reach;
+// a non-nil one fences the read to the granted branches.
+func (r *Repository) ListOpenCardRefundAttempts(ctx context.Context, statusFilter string, branches []string) ([]CardRefundAttempt, error) {
+	if r.pool == nil {
+		return nil, errNoPool
+	}
+	q := "SELECT " + cardRefundAttemptColumns + ` FROM pos_card_refund_attempts a
+ JOIN orders o ON o.id = a.order_id
+ LEFT JOIN customers c ON c.id = a.customer_id
+ WHERE ($1::text[] IS NULL OR a.branch_id::text = ANY($1::text[])) AND a.status IN ('IN_FLIGHT', 'UNBOOKED')
+ ORDER BY a.attempted_at DESC, a.id DESC`
+	args := []any{branches}
+	if statusFilter != "" {
+		q = "SELECT " + cardRefundAttemptColumns + ` FROM pos_card_refund_attempts a
+ JOIN orders o ON o.id = a.order_id
+ LEFT JOIN customers c ON c.id = a.customer_id
+ WHERE ($1::text[] IS NULL OR a.branch_id::text = ANY($1::text[])) AND a.status = $2
+ ORDER BY a.attempted_at DESC, a.id DESC`
+		args = append(args, statusFilter)
+	}
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CardRefundAttempt
+	for rows.Next() {
+		a, err := scanCardRefundAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// CardRefundAttemptForUpdateTx is the resolution's locked read (HH-767): the
+// attempt row by its id under FOR UPDATE, inside the resolution transaction,
+// joined with the order's number and the customer's name.
+func (r *Repository) CardRefundAttemptForUpdateTx(ctx context.Context, tx pgx.Tx, attemptID string) (CardRefundAttempt, bool, error) {
+	a, err := scanCardRefundAttempt(tx.QueryRow(ctx,
+		"SELECT "+cardRefundAttemptColumns+` FROM pos_card_refund_attempts a
+ JOIN orders o ON o.id = a.order_id
+ LEFT JOIN customers c ON c.id = a.customer_id
+ WHERE a.id = $1::uuid
+ FOR UPDATE OF a`, attemptID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CardRefundAttempt{}, false, nil
+		}
+		return CardRefundAttempt{}, false, err
+	}
+	return a, true, nil
+}
+
+// ApplyCardRefundResolutionTx writes the manager's judgment on the locked
+// row (HH-767): the status the outcome rules (UNBOOKED for REFUNDED with the
+// processor's refund_ref, FAILED for NOT_REFUNDED), who resolved it, when,
+// and the note, and appends the judgment to the row's resolution_log. An
+// empty refundRef keeps whatever ref the row already holds.
+func (r *Repository) ApplyCardRefundResolutionTx(ctx context.Context, tx pgx.Tx, attemptID, status, refundRef, resolvedBy, note string) error {
+	tag, err := tx.Exec(ctx, `
+UPDATE pos_card_refund_attempts
+   SET status = $2, refund_ref = COALESCE(NULLIF($3::text, ''), refund_ref),
+       resolved_by = $4, resolved_at = now(), resolution_note = $5,
+       processor_at = COALESCE(processor_at, now()), updated_at = now(),
+       call_not_sent = (call_not_sent AND $2::text <> 'FAILED'),
+       resolution_log = resolution_log || jsonb_build_array(jsonb_build_object(
+            'event', CASE WHEN $2::text = 'FAILED' THEN 'NOT_REFUNDED' ELSE 'REFUNDED' END,
+            'at', now(), 'by', $4::text, 'refund_ref', COALESCE(NULLIF($3::text, ''), refund_ref), 'note', $5::text))
+ WHERE id = $1::uuid AND status IN ('IN_FLIGHT', 'UNBOOKED')`,
+		attemptID, status, refundRef, resolvedBy, note)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return clientErr(http.StatusConflict, "pos: card refund attempt is already resolved")
+	}
+	return nil
+}
+
+// CardRefundRefUsedElsewhereTx answers, inside the settle's own transaction,
+// whether the processor's refund ref a manager names is already carried by
+// ANOTHER attempt row (one reversal booked against two attempts) or already
+// booked as a payment's gateway_ref (the refund landed on the books under
+// that ref). Either answer refuses the settle (PR #501 round 1 P1-2); the
+// partial unique index on refund_ref backs the attempt side at the table
+// itself.
+func (r *Repository) CardRefundRefUsedElsewhereTx(ctx context.Context, tx pgx.Tx, refundRef, exceptRefundKey string) (onAttempt, onPayment bool, err error) {
+	err = tx.QueryRow(ctx, `
+SELECT EXISTS(SELECT 1 FROM pos_card_refund_attempts WHERE refund_ref = $1 AND refund_key <> $2),
+       EXISTS(SELECT 1 FROM payments WHERE gateway_ref = $1)`, refundRef, exceptRefundKey).Scan(&onAttempt, &onPayment)
+	return onAttempt, onPayment, err
 }
 
 // sumCommittedReturnTotalsQuery is the sale's committed return total. Every

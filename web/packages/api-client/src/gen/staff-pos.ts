@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnPreview, PosReturnPreviewInput, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosSwapInput, PosSwapPreview, PosSwapResult, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
+import type { PosAccountStanding, PosAddonSuggestions, PosCardRefundAttempt, PosCardRefundAttemptList, PosCounterPriceInput, PosCounterPrices, PosCustomerLines, PosDiscountApproverList, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosOwingOrderList, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPayBalanceTakeInput, PosPayBalanceTaken, PosPaymentGrant, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosResolveCardRefundAttemptInput, PosReturn, PosReturnAcrossInput, PosReturnInput, PosReturnLookup, PosReturnNote, PosReturnPickup, PosReturnPickupPage, PosReturnPreview, PosReturnPreviewInput, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSalePreview, PosSalePreviewInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosSwapInput, PosSwapPreview, PosSwapResult, PosTaxRate, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -49,6 +49,38 @@ export async function posAssessRelief(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "posAssessRelief",
+  });
+}
+
+export async function posListCardRefundAttempts(
+  client: ApiClient,
+  opts?: { status?: "IN_FLIGHT" | "UNBOOKED" },
+  call?: ApiCallOptions
+): Promise<Result<PosCardRefundAttemptList>> {
+  return client.request<PosCardRefundAttemptList>({
+    method: "GET",
+    path: "/api/v1/pos/card-refund-attempts",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posListCardRefundAttempts",
+  });
+}
+
+export async function posResolveCardRefundAttempt(
+  client: ApiClient,
+  id: string | number,
+  body: PosResolveCardRefundAttemptInput,
+  call?: ApiCallOptions
+): Promise<Result<PosCardRefundAttempt>> {
+  return client.request<PosCardRefundAttempt>({
+    method: "POST",
+    path: "/api/v1/pos/card-refund-attempts/{id}/resolve",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "posResolveCardRefundAttempt",
   });
 }
 
