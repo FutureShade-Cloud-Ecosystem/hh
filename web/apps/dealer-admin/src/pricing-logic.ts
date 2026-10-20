@@ -289,10 +289,14 @@ export function costCellWords(cents: number | null | undefined): string {
 /**
  * The ledger header: the total and the claims it covers. When a cost basis row's accrual is withheld
  * the server's total counts only the rows shown, so the header must say so and how many are not shown,
- * never present a partial total as the whole claim. (Skeleton: states the total as the whole claim.)
+ * never present a partial total as the whole claim.
  */
 export function ledgerTotalWords(totalCents: number, rows: readonly { readonly accrual_cents: number | null }[]): string {
-  return `${moneyWords(totalCents)} over ${rows.length} ${rows.length === 1 ? "claim" : "claims"}`;
+  const shown = rows.filter((r) => r.accrual_cents !== null).length;
+  const hidden = rows.length - shown;
+  const claims = (n: number): string => `${n} ${n === 1 ? "claim" : "claims"}`;
+  if (hidden === 0) return `${moneyWords(totalCents)} over ${claims(shown)}`;
+  return `${moneyWords(totalCents)} over the ${claims(shown)} shown, ${hidden} not shown`;
 }
 
 /** Integer basis points to a two decimal percent, the sign included. */
