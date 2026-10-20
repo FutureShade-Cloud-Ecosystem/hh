@@ -131,7 +131,7 @@ func TestOrdersViewReachFollowsTheSignedClaim(t *testing.T) {
 		return m
 	}
 	staff := func(branchIDs []string, global bool) Claims {
-		return Claims{Audience: AudienceStaff, AskerID: "asker", BranchIDs: branchIDs, Global: global}
+		return Claims{Audience: AudienceStaff, AskerID: "asker", Tier: 2, BranchIDs: branchIDs, Global: global}
 	}
 	g := ids(staff(nil, true))
 	if len(g) != len(all) {
@@ -197,7 +197,7 @@ func TestOrdersViewHasPlainColumnsOnly(t *testing.T) {
 
 func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *testing.T) {
 	admin := connect(t, gateURL(t))
-	for _, table := range []string{"orders", "order_lines"} {
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs"} {
 		var enabled, forced bool
 		var policies int
 		if err := admin.QueryRow(ctxT(t), `SELECT c.relrowsecurity, c.relforcerowsecurity,

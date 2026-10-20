@@ -30,17 +30,21 @@ import (
 // assistReaderViews is the exact list of views the staff reader may SELECT. Each data slice adds its
 // views here, with the reason, so a view cannot be granted by accident.
 var assistReaderViews = map[string]bool{
-	"ai.orders":      true, // slice 5
-	"ai.order_lines": true, // slice 5
+	"ai.orders":         true, // slice 5
+	"ai.order_lines":    true, // slice 5
+	"ai.stock_balances": true, // slice 6a
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
 // SELECT only, never a table grant. Each data slice adds the columns its views use.
 var viewOwnerColumns = map[string][]string{
-	"public.orders":      {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"}, // slice 5
-	"public.order_lines": {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                    // slice 5
-	"public.customers":   {"id", "name"},                                                                                                                                        // slice 5
-	"public.locations":   {"id", "name"},                                                                                                                                        // slice 5
+	"public.orders":               {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"}, // slice 5
+	"public.order_lines":          {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                    // slice 5
+	"public.customers":            {"id", "name"},                                                                                                                                        // slice 5
+	"public.locations":            {"id", "loc_type", "name"},                                                                                                                            // loc_type: slice 6a
+	"public.stock_balances":       {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                           // slice 6a
+	"public.product_branch_costs": {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                    // slice 6a
+	"public.products":             {"base_uom", "id", "name", "sku"},                                                                                                                     // slice 6a                                                                                                                                        // slice 5
 }
 
 func (r Roles) all() []string {

@@ -17,3 +17,14 @@ core/internal/assist/readtx/
 core/internal/assist/parity/
 core/db/migrations/0418_assist_roles_and_claims.sql
 core/db/migrations/0419_assist_orders_views_and_query_log.sql
+# Slice 6a: the functions and files that decide who sees cost and which stock rows a caller reaches.
+core/internal/roleconfig/queries.go
+core/internal/inventory/cost_gate.go
+core/internal/inventory/stock_lookup.go
+core/internal/inventory/visibility.go
+core/internal/purchasing/cost_gate.go
+core/internal/assist/handler.go
+core/internal/assist/dataquery_registry.go
+core/internal/assist/dataquery_shape.go
+core/cmd/core/assist_startup.go
+core/db/migrations/0420_assist_registry_cost_inventory.sql
