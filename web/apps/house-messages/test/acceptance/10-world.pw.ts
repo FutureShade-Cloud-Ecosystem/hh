@@ -76,7 +76,7 @@ test("the demo image issues no stream tickets, so the screen says it reads every
   testInfo_note(ticket.status());
   await arriveFromFrontDoor(page, "sales");
   if (ticket.status() === 501) {
-    await expect(page.locator("[data-live]")).toContainText("Messages are read every 10 seconds");
+    await expect(page.locator("[data-live]")).toContainText("Updates while this page is open");
   } else {
     await expect(page.locator("[data-live]")).toContainText("Live");
   }

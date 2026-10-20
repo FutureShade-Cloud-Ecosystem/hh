@@ -207,7 +207,7 @@ test("the words for each state", () => {
   assert.match(liveWords("live"), /Live/);
   assert.match(liveWords("connecting"), /Connecting/);
   assert.match(liveWords("reconnecting"), /Reconnecting/);
-  assert.match(liveWords("polling"), /every 10 seconds/);
+  assert.equal(liveWords("polling"), "Updates while this page is open");
   assert.match(liveWords("offline"), /Offline/);
   assert.match(liveWords("offline"), /nothing you send is saved/i);
 });

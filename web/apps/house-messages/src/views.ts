@@ -248,7 +248,7 @@ function notifyModeWord(mode?: NotifyMode | null): string {
 // ---- the strip ---------------------------------------------------------------------------------
 
 function liveDot(state: LiveState | null): string {
-  if (state === "live") return "dot dot-live";
+  if (state === "live" || state === "polling") return "dot dot-live";
   if (state === "offline") return "dot dot-stop";
   return "dot dot-watch";
 }
@@ -256,13 +256,13 @@ function liveDot(state: LiveState | null): string {
 function renderStrip(m: Model): TemplateResult {
   const state = m.live;
   const words = state === null ? "Connecting" : liveWords(state);
-  const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" || state === "polling" ? "strip strip-warn" : "strip";
+  const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" ? "strip strip-warn" : "strip";
   const retry = state === "reconnecting" || state === "offline";
   return html`
     <div class="${tone}" role="status" data-live>
-      <span class="live"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
+      <h1 class="strip-title" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</h1>
       <span class="spacer"></span>
-      <span class="dim small" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</span>
+      <span class="live dim small"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>
       ${retry ? html`<button type="button" class="btn btn-secondary small-btn" data-action="retry-live">Retry now</button>` : nothing}
       ${m.stale === "" ? nothing : html`<span class="small words-bad" data-stale>${m.stale}</span>`}
     </div>
