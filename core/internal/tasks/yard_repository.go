@@ -640,7 +640,8 @@ func (r *Repository) ListPickedLines(ctx context.Context, taskID string) ([]Pick
 }
 
 // HolderLocked runs apply with the task row locked (FOR UPDATE) and the actor checked against the claim on
-// that locked row: ErrNoActor with no actor, ErrNotHolder when someone else holds the pick. The skid count's
+// that locked row: ErrNotHolder when someone else holds the pick (the doors refuse a person's write with no
+// actor before they reach here). The skid count's
 // guard (UX-76b): the order call inside apply may need a pooled connection, so it takes a record slot as
 // RecordPickLocked does, and the lock is held across the call so a claim and a count cannot cross.
 func (r *Repository) HolderLocked(ctx context.Context, taskID, actorID string, apply func(context.Context) error) error {
@@ -671,9 +672,6 @@ func (r *Repository) HolderLocked(ctx context.Context, taskID, actorID string, a
 			return ErrNotFound
 		}
 		return fmt.Errorf("tasks: lock %q for holder check: %w", taskID, err)
-	}
-	if actorID == "" {
-		return ErrNoActor
 	}
 	if notHolder(claimedBy, actorID) {
 		return ErrNotHolder

@@ -204,26 +204,18 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	if !canTransition(from, in.To) {
 		return Task{}, ErrIllegalTransition
 	}
-	// The holder rule (UX-76b), on the locked row: a write with no actor is refused so no pick is claimed and
-	// left with no holder; start and done are the holder's; a cancel is the holder's, or an explicit act of
-	// a manager above the yard hands, with its reason, audited on this transition's event.
+	// The holder rule (UX-76b), on the locked row: start and done are the holder's; a cancel is the holder's,
+	// or an explicit act of a manager above the yard hands, with its reason, audited on this transition's
+	// event. A transition with no actor is a system transition (TransitionInput.ActorID) and owns no claim; the
+	// doors (the REST transition handlers and the sync write) refuse a person's write with no actor before they
+	// reach here, so no pick is claimed and left with no holder.
 	note := in.Note
 	switch in.To {
-	case StatusAccepted:
-		if in.ActorID == "" {
-			return Task{}, ErrNoActor
-		}
 	case StatusInProgress, StatusDone:
-		if in.ActorID == "" {
-			return Task{}, ErrNoActor
-		}
 		if notHolder(claimedBy, in.ActorID) {
 			return Task{}, ErrNotHolder
 		}
 	case StatusCancelled:
-		if in.ActorID == "" {
-			return Task{}, ErrNoActor
-		}
 		if notHolder(claimedBy, in.ActorID) {
 			if in.OverrideRole == "" {
 				return Task{}, ErrCancelNotAllowed
