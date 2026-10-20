@@ -61,7 +61,6 @@ var viewOwnerColumns = map[string][]string{
 	"public.invoices":             {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
 	"public.payments":             {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
 	"public.payment_allocations":  {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
-	"public.system_settings":      {"key", "value"},                                                                                                                                                                                                                                                // slice 7a: one row only, by policy (the business zone)
 }
 
 func (r Roles) all() []string {
@@ -305,7 +304,10 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		ext := row[5].(bool)
 		ok := owner || (extensionsOpen && ext) ||
 			((role == roles.Reader || role == roles.ProReader) && schema == "ai" && fn == "claims" && args == "") ||
-			(role == roles.ClaimsOwner && fn == "hmac" && args == "text, text, text")
+			(role == roles.ClaimsOwner && fn == "hmac" && args == "text, text, text") ||
+			// Slice 7a: the dealer's day for the aging view, a one purpose wrapper over the settings module's zone
+			// rule (a date out, nothing in), executable by the reader alone (a function in a view runs with the caller's privilege, as ai.claims()).
+			(role == roles.Reader && schema == "public" && fn == "assist_dealer_day" && args == "")
 		if !ok {
 			add("role %s can EXECUTE %s.%s(%s) outside the plan's list", role, schema, fn, args)
 		}

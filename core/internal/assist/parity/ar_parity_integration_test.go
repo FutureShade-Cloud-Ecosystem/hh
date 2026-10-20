@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -600,6 +601,48 @@ func TestParity_APaymentStatusChangeDoesNotChangeTheAnswerOfACallerWithoutTheTra
 		}
 		if n, c := read(onClaims); n != onN || c != onCount {
 			t.Errorf("setting %s to %s changed the rows a caller with the trail reads: %d rows, count %d", change.payment, change.status, n, c)
+		}
+	}
+}
+
+// The question a manager asks first is "show me my aging": the default read of ai.ar_aging, and the read of every
+// band, must be answered through data.query (the plan shape check included), not refused as too broad. The raw
+// SQL reads above skip that check, which is how a day's subquery that priced the plan over the ceiling went by.
+func TestQuery_TheAgingViewAnswersItsDefaultReadAndItsAllBandsRead(t *testing.T) {
+	r := newARRig(t)
+	ctx := testsupport.Ctx(t)
+	q := &assist.ReadQuerier{Reader: r.env.Readers.Staff, Now: time.Now}
+	for _, name := range []string{"global with trail", "manager at a with trail", "manager at both without trail"} {
+		var c arCaller
+		for _, x := range r.cs {
+			if x.name == name {
+				c = x
+			}
+		}
+		caller, _ := r.claimsFor(t, c)
+		for spec, label := range map[string]string{
+			`{"view":"ai.ar_aging","limit":200}`: "the default read",
+			`{"view":"ai.ar_aging","select":["customer_name","account_no","as_of","current_cents","days_1_30_cents","days_31_60_cents","days_61_90_cents","days_90_plus_cents","open_cents"],"limit":200}`: "the all bands read",
+			`{"view":"ai.ar_aging","select":["customer_name","open_cents"],"order_by":[{"col":"open_cents","dir":"desc"}],"limit":200}`:                                                                    "the open balance, largest first",
+		} {
+			res, err := q.Query(ctx, caller, spec)
+			if err != nil {
+				t.Errorf("%s, %s: %v", name, label, err)
+				continue
+			}
+			if res.Notice != nil || res.Empty || len(res.Items) < 1 {
+				t.Errorf("%s, %s: want rows, got headline %q notice %+v, %d rows", name, label, res.Headline, res.Notice, len(res.Items))
+				continue
+			}
+			found := false
+			for _, it := range res.Items {
+				if v, ok := fieldValue(it, "Customer"); ok && strings.Contains(v, "Planted Customer") {
+					found = true
+				}
+			}
+			if !found && name != "manager at a with trail" {
+				t.Errorf("%s, %s: the planted accounts are not in the answer", name, label)
+			}
 		}
 	}
 }

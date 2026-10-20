@@ -137,8 +137,9 @@ func TestTempAndOutsideFunctionsAreRevokedFromTheAssistRoles(t *testing.T) {
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'ai', 'ai_pro')
 		  AND n.nspname NOT LIKE 'pg\_%'
 		  AND has_function_privilege(r.oid, p.oid, 'EXECUTE')
-		  AND NOT (r.rolname = $2 AND p.proname = 'hmac')`,
-		[]string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner}, roles.ClaimsOwner)
+		  AND NOT (r.rolname = $2 AND p.proname = 'hmac')
+		  AND NOT (r.rolname = $3 AND p.proname = 'assist_dealer_day')`,
+		[]string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner}, roles.ClaimsOwner, roles.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}

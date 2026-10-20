@@ -197,7 +197,7 @@ func TestOrdersViewHasPlainColumnsOnly(t *testing.T) {
 
 func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *testing.T) {
 	admin := connect(t, gateURL(t))
-	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines", "invoices", "payments", "payment_allocations", "system_settings"} {
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines", "invoices", "payments", "payment_allocations"} {
 		var enabled, forced bool
 		var policies int
 		if err := admin.QueryRow(ctxT(t), `SELECT c.relrowsecurity, c.relforcerowsecurity,
