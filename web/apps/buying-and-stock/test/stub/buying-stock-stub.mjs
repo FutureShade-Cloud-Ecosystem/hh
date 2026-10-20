@@ -89,6 +89,9 @@ function callerOf(req) {
 
 const DEFAULT_BUSINESS_ZONE = "America/Los_Angeles";
 let businessZone = DEFAULT_BUSINESS_ZONE;
+// The surface config route's reads so far and how long it stalls before answering (a test's knob).
+let configReads = 0;
+let configDelayMs = 0;
 let clockOffsetMs = 0;
 const nowMs = () => Date.now() + clockOffsetMs;
 
@@ -907,6 +910,8 @@ async function handle(req, res) {
     clockOffsetMs = typeof body?.now === "number" && Number.isFinite(body.now) ? body.now - Date.now() : 0;
     businessZone = typeof body?.business_zone === "string" && body.business_zone !== "" ? body.business_zone : DEFAULT_BUSINESS_ZONE;
     reset();
+    configReads = 0;
+    configDelayMs = 0;
     walled = false;
     fenced = false;
     roleMode = "procurement";
@@ -921,6 +926,11 @@ async function handle(req, res) {
     clockOffsetMs = typeof body?.now === "number" && Number.isFinite(body.now) ? body.now - Date.now() : 0;
     if (typeof body?.business_zone === "string" && body.business_zone !== "") businessZone = body.business_zone;
     return json(res, { ok: true, business_zone: businessZone });
+  }
+  if (method === "POST" && path === "/_stub/config") {
+    const body = await readBody(req);
+    if (typeof body?.delay_ms === "number" && Number.isFinite(body.delay_ms)) configDelayMs = Math.max(0, body.delay_ms);
+    return json(res, { ok: true, reads: configReads, delay_ms: configDelayMs });
   }
   if (method === "POST" && path === "/_stub/flag") {
     const body = await readBody(req);
@@ -1037,6 +1047,8 @@ async function handle(req, res) {
 
   // ---- reads ----
   if (method === "GET" && path === "/api/v1/surfaces/buying-and-stock/config") {
+    configReads += 1;
+    if (configDelayMs > 0) await new Promise((r) => setTimeout(r, configDelayMs));
     const profile = seat === "procurement" ? "manager" : seat === "yard" ? "yard" : "counter";
     return json(res, {
       surface_id: "buying-and-stock",

@@ -19,7 +19,7 @@ import {
   type PurchasingPOPage,
   type Result,
 } from "@hardscapehouse/api-client";
-import { serveBuyingZone } from "../po/po-api.js";
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
 
 export class LandedApi {
   readonly #client: ApiClient;
@@ -28,9 +28,14 @@ export class LandedApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
   async branches(): Promise<Result<Branch[]>> {
-    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
-    return branches;
+    serveBuyingZoneBeside(this.#client);
+    return staffBranches.branchesList(this.#client);
   }
 
   /** The register; the area keeps the orders with goods received. */

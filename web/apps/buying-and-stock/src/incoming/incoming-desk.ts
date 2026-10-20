@@ -26,6 +26,7 @@ export class IncomingDesk implements AreaDesk {
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   /** The first read of the area, run when it is first shown. */
@@ -140,6 +141,7 @@ export class SalesIncomingDesk implements AreaDesk {
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   /** The first read of the area: the register, of which the placed orders are the arrivals. */

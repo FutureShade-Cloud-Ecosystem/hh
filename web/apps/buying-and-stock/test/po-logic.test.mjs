@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { houseZone, resetHouseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 import { ReceivingApi } from "../src/receiving/receiving-api.ts";
+import { PoApi } from "../src/po/po-api.ts";
 import { startStub } from "./contract-kit.mjs";
 import {
   deliveryWord,
@@ -246,6 +247,52 @@ test("a receipt at a Pacific evening with the stub serving America/Los_Angeles r
       assert.equal(stampDay(received.value.received_at), pacificToday);
       assert.equal(whenWords(received.value.received_at), "today");
     });
+  } finally {
+    stub.stop();
+  }
+});
+
+test("the zone is served once per session: reads on the data paths call the config route once", async () => {
+  const stub = await startStub();
+  try {
+    await stub.post("/_stub/reset", {});
+    const client = new ApiClient({
+      baseUrl: stub.base,
+      headers: () => ({ Authorization: "Bearer stub-token", "X-Org": "hh-demo" }),
+    });
+    const receiving = new ReceivingApi(client);
+    const po = new PoApi(client);
+    await receiving.branches();
+    await receiving.worklist();
+    await receiving.worklist();
+    await po.orders();
+    await po.branches();
+    await receiving.dealersDay();
+    assert.equal((await (await stub.post("/_stub/config", {})).json()).reads, 1);
+  } finally {
+    stub.stop();
+  }
+});
+
+test("a failed zone read is retried by the next read, and a stalled one never holds a data read", async () => {
+  const stub = await startStub();
+  try {
+    await stub.post("/_stub/reset", {});
+    await stub.post("/_stub/config", { delay_ms: 6000 });
+    const client = new ApiClient({
+      baseUrl: stub.base,
+      headers: () => ({ Authorization: "Bearer stub-token", "X-Org": "hh-demo" }),
+    });
+    const receiving = new ReceivingApi(client);
+    const t0 = Date.now();
+    const worklist = await receiving.worklist();
+    assert.equal(worklist.ok, true);
+    assert.ok(Date.now() - t0 < 2000, "the worklist waited on the stalled config route");
+    await stub.post("/_stub/config", { delay_ms: 0 });
+    await new Promise((r) => setTimeout(r, 4500));
+    await receiving.dealersDay();
+    const reads = (await (await stub.post("/_stub/config", {})).json()).reads;
+    assert.equal(reads, 2, "the timed out read is retried once, then served");
   } finally {
     stub.stop();
   }

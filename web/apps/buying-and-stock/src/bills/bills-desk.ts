@@ -56,6 +56,7 @@ export class BillsDesk implements AreaDesk {
   constructor(api: BillsApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   // ---- loads ----------------------------------------------------------------------------------

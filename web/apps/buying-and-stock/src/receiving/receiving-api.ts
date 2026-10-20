@@ -20,7 +20,7 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import { serveBuyingZone } from "../po/po-api.js";
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
 
 export type { PurchasingReceiptLine };
 
@@ -31,6 +31,11 @@ export class ReceivingApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
   /** The dealer's day, after refreshing the served business zone from the surface config read. */
   async dealersDay(now: Date = new Date()): Promise<string> {
     await serveBuyingZone(this.#client);
@@ -38,14 +43,14 @@ export class ReceivingApi {
   }
 
   async branches(): Promise<Result<Branch[]>> {
-    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
-    return branches;
+    serveBuyingZoneBeside(this.#client);
+    return staffBranches.branchesList(this.#client);
   }
 
   /** The receiving queue: the orders with something still to arrive. A scoped caller's reach applies itself. */
   async worklist(): Promise<Result<PurchasingWorklistItemPage>> {
-    const [, worklist] = await Promise.all([serveBuyingZone(this.#client), staffPurchasing.purchasingListReceivingWorklist(this.#client)]);
-    return worklist;
+    serveBuyingZoneBeside(this.#client);
+    return staffPurchasing.purchasingListReceivingWorklist(this.#client);
   }
 
   order(id: string): Promise<Result<PurchasingPODetail>> {

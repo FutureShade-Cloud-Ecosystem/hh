@@ -19,7 +19,7 @@ import {
   type InvCountSubmitCountsRequest,
   type Result,
 } from "@hardscapehouse/api-client";
-import { serveBuyingZone } from "../po/po-api.js";
+import { serveBuyingZone, serveBuyingZoneBeside, watchBuyingZone } from "../po/po-api.js";
 
 export class CountsApi {
   readonly #client: ApiClient;
@@ -28,10 +28,15 @@ export class CountsApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchBuyingZone(this.#client, repaint);
+  }
+
   /** The branches the caller reaches: the names the sheets and the recon show. */
   async branches(): Promise<Result<Branch[]>> {
-    const [, branches] = await Promise.all([serveBuyingZone(this.#client), staffBranches.branchesList(this.#client)]);
-    return branches;
+    serveBuyingZoneBeside(this.#client);
+    return staffBranches.branchesList(this.#client);
   }
 
   sheets(branchId?: string): Promise<Result<InvCountSheetPage>> {

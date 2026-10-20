@@ -59,6 +59,7 @@ export class PoDesk implements AreaDesk {
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   // ---- loads ----------------------------------------------------------------------------------

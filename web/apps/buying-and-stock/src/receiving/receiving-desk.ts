@@ -60,6 +60,7 @@ export class ReceivingDesk implements AreaDesk {
   constructor(api: ReceivingApi, host: DeskHost) {
     this.#api = api;
     this.#host = host;
+    api.watchZone(() => host.repaint());
   }
 
   // ---- loads ----------------------------------------------------------------------------------

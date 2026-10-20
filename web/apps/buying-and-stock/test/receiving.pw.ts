@@ -4,7 +4,7 @@
 // two answers that can be lost on the way back. The stub is held to the core's shapes and sentences
 // by test/receiving-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { test, expect, openArea, procurementHandoff, stubRole, lowContrast, noSidewaysScroll } from "./helpers.js";
+import { test, expect, openArea, resetStub, procurementHandoff, stubRole, lowContrast, noSidewaysScroll } from "./helpers.js";
 
 const P = "/api/v1/purchasing";
 const auth = { Authorization: "Bearer x" };
@@ -363,4 +363,15 @@ test("a receipt at a Pacific evening with the stub serving America/Los_Angeles r
   await expect(page.locator("[data-receipt-row]").nth(0).locator("td[data-label='Received']")).toHaveText("today");
   await expect(page.locator("[data-receipt-row]").nth(1).locator("td[data-label='Received']")).toHaveText("today");
   await expect(page.locator("[data-queue-row]").first().locator("td[data-expected-col]")).toHaveText("in 2 days");
+});
+
+test("a stalling config route never holds the Receiving list: the rows show at once", async ({ page, request }) => {
+  await resetStub(request);
+  await request.post("/_stub/config", { data: { delay_ms: 8000 } });
+  await page.addInitScript(procurementHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible({ timeout: 2000 });
+  await page.locator("nav.areas").getByRole("button", { name: "Receiving" }).click();
+  await expect(page.locator("[data-queue-row]")).toHaveCount(3, { timeout: 2000 });
+  await expect(page.locator("[data-queue-row]").first()).toContainText("PO-PLM-141");
 });

@@ -76,6 +76,7 @@ export class InventoryDesk {
   constructor(api: InventoryApi, host: DeskHost) {
     this.#api = api;
     this.#repaint = host.repaint;
+    api.watchZone(() => host.repaint());
     this.#field = host.field;
     this.#role = host.role;
   }
