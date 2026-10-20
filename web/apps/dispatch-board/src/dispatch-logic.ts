@@ -28,6 +28,7 @@ import type {
   DispatchTruck,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type StopStatus = "READY" | "LOADED" | "EN_ROUTE" | "DELIVERED" | "FAILED" | "CANCELLED";
 export type RunStatus = "PLANNED" | "DISPATCHED" | "COMPLETED" | "CANCELLED";
@@ -395,8 +396,8 @@ export function cardMatches(id: CardId, stop: DispatchLoadStop, committed: boole
 
 /**
  * The denominator each card counts against. Four cards count the board's day, two count the
- * whole working window the staging lane draws, and pickups count the branch with no date at
- * all. The scope is named once, here: filterBoard holds a day card's drill down to that day,
+ * whole working window the staging lane draws, and pickups count open customer pickups right
+ * now. The scope is named once, here: filterBoard holds a day card's drill down to that day,
  * and the shelf prints the scope so a reader can tell "none today" from "none at all".
  */
 export type CardScope = "DAY" | "WINDOW" | "BRANCH";
@@ -416,7 +417,7 @@ export function cardScopeLabel(view: DispatchLoadBoardView | null, id: CardId): 
     case "WINDOW":
       return `next ${view?.working_days ?? 14} days`;
     case "BRANCH":
-      return "this branch";
+      return "open now";
     default:
       return "this day";
   }
@@ -651,12 +652,18 @@ export function shortDay(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** A clock time from an ISO timestamp, or an empty string when absent. */
-export function formatTime(ts?: string | null): string {
+/** A clock time from an ISO timestamp in the dealer's zone, or an empty string when absent. */
+export function formatTime(ts?: string | null, zone: string = houseZone()): string {
   if (!ts) return "";
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+}
+
+/** The freshness line on the quick cards strip, formatted in the yard's timezone. */
+export function asOfLabel(ts?: string | null, zone: string = houseZone()): string {
+  const time = formatTime(ts, zone);
+  return time === "" ? "" : `As of ${time}`;
 }
 
 /** One line of address from the parts that are present. A blank segment is skipped, not printed. */

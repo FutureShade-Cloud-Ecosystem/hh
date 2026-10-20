@@ -53,6 +53,7 @@ export const boardStyles = css`
   .tile .kicker, .day .kicker { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; }
   .tile .figure { font-size: 32px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .tile .small { color: var(--hh-text-dim); font-size: 13px; }
+  .qcards-as-of { grid-column: 1 / -1; margin: 0; font-variant-numeric: tabular-nums; }
   .filter { margin: 0 0 var(--hh-s-12); }
   .link { background: transparent; border: 0; padding: 0 var(--hh-s-4); min-height: 44px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; cursor: pointer; }
   .link:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }

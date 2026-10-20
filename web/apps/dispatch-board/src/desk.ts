@@ -79,6 +79,8 @@ export interface DeskHost {
   readonly findAll: (selector: string) => Element[];
   /** The day the board opens on; the root reads the clock, tests pin it. */
   readonly today: () => string;
+  /** The instant a read finishes; tests can pin it. */
+  readonly now?: () => Date;
 }
 
 type Failure = Extract<Result<unknown>, { ok: false }>;
@@ -103,6 +105,7 @@ export class DispatchDesk {
   #notice = "";
   #refusals: readonly string[] = [];
   #view: DispatchLoadBoardView | null = null;
+  #readAt = "";
   #card: CardId | "" = "";
   #axis: Axis = "TRUCK";
   #selected: ReadonlySet<string> = new Set();
@@ -199,6 +202,7 @@ export class DispatchDesk {
         return false;
       }
       this.#view = view.value;
+      this.#readAt = (this.#host.now?.() ?? new Date()).toISOString();
       this.#trucks = trucks.ok ? (trucks.value.items ?? []) : [];
       this.#drivers = drivers.ok ? (drivers.value.items ?? []) : [];
       // The gaps and the week are the board's company: a refusal leaves them out, and says so.
@@ -295,6 +299,7 @@ export class DispatchDesk {
       notice: this.#notice,
       refusals: this.#refusals,
       view: this.#view,
+      readAt: this.#readAt,
       card: this.#card,
       axis: this.#axis,
       selected: this.#selected,

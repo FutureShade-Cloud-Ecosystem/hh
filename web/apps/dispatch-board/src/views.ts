@@ -62,6 +62,7 @@ import {
   STATUS_LANES,
   STOP_LABEL,
   addressLine,
+  asOfLabel,
   askDiffers,
   assignTargets,
   barPct,
@@ -104,6 +105,7 @@ import {
   type BoardProblem,
   type CardId,
 } from "./dispatch-logic.js";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export type Tab = "load" | "day" | "schedule" | "fleet" | "willcall" | "settings";
 export type Axis = "TRUCK" | "STATUS";
@@ -136,6 +138,7 @@ export interface BoardModel {
   readonly info: string;
   readonly refusals: readonly string[];
   readonly view: DispatchLoadBoardView | null;
+  readonly readAt?: string;
   readonly card: CardId | "";
   readonly axis: Axis;
   readonly selected: ReadonlySet<string>;
@@ -581,6 +584,7 @@ function tabs(model: BoardModel): TemplateResult {
 // ---- the load board ------------------------------------------------------------------------------
 
 function quickCards(model: BoardModel, view: DispatchLoadBoardView): TemplateResult {
+  const asOf = asOfLabel(model.readAt, houseZone());
   return html`
     <section class="qcards" aria-label="Quick cards">
       ${CARD_ORDER.map((id) => {
@@ -601,6 +605,7 @@ function quickCards(model: BoardModel, view: DispatchLoadBoardView): TemplateRes
           <span class="small">${scope}</span>
         </button>`;
       })}
+      ${asOf !== "" ? html`<p class="small dim qcards-as-of" data-cards-as-of>${asOf}</p>` : nothing}
     </section>
     ${model.card !== ""
       ? html`<p class="filter" role="status" data-filter>

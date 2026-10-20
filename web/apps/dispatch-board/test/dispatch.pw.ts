@@ -557,3 +557,35 @@ test("UX-37d B29: dealer words replace Staff login id, paste the order id, Latit
   await expect(page.locator("[data-rule='load_value_visibility']")).toContainText("Managers see the load value; others do not.");
   await expect(page.locator("[data-rule='load_value_visibility']")).not.toContainText("A figure the core is told not to send");
 });
+
+test("UX-37d B30: quick cards state their period and the strip shows one As of <time> line in houseZone updated on reload", async ({ page, request }) => {
+  await resetStub(request);
+  const today = await stubToday(request);
+  const t1 = `${today}T15:04:00Z`;
+  const t2 = `${today}T15:19:00Z`;
+  const fmtNY = (iso: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
+      new Date(iso),
+    );
+  await page.clock.setFixedTime(new Date(t1));
+  await page.addInitScript(() => {
+    (window as unknown as { __hhHostFacts?: { timezone: string } }).__hhHostFacts = { timezone: "America/New_York" };
+  });
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+
+  await expect(page.locator("[data-card='card.deliveries']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.pickups']")).toContainText("open now");
+  await expect(page.locator("[data-card='card.unassigned']")).toContainText("next 14 days");
+  await expect(page.locator("[data-card='card.ready']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.requested']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.committed']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.due']")).toContainText("next 14 days");
+
+  await expect(page.locator("[data-cards-as-of]")).toHaveCount(1);
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtNY(t1)}`);
+
+  await page.clock.setFixedTime(new Date(t2));
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtNY(t2)}`);
+});

@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   AMBER_FROM,
+  asOfLabel,
   assignTargets,
   askDiffers,
   barPct,
@@ -228,11 +229,15 @@ test("each card's filter agrees with its meaning, and the pickups card matches n
   assert.equal(cardMatches("card.pickups", stop(), false), false);
 });
 
-test("a card's scope is named: the day, the working window or the branch", () => {
+test("a card's scope is named: the day, the working window or open now", () => {
   const v = view();
   assert.equal(cardScopeLabel(v, "card.ready"), "this day");
   assert.equal(cardScopeLabel(v, "card.unassigned"), "next 14 days");
-  assert.equal(cardScopeLabel(v, "card.pickups"), "this branch");
+  assert.equal(cardScopeLabel(v, "card.pickups"), "open now");
+  const stamp = new Date(Date.UTC(2026, 0, 15, 15, 4, 0)).toISOString();
+  assert.equal(asOfLabel(stamp, "America/Los_Angeles"), "As of 07:04");
+  assert.equal(asOfLabel(stamp, "America/New_York"), "As of 10:04");
+  assert.equal(asOfLabel(""), "");
 });
 
 test("a day card holds its drill down to the board's day, and an absent date stays", () => {
