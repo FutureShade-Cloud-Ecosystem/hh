@@ -76,12 +76,13 @@ var glsStopSites = map[string]glsSite{
 	"SP17": {"760-555-0117", "19 Apple Orchard Lane", "Julian", "92036", 33.0770, -116.6001},
 }
 
-// glsTodaySites are the two day-keyed delivery stops and the Driver's two day stops, by key.
+// glsTodaySites are the two day-keyed delivery stops and the Driver's three day stops, by key.
 var glsTodaySites = map[string]glsSite{
 	"T3": {"760-555-0131", "77 Eagle Peak Road", "Julian", "92036", 33.0830, -116.6100},
 	"T4": {"858-555-0132", "271 Nautilus Street", "La Jolla", "92037", 32.8180, -117.2710},
 	"D1": {"760-555-0141", "290 County Yard Road", "Ramona", "92065", 33.0440, -116.8640},
 	"D2": {"760-555-0142", "15 Birch Hill Lane", "Julian", "92036", 33.0795, -116.6065},
+	"D3": {"619-555-0143", "4410 Valeta Street", "San Diego", "92107", 32.7440, -117.2400},
 }
 
 // init moves the plan's delivery sites to the demo dealer's two delivery areas. The spec tables

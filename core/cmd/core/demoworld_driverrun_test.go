@@ -214,8 +214,8 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		if run.DispatchedAt == nil || *run.DispatchedAt == "" {
 			t.Fatalf("%s: the dispatched run %s carries no departure stamp, the core's own dispatch always sets one", label, run.RunNo)
 		}
-		if len(run.Stops) < 2 {
-			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs one to deliver and one to hand back",
+		if len(run.Stops) != 3 {
+			t.Fatalf("%s: the dispatched run %s carries %d stops, the walk needs three: two to deliver and one to hand back",
 				label, run.RunNo, len(run.Stops))
 		}
 
@@ -254,6 +254,16 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 			t.Fatalf("%s: the handback left stop %d %q with reason %q, want FAILED with %q",
 				label, second.StopNo, failed.Status, failed.FailureReason, reason)
 		}
+
+		// Stop three: loaded, en route, delivered with a typed proof of delivery.
+		third := run.Stops[2]
+		for _, move := range []string{"LOADED", "EN_ROUTE"} {
+			m := driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/status",
+				map[string]string{"status": move, "reason": ""})
+			m.ok(t, http.StatusOK)
+		}
+		driver.call("POST", "/api/v1/dispatch/stops/"+third.ID+"/pod",
+			map[string]any{"received_by": receiver, "affirmed": true}).ok(t, http.StatusOK)
 
 		// The run closes, by the driver who drove it.
 		done := driver.call("POST", "/api/v1/dispatch/runs/"+run.ID+"/complete", nil)
