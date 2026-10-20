@@ -212,6 +212,8 @@ func TestYardHolderRule_SyncStartDoneCancelAndSkidsAreTheHolders(t *testing.T) {
 		{"start", "ACCEPTED", "IN_PROGRESS"},
 		{"done", "IN_PROGRESS", "DONE"},
 		{"cancel", "IN_PROGRESS", "CANCELLED"},
+		{"push back to PUSHED", "QUEUED", "PUSHED"},
+		{"return to QUEUED", "ACCEPTED", "QUEUED"},
 	} {
 		t.Run(leg.name, func(t *testing.T) {
 			g := newHolderGuard(t)
@@ -293,6 +295,7 @@ func TestYardHolderRule_AnotherBranchMeetsTheFenceFirst(t *testing.T) {
 	}
 	for _, leg := range []struct{ name, from, to string }{
 		{"claim", "QUEUED", "ACCEPTED"}, {"start", "ACCEPTED", "IN_PROGRESS"}, {"done", "IN_PROGRESS", "DONE"}, {"cancel", "IN_PROGRESS", "CANCELLED"},
+		{"push back to PUSHED", "QUEUED", "PUSHED"}, {"return to QUEUED", "ACCEPTED", "QUEUED"},
 	} {
 		t.Run("sync "+leg.name, func(t *testing.T) {
 			g := newHolderGuard(t)
