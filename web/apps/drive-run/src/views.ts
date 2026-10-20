@@ -483,7 +483,7 @@ export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
   } else if (view.flows.kind === "unavailable") {
-    body = html`<p class="alert alert-error" role="alert">This way in is not available here. Sign in from your role's own start.</p>`;
+    body = html`<p class="alert alert-error" role="alert">The sign in list could not load. Check your signal and try again.</p>`;
   } else {
     const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
     body =
