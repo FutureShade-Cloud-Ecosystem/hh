@@ -306,45 +306,25 @@ function looksLikeUUID(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
-const CLAIMED_ROLE_LABELS: Record<string, string> = {
-  "d0200000-0000-4000-9000-000000000002": "Yard Team",
-  yard_team: "Yard Team",
-  "yard-team": "Yard Team",
-  "de110000-0000-4000-9000-000000000003": "Yard Manager",
-  "d0200000-0000-4000-9000-000000000009": "Yard Manager",
-  "demo-account-yard-manager": "Yard Manager",
-  yard_manager: "Yard Manager",
-  "yard-manager": "Yard Manager",
-  "d0200000-0000-4000-9000-000000000001": "Logistics Manager",
-  logistics_manager: "Logistics Manager",
-  "logistics-manager": "Logistics Manager",
-  dispatch: "Logistics Manager",
-  "d0200000-0000-4000-9000-000000000003": "Driver",
-  driver: "Driver",
-  "de110000-0000-4000-9000-000000000001": "Inside Sales",
-  inside_sales: "Inside Sales",
-  sales: "Inside Sales",
-  "de110000-0000-4000-9000-000000000002": "Sales Manager",
-  sales_manager: "Sales Manager",
-  "sales-manager": "Sales Manager",
-  "de5b2000-0000-4000-9000-000000000003": "Branch Manager",
-  branch_manager: "Branch Manager",
-  "branch-manager": "Branch Manager",
-  "de5b2000-0000-4000-9000-000000000001": "General Manager",
-  general_manager: "General Manager",
-  "general-manager": "General Manager",
-};
-
-/** Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by <role label>" for others. */
+/**
+ * Who holds a claimed pick: "Claimed by you" for the signed-in person, "Claimed by a teammate" for anyone else.
+ * The core's pick payload serves the claimer's id and no role label, and an id is never printed.
+ */
 export function claimedByWords(claimedBy: string | null | undefined, me: string | null | undefined): string {
   const raw = (claimedBy ?? "").trim();
   if (raw === "") return "";
   const myId = (me ?? "").trim();
   if (myId !== "" && raw === myId) return "Claimed by you";
-  const mapped = CLAIMED_ROLE_LABELS[raw] ?? CLAIMED_ROLE_LABELS[raw.toLowerCase()];
-  if (mapped !== undefined) return `Claimed by ${mapped}`;
-  if (looksLikeUUID(raw)) return "Claimed by Yard Team";
-  return `Claimed by ${raw}`;
+  return "Claimed by a teammate";
+}
+
+/** What the second person in a race is told: the pick is held, and nothing they pulled was recorded. */
+export const PICK_TAKEN_WORDS = "Someone else already took this pick. Nothing was recorded from you.";
+
+/** True when the pick is held by a person other than the signed-in one. */
+export function heldByOther(claimedBy: string | null | undefined, me: string | null | undefined, status: string): boolean {
+  const raw = (claimedBy ?? "").trim();
+  return raw !== "" && raw !== (me ?? "").trim() && status !== "CANCELLED";
 }
 
 /** What the board calls a row when the feed gave it no order number: never a uuid, never nothing. */
@@ -732,7 +712,7 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string } = {},
+  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string; taken?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
@@ -755,6 +735,8 @@ export function yardError(
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
+  // A claim that lost the race comes back as the core's transition words: the person is told who won, not the engine's sentence.
+  if (words.taken !== undefined && /^(task already in that status|illegal task transition)\.?$/i.test(plain)) return words.taken;
   if (plain === "") return fallback;
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;

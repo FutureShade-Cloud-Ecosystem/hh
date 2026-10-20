@@ -96,16 +96,16 @@ for (const size of [
     await page.locator("[data-line]").first().locator(".line-row").click();
     await expect(page.locator("[data-task-status]")).toHaveText("Picking");
 
-    // Another role sees "Claimed by Yard Team" on the queue and detail.
+    // Another role sees "Claimed by a teammate" on the queue and detail.
     const otherContext = await browser.newContext({ viewport: size });
     const otherPage = await otherContext.newPage();
     await otherPage.addInitScript(managerHandoff);
     await otherPage.goto("/");
     const otherCard = otherPage.locator("[data-pick-card]", { hasText: "SO-1042" });
-    await expect(otherCard).toContainText("Claimed by Yard Team");
+    await expect(otherCard).toContainText("Claimed by a teammate");
     await otherCard.click();
     await expect(otherPage.locator("[data-pick-order]")).toHaveText("SO-1042");
-    await expect(otherPage.locator("[data-claimed-by]")).toHaveText("Claimed by Yard Team");
+    await expect(otherPage.locator("[data-claimed-by]")).toHaveText("Claimed by a teammate");
     await otherContext.close();
   });
 }

@@ -61,6 +61,8 @@ import {
   shortageSentWords,
   validateShortage,
   yardError,
+  heldByOther,
+  PICK_TAKEN_WORDS,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
 import {
@@ -897,6 +899,7 @@ export class YardPickApp extends HHElement {
   #pullLine(lineNo: number): void {
     const line = this.#ticketLine(lineNo);
     if (line === null) return;
+    if (this.#refuseIfTaken()) return;
     if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
       void this.#ensureClaimed();
     }
@@ -922,6 +925,7 @@ export class YardPickApp extends HHElement {
 
   #openEditor(lineNo: number): void {
     if (lineNo <= 0 || this.#ticketLine(lineNo) === null) return;
+    if (this.#refuseIfTaken()) return;
     if (this.#pick !== null && isUnclaimed(this.#pick.task.status)) {
       void this.#ensureClaimed();
     }
@@ -958,6 +962,26 @@ export class YardPickApp extends HHElement {
 
   #takePromise: Promise<void> | null = null;
 
+  /** The pulled row says another person holds this pick: say so, and take nothing from this person. */
+  #refuseIfTaken(): boolean {
+    const pick = this.#pick;
+    if (pick === null || !heldByOther(pick.task.claimed_by, this.#me, pick.task.status)) return false;
+    this.#loseRace();
+    return true;
+  }
+
+  /** The second person in a race: the draft checks, the pending edit and the optimistic notice go, and the screen says who won. */
+  #loseRace(): void {
+    this.#drafts = new Map();
+    this.#qtyMirror = new Map();
+    this.#reasonMirror = new Map();
+    this.#noteMirror = new Map();
+    this.#editing = null;
+    this.#notice = "";
+    this.#error = PICK_TAKEN_WORDS;
+    this.requestUpdate();
+  }
+
   async #ensureClaimed(): Promise<void> {
     if (this.#takePromise !== null) return this.#takePromise;
     if (this.#view.kind !== "pick" || this.#pick === null) return;
@@ -967,11 +991,30 @@ export class YardPickApp extends HHElement {
     const run = (async () => {
       const claimed = this.#yardOffline !== null ? await this.#yardOffline.claim(taskId, false) : await this.#door().claim(taskId);
       if (!claimed.ok) {
+        if (claimed.status === 409) {
+          const reread = await this.#door().pick(taskId);
+          if (reread.ok && this.#view.kind === "pick" && this.#view.id === taskId) this.#pick = reread.value;
+          this.#loseRace();
+          return;
+        }
         this.#error = yardError(claimed.error, claimed.status, "That did not go through. Check your signal and try again.", {
           notFound: "That pick is no longer on the board.",
+          taken: PICK_TAKEN_WORDS,
         });
         this.requestUpdate();
         return;
+      }
+      if (this.#yardOffline !== null) {
+        // Online, the server answers the claim now; a refusal or a row that shows someone else means the race was lost.
+        const refused = await this.#yardOffline.sendClaimNow(taskId);
+        const seen = await this.#door().pick(taskId);
+        const lost = refused || (seen.ok && heldByOther(seen.value.task.claimed_by, this.#me, seen.value.task.status));
+        if (lost) {
+          if (seen.ok && this.#view.kind === "pick" && this.#view.id === taskId) this.#pick = seen.value;
+          await this.#refreshOfflineChrome();
+          this.#loseRace();
+          return;
+        }
       }
       const started = await this.#door().start(taskId);
       if (!started.ok) {
