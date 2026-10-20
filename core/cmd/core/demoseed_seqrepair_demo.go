@@ -36,6 +36,14 @@
 // migrations plant the demo branches with org_id NULL, so those feeds stay empty whatever a row's
 // seq says. The pass stamps the demo org on the unstamped branches first, by the same guard.
 //
+// ONCE PER WORLD. The pass is a build step of the world, not a standing sweep: staging carries rows
+// testers typed after the build, and the applier's rule is that a built box's apply leaves them
+// alone. So the pass records demoSeqDoneScope in scope_sequences the moment it has run with the org in
+// place, and every later apply skips it whole. A rebuilt world (a fresh database) has no marker and
+// is sequenced again; a box built before this pass existed is sequenced once, on its next boot, where
+// the only rows still carrying seq NULL are the world's own and the carried ones (a row written
+// through the core always has its seq).
+//
 // THE LIST. demoSeqTables and demoSeqNotScoped together name every table with a seq column; the
 // guard test reads the schema and fails when a table is in neither, so a new table cannot be missed
 // silently. The statement text is built from these fixed names only, never from input.
@@ -177,6 +185,13 @@ func demoSeqTableSet() map[string]bool {
 // carries a seq column, and returns how many rows it sequenced. A listed table that the schema does
 // not have is skipped (the list is checked against the schema by the guard test, not by the apply).
 func repairDemoSeq(ctx context.Context, tx txExec, rows rowQuery) (int, error) {
+	var done bool
+	if err := rows.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM scope_sequences WHERE scope = $1)`, demoSeqDoneScope).Scan(&done); err != nil {
+		return 0, fmt.Errorf("demoseed: reading the seq repair marker: %w", err)
+	}
+	if done {
+		return 0, nil
+	}
 	have, err := seqColumnTables(ctx, rows)
 	if err != nil {
 		return 0, err
@@ -204,8 +219,20 @@ func repairDemoSeq(ctx context.Context, tx txExec, rows rowQuery) (int, error) {
 		}
 		total += int(tag.RowsAffected())
 	}
+	// The marker is written once the org is in place: the first apply of a fresh box runs before the
+	// populate provisions it and has not yet been able to sequence the org stamped tables.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO scope_sequences (scope, next_value)
+		SELECT $1, 0 WHERE EXISTS (SELECT 1 FROM org WHERE slug = $2::citext)
+		ON CONFLICT (scope) DO NOTHING`, demoSeqDoneScope, demoOrgSlug); err != nil {
+		return 0, fmt.Errorf("demoseed: recording the seq repair marker: %w", err)
+	}
 	return total, nil
 }
+
+// demoSeqDoneScope is the scope_sequences row that records the seq repair has run on this world. No
+// table is written under it; it is a marker row, and the pass skips once it exists.
+const demoSeqDoneScope = "demo_seq_repair_done"
 
 // seqCols records what the repair needs to know of one table.
 type seqCols struct{ org bool }
