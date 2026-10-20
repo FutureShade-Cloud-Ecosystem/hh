@@ -276,6 +276,19 @@ export function roleEntryScreen(
                       <div class="picker-group">
                         <span class="picker-group-label" id="branch-group-label">Your branches</span>
                         <div class="picker-radio-list" role="group" aria-labelledby="branch-group-label" data-testid="branch-group">
+                          <button
+                            type="button"
+                            class="picker-option ${session.allBranchesChosen ? "checked" : ""}"
+                            aria-pressed=${session.allBranchesChosen ? "true" : "false"}
+                            data-tabstop=${session.activeBranchOptionId === "__all__" ? "true" : "false"}
+                            data-action="select-branch"
+                            data-branch-id="__all__"
+                          >
+                            <span class="picker-radio-dot picker-box-dot" aria-hidden="true">${session.allBranchesChosen ? radioCheckMark() : nothing}</span>
+                            <span class="picker-option-words">
+                              <span class="picker-option-title">All branches</span>
+                            </span>
+                          </button>
                           ${session.branches.map((branch) => {
                             const checked = session.chosenBranchIds.includes(branch.id);
                             return html`

@@ -43,6 +43,9 @@ export interface GrantedBranch {
   readonly name: string;
 }
 
+/** The option id of the All branches row in the branch choice group. */
+export const ALL_BRANCHES_OPTION = "__all__";
+
 export type ConsolePhase = "starting" | "signed-out" | "signing-in" | "signed-in";
 
 export type MethodsState =
@@ -237,9 +240,15 @@ export class ConsoleSession {
     return this.#branches.filter((branch) => this.#chosenBranchIds.includes(branch.id));
   }
 
-  /** The branch option that carries the choice group's single tab stop. */
+  /** True when every granted branch is chosen: the All branches row reads pressed. */
+  get allBranchesChosen(): boolean {
+    return this.#branches.length > 0 && this.#chosenBranchIds.length === this.#branches.length;
+  }
+
+  /** The branch option ("__all__" or a branch id) that carries the choice group's single tab stop. */
   get activeBranchOptionId(): string {
     const active = this.#activeBranchOption;
+    if (active === ALL_BRANCHES_OPTION && this.branchIsChoice) return active;
     if (active !== null && this.#branches.some((branch) => branch.id === active)) return active;
     return this.#chosenBranchIds[0] ?? this.#branches[0]?.id ?? "";
   }
@@ -264,8 +273,23 @@ export class ConsoleSession {
     this.#changed();
   }
 
+  /** The All branches row: selects every granted branch; pressed with all chosen it narrows to the first, never to none. */
+  toggleAllBranches(): void {
+    if (!this.branchIsChoice) return;
+    this.#activeBranchOption = ALL_BRANCHES_OPTION;
+    this.#chosenBranchIds = this.allBranchesChosen
+      ? this.#branches.slice(0, 1).map((branch) => branch.id)
+      : this.#branches.map((branch) => branch.id);
+    this.#changed();
+  }
+
   /** Move the choice group's tab stop without changing the choice: the arrow keys only move focus. */
   focusBranchOption(branchId: string): void {
+    if (branchId === ALL_BRANCHES_OPTION && this.branchIsChoice) {
+      this.#activeBranchOption = branchId;
+      this.#changed();
+      return;
+    }
     if (!this.#branches.some((branch) => branch.id === branchId)) return;
     this.#activeBranchOption = branchId;
     this.#changed();

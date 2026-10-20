@@ -71,7 +71,7 @@ import {
 import { countMarginApprovals } from "./approvals-count.js";
 import { createAppwriteAccountSurface } from "@hardscapehouse/auth/appwrite-adapter";
 import { loadRuntimeConfig, type RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
-import { ConsoleSession, coreBaseFor, type GrantedBranch } from "./console.js";
+import { ALL_BRANCHES_OPTION, ConsoleSession, coreBaseFor, type GrantedBranch } from "./console.js";
 import { consoleStyles } from "./console-styles.js";
 import { bootScreen, configErrorScreen, dealerLockup, personaCards, roleEntryScreen, signInScreen } from "./console-views.js";
 import { landingFor } from "./signin.js";
@@ -1031,7 +1031,8 @@ export class FrontDoorApp extends HHElement {
     }
     if (action === "select-branch") {
       const branchId = control.getAttribute("data-branch-id");
-      if (typeof branchId === "string" && branchId !== "") session.toggleBranch(branchId);
+      if (branchId === ALL_BRANCHES_OPTION) session.toggleAllBranches();
+      else if (typeof branchId === "string" && branchId !== "") session.toggleBranch(branchId);
     }
     if (action === "continue-own") {
       // The one channel the desks read: only branch ids the core already granted, per tab.

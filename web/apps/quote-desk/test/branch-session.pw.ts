@@ -161,6 +161,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByTestId("branch-chooser")).toBeVisible({ timeout: 15_000 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
       const radios = page.getByRole("radiogroup", { name: /which branch/i }).getByRole("radio");
+      await shot(page, `quote-desk-chooser-focus-${theme}-${width}`);
       await radios.nth(1).click();
       const card = await page.locator("hh-branch-chooser .card").boundingBox();
       expect(card!.x).toBeGreaterThan(0);

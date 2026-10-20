@@ -552,3 +552,30 @@ test("branch choice on ConsoleSession: several granted branches are a choice, at
   w.session.setBranches([]);
   assert.deepEqual(w.session.chosenBranchIds, []);
 });
+
+test("All branches on ConsoleSession: one toggle selects every granted branch and reads pressed only when all are chosen", async () => {
+  const account = new FakeAccountSurface();
+  const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+  account.script(ownAnswer("general_manager", "General Manager")(1, w.clock.now() + 900_000));
+  await w.session.submit(EMAIL, FAKE_PASSWORD);
+  w.session.setBranches([
+    { id: "b-west", code: "WST", name: "West Yard" },
+    { id: "b-east", code: "EST", name: "East Yard" },
+    { id: "b-north", code: "NTH", name: "North Yard" },
+  ]);
+  assert.equal(w.session.allBranchesChosen, true);
+  w.session.toggleBranch("b-west");
+  w.session.toggleBranch("b-east");
+  assert.deepEqual(w.session.chosenBranchIds, ["b-north"]);
+  assert.equal(w.session.allBranchesChosen, false);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west", "b-east", "b-north"], "pressed once selects every granted branch");
+  assert.equal(w.session.allBranchesChosen, true);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "pressed with all chosen it narrows to the first, never to none");
+  w.session.focusBranchOption("__all__");
+  assert.equal(w.session.activeBranchOptionId, "__all__");
+  w.session.setBranches([{ id: "b-west", code: "WST", name: "West Yard" }]);
+  w.session.toggleAllBranches();
+  assert.deepEqual(w.session.chosenBranchIds, ["b-west"], "a one branch person has no All branches");
+});
