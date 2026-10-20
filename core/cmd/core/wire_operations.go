@@ -1050,11 +1050,22 @@ func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.Task
 // here; the counter is the only one whose figures flag the rule sets, and
 // when OUTSIDE_SALES is off the list every channel in the chain is figureless
 // (N2). A body with no figureless twin carries its own words everywhere: it
-// names no figure to begin with.
+// names no figure to begin with, and a summary that names a figure with no twin is refused
+// before any copy is posted (the fence reads the messaging module's own figure predicate, so
+// the two fences cannot drift).
+var errFallbackFigure = errors.New("yard: order notice summary names a currency figure and no figureless twin was given")
+
 func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, ref tasks.TaskEventRef, routes []orderRepFallbackRoute, prefix string) error {
 	plain := ref.SummaryNoFigures
 	if plain == "" {
 		plain = ref.Summary
+		if messaging.ContainsCurrencyFigure(ref.Summary) {
+			for _, r := range routes {
+				if !r.figures {
+					return errFallbackFigure
+				}
+			}
+		}
 	}
 	var lastErr error
 	for _, r := range routes {

@@ -167,7 +167,12 @@ through Caddy with no phrase, ahead of the front door's catch all; proven by
 A console copy needs the core to be the only replica per deployment (a
 replica knows only its own key configuration), the signing key rotated by the
 staged order in the sign in state note, and FB Deploy's secret file mode
-confirmed before the copy ships.
+confirmed before the copy ships. FB Deploy's file storage mounts files as
+`0755 root:root` and its API refuses `chmod`, so on a console copy the
+entrypoint copies a group or other readable mounted key into a private
+`0400` path (`/run/hh-secrets/session.pem`, directory `0700`) and points
+`CORE_SESSION_SIGNING_KEY_FILE` there before the core starts; a key already
+`0400` or `0600` is used as-is.
 
 ## One replica
 

@@ -242,5 +242,11 @@ func (s *Service) DeleteMessage(ctx context.Context, c Caller, channelID, messag
 	if facts.DeletedAt == nil && !editWindowOpen(facts.CreatedAt, mins, time.Now()) {
 		return Message{}, ErrEditWindowClosed
 	}
+	// A repeat delete of a tombstone changes nothing (the body is already dropped, deleted_at
+	// already stamped), so it runs no write: the UPDATE would draw a fresh feed seq for a row
+	// that did not change. The tombstone is answered as it stands.
+	if facts.DeletedAt != nil {
+		return s.repo.GetMessage(ctx, messageID)
+	}
 	return s.repo.DeleteMessage(ctx, channelID, messageID)
 }

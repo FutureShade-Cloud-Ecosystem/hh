@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -127,16 +128,37 @@ func (s *Service) bodyForRep(ctx context.Context, in OrderRepNotice, rep string)
 	return in.Body
 }
 
+// ErrFallbackFigure is the refusal an order notice's fallback copy earns when the caller named a
+// currency figure in the body but handed over no figureless twin: an empty BodyNoFigures names no
+// figure only when the body itself names none, and the fallback channel's readers are never the
+// figure predicate's audience by assumption.
+var ErrFallbackFigure = errors.New("messaging: the fallback copy names a currency figure and no figureless twin was given")
+
+// ContainsCurrencyFigure reports whether s names a currency figure: a dollar sign followed
+// immediately by a digit. It is the fallback's own fence, so it reads only prose, never a store;
+// the wire's fallback chain reads the same predicate so the two fences cannot drift.
+func ContainsCurrencyFigure(s string) bool {
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] == '$' && s[i+1] >= '0' && s[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // orderNoticeFallback delivers a rep-less order notice to the first reachable fallback channel.
 func (s *Service) orderNoticeFallback(ctx context.Context, in OrderRepNotice) (OrderRepResult, error) {
 	none := OrderRepResult{Kind: RouteNone, Level: LevelNone}
 	rawBody := in.Body
 	if in.BodyNoFigures != "" {
 		rawBody = in.BodyNoFigures
+	} else if ContainsCurrencyFigure(in.Body) {
+		return none, ErrFallbackFigure
 	}
 	body := in.FallbackPrefix + rawBody
 	ref := in.Ref
 	ref.Summary = body
+	ref.AmountCents = 0
 	if in.OrderID != "" && ref.Entity == "" {
 		ref.Entity = "order:" + in.OrderID
 	}

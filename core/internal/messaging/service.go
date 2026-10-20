@@ -1138,6 +1138,18 @@ func (s *Service) SetNotificationSettings(ctx context.Context, c Caller, patch N
 		}
 	}
 
+	// The caller's stored category map is loaded once, before the loop: the merge-over-current
+	// read is the same map for every category in the patch, and a read per category multiplied
+	// the query by the patch's length. A repo failure surfaces as an empty map, the same
+	// fail-open the per-category lookup carried (the upsert that follows overwrites the defaults
+	// with the patch's values, which is what the caller asked for).
+	storedCats := map[string]PersonEventPref{}
+	if len(patch.EventPrefs) > 0 {
+		if all, err := s.repo.GetPersonEventPrefsForUser(ctx, c.UserID); err == nil {
+			storedCats = all
+		}
+	}
+
 	// Upsert each category row. Per-category validation: the closed-set check runs before the
 	// upsert so a single bad category refuses the WHOLE request (a partial write of the others is
 	// a half-applied change the surface cannot honestly present back).
@@ -1148,7 +1160,7 @@ func (s *Service) SetNotificationSettings(ctx context.Context, c Caller, patch N
 		// Merge over the caller's CURRENT stored row so an omitted field keeps its value (the
 		// omitted-fields-keep-their-current-value rule).
 		cur := DefaultPersonEventPref(c.UserID, ep.Category)
-		if stored, ok := s.lookupStoredEventPref(ctx, c.UserID, ep.Category); ok {
+		if stored, ok := storedCats[ep.Category]; ok {
 			cur = stored
 		}
 		if ep.InApp != nil {
@@ -1192,19 +1204,6 @@ func (s *Service) SetNotificationSettings(ctx context.Context, c Caller, patch N
 	// Re-read the full envelope so the response mirrors what a follow-up GET would return (the
 	// same honesty GetNotifyPrefs / GetPaymentRules apply: round-trip the truth).
 	return s.GetNotificationSettings(ctx, c)
-}
-
-// lookupStoredEventPref is the merge-over-current helper for the category upsert. It returns
-// ok=false when no row is stored (the caller falls back to DefaultPersonEventPref). A repo
-// failure surfaces as an empty map (the upsert that follows will overwrite the defaults with the
-// patch's values, which is what the caller asked for).
-func (s *Service) lookupStoredEventPref(ctx context.Context, userID, category string) (PersonEventPref, bool) {
-	all, err := s.repo.GetPersonEventPrefsForUser(ctx, userID)
-	if err != nil {
-		return PersonEventPref{}, false
-	}
-	p, ok := all[category]
-	return p, ok
 }
 
 // qhHasAny reports whether a QuietHoursPatch carries ANY field. A truly empty patch is a

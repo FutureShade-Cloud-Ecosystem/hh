@@ -396,3 +396,38 @@ func TestIntegration_EditDelete_Bump_The_Feed_Seq(t *testing.T) {
 		t.Fatalf("a sent message is not deletable over sync, the fence must refuse")
 	}
 }
+
+// A repeat DELETE of an already tombstoned message changes nothing (the body is already dropped
+// and deleted_at already stamped), so it must not draw a fresh feed seq either: the second
+// delete answers the tombstone as it stands and the row's seq is untouched.
+func TestIntegration_DeleteMessage_RepeatDeleteIsIdempotentOnTheSeq(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo)
+	room, msg, author, _ := editWorld(ctx, t, pool)
+
+	first, err := svc.DeleteMessage(ctx, Caller{UserID: author}, room, msg)
+	if err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	var seq1 int64
+	if err := pool.QueryRow(ctx, `SELECT seq FROM msg_messages WHERE id = $1`, msg).Scan(&seq1); err != nil {
+		t.Fatalf("read seq after the first delete: %v", err)
+	}
+
+	second, err := svc.DeleteMessage(ctx, Caller{UserID: author}, room, msg)
+	if err != nil {
+		t.Fatalf("second delete: %v", err)
+	}
+	var seq2 int64
+	if err := pool.QueryRow(ctx, `SELECT seq FROM msg_messages WHERE id = $1`, msg).Scan(&seq2); err != nil {
+		t.Fatalf("read seq after the second delete: %v", err)
+	}
+	if seq2 != seq1 {
+		t.Fatalf("a repeat delete must not bump the feed seq: first=%d second=%d", seq1, seq2)
+	}
+	if second.Body != "" || second.DeletedAt == nil || !second.DeletedAt.Equal(*first.DeletedAt) {
+		t.Fatalf("the second delete must answer the tombstone as it stands: %+v", second)
+	}
+}

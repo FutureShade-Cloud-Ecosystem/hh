@@ -1620,3 +1620,14 @@ Still open, for its owner: after the whole integration list the module gate agai
 locations (none remain right after `internal/dispatch` alone). Some package later in `go list` order still leaves the kit's
 fixture world behind. `internal/inventory`, the known victim, runs before it and passes, so nothing is red today, but a
 package that runs after the leaker and counts branches would be.
+
+
+## The demo image's denylist scan is red on main: a person's name in two web bundles (appended for its owner)
+
+`deploy/demo/exit-test.sh` fails its denylist clause on `origin/main` `a47b2d45` without any change of this branch: the
+dealer-admin bundle (`src-gCAvYekw.js`) and the manager-home bundle (`src-Brh8KhLx.js`) each carry the person name
+Priya Shah, from `web/apps/manager-home/src/approvals-logic.ts` (the approvals fixture copy) and the dealer-admin stub
+data (an email probe on `priya`). The scan's denylist names `priya`, so `bundle_matches=2` and the exit-test reports two
+FAIL lines (the found-a-word clause and the count clause). The database side is clean (`db_matches=0`). This is the web
+lane's file and the person-name house rule, so the fix belongs there: replace the fixture names with role labels. Found
+while gating the row 2354 entrypoint change, which touches `deploy/demo` only.
