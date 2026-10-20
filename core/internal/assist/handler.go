@@ -66,6 +66,7 @@ func (h *Handler) WithPaymentTrail(t PaymentTrailReader) *Handler {
 // callerFor is CallerFrom plus the payment trail answer, for the routes that run commands.
 func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
 	c := CallerFrom(r)
+	c.SessionKey = sc.SessionID
 	if h.trail == nil {
 		return c, nil
 	}
@@ -162,8 +163,11 @@ func (h *Handler) runCommand(w http.ResponseWriter, r *http.Request, caller guar
 }
 
 type chatBody struct {
-	Question string    `json:"question"`
-	History  []Message `json:"history"`
+	Question string `json:"question"`
+	// ConversationID, when present, replaces History: the history is rebuilt on the server from the
+	// exchange log and History and ran are ignored.
+	ConversationID string    `json:"conversation_id"`
+	History        []Message `json:"history"`
 }
 
 func (h *Handler) chat(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -180,7 +184,7 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request, caller guards.Sta
 		h.fail(w, err)
 		return
 	}
-	ans, err := h.svc.Ask(r.Context(), c, body.Question, body.History)
+	ans, err := h.svc.AskConversation(r.Context(), c, body.ConversationID, body.Question, body.History)
 	if err != nil {
 		h.fail(w, err)
 		return

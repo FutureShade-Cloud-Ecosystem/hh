@@ -12,6 +12,7 @@
 // out, so a new state added to the schema shows up strange (a bug report)
 // rather than confident and wrong (a lie nobody catches).
 
+import { houseDay, stampDay } from "../po/po-logic.js";
 import { formatQty } from "../po/po-money.js";
 
 // ---- the ledger's words ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ export function configWord(pair: TransitPair): string {
 }
 
 function dayNumber(date: string): number | null {
-  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m = stampDay(date).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m === null ? null : Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
 }
 
@@ -113,10 +114,10 @@ function dayOfNumber(number: number): string {
 
 /**
  * The ship box's pre-fill: the ship day plus the route's configured days, both
- * YYYY-MM-DD. An unconfigured route pre-fills nothing, and nothing here
+ * in the house zone. An unconfigured route pre-fills nothing, and nothing here
  * invents a date.
  */
-export function defaultShipETA(pairs: readonly TransitPair[] | undefined, fromBranchId: string, toBranchId: string, today: string): string {
+export function defaultShipETA(pairs: readonly TransitPair[] | undefined, fromBranchId: string, toBranchId: string, today: string = houseDay()): string {
   const days = transitDaysFor(pairs, fromBranchId, toBranchId);
   if (days === null) return "";
   const base = dayNumber(today);

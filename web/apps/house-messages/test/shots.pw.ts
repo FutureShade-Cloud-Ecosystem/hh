@@ -7,7 +7,7 @@
 // The brand theme is the design system's dark half; light is this app's default, one tap on the
 // header's theme control moves between them.
 import type { Page } from "@playwright/test";
-import { test, expect, openAs, channel, CH, says, stubPost } from "./helpers.js";
+import { test, expect, accountItem, openAs, channel, CH, says, stubPost } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.MSG_SHOT_DIR ?? "";
@@ -37,7 +37,7 @@ for (const size of SIZES) {
         await expect(page.locator("[data-channel-list]")).toBeVisible();
       };
       const brandOn = async () => {
-        if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
+        if (theme === "brand") await accountItem(page, "Brand theme");
       };
 
       await request.post("/_stub/reset");

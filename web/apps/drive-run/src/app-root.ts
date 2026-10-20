@@ -15,8 +15,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-// hos-app-header: the shared chrome element (decision log row 938).
-import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
@@ -25,7 +23,8 @@ import { houseDay, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
-import "@hardscapehouse/shell-chrome";
+import { fieldTabsForRole, setFieldFrame, type ShellSyncState } from "@hardscapehouse/shell-chrome";
+import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
@@ -132,6 +131,12 @@ export class DriveRunApp extends HHElement {
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // The role code the frame's tabs follow; set with the label from the handoff, the console entry or the mint.
+  #roleCode = "";
+
+  // The dealer's name for the frame's lockup, from the public tenant config; empty until it lands.
+  #org = "";
 
   // The theme: light by default (a driver reads this in daylight), brand
   // (the dark half) one tap away. Held in memory only: nothing here persists.
@@ -257,6 +262,10 @@ export class DriveRunApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    void readDealerName().then((name) => {
+      this.#org = name;
+      this.requestUpdate();
+    });
     this.addEventListener("click", this.#onHostClick);
     // input and change do not leave this element's own shadow root (change is
     // not composed), so the form listeners sit on the root itself.
@@ -284,6 +293,7 @@ export class DriveRunApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
+        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
         void this.#loadRuns();
       }
@@ -299,6 +309,7 @@ export class DriveRunApp extends HHElement {
   #onRecovered(outcome: AppStart): void {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
+      this.#roleCode = outcome.entry.roleCode;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       void this.#loadRuns();
     } else if (outcome.kind === "front-door" && outcome.why === "ended") {
@@ -393,11 +404,20 @@ export class DriveRunApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
-    if (header !== null) {
-      header.roleLabel = this.#roleLabel;
-      header.theme = this.#theme;
-    }
+    setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
+      org: this.#org,
+      appName: "Drive",
+      surface: this.#surfaceWords(),
+      roleLabel: this.#roleLabel,
+      syncState: this.#syncState as ShellSyncState,
+      theme: this.#theme,
+      signedIn: this.#sessions.current !== null,
+      demo: true,
+      current: "drive",
+      bellAction: "open-conflicts",
+      bellCount: this.#openCards.length,
+      tabs: fieldTabsForRole(this.#roleCode),
+    });
     // The offline strip and the card list take their state through properties
     // (the position gate refuses a bound value outside data- and aria-), the
     // same pass the header's label rides.
@@ -736,6 +756,7 @@ export class DriveRunApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
+        this.#roleCode = result.value.roleCode;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadRuns();
       } else {
@@ -748,6 +769,9 @@ export class DriveRunApp extends HHElement {
   }
 
   #onSignOut(): void {
+    // The frame's account chip names no role once the person is out.
+    this.#roleLabel = "";
+    this.#roleCode = "";
     this.#sessions.clear();
     this.#phase = "loading";
     this.#runs = [];
@@ -764,11 +788,15 @@ export class DriveRunApp extends HHElement {
     void this.loadFlows();
   }
 
-  // The theme control rides the header's named slot; its word names the
-  // theme a tap moves to.
-  private renderThemeControl(): TemplateResult {
-    const label = this.#theme === "light" ? "Brand theme" : "Light theme";
-    return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
+  // The surface the frame's chip names beside the app.
+  #surfaceWords(): string {
+    const kind = this.#view.kind;
+    if (kind === "stop") return "Stop";
+    if (kind === "pod") return "Proof of delivery";
+    if (kind === "fail") return "Could not deliver";
+    if (kind === "close") return "End of run";
+    if (kind === "conflicts") return "Review";
+    return "My run";
   }
 
   private renderWork(): TemplateResult {
@@ -828,7 +856,7 @@ export class DriveRunApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     const mode = this.#bannerModeNow();
     return html`
-      <hos-app-header signed-in demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
       ${this.renderStallStrip()}
       <main>${this.renderWork()}</main>
@@ -839,7 +867,7 @@ export class DriveRunApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      <hh-field-frame></hh-field-frame>
       <main>
         ${renderEntry(this.#entryView)}
       </main>

@@ -91,9 +91,17 @@ var glsTodaySites = map[string]glsSite{
 // being silently relocated.
 func init() {
 	for i := range demoStops {
-		if g, ok := glsStopSites[demoStops[i].Key]; ok {
-			st := &demoStops[i]
+		st := &demoStops[i]
+		if g, ok := glsStopSites[st.Key]; ok {
 			st.Phone, st.Addr, st.City, st.Postal, st.Lat, st.Lng = g.Phone, g.Addr, g.City, g.Postal, g.Lat, g.Lng
+		}
+		if st.Received != "" {
+			st.Received = glsApply(st.Received)
+		}
+	}
+	for i := range demoWillCall {
+		if demoWillCall[i].Received != "" {
+			demoWillCall[i].Received = glsApply(demoWillCall[i].Received)
 		}
 	}
 	for i := range demoTodayStops {
@@ -191,6 +199,12 @@ var glsExact = map[string]string{
 	"Demo boom truck":       "Truck 02 · boom truck",
 	"Demo tandem dump":      "Truck 03 · tandem dump",
 	"Demo pickup + trailer": "Truck 04 · pickup and trailer",
+	// -- currency and sales tax words on seeded and migration-planted documents --
+	"CAD":           "USD",
+	"HST":           "Sales tax",
+	"HST reversed":  "Sales tax reversed",
+	"HST Collected": "Sales tax collected",
+	"Placeholder \u2014 pending the HST registration number and confirmation of the tax table.": "Provisional until the sales tax registration number and tax table are confirmed.",
 }
 
 // glsTokens are the words that are replaced wherever they sit inside a longer value, in order:
@@ -203,6 +217,7 @@ var glsTokens = [][2]string{
 	{"Hardscape House (demo)", "Gable Landscape Supply"},
 	{"Quinte Paving & Design (demo)", "Fieldstone Pools and Patios"},
 	{"Northline Hardscapes Ltd (demo)", "Bluffside Builders"},
+	{"Bay Ridge Landscaping (demo)", "Ridgeview Outdoor Living"},
 	{"Techo-Bloc Blu 60 Slab", "Stonecrest 60 mm Slab"},
 	{"Permacon Melville Slab", "Cascade Masonry Slab"},
 	{"Oaks Vintage Paver", "Tidewater Tumbled Paver"},
@@ -245,6 +260,10 @@ var glsTokens = [][2]string{
 	{"@dibbits.example", "@hh-demo.invalid"},
 	{"-trenton", "-point-loma"},
 	{"-kingston", "-julian"},
+	{"-TRT-", "-PLM-"},
+	{"-KGN-", "-JUL-"},
+	{"  TRT  ", "  PLM  "},
+	{"  KGN  ", "  JUL  "},
 	{"Placeholder Way", "Canyon Ridge Way"},
 	{"Scrubbed Party 0003", "Contractor Owner"},
 	{"\"province\": \"ON\"", "\"province\": \"CA\""},
@@ -298,6 +317,25 @@ func glsRewritePlan(rows []row) []row {
 		}
 	}
 	return rows
+}
+
+// glsRewriteSummary carries the plan summary's display lines through the dictionary so `demoseed`
+// output names the demo dealer's branches, accounts and products.
+func glsRewriteSummary(s planSummary) planSummary {
+	applySlice := func(in []string) []string {
+		for i, line := range in {
+			in[i] = glsApply(line)
+		}
+		return in
+	}
+	s.RunFill = applySlice(s.RunFill)
+	s.WillCall = applySlice(s.WillCall)
+	s.Quotes = applySlice(s.Quotes)
+	s.QuoteLinks = applySlice(s.QuoteLinks)
+	s.ContractorLines = applySlice(s.ContractorLines)
+	s.DepositOrders = applySlice(s.DepositOrders)
+	s.ProcurementLines = applySlice(s.ProcurementLines)
+	return s
 }
 
 // glsPrepareWorld moves the two BRANCH rows onto the demo dealer before the plan is built.
@@ -386,6 +424,11 @@ var glsPlantedColumns = []glsPlanted{
 	{"projects", "name", true, "", false},
 	{"projects", "job_address", true, "", false},
 	{"permission_approval_requests", "data", false, "jsonb", false},
+	{"purchase_orders", "currency", true, "", false},
+	{"landed_costs", "currency", true, "", false},
+	{"gl_journal_lines", "memo", false, "", false},
+	{"report_templates", "legacy_name", true, "", false},
+	{"tax_config", "notes", true, "", false},
 }
 
 // glsDepots are the demo dealer's two depots, where the delivery distance estimates start.
