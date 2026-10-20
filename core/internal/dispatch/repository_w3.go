@@ -129,6 +129,11 @@ func (r *Repository) PickFeedPendingStops(ctx context.Context, branchID string, 
 		q += ` AND s.branch_id = $2`
 		args = append(args, branchID)
 	}
+	// Held to the caller's org when the context carries one (UX-81 round 5), by the orders join's org stamp.
+	if org := orgFrom(ctx); org != "" {
+		args = append(args, org)
+		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+	}
 	q += ` ORDER BY s.scheduled_date, s.stop_no, s.created_at LIMIT $1`
 
 	rows, err := pool.Query(ctx, q, args...)
@@ -251,6 +256,11 @@ func (r *Repository) PickFeedPendingPickups(ctx context.Context, branchID string
 	if branchID != "" {
 		q += ` AND o.branch_id = $2`
 		args = append(args, branchID)
+	}
+	// Held to the caller's org when the context carries one (UX-81 round 5).
+	if org := orgFrom(ctx); org != "" {
+		args = append(args, org)
+		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
 	}
 	q += ` ORDER BY o.requested_date ASC NULLS LAST, o.created_at LIMIT $1`
 
@@ -654,6 +664,12 @@ func (r *Repository) CountPickFeedPendingStops(ctx context.Context, branchID str
 		q += ` AND s.branch_id = $1`
 		args = append(args, branchID)
 	}
+	// Held to the caller's org when the context carries one (UX-81 round 5): the count joins orders for the stamp.
+	if org := orgFrom(ctx); org != "" {
+		args = append(args, org)
+		q = strings.Replace(q, "  LEFT JOIN delivery_runs r ON r.id = s.run_id", "  LEFT JOIN delivery_runs r ON r.id = s.run_id\n  LEFT JOIN orders o ON o.id = s.order_id", 1)
+		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
+	}
 	var n int
 	err = pool.QueryRow(ctx, q, args...).Scan(&n)
 	return n, err
@@ -673,6 +689,10 @@ func (r *Repository) CountPickFeedPendingPickups(ctx context.Context, branchID s
 	if branchID != "" {
 		q += ` AND o.branch_id = $1`
 		args = append(args, branchID)
+	}
+	if org := orgFrom(ctx); org != "" { // held to the caller's org (UX-81 round 5)
+		args = append(args, org)
+		q += fmt.Sprintf(` AND o.org_id = $%d::uuid`, len(args))
 	}
 	var n int
 	err = pool.QueryRow(ctx, q, args...).Scan(&n)

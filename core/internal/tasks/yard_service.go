@@ -22,6 +22,7 @@ import (
 func (s *Service) WithPickSource(p PickSource) *Service {
 	s.picks = p
 	s.orgPicks, _ = p.(OrgPickSource) // the org held ticket read, taken from the source when it has one (UX-81 round 4)
+	s.orgPending, _ = p.(OrgPendingSource)
 	return s
 }
 
@@ -36,10 +37,22 @@ func withOrg(ctx context.Context, orgID string) context.Context {
 	return context.WithValue(ctx, orgCtxKey{}, orgID)
 }
 
-// pickTicket reads one order's ticket under the org bound to the context when the source can hold it (every REST
-// door that reads a ticket binds its caller's org); a context with no org is a system read (the sweep, tests).
+// orgFrom is the org bound to a context by withOrg, "" for none.
+func orgFrom(ctx context.Context) string {
+	org, _ := ctx.Value(orgCtxKey{}).(string)
+	return org
+}
+
+// pickTicket reads one order's ticket under the org bound to the context (every REST door binds its caller's org).
+// A source that holds the org read and a context that carries no org REFUSE as an unknown order rather than read
+// across orgs (UX-81 round 5); only a source without the org read (the fixtures and tests the boot check keeps
+// out of production) reads unscoped.
 func (s *Service) pickTicket(ctx context.Context, orderID string) (PickTicket, error) {
-	if org, _ := ctx.Value(orgCtxKey{}).(string); org != "" && s.orgPicks != nil {
+	if s.orgPicks != nil {
+		org := orgFrom(ctx)
+		if org == "" {
+			return PickTicket{}, ErrUnknownOrder
+		}
 		return s.orgPicks.PickTicketInOrg(ctx, org, orderID)
 	}
 	return s.picks.PickTicket(ctx, orderID)
@@ -406,6 +419,15 @@ func (s *Service) PendingTickets(ctx context.Context, branchID string, limit, of
 	}
 	if branchID != "" && !looksLikeUUID(branchID) {
 		return nil, 0, httpx.BadRequestf("branch_id must be a uuid")
+	}
+	// The feed is keyed by branch, so it is held to the caller's org (UX-81 round 5): a branch id of another org
+	// lists nothing of that org. A source that holds the org read and a context with no org refuse.
+	if s.orgPending != nil {
+		org := orgFrom(ctx)
+		if org == "" {
+			return nil, 0, ErrUnknownOrder
+		}
+		return s.orgPending.PendingTicketsInOrg(ctx, org, branchID, limit, offset)
 	}
 	return s.picks.PendingTickets(ctx, branchID, limit, offset)
 }

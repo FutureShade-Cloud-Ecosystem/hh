@@ -71,6 +71,8 @@ type SyncStore struct {
 	// source when they implement OrgOrderReader and OrgPickSource, which the composition root's adapters do.
 	orgOrders  OrgOrderReader
 	orgTickets OrgPickSource
+	// branchOrg bounds a GLOBAL caller's reach to the branches of its own org (UX-81 round 5).
+	branchOrg BranchOrgReader
 	// claimerRoles labels a row's claimer by role on the rows a device reads (claimer_role.go).
 	claimerRoles ClaimerRoleReader
 	log          *slog.Logger
@@ -88,13 +90,22 @@ func NewSyncStore(pool *pgxpool.Pool, orders OrderReader, link identity.UserIDLi
 // OrgScoped reports whether the create's order read and the ticket read are held to the caller's org, the leg the
 // composition root's boot check pins (UX-81 round 4). A store without a pick source has no ticket read to hold.
 func (s *SyncStore) OrgScoped() bool {
-	return s.orgOrders != nil && (s.tickets == nil || s.orgTickets != nil)
+	return s.orgOrders != nil && (s.tickets == nil || s.orgTickets != nil) && s.branchOrg != nil
+}
+
+// WithBranchOrgReader wires the branch to org seam the caller's reach is bounded by (UX-81 round 5).
+func (s *SyncStore) WithBranchOrgReader(r BranchOrgReader) *SyncStore {
+	s.branchOrg = r
+	return s
 }
 
 // orderBrief reads the order for a create under the caller's org when the seam can (the composition root's always
 // can): a foreign order is the same ErrUnknownOrder as a missing one.
 func (s *SyncStore) orderBrief(ctx context.Context, orgID, orderID string) (OrderBrief, error) {
-	if s.orgOrders != nil && orgID != "" {
+	if s.orgOrders != nil {
+		if orgID == "" { // an empty org reads nothing (UX-81 round 5)
+			return OrderBrief{}, ErrUnknownOrder
+		}
 		return s.orgOrders.OrderBriefInOrg(ctx, orgID, orderID)
 	}
 	return s.orders.OrderBrief(ctx, orderID)
@@ -102,7 +113,10 @@ func (s *SyncStore) orderBrief(ctx context.Context, orgID, orderID string) (Orde
 
 // pickTicket reads the order's ticket under the org when the source can.
 func (s *SyncStore) pickTicket(ctx context.Context, orgID, orderID string) (PickTicket, error) {
-	if s.orgTickets != nil && orgID != "" {
+	if s.orgTickets != nil {
+		if orgID == "" { // an empty org reads nothing (UX-81 round 5)
+			return PickTicket{}, ErrUnknownOrder
+		}
 		return s.orgTickets.PickTicketInOrg(ctx, orgID, orderID)
 	}
 	return s.tickets.PickTicket(ctx, orderID)
@@ -363,15 +377,22 @@ func (s *SyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branc
 	if err != nil || !ok {
 		return false, err
 	}
-	if branches == nil {
-		return true, nil
-	}
+	granted := branches == nil // GLOBAL: every branch, bounded to the caller's org just below
 	for _, b := range branches {
 		if b == branch {
-			return true, nil
+			granted = true
 		}
 	}
-	return false, nil
+	if !granted {
+		return false, nil
+	}
+	// GLOBAL reach is every branch of the caller's OWN org, never every branch in the database (UX-81 round 5):
+	// the branch must belong to the filter's org. A pick with no branch has none to check (a GLOBAL caller's alone,
+	// as the pull holds it).
+	if branch != "" && s.branchOrg != nil {
+		return s.branchOrg.BranchInOrg(ctx, f.OrgID, branch)
+	}
+	return true, nil
 }
 
 // DecorateServerState attaches the ticket to the row a conflict envelope shows the device, under the

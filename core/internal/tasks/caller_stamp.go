@@ -5,6 +5,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // CARRY NOTE (guards swap, HH-3.2 B5): the ERP registrar took positional
@@ -21,7 +22,15 @@ import (
 // authority only and every id-consuming read fails closed).
 func (h *Handler) staff(next guards.StaffHandler) guards.StaffHandler {
 	return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-		next(w, identity.StampRequest(r, caller, h.userLink), caller)
+		// The caller's org rides the request context to every read under the handler (UX-81 round 5): GetTask,
+		// ListTasks, the transition lock, the ticket reads and the pending feed hold it. A caller that names no
+		// org is refused here rather than read across orgs.
+		org := caller.StaffScope.OrgID
+		if org == "" {
+			httpx.Error(w, http.StatusForbidden, "yard: no org for this caller")
+			return
+		}
+		next(w, identity.StampRequest(r.WithContext(withOrg(r.Context(), org)), caller, h.userLink), caller)
 	}
 }
 

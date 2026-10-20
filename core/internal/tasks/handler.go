@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,31 @@ type Handler struct {
 	log      *slog.Logger
 	// costRoles decides who receives a yard payload's money figures (cost_gate.go).
 	costRoles CostRoles
+	// branchOrg bounds a GLOBAL caller's reach to the branches of its own org (UX-81 round 5).
+	branchOrg BranchOrgReader
+}
+
+// WithBranchOrgReader wires the branch to org seam the yard fences bound a caller's reach by (UX-81 round 5).
+func (h *Handler) WithBranchOrgReader(r BranchOrgReader) *Handler {
+	h.branchOrg = r
+	return h
+}
+
+// BranchOrgWired reports whether the seam is wired, the leg the composition root's boot check pins.
+func (h *Handler) BranchOrgWired() bool { return h.branchOrg != nil }
+
+// branchInCallersOrg says whether the branch is one of the caller's OWN org's branches, the bound on a GLOBAL
+// caller's reach (UX-81 round 5). A request that carries no org (the handler unit fixtures, never a served
+// request: the staff wrapper binds it) has nothing to bound by; an unwired seam fails closed once an org is bound.
+func (h *Handler) branchInCallersOrg(ctx context.Context, branchID string) (bool, error) {
+	org := orgFrom(ctx)
+	if org == "" || branchID == "" {
+		return true, nil
+	}
+	if h.branchOrg == nil {
+		return false, nil
+	}
+	return h.branchOrg.BranchInOrg(ctx, org, branchID)
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
@@ -71,7 +97,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 		CreatedBy:       identity.StaffUserIDFromContext(r.Context()),
 		SourceMessageID: req.SourceMessageID,
 		OrgID:           caller.StaffScope.OrgID,
-		Reach:           func(branch string) bool { return haveStaff && sc.CanAccessBranch(branch) },
+		Reach: func(branch string) (bool, error) {
+			if !haveStaff || !sc.CanAccessBranch(branch) {
+				return false, nil
+			}
+			// GLOBAL reaches the branches of its OWN org only (UX-81 round 5).
+			return h.branchInCallersOrg(withOrg(r.Context(), caller.StaffScope.OrgID), branch)
+		},
 	})
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -81,6 +113,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	// The task list holds the yard board's branch fence (UX-81 round 5): it had none, so a caller granted one
+	// branch listed another branch's, and another org's, tasks with and without branch_id.
+	if !h.yardBranchFence(w, r) {
+		return
+	}
 	// Cursor pagination (HH-3.2 B5). Stable-ordering basis: open-first
 	// flag, priority rank, created_at, id tie-breaker; the id completes
 	// the key the pin's three-column order left ambiguous, and the cursor
@@ -268,6 +305,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, "illegal task transition")
 	case errors.Is(err, ErrNoTransition):
 		httpx.Error(w, http.StatusConflict, "task already in that status")
+	case errors.Is(err, ErrReachUnavailable):
+		httpx.Error(w, http.StatusServiceUnavailable, "yard: branch reach unavailable")
 	case errors.Is(err, ErrNotHolder):
 		httpx.Error(w, http.StatusConflict, ErrNotHolderWords)
 	case errors.Is(err, ErrCancelNotAllowed):

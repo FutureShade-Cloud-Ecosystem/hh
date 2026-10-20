@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	hhsync "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -74,6 +75,7 @@ func (w *orgScopeWorld) syncStore(sc identity.StaffContext) *tasks.SyncStore {
 	link := func(context.Context, string) (string, bool) { return sc.UserID, true }
 	staff := func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, true, nil }
 	return tasks.NewSyncStore(w.pool, w.orders(), link).WithStaffAuthority(staff).
+		WithBranchOrgReader(branchOrgAdapter{repo: branches.NewRepository(w.pool)}).
 		WithPickSource(newDispatchPickSource(w.pool, order.NewRepository(w.pool), slog.Default()))
 }
 
@@ -94,7 +96,7 @@ func TestTasksOrgScope_RESTCreateOnAnotherOrgsOrderIsAnUnknownOrder(t *testing.T
 	global := w.globalOf(testkit.OrgNorthID)
 	create := func(org, orderID string) (tasks.Task, error) {
 		return svc.CreateFromOrder(context.Background(), tasks.CreateInput{OrderID: orderID, OrgID: org, CreatedBy: global.UserID,
-			Reach: func(branch string) bool { return global.CanAccessBranch(branch) }})
+			Reach: func(branch string) (bool, error) { return global.CanAccessBranch(branch), nil }})
 	}
 	_, unknownErr := create(testkit.OrgNorthID, uuid.NewString())
 	if unknownErr == nil {

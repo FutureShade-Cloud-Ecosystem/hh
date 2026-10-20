@@ -377,3 +377,46 @@ func TestPickPullFence_AFailedAuthorityReadIsRetryableNotARefusal(t *testing.T) 
 		t.Errorf("the retried create applies once the authority answers: %+v %v", res[0], res[0].Error)
 	}
 }
+
+// TestPickPullFence_TheRESTReadsAreHeldToTheCallersOrg (UX-81 round 5): GetTask, ListTasks and the transition lock
+// run under the org the staff wrapper binds to the request, so another org's task is not found, is not listed, and
+// cannot be moved; a list that names no org lists nothing.
+func TestPickPullFence_TheRESTReadsAreHeldToTheCallersOrg(t *testing.T) {
+	d := newPickDoor(t)
+	own := d.task(d.branchA)
+	other := func() string {
+		s := NewSyncStore(d.pool, pickDoorOrders{branch: d.branchB}, nil)
+		row, err := s.Create(context.Background(), hhsync.ScopeFilter{OrgID: d.other, Actor: "x"}, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+		if err != nil {
+			t.Fatalf("create the other org's task: %v", err)
+		}
+		return row.ID
+	}()
+	repo := NewRepository(d.pool)
+	inOrg := withOrg(context.Background(), d.org)
+	if _, err := repo.GetTask(inOrg, own); err != nil {
+		t.Errorf("the caller's own task is read: %v", err)
+	}
+	if _, err := repo.GetTask(inOrg, other); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another org's task is not found: %v", err)
+	}
+	list, err := repo.ListTasks(inOrg, TaskFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, task := range list {
+		if task.ID == other {
+			t.Errorf("another org's task is listed")
+		}
+	}
+	if _, err := repo.ListTasks(context.Background(), TaskFilter{Limit: 50}); !errors.Is(err, ErrNoOrg) {
+		t.Errorf("a list that names no org lists nothing: %v", err)
+	}
+	if _, err := repo.Transition(inOrg, TransitionInput{TaskID: other, To: StatusAccepted, ActorID: d.user}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another org's task cannot be moved: %v", err)
+	}
+	var status string
+	if err := d.pool.QueryRow(context.Background(), `SELECT status FROM tasks WHERE id = $1::uuid`, other).Scan(&status); err != nil || status != "QUEUED" {
+		t.Errorf("the refused move wrote nothing: %s %v", status, err)
+	}
+}

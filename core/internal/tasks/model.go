@@ -198,7 +198,7 @@ type CreateInput struct {
 	// Reach says whether the caller's branch reach covers a branch (UX-81 round 3). When set, an order on a
 	// branch it does not cover is refused as an unknown order. Nil is a system caller with no staff reach to
 	// hold (the REST handler always sets it).
-	Reach func(branch string) bool
+	Reach func(branch string) (bool, error)
 }
 
 // OrderBrief is the narrow order projection the tasks module consumes to validate an order exists and
@@ -222,6 +222,19 @@ type OrderReader interface {
 // store whose order seam also implements this uses it for every create.
 type OrgOrderReader interface {
 	OrderBriefInOrg(ctx context.Context, orgID, orderID string) (OrderBrief, error)
+}
+
+// BranchOrgReader answers whether a location is a branch of an org (UX-81 round 5). The tasks module may not read
+// locations itself, so the composition root hands it this one fact; it is what bounds a GLOBAL caller's reach to the
+// branches of its OWN org (StaffContext.CanAccessBranch alone says yes to any branch id for a GLOBAL caller).
+type BranchOrgReader interface {
+	BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error)
+}
+
+// OrgPendingSource is PickSource's pending ticket feed held to the caller's org (UX-81 round 5): the feed is keyed by
+// branch, and a branch id of another org must never list that org's customers and lines.
+type OrgPendingSource interface {
+	PendingTicketsInOrg(ctx context.Context, orgID, branchID string, limit, offset int) ([]PickTicket, int, error)
 }
 
 // OrgPickSource is PickSource's ticket read held to the caller's org (UX-81 round 4): a ticket of another org's

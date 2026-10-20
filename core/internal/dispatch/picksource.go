@@ -227,6 +227,29 @@ func (f *PickFeed) TicketForOrder(ctx context.Context, orderID string) (PickFeed
 	return t, nil
 }
 
+// orgCtxKey carries an org to the pending feed's reads (UX-81 round 5).
+type orgCtxKey struct{}
+
+// WithOrg binds an org to the context the pending feed reads run under: the four reads (the two lists and the two
+// counts) then add the org stamp of the order to their WHERE.
+func WithOrg(ctx context.Context, orgID string) context.Context {
+	return context.WithValue(ctx, orgCtxKey{}, orgID)
+}
+
+func orgFrom(ctx context.Context) string {
+	org, _ := ctx.Value(orgCtxKey{}).(string)
+	return org
+}
+
+// PendingTicketsInOrg is PendingTickets held to one org (UX-81 round 5): the feed is keyed by branch, and a branch
+// id of another org lists nothing of that org's customers, orders or lines. An empty org is refused.
+func (f *PickFeed) PendingTicketsInOrg(ctx context.Context, orgID, branchID string, limit, offset int) ([]PickFeedTicket, int, error) {
+	if !looksLikeUUID(orgID) {
+		return nil, 0, ErrNotFound
+	}
+	return f.PendingTickets(WithOrg(ctx, orgID), branchID, limit, offset)
+}
+
 // TicketForOrderInOrg is TicketForOrder held to one org (UX-81 round 4): both source reads carry the org in their
 // WHERE, so a ticket of another org's order is ErrNotFound, exactly the answer for an unknown order. The lines are
 // read only for an order whose org matched.

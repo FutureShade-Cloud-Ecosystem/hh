@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -114,6 +115,27 @@ func (r *Repository) List(ctx context.Context) ([]Branch, error) {
 		out = append(out, b)
 	}
 	return out, rows.Err()
+}
+
+// BranchInOrg says whether the location is a branch of the org (UX-81 round 5): the one fact a module that may not
+// read locations itself needs to bound a GLOBAL caller's reach to its own org's branches. A malformed id or an
+// org with no such branch is false, never an error.
+func (r *Repository) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	if _, err := uuid.Parse(orgID); err != nil {
+		return false, nil
+	}
+	if _, err := uuid.Parse(branchID); err != nil {
+		return false, nil
+	}
+	var ok bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM locations WHERE id = $1::uuid AND org_id = $2::uuid)`, branchID, orgID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 // Exists reports whether `id` names a branch row this dealer actually has.

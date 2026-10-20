@@ -58,7 +58,29 @@ func (h *Handler) yardBranchFence(w http.ResponseWriter, r *http.Request) bool {
 		}
 		return true
 	}
+	// GLOBAL reaches every branch of its OWN org, never another org's (UX-81 round 5): the branch must be one of
+	// the caller's org's, whatever the caller's scope.
 	if !caller.CanAccessBranch(branchID) {
+		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
+		return false
+	}
+	if !h.branchReach(w, r, branchID) {
+		return false
+	}
+	return true
+}
+
+// branchReach writes the refusal for a branch outside the caller's org (403 "branch out of scope", the fence's own
+// words, so it tells nothing more than the scope fence) or an unreadable seam (503, retryable), and reports whether
+// the branch is in reach.
+func (h *Handler) branchReach(w http.ResponseWriter, r *http.Request, branchID string) bool {
+	ok, err := h.branchInCallersOrg(r.Context(), branchID)
+	if err != nil {
+		h.log.Error("tasks: branch to org read failed", "err", err)
+		httpx.Error(w, http.StatusServiceUnavailable, "yard: branch reach unavailable")
+		return false
+	}
+	if !ok {
 		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
 		return false
 	}
@@ -83,6 +105,11 @@ func (h *Handler) taskBranchFence(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if t.BranchID != "" && !caller.CanAccessBranch(t.BranchID) {
 		httpx.Error(w, http.StatusForbidden, "yard: branch out of scope")
+		return false
+	}
+	// The task is read under the caller's org (GetTask holds the org the staff wrapper binds), so another
+	// dealer's task never gets here: it is the 404 above. The branch is bounded to the org as well.
+	if !h.branchReach(w, r, t.BranchID) {
 		return false
 	}
 	return true

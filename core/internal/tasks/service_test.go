@@ -439,7 +439,7 @@ func TestCreateReadsTheOrderUnderTheCallersOrg(t *testing.T) {
 	const north, south = "3ef10000-0000-4000-8000-000000000001", "3ef10000-0000-4000-8000-000000000002"
 	svc, store, _ := newSvc(t)
 	svc.WithOrderReader(orgOrderReader{owner: map[string]string{knownOrder: south}})
-	h := NewHandler(svc, nil)
+	h := NewHandler(svc, nil).WithBranchOrgReader(branchesOfOrg{branchA: {south: true, north: true}})
 	global := identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", Tier: identity.TierLeadership,
 		Scope: identity.ScopeGlobal, Status: identity.StatusActive}
 	post := func(order, org string) (int, string) {
@@ -457,4 +457,110 @@ func TestCreateReadsTheOrderUnderTheCallersOrg(t *testing.T) {
 	if code, body := post(knownOrder, south); code != http.StatusCreated {
 		t.Errorf("the owning org still creates: %d %s", code, body)
 	}
+}
+
+// branchesOfOrg is the branch to org seam double: branch id -> the orgs it belongs to.
+type branchesOfOrg map[string]map[string]bool
+
+func (b branchesOfOrg) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
+	return b[branchID][orgID], nil
+}
+
+// UX-81 round 5: every fallback taken on an empty org refuses. Each is listed in the report.
+func TestAnEmptyOrgRefusesInsteadOfReadingUnscoped(t *testing.T) {
+	const org = "3ef10000-0000-4000-8000-000000000001"
+	ctx := context.Background()
+
+	// 1. CreateFromOrder with the org held order read wired and no org.
+	svc, store, _ := newSvc(t)
+	svc.WithOrderReader(orgOrderReader{owner: map[string]string{knownOrder: org}})
+	if _, err := svc.CreateFromOrder(ctx, CreateInput{OrderID: knownOrder}); !errors.Is(err, ErrUnknownOrder) || len(store.tasks) != 0 {
+		t.Errorf("a create with no org refuses as an unknown order and writes nothing: %v, %d tasks", err, len(store.tasks))
+	}
+
+	// 2 and 3. The service's ticket read and the pending feed with the org held source wired and no org bound.
+	svc.WithPickSource(orgSource{})
+	if _, err := svc.pickTicket(ctx, knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("a ticket read with no org bound refuses: %v", err)
+	}
+	if _, _, err := svc.PendingTickets(ctx, "", 10, 0); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the pending feed with no org bound refuses: %v", err)
+	}
+	if _, err := svc.pickTicket(withOrg(ctx, org), knownOrder); err != nil {
+		t.Errorf("with an org bound the ticket read goes through: %v", err)
+	}
+
+	// 4 and 5. The sync store's order read and ticket read.
+	s := NewSyncStore(nil, orgOrderReader{owner: map[string]string{knownOrder: org}}, nil).WithPickSource(orgSource{})
+	if _, err := s.orderBrief(ctx, "", knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the sync create's order read with no org refuses: %v", err)
+	}
+	if _, err := s.pickTicket(ctx, "", knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the sync ticket read with no org refuses: %v", err)
+	}
+
+	// 6. The task list: a read that names no org lists nothing (the repository is checked in the integration legs).
+	// 7. A served request that names no org never reaches a handler.
+	h := NewHandler(svc, nil)
+	called := false
+	w := httptest.NewRecorder()
+	h.staff(func(http.ResponseWriter, *http.Request, guards.StaffCaller) { called = true })(w,
+		httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil), guards.StaffCaller{})
+	if called || w.Code != http.StatusForbidden {
+		t.Errorf("a caller that names no org is refused before any read: called %v, %d", called, w.Code)
+	}
+}
+
+// orgSource is a pick source that holds the org read (and the pending feed), the shape of the real adapter.
+type orgSource struct{}
+
+func (orgSource) PickTicket(context.Context, string) (PickTicket, error) {
+	return PickTicket{}, errors.New("the unscoped read must never be taken")
+}
+func (orgSource) PendingTickets(context.Context, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, errors.New("the unscoped read must never be taken")
+}
+func (orgSource) PickTicketInOrg(context.Context, string, string) (PickTicket, error) {
+	return PickTicket{OrderID: knownOrder}, nil
+}
+func (orgSource) PendingTicketsInOrg(context.Context, string, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, nil
+}
+
+// The yard fence bounds the named branch to the caller's org, whatever the caller's scope: a GLOBAL caller names a
+// branch of another org and is out of scope; the unreadable seam is a retry (503), never an allow.
+func TestYardFenceBoundsTheBranchToTheCallersOrg(t *testing.T) {
+	const north, south = "3ef10000-0000-4000-8000-000000000001", "3ef10000-0000-4000-8000-000000000002"
+	const northBranch, southBranch = "3ef10000-0000-4000-8000-000000000011", "3ef10000-0000-4000-8000-000000000013"
+	svc, _, _ := newSvc(t)
+	h := NewHandler(svc, nil).WithBranchOrgReader(branchesOfOrg{northBranch: {north: true}, southBranch: {south: true}})
+	global := identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive}
+	fence := func(h *Handler, branch string) int {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?branch_id="+branch, nil)
+		r = r.WithContext(withOrg(identity.ContextWithStaff(r.Context(), global), north))
+		w := httptest.NewRecorder()
+		if h.yardBranchFence(w, r) {
+			return http.StatusOK
+		}
+		return w.Code
+	}
+	if c := fence(h, southBranch); c != http.StatusForbidden {
+		t.Errorf("a GLOBAL caller of north naming south's branch is out of scope: %d", c)
+	}
+	if c := fence(h, northBranch); c != http.StatusOK {
+		t.Errorf("a GLOBAL caller of north naming north's branch passes: %d", c)
+	}
+	if c := fence(NewHandler(svc, nil), northBranch); c != http.StatusForbidden {
+		t.Errorf("a handler with no branch to org seam fails closed once an org is bound: %d", c)
+	}
+	if c := fence(NewHandler(svc, nil).WithBranchOrgReader(failingBranchOrg{}), northBranch); c != http.StatusServiceUnavailable {
+		t.Errorf("an unreadable branch to org seam is a retry (503), not an allow: %d", c)
+	}
+}
+
+type failingBranchOrg struct{}
+
+func (failingBranchOrg) BranchInOrg(context.Context, string, string) (bool, error) {
+	return false, errors.New("locations unreadable")
 }
