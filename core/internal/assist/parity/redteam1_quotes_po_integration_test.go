@@ -36,7 +36,7 @@ func TestRedTeam1_AManagerOffTheMarginListCannotGetMarginByAnySpec(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := assist.NewHandler(nil, nil).WithCostGate(rc, allBranches{{BranchID: w.a}, {BranchID: w.b}})
+	h := assist.NewHandler(nil, nil).WithCostGate(rc, everyBranch(t, env))
 	build := func(sc identity.StaffContext) assist.Caller {
 		req := httptest.NewRequest("POST", "/api/v1/assist/chat", nil).WithContext(identity.ContextWithStaff(ctx, sc))
 		c, err := h.CallerFor(req, guards.StaffCaller{})
@@ -127,7 +127,7 @@ func TestRedTeam1_PurchaseCostFollowsTheBranchPolicyOnEveryPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := assist.NewHandler(nil, nil).
-		WithCostGate(rc, allBranches{{BranchID: w.manager}, {BranchID: w.allStaff}, {BranchID: w.hidden}}).
+		WithCostGate(rc, everyBranch(t, env)).
 		WithPurchaseCostPolicy(adapters.NewPurchaseCostPolicy(purchasing.NewService(purchasing.NewRepository(pool))))
 	build := func(sc identity.StaffContext) assist.Caller {
 		req := httptest.NewRequest("POST", "/api/v1/assist/chat", nil).WithContext(identity.ContextWithStaff(ctx, sc))

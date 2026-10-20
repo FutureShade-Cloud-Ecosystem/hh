@@ -159,7 +159,7 @@ func TestParity_EveryPurchaseOrderAndItsCostFollowThePurchasingModulesOwnRead(t 
 	}
 	svc := purchasing.NewService(purchasing.NewRepository(pool))
 	h := assist.NewHandler(nil, nil).
-		WithCostGate(rc, allBranches{{BranchID: w.manager}, {BranchID: w.allStaff}, {BranchID: w.hidden}}).
+		WithCostGate(rc, everyBranch(t, env)).
 		WithPurchaseCostPolicy(adapters.NewPurchaseCostPolicy(svc))
 
 	type poRow struct{ id, no, branch string }

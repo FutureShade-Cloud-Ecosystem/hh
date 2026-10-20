@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/readtx/testsupport"
 )
 
@@ -163,4 +164,24 @@ func plantBranch(t *testing.T, env *testsupport.Env, tag, name string) string {
 		_, _ = c.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, id)
 	})
 	return id
+}
+
+// everyBranch is the dealer's branch directory as a global caller's cost resolution sees it: every BRANCH
+// location in the database, the seeded ones, the test's own and any stray one another package left.
+func everyBranch(t *testing.T, env *testsupport.Env) allBranches {
+	t.Helper()
+	rows, err := env.Admin.Query(testsupport.Ctx(t), `SELECT id::text, name FROM locations WHERE loc_type = 'BRANCH' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out allBranches
+	for rows.Next() {
+		var b assist.NamedBranch
+		if err := rows.Scan(&b.BranchID, &b.Name); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, b)
+	}
+	return out
 }

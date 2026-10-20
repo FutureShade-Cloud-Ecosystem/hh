@@ -123,7 +123,7 @@ func TestParity_EveryQuoteAndItsMarginFollowTheQuoteModulesOwnReads(t *testing.T
 		t.Fatal(err)
 	}
 	oracle := quote.NewStaffService(quote.NewRepository(pool)).WithRoleConfig(rc)
-	h := assist.NewHandler(nil, nil).WithCostGate(rc, allBranches{{BranchID: w.a}, {BranchID: w.b}})
+	h := assist.NewHandler(nil, nil).WithCostGate(rc, everyBranch(t, env))
 	callers := map[string]identity.StaffContext{
 		"general manager, global":     {UserID: "u-gm", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal, Status: "ACTIVE"},
 		"sales manager at a":          scoped("SALES_MANAGER", w.a),
