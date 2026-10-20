@@ -125,3 +125,57 @@ test("a product at -3 on hand reads 'Out of stock here' on the search row and th
   await expect(grid.locator(".rowitem").filter({ hasText: "Charcoal Stone 60 mm" }).first()).not.toContainText("-3");
   await expect(grid.locator(".rowitem").filter({ hasText: "Clear Stone" }).first()).toContainText("12");
 });
+
+test("at 390x844 a long product name at 0 on hand keeps 'Out of stock here' whole on the search row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/v1/products/counter-search**", async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { items?: Array<Record<string, unknown>> };
+    const items = (body.items ?? []).map((item) => {
+      if (item.product_id !== "p-charcoal-60") return item;
+      const byBranch = (item.on_hand_by_branch ?? {}) as Record<string, number>;
+      const updated: Record<string, number> = {};
+      for (const k of Object.keys(byBranch)) updated[k] = 0;
+      return {
+        ...item,
+        name: "Charcoal Stone 60 mm Permeable Interlocking Paver Heavy Duty Driveway Grade Pallet",
+        sku: "CHAR-STN-60-PERM-HD",
+        on_hand_branch: 0,
+        on_hand_by_branch: updated,
+      };
+    });
+    await route.fulfill({ response: res, json: { ...body, items } });
+  });
+  await signIn(page);
+
+  const head = page.getByTestId("step-head-items");
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    if ((await head.getAttribute("aria-expanded")) === "true") break;
+  }
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("stone");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Permeable Interlocking" }).first();
+  await expect(row).toBeVisible();
+  const words = row.locator(".out");
+  await expect(words).toHaveText("Out of stock here");
+  await expect(words).toBeVisible();
+  // The words are an inline span (its own scrollWidth is always 0), so the clip is read on the
+  // line that holds them: nothing of it overflows, and the words end inside its box.
+  const clip = await words.evaluate((el) => {
+    const meta = el.closest(".meta") as HTMLElement;
+    const r = el.getBoundingClientRect();
+    const m = meta.getBoundingClientRect();
+    return {
+      overflow: meta.scrollWidth - meta.clientWidth,
+      past: r.right - m.right,
+      ellipsis: getComputedStyle(el).textOverflow === "ellipsis" || getComputedStyle(meta).textOverflow === "ellipsis",
+      clipped: getComputedStyle(meta).overflow !== "visible" && meta.scrollWidth > meta.clientWidth,
+    };
+  });
+  expect(clip.overflow, "the stock words overflow their line").toBeLessThanOrEqual(0);
+  expect(clip.past, "the stock words run past their line").toBeLessThanOrEqual(0.5);
+  expect(clip.clipped, "the stock words are cut").toBe(false);
+});

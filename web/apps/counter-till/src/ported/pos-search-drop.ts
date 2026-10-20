@@ -249,6 +249,22 @@ export class HosPosSearchDrop extends LitElement {
           grid-column: 2;
           grid-row: 2;
           align-self: center;
+          white-space: normal;
+        }
+        /* The stock words never truncate: at this width they take their own line under the SKU
+           (the SKU may still ellipsize on its own line). */
+        .meta .sku {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .meta .out {
+          display: block;
+          white-space: nowrap;
+        }
+        .meta .sep {
+          display: none;
         }
         .price {
           grid-column: 3;
@@ -446,8 +462,8 @@ export class HosPosSearchDrop extends LitElement {
           ><span class="sku">${h.sku}</span>${stock === null
             ? nothing
             : stock.tone === 'out'
-              ? html` · <span class="out">${stock.label}</span>`
-              : html` · ${stock.label}`}</span
+              ? html`<span class="sep"> · </span><span class="out">${stock.label}</span>`
+              : html`<span class="sep"> · </span>${stock.label}`}</span
         >
       </span>
       ${this.renderPrice(h)}
