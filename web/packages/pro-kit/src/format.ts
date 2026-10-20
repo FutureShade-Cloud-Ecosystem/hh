@@ -49,31 +49,82 @@ export function qtyWithUnit(qty: string | null | undefined, unit: string | null 
 }
 
 // The dealer's own zone: a day means the dealer's day, never UTC's (a UTC day
-// rolls over mid afternoon west of Greenwich). The demo dealer is in San Diego.
-const HOUSE_ZONE = "America/Los_Angeles";
+// rolls over mid afternoon west of Greenwich). The demo dealer is in San Diego,
+// and a dealer config that carries business_zone serves that zone for the session.
+export const DEFAULT_PRO_ZONE = "America/Los_Angeles";
 
-/** A timestamp as the dealer's calendar day in short words, for example `Mar 1`. */
-export function houseDay(iso: string | null | undefined): string {
-  if (typeof iso !== "string") return NO_DAY;
+let servedZone: string = DEFAULT_PRO_ZONE;
+
+function isValidZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Record the dealer's IANA time zone when the tenant config carries business_zone. */
+export function serveProZoneFrom(config: unknown): string {
+  if (config !== null && typeof config === "object" && "business_zone" in config) {
+    const raw = (config as { business_zone?: unknown }).business_zone;
+    if (typeof raw === "string" && raw.trim() !== "" && isValidZone(raw.trim())) {
+      servedZone = raw.trim();
+    }
+  }
+  return servedZone;
+}
+
+/** The dealer's active IANA time zone for Pro screens. */
+export function proZone(): string {
+  return servedZone;
+}
+
+/** Reset the dealer's zone to the default between unit tests. */
+export function resetProZoneForTest(): void {
+  servedZone = DEFAULT_PRO_ZONE;
+}
+
+/** A timestamp as the dealer's calendar day in glossary words, for example `Mar 1, 2026`. */
+export function houseDay(iso: string | null | undefined, zone: string = proZone()): string {
+  if (typeof iso !== "string" || iso.trim() === "") return NO_DAY;
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return NO_DAY;
-  return new Intl.DateTimeFormat("en-US", { timeZone: HOUSE_ZONE, month: "short", day: "numeric" }).format(when);
+  const tz = isValidZone(zone) ? zone : proZone();
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric", year: "numeric" }).format(when);
+}
+
+/** A timestamp as the dealer's calendar day and clock time in glossary words, for example `Mar 1, 2026, 8:15 AM`. */
+export function houseMoment(iso: string | null | undefined, zone: string = proZone()): string {
+  if (typeof iso !== "string" || iso.trim() === "") return NO_DAY;
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return NO_DAY;
+  const tz = isValidZone(zone) ? zone : proZone();
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(when);
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /**
- * A bare day from the core (an issue or due date, `YYYY-MM-DD`) as short words. It is the dealer's day already,
- * so it is read as written and never converted through a zone; anything after the day is ignored.
+ * A bare day from the core (an issue or due date, `YYYY-MM-DD`) in glossary words (`Mar 1, 2026`). It is the dealer's
+ * day already, so it is read as written and never converted through a zone; anything after the day is ignored.
  */
 export function calendarDay(value: string | null | undefined): string {
   if (typeof value !== "string") return NO_DAY;
-  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(value);
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
   if (m === null) return NO_DAY;
-  const month = Number(m[1]);
-  const day = Number(m[2]);
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return NO_DAY;
-  return `${MONTHS[month - 1]} ${day}`;
+  return `${MONTHS[month - 1]} ${day}, ${year}`;
 }
 
 /** The mono face for ids, quantities and totals, with tabular figures so a column lines up. */

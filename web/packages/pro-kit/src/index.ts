@@ -9,7 +9,23 @@ export type { SignInMethod, SignInPlan, SignInMethodChoice, SignInSubmit } from 
 export { DemoTenantSignInAdapter, demoTenantAdapter } from "./demo-adapter.js";
 export { tenantClient } from "./client.js";
 export { realExchangeAdapter } from "./real-exchange.js";
-export { NO_PRICE, NO_COUNT, NO_DAY, NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, calendarDay, monoStyles } from "./format.js";
+export {
+  NO_PRICE,
+  NO_COUNT,
+  NO_DAY,
+  NO_FIGURE,
+  DEFAULT_PRO_ZONE,
+  serveProZoneFrom,
+  proZone,
+  resetProZoneForTest,
+  money,
+  totalsLine,
+  qtyWithUnit,
+  houseDay,
+  houseMoment,
+  calendarDay,
+  monoStyles,
+} from "./format.js";
 export { STAGES, STAGE_WORDS, statusWords, statusTone, chipStyles, stageChip, statusChip, trackingChip, trackingTone } from "./chips.js";
 export { stageOfOrder, stageOfProject, stageOfQuote, trackingOf, TRACKING_WORDS, TRACKING_STATES } from "./board.js";
 export type { Tracking } from "./board.js";

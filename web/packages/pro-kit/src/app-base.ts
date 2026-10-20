@@ -32,7 +32,7 @@ import { tenantClient } from "./client.js";
 import { InMemoryTenantSession, type TenantSession, type TenantSignInAdapter } from "./session.js";
 import { appOf, surfaceOf, type ProAppKey } from "./surfaces.js";
 import { chipStyles } from "./chips.js";
-import { monoStyles } from "./format.js";
+import { monoStyles, serveProZoneFrom } from "./format.js";
 import "./frame.js";
 import "./signin.js";
 import "./state-view.js";
@@ -156,6 +156,7 @@ export abstract class ProAppBase<T> extends HHElement {
   async #loadDealer(): Promise<void> {
     const answer = await tenantAuth.tenantGetConfig(this.#client);
     if (answer.ok) {
+      serveProZoneFrom(answer.value);
       this.#dealerName = answer.value.dealer_name;
       this.requestUpdate();
     }
