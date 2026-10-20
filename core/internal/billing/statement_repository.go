@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -107,7 +108,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
-		ln := StatementLine{Date: at, DocNo: invNo, Description: statementDescription(txnType, memo)}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, memo)}
 		// The subledger's sign convention: a charge raises AR (positive), a payment lowers it
 		// (negative). The statement shows both as positive numbers in their own column, which is what
 		// a reader expects, so the sign is translated here rather than shown raw.
@@ -122,6 +123,10 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 	}
 	return out, rows.Err()
 }
+
+// statementLineDate is the dealer's day an activity line printed under. The cut off above is in the
+// house zone, so the date shown must be too, or a late evening sale prints a day after its cut off.
+func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return houseClockIn(zone, at) }
 
 // statementDescription turns a subledger row into a line a customer can read without a glossary.
 func statementDescription(txnType, memo string) string {
