@@ -92,13 +92,7 @@ VALUES ($1, $2, $3::date, 'READY', 1, 353125, 9500)`, branchTRT, orderID, date);
 	if drvView.ValueVisible {
 		t.Fatal("value_visible must be false for a driver, the posture field is the caller's, not the data's")
 	}
-	for _, forbidden := range []string{"value_cents", "freight_cents", "353125", "9500"} {
-		if strings.Contains(string(drvJSON), forbidden) {
-			t.Fatalf("a driver's load board carries %q. The gate is DEFINED correctly and the struct tags "+
-				"are correct; what this asserts is that the one line joining them is still there. Got %s",
-				forbidden, drvJSON)
-		}
-	}
+	assertUnion15DriverBoardJSON(t, drvJSON)
 
 	// And the gate removes the MONEY, not the WORK: the driver sees the same stops.
 	if countStopsIn(drvJSON) != countStopsIn(mgrJSON) {

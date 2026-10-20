@@ -38,14 +38,22 @@ func (c Caller) ReadClaims() (readtx.Claims, error) {
 		}
 		costBranches = append(costBranches, id)
 	}
+	poBranches := make([]string, 0, len(c.POCostBranchIDs))
+	for _, id := range c.POCostBranchIDs {
+		if !uuidShape.MatchString(id) {
+			return readtx.Claims{}, errors.New("assist: a purchase cost branch id is not a uuid")
+		}
+		poBranches = append(poBranches, id)
+	}
 	return readtx.Claims{
-		Audience:      readtx.AudienceStaff,
-		AskerID:       c.UserID,
-		Tier:          c.Tier,
-		Global:        c.Global,
-		BranchIDs:     branches,
-		CostBranchIDs: costBranches,
-		Margin:        c.Margin,
-		PaymentTrail:  c.PaymentTrail,
+		Audience:        readtx.AudienceStaff,
+		AskerID:         c.UserID,
+		Tier:            c.Tier,
+		Global:          c.Global,
+		BranchIDs:       branches,
+		CostBranchIDs:   costBranches,
+		POCostBranchIDs: poBranches,
+		Margin:          c.Margin,
+		PaymentTrail:    c.PaymentTrail,
 	}, nil
 }

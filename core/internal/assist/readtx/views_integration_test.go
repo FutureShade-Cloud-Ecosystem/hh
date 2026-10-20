@@ -197,7 +197,7 @@ func TestOrdersViewHasPlainColumnsOnly(t *testing.T) {
 
 func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *testing.T) {
 	admin := connect(t, gateURL(t))
-	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs"} {
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines"} {
 		var enabled, forced bool
 		var policies int
 		if err := admin.QueryRow(ctxT(t), `SELECT c.relrowsecurity, c.relforcerowsecurity,
@@ -218,8 +218,69 @@ func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *test
 		if err := admin.QueryRow(ctxT(t), `SELECT reltuples::int FROM pg_class WHERE oid = $1::regclass`, "public."+table).Scan(&direct); err != nil {
 			t.Fatal(err)
 		}
-		if n == 0 {
+		// The seed holds no purchase orders; for those two tables row_security_active above is the whole check
+		// that the app role is not filtered, and the purchasing parity tests read them with rows planted.
+		seedEmpty := table == "purchasing_pos" || table == "purchasing_po_lines"
+		if n == 0 && !seedEmpty {
 			t.Errorf("the app role reads no rows of %s", table)
 		}
+	}
+}
+
+// Slice 6b: no column named latitude, longitude or instructions is in any view the assistant's readers can reach,
+// in either schema. Coordinates place a person's address or a truck and instructions are free text addressed to
+// a driver or a crew; neither is a column of any ai or ai_pro view, and a view that gains one fails here.
+const noPlaceOrInstructionColumns = `SELECT n.nspname || '.' || c.relname, a.attname FROM pg_attribute a
+	JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE n.nspname IN ('ai', 'ai_pro') AND c.relkind IN ('v', 'm', 'r', 'f', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+	  AND (a.attname ~* '(^|_)(latitude|longitude|lat|lng|lon|instructions?)($|_)')
+	ORDER BY 1, 2`
+
+func TestNoAssistViewCarriesCoordinatesOrInstructions(t *testing.T) {
+	_, _, _, admin := staffReader(t)
+	check := func() []string {
+		rows, err := admin.Query(ctxT(t), noPlaceOrInstructionColumns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var found []string
+		for rows.Next() {
+			var rel, col string
+			if err := rows.Scan(&rel, &col); err != nil {
+				t.Fatal(err)
+			}
+			found = append(found, rel+"."+col)
+		}
+		return found
+	}
+	if got := check(); len(got) != 0 {
+		t.Errorf("views carry place or instruction columns: %v", got)
+	}
+	// The test bites: a view that adds one is found (in a transaction that is rolled back).
+	tx, err := admin.Begin(ctxT(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctxT(t)) }()
+	for _, sql := range []string{
+		`CREATE VIEW ai.s6b_probe AS SELECT 1 AS id, 2.5::numeric AS latitude, 'x'::text AS delivery_instructions`,
+		`CREATE VIEW ai_pro.s6b_probe AS SELECT 1 AS id, 1.5::numeric AS longitude`,
+	} {
+		if _, err := tx.Exec(ctxT(t), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := tx.Query(ctxT(t), noPlaceOrInstructionColumns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	if n != 3 {
+		t.Errorf("the probe views carry 3 forbidden columns and the check found %d", n)
 	}
 }

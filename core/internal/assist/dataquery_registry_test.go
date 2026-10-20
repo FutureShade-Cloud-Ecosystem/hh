@@ -87,3 +87,54 @@ func classOfView(view, col string) (string, bool) {
 	c, ok := RegisteredColumns()[view+"."+col]
 	return c, ok
 }
+
+// PII-CLASSES-r2: the personal tag is separate from the class and gates nothing. Every personal column the
+// views carry is tagged and keeps its visibility class; the tag list is exported for the text index.
+func TestRegistry_PersonalTagIsSeparateFromTheClassAndOnEveryPersonalColumn(t *testing.T) {
+	reg := RegisteredColumns()
+	for _, col := range PersonalColumns() {
+		class, ok := reg[col]
+		if !ok {
+			t.Errorf("personal column %s is not in the registry", col)
+		}
+		if class == ClassSecret {
+			t.Errorf("personal column %s is secret: a secret column is in no view, so it cannot be tagged", col)
+		}
+	}
+	// customers.name is shown on every order screen: plain for visibility, personal for sensitivity.
+	if reg["ai.orders.customer_name"] != ClassPlain {
+		t.Errorf("customer_name has class %q, want plain: the tag does not gate", reg["ai.orders.customer_name"])
+	}
+	v := ordersView()
+	if c, _ := v.col("customer_name"); !c.Personal {
+		t.Error("customer_name is not tagged personal in the classified view")
+	}
+	if c, _ := v.col("order_no"); c.Personal {
+		t.Error("order_no is tagged personal")
+	}
+	// The tag gates nothing: an asker with no cost, margin or trail still has the column in the catalogue.
+	for _, fv := range CatalogueFor(dqManager) {
+		if fv.Name == "ai.orders" {
+			if c, ok := fv.col("customer_name"); !ok || !c.Personal {
+				t.Errorf("customer_name in the manager's catalogue: present=%v personal=%v", ok, c.Personal)
+			}
+		}
+	}
+}
+
+// A citation label is built from the record's own label column, never from a personal column.
+func TestRegistry_NoCitationLabelIsBuiltFromAPersonalColumn(t *testing.T) {
+	for _, v := range builtinViews() {
+		if v.CiteLabelCol == "" {
+			continue
+		}
+		col, ok := v.col(v.CiteLabelCol)
+		if !ok {
+			t.Errorf("%s: the label column %s is not a column of the view", v.Name, v.CiteLabelCol)
+			continue
+		}
+		if col.Personal {
+			t.Errorf("%s: the citation label is built from %s, which is personal data", v.Name, v.CiteLabelCol)
+		}
+	}
+}
