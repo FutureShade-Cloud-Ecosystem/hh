@@ -108,6 +108,24 @@ test("unknown fields are dropped, not carried", () => {
   assert.equal("apiKey" in parsed.config, false);
 });
 
+test("dealer branch is carried when configured and refused when blank", () => {
+  const withBranch = parseRuntimeConfig({
+    ...CONSOLE,
+    dealer: { name: "Gable Landscape Supply", mark: "gable", branch: "Point Loma" },
+  });
+  assert.equal(withBranch.ok, true);
+  assert.deepEqual(withBranch.config.dealer, {
+    name: "Gable Landscape Supply",
+    mark: "gable",
+    branch: "Point Loma",
+  });
+  const blankBranch = parseRuntimeConfig({
+    ...CONSOLE,
+    dealer: { name: "Gable Landscape Supply", mark: "gable", branch: "   " },
+  });
+  assert.deepEqual(blankBranch, { ok: false, reason: "incomplete" });
+});
+
 test("loading: a 200 with json parses; every other outcome has its own reason", async () => {
   const answer = (status, body) => async () => new Response(body, { status });
   assert.equal((await loadRuntimeConfig(answer(200, JSON.stringify({ mode: "demo" })))).ok, true);

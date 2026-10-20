@@ -273,6 +273,32 @@ export function moneyWords(cents: number | null | undefined): string {
   return formatDollars(Math.round(cents));
 }
 
+/** The words a withheld figure shows: the margin and cost legs ride only to the cost list (HH-419). */
+export const WITHHELD_FIGURE_WORDS = "Not shown";
+
+/** A margin or floor cell: the percent, or the withheld words when the figure is absent, never 0.00%. */
+export function marginCellWords(bps: number | null | undefined): string {
+  return bps === null || bps === undefined ? WITHHELD_FIGURE_WORDS : pctWords(bps);
+}
+
+/** A cost bearing money cell: the dollars, or the withheld words when the figure is absent. */
+export function costCellWords(cents: number | null | undefined): string {
+  return cents === null || cents === undefined ? WITHHELD_FIGURE_WORDS : moneyWords(cents);
+}
+
+/**
+ * The ledger header: the total and the claims it covers. When a cost basis row's accrual is withheld
+ * the server's total counts only the rows shown, so the header must say so and how many are not shown,
+ * never present a partial total as the whole claim.
+ */
+export function ledgerTotalWords(totalCents: number, rows: readonly { readonly accrual_cents: number | null }[]): string {
+  const shown = rows.filter((r) => r.accrual_cents !== null).length;
+  const hidden = rows.length - shown;
+  const claims = (n: number): string => `${n} ${n === 1 ? "claim" : "claims"}`;
+  if (hidden === 0) return `${moneyWords(totalCents)} over ${claims(shown)}`;
+  return `${moneyWords(totalCents)} over the ${claims(shown)} shown, ${hidden} not shown`;
+}
+
 /** Integer basis points to a two decimal percent, the sign included. */
 export function pctWords(bps: number | null | undefined): string {
   if (bps === null || bps === undefined || !Number.isFinite(bps)) return "";
@@ -379,10 +405,10 @@ export interface FloorItemLike {
   readonly sku: string;
   readonly name: string;
   readonly final_cents: number;
-  readonly margin_bps: number;
-  readonly floor_bps: number;
+  readonly margin_bps: number | null;
+  readonly floor_bps: number | null;
   readonly previous_final_cents: number;
-  readonly previous_margin_bps: number;
+  readonly previous_margin_bps: number | null;
   readonly already_under_floor: boolean;
 }
 

@@ -250,6 +250,39 @@ func TestDemoServeVisitorAllowance(t *testing.T) {
 	}
 }
 
+// The operator's address ceiling is read once at boot beside the visitor
+// allowance: unset keeps the default, a value is capped, and it never falls
+// below the visitor allowance in effect.
+func TestDemoServeAddressCeiling(t *testing.T) {
+	env := serveEnv(t)
+	env["CORE_SIGNIN_MODE"] = "demo"
+	getenv, _, _ := envFuncs(env)
+
+	cases := []struct {
+		name, ceiling, visitor string
+		want                   int
+	}{
+		{"unset", "", "", demo.DefaultAddressCeiling},
+		{"value", "120", "", 120},
+		{"capped", "100000", "", demo.MaxAddressCeiling},
+		{"junk", "lots", "", demo.DefaultAddressCeiling},
+		{"under the visitor allowance", "8", "14", 14},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env["HH_DEMO_MINT_ADDRESS_CEILING"] = c.ceiling
+			env["HH_DEMO_MINT_VISITOR_ALLOWANCE"] = c.visitor
+			cfg, err := loadDemoServeConfig(getenv)
+			if err != nil {
+				t.Fatalf("loadDemoServeConfig: %v", err)
+			}
+			if cfg.addressCeiling != c.want {
+				t.Errorf("addressCeiling = %d, want %d", cfg.addressCeiling, c.want)
+			}
+		})
+	}
+}
+
 // P3-9: the token expiry is capped at the demo ceiling; a longer value
 // refuses at load with the variable named.
 func TestDemoServeRefusesATokenExpiryOverTheCeiling(t *testing.T) {

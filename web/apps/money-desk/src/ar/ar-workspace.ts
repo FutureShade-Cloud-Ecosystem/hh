@@ -502,7 +502,7 @@ export function renderWorkspaceSummaryCard(
       <dl class="summary-dl">
         <dt>Status</dt><dd>${accountStatusBadgeText(h.status)}</dd>
         <dt>Credit limit</dt><dd>${formatWorkspaceMoney(h.credit_limit_cents)}</dd>
-        <dt>Open balance</dt><dd>${formatWorkspaceMoney(h.open_cents)}</dd>
+        <dt>Balance</dt><dd>${formatWorkspaceMoney(h.open_cents)}</dd>
         <dt>Available</dt><dd>${formatWorkspaceMoney(h.available_credit_cents)}</dd>
         <dt>Overdue</dt><dd>${formatWorkspaceMoney(h.overdue_cents)}</dd>
         <dt>Last payment</dt><dd>${h.last_payment_at ? formatWorkspaceDate(h.last_payment_at) : "None"}</dd>

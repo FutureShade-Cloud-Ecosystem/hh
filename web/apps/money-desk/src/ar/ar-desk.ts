@@ -14,7 +14,7 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { sweepWords } from "./office-logic.js";
@@ -218,9 +218,9 @@ export class ArDesk {
   async #reloadAccount(): Promise<void> {
     const account = this.#account;
     if (account === null) return;
-    const register = await this.#api.register({ chip: "PAID", customerId: account.customerId });
+    const register = await this.#api.accountInvoices(account.customerId);
     if (!register.ok || this.#account === null) return;
-    this.#account = { ...this.#account, invoices: register.value.items };
+    this.#account = { ...this.#account, invoices: register.value.items, invoicesState: "ready" };
     if (this.#account.selectedInvoiceId !== null) await this.#reloadInvoice();
   }
 
@@ -254,6 +254,9 @@ export class ArDesk {
     switch (action) {
       case "reload":
         void this.load();
+        return true;
+      case "retry-account-invoices":
+        void this.#retryAccountInvoices();
         return true;
       case "tab":
         void this.#goTab(attr("data-tab") as Tab);
@@ -616,7 +619,7 @@ export class ArDesk {
   }
 
   async #loadPaid(): Promise<void> {
-    const all = await this.#api.register({ chip: "PAID" });
+    const all = await this.#api.register();
     if (all.ok) this.#rows = all.value.items;
     await this.#refreshSelection();
     this.#host.repaint();
@@ -647,6 +650,7 @@ export class ArDesk {
       terms: row?.payment_terms_days ?? null,
       branchName: "",
       invoices: [],
+      invoicesState: "loading",
       showAll: false,
       sub,
       right,
@@ -662,14 +666,23 @@ export class ArDesk {
       previewError: "",
     };
     this.#host.repaint();
-    const register = await this.#api.register({ chip: "PAID", customerId });
+    await this.#loadAccountInvoices(customerId, invoiceId, right);
+    this.#host.repaint();
+    if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
+    await this.#loadStatement(customerId);
+    if (sub === "contacts") await this.#office.ensureContact(customerId);
+  }
+
+  /** Reads every invoice of the account (open and paid), prefills the payment from the arriving row, or says the read failed. */
+  async #loadAccountInvoices(customerId: string, invoiceId: string | null, right: RightMode): Promise<void> {
+    const register = await this.#api.accountInvoices(customerId);
     if (this.#account === null || this.#account.customerId !== customerId) return;
     if (!register.ok) {
-      this.#fail("load", register);
+      this.#account = { ...this.#account, invoicesState: "failed" };
     } else {
       const first = register.value.items[0];
       const branch = this.#branches.find((b) => b.id === first?.branch_id)?.name.replace(/ \(demo\)$/, "") ?? "";
-      this.#account = { ...this.#account, name: first?.customer_name ?? this.#account.name, accountNo: first?.account_no ?? this.#account.accountNo, branchName: branch, invoices: register.value.items };
+      this.#account = { ...this.#account, name: first?.customer_name ?? this.#account.name, accountNo: first?.account_no ?? this.#account.accountNo, branchName: branch, invoices: register.value.items, invoicesState: "ready" };
       const target = invoiceId === null ? undefined : register.value.items.find((r) => r.id === invoiceId);
       if (target !== undefined && right === "receive" && target.balance_cents > 0) {
         this.#account = { ...this.#account, amountText: formatMoney(target.balance_cents), picked: [target.id] };
@@ -678,9 +691,15 @@ export class ArDesk {
       this.#afterFill();
     }
     this.#host.repaint();
-    if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
-    await this.#loadStatement(customerId);
-    if (sub === "contacts") await this.#office.ensureContact(customerId);
+  }
+
+  async #retryAccountInvoices(): Promise<void> {
+    const account = this.#account;
+    if (account === null) return;
+    this.#clearMessages();
+    this.#account = { ...account, invoicesState: "loading" };
+    this.#host.repaint();
+    await this.#loadAccountInvoices(account.customerId, account.selectedInvoiceId, account.right);
   }
 
   async #selectInvoice(invoiceId: string): Promise<void> {
@@ -702,7 +721,7 @@ export class ArDesk {
   }
 
   #openInvoices(): BillingRegisterRow[] {
-    return (this.#account?.invoices ?? []).filter((r) => r.status !== "PAID");
+    return (this.#account?.invoices ?? []).filter(isUnpaidInvoice);
   }
 
   #togglePick(invoiceId: string): void {
@@ -946,8 +965,14 @@ export class ArDesk {
     if (customerId === "" || this.#busy) return;
     this.#busy = true;
     this.#clearMessages();
-    const register = await this.#api.register({ chip: "PAID", customerId });
-    const overdue = register.ok ? register.value.items.filter((r) => r.days_overdue > 0 && r.status !== "PAID").map((r) => r.id) : [];
+    const register = await this.#api.accountInvoices(customerId);
+    if (!register.ok) {
+      this.#busy = false;
+      this.#fail("load", register);
+      this.#host.repaint();
+      return;
+    }
+    const overdue = register.value.items.filter((r) => r.days_overdue > 0 && isUnpaidInvoice(r)).map((r) => r.id);
     if (overdue.length === 0) {
       this.#busy = false;
       this.#error = "Nothing on this account is overdue, so there is nothing to chase.";
