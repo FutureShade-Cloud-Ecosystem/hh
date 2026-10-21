@@ -12,6 +12,7 @@ package bankrec
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -199,3 +200,63 @@ func TestIntegration_Integrity_AnUnmatchInsideACompletedMonthIsRefused(t *testin
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// (4b) The completed month lock: a completion in flight (the reconciliation row FOR UPDATE and the advisory key held,
+// as CompleteReconciliation takes them) makes an unmatch of a line in that month wait, and when the completion
+// commits the unmatch reads COMPLETED and refuses. testkit.DrawPark parks counter draws, which the completion path
+// has none of, so the completion's locks are held by a plain transaction here.
+func TestIntegration_Integrity_AnUnmatchWaitsForACompletionAndThenRefuses(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	line := w.line(t, "COMPLETING MONTH", 5000)
+	code, body := w.post(w.callerAB, w.manual(line, reachPayA1))
+	if code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	var m Match
+	_ = json.Unmarshal([]byte(body), &m)
+	var year, month int
+	_ = w.pool.QueryRow(ctx, `SELECT EXTRACT(YEAR FROM txn_date)::int, EXTRACT(MONTH FROM txn_date)::int FROM bank_statement_lines WHERE id = $1::uuid`, line).Scan(&year, &month)
+	var recID string
+	if err := w.pool.QueryRow(ctx, `INSERT INTO bank_reconciliations (bank_account_id, year, month, status) VALUES ($1::uuid, $2, $3, 'OPEN')
+		ON CONFLICT (bank_account_id, year, month) DO UPDATE SET status = 'OPEN' RETURNING id::text`, w.account, year, month).Scan(&recID); err != nil {
+		t.Fatalf("open the month: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, recID)
+	})
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM bank_reconciliations WHERE id = $1::uuid FOR UPDATE`, recID); err != nil {
+		t.Fatalf("lock the row: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fmt.Sprintf("%s|%d|%d", w.account, year, month)); err != nil {
+		t.Fatalf("lock the key: %v", err)
+	}
+	done := make(chan [2]any, 1)
+	go func() { c, b := w.unmatch(w.callerAB, m.ID); done <- [2]any{c, b} }()
+	select {
+	case o := <-done:
+		t.Fatalf("the unmatch did not wait for the completion in flight: %v", o)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	if _, err := tx.Exec(ctx, `UPDATE bank_reconciliations SET status = 'COMPLETED', completed_at = now() WHERE id = $1::uuid`, recID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	select {
+	case o := <-done:
+		ls, ps, _ := w.written(t, line, reachPayA1)
+		t.Logf("the unmatch after the completion committed: %v | line %s payment %s", o, ls, ps)
+		if o[0].(int) == http.StatusOK || ls != "MATCHED" || ps != "DEPOSITED" {
+			t.Errorf("an unmatch that waited on a completion landed: %v, line %s, payment %s", o, ls, ps)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the unmatch never finished")
+	}
+}
