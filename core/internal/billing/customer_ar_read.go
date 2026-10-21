@@ -133,10 +133,12 @@ func (a AgingRow) OldestOverdueBucket() string {
 // ADJUSTMENT has no document, and inventing a placeholder for it would put a reference on screen
 // that a user could not find anywhere else in the system.
 type ARActivity struct {
-	Kind        string    `json:"kind"`
-	Reference   string    `json:"reference"`
-	AmountCents int64     `json:"amount_cents"`
-	BalanceLeft int64     `json:"balance_after_cents"`
+	Kind        string `json:"kind"`
+	Reference   string `json:"reference"`
+	AmountCents int64  `json:"amount_cents"`
+	// BalanceLeft is absent for a caller without the payment trail: a running balance with the payment
+	// rows taken out would give the withheld payment's amount and timing back (ruling 87).
+	BalanceLeft *int64    `json:"balance_after_cents,omitempty"`
 	BranchID    string    `json:"branch_id"`
 	Memo        string    `json:"memo"`
 	OccurredAt  time.Time `json:"occurred_at"`
@@ -181,9 +183,11 @@ func (s *CreditService) CustomerActivity(ctx context.Context, customerID string,
 // since been voided or removed still appears, with an empty reference, instead of vanishing from the
 // ledger, a missing ledger line is a much worse answer than a nameless one.
 //
-// withPayments admits the rows that name a payment (the payment, and the NSF reversal of one): they are
-// the payment trail ruling 87 holds to money desk or counter till WORK, so a caller the role gate does
-// not admit to the payment reads asks without them and the rows are absent, not blanked. The limit
+// withPayments admits the rows that name a payment (the payment, the NSF reversal of one, and the NSF
+// fee it raised): they are the payment trail ruling 87 holds to money desk or counter till WORK, so a
+// caller the role gate does not admit to the payment reads asks without them and the rows are absent,
+// not blanked. Without the trail the running balance is left off every row too (the register's own
+// timeline carries none): the steps between the kept rows would give the payments back. The limit
 // counts only the rows the caller may see.
 func (r *Repository) CustomerActivity(ctx context.Context, customerID string, limit int, withPayments bool) ([]ARActivity, error) {
 	if r.pool == nil {
@@ -206,7 +210,9 @@ func (r *Repository) CustomerActivity(ctx context.Context, customerID string, li
 		  LEFT JOIN invoices i ON i.id = ct.source_ref_id
 		  LEFT JOIN payments p ON p.id = ct.source_ref_id
 		 WHERE ct.customer_id = $1::uuid
-		   AND ($3::bool OR ct.txn_type NOT IN ('PAYMENT','NSF'))
+		   AND ($3::bool OR (ct.txn_type NOT IN ('PAYMENT','NSF')
+		                     AND COALESCE(ct.source_type, '') <> 'payment_nsf'
+		                     AND p.id IS NULL))
 		 ORDER BY ct.occurred_at DESC, ct.created_at DESC
 		 LIMIT $2`, customerID, limit, withPayments)
 	if err != nil {
@@ -216,9 +222,13 @@ func (r *Repository) CustomerActivity(ctx context.Context, customerID string, li
 	out := make([]ARActivity, 0, limit)
 	for rows.Next() {
 		var a ARActivity
-		if err := rows.Scan(&a.Kind, &a.Reference, &a.AmountCents, &a.BalanceLeft,
+		var balance int64
+		if err := rows.Scan(&a.Kind, &a.Reference, &a.AmountCents, &balance,
 			&a.BranchID, &a.Memo, &a.OccurredAt); err != nil {
 			return nil, err
+		}
+		if withPayments {
+			a.BalanceLeft = &balance
 		}
 		out = append(out, a)
 	}
