@@ -1203,3 +1203,9 @@ func (r *Repository) ReceivedPaymentsForInvoices(ctx context.Context, tx pgx.Tx,
 	}
 	return out, rows.Err()
 }
+
+// ReappliedToOrder lists the slices of reversed payments' held money applied to the invoices of one order, oldest first
+// (SF-2r round 2). INERT in the red commit.
+func (r *Repository) ReappliedToOrder(ctx context.Context, orderID string) ([]OrderReapplication, error) {
+	return nil, nil
+}
