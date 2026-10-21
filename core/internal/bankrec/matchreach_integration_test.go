@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -77,7 +78,7 @@ func newReachWorld(t *testing.T) *reachWorld {
 	w.poster = newDBPoster(pool)
 	w.pay = &fakePayments{}
 	w.lodg = &fakeLodgements{}
-	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournalPoster(w.poster)
+	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournals(gl.NewService(gl.NewRepository(pool))).WithJournalPoster(w.poster)
 	w.h = NewHandler(svc, slog.Default())
 	w.callerA = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{w.branchA}}}
 	w.callerAB = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeGlobal}}

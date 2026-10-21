@@ -147,11 +147,15 @@ func TestIntegration_Integrity_ALodgementOfAnotherAmountDoesNotClearTheLine(t *t
 	w := newReachWorld(t)
 	d := time.Now().UTC().Truncate(24 * time.Hour)
 	w.lodg.open = []Lodgement{{MovementID: reachLodgA, BranchID: w.branchA, AmountCents: 5000, Reference: "LDG-50", OccurredAt: d}}
+	credited := func() (n int64) {
+		_ = w.pool.QueryRow(context.Background(), `SELECT COALESCE(SUM(l.credit_cents), 0) FROM gl_journal_lines l
+			JOIN gl_accounts a ON a.id = l.account_id WHERE a.code = '1020'`).Scan(&n)
+		return n
+	}
+	before := credited()
 	line := w.line(t, "BIG DEPOSIT", 500000)
 	code, body := w.post(w.callerA, w.manualOf(line, "LODGEMENT", reachLodgA, 500000))
-	var posted int64
-	_ = w.pool.QueryRow(context.Background(), `SELECT COALESCE(SUM(l.credit_cents), 0) FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
-		JOIN gl_accounts a ON a.id = l.account_id WHERE a.code = '1020' AND j.memo LIKE '%'||$1||'%'`, "BIG DEPOSIT").Scan(&posted)
+	posted := credited() - before
 	ls, _, _ := w.written(t, line, reachPayA1)
 	t.Logf("a 50.00 lodgement matched to a 5,000.00 line: %d %s | line %s, undeposited cleared %d", code, body, ls, posted)
 	if code == http.StatusCreated || ls != "UNMATCHED" || posted != 0 {

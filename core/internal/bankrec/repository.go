@@ -321,6 +321,22 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 	if tag.RowsAffected() == 0 {
 		return "", conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
 	}
+	if m.TargetType == TargetJournal && m.TargetRefID != "" {
+		// A journal explains one line: bank_matches has no unique index for JOURNAL targets (0036 covers PAYMENT and
+		// LODGEMENT only), so a transaction lock on the journal id serialises the check and the insert.
+		if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "bankrec-journal|"+strings.ToLower(m.TargetRefID)); lerr != nil {
+			return "", fmt.Errorf("bankrec: journal lock: %w", lerr)
+		}
+		var held bool
+		if qerr := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM bank_matches WHERE target_type = 'JOURNAL' AND target_ref_id::text = $1 AND unmatched_at IS NULL)`,
+			strings.ToLower(m.TargetRefID)).Scan(&held); qerr != nil {
+			return "", fmt.Errorf("bankrec: journal live match: %w", qerr)
+		}
+		if held {
+			return "", conflict("bankrec: that journal already explains another statement line")
+		}
+	}
 	if len(claimPaymentIDs) > 0 {
 		// The named payment rows first, ascending (the payments module's own lock, LOCK-ORDER.md): the
 		// UPDATE below takes the payments counter on its first row, and must not hold it while it waits

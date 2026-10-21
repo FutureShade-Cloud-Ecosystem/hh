@@ -171,25 +171,25 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 	return out, rows.Err()
 }
 
-// LodgementBranch answers the branch of one lodgement (a till_movements row of type LODGEMENT), found false when
-// the id is no lodgement or not a uuid. A movement row is never updated or deleted and its branch is its session's,
-// so the fact is immutable.
-func (r *Repository) LodgementBranch(ctx context.Context, movementID string) (string, bool, error) {
+// LodgementFacts answers the branch and the amount of one lodgement (a till_movements row of type LODGEMENT), found
+// false when the id is no lodgement or not a uuid. A movement row is never updated or deleted, its branch is its
+// session's and its amount its own, so the facts are immutable.
+func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (bankrec.LodgementFact, bool, error) {
 	if r.pool == nil {
-		return "", false, errNoDB
+		return bankrec.LodgementFact{}, false, errNoDB
 	}
-	var branch string
+	var f bankrec.LodgementFact
 	err := r.pool.QueryRow(ctx,
-		`SELECT s.branch_id::text
+		`SELECT s.branch_id::text, m.amount_cents
 		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
-		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&branch)
+		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&f.BranchID, &f.AmountCents)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return bankrec.LodgementFact{}, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("till: lodgement branch: %w", err)
+		return bankrec.LodgementFact{}, false, fmt.Errorf("till: lodgement facts: %w", err)
 	}
-	return branch, true, nil
+	return f, true, nil
 }
 
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the

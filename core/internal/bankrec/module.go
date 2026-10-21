@@ -42,10 +42,23 @@ type PaymentSource interface {
 // against a bank deposit line. Satisfied by *till.Repository (recon_seam.go).
 type LodgementSource interface {
 	OpenLodgements(ctx context.Context, from, to time.Time) ([]Lodgement, error)
-	// LodgementBranch answers the branch of one lodgement by its movement id (SF-2g round 2): found is false for an
-	// id that is no lodgement. The till owns the movement; a lodgement is an append only ledger row whose branch
-	// is its till session's and never changes, so the answer cannot move between the reach check and the write.
-	LodgementBranch(ctx context.Context, movementID string) (branchID string, found bool, err error)
+	// LodgementFacts answers the branch and the amount of one lodgement by its movement id (SF-2g round 2, SF-2j):
+	// found is false for an id that is no lodgement. The till owns the movement; a lodgement is an append only
+	// ledger row whose branch is its till session's and whose amount is its own, and neither changes, so the answer
+	// cannot move between the reach and amount checks and the write.
+	LodgementFacts(ctx context.Context, movementID string) (LodgementFact, bool, error)
+}
+
+// LodgementFact is the branch and amount of one lodgement.
+type LodgementFact struct {
+	BranchID    string
+	AmountCents int64
+}
+
+// JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
+// *gl.Service. bankrec never reads gl_journals itself.
+type JournalSource interface {
+	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
 }
 
 // JournalPoster posts a clearing journal through the GL provider. Satisfied by a main.go adapter over
@@ -121,6 +134,7 @@ type Service struct {
 	repo       *Repository
 	payments   PaymentSource
 	lodgements LodgementSource
+	journals   JournalSource
 	poster     JournalPoster
 	balances   GLBalanceReader
 	source     StatementSource
@@ -135,6 +149,9 @@ func NewService(repo *Repository) *Service {
 
 // WithPayments injects the till unreconciled-card-payment seam (+ MarkDeposited).
 func (s *Service) WithPayments(p PaymentSource) *Service { s.payments = p; return s }
+
+// WithJournals injects the GL journal seam a manual JOURNAL match reads (SF-2j). Unwired, a JOURNAL target is refused.
+func (s *Service) WithJournals(j JournalSource) *Service { s.journals = j; return s }
 
 // WithLodgements injects the till open-lodgement seam.
 func (s *Service) WithLodgements(l LodgementSource) *Service { s.lodgements = l; return s }

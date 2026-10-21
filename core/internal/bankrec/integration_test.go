@@ -213,13 +213,13 @@ func (f *fakePayments) MarkDeposited(_ context.Context, ids []string, lineID str
 
 type fakeLodgements struct{ open []Lodgement }
 
-func (f *fakeLodgements) LodgementBranch(_ context.Context, id string) (string, bool, error) {
+func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (LodgementFact, bool, error) {
 	for _, l := range f.open {
 		if l.MovementID == id {
-			return l.BranchID, true, nil
+			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents}, true, nil
 		}
 	}
-	return "", false, nil
+	return LodgementFact{}, false, nil
 }
 
 func (f *fakeLodgements) OpenLodgements(_ context.Context, _, _ time.Time) ([]Lodgement, error) {
@@ -620,7 +620,9 @@ func TestIntegration_AC6_ManualMatchHistory(t *testing.T) {
 	d := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	lineID := insertLine(t, pool, acct, d, "MANUAL DEPOSIT", "MAN-1", 12345)
 	poster := newDBPoster(pool)
-	svc := NewService(NewRepository(pool)).WithJournalPoster(poster)
+	// The lodgement must exist and be for the line's own amount (SF-2j), so the seam holds one.
+	lodg := &fakeLodgements{open: []Lodgement{{MovementID: "44444444-4444-4444-8444-444444444444", AmountCents: 12345}}}
+	svc := NewService(NewRepository(pool)).WithLodgements(lodg).WithJournalPoster(poster)
 
 	m, err := svc.ManualMatch(context.Background(), MatchInput{
 		Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "44444444-4444-4444-8444-444444444444",
@@ -678,7 +680,8 @@ func TestIntegration_AC7_ReconGuardsAndEmission(t *testing.T) {
 
 	// Match the line manually so 0 unmatched remain.
 	poster := newDBPoster(pool)
-	svcM := NewService(NewRepository(pool)).WithJournalPoster(poster)
+	lodgM := &fakeLodgements{open: []Lodgement{{MovementID: "55555555-5555-4555-8555-555555555555", AmountCents: 70000}}}
+	svcM := NewService(NewRepository(pool)).WithLodgements(lodgM).WithJournalPoster(poster)
 	if _, err := svcM.ManualMatch(ctx, MatchInput{Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "55555555-5555-4555-8555-555555555555"}, ""); err != nil {
 		t.Fatalf("manual match: %v", err)
 	}

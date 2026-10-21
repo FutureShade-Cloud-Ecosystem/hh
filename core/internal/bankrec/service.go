@@ -251,13 +251,29 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
-	// A LODGEMENT target must exist and be in the caller's reach (SF-2g round 2); otherwise it answers exactly as a
-	// missing target, with nothing written. The fact comes from the till's seam.
-	if in.TargetType == TargetLodgement && in.CanAccessBranch != nil {
-		if ok, lerr := s.lodgementReachable(ctx, in.TargetRefID, in.CanAccessBranch); lerr != nil {
+	switch in.TargetType {
+	case TargetGroup:
+		// GROUP is a "manual grouping header" (migration 0033, matcher.go) with no member set: nothing resolves
+		// what it groups, so a match to it explains no money. Refused until members exist.
+		return Match{}, unprocessable("bankrec: a group match is not available yet, match the line to a payment, a lodgement or a journal")
+	case TargetLodgement:
+		// A LODGEMENT target must exist and be in the caller's reach (SF-2g round 2); otherwise it answers exactly as
+		// a missing target, with nothing written. The facts come from the till's seam. The lodgement must also be
+		// for the line's own amount: the clearing journal posts the line's amount, and the matcher's own tolerance
+		// for a lodgement reference is zero (SF-2j).
+		facts, found, lerr := s.lodgementFacts(ctx, in.TargetRefID)
+		if lerr != nil {
 			return Match{}, lerr
-		} else if !ok {
+		}
+		if !found || (in.CanAccessBranch != nil && !in.CanAccessBranch(facts.BranchID)) {
 			return Match{}, errNotFound
+		}
+		if facts.AmountCents != line.AmountCents {
+			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
+		}
+	case TargetJournal:
+		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
+			return Match{}, jerr
 		}
 	}
 	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
@@ -298,11 +314,51 @@ func (s *Service) lodgementReachable(ctx context.Context, ref string, reach func
 	if s.lodgements == nil || ref == "" {
 		return false, nil
 	}
-	branch, found, err := s.lodgements.LodgementBranch(ctx, ref)
+	f, found, err := s.lodgements.LodgementFacts(ctx, ref)
 	if err != nil {
 		return false, err
 	}
-	return found && reach(branch), nil
+	return found && reach(f.BranchID), nil
+}
+
+// lodgementFacts reads a lodgement's branch and amount through the till's seam. An unwired seam or an empty id is a
+// missing lodgement (fail closed).
+func (s *Service) lodgementFacts(ctx context.Context, ref string) (LodgementFact, bool, error) {
+	if s.lodgements == nil || ref == "" {
+		return LodgementFact{}, false, nil
+	}
+	return s.lodgements.LodgementFacts(ctx, ref)
+}
+
+// checkJournalTarget refuses a JOURNAL target that does not explain the line: it must be a POSTED journal (read
+// through the GL seam) that touches the bank account's GL code for exactly the line's signed amount. A journal with
+// a branch outside the caller's reach answers as missing; a journal with no branch is dealer wide, like the bank
+// line itself. That no other live match holds it is checked in the write's transaction (PersistMatchReach).
+func (s *Service) checkJournalTarget(ctx context.Context, line StatementLine, in MatchInput) error {
+	if s.journals == nil || in.TargetRefID == "" {
+		return errNotFound
+	}
+	acct, err := s.repo.GetAccount(ctx, line.BankAccountID)
+	if err != nil {
+		return err
+	}
+	f, found, err := s.journals.JournalForBank(ctx, in.TargetRefID, acct.GLAccountCode)
+	if err != nil {
+		return err
+	}
+	if !found || (f.BranchID != "" && in.CanAccessBranch != nil && !in.CanAccessBranch(f.BranchID)) {
+		return errNotFound
+	}
+	if !f.Posted {
+		return unprocessable("bankrec: that journal is not posted, so it cannot explain a bank line")
+	}
+	if !f.TouchesGL {
+		return unprocessable("bankrec: that journal does not touch this bank account")
+	}
+	if f.NetCents != line.AmountCents {
+		return unprocessable("bankrec: that journal moves this bank account by %d cents and the line is %d cents", f.NetCents, line.AmountCents)
+	}
+	return nil
 }
 
 // UnmatchReach is Unmatch fenced to the caller's branch reach (SF-2g round 2). A match whose target is a payment or a

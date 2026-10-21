@@ -7,9 +7,11 @@ package gl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -378,3 +380,36 @@ func (s *Service) thresholdFor(ctx context.Context, branchID string) int64 {
 }
 
 func (s *Service) orgThreshold(ctx context.Context) int64 { return s.thresholdFor(ctx, "") }
+
+// BankJournalFacts is what a bank reconciliation needs to know about one journal to let a statement line be explained
+// by it (SF-2j): whether it is POSTED, its branch (empty when it has none: a dealer wide journal), and its net effect
+// on one GL account (debits minus credits on that account's lines).
+type BankJournalFacts struct {
+	Posted    bool
+	BranchID  string
+	NetCents  int64 // debits minus credits on the named account's lines
+	TouchesGL bool  // at least one line is on that account
+}
+
+// JournalForBank answers BankJournalFacts for one journal and one GL account code, found false when the id is no
+// journal (or no uuid). bankrec reads a journal through this seam and never from the table.
+func (s *Service) JournalForBank(ctx context.Context, journalID, glAccountCode string) (BankJournalFacts, bool, error) {
+	if _, err := uuid.Parse(journalID); err != nil {
+		return BankJournalFacts{}, false, nil
+	}
+	j, err := s.store.GetJournal(ctx, journalID)
+	if errors.Is(err, errNotFound) {
+		return BankJournalFacts{}, false, nil
+	}
+	if err != nil {
+		return BankJournalFacts{}, false, err
+	}
+	f := BankJournalFacts{Posted: j.Status == StatusPosted, BranchID: j.BranchID}
+	for _, l := range j.Lines {
+		if l.AccountCode == glAccountCode {
+			f.TouchesGL = true
+			f.NetCents += l.DebitCents - l.CreditCents
+		}
+	}
+	return f, true, nil
+}
