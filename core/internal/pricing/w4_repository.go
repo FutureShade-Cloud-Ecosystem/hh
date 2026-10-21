@@ -52,9 +52,9 @@ func (r *Repository) ActivePromotions(ctx context.Context, productID, categoryID
 	        FROM pricing_promotions
 	       WHERE is_active
 	         AND starts_at <= $1 AND ends_at > $1
-	         AND (product_id  IS NULL OR ($2 <> '' AND product_id  = $2::uuid))
-	         AND (category_id IS NULL OR ($3 <> '' AND category_id = $3::uuid))
-	         AND (branch_id   IS NULL OR ($4 <> '' AND branch_id   = $4::uuid))`
+	         AND (product_id  IS NULL OR product_id  = NULLIF($2, '')::uuid)
+	         AND (category_id IS NULL OR category_id = NULLIF($3, '')::uuid)
+	         AND (branch_id   IS NULL OR branch_id   = NULLIF($4, '')::uuid)`
 	rows, err := r.pool.Query(ctx, q, at, productID, categoryID, branchID)
 	if err != nil {
 		return nil, err
@@ -400,8 +400,8 @@ func (r *Repository) ProgramsForLine(ctx context.Context, productID, categoryID,
 	q := `SELECT ` + rebateCols + `
 	        FROM rebate_programs
 	       WHERE is_active
-	         AND (product_id  IS NULL OR ($1 <> '' AND product_id  = $1::uuid))
-	         AND (category_id IS NULL OR ($2 <> '' AND category_id = $2::uuid))
+	         AND (product_id  IS NULL OR product_id  = NULLIF($1, '')::uuid)
+	         AND (category_id IS NULL OR category_id = NULLIF($2, '')::uuid)
 	         AND ($3 = '' OR vendor_id = $3::uuid)`
 	rows, err := r.pool.Query(ctx, q, productID, categoryID, vendorID)
 	if err != nil {
@@ -513,8 +513,8 @@ func (r *Repository) ConversionsFor(ctx context.Context, productID, categoryID s
 	        FROM pricing_uom_conversions
 	       WHERE is_active
 	         AND ( (product_id IS NULL AND category_id IS NULL)
-	            OR ($1 <> '' AND product_id  = $1::uuid)
-	            OR ($2 <> '' AND category_id = $2::uuid) )`
+	            OR product_id  = NULLIF($1, '')::uuid
+	            OR category_id = NULLIF($2, '')::uuid )`
 	rows, err := r.pool.Query(ctx, q, productID, categoryID)
 	if err != nil {
 		return nil, err

@@ -79,10 +79,10 @@ function fresh() {
       line(7, 25, "WIRE FROM CONTRACTOR", "", 30_000),
     ],
     payments: [
-      { id: IDS.paymentGateway1, payment_no: "PAY-000101", gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
-      { id: IDS.paymentGateway2, payment_no: "PAY-000102", gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
-      { id: IDS.paymentBatch, payment_no: "PAY-000103", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
-      { id: IDS.paymentWire, payment_no: "PAY-000104", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
+      { id: IDS.paymentGateway1, payment_no: "PAY-000101", method: "CARD", gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
+      { id: IDS.paymentGateway2, payment_no: "PAY-000102", method: "CARD", gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
+      { id: IDS.paymentBatch, payment_no: "PAY-000103", method: "CARD", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
+      { id: IDS.paymentWire, payment_no: "PAY-000104", method: "EFT", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
     ],
     lodgements: [{ id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050 }],
     matches: [],
@@ -468,6 +468,11 @@ export function createBankrecWorld() {
         return clientError(409, `that match sits in ${year}-${pad(month)}, which is already reconciled and completed, so it cannot be unmatched`);
       }
     }
+    // A deposit whose payment was reversed cannot be unmatched, except a reversed CARD (SF-2d round 7): a card is
+    // claimable again, while a reversed cheque, cash, EFT or other payment can never be matched again.
+    if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed && p.method !== "CARD")) {
+      return clientError(409, "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
+    }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
     if (line !== undefined && line.status === "MATCHED") line.status = "UNMATCHED";
@@ -557,6 +562,18 @@ export function createBankrecWorld() {
     const method = req.method;
     if (method === "POST" && path === "/_stub/reset") {
       reset();
+      return { status: 200, body: { ok: true } };
+    }
+    // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
+    if (method === "POST" && path === "/_stub/reverse-payment") {
+      const input = JSON.parse(bodyText || "{}");
+      if (input.all === true) {
+        for (const p of world.payments) p.reversed = true;
+        return { status: 200, body: { ok: true } };
+      }
+      const payment = world.payments.find((p) => p.id === input.payment_id);
+      if (payment === undefined) return { status: 404, body: { error: "not found" } };
+      payment.reversed = true;
       return { status: 200, body: { ok: true } };
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;

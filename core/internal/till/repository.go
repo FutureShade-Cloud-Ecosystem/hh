@@ -549,21 +549,21 @@ func (r *Repository) Policy(ctx context.Context, branchID string) (TillPolicy, e
 // - W5 A-05: NSF + credit holds + declined-attempt log -
 
 // PaymentNSFContext resolves the finance facts of a payment for the NSF decision (non-tx read).
-func (r *Repository) PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, found bool, err error) {
+func (r *Repository) PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, reversed, found bool, err error) {
 	if r.pool == nil {
-		return "", "", "", "", 0, false, errNoDB
+		return "", "", "", "", 0, false, false, errNoDB
 	}
 	err = r.pool.QueryRow(ctx,
-		`SELECT COALESCE(customer_id::text, ''), branch_id::text, status, method, amount_cents
+		`SELECT COALESCE(customer_id::text, ''), branch_id::text, status, method, amount_cents, reversed_at IS NOT NULL
 		 FROM payments WHERE id = $1`, paymentID,
-	).Scan(&customerID, &branchID, &status, &method, &amountCents)
+	).Scan(&customerID, &branchID, &status, &method, &amountCents, &reversed)
 	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
-		return "", "", "", "", 0, false, nil
+		return "", "", "", "", 0, false, false, nil
 	}
 	if err != nil {
-		return "", "", "", "", 0, false, fmt.Errorf("till: payment nsf context: %w", err)
+		return "", "", "", "", 0, false, false, fmt.Errorf("till: payment nsf context: %w", err)
 	}
-	return customerID, branchID, status, method, amountCents, true, nil
+	return customerID, branchID, status, method, amountCents, reversed, true, nil
 }
 
 // NSFPolicyFor reads the effective NSF policy: a branch row overrides the org default (branch_id IS NULL).
@@ -603,10 +603,11 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 
 	var res nsfReverseResult
 	var status string
+	var reversed bool
 	err = tx.QueryRow(ctx,
-		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents
+		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents, reversed_at IS NOT NULL
 		 FROM payments WHERE id = $1 FOR UPDATE`, in.PaymentID,
-	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents)
+	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nsfReverseResult{}, errNotFound
 	}
@@ -615,6 +616,11 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	}
 	if status == "BOUNCED" {
 		return nsfReverseResult{}, errAlreadyBounced
+	}
+	// A reversal and a bounce exclude each other (SF-2d round 7): decided here, in the locked read, so a reversal
+	// that committed first is seen and one that has not yet taken the row waits behind this transaction.
+	if reversed {
+		return nsfReverseResult{}, errPaymentReversed
 	}
 	// Capture whether the receipt had already settled to the bank (DEPOSITED) BEFORE we flip it to BOUNCED.
 	// The GL payment.bounced consumer needs this to reverse the right leg: DEPOSITED → bank 1000, else the

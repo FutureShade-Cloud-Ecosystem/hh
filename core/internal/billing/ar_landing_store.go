@@ -56,7 +56,7 @@ func (r *ARLandingRepository) ReadARLandingPolicy(ctx context.Context, branchID 
 	err := r.pool.QueryRow(ctx, `
 		SELECT `+arLandingPolicyColumns+`
 		  FROM ar_landing_policy
-		 WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
+		 WHERE branch_id IS NULL OR branch_id = NULLIF($1, '')::uuid
 		 ORDER BY branch_id NULLS LAST
 		 LIMIT 1`, branchID).Scan(
 		&p.AgingWarnDays, &p.AgingEscalateDays, &p.ReminderCadenceDays,

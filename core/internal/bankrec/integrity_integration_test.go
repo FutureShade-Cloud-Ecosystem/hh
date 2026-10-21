@@ -12,7 +12,6 @@ package bankrec
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -233,7 +232,7 @@ func TestIntegration_Integrity_AnUnmatchWaitsForACompletionAndThenRefuses(t *tes
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM bank_reconciliations WHERE id = $1::uuid FOR UPDATE`, recID); err != nil {
 		t.Fatalf("lock the row: %v", err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fmt.Sprintf("%s|%d|%d", w.account, year, month)); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, reconKey(w.account, year, month)); err != nil {
 		t.Fatalf("lock the key: %v", err)
 	}
 	done := make(chan [2]any, 1)

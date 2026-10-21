@@ -12,46 +12,47 @@ test('returns null when no customer is attached', () => {
   assert.equal(evaluateAccountCheck(undefined), null);
 });
 
-test('Palmera Landscapes evaluates to good standing with exact review copy', () => {
+test('a good standing account shows the server figures and no invented crew member', () => {
   const customer = {
     name: 'Palmera Landscapes',
     payment_terms_days: 30,
     credit_limit_cents: 1500000,
     open_balance_cents: 246000,
   };
-  const standing = {
-    on_hold: false,
-    past_due_cents: 0,
-  };
-
-  const res = evaluateAccountCheck(customer, standing);
+  const res = evaluateAccountCheck(customer, { on_hold: false, past_due_cents: 0 });
   assert.ok(res !== null);
   assert.equal(res.standing, 'good_standing');
   assert.equal(res.isBlocked, false);
   assert.equal(res.title, 'In good standing');
-  assert.equal(res.termsDays, 30);
-  assert.equal(
-    res.lines[0],
-    'Available credit $12,540.00 · Terms 30 days · No open promise.'
-  );
-  assert.equal(
-    res.lines[1],
-    'Luis Ortega is a listed crew member of Palmera Landscapes and may buy on this account. Every ticket needs a job and PO.'
-  );
+  assert.equal(res.lines[0], 'Available credit $12,540.00 · Terms 30 days.');
+  assert.equal(res.lines[1], 'Palmera Landscapes may buy on this account. Every ticket needs a job and PO.');
   assert.equal(res.waysForward.length, 0);
 });
 
-test('Palmera Landscapes defaults available credit when zero or unconfigured', () => {
-  const customer = {
-    name: 'Palmera Landscapes',
-  };
-  const res = evaluateAccountCheck(customer);
+test('a Palmera with no limit shows its true figure in words, never 12,540.00', () => {
+  const res = evaluateAccountCheck({ name: 'Palmera Landscapes' });
   assert.ok(res !== null);
   assert.equal(res.standing, 'good_standing');
+  assert.ok(!res.lines.join(' ').includes('12,540'));
   assert.equal(
     res.lines[0],
-    'Available credit $12,540.00 · Terms 30 days · No open promise.'
+    'Available credit none (the credit line is used up or not set) · No terms on file.'
   );
+  assert.ok(!res.lines.join(' ').includes('Luis Ortega'));
+});
+
+test('a C09 account with no hold is not blocked', () => {
+  const customer = { name: 'Harbour Drywall Inc', account_no: 'C09', credit_limit_cents: 200000 };
+  assert.equal(isAccountBlocked(customer), false);
+  assert.equal(evaluateAccountCheck(customer).standing, 'good_standing');
+});
+
+test('a customer named Bluffside Builders with no hold is not blocked', () => {
+  const customer = { name: 'Bluffside Builders', account_no: 'C01', credit_limit_cents: 5000000, payment_terms_days: 30 };
+  assert.equal(isAccountBlocked(customer), false);
+  const res = evaluateAccountCheck(customer);
+  assert.equal(res.standing, 'good_standing');
+  assert.equal(res.lines[0], 'Available credit $50,000.00 · Terms 30 days.');
 });
 
 test('generic customer in good standing uses customer name fallback', () => {
@@ -66,7 +67,7 @@ test('generic customer in good standing uses customer name fallback', () => {
   assert.equal(res.standing, 'good_standing');
   assert.equal(
     res.lines[0],
-    'Available credit $6,000.00 · Terms 15 days · No open promise.'
+    'Available credit $6,000.00 · Terms 15 days.'
   );
   assert.equal(
     res.lines[1],
@@ -89,10 +90,9 @@ test('generic customer with explicit crewMemberName uses named crew line', () =>
   );
 });
 
-test('Bluffside Builders evaluates to blocked with exact review copy', () => {
+test('a held account shows only the standing the server gave, with three ways forward', () => {
   const customer = {
     name: 'Bluffside Builders',
-    account_no: 'C01',
     credit_limit_cents: 2800000,
     open_balance_cents: 2482000,
   };
@@ -100,47 +100,41 @@ test('Bluffside Builders evaluates to blocked with exact review copy', () => {
     on_hold: true,
     past_due_cents: 1482000,
     oldest_bucket: '61 to 90',
+    promise_text: 'Open promise: $10,000.00, not received.',
   };
-
   const res = evaluateAccountCheck(customer, standing);
-  assert.ok(res !== null);
   assert.equal(res.standing, 'blocked');
-  assert.equal(res.isBlocked, true);
-  assert.equal(res.title, 'On hold: past due 61 to 90, promise missed');
-  assert.equal(
-    res.lines[0],
-    'Available credit $3,180.00, but the account is on hold · Past due $14,820.00, 61 to 90 days.'
-  );
-  assert.equal(
-    res.lines[1],
-    'Open promise: $10,000.00 by last Friday, not received. The second reminder went out and the promise was missed.'
-  );
-  assert.equal(
-    res.lines[2],
-    'The crew member may buy on this account, but it is on hold. Three ways forward:'
-  );
-
-  // Check the three ways forward cards
+  assert.equal(res.title, 'On hold: past due 61 to 90 days');
+  assert.deepEqual(res.lines, [
+    'Available credit $3,180.00, but the account is on hold · Past due $14,820.00, 61 to 90 days.',
+    'Open promise: $10,000.00, not received.',
+    'The account is on hold. Three ways forward:',
+  ]);
   assert.equal(res.waysForward.length, 3);
   assert.equal(res.waysForward[0].title, 'Take a payment now');
-  assert.equal(res.waysForward[0].subtitle, 'ACH first, no fee');
-  assert.equal(
-    res.waysForward[0].body,
-    'Card adds a 2.9% surcharge, shown as its own line before you confirm. The hold lifts when it lands.'
-  );
-
   assert.equal(res.waysForward[1].title, 'Send a paylink');
-  assert.equal(res.waysForward[1].subtitle, 'to the owner phone');
-  assert.equal(
-    res.waysForward[1].body,
-    '(619) 555-0142. It works with no sign in, on a phone.'
-  );
-
+  assert.ok(!res.waysForward[1].body.includes('555'));
   assert.equal(res.waysForward[2].title, 'Ask the credit manager');
-  assert.equal(res.waysForward[2].subtitle, 'to override');
+});
+
+test('a held account with a bare standing invents no past due, bucket, promise or credit', () => {
+  const res = evaluateAccountCheck({ name: 'Bluffside Builders', on_hold: true });
+  assert.equal(res.title, 'On hold');
+  assert.equal(res.pastDueFormatted, null);
+  assert.equal(res.bucketLabel, null);
+  assert.equal(res.lines.length, 2);
   assert.equal(
-    res.waysForward[2].body,
-    'Sends the request to the controller with this order.'
+    res.lines[0],
+    'Available credit none (the credit line is used up or not set), but the account is on hold.'
+  );
+  assert.ok(!res.lines.join(' ').includes('14,820'));
+});
+
+test('a held account names a crew member only when one is passed in', () => {
+  const res = evaluateAccountCheck({ name: 'X', on_hold: true }, null, { crewMemberName: 'Crew Person' });
+  assert.equal(
+    res.lines[res.lines.length - 1],
+    'Crew Person is a listed crew member of X, but the account is on hold, so a charge to it will be refused.',
   );
 });
 
@@ -206,4 +200,51 @@ test('no em or en dashes exist in any formatted text or constants', () => {
   for (const line of blocked.lines) {
     assert.ok(!line.includes(emDash) && !line.includes(enDash));
   }
+});
+
+test('a bucket that already says days is not doubled in the title', () => {
+  const res = evaluateAccountCheck({ name: 'X', on_hold: true }, { oldest_bucket: '30' });
+  assert.equal(res.title, 'On hold: past due 30 days');
+  const res2 = evaluateAccountCheck({ name: 'X', on_hold: true }, { oldest_bucket: '90+ days' });
+  assert.equal(res2.title, 'On hold: past due 90+ days');
+});
+
+test('the ways forward claim no send, no surcharge figure and no automatic lift', () => {
+  const text = WAYS_FORWARD.map((w) => `${w.title} ${w.subtitle} ${w.body}`).join(' ');
+  assert.ok(!/sent to|has been sent|was sent|2\.9|surcharge|lifts when|no fee/i.test(text), text);
+  assert.ok(text.includes('Money Desk'));
+  assert.ok(text.includes('released by hand'));
+});
+
+test('a terms-0 account reads no terms on file, never thirty days', () => {
+  const res = evaluateAccountCheck({ name: 'Walk Up Retail', credit_limit_cents: 100000, payment_terms_days: 0 });
+  assert.equal(res.termsDays, 0);
+  assert.equal(res.lines[0], 'Available credit $1,000.00 · No terms on file.');
+  assert.ok(!res.lines.join(' ').includes('30 days'));
+  assert.ok(!res.lines.join(' ').includes('No open promise'));
+});
+
+test('a cash on demand account reads cash on demand, not terms or good standing credit words', () => {
+  const res = evaluateAccountCheck(
+    { name: 'Cash On Demand customer', credit_limit_cents: 500000, payment_terms_days: 0 },
+    null,
+    { cashOnDemand: true },
+  );
+  assert.equal(res.standing, 'good_standing');
+  assert.equal(res.lines[0], 'Cash on demand: pay before release.');
+  assert.ok(!res.lines.join(' ').includes('Terms'));
+  assert.ok(!res.lines.join(' ').includes('Available credit'));
+  assert.ok(!res.lines.join(' ').includes('may buy on this account'));
+});
+
+test('an account with no available credit never reads may buy on this account', () => {
+  const res = evaluateAccountCheck({
+    name: 'At Limit Co',
+    payment_terms_days: 30,
+    credit_limit_cents: 100000,
+    open_balance_cents: 100000,
+  });
+  assert.ok(!res.lines.join(' ').includes('may buy on this account'));
+  assert.equal(res.lines[1], 'No credit is available, so a charge to this account will be refused.');
+  assert.equal(res.title, 'No credit available');
 });

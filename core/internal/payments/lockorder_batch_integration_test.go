@@ -62,9 +62,9 @@ func TestIntegration_LockOrder_BatchStatusWritersBesideAReversalOfAMember(t *tes
 	batches := map[string]func(r *loRig, ids []string) error{
 		"claim": func(r *loRig, ids []string) error {
 			line := r.bwStatementLine(20_000)
-			_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
+			_, err := bankrec.NewRepository(r.pool).PersistMatchReach(context.Background(), bankrec.Match{
 				StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: ids[0],
-				Method: bankrec.MethodManual, AmountCents: 20_000}, ids)
+				Method: bankrec.MethodManual, AmountCents: 20_000}, ids, bankrec.AllBranches)
 			return err
 		},
 		"MarkDeposited": func(r *loRig, ids []string) error {

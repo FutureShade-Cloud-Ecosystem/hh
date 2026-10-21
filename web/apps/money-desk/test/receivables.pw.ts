@@ -23,15 +23,18 @@ test("the way in with no handoff offers the role cards", async ({ page, request 
 test("the way in builds the role code from the session's own code, never from the role's display name", async ({ page, request }) => {
   await request.post("/_stub/reset");
   // A renamed role display name must not move the landing: the session's own role code decides it.
+  // One fetch is all the test needs, so the route handles the first and then removes itself: a later session
+  // fetch still in flight when the test ends would otherwise be read after its page closed ("Response has been disposed").
   await page.route("**/api/v1/demo/session", async (route) => {
     const answer = await route.fetch();
     const body = await answer.json();
     body.user.role_name = "Chief Book Keeper";
     return route.fulfill({ response: answer, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  });
+  }, { times: 1 });
   await page.goto("/");
   await page.locator("[data-flow='financial-controller']").click();
-  await expect(page.getByRole("button", { name: "Approvals and ledger" })).toBeVisible();
+  // Exact: the desk selector's own name also contains these words, and it can be on screen at the same moment.
+  await expect(page.getByRole("button", { name: "Approvals and ledger", exact: true })).toBeVisible();
 });
 
 test("the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words", async ({ page, request }) => {

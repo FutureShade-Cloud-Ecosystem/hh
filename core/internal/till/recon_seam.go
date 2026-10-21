@@ -58,8 +58,12 @@ var ErrPaymentReversed = clientError{status: http.StatusConflict, msg: "till: a 
 // payment is a no-op. A REVERSED payment is refused (ErrPaymentReversed), and the whole call rolls back, so a
 // caller that gets the refusal finds no row moved.
 //
+// A reversed CARD is the exception, the same predicate as bankrec's claim (SF-2d round 4 and ruling 55.4): the
+// reversal moved no money at the bank, so the processor's settlement of the card still arrives and the card is
+// claimable. Every other reversed tender is refused.
+//
 // The refusal is decided by the UPDATE itself: its row lock and its WHERE (re-checked after a concurrent
-// commit, which is how a reversal beside it is seen) carry `reversed_at IS NULL`. There is no pre-check read.
+// commit, which is how a reversal beside it is seen) carry `reversed_at IS NULL OR method = 'CARD'`. There is no pre-check read.
 // Rows the UPDATE did not move are then read, only to say why: a reversed one refuses; a payment that is
 // already DEPOSITED (or not there) is the no-op it has always been.
 func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, statementLineID string) error {
@@ -85,7 +89,7 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 		 SET status = 'DEPOSITED',
 		     metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 		     updated_at = now()
-		 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
+		 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND (reversed_at IS NULL OR method = 'CARD')
 		 RETURNING id::text`,
 		paymentIDs, statementLineID)
 	if err != nil {
@@ -107,7 +111,7 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 	if len(moved) < len(paymentIDs) {
 		var reversed []string
 		rrows, err := tx.Query(ctx,
-			`SELECT id::text FROM payments WHERE id = ANY($1::uuid[]) AND reversed_at IS NOT NULL ORDER BY id`, paymentIDs)
+			`SELECT id::text FROM payments WHERE id = ANY($1::uuid[]) AND reversed_at IS NOT NULL AND method <> 'CARD' ORDER BY id`, paymentIDs)
 		if err != nil {
 			return fmt.Errorf("till: mark deposited: read the unmoved: %w", err)
 		}

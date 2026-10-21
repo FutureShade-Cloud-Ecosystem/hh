@@ -215,6 +215,9 @@ export function refusalWords(action: string, message: string, status: number): s
     return `That match belongs to ${periodWords(Number(lockedMonth[1]), Number(lockedMonth[2]))}, which is already signed off, so it cannot be undone.`;
   }
   if (lower.includes("already has a live match")) return "That target is already matched to this line.";
+  if (lower.includes("cannot be unmatched")) {
+    return "This deposit cannot be undone: the payment was reversed, and a reversed cheque or cash payment cannot be matched again.";
+  }
   if (lower.includes("is not live (already unmatched)")) return "That match was already undone. Reload to see where the line stands.";
   if (lower.includes("another approved version")) return "Another version of this rule was approved a moment ago. Reload the rules and try again.";
   if (lower.includes("spec.kind must be one of")) return "Pick one of the three match kinds.";

@@ -419,6 +419,16 @@ test("the time axis lays out the twelve hours and one row per planned run, all o
   await expect(rows.first()).toBeVisible();
 });
 
+test("the time axis marks a seeded run's stops in the hours they depart and follow", async ({ page, request }) => {
+  await openBoard(page, request);
+  // RUN-PLM-1 leaves at 7 with two stops that day: the 7 and 8 cells, and no other.
+  const row = page.locator("[data-time-axis] [data-axis-run-id]", { hasText: "RUN-PLM-1" });
+  await expect(row.locator(".has-stop")).toHaveCount(2);
+  await expect(row.locator("[data-hour='7']")).toHaveClass(/has-stop/);
+  await expect(row.locator("[data-hour='8']")).toHaveClass(/has-stop/);
+  await expect(row.locator("[data-hour='9']")).not.toHaveClass(/has-stop/);
+});
+
 test("the run-detail drawer opens when a run is named on the time axis and closes again", async ({ page, request }) => {
   await openBoard(page, request);
   await expect(page.locator("[data-run-detail]")).toHaveCount(0);

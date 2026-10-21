@@ -292,18 +292,17 @@ func (r *Repository) UnmatchedCreditLines(ctx context.Context, accountID string,
 //
 // The clearing journal is posted by the SERVICE only AFTER this returns, so a rejected duplicate posts NO
 // journal. The journal id is written back via SetMatchJournal.
-func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs []string) (string, error) {
-	return r.PersistMatchReach(ctx, m, claimPaymentIDs, nil)
-}
-
-// PersistMatchReach is PersistMatch fenced to the caller's branch reach (SF-2g). Under the payment rows' lock (the
+// PersistMatchReach claims the match, fenced to the caller's branch reach (SF-2g). Under the payment rows' lock (the
 // same ascending lock the claim takes), the branch of each named payment is read through the payments module and
 // checked against reach; a payment outside it, or one that does not exist, is not claimed and is reported EXACTLY as
 // a missing payment is, with no number: the caller cannot tell "not yours" from "not there". The branch is a fact
 // of the row read under its lock, in the claim's own transaction, so another writer cannot move the payment between
 // the check and the claim; and a refusal rolls the whole transaction back, so nothing is written. A nil reach
-// fences nothing.
+// REFUSES (SF-2d round 5); a dealer wide caller passes AllBranches.
 func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymentIDs []string, reach func(branchID string) bool) (string, error) {
+	if reach == nil {
+		return "", errNoReach
+	}
 	if r.pool == nil {
 		return "", errNoDB
 	}
@@ -348,26 +347,29 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		// updated and never named.
 		claimable := claimPaymentIDs
 		hidden := map[string]bool{}
-		if reach != nil {
-			branches, berr := payments.PaymentBranchesTx(ctx, tx, claimPaymentIDs)
-			if berr != nil {
-				return "", fmt.Errorf("bankrec: read the payment branches: %w", berr)
-			}
-			claimable = nil
-			for _, pid := range claimPaymentIDs {
-				if b, ok := branches[strings.ToLower(pid)]; ok && reach(b) {
-					claimable = append(claimable, pid)
-				} else {
-					hidden[strings.ToLower(pid)] = true
-				}
+		branches, berr := payments.PaymentBranchesTx(ctx, tx, claimPaymentIDs)
+		if berr != nil {
+			return "", fmt.Errorf("bankrec: read the payment branches: %w", berr)
+		}
+		claimable = nil
+		for _, pid := range claimPaymentIDs {
+			if b, ok := branches[strings.ToLower(pid)]; ok && reach(b) {
+				claimable = append(claimable, pid)
+			} else {
+				hidden[strings.ToLower(pid)] = true
 			}
 		}
+		// A reversed payment is refused here (SF-2b) EXCEPT a CARD (SF-2d round 4, ruling 52.2): the reversal is a ledger
+		// act that does not touch the gateway, so the processor settles the captured card anyway, and the settlement
+		// line has to be explained. The money did arrive; the claim moves the payment to DEPOSITED and the match posts
+		// the clearing (Dr 1000 / Cr 1010) that the reversal's credit to 2310 leaves standing. Every other tender
+		// that was reversed (cash, cheque, EFT) is never matched: no deposit of it can be real.
 		rows, cerr := tx.Query(ctx,
 			`UPDATE payments
 			   SET status = 'DEPOSITED',
 			       metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 			       updated_at = now()
-			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
+			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND (reversed_at IS NULL OR method = 'CARD')
 			 RETURNING id::text`,
 			claimable, m.StatementLineID)
 		if cerr != nil {
@@ -508,14 +510,6 @@ func (r *Repository) GetLiveMatch(ctx context.Context, matchID string) (Match, e
 	return m, nil
 }
 
-// Unmatch stamps a live match unmatched (keeping the row for history), reverts its line to UNMATCHED, and -
-// for a PAYMENT target, releases the claimed payment back to RECEIVED (DEPOSITED→RECEIVED), all in ONE tx so
-// a corrective re-match sees the payment claimable again. A match already unmatched → 409 conflict. Returns
-// the match's target facts so the service can post the offsetting reversal journal.
-func (r *Repository) Unmatch(ctx context.Context, matchID, userID string) (targetType, targetRef string, amount int64, err error) {
-	return r.UnmatchReach(ctx, matchID, userID, nil)
-}
-
 // PeekMatchTarget reads a match's target without locking: live is false for a match that does not exist or is
 // already unmatched. A match row's target fields never change, so the read cannot go stale.
 func (r *Repository) PeekMatchTarget(ctx context.Context, matchID string) (targetType, targetRef string, live bool, err error) {
@@ -534,13 +528,18 @@ func (r *Repository) PeekMatchTarget(ctx context.Context, matchID string) (targe
 	return targetType, targetRef, true, nil
 }
 
-// UnmatchReach is Unmatch fenced to the caller's branch reach (SF-2g round 2). For a PAYMENT target, inside the
-// transaction and before anything is written: the live match's target is read, the payment row is taken
-// (payments.LockPaymentRowsTx, FOR NO KEY UPDATE, which a reversal's FOR UPDATE queues behind), and its branch is
-// read through the payments module under that lock; a payment outside the reach answers exactly as a match that is
-// not live. The lock order is the payment row, then the match, the line and the payment update, the order SF-2d
-// round 2 gives Unmatch on its branch, so the two agree when both merge. A nil reach fences nothing.
+// UnmatchReach is Unmatch with both of its fences, in ONE body under ONE payment row lock: the caller's branch reach
+// (SF-2g round 2) and the refusal of a reversed payment (SF-2d round 2). For a PAYMENT target, inside the transaction
+// and before anything is written: the live match's target is read, the payment row is taken (payments.LockPaymentRowsTx,
+// FOR NO KEY UPDATE, which a reversal's FOR UPDATE queues behind), the payment's branch is read through the payments
+// module under that lock and checked against the reach (a payment outside it answers exactly as a match that is not
+// live), then the payments module says whether it was reversed (a reversed payment's deposit cannot be unmatched).
+// The lock order is the payment row (taken whatever the reach), then the match, the line and the payment update.
+// A nil reach REFUSES (SF-2d round 5); a dealer wide caller passes AllBranches.
 func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, reach func(branchID string) bool) (targetType, targetRef string, amount int64, err error) {
+	if reach == nil {
+		return "", "", 0, errNoReach
+	}
 	if r.pool == nil {
 		return "", "", 0, errNoDB
 	}
@@ -550,60 +549,60 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	}
 	defer tx.Rollback(ctx)
 
-	if reach != nil {
-		var peekType, peekRef string
-		perr := tx.QueryRow(ctx,
-			`SELECT target_type, COALESCE(target_ref_id::text, '') FROM bank_matches WHERE id::text = $1 AND unmatched_at IS NULL`,
-			matchID).Scan(&peekType, &peekRef)
-		if errors.Is(perr, pgx.ErrNoRows) {
-			return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
-		}
-		if perr != nil {
-			return "", "", 0, fmt.Errorf("bankrec: read the match to unmatch: %w", perr)
-		}
-		if peekType == TargetPayment && peekRef != "" {
-			if lerr := payments.LockPaymentRowsTx(ctx, tx, []string{peekRef}); lerr != nil {
-				return "", "", 0, fmt.Errorf("bankrec: lock payment: %w", lerr)
-			}
-			branches, berr := payments.PaymentBranchesTx(ctx, tx, []string{peekRef})
-			if berr != nil {
-				return "", "", 0, fmt.Errorf("bankrec: read the payment branch: %w", berr)
-			}
-			if b, ok := branches[strings.ToLower(peekRef)]; !ok || !reach(b) {
-				return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
-			}
-		}
+	// The lock order of every bankrec writer (LOCK-ORDER.md, SF-2j round 2): the reconciliation row of the line's month
+	// FOR SHARE and the shared form of completion's advisory key FIRST, then the payment row, then the match, the line
+	// and the payment update. The live match is read once (its target and its line's month, which never change), with
+	// no lock yet.
+	var peekType, peekRef, recAcct string
+	var recYear, recMonth int
+	err = tx.QueryRow(ctx,
+		`SELECT m.target_type, COALESCE(m.target_ref_id::text, ''), l.bank_account_id::text,
+		        EXTRACT(YEAR FROM l.txn_date)::int, EXTRACT(MONTH FROM l.txn_date)::int
+		   FROM bank_matches m JOIN bank_statement_lines l ON l.id = m.statement_line_id
+		  WHERE m.id::text = $1 AND m.unmatched_at IS NULL`,
+		matchID).Scan(&peekType, &peekRef, &recAcct, &recYear, &recMonth)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+	}
+	if err != nil {
+		return "", "", 0, fmt.Errorf("bankrec: read the match to unmatch: %w", err)
+	}
+	recStatus, rerr0 := lockReconMonthShared(ctx, tx, recAcct, recYear, recMonth)
+	if rerr0 != nil {
+		return "", "", 0, rerr0
 	}
 
-	// No unmatch inside a COMPLETED reconciliation's month. The month is the line's txn_date month (the same key
-	// CompleteReconciliation uses). Lock order matches completion: the reconciliation row (FOR SHARE, which conflicts
-	// with completion's FOR UPDATE), then the shared form of completion's advisory key. Completion first: we wait
-	// and read COMPLETED. Unmatch first: completion waits for our commit and its recount sees the reopened line.
-	// No row yet: a row made later is OPEN, and its completion needs the exclusive advisory key, which our shared
-	// hold blocks until we commit.
-	var recAcct string
-	var recYear, recMonth int
-	cerr := tx.QueryRow(ctx,
-		`SELECT l.bank_account_id::text, EXTRACT(YEAR FROM l.txn_date)::int, EXTRACT(MONTH FROM l.txn_date)::int
-		   FROM bank_matches m JOIN bank_statement_lines l ON l.id = m.statement_line_id
-		  WHERE m.id::text = $1 AND m.unmatched_at IS NULL`, matchID).Scan(&recAcct, &recYear, &recMonth)
-	if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
-		return "", "", 0, fmt.Errorf("bankrec: read the line month: %w", cerr)
+	// One body for all the fences, under the ONE payment row lock (SF-2g round 2 and SF-2d round 2): the payment row
+	// is taken (ascending, the payments module's own lock, which a reversal's FOR UPDATE queues behind), and before
+	// anything is written: first the caller's REACH fence (a payment outside the caller's branches answers exactly
+	// as a match that is not live), then the COMPLETED month refusal, then the REVERSED refusal (a deposit whose
+	// payment was reversed cannot be unmatched, except a CARD, see below). The month is refused only after the reach
+	// is checked, so a caller out of reach learns nothing about a month it cannot see.
+	if peekType == TargetPayment && peekRef != "" {
+		if lerr := payments.LockPaymentRowsTx(ctx, tx, []string{peekRef}); lerr != nil {
+			return "", "", 0, fmt.Errorf("bankrec: lock payment: %w", lerr)
+		}
+		branches, berr := payments.PaymentBranchesTx(ctx, tx, []string{peekRef})
+		if berr != nil {
+			return "", "", 0, fmt.Errorf("bankrec: read the payment branch: %w", berr)
+		}
+		if b, ok := branches[strings.ToLower(peekRef)]; !ok || !reach(b) {
+			return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+		}
 	}
-	if cerr == nil {
-		var recStatus string
-		serr := tx.QueryRow(ctx,
-			`SELECT status FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2 AND month = $3 FOR SHARE`,
-			recAcct, recYear, recMonth).Scan(&recStatus)
-		if serr != nil && !errors.Is(serr, pgx.ErrNoRows) {
-			return "", "", 0, fmt.Errorf("bankrec: read the reconciliation: %w", serr)
+	if recStatus == ReconCompleted {
+		return "", "", 0, conflict("bankrec: that match sits in %d-%02d, which is already reconciled and completed, so it cannot be unmatched", recYear, recMonth)
+	}
+	if peekType == TargetPayment && peekRef != "" {
+		reversed, method, rerr := payments.PaymentReversedTx(ctx, tx, peekRef)
+		if rerr != nil {
+			return "", "", 0, rerr
 		}
-		if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`,
-			fmt.Sprintf("%s|%d|%d", recAcct, recYear, recMonth)); lerr != nil {
-			return "", "", 0, fmt.Errorf("bankrec: recon advisory lock: %w", lerr)
-		}
-		if recStatus == ReconCompleted {
-			return "", "", 0, conflict("bankrec: that match sits in %d-%02d, which is already reconciled and completed, so it cannot be unmatched", recYear, recMonth)
+		// A reversed CARD may be unmatched (SF-2d round 7, S3's P2): the unmatch only moves Dr 1000 / Cr 1010 back,
+		// the card is claimable again (round 4) and 2310 is untouched, so a wrong match can be corrected. Every
+		// other reversed tender can never be claimed again, so its bank line could not be explained again.
+		if reversed && method != "CARD" {
+			return "", "", 0, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again")
 		}
 	}
 
@@ -634,6 +633,32 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 		return "", "", 0, fmt.Errorf("bankrec: commit unmatch: %w", err)
 	}
 	return targetType, targetRef, amount, nil
+}
+
+// reconKey is the advisory key CompleteReconciliation and every other writer that must see a month's status share. The
+// prefix keeps it from ever hashing like another module's text (SF-2j round 2).
+func reconKey(acct string, year, month int) string {
+	return fmt.Sprintf("bankrec-recon|%s|%d|%d", acct, year, month)
+}
+
+// lockReconMonthShared takes the reconciliation row of (account, year, month) FOR SHARE, which conflicts with
+// completion's FOR UPDATE, then the shared form of its advisory key, and answers the status the row reads under that
+// lock ("" when there is no row yet). Completion first: the caller waits and reads COMPLETED. The caller first: a
+// completion waits for the caller's commit and its recount sees what the caller wrote. No row yet: a row made later
+// is OPEN and its completion needs the exclusive key, which this shared hold blocks until the caller commits. Every
+// bankrec writer takes this pair before any payment row (LOCK-ORDER.md).
+func lockReconMonthShared(ctx context.Context, tx pgx.Tx, acct string, year, month int) (string, error) {
+	var status string
+	serr := tx.QueryRow(ctx,
+		`SELECT status FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2 AND month = $3 FOR SHARE`,
+		acct, year, month).Scan(&status)
+	if serr != nil && !errors.Is(serr, pgx.ErrNoRows) {
+		return "", fmt.Errorf("bankrec: read the reconciliation: %w", serr)
+	}
+	if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`, reconKey(acct, year, month)); lerr != nil {
+		return "", fmt.Errorf("bankrec: recon advisory lock: %w", lerr)
+	}
+	return status, nil
 }
 
 // - match rules -
@@ -858,7 +883,7 @@ func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCo
 	if status != ReconOpen {
 		return Reconciliation{}, conflict("bankrec: reconciliation %s is not OPEN", id)
 	}
-	lockKey := fmt.Sprintf("%s|%d|%d", acctID, year, month)
+	lockKey := reconKey(acctID, year, month)
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return Reconciliation{}, fmt.Errorf("bankrec: recon advisory lock: %w", err)

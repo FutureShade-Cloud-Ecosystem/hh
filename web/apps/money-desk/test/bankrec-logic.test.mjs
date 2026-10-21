@@ -175,6 +175,10 @@ test("the core's refusals read in words that say what to do, and a walled route 
   assert.equal(refusalWords("match", "bankrec: that journal already explains another statement line", 409), "That journal already explains another line.");
   assert.equal(refusalWords("unmatch", "bankrec: that match sits in 2026-06, which is already reconciled and completed, so it cannot be unmatched", 409), `That match belongs to ${periodWords(2026, 6)}, which is already signed off, so it cannot be undone.`);
   assert.equal(refusalWords("match", "line abc / target def already has a live match", 409), "That target is already matched to this line.");
+  assert.equal(
+    refusalWords("unmatch", "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again", 409),
+    "This deposit cannot be undone: the payment was reversed, and a reversed cheque or cash payment cannot be matched again.",
+  );
   assert.equal(refusalWords("unmatch", "match abc is not live (already unmatched)", 409), "That match was already undone. Reload to see where the line stands.");
   assert.equal(refusalWords("rule", "another APPROVED version of \"x\" already exists", 409), "Another version of this rule was approved a moment ago. Reload the rules and try again.");
   assert.equal(refusalWords("rule", "spec.kind must be one of gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy", 422), "Pick one of the three match kinds.");
