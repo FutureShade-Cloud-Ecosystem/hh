@@ -55,6 +55,10 @@ type WeightRequestInput struct {
 	UOM         string // the unit the yard must answer in; defaults to the line's own
 	Note        string
 	RequestedBy string
+	// OrgID is the caller's org (UX-81c): the order is read under it and the stored task carries it.
+	OrgID string
+	// Reach says whether the caller's branch reach covers a branch, as CreateInput.Reach does for a pick.
+	Reach func(branch string) (bool, error)
 }
 
 // WeightInput is the yard's answer.
@@ -117,7 +121,7 @@ func (s *Service) RequestWeight(ctx context.Context, in WeightRequestInput) (Tas
 	if s.orders == nil {
 		return Task{}, errNotConfigured
 	}
-	ob, err := s.orders.OrderBrief(ctx, in.OrderID)
+	ob, err := s.briefForCreate(ctx, in.OrgID, in.OrderID, in.Reach)
 	if err != nil {
 		return Task{}, err
 	}
@@ -147,6 +151,7 @@ func (s *Service) RequestWeight(ctx context.Context, in WeightRequestInput) (Tas
 		Priority:    PriorityHigh,
 		Source:      SourceManual,
 		CreatedBy:   in.RequestedBy,
+		OrgID:       in.OrgID,
 	})
 	if err != nil {
 		return Task{}, err

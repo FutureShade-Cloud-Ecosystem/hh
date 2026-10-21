@@ -359,7 +359,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	weightSync := tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff).
+		WithBranchOrgReader(branchOrg)
+	// The weight create's order read and branch reach are the pick door's (UX-81c); a box without them refuses to boot.
+	if pool != nil && !weightSync.OrgScoped() {
+		panic("tasks: the weight sync create is not bound to the caller's org and branch reach - a caller could request a weight on another dealer's order")
+	}
+	if err := syncEngine.RegisterScope("weights", weightSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// THE DRIVER FENCE (the HH Drive fence, the role logins lane): the
@@ -732,7 +738,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if pool != nil && (!tasksHandler.BranchOrgWired() || !yardHandler.BranchOrgWired()) {
 		panic("tasks: the yard REST fences are not bound to the caller's org - a GLOBAL caller could reach another dealer's branch")
 	}
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
+	weightHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithBranchOrgReader(branchOrg)
+	// The weight request holds the same fences as the yard doors beside it (UX-81c).
+	if pool != nil && !weightHandler.BranchOrgWired() {
+		panic("tasks: the weight REST fence is not bound to the caller's org - a GLOBAL caller could reach another dealer's branch")
+	}
+	weightHandler.RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
 	// approvals routes register through the Guards with the same linker,

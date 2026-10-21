@@ -58,11 +58,53 @@ type WeightSyncStore struct {
 	pool   *pgxpool.Pool
 	orders OrderReader
 	link   identity.UserIDLinker
+	// orgOrders is the org held order read (UX-81c), taken from the order seam when it implements it, which the
+	// composition root's adapter does. staff and branchOrg are the caller's branch reach, the pick door's seams.
+	orgOrders OrgOrderReader
+	staff     identity.SyncStaffResolver
+	branchOrg BranchOrgReader
 }
 
 // NewWeightSyncStore wires the adapter.
 func NewWeightSyncStore(pool *pgxpool.Pool, orders OrderReader, link identity.UserIDLinker) *WeightSyncStore {
-	return &WeightSyncStore{pool: pool, orders: orders, link: link}
+	s := &WeightSyncStore{pool: pool, orders: orders, link: link}
+	s.orgOrders, _ = orders.(OrgOrderReader)
+	return s
+}
+
+// WithStaffAuthority wires the branch fence's authority seam, the pick door's (SyncStore.WithStaffAuthority).
+func (s *WeightSyncStore) WithStaffAuthority(r identity.SyncStaffResolver) *WeightSyncStore {
+	s.staff = r
+	return s
+}
+
+// WithBranchOrgReader wires the branch to org seam the caller's reach is bounded by (UX-81c).
+func (s *WeightSyncStore) WithBranchOrgReader(r BranchOrgReader) *WeightSyncStore {
+	s.branchOrg = r
+	return s
+}
+
+// OrgScoped reports whether the create's order read is held to the caller's org and its reach is wired, the leg the
+// composition root's boot check pins (UX-81c), as SyncStore.OrgScoped does for the pick door.
+func (s *WeightSyncStore) OrgScoped() bool {
+	return s.orgOrders != nil && s.staff != nil && s.branchOrg != nil
+}
+
+// orderBrief reads the order for a create under the caller's org when the seam can: a foreign order is the same
+// ErrUnknownOrder as a missing one, and an empty org reads nothing.
+func (s *WeightSyncStore) orderBrief(ctx context.Context, orgID, orderID string) (OrderBrief, error) {
+	if s.orgOrders != nil {
+		if orgID == "" {
+			return OrderBrief{}, ErrUnknownOrder
+		}
+		return s.orgOrders.OrderBriefInOrg(ctx, orgID, orderID)
+	}
+	return s.orders.OrderBrief(ctx, orderID)
+}
+
+// callerReaches is the pick door's rule over the same seams, never a second copy of it (SyncStore.callerReaches).
+func (s *WeightSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
+	return (&SyncStore{staff: s.staff, branchOrg: s.branchOrg}).callerReaches(ctx, f, branch)
 }
 
 // Pull returns the page of NEED_WEIGHT task changes past since, live rows
@@ -223,9 +265,22 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("tasks: order reader not configured: %w", sync.ErrOpRefused)
 	}
-	ob, err := s.orders.OrderBrief(ctx, orderID)
+	// The order is read under the caller's org (UX-81c): another org's order is an unknown order here.
+	ob, err := s.orderBrief(ctx, f.OrgID, orderID)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
+	}
+	// A weight request is created only on a branch the caller reaches, by the pick door's rule. An order out of
+	// reach is refused with exactly the words an unknown order gets. An unreadable authority is no verdict on the
+	// order: the plain error fails the push, which the device retries.
+	if s.staff != nil {
+		reach, err := s.callerReaches(ctx, f, ob.BranchID)
+		if err != nil {
+			return sync.RowState{}, err
+		}
+		if !reach {
+			return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, ErrUnknownOrder)
+		}
 	}
 	// Priority is HIGH, always, exactly as RequestWeight rules: somebody
 	// is waiting on this number. The birth row is not negotiable through
