@@ -306,7 +306,7 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		    -- the delivery that earned the invoice
 		    SELECT 'DELIVERED', s.pod_at, s.pod_received_by, 0, COALESCE(u.display_name,'')
 		      FROM delivery_stops s LEFT JOIN users u ON u.id = s.pod_by
-		     WHERE $2 <> '' AND s.order_id = $2::uuid AND s.pod_at IS NOT NULL
+		     WHERE s.order_id = NULLIF($2, '')::uuid AND s.pod_at IS NOT NULL
 		    UNION ALL
 		    -- commitments and arguments
 		    SELECT 'PROMISE', pr.taken_at, pr.promised_by, pr.promised_cents, COALESCE(u.display_name,'')

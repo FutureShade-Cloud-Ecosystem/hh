@@ -161,7 +161,7 @@ func (r *Repository) BranchHeader(ctx context.Context, branchID string) (Stateme
 	err := r.pool.QueryRow(ctx,
 		`SELECT name, COALESCE(address->>'line1',''), COALESCE(address->>'phone','')
 		   FROM locations
-		  WHERE ($1 <> '' AND id = $1::uuid) OR ($1 = '' AND loc_type = 'BRANCH')
+		  WHERE id = NULLIF($1, '')::uuid OR ($1 = '' AND loc_type = 'BRANCH')
 		  ORDER BY (id::text = $1) DESC
 		  LIMIT 1`, branchID).Scan(&h.BranchName, &addr, &phone)
 	if err != nil {

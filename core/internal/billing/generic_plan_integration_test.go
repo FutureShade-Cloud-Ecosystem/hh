@@ -124,3 +124,53 @@ func TestGenericPlan_ARLandingPolicyReadsTheDealerRowForAnEmptyBranch(t *testing
 		}
 	}
 }
+
+func TestGenericPlan_BranchHeaderResolvesTheFirstBranchForAnEmptyId(t *testing.T) {
+	pool := genericPlanPool(t)
+	repo := NewRepository(pool)
+	branch := aBranchID(t, pool)
+	var want string
+	if err := pool.QueryRow(context.Background(), `SELECT name FROM locations WHERE id = $1::uuid`, branch).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	h, err := repo.BranchHeader(context.Background(), branch)
+	if err != nil {
+		t.Fatalf("BranchHeader(real branch): %v", err)
+	}
+	if h.BranchName != want {
+		t.Fatalf("BranchHeader(real branch) = %q, want %q", h.BranchName, want)
+	}
+	if _, err := repo.BranchHeader(context.Background(), ""); err != nil {
+		t.Fatalf("BranchHeader(empty): %v", err)
+	}
+}
+
+func TestGenericPlan_ActivityForReadsWithoutAnOrder(t *testing.T) {
+	pool := genericPlanPool(t)
+	repo := NewRepository(pool)
+	ctx := context.Background()
+	var invoice, order string
+	if err := pool.QueryRow(ctx, `SELECT gen_random_uuid()::text, gen_random_uuid()::text`).Scan(&invoice, &order); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ActivityFor(ctx, invoice, "", true); err != nil {
+		t.Fatalf("ActivityFor(no order): %v", err)
+	}
+	if _, err := repo.ActivityFor(ctx, invoice, order, true); err != nil {
+		t.Fatalf("ActivityFor(order): %v", err)
+	}
+}
+
+func TestGenericPlan_RegisterPolicyResolvesTheDealerDefaultForAnEmptyBranch(t *testing.T) {
+	pool := genericPlanPool(t)
+	repo := NewRepository(pool)
+	branch := aBranchID(t, pool)
+	for i := 0; i < 3; i++ {
+		if _, err := repo.RegisterPolicyFor(context.Background(), ""); err != nil {
+			t.Fatalf("RegisterPolicyFor(empty) call %d: %v", i+1, err)
+		}
+		if _, err := repo.RegisterPolicyFor(context.Background(), branch); err != nil {
+			t.Fatalf("RegisterPolicyFor(real branch) call %d: %v", i+1, err)
+		}
+	}
+}

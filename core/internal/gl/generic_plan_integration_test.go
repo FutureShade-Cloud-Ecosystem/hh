@@ -113,6 +113,19 @@ func TestGenericPlan_PostingAccountsResolveForAnEmptyBranch(t *testing.T) {
 	}
 }
 
+func TestGenericPlan_ListApproversReadsTheOrgWideRowsForAnEmptyBranch(t *testing.T) {
+	pool := genericPlanPool(t)
+	repo := NewRepository(pool)
+	branch := aBranchID(t, pool)
+	for i := 0; i < 3; i++ {
+		for _, b := range []string{"", branch} {
+			if _, err := repo.ListApprovers(context.Background(), "JE_APPROVAL", b); err != nil {
+				t.Fatalf("ListApprovers(%q) call %d: %v", b, i+1, err)
+			}
+		}
+	}
+}
+
 // reliefSplit is the tax split reader a tax relief posting asks for.
 type reliefSplit struct{}
 

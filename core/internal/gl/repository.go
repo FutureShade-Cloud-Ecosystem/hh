@@ -1179,7 +1179,7 @@ func (r *Repository) ListApprovers(ctx context.Context, policyType, branchID str
 		   FROM gl_approver_assignments a
 		   LEFT JOIN users u ON u.id = a.user_id
 		  WHERE a.policy_type = $1
-		    AND (a.branch_id IS NULL OR ($2 <> '' AND a.branch_id = $2::uuid))
+		    AND (a.branch_id IS NULL OR a.branch_id = NULLIF($2, '')::uuid)
 		  ORDER BY a.branch_id NULLS FIRST, a.created_at`, policyType, branchID)
 	if err != nil {
 		return nil, fmt.Errorf("gl: list approvers: %w", err)
