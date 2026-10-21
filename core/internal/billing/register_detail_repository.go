@@ -303,8 +303,13 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		     WHERE d.invoice_id = $1::uuid AND d.opened_at IS NOT NULL
 		    UNION ALL
 		    -- money applied
-		    SELECT 'PAYMENT', pa.created_at, p.payment_no::text || ' · ' || p.method,
-		           pa.amount_cents, COALESCE(u.display_name,'')
+		    -- a reversing row's contra allocation is the payment taken back: its own act, the amount negative
+		    SELECT 'PAYMENT', pa.created_at,
+		           CASE WHEN p.reverses_payment_id IS NOT NULL
+		                THEN 'reversed ' || (SELECT o.payment_no::text FROM payments o WHERE o.id = p.reverses_payment_id) || ' · ' || p.method
+		                ELSE p.payment_no::text || ' · ' || p.method END,
+		           CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.amount_cents ELSE pa.amount_cents END,
+		           COALESCE(u.display_name,'')
 		      FROM payment_allocations pa
 		      JOIN payments p ON p.id = pa.payment_id
 		      LEFT JOIN users u ON u.id = COALESCE(pa.allocated_by, p.received_by)
