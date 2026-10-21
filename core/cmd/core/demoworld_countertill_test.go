@@ -875,23 +875,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	}
 	t.Logf("the account sale for C02 %s: invoice FINALIZED, balance %d", acctC02.OrderNo, invBalance)
 
-	// 10. the account sale for C09: refused for its hold. C09 is homed at the other branch, and since UX-89 an
-	// account homed at a branch the seller cannot reach is not found at any door, so the seller first meets
-	// that wall (404), and the hold is proved once the account is homed at the seller's own branch.
-	c09Wall := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
-		IdempotencyKey: uuid.NewString(),
-		BranchID:       trentonBranchID,
-		SaleType:       "COLLECT_NOW",
-		CustomerID:     c09,
-		Tender:         "ACCOUNT",
-		Lines:          []demoSaleLine{{ProductID: holland, QtyEntered: 1, UOMEntered: "PC"}},
-	})
-	if c09Wall.status != http.StatusNotFound {
-		t.Fatalf("C09 is homed at the other branch: want 404 customer not found, got %d (body: %s)", c09Wall.status, string(c09Wall.body))
-	}
-	if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = $2::uuid WHERE id = $1::uuid`, c09, trentonBranchID); err != nil {
-		t.Fatalf("home C09 at the seller's branch: %v", err)
-	}
+	// 10. the account sale for C09: refused for its hold. C09 is a shared account (no home branch, UX-94b), so
+	// the customer wall lets the seller through to the hold.
 	c09Rsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,
