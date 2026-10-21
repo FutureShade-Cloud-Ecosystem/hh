@@ -395,8 +395,11 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	}
 	var custID string
 	if err := pool.QueryRow(admin,
-		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
-		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
+		// UX-89: the control sale below is made on the caller's own branch, so the account must be one that
+		// branch may trade with (homed there, or shared with no home), or the customer wall answers not found.
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000
+		    AND (home_branch_id IS NULL OR home_branch_id::text = $1) ORDER BY account_no LIMIT 1`, homeBranch).Scan(&custID); err != nil {
+		t.Skipf("no CONTRACTOR with credit seeded for the caller's branch: %v", err)
 	}
 
 	// A rep granted ONLY homeBranch, ringing against otherBranch.

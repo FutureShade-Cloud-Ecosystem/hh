@@ -14,7 +14,7 @@ import (
 // satisfied by *Repository and by the unit-test fake, so the whole routing matrix is provable DB-free.
 type repStore interface {
 	RepAssignmentsForCustomer(ctx context.Context, customerID string) ([]RepAssignment, error)
-	ListRepAssignments(ctx context.Context, repUserID, customerID string) ([]RepAssignment, error)
+	ListRepAssignments(ctx context.Context, repUserID, customerID string, scope RepListScope) ([]RepAssignment, error)
 	UpsertRepAssignment(ctx context.Context, a RepAssignment) (RepAssignment, error)
 	DeleteRepAssignment(ctx context.Context, customerID, orderID string) (int, error)
 	EnsureRepDMChannel(ctx context.Context, userID string) (string, error)
@@ -178,12 +178,17 @@ func (s *Service) UnassignRep(ctx context.Context, customerID, orderID string) e
 }
 
 // ListRepAssignments returns the admin list (both filters optional).
-func (s *Service) ListRepAssignments(ctx context.Context, repUserID, customerID string) ([]RepAssignment, error) {
+//
+// The list is held to the customer read's rule (UX-89 round 3 P2-B): an account homed at a branch outside the
+// caller's reach is left out, an account with no home is shared. One arm stays open: a rep lists their own
+// book across branches, but only when repUserID is the caller's own linked users.id (scope.OwnBook, set by
+// the handler from the stamped caller, never from a value the request chooses).
+func (s *Service) ListRepAssignments(ctx context.Context, repUserID, customerID string, scope RepListScope) ([]RepAssignment, error) {
 	rs, err := s.reps()
 	if err != nil {
 		return nil, err
 	}
-	out, err := rs.ListRepAssignments(ctx, repUserID, customerID)
+	out, err := rs.ListRepAssignments(ctx, repUserID, customerID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -256,4 +261,12 @@ func displayOr(name, id string) string {
 		return name
 	}
 	return id
+}
+
+// RepListScope is the reach a rep assignment list is read under: Global callers are unbounded, others see the
+// accounts homed in BranchIDs or homed nowhere, and OwnBook lifts the home test for the caller's own assignments.
+type RepListScope struct {
+	Global    bool
+	BranchIDs []string
+	OwnBook   bool
 }

@@ -875,7 +875,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	}
 	t.Logf("the account sale for C02 %s: invoice FINALIZED, balance %d", acctC02.OrderNo, invBalance)
 
-	// 10. the account sale for C09: refused for its hold.
+	// 10. the account sale for C09: refused for its hold. C09 is a shared account (no home branch, UX-94b), so
+	// the customer wall lets the seller through to the hold.
 	c09Rsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,

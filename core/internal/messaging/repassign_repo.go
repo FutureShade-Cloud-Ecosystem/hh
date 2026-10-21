@@ -45,9 +45,19 @@ func (r *Repository) RepAssignmentsForCustomer(ctx context.Context, customerID s
 
 // ListRepAssignments is the admin/rep list read model. Both filters are optional ("" = no constraint),
 // matching the audit/export filter convention.
-func (r *Repository) ListRepAssignments(ctx context.Context, repUserID, customerID string) ([]RepAssignment, error) {
+func (r *Repository) ListRepAssignments(ctx context.Context, repUserID, customerID string, scope RepListScope) ([]RepAssignment, error) {
 	if r.pool == nil {
 		return nil, errNoDB
+	}
+	// A global caller's reach is SQL NULL (every branch); anyone else's is the list, an empty one matching only
+	// the accounts homed nowhere.
+	var reach any
+	if !scope.Global {
+		ids := scope.BranchIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		reach = ids
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT ra.id::text, ra.customer_id::text, COALESCE(c.name,''),
@@ -60,8 +70,9 @@ func (r *Repository) ListRepAssignments(ctx context.Context, repUserID, customer
 		LEFT JOIN users u ON u.id = ra.rep_user_id
 		WHERE ($1 = '' OR ra.rep_user_id = $1::uuid)
 		  AND ($2 = '' OR ra.customer_id = $2::uuid)
+		  AND ($3::bool OR $4::uuid[] IS NULL OR c.home_branch_id IS NULL OR c.home_branch_id = ANY($4::uuid[]))
 		ORDER BY COALESCE(c.name,''), (ra.order_id IS NULL) DESC, ra.assigned_at DESC
-		LIMIT 500`, repUserID, customerID)
+		LIMIT 500`, repUserID, customerID, scope.OwnBook, reach)
 	if err != nil {
 		return nil, fmt.Errorf("list rep assignments: %w", err)
 	}
