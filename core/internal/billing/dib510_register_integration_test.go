@@ -594,3 +594,25 @@ func TestCustomerActivity_PaymentRowsReachOnlyACallerWhoAsksForThem(t *testing.T
 		t.Fatalf("payment and NSF rows are absent for a caller without the trail, got %v", got)
 	}
 }
+
+// The dealer default is read with an empty branch, and the query must not cast that empty string to a uuid: SQL's
+// OR does not short circuit, and once the driver's prepared statement has turned into a generic plan (after five
+// uses on a connection with real branch ids, as the register's own reads give it) the cast is evaluated for the
+// empty branch and the read fails with an invalid uuid. Found by the assistant's account position claim (slice 7c),
+// which reads the default beside the branches on every request.
+func TestRegisterPolicy_TheDealerDefaultResolvesAfterTheStatementHasBeenUsedWithRealBranches(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	var branch string
+	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' ORDER BY code LIMIT 1`).Scan(&branch); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		if _, err := repo.RegisterPolicyFor(context.Background(), branch); err != nil {
+			t.Fatalf("call %d for a branch: %v", i+1, err)
+		}
+		if _, err := repo.RegisterPolicyFor(context.Background(), ""); err != nil {
+			t.Fatalf("call %d for the dealer default: %v", i+1, err)
+		}
+	}
+}
