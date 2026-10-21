@@ -19,6 +19,8 @@ package main
 // route, as the demo Sales login, and must come back. The fence's own negative space is asserted
 // beside it: the house WALK-IN account is excluded by the search on purpose and stays excluded.
 //
+// UX-94b adds Stonebrook, the held account, to the shared set, and proves it on the Trenton till.
+//
 // UX-94: Northline, Harbourview and the County are SHARED accounts (NULL home), because they are
 // ordered from at both yards. The proof asserts the NULL after a fresh apply and after the repair
 // on a box seeded with the old homes, and that each is findable by name at Trenton and by a
@@ -31,6 +33,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -155,6 +158,52 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	}
 	assertShared("after a fresh apply")
 
+	// UX-94b, THE HELD ACCOUNT AT TRENTON. A Trenton walker finds Stonebrook through the till's
+	// customer read, and the account-standing read the till makes on picking it says on_hold, so the
+	// On hold card has real data behind it. Red on main, where C09 is homed at Kingston.
+	nameOf := func(key string) string {
+		t.Helper()
+		var name string
+		if err := pool.QueryRow(ctx, `SELECT name FROM customers WHERE id = $1::uuid`, demoID("customer:"+key)).Scan(&name); err != nil {
+			t.Fatalf("reading %s's name: %v", key, err)
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(name, " (demo)"), " (demo retail)")
+	}
+	c09 := demoID("customer:C09")
+	held := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape(nameOf("C09"))+"&branch_id="+trentonBranchID, nil)
+	held.ok(t, http.StatusOK)
+	if !strings.Contains(string(held.body), c09) {
+		t.Errorf("RED the held account is not findable at Trenton by a demo login: %s", held.body)
+	}
+	standing := sales.call("GET", "/api/v1/pos/account-standing?branch_id="+trentonBranchID+"&customer_id="+c09, nil)
+	standing.ok(t, http.StatusOK)
+	var heldStanding struct {
+		Standing string `json:"standing"`
+		OnHold   bool   `json:"on_hold"`
+	}
+	if err := json.Unmarshal(standing.body, &heldStanding); err != nil {
+		t.Fatalf("decode the held account's standing: %v: %s", err, standing.body)
+	}
+	if heldStanding.Standing != "on_hold" || !heldStanding.OnHold {
+		t.Errorf("RED the Trenton till read %+v for the held account, want on_hold", heldStanding)
+	}
+
+	// THE FENCE STILL REFUSES. C06, the retail walk-up homed at Kingston, is the account no demo
+	// login reaches: the search at Trenton must not return it.
+	c06 := demoID("customer:C06")
+	var c06Home *string
+	if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1::uuid`, c06).Scan(&c06Home); err != nil {
+		t.Fatalf("reading C06's home: %v", err)
+	}
+	if c06Home == nil || *c06Home == trentonBranchID {
+		t.Fatalf("the fence proof needs C06 homed at the other yard, got %v", c06Home)
+	}
+	fenced := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape(nameOf("C06"))+"&branch_id="+trentonBranchID, nil)
+	fenced.ok(t, http.StatusOK)
+	if strings.Contains(string(fenced.body), c06) {
+		t.Errorf("the branch fence leaked C06, homed at the other yard, to a Trenton search: %s", fenced.body)
+	}
+
 	// Search each one by the distinctive half of its name, the way a tester types it.
 	for _, w := range wants {
 		term := w.name
@@ -244,7 +293,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	// world (C01 and C08 homed at the first branch by code order, C04 at Trenton), run the apply
 	// again, and all three must read NULL and stay findable at Trenton. A second apply must repair
 	// nothing: the guard names the old homes, so a repaired row is out of its reach.
-	oldHome := map[string]string{"C01": kingstonID, "C04": trentonBranchID, "C08": kingstonID}
+	oldHome := map[string]string{"C01": kingstonID, "C04": trentonBranchID, "C08": kingstonID, "C09": kingstonID}
 	for key, home := range oldHome {
 		if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = $1::uuid WHERE id = $2::uuid`,
 			home, demoID("customer:"+key)); err != nil {
@@ -266,7 +315,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	read := func(dst *string) {
 		t.Helper()
 		if err := pool.QueryRow(ctx, `SELECT string_agg(updated_at::text, ',' ORDER BY id) FROM customers WHERE id = ANY($1::uuid[])`,
-			[]string{demoID("customer:C01"), demoID("customer:C04"), demoID("customer:C08")}).Scan(dst); err != nil {
+			[]string{demoID("customer:C01"), demoID("customer:C04"), demoID("customer:C08"), demoID("customer:C09")}).Scan(dst); err != nil {
 			t.Fatalf("reading the shared accounts' stamps: %v", err)
 		}
 	}
@@ -280,4 +329,4 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 }
 
 // sharedKeys are the demo accounts the plan seeds with no home branch.
-var sharedKeys = []string{"C01", "C04", "C08"}
+var sharedKeys = []string{"C01", "C04", "C08", "C09"}

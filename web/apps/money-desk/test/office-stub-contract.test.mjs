@@ -293,6 +293,17 @@ test("a payment is reversed once, reopens what it paid, and is refused in the co
   const list = await call("GET", `/api/v1/ar/invoices/${inv.id}/payments`);
   holds("TillInvoicePayments", list.json);
   assert.ok(list.json.items.some((p) => p.status === "VOID"));
+  assert.ok(list.json.items.some((p) => typeof p.reversed_at === "string"), "the reversed original carries reversed_at");
+  // A reversed payment cannot be bounced (SF-2d round 7).
+  refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "this payment was reversed, so it cannot be marked bounced");
+});
+
+test("a bounced payment cannot be reversed, and the core says why", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "rv-2" });
+  assert.equal((await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" })).status, 200);
+  refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/reverse`, { reason: "Too late" }), 400, "it was bounced, and a payment is reversed or bounced, never both");
 });
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ------------------------

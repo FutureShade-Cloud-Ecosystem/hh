@@ -53,7 +53,7 @@ type tillStore interface {
 
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// PaymentNSFContext resolves the finance facts of a payment for the NSF decision (non-tx read).
-	PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, found bool, err error)
+	PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, reversed, found bool, err error)
 	// NSFPolicyFor reads the branch NSF policy (branch row overrides the org default).
 	NSFPolicyFor(ctx context.Context, branchID string) (NSFPolicy, error)
 	// MarkNSF performs the full atomic NSF reversal (flip BOUNCED, reverse allocations, reopen invoices,
@@ -818,7 +818,7 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	if in.PaymentID == "" {
 		return NSFResult{}, unprocessable("till: payment_id is required")
 	}
-	_, branchID, status, _, _, found, err := s.store.PaymentNSFContext(ctx, in.PaymentID)
+	_, branchID, status, _, _, reversed, found, err := s.store.PaymentNSFContext(ctx, in.PaymentID)
 	if err != nil {
 		return NSFResult{}, err
 	}
@@ -832,6 +832,9 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	// Fast idempotent guard (the store re-checks under FOR UPDATE to close the race).
 	if status == "BOUNCED" {
 		return NSFResult{}, errAlreadyBounced
+	}
+	if reversed {
+		return NSFResult{}, errPaymentReversed
 	}
 	policy, err := s.store.NSFPolicyFor(ctx, branchID)
 	if err != nil {
