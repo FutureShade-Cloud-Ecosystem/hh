@@ -46,3 +46,10 @@ bank match.
   core's source, so a message change runs every web contract test and stub that reads it.
 - What the ledger shows after a payment is banked and then reversed (the reversing journal of a banked payment) is a
   separate question, outside this record (SF-2c).
+- The ledger side is SF-2d: the reversal's journal credits the account the deposit had put the money in, fixed in the
+  `payment.reversed` payload under the payment row lock, and an unmatch of a reversed payment is refused (its money
+  already left through the reversal).
+- LATENT: `till.Repository.MarkDeposited` sets a payment DEPOSITED without posting a clearing journal (only a bank
+  match posts Dr bank / Cr clearing). It has no live caller today. A caller that used it would leave the GL on the
+  clearing account while the status says DEPOSITED, and a later reversal would credit the bank for money the GL never
+  moved there. It must post its own clearing journal before it gains a caller.
