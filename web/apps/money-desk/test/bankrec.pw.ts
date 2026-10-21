@@ -149,13 +149,19 @@ test("a line matched by hand to a payment leaves the unmatched list, and the ref
   // An id the core does not hold as a received payment: the core's 409, in words.
   await panel.getByRole("textbox", { name: "Payment id" }).fill("b9000000-0000-4000-8000-0000000000ff");
   await panel.getByRole("button", { name: "Match line" }).click();
-  await expect(page.locator("[data-error]")).toContainText("That payment is not waiting to be deposited");
+  await expect(page.locator("[data-error]")).toContainText("That payment cannot be found, so it cannot be deposited.");
   await expect(page.locator("[data-line-panel]")).toBeVisible();
   // The real payment.
   await panel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
   await panel.getByRole("button", { name: "Match line" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Matched. The clearing entry posted to the ledger.");
   await expect(row(page, "WIRE FROM CONTRACTOR")).toHaveCount(0);
+  // A real payment that is no longer waiting (just matched): the sentence names it by its NUMBER, never its id.
+  await chooseLine(page, "MONTHLY SERVICE FEE");
+  await panel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+  await panel.getByRole("button", { name: "Match line" }).click();
+  await expect(page.locator("[data-error]")).toContainText("Payment PAY-000104 is not waiting to be deposited");
+  await expect(page.locator("[data-error]")).not.toContainText(WIRE_PAYMENT);
   await page.getByRole("button", { name: "Matched", exact: true }).click();
   await expect(row(page, "WIRE FROM CONTRACTOR")).toContainText("Matched");
 });

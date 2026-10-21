@@ -418,7 +418,7 @@ export function createBankrecWorld() {
       // no row reads as plain words.
       if (payment === undefined) {
         const known = world.payments.find((p) => p.id === input.target_ref_id);
-        return clientError(409, `payment already claimed, reversed or not RECEIVED: ${known === undefined ? "a payment that no longer exists" : known.payment_no} (claimed 0 of 1)`);
+        return clientError(409, `payment already claimed, reversed or not RECEIVED: ${known === undefined ? "a payment that cannot be found" : known.payment_no} (claimed 0 of 1)`);
       }
       payment.status = "DEPOSITED";
     }

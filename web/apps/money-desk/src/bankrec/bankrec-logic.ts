@@ -192,7 +192,7 @@ export function refusalWords(action: string, message: string, status: number): s
     const ids = named === null ? [] : named[1].split(/,\s*/).filter((n) => n !== "");
     const causes = "it is already matched to another line, it was reversed, or it is not a received payment.";
     if (ids.length === 0) return `That payment is not waiting to be deposited: ${causes}`;
-    if (ids.length === 1 && ids[0] === "a payment that no longer exists") return "That payment no longer exists, so it cannot be deposited.";
+    if (ids.length === 1 && ids[0] === "a payment that cannot be found") return "That payment cannot be found, so it cannot be deposited.";
     if (ids.length === 1) return `Payment ${ids[0]} is not waiting to be deposited: ${causes}`;
     return `Payments ${ids.join(", ")} are not waiting to be deposited: for each, ${causes}`;
   }
