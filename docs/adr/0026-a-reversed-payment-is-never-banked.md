@@ -1,4 +1,4 @@
-# ADR-0026: a reversed payment is never banked
+# ADR-0026: a reversed payment is never banked, and its money waits in 2310
 
 Status: Proposed
 
@@ -38,26 +38,38 @@ bank match.
    table, a cross module read the tablegate census forbids. The desk matches the stable first words and puts the
    same three causes in the dealer's words.
 
+6. **EXCEPTION, a reversed CARD payment is matched (SF-2d round 4, ruling 52.2).** A reversal is a ledger act: it
+   does not touch the gateway, so the processor settles the captured card anyway and the bank statement carries a
+   settlement line that has to be explained. The bank claim's predicate is `status = 'RECEIVED' AND (reversed_at IS
+   NULL OR method = 'CARD')`. The match posts the usual clearing (Dr 1000 / Cr 1010), which leaves the card clearing
+   account at zero because the receipt debited it. Every other reversed tender (cash, cheque, EFT) is still never
+   matched: no deposit of it can be real. `MarkDeposited` (no live caller) still refuses every reversed payment.
+7. **Every reversal credits 2310, whatever the tender or status (FROM-PRINCIPAL 52).** The GL books a reversal as
+   Dr AR 1100 / Cr 2310 "Customer Refunds and Unapplied Cash" (`payment.reversed` / `refund_payable`, migration
+   0426). A reversal moves no money at the bank, and 1020 is never the right credit for it: the original payment stays
+   RECEIVED and the till's expected tenders count every RECEIVED payment of the session, so the money is either still
+   in the drawer, where it is lodged and the bank match clears 1020, or gone unrecorded, where the count shows the
+   shortage and the close posts Dr 6350 / Cr 1020. Crediting 1020 at the reversal would credit it twice in either
+   case, driving it below zero while the bank holds the money. The account therefore depends on no status, no
+   deposit, no lodgement, and no payload fact: there is no fallback by status. `payment.bounced` is its own rule
+   (that money never arrived) and is untouched.
+8. **2310 is cleared by the act that moves the money.** Re-application to an invoice (Dr 2310 / Cr AR; also the right
+   way to fix a payment rung on the wrong account, since a new tender would count the cash twice in the drawer),
+   a pay out (Dr 2310 / Cr where the money leaves: 1020 with a PAID_OUT movement from the drawer, 1000 from the bank),
+   or a write off for the short or duplicate case (Dr 2310 / Cr 6350, after the count has posted the shortage).
+   Those three are SF-2l, SF-2m and SF-2n; until they land the liability simply stands, which is the truth: the
+   customer is owed it.
+
 ## Consequences
 
 - A refused write changes no row, so the sync feed re-serves nothing for it (the trigger of ADR 0025 draws only when
   a row changes).
 - A core message that a web package reads is a contract: the Money Desk's stub contract test finds each sentence in the
   core's source, so a message change runs every web contract test and stub that reads it.
-- What the ledger shows after a payment is banked and then reversed (the reversing journal of a banked payment) is a
-  separate question, outside this record (SF-2c).
-- The ledger side is SF-2d: the reversal's journal credits the account the deposit had put the money in, fixed in the
-  `payment.reversed` payload under the payment row lock, and an unmatch of a reversed payment is refused (its money
-  already left through the reversal).
+- The ledger side is SF-2d (decisions 6 to 8). An unmatch of a reversed payment is refused (its money already left
+  through the reversal), and the `payment.reversed` payload keeps the original's status facts and branch for the
+  audit only.
 - LATENT: `till.Repository.MarkDeposited` sets a payment DEPOSITED without posting a clearing journal (only a bank
   match posts Dr bank / Cr clearing). It has no live caller today. A caller that used it would leave the GL on the
-  clearing account while the status says DEPOSITED, and a later reversal would credit the bank for money the GL never
-  moved there. It must post its own clearing journal before it gains a caller.
-- RULED, NOT YET BUILT (SF-2d round 4, blocked on the items in SF2D-REPORT.md): a reversal moves no money at the bank.
-  A reversal of money NOT yet banked credits the receipt's own account (1020 undeposited funds for cash and cheque,
-  1010 card clearing for a card), as built. A reversal of money ALREADY in the bank (banked by a till lodgement match
-  or by a bank payment match) credits a liability posting role, customer refunds and unapplied cash, never the bank
-  and never undeposited funds. That liability is cleared later either by the refund that pays it out (Dr the liability,
-  Cr the bank) or by re-application of the money to an invoice (Dr the liability, Cr AR). At the time of writing
-  neither the account nor either clearing path exists, and the reversal of banked money still credits the bank (a
-  deposit by payment match) or undeposited funds (a lodgement), which is the gap this rule closes.
+  clearing account while the status says DEPOSITED, and a deposit-status payment would show as banked in the matcher while the
+  GL never moved the money there. It must post its own clearing journal before it gains a caller.
