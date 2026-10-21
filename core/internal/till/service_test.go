@@ -301,16 +301,16 @@ func (f *fakeStore) SetCompleted(_ context.Context, sessionID, branchID, complet
 
 // - W5 A-05 fake store methods -
 
-func (f *fakeStore) PaymentNSFContext(_ context.Context, paymentID string) (string, string, string, string, int64, bool, error) {
+func (f *fakeStore) PaymentNSFContext(_ context.Context, paymentID string) (string, string, string, string, int64, bool, bool, error) {
 	p, ok := f.payments[paymentID]
 	if !ok {
-		return "", "", "", "", 0, false, nil
+		return "", "", "", "", 0, false, false, nil
 	}
 	status := p.Status
 	if f.nsfByPayment[paymentID] {
 		status = "BOUNCED"
 	}
-	return p.CustomerID, p.BranchID, status, p.Method, p.AmountCents, true, nil
+	return p.CustomerID, p.BranchID, status, p.Method, p.AmountCents, false, true, nil
 }
 
 func (f *fakeStore) NSFPolicyFor(_ context.Context, _ string) (NSFPolicy, error) {

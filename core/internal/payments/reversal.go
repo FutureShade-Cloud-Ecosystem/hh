@@ -155,8 +155,15 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		return Reversal{}, fmt.Errorf("%w: it is itself a reversing entry, take the payment again as a new "+
 			"payment so the reason for re-charging is its own record", ErrNotReversible)
 	}
-	if status == "VOID" {
-		return Reversal{}, fmt.Errorf("%w: status is VOID", ErrNotReversible)
+	// Only a RECEIVED or DEPOSITED payment is reversible, decided under the row lock (SF-2d round 7). A payment is
+	// reversed or bounced, never both: a bounce already reopened the invoices and deleted the allocations, so a
+	// reversal would credit 2310 for money that never arrived. A refund row has nothing to give back either.
+	switch status {
+	case "RECEIVED", "DEPOSITED":
+	case "BOUNCED":
+		return Reversal{}, fmt.Errorf("%w: it was bounced, and a payment is reversed or bounced, never both", ErrNotReversible)
+	default:
+		return Reversal{}, fmt.Errorf("%w: status is %s, only a received or deposited payment can be reversed", ErrNotReversible, status)
 	}
 
 	// The allocations this payment made are exactly what must be given back.
@@ -296,6 +303,12 @@ UPDATE invoices
 		"method":              method,
 		"reason":              in.Reason,
 		"invoice_ids":         reopened,
+		// The facts the GL's account choice needs, read under the payment row lock this transaction holds, so the
+		// account is fixed when the reversal happens and not when the consumer runs (SF-2d round 2): whether the
+		// original had been deposited (cleared to the bank), and its branch.
+		"original_status":  status,
+		"original_cleared": status == "DEPOSITED",
+		"branch_id":        branchID,
 	})
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: marshal payment.reversed: %w", err)

@@ -86,9 +86,9 @@ func TestIntegration_Fresh_PaymentMatchedReachesThePayersFeed(t *testing.T) {
 	lineID := insertLine(t, pool, acct, time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC), "FRESH MATCH", "GTW-FRESH-MATCH", 41100)
 
 	c.Write = func(ctx context.Context) (string, error) {
-		_, err := NewRepository(pool).PersistMatch(ctx, Match{
+		_, err := NewRepository(pool).PersistMatchReach(ctx, Match{
 			StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: pid, Method: MethodManual, AmountCents: 41100,
-		}, []string{pid})
+		}, []string{pid}, AllBranches)
 		return pid, err
 	}
 	c.Want = freshWantStatus("DEPOSITED")
@@ -105,9 +105,9 @@ func TestIntegration_Fresh_PaymentUnmatchedReachesThePayersFeed(t *testing.T) {
 	ctx := context.Background()
 	lineID := insertLine(t, pool, acct, time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC), "FRESH UNMATCH", "GTW-FRESH-UNMATCH", 41100)
 	repo := NewRepository(pool)
-	matchID, err := repo.PersistMatch(ctx, Match{
+	matchID, err := repo.PersistMatchReach(ctx, Match{
 		StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: pid, Method: MethodManual, AmountCents: 41100,
-	}, []string{pid})
+	}, []string{pid}, AllBranches)
 	if err != nil {
 		t.Fatalf("seed match: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestIntegration_Fresh_PaymentUnmatchedReachesThePayersFeed(t *testing.T) {
 	}
 
 	c.Write = func(ctx context.Context) (string, error) {
-		_, _, _, err := repo.Unmatch(ctx, matchID, "")
+		_, _, _, err := repo.UnmatchReach(ctx, matchID, "", AllBranches)
 		return pid, err
 	}
 	c.Want = freshWantStatus("RECEIVED")

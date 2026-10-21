@@ -769,7 +769,7 @@ var counterFirstTables = map[string][]string{
 // counterFirstAccepted: a trigger relying writer of a counter first table that takes no counter first, with the
 // reason it cannot cross anything. Key: "<package dir>.<function> <table>".
 var counterFirstAccepted = map[string]string{
-	"core.repairNorthlineHome customers":         "demo seed repair (demo tag): runs once at provisioning of a demo database, alone, with no load batch and no REST traffic",
+	"core.repairSharedAccountHomes customers":    "demo seed repair (demo tag): runs once at provisioning of a demo database, alone, with no load batch and no REST traffic",
 	"core.renameScrubbedDemoCustomers customers": "demo seed scrub (demo tag): runs once at provisioning of a demo database, alone",
 }
 

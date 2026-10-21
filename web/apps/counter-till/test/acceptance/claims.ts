@@ -6,11 +6,12 @@
 // claim with no proof fails, a proof naming a test that does not exist fails,
 // and a retired proof cannot outlive its sentence.
 //
-// World facts the counter cannot enumerate through its own walls (the nine
+// World facts the counter cannot enumerate through its own walls (the
 // accounts behind the branch fence) are covered as far as the product's API
-// can see: the naming rule is asserted over everything the counter reaches,
-// and the on-hold account's absence from this counter is itself asserted (it
-// sits behind the branch fence, which is the wall the returns desk shows).
+// can see: the naming rule is asserted over everything the counter reaches.
+// The on-hold account is company-wide and reachable at this counter; the
+// fence is the other yard's retail walk-up, which the core's search proof
+// asserts is never returned here.
 export interface ClaimProof {
   file: string;
   test: string;

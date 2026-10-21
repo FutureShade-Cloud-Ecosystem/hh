@@ -350,6 +350,9 @@ var (
 	// errAlreadyBounced is the idempotent-replay guard for the NSF flow: a payment already marked BOUNCED
 	// cannot be bounced a second time (409). Returned by the store's in-tx FOR UPDATE status check.
 	errAlreadyBounced = clientError{status: http.StatusConflict, msg: "till: payment already marked BOUNCED"}
+	// errPaymentReversed refuses a bounce of a reversed payment (SF-2d round 7): a payment is reversed or bounced,
+	// never both. Decided in the store's locked read, mirrored by the service's fast check.
+	errPaymentReversed = clientError{status: http.StatusConflict, msg: "till: this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)"}
 )
 
 // unprocessable maps a SEMANTIC validation failure (well-formed request, value violates a rule) to 422

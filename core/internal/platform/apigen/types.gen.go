@@ -6478,18 +6478,19 @@ type TillPaymentHistory struct {
 }
 
 type TillInvoicePaymentRecord struct {
-	PaymentId          string    `json:"payment_id"`
-	PaymentNo          string    `json:"payment_no"`
-	Method             string    `json:"method"`
-	Status             string    `json:"status"`
-	AmountCents        int64     `json:"amount_cents"`
-	PaymentAmountCents int64     `json:"payment_amount_cents"`
-	AllocatedBy        *string   `json:"allocated_by,omitempty"`
-	AllocatedByName    *string   `json:"allocated_by_name,omitempty"`
-	AllocatedAt        time.Time `json:"allocated_at"`
-	ReceivedBy         *string   `json:"received_by,omitempty"`
-	ReceivedByName     *string   `json:"received_by_name,omitempty"`
-	ReceivedAt         time.Time `json:"received_at"`
+	PaymentId          string     `json:"payment_id"`
+	PaymentNo          string     `json:"payment_no"`
+	Method             string     `json:"method"`
+	Status             string     `json:"status"`
+	AmountCents        int64      `json:"amount_cents"`
+	PaymentAmountCents int64      `json:"payment_amount_cents"`
+	AllocatedBy        *string    `json:"allocated_by,omitempty"`
+	AllocatedByName    *string    `json:"allocated_by_name,omitempty"`
+	AllocatedAt        time.Time  `json:"allocated_at"`
+	ReceivedBy         *string    `json:"received_by,omitempty"`
+	ReceivedByName     *string    `json:"received_by_name,omitempty"`
+	ReceivedAt         time.Time  `json:"received_at"`
+	ReversedAt         *time.Time `json:"reversed_at,omitempty"`
 }
 
 type TillInvoicePayments struct {
