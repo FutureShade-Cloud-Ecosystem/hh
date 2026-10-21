@@ -46,6 +46,7 @@ type reachWorld struct {
 	pay      *fakePayments
 	lodg     *fakeLodgements
 	poster   *dbPoster
+	journals *gl.Service
 	callerA  guards.StaffCaller
 	callerAB guards.StaffCaller
 }
@@ -77,9 +78,10 @@ func newReachWorld(t *testing.T) *reachWorld {
 		t.Fatalf("deposit: %v", err)
 	}
 	w.poster = newDBPoster(pool)
+	w.journals = gl.NewService(gl.NewRepository(pool))
 	w.pay = &fakePayments{}
 	w.lodg = &fakeLodgements{}
-	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournals(gl.NewService(gl.NewRepository(pool))).WithJournalPoster(w.poster)
+	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournals(w.journals).WithJournalPoster(w.poster)
 	w.h = NewHandler(svc, slog.Default())
 	w.callerA = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{w.branchA}}}
 	w.callerAB = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeGlobal}}

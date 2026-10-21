@@ -76,3 +76,42 @@ func TestIntegration_Round2_AJournalThatNoLongerExplainsALineIsRefused(t *testin
 		t.Errorf("the refusal %q does not say it is about the journal", body)
 	}
 }
+
+// Completion rechecks every live JOURNAL match in the month through the GL seam (S3 section 7): a matched journal
+// that has been reversed since, or no longer qualifies, refuses the sign off and names the line.
+func TestIntegration_Round2_CompletionRechecksTheJournalMatchesOfTheMonth(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	stamp := time.Now().UnixNano()
+	j := w.plantJournal(t, "sf2j2-cmp-"+itoa(stamp), "", "POSTED", []jl{{"1000", 7300, 0}, {"4950", 0, 7300}})
+	line := w.line(t, "R2 COMPLETION", 7300)
+	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", j, 7300)); code != http.StatusCreated {
+		t.Fatalf("setup: the journal match answered %d %s", code, body)
+	}
+	svc := NewService(NewRepository(w.pool)).WithJournals(w.journals).WithGLBalances(&fakeBalances{val: 7300})
+	var year, month int
+	_ = w.pool.QueryRow(ctx, `SELECT EXTRACT(YEAR FROM txn_date)::int, EXTRACT(MONTH FROM txn_date)::int FROM bank_statement_lines WHERE id = $1::uuid`, line).Scan(&year, &month)
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: year, Month: month, StatementBalanceCents: 7300})
+	if err != nil {
+		t.Fatalf("open the month: %v", err)
+	}
+	t.Cleanup(func() { _, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID) })
+	// The journal is reversed after the match, before the sign off.
+	rev := w.plantJournal(t, "sf2j2-cmp-rev-"+itoa(stamp), "", "POSTED", []jl{{"1000", 0, 7300}, {"4950", 7300, 0}})
+	if _, err := w.pool.Exec(ctx, `UPDATE gl_journals SET reverses_journal_id = $1::uuid WHERE id = $2::uuid`, j, rev); err != nil {
+		t.Fatalf("name the reversal: %v", err)
+	}
+	_, err = svc.CompleteReconciliation(ctx, rec.ID, "")
+	t.Logf("completion with a reversed journal match: %v", err)
+	if err == nil {
+		t.Fatalf("a month holding a journal match whose journal was reversed was signed off")
+	}
+	if !strings.Contains(err.Error(), "R2 COMPLETION") {
+		t.Errorf("the refusal %q does not name the line", err.Error())
+	}
+	var status string
+	_ = w.pool.QueryRow(ctx, `SELECT status FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID).Scan(&status)
+	if status != ReconOpen {
+		t.Errorf("the month reads %s after the refused sign off, want OPEN", status)
+	}
+}
