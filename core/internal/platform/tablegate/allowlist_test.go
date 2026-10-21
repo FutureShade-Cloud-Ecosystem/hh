@@ -298,7 +298,7 @@ var allowlist = []allowlistEntry{
 		file:   "core/internal/dispatch/repository_w3.go",
 		tables: []string{"customers", "locations", "orders"},
 		writes: []string{"scope_sequences"},
-		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows; the org held ticket and pending feed reads hold the stop's or order's branch to the caller's org through the org anchor read on locations, read only (UX-81 rounds 5 and 6: no writer stamps orders.org_id)",
+		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows; the org held ticket and pending feed reads hold the stop's or order's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 rounds 5 and 6: no writer stamps orders.org_id; approved, decision record row 2879)",
 	},
 	{
 		module: "dispatch",
@@ -511,7 +511,7 @@ var allowlist = []allowlistEntry{
 		module: "order",
 		file:   "core/internal/order/repository.go",
 		tables: []string{"locations"},
-		reason: "the org held brief read (OrderBriefInOrg) holds an order's branch to the caller's org through the org anchor read on locations, read only (UX-81 round 6: no writer stamps orders.org_id)",
+		reason: "the org held brief read (OrderBriefInOrg) holds an order's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 round 6: no writer stamps orders.org_id; approved, decision record row 2879)",
 	},
 	{
 		module: "order",
@@ -1000,7 +1000,7 @@ var allowlist = []allowlistEntry{
 		file:   "core/internal/tasks/repository.go",
 		tables: []string{"locations"},
 		writes: []string{"scope_sequences"},
-		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above); the REST reads (GetTask, ListTasks, the transition lock) hold a task's branch to the caller's org through the org anchor read on locations, read only (UX-81 round 6: no writer stamps tasks.org_id on every path)",
+		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above); the REST reads (GetTask, ListTasks, the transition lock) hold a task's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 round 6: no writer stamps tasks.org_id on every path; approved, decision record row 2879)",
 	},
 	{
 		module: "tax",
