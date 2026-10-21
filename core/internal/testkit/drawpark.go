@@ -35,8 +35,7 @@ type DrawPark struct {
 
 func NewDrawPark(t *testing.T, base *pgxpool.Pool, scope string, key int64) *DrawPark {
 	t.Helper()
-	ctx := context.Background()
-	for _, q := range []string{
+	return newPark(t, base, scope, key, []string{
 		`CREATE OR REPLACE FUNCTION sf1_park_before() RETURNS trigger LANGUAGE plpgsql AS $$
 		 BEGIN
 		   IF NEW.scope = TG_ARGV[0] AND current_setting('application_name') = 'sf1-park' THEN
@@ -47,7 +46,32 @@ func NewDrawPark(t *testing.T, base *pgxpool.Pool, scope string, key int64) *Dra
 		`DROP TRIGGER IF EXISTS sf1_park_before ON scope_sequences`,
 		fmt.Sprintf(`CREATE TRIGGER sf1_park_before BEFORE INSERT ON scope_sequences FOR EACH ROW EXECUTE FUNCTION sf1_park_before('%s', '%d')`, scope, key),
 		fmt.Sprintf(`INSERT INTO scope_sequences (scope, next_value) VALUES ('%s', 0) ON CONFLICT (scope) DO NOTHING`, scope),
-	} {
+	}, []string{`DROP TRIGGER IF EXISTS sf1_park_before ON scope_sequences`, `DROP FUNCTION IF EXISTS sf1_park_before()`})
+}
+
+// NewInsertPark parks sessions of its own pool (application name sf1-park) at the moment they INSERT into one table,
+// on an advisory lock the test holds: a BEFORE INSERT trigger on the table, so the parked writer stands after
+// everything it read before the insert and before the row exists. It is the park for a check-then-insert race that
+// has no counter to stand on (SF-2j, the till movement beside a count). Everything else about it is DrawPark's.
+func NewInsertPark(t *testing.T, base *pgxpool.Pool, table string, key int64) *DrawPark {
+	t.Helper()
+	return newPark(t, base, table, key, []string{
+		`CREATE OR REPLACE FUNCTION sf1_park_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN
+		   IF current_setting('application_name') = 'sf1-park' THEN
+		     PERFORM pg_advisory_xact_lock(TG_ARGV[0]::bigint);
+		   END IF;
+		   RETURN NEW;
+		 END $$`,
+		fmt.Sprintf(`DROP TRIGGER IF EXISTS sf1_park_insert ON %s`, table),
+		fmt.Sprintf(`CREATE TRIGGER sf1_park_insert BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION sf1_park_insert('%d')`, table, key),
+	}, []string{fmt.Sprintf(`DROP TRIGGER IF EXISTS sf1_park_insert ON %s`, table), `DROP FUNCTION IF EXISTS sf1_park_insert()`})
+}
+
+func newPark(t *testing.T, base *pgxpool.Pool, scope string, key int64, setup, cleanup []string) *DrawPark {
+	t.Helper()
+	ctx := context.Background()
+	for _, q := range setup {
 		if _, err := base.Exec(ctx, q); err != nil {
 			t.Fatalf("park trigger: %v", err)
 		}
@@ -79,8 +103,9 @@ func NewDrawPark(t *testing.T, base *pgxpool.Pool, scope string, key int64) *Dra
 		hold.Release()
 		park.Close()
 		c := context.Background()
-		_, _ = base.Exec(c, `DROP TRIGGER IF EXISTS sf1_park_before ON scope_sequences`)
-		_, _ = base.Exec(c, `DROP FUNCTION IF EXISTS sf1_park_before()`)
+		for _, q := range cleanup {
+			_, _ = base.Exec(c, q)
+		}
 	})
 	return p
 }

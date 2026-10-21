@@ -187,6 +187,15 @@ func (f *fakeStore) GetJournal(_ context.Context, id string) (Journal, error) {
 	return *j, nil
 }
 
+func (f *fakeStore) JournalIsReversed(_ context.Context, id string) (bool, error) {
+	for _, j := range f.journals {
+		if j.ReversesJournalID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeStore) ListJournals(_ context.Context, _ JournalFilter) ([]Journal, error) {
 	var out []Journal
 	for _, j := range f.journals {
