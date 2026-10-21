@@ -334,7 +334,54 @@ test("a payment is reversed with a reason, and the invoice is owing what it was"
   await expect(page.locator("[data-payment-row]", { hasText: "REV-" }).getByRole("button")).toHaveCount(0);
   // A reversed payment is reversed or bounced, never both: the original offers neither Mark bounced nor Reverse again.
   await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" })).toContainText("Reversed");
-  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button")).toHaveCount(0);
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button", { name: "Mark bounced" })).toHaveCount(0);
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button", { name: "Reverse" })).toHaveCount(0);
+});
+
+test("a reversed payment's held money is put on an invoice, never more than is held, and never twice", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccountToPay(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$637.50");
+  // A payment that was never reversed holds nothing, so it offers no way to apply it.
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button", { name: "Apply its money" })).toHaveCount(0);
+  await page.locator("[data-payment-row]").getByRole("button", { name: "Reverse" }).click();
+  await page.locator("[data-field='reverse-reason']").fill("Keyed on the wrong account");
+  await page.getByRole("button", { name: "Confirm reversed" }).click();
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
+
+  const row = page.locator("[data-payment-row]", { hasText: "PAY-0101" });
+  await row.getByRole("button", { name: "Apply its money" }).click();
+  await expect(page.locator("[data-held]")).toContainText("$250.00 is held for this customer.");
+  await expect(page.locator("[data-field='reapply-invoice']")).toContainText("INV-1005");
+  await noSidewaysScroll(page);
+  // Checked before anything is sent.
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter the amount to apply, such as 100.00.");
+  await page.locator("[data-field='reapply-amount']").fill("250.01");
+  await page.locator("[data-field='reapply-reason']").fill("Keyed on the wrong account");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("That is more than the $250.00 still held for this payment.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
+  // A part, and the server's balance follows it.
+  await page.locator("[data-field='reapply-amount']").fill("100.00");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("$100.00 of payment PAY-0101 is applied to invoice INV-1005. $150.00 is still held for this payment.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$787.50");
+  // The rest, and then nothing is held.
+  await row.getByRole("button", { name: "Apply its money" }).click();
+  await expect(page.locator("[data-held]")).toContainText("$150.00 is held for this customer.");
+  await page.locator("[data-field='reapply-amount']").fill("150.00");
+  await page.locator("[data-field='reapply-reason']").fill("The rest of it");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("$150.00 of payment PAY-0101 is applied to invoice INV-1005. Nothing is held for this payment now.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$637.50");
+  await row.getByRole("button", { name: "Apply its money" }).click();
+  await expect(page.locator("[data-held]")).toHaveText("Nothing is held for this payment now.");
 });
 
 test("on a phone the invoice's dispute form and the reversal fit the screen", async ({ page, request }) => {

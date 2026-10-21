@@ -17,6 +17,7 @@ import type {
   BillingReminderRule,
   BillingReminderSend,
   BillingStatementRunResult,
+  PaymentsHeld,
   Result,
 } from "@hardscapehouse/api-client";
 import { OfficeApi } from "./office-api.js";
@@ -28,6 +29,8 @@ import {
   officeRefusal,
   outcomeUnknown,
   paperResolveCheck,
+  reapplyCheck,
+  reapplyWords,
   reminderResultWords,
   reversalCheck,
   reversalWords,
@@ -63,6 +66,12 @@ export interface OfficeHost {
   readonly reloadAccount: () => Promise<void>;
   /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame. */
   readonly mountDocument: (selector: string, text: string) => void;
+}
+
+/** The reversed payment whose held money is being put on an invoice, and the figure the core reads for it. */
+export interface ReapplyView {
+  readonly paymentId: string;
+  readonly held: PaymentsHeld | "loading" | "error";
 }
 
 /** The panel an invoice's extra actions open, and what it is about. */
@@ -102,6 +111,8 @@ export interface OfficeModel {
   readonly document: DocumentView;
   /** The payment being reversed, waiting on a reason. */
   readonly reversing: string | null;
+  /** The reversed payment whose held money is being put on an invoice, with the figure the core holds for it. */
+  readonly reapplying: ReapplyView | null;
   readonly accounts: readonly BillingAgingRow[];
   readonly policy: BillingLandingPolicy | null;
   readonly remind: RemindForm;
@@ -155,6 +166,7 @@ export class OfficeDesk {
   /** The invoice document's HTML, held until the next paint can mount it. */
   #documentHtml: string | null = null;
   #reversing: string | null = null;
+  #reapplying: ReapplyView | null = null;
   /** The account whose name field the next paint must fill from its contact. */
   #fillContactFor: string | null = null;
 
@@ -176,6 +188,7 @@ export class OfficeDesk {
       invoiceMode: this.#invoiceMode,
       document: this.#document,
       reversing: this.#reversing,
+      reapplying: this.#reapplying,
       accounts: this.#host.accounts(),
       policy: this.#host.policy(),
       remind: this.#remind,
@@ -463,6 +476,7 @@ export class OfficeDesk {
     this.#document = { phase: "none" };
     this.#documentHtml = null;
     this.#reversing = null;
+    this.#reapplying = null;
   }
 
   async #sendInvoice(invoiceId: string): Promise<void> {
@@ -575,6 +589,56 @@ export class OfficeDesk {
     this.#host.repaint();
   }
 
+  /** Opens the form for a reversed payment: the core is asked what it still holds, and the form waits on that figure. */
+  async #startReapply(paymentId: string): Promise<void> {
+    this.#reapplying = { paymentId, held: "loading" };
+    this.#host.repaint();
+    const got = await this.#api.heldFor(paymentId);
+    if (this.#reapplying === null || this.#reapplying.paymentId !== paymentId) return;
+    if (!got.ok) {
+      this.#reapplying = { paymentId, held: "error" };
+      this.#fail("reapply", got);
+    } else {
+      this.#reapplying = { paymentId, held: got.value };
+    }
+    this.#host.repaint();
+  }
+
+  /** Puts held money on one open invoice of the same customer: one key per attempt, the same key again on a lost answer. */
+  async #reapply(paymentId: string, paymentNo: string): Promise<void> {
+    if (this.#busy) return;
+    const view = this.#reapplying;
+    if (view === null || view.paymentId !== paymentId || typeof view.held === "string") return;
+    // The picker's value is the invoice's id and its open balance as the screen drew it, "id:cents": the screens bind
+    // no value beyond the field, and the balance only bounds what the press will send, the core judges it again.
+    const [invoiceId = "", balance = ""] = this.#host.field("reapply-invoice").split(":");
+    const check = reapplyCheck({
+      invoiceId,
+      amountText: this.#host.field("reapply-amount"),
+      reason: this.#host.field("reapply-reason"),
+      heldCents: view.held.held_cents,
+      balanceCents: balance === "" ? null : Number(balance),
+    });
+    if (!check.ok) return this.#stop(check.words);
+    const attempt = `reapply:${paymentId}:${check.invoiceId}:${check.amountCents}`;
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.reapplyHeld(paymentId, { invoiceId: check.invoiceId, amountCents: check.amountCents, reason: check.reason, key: this.#keys.keyFor(attempt) });
+    this.#busy = false;
+    if (!outcomeUnknown(result.ok ? 200 : result.status)) this.#keys.settle(attempt);
+    if (!result.ok) {
+      this.#fail("reapply", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#reapplying = null;
+    this.#host.notice(reapplyWords(result.value, paymentNo));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
   // ---- settings, holds a returned payment placed, the dispatch gate -----------------------------------------
 
   openSettings(): Promise<void> {
@@ -676,6 +740,16 @@ export class OfficeDesk {
         return true;
       case "reverse-confirm":
         void this.#reversePayment(attr("data-payment-id"), attr("data-payment-no"));
+        return true;
+      case "reapply-start":
+        void this.#startReapply(attr("data-payment-id"));
+        return true;
+      case "reapply-cancel":
+        this.#reapplying = null;
+        this.#host.repaint();
+        return true;
+      case "reapply-confirm":
+        void this.#reapply(attr("data-payment-id"), attr("data-payment-no"));
         return true;
       case "paper-sweep":
         void this.#sweepPaper();
