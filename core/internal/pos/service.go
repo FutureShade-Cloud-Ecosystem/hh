@@ -451,6 +451,16 @@ var errCustomerNotFound = clientErr(http.StatusNotFound, "customer not found")
 // for a caller who may use it, and errCustomerNotFound for an id that is no account and for an account the
 // customer module's rule (staffcontext CanReachAccountHome) keeps from this caller. Any other read failure
 // is returned as is.
+//
+// THE RULING (UX-89 round 3): a branch may serve a yard-held account (one homed at another branch) only on
+// documents that branch already holds.
+//   - NEW sales, quotes, parked tickets, pricing orders, counter prices, the margin glance and sale preview
+//     price or file against the account, so they go through this wall.
+//   - A RETURN or a SWAP of the branch's own sale is not a new document: it is held by the sale's branch
+//     (previewNoteProducts refuses an order outside the caller's reach), so a clerk may return to, and swap for
+//     the replacement of, a yard-held account's purchase at that branch. The swap's replacement order prices at
+//     the account's type under the same ruling (swapFigures reads the account directly, on purpose), and the
+//     return across preview's account credit check reads it directly too.
 func (s *Service) customerFor(ctx context.Context, caller identity.StaffContext, customerID string) (customerRec, error) {
 	cust, err := s.store.ReadCustomer(ctx, customerID)
 	if err != nil {
