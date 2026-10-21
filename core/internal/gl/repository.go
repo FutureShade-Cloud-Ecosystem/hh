@@ -44,7 +44,7 @@ func (r *Repository) Policy(ctx context.Context, branchID string) (Policy, error
 	q := `SELECT COALESCE(branch_id::text,''), je_approval_threshold_cents, fiscal_year_start_month,
 	             cost_basis_strategy, exclude_special_buys, notes
 	      FROM gl_policy
-	      WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
+	      WHERE branch_id IS NULL OR branch_id = NULLIF($1, '')::uuid
 	      ORDER BY (branch_id IS NOT NULL) DESC
 	      LIMIT 1`
 	var p Policy
@@ -93,7 +93,7 @@ func postingAccountsOn(ctx context.Context, q rowQuerier, eventType, branchID st
 		`SELECT line_role, account_code::text, (branch_id IS NOT NULL) AS is_branch
 		 FROM posting_rules
 		 WHERE event_type = $1 AND is_active
-		   AND (branch_id IS NULL OR ($2 <> '' AND branch_id = $2::uuid))
+		   AND (branch_id IS NULL OR branch_id = NULLIF($2, '')::uuid)
 		 ORDER BY is_branch`, eventType, branchID) // NULL (default) first, branch override last
 	if err != nil {
 		return nil, fmt.Errorf("gl: posting accounts %q: %w", eventType, err)
