@@ -80,6 +80,9 @@ type InvoicePaymentRecord struct {
 	ReceivedBy         string    `json:"received_by,omitempty"`
 	ReceivedByName     string    `json:"received_by_name,omitempty"`
 	ReceivedAt         time.Time `json:"received_at"`
+	// ReversedAt is set when the payment was reversed (a ledger correction; its status stays RECEIVED or DEPOSITED).
+	// The desk hides Mark bounced and Reverse on such a row: a payment is reversed or bounced, never both.
+	ReversedAt *time.Time `json:"reversed_at,omitempty"`
 }
 
 // InvoicePayments is the per-invoice settlement view: every payment applied to it, attributed.
@@ -177,7 +180,7 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 	rows, err := r.pool.Query(ctx,
 		`SELECT p.id::text, p.payment_no::text, p.method, p.status, pa.amount_cents, p.amount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(ua.display_name, ''), pa.created_at,
-		        COALESCE(p.received_by::text, ''), COALESCE(ur.display_name, ''), p.received_at
+		        COALESCE(p.received_by::text, ''), COALESCE(ur.display_name, ''), p.received_at, p.reversed_at
 		 FROM payment_allocations pa
 		 JOIN payments p ON p.id = pa.payment_id
 		 LEFT JOIN users ua ON ua.id = pa.allocated_by
@@ -194,7 +197,7 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 		if err := rows.Scan(&it.PaymentID, &it.PaymentNo, &it.Method, &it.Status,
 			&it.AmountCents, &it.PaymentAmountCents,
 			&it.AllocatedBy, &it.AllocatedByName, &it.AllocatedAt,
-			&it.ReceivedBy, &it.ReceivedByName, &it.ReceivedAt); err != nil {
+			&it.ReceivedBy, &it.ReceivedByName, &it.ReceivedAt, &it.ReversedAt); err != nil {
 			return InvoicePayments{}, false, fmt.Errorf("till: scan invoice payment: %w", err)
 		}
 		out.Items = append(out.Items, it)
