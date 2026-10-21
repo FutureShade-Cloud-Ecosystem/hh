@@ -24,33 +24,63 @@ import (
 
 var _ payments.TillSeam = (*Service)(nil)
 
-// PayOutHeldMoney records a cash pay out of held money as a PAID_OUT movement on an OPEN session of the payment's
-// branch the caller can reach, inside the caller's transaction.
-func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.DrawerPaidOut) error {
+// PayOutHeldMoney records a cash pay out of held money as a PAID_OUT movement on an OPEN session of the payment's branch
+// the caller can reach, inside the caller's transaction, and answers the session it landed on. A named session is
+// checked; an unnamed one is the branch's one OPEN drawer, refused in words when there is none or more than one (the
+// Money Desk cannot name a drawer, and the cash is handed back from the till the dealer is standing at).
+func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.DrawerPaidOut) (string, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if in.AmountCents <= 0 {
-		return payments.PayoutRefusedError{Status: 400, Msg: "till: a pay out amount must be > 0"}
+		return "", payments.PayoutRefusedError{Status: 400, Msg: "till: a pay out amount must be > 0"}
 	}
-	sess, err := s.store.GetSessionTx(ctx, tx, in.SessionID)
+	sessionID := in.SessionID
+	if sessionID == "" {
+		rows, err := tx.Query(ctx, `SELECT id::text FROM till_sessions WHERE branch_id = $1::uuid AND status = 'OPEN' ORDER BY opened_at LIMIT 2`, in.BranchID)
+		if err != nil {
+			return "", fmt.Errorf("till: find the open drawer: %w", err)
+		}
+		var open []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return "", fmt.Errorf("till: scan the open drawer: %w", err)
+			}
+			open = append(open, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		switch len(open) {
+		case 0:
+			return "", payments.PayoutRefusedError{Status: 409, Msg: "till: no drawer is open at the payment's branch to hand the cash back from"}
+		case 1:
+			sessionID = open[0]
+		default:
+			return "", payments.PayoutRefusedError{Status: 409, Msg: "till: more than one drawer is open at the payment's branch, pay it out from the till the cash leaves"}
+		}
+	}
+	sess, err := s.store.GetSessionTx(ctx, tx, sessionID)
 	if err != nil {
 		if errors.Is(err, errNotFound) {
-			return payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
+			return "", payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
 		}
-		return err
+		return "", err
 	}
 	if sess.Status != StatusOpen {
-		return payments.PayoutRefusedError{Status: 409, Msg: fmt.Sprintf("till: a cash pay out needs an OPEN drawer, and this session is %s", sess.Status)}
+		return "", payments.PayoutRefusedError{Status: 409, Msg: fmt.Sprintf("till: a cash pay out needs an OPEN drawer, and this session is %s", sess.Status)}
 	}
 	if sess.BranchID != in.BranchID {
-		return payments.PayoutRefusedError{Status: 409, Msg: "till: that drawer belongs to another branch than the payment"}
+		return "", payments.PayoutRefusedError{Status: 409, Msg: "till: that drawer belongs to another branch than the payment"}
 	}
 	if !caller.CanAccessBranch(sess.BranchID) {
-		return payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
+		return "", payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
 	}
-	return s.store.InsertMovementTx(ctx, tx, MovementRow{
+	if err := s.store.InsertMovementTx(ctx, tx, MovementRow{
 		TillSessionID: sess.ID,
 		MovementType:  MovementPaidOut,
 		Method:        MethodCash,
@@ -58,7 +88,10 @@ func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.Dr
 		Reason:        "HELD PAYOUT " + in.Reason,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
-	})
+	}); err != nil {
+		return "", err
+	}
+	return sess.ID, nil
 }
 
 // SessionCountTx answers a session's status and over or short on the caller's transaction, the session row FOR SHARE.

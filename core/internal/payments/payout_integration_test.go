@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -304,5 +306,76 @@ func TestIntegration_Payout_WriteOffNeedsASessionWithAShortage(t *testing.T) {
 	w.closeSession(session, 5_000) // the drawer is exactly as expected: no shortage
 	if _, err := w.payOut(repo, cash, payments.PayoutWriteOff, 1_000, nil); err == nil || !strings.Contains(err.Error(), "no shortage") {
 		t.Errorf("a write off against a session with no shortage answered %v, want it refused in words", err)
+	}
+}
+
+// A drawer pay out that names no session takes the payment's branch's one OPEN drawer, and is refused in words when the
+// branch has none or more than one (the Money Desk cannot name a drawer). A fresh branch keeps the count deterministic.
+func TestIntegration_Payout_AnUnnamedDrawerIsTheBranchsOneOpenDrawer(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	ctx := context.Background()
+	branch := uuid.NewString()
+	if _, err := w.r.obs.Exec(ctx, `INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name)
+		VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', 'DR'||$2, 'drawer leg branch')`, branch, w.r.suffix); err != nil {
+		t.Fatalf("seed a branch: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.r.obs.Exec(c, `UPDATE payments SET till_session_id = NULL WHERE branch_id = $1::uuid`, branch)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM till_movements WHERE till_session_id IN (SELECT id FROM till_sessions WHERE branch_id = $1::uuid)`, branch)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM till_sessions WHERE branch_id = $1::uuid`, branch)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM payment_payouts WHERE branch_id = $1::uuid`, branch)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM invoices WHERE branch_id = $1::uuid`, branch)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, branch)
+	})
+	var inv string
+	if err := w.r.obs.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
+		VALUES ('DR-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE + 30, 90000, 0, 90000, 90000, now()) RETURNING id::text`, w.r.suffix, w.r.custID, branch).Scan(&inv); err != nil {
+		t.Fatalf("seed the invoice: %v", err)
+	}
+	p, err := w.r.repo.Pay(ctx, w.r.custID, "CARD", "gw-dr-"+w.r.suffix, []payments.Allocation{{InvoiceID: inv, AmountCents: 6_000}})
+	if err != nil {
+		t.Fatalf("take the payment: %v", err)
+	}
+	w.drain()
+	w.reverse(p.ID)
+	repo := w.payoutRepo()
+	if _, err := w.payOut(repo, p.ID, payments.PayoutDrawer, 1_000, nil); err == nil || !strings.Contains(err.Error(), "no drawer is open") {
+		t.Errorf("a branch with no open drawer answered %v, want it refused in words", err)
+	}
+	tillRepo := till.NewRepository(w.r.pool)
+	open := func(station string) string {
+		id, err := tillRepo.OpenSession(ctx, till.TillSession{BranchID: branch, Station: station, OpenedBy: w.r.userID, BlindClose: true}, nil)
+		if err != nil {
+			t.Fatalf("open %s: %v", station, err)
+		}
+		return id
+	}
+	first := open("D1")
+	res, err := w.payOut(repo, p.ID, payments.PayoutDrawer, 2_000, nil)
+	if err != nil {
+		t.Fatalf("the unnamed pay out was refused with one open drawer: %v", err)
+	}
+	var landed string
+	if err := w.r.obs.QueryRow(ctx, `SELECT till_session_id::text FROM payment_payouts WHERE id = $1::uuid`, res.PayoutID).Scan(&landed); err != nil || landed != first {
+		t.Errorf("the pay out landed on %q (%v), want the branch's one open drawer %q", landed, err, first)
+	}
+	var moves int
+	_ = w.r.obs.QueryRow(ctx, `SELECT count(*) FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'PAID_OUT' AND amount_cents = 2000`, first).Scan(&moves)
+	if moves != 1 {
+		t.Errorf("the open drawer carries %d paid out movements of 2000, want 1", moves)
+	}
+	open("D2")
+	before := w.payoutState(p.ID)
+	if _, err := w.payOut(repo, p.ID, payments.PayoutDrawer, 1_000, nil); err == nil || !strings.Contains(err.Error(), "more than one drawer") {
+		t.Errorf("a branch with two open drawers answered %v, want it refused in words", err)
+	}
+	if after := w.payoutState(p.ID); after != before {
+		t.Errorf("the refused pay out wrote: before %+v after %+v", before, after)
+	}
+	// Naming one of the open drawers settles it.
+	if _, err := w.payOut(repo, p.ID, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = first }); err != nil {
+		t.Errorf("a named drawer was refused: %v", err)
 	}
 }

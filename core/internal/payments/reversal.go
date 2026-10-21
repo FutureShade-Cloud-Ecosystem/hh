@@ -793,12 +793,13 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 		if r.till == nil {
 			return Payout{}, errors.New("payments: the drawer pay out is not wired")
 		}
-		if err := r.till.PayOutHeldMoney(ctx, tx, DrawerPaidOut{
-			SessionID: in.TillSessionID, BranchID: branchID, AmountCents: in.AmountCents, Reason: in.Reason, Reference: in.Reference,
-		}); err != nil {
+		landedOn, err := r.till.PayOutHeldMoney(ctx, tx, DrawerPaidOut{
+			SessionID: strings.TrimSpace(in.TillSessionID), BranchID: branchID, AmountCents: in.AmountCents, Reason: in.Reason, Reference: in.Reference,
+		})
+		if err != nil {
 			return Payout{}, err
 		}
-		sessionForRow = in.TillSessionID
+		sessionForRow = landedOn
 	case PayoutWriteOff:
 		if r.till == nil {
 			return Payout{}, errors.New("payments: the write off is not wired")

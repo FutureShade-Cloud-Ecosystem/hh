@@ -76,7 +76,7 @@ type PayoutInput struct {
 	AmountCents    int64
 	Reason         string
 	Reference      string // BANK: the cheque number or transfer reference, required
-	TillSessionID  string // DRAWER: the OPEN session of the payment's branch the cash leaves
+	TillSessionID  string // DRAWER: the OPEN session the cash leaves; empty lets the till find the branch's one open drawer
 	ActorID        string
 	IdempotencyKey string
 	IsManager      bool
@@ -97,7 +97,7 @@ type Payout struct {
 
 // DrawerPaidOut is the till's part of a drawer pay out: the PAID_OUT movement on the named session.
 type DrawerPaidOut struct {
-	SessionID   string
+	SessionID   string // empty: the till takes the branch's one OPEN drawer, and refuses when there is none or more than one
 	BranchID    string // the payment's branch: the session must be this branch's
 	AmountCents int64
 	Reason      string
@@ -114,7 +114,8 @@ type SessionCount struct {
 // TillSeam is the till's side of the drawer pay out and the write off, implemented by the till (which imports this
 // package, so the interface lives here). Both run on the caller's transaction.
 type TillSeam interface {
-	PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in DrawerPaidOut) error
+	// PayOutHeldMoney writes the PAID_OUT movement and answers the session it landed on.
+	PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in DrawerPaidOut) (sessionID string, err error)
 	SessionCountTx(ctx context.Context, tx pgx.Tx, sessionID string) (SessionCount, error)
 }
 
@@ -144,10 +145,6 @@ func validatePayout(in PayoutInput) (PayoutInput, error) {
 	case PayoutBank:
 		if in.Reference == "" {
 			return PayoutInput{}, httpx.BadRequestf("a bank pay out needs the cheque number or transfer reference")
-		}
-	case PayoutDrawer:
-		if strings.TrimSpace(in.TillSessionID) == "" {
-			return PayoutInput{}, httpx.BadRequestf("a drawer pay out names the open till session the cash leaves")
 		}
 	}
 	return in, nil
