@@ -308,6 +308,7 @@ var migrationTopics = map[string]string{
 	"0410_ar_reminder_paylink_enrol":       "billing",
 	"0417_assist_metering":                 "assist",
 	"0361_card_charge_attempts":            "payment",
+	"0431_payment_reapplications":          "payments",
 }
 
 // multiTopicSplits states the per-object attribution inside the five

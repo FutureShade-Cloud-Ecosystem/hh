@@ -363,14 +363,19 @@ type reversalStore interface {
 // reversal, and a reversal must remain possible when no processor is reachable at all, the money has
 // already moved; this is bookkeeping.
 type ReverseService struct {
-	store reversalStore
-	audit audit.Recorder
-	clock func() time.Time
+	store   reversalStore
+	reapply reapplyStore // SF-2l: the same repository, when the store carries it (reapply.go)
+	audit   audit.Recorder
+	clock   func() time.Time
 }
 
 // NewReverseService builds the undo service.
 func NewReverseService(store reversalStore) *ReverseService {
-	return &ReverseService{store: store, clock: time.Now}
+	svc := &ReverseService{store: store, clock: time.Now}
+	if rs, ok := store.(reapplyStore); ok {
+		svc.reapply = rs
+	}
+	return svc
 }
 
 // WithAudit attaches the audit recorder.
@@ -408,4 +413,9 @@ func (s *ReverseService) Reverse(ctx context.Context, in ReverseInput) (Reversal
 		})
 	}
 	return rev, nil
+}
+
+// ReapplyHeld is the re-application's write (reapply.go states the rules). INERT in the red commit.
+func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.Time) (Reapplication, error) {
+	return Reapplication{}, errors.New("payments: re-application is not built yet")
 }
