@@ -163,8 +163,13 @@ type MatchInput struct {
 
 	StatementLineID string `json:"statement_line_id"` // manual
 	TargetType      string `json:"target_type"`       // manual
-	TargetRefID     string `json:"target_ref_id"`     // manual
-	AmountCents     int64  `json:"amount_cents"`      // manual (optional; defaults to line amount)
+	TargetRefID     string `json:"target_ref_id"`
+
+	// CanAccessBranch is the caller's branch reach, set by the handler from the guard-resolved authority and never
+	// read from the request (SF-2g). A payment target outside it answers exactly as a missing payment does. Nil
+	// fences nothing: only internal callers and tests leave it nil.
+	CanAccessBranch func(branchID string) bool `json:"-"`            // manual
+	AmountCents     int64                      `json:"amount_cents"` // manual (optional; defaults to line amount)
 }
 
 // UnmatchInput stamps a live match unmatched (history kept) and reverts its line to UNMATCHED.

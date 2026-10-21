@@ -42,6 +42,10 @@ type PaymentSource interface {
 // against a bank deposit line. Satisfied by *till.Repository (recon_seam.go).
 type LodgementSource interface {
 	OpenLodgements(ctx context.Context, from, to time.Time) ([]Lodgement, error)
+	// LodgementBranch answers the branch of one lodgement by its movement id (SF-2g round 2): found is false for an
+	// id that is no lodgement. The till owns the movement; a lodgement is an append only ledger row whose branch
+	// is its till session's and never changes, so the answer cannot move between the reach check and the write.
+	LodgementBranch(ctx context.Context, movementID string) (branchID string, found bool, err error)
 }
 
 // JournalPoster posts a clearing journal through the GL provider. Satisfied by a main.go adapter over
