@@ -27,8 +27,44 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// assistReaderViews is the exact list of views the staff reader may SELECT. Each data slice adds its
+// views here, with the reason, so a view cannot be granted by accident.
+var assistReaderViews = map[string]bool{
+	"ai.orders":               true, // slice 5
+	"ai.order_lines":          true, // slice 5
+	"ai.stock_balances":       true, // slice 6a
+	"ai.quotes":               true, // slice 6b
+	"ai.quote_lines":          true, // slice 6b
+	"ai.purchase_orders":      true, // slice 6b
+	"ai.purchase_order_lines": true, // slice 6b
+	"ai.invoices":             true, // slice 7a
+	"ai.ar_aging":             true, // slice 7a
+	"ai.payments":             true, // slice 7a
+	"ai.payment_allocations":  true, // slice 7a
+}
+
+// viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
+// SELECT only, never a table grant. Each data slice adds the columns its views use.
+var viewOwnerColumns = map[string][]string{
+	"public.orders":               {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
+	"public.order_lines":          {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
+	"public.customers":            {"account_no", "id", "name"},                                                                                                                                                                                                                                    // slice 5
+	"public.locations":            {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
+	"public.stock_balances":       {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
+	"public.product_branch_costs": {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
+	"public.products":             {"base_uom", "id", "name", "sku"},                                                                                                                                                                                                                               // slice 6a                                                                                                                                        // slice 5
+	"public.quotes":               {"branch_id", "contact_name", "created_at", "customer_id", "customer_notes", "delivery_address", "delivery_fee_cents", "deposit_pct", "fulfillment", "id", "quote_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents", "valid_until"}, // slice 6b
+	"public.quote_lines":          {"description", "disc_pct", "id", "line_no", "line_total_cents", "product_id", "qty_base", "qty_entered", "quote_id", "uom_entered", "unit_price_cents"},                                                                                                        // slice 6b
+	"public.purchasing_pos":       {"branch_id", "currency", "delivery_method", "expected_at", "id", "notes", "ordered_at", "po_no", "status", "vendor_id"},                                                                                                                                        // slice 6b
+	"public.purchasing_po_lines":  {"billed_cents", "description", "id", "line_no", "po_id", "product_id", "qty_billed_base", "qty_ordered_base", "qty_received_base", "unit_cost_cents", "uom"},                                                                                                   // slice 6b
+	"public.vendors":              {"id", "name"},                                                                                                                                                                                                                                                  // slice 6b
+	"public.invoices":             {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
+	"public.payments":             {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
+	"public.payment_allocations":  {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+}
+
 func (r Roles) all() []string {
-	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin}
+	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin, r.ZoneReader}
 }
 
 // catalogueViolations reads the catalogue. extensionsOpen describes a box where the
@@ -85,6 +121,9 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 			if claimsOwned[schema+"."+name] {
 				want = roles.ClaimsOwner
 			}
+			if schema+"."+name == "ai.dealer_day" {
+				want = roles.ZoneReader // slice 7a: the dealer's day, owned by the role that can read the one setting
+			}
 			if owner != want {
 				add("%s %s.%s is owned by %s, want %s", q.kind, schema, name, owner, want)
 			}
@@ -94,14 +133,23 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		}
 	}
 
-	// 2. Role attributes and memberships.
+	// 2. Role attributes and memberships. The zone reader exists from migration 0427; a database that has run 0418
+	// alone, as the planted mistake tests build, has the other six.
+	var zoneExists bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, roles.ZoneReader).Scan(&zoneExists); err != nil {
+		return nil, err
+	}
 	rows, err := collect(`SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication, rolcanlogin, rolinherit
 		FROM pg_roles WHERE rolname = ANY($1)`, roles.all())
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) != 6 {
-		add("expected 6 assist roles, found %d", len(rows))
+	wantRoles := 6
+	if zoneExists {
+		wantRoles = 7
+	}
+	if len(rows) != wantRoles {
+		add("expected %d assist roles, found %d", wantRoles, len(rows))
 	}
 	for _, row := range rows {
 		name := row[0].(string)
@@ -182,6 +230,15 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		add("the function users role %s carries a power or a login", roles.FunctionUsers)
 	}
 
+	// No assist role is a member of the zone reader (the migrating role may be).
+	rows, err = collect(`SELECT r.rolname FROM pg_roles r WHERE $3 AND r.rolname = ANY($1) AND r.rolname <> $2 AND pg_has_role(r.oid, $2::name, 'MEMBER')`, roles.all(), roles.ZoneReader, zoneExists)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		add("assist role %s is a member of the zone reader %s", row[0], roles.ZoneReader)
+	}
+
 	// 3. Table privileges outside the plan's list. Writes: never, on anything the
 	// role does not own. SELECT: only a reader on a view of its own schema.
 	rows, err = collect(`
@@ -205,9 +262,79 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		if write {
 			add("role %s holds a write privilege on %s", role, fq)
 		}
-		readerOK := kind == "v" && ((role == roles.Reader && schema == "ai") || (role == roles.ProReader && schema == "ai_pro"))
+		// The view owner's column grants are checked as an exact set below.
+		if role == roles.ViewOwner || role == roles.ZoneReader {
+			continue
+		}
+		readerOK := kind == "v" && role == roles.Reader && assistReaderViews[fq]
 		if (sel || anyCol) && !readerOK {
 			add("role %s holds a SELECT privilege on %s outside the plan's list", role, fq)
+		}
+	}
+
+	// 3b. The view owner's column grants, as an exact set.
+	rows, err = collect(`
+		SELECT n.nspname || '.' || c.relname || '.' || a.attname
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'ai', 'ai_pro')
+		  AND n.nspname NOT LIKE 'pg\_%' AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = $1)
+		  AND has_column_privilege($1, c.oid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES')`, roles.ViewOwner)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, row := range rows {
+		have[row[0].(string)] = true
+	}
+	want := map[string]bool{}
+	for table, cols := range viewOwnerColumns {
+		for _, col := range cols {
+			want[table+"."+col] = true
+		}
+	}
+	for col := range have {
+		if !want[col] {
+			add("the view owner can read %s outside the plan's list", col)
+		}
+	}
+	// The planned columns are required only once the data slice's views exist (a database
+	// that has run 0418 alone, as the planted mistake tests build, has none yet).
+	var viewsExist bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('ai.orders') IS NOT NULL`).Scan(&viewsExist); err != nil {
+		return nil, err
+	}
+	for col := range want {
+		if viewsExist && !have[col] {
+			add("the view owner lacks the planned column %s", col)
+		}
+	}
+
+	// 3c. The zone reader's column grants, as an exact set: two columns of system_settings, nothing else.
+	rows, err = collect(`
+		SELECT n.nspname || '.' || c.relname || '.' || a.attname
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		  AND n.nspname NOT LIKE 'pg\_%' AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = $1)
+		  AND has_column_privilege($1, c.oid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES') AND $2`, roles.ZoneReader, zoneExists)
+	if err != nil {
+		return nil, err
+	}
+	zoneHave := map[string]bool{}
+	for _, row := range rows {
+		zoneHave[row[0].(string)] = true
+		if row[0].(string) != "public.system_settings.key" && row[0].(string) != "public.system_settings.value" {
+			add("the zone reader can read %s outside the plan's list", row[0])
+		}
+	}
+	var settingsExist bool
+	if err := conn.QueryRow(ctx, `SELECT to_regprocedure('ai.dealer_day()') IS NOT NULL`).Scan(&settingsExist); err != nil {
+		return nil, err
+	}
+	for _, col := range []string{"public.system_settings.key", "public.system_settings.value"} {
+		if settingsExist && !zoneHave[col] {
+			add("the zone reader lacks the planned column %s", col)
 		}
 	}
 
@@ -226,7 +353,13 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		ext := row[5].(bool)
 		ok := owner || (extensionsOpen && ext) ||
 			((role == roles.Reader || role == roles.ProReader) && schema == "ai" && fn == "claims" && args == "") ||
-			(role == roles.ClaimsOwner && fn == "hmac" && args == "text, text, text")
+			(role == roles.ClaimsOwner && fn == "hmac" && args == "text, text, text") ||
+			// Slice 7a: the dealer's day for the aging view (ai.dealer_day(), a date out and nothing in) is run by the
+			// reader as ai.claims() is (a function in a view runs with the caller's privilege); the zone reader that
+			// owns it runs the settings module's zone rule and the one citext function its key comparison needs.
+			(role == roles.Reader && schema == "ai" && fn == "dealer_day" && args == "") ||
+			(role == roles.ZoneReader && schema == "public" && fn == "settings_business_zone" && args == "") ||
+			(role == roles.ZoneReader && fn == "citext_eq" && args == "citext, citext")
 		if !ok {
 			add("role %s can EXECUTE %s.%s(%s) outside the plan's list", role, schema, fn, args)
 		}
@@ -269,7 +402,7 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 	}
 	for _, row := range rows {
 		role, schema := row[0].(string), row[1].(string)
-		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner)) || (schema == "ai_pro" && role == roles.ViewOwner)
+		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner || role == roles.ZoneReader)) || (schema == "ai_pro" && role == roles.ViewOwner)
 		if !ok {
 			add("role %s holds CREATE on schema %s", role, schema)
 		}
@@ -373,5 +506,84 @@ func TestCatalogueTestBitesOnEveryPlantedMistake(t *testing.T) {
 	}
 	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
 		t.Errorf("objects created under the owner role must pass: %v %v", got, err)
+	}
+}
+
+// The slice 5 additions bite: one column beyond the view owner's exact list, and a
+// reader grant on a base table, are each reported (and put back).
+func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	roles := RolesFor(currentDatabase(t, conn))
+	q := pgx.Identifier.Sanitize
+	for _, p := range []struct{ name, plant, revert, mention string }{
+		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.payment_terms_days"},
+		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
+	} {
+		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {
+			t.Fatalf("%s: %v", p.name, err)
+		}
+		got, err := catalogueViolations(ctxT(t), conn, roles, false)
+		_, _ = conn.Exec(ctxT(t), p.revert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, v := range got {
+			found = found || strings.Contains(v, p.mention)
+		}
+		if !found {
+			t.Errorf("%s was not reported: %v", p.name, got)
+		}
+	}
+	if got, err := catalogueViolations(ctxT(t), conn, roles, false); err != nil || len(got) != 0 {
+		t.Fatalf("not clean after the reverts: %v %v", got, err)
+	}
+}
+
+// Slice 7a round 2 (r2 plan read P2-1): no SECURITY DEFINER function runs as a role that can bypass anything. A
+// definer function executes with its owner's privilege, and a superuser or BYPASSRLS owner would hand its caller
+// the whole database through whatever the function reads. ai.claims(), owned by the claims owner, is the one that
+// existed; ai.dealer_day() is the second, owned by the zone reader, a role that can read one setting and nothing
+// else. The check covers every schema but the system ones, so a definer function added by any later migration is
+// held to it too.
+func TestNoSecurityDefinerFunctionIsOwnedByASuperuserOrABypassRLSRole(t *testing.T) {
+	conn := connect(t, gateURL(t))
+	rows, err := conn.Query(ctxT(t), `SELECT n.nspname || '.' || p.proname, r.rolname, r.rolsuper, r.rolbypassrls
+		FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_roles r ON r.oid = p.proowner
+		WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_%'
+		  AND (r.rolsuper OR r.rolbypassrls)
+		ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fn, owner string
+		var super, bypass bool
+		if err := rows.Scan(&fn, &owner, &super, &bypass); err != nil {
+			t.Fatal(err)
+		}
+		t.Errorf("%s is SECURITY DEFINER and owned by %s (superuser %v, bypassrls %v)", fn, owner, super, bypass)
+	}
+	// The check bites: a definer function planted under the migrating role is found (rolled back).
+	tx, err := conn.Begin(ctxT(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctxT(t)) }()
+	var migratingSuper bool
+	if err := tx.QueryRow(ctxT(t), `SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&migratingSuper); err != nil {
+		t.Fatal(err)
+	}
+	if !migratingSuper {
+		t.Skip("the connecting role is not a superuser or BYPASSRLS, so a planted function would not be found by this check")
+	}
+	if _, err := tx.Exec(ctxT(t), `CREATE FUNCTION public.s7a_probe_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := tx.QueryRow(ctxT(t), `SELECT count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.proname = 's7a_probe_definer' AND p.prosecdef AND (r.rolsuper OR r.rolbypassrls)`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("the probe definer function was not found by the check's own predicate: %d, %v", n, err)
 	}
 }

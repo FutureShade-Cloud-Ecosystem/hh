@@ -76,7 +76,7 @@ func TestMigrationAsANonSuperuserOwnerAndTheExtensionRevokeOneshot(t *testing.T)
 		}
 		defer c.Close(ctxT(t))
 		_, _ = c.Exec(ctxT(t), `DROP DATABASE IF EXISTS `+pgx.Identifier{db}.Sanitize()+` WITH (FORCE)`)
-		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner, roles.FunctionUsers, app} {
+		for _, r := range []string{roles.Login, roles.ProLogin, roles.Reader, roles.ProReader, roles.ViewOwner, roles.ClaimsOwner, roles.FunctionUsers, roles.ZoneReader, app} {
 
 			_, _ = c.Exec(ctxT(t), `DROP ROLE IF EXISTS `+pgx.Identifier{r}.Sanitize())
 		}
@@ -84,6 +84,20 @@ func TestMigrationAsANonSuperuserOwnerAndTheExtensionRevokeOneshot(t *testing.T)
 
 	appConn := connect(t, withDatabase(t, withUser(t, gate, app, pw), db))
 	migrateAs(t, appConn)
+
+	// Migration 0419 enabled row security on orders and order_lines. The app here is a non superuser that
+	// owns them, so it is exempt: row security is not active for it, and it reads both tables (the serve
+	// startup check asserts the same property on every policied table).
+	for _, table := range []string{"orders", "order_lines", "stock_balances", "product_branch_costs", "quotes", "quote_lines", "purchasing_pos", "purchasing_po_lines", "invoices", "payments", "payment_allocations"} {
+		var active bool
+		if err := appConn.QueryRow(ctxT(t), `SELECT row_security_active($1::regclass)`, "public."+table).Scan(&active); err != nil || active {
+			t.Errorf("row security is active for the owning app role on %s (%v, %v)", table, active, err)
+		}
+		var n int
+		if err := appConn.QueryRow(ctxT(t), `SELECT count(*) FROM public.`+table).Scan(&n); err != nil {
+			t.Errorf("the owning app role cannot read %s: %v", table, err)
+		}
+	}
 
 	got, err := catalogueViolations(ctxT(t), appConn, roles, true)
 	if err != nil {

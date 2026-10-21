@@ -219,7 +219,35 @@ func (s *Service) ListReturnRequests(ctx context.Context, status string) ([]Retu
 	default:
 		return nil, clientErr(http.StatusBadRequest, "pos: unknown request status %q", status)
 	}
-	return s.store.ListReturnRequestsByStatus(ctx, status, 200)
+	rows, err := s.store.ListReturnRequestsByStatus(ctx, status, 200)
+	if err != nil {
+		return nil, err
+	}
+	// THE BRANCH WALL: the staff queue shows only the requests at branches the caller reaches.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]ReturnRequest, 0, len(rows))
+	for _, rr := range rows {
+		if caller.CanAccessBranch(rr.BranchID) {
+			kept = append(kept, rr)
+		}
+	}
+	return kept, nil
+}
+
+// requireRequestReach is the by-id half of the queue's wall: a request at a branch the caller does not reach
+// answers what a missing request answers.
+func (s *Service) requireRequestReach(ctx context.Context, rr ReturnRequest) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if !caller.CanAccessBranch(rr.BranchID) {
+		return errRequestNotFound
+	}
+	return nil
 }
 
 // ApproveReturnRequest executes the request through the EXISTING return rail: ACCOUNT_CREDIT,
@@ -245,6 +273,9 @@ func (s *Service) ApproveReturnRequest(ctx context.Context, requestID string) (R
 	}
 	if !found {
 		return ReturnRequest{}, errRequestNotFound
+	}
+	if err := s.requireRequestReach(ctx, rr); err != nil {
+		return ReturnRequest{}, err
 	}
 	if rr.Status != RequestPending {
 		return ReturnRequest{}, clientErr(http.StatusConflict, "pos: request %s is already %s", rr.RequestNo, rr.Status)
@@ -360,6 +391,9 @@ func (s *Service) RejectReturnRequest(ctx context.Context, requestID, reason str
 	}
 	if !found {
 		return ReturnRequest{}, errRequestNotFound
+	}
+	if err := s.requireRequestReach(ctx, rr); err != nil {
+		return ReturnRequest{}, err
 	}
 	if rr.Status != RequestPending {
 		return ReturnRequest{}, clientErr(http.StatusConflict, "pos: request %s is already %s", rr.RequestNo, rr.Status)

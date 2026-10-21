@@ -60,30 +60,43 @@ func TestIntegration_DrawBeforeLock_PlanTombstonesBesideAWrite(t *testing.T) {
 	for _, c := range []struct {
 		name, table, scope, id string
 		key                    int64
-		del                    func() (hhsync.RowState, error)
+		store                  hhsync.Store
 	}{
-		{"plan", "plan", "orders", dblPlanID, 55010009, func() (hhsync.RowState, error) {
-			return NewOrdersSyncStore(pool).Delete(ctx, filter, dblPlanID, "")
-		}},
-		{"plan_line", "plan_line", "scope_items", dblLineID, 55010010, func() (hhsync.RowState, error) {
-			return NewItemsSyncStore(pool).Delete(ctx, filter, dblLineID, "")
-		}},
+		{"plan", "plan", "orders", dblPlanID, 55010009, NewOrdersSyncStore(pool)},
+		{"plan_line", "plan_line", "scope_items", dblLineID, 55010010, NewItemsSyncStore(pool)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			engine := hhsync.NewEngine()
+			if err := engine.RegisterScope(c.scope, c.store); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			info, _ := hhsync.Lookup(c.scope)
+			before, err := engine.Pull(ctx, info, filter, 0, 100)
+			if err != nil {
+				t.Fatalf("pull: %v", err)
+			}
 			park := testkit.NewDrawPark(t, pool, c.scope, c.key)
 			touch := park.TouchRow(c.table, "updated_at = now()", c.id)
 			park.WaitParked("the touch stands between its row lock and its draw")
 
 			del := make(chan error, 1)
 			go func() {
-				rs, err := c.del()
-				if err == nil && rs.Seq <= 1 {
-					t.Errorf("the tombstone answered seq %d: the trigger's draw must come back", rs.Seq)
-				}
+				_, err := c.store.Delete(ctx, filter, c.id, "")
 				del <- err
 			}()
 			park.WaitBlocked("the tombstone waits")
 			park.Answers(map[string]chan error{"touch": touch, "tombstone": del})
+
+			pulled, err := engine.Pull(ctx, info, filter, before.LastSeq, 100)
+			if err != nil {
+				t.Fatalf("pull after: %v", err)
+			}
+			for _, tb := range pulled.Tombstones {
+				if tb.Id == c.id && tb.Seq > before.LastSeq {
+					return
+				}
+			}
+			t.Fatalf("the device did not receive the tombstone from cursor %d: %+v", before.LastSeq, pulled.Tombstones)
 		})
 	}
 }

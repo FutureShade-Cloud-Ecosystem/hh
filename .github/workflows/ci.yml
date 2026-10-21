@@ -426,6 +426,21 @@ jobs:
           done
       - name: Build the demo image, no push
         run: docker build -f deploy/demo/Dockerfile -t hh-demo-ci-build .
+      # The denylist scan (check 5.1 of the image exit test) over the web
+      # bundles this very image carries, so no second build is added: the
+      # image's /srv/app is copied out of a created, never started, container
+      # and scanned as a bundle directory. Any first dealer word or planted
+      # person name in a built bundle fails the pull request here.
+      - name: Scan the demo image's web bundles for the denylist
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          cid="$(docker create hh-demo-ci-build)"
+          docker cp "$cid:/srv/app/." "$out"
+          docker rm "$cid" >/dev/null
+          ./deploy/demo/denylist-scan.sh --bundle-dir "$out"
+      - name: Denylist scan script test
+        run: sh deploy/demo/denylist-scan-test.sh
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with
@@ -482,6 +497,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The assist parity path rule diffs against the pull request's base commit.
+          fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -541,6 +559,15 @@ jobs:
           # before it bites.
           go test -tags integration -p 1 -count=1 -timeout 30m \
             $(go list ./...)
+      - name: Assist parity path rule (the suite must pass and not be skipped)
+        # Per record parity of the assistant's views against the order module's own record read, and the
+        # red team cases, on the migrated and seeded gate database. A change to any file named in
+        # core/internal/assist/parity/visibility_files.txt (the functions that decide what an asker may
+        # see) cannot merge with the suite red or skipped; the script prints which files a change touched.
+        # It needs the base commit to diff against, so the checkout above is deep.
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/integration_gate?sslmode=disable
+        run: scripts/ci/assist-parity-path-rule.sh "${{ github.event.pull_request.base.sha }}" core
       - name: Evening guard, the date sensitive integration packages
         # The integration half of item 55's guard: the same date sensitive packages as the ci
         # job's guard step, under the integration tag, rerun against a database whose own

@@ -130,31 +130,14 @@ VALUES ($1, $2, $3, $4::date, 'READY', 1, 353125, 9500, 1240.5,
 		t.Fatalf("marshal driver day: %v", err)
 	}
 	body := string(drvJSON)
-	lower := strings.ToLower(body)
 
 	// THE BYTE SCAN. Two categories: the WORDS money hides behind whatever it is called, and the
 	// DIGITS of this particular load. A rename defeats the first list; a zero row defeats the second;
 	// neither defeats both.
-	for _, forbidden := range []string{"cents", "value", "cost", "margin", "price", "amount"} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("a driver's day carries the substring %q.\n"+
-				"A driver is told what is on the truck and where it goes, never what it is worth: the "+
-				"figures are gated at the MARSHAL layer (Stop.ValueCents is `json:\"-\"`, runDetail "+
-				"never builds a gauge, DriverLine has no money member), and this asserts all three at "+
-				"once against a real read of a real priced row. Got %s", forbidden, body)
-		}
-	}
-	for _, forbidden := range []string{"353125", "9500"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("the digits %q of this load's money reached a driver's day. Got %s", forbidden, body)
-		}
-	}
 	// null is not byte-absence. A money pointer that lost its `json:"-"` and gained an `,omitempty`
 	// would be caught above; one that lost the tag entirely marshals as null, and that is the shape
 	// train 14 measured on LoadStop.
-	if strings.Contains(body, "null") {
-		t.Fatalf("no field on a driver's day may marshal as null, a null key is a key. Got %s", body)
-	}
+	assertDriverPayloadJSON(t, drvJSON)
 
 	// - and the gate removed the MONEY, not the WORK -
 	//

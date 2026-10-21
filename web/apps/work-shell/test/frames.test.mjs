@@ -72,3 +72,9 @@ test("the host listens for the frame's list of controls and shows only those", (
   assert.ok(/acceptChromeControls\(/.test(hostSrc), "the list is read through the one acceptor");
   assert.ok(/data-action="theme"/.test(hostSrc) && /data-action="feedback"/.test(hostSrc));
 });
+
+test("the fault and empty state screens name Work plainly, without HH Work", () => {
+  assert.ok(hostSrc.includes('"Work could not read its profile, so it has no apps to offer. Close it and open it again."'));
+  assert.ok(hostSrc.includes("<h2>Work cannot start</h2>"));
+  assert.ok(hostSrc.includes("has no desk apps in Work. Use Switch role to pick another role."));
+});

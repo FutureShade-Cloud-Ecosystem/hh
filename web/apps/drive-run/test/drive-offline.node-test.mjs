@@ -27,7 +27,16 @@ function nextKey() {
   return `00000000-0000-4000-8000-${String(keyCounter).padStart(12, "0")}`;
 }
 
-async function rig(extra = {}) {
+/** Back online. Every write fires a background sync it does not await, and one
+ * that started while the fake server was offline can reach its push after the
+ * flip and send a lone write ahead of the explicit cycle. Let those rest first,
+ * so a test counting pushes sees the queue go out together. */
+async function online(layer, server) {
+  await layer.runner.settled();
+  server.setOffline(false);
+}
+
+async function rig({ wrapTransport, ...extra } = {}) {
   const server = new FakeSyncServer();
   server.seed("runs", RUN, {
     id: RUN,
@@ -87,7 +96,7 @@ async function rig(extra = {}) {
   const layer = new DriveOffline({
     store,
     sql: backend.sql,
-    transport: server.transport(),
+    transport: wrapTransport ? wrapTransport(server.transport()) : server.transport(),
     newKey: nextKey,
     ...extra,
   });
@@ -132,7 +141,7 @@ test("offline, loading and going en route stay local, then drain in order", asyn
   if (!read.ok) return assert.fail("the run sheet should read back");
   assert.equal(read.value.runs[0].stops[0].status, "EN_ROUTE");
   assert.equal(await layer.waiting(), 2);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   assert.equal(server.appliedOrder.length, 2);
@@ -144,13 +153,49 @@ test("offline, loading and going en route stay local, then drain in order", asyn
   assert.equal(pushes[0].ops[1].base_seq === undefined, true);
 });
 
+test("a background sync and an explicit cycle that overlap push each queued write once", async () => {
+  // Hold the server's answer to a push so the background sync a write fires
+  // is still in flight when the explicit cycle starts.
+  let held = false;
+  let open = () => {};
+  let arrived = () => {};
+  const arrival = new Promise((resolve) => (arrived = resolve));
+  const gate = new Promise((resolve) => (open = resolve));
+  const { layer, server } = await rig({
+    wrapTransport: (inner) => ({
+      pull: (...args) => inner.pull(...args),
+      push: async (...args) => {
+        const answer = await inner.push(...args);
+        if (held) {
+          held = false;
+          arrived();
+          await gate;
+        }
+        return answer;
+      },
+    }),
+  });
+  held = true;
+  const loaded = await layer.advance(STOP_1, "LOADED");
+  assert.equal(loaded.ok, true);
+  await arrival; // the background sync's push is at the server, unanswered
+  const explicit = layer.cycle();
+  open();
+  await explicit;
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  const pushes = server.requests.filter((r) => r.kind === "push");
+  const sent = pushes.flatMap((p) => p.ops).filter((o) => o.payload.id === STOP_1);
+  assert.equal(sent.length, 1, "the advance reaches the server in one push, not two");
+});
+
 test("a stop the server moved first comes back superseded, and the server row is what reads show", async () => {
   const { layer, server, store } = await rig();
   server.setOffline(true);
   await layer.advance(STOP_2, "LOADED");
   // Dispatch moves the stop while the device cannot hear it.
   server.touch("stops", STOP_2, { status: "CANCELLED" });
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const cards = await layer.openCards();
   const superseded = cards.find((c) => c.kind === "superseded");
@@ -284,7 +329,7 @@ test("the run close drains the outbox first, and refuses with words while a move
   assert.match(refused.error, /still waiting/);
   assert.equal(closes.length, 0, "the direct close was never sent");
   // Back on signal: the queued move goes first, then the close is sent.
-  server.setOffline(false);
+  await online(layer, server);
   const closed = await layer.completeRun(RUN);
   assert.equal(closed.ok, true);
   assert.equal(closes.length, 1);
@@ -310,7 +355,7 @@ test("every queued write declares only fields the core's sync stores admit (the 
   await layer.advance(STOP_1, "LOADED");
   await layer.advance(STOP_1, "EN_ROUTE");
   await layer.advance(STOP_1, "FAILED", "Gate locked, no answer");
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   const pushed = server.requests.filter((r) => r.kind === "push").flatMap((r) => r.ops);
@@ -452,7 +497,7 @@ test("offline, the proof queues on pod create with the attestation's exact field
 test("back online the moves and the proof drain in the order they were made, and the waiting state clears", async () => {
   const { layer, server } = await onTheRoad();
   await layer.pod(STOP_1, NAME);
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   assert.equal(await layer.waiting(), 0);
   const pushes = server.requests.filter((r) => r.kind === "push");
@@ -467,7 +512,7 @@ test("a proof the core refuses comes back as a Not accepted card with the core's
   await layer.pod(STOP_1, NAME);
   const proof = (await layer.store.outbox.pending()).find((row) => row.scope === "pod");
   server.refuse(proof.key, "illegal status transition");
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const card = (await layer.openCards()).find((c) => c.kind === "rejected");
   assert.ok(card !== undefined, "a Not accepted card waits");
@@ -547,7 +592,7 @@ test("a proof the core refuses while the stop is unchanged on the server is take
   assert.equal((await layer.pod(STOP_1, "Site lead")).ok, true);
   const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
   server.refuse(proof.key, "dispatch: no active staff authority in this org");
-  server.setOffline(false);
+  await online(layer, server);
   await layer.cycle();
   const stop = await stopOf(layer);
   assert.equal(stop.status, "EN_ROUTE");
@@ -563,7 +608,7 @@ test("the same refusal arriving through a fresh layer over the same store (a res
   await layer.pod(STOP_1, "Site lead");
   const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
   server.refuse(proof.key, "dispatch: no active staff authority in this org");
-  server.setOffline(false);
+  await online(layer, server);
   const fresh = new DriveOffline({ store, sql: backend.sql, transport: server.transport(), newKey: nextKey });
   await fresh.cycle();
   const stop = await stopOf(fresh);

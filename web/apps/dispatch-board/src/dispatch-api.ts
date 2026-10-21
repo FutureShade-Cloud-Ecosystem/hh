@@ -12,6 +12,7 @@
 import {
   staffBranches,
   staffDispatch,
+  staffSettings,
   type ApiClient,
   type Branch,
   type DispatchBoard,
@@ -42,6 +43,49 @@ import {
   type DispatchWillCallRevokeResult,
   type Result,
 } from "@hardscapehouse/api-client";
+import { houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+
+/** A stalling connection must not hold the board: the zone read carries a short timeout. */
+const ZONE_READ_TIMEOUT_MS = 4_000;
+
+const zoneReads = new WeakMap<ApiClient, Promise<void>>();
+const zoneWatchers = new WeakMap<ApiClient, Set<() => void>>();
+
+/**
+ * The dealer's business day zone is served on the dispatch-board surface's config read
+ * (business_zone) and held by the kit; a read that fails keeps the default, so every screen still
+ * names a time, never a blank screen. One read serves a session: the promise is kept per client and
+ * dropped only when the read fails, so the next call retries.
+ */
+export function serveDispatchZone(client: ApiClient): Promise<void> {
+  const held = zoneReads.get(client);
+  if (held !== undefined) return held;
+  const read = staffSettings
+    .settingsGetSurfaceConfig(client, "dispatch-board", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS })
+    .then((config) => {
+      if (!config.ok) {
+        zoneReads.delete(client);
+        return;
+      }
+      const before = houseZone();
+      serveHouseZoneFrom(config.value);
+      if (houseZone() !== before) zoneWatchers.get(client)?.forEach((repaint) => repaint());
+    });
+  zoneReads.set(client, read);
+  return read;
+}
+
+/** Calls back when a zone that lands differs from the one in force, so the board's times are painted again. */
+export function watchDispatchZone(client: ApiClient, repaint: () => void): void {
+  const held = zoneWatchers.get(client) ?? new Set<() => void>();
+  held.add(repaint);
+  zoneWatchers.set(client, held);
+}
+
+/** Starts the zone read beside a data read, never ahead of it: the board shows at once. */
+export function serveDispatchZoneBeside(client: ApiClient): void {
+  void serveDispatchZone(client);
+}
 
 export class DispatchApi {
   readonly #client: ApiClient;
@@ -50,16 +94,24 @@ export class DispatchApi {
     this.#client = client;
   }
 
+  /** Repaint the screen when the served zone lands and differs from the one in force. */
+  watchZone(repaint: () => void): void {
+    watchDispatchZone(this.#client, repaint);
+  }
+
   /** The branches the caller reaches: a dispatcher homed at one yard reaches one. */
   branches(): Promise<Result<Branch[]>> {
+    serveDispatchZoneBeside(this.#client);
     return staffBranches.branchesList(this.#client);
   }
 
   loadBoard(branchId: string, date: string): Promise<Result<DispatchLoadBoardView>> {
+    serveDispatchZoneBeside(this.#client);
     return staffDispatch.dispatchGetLoadBoard(this.#client, { branch_id: branchId, date });
   }
 
   dayBoard(branchId: string, date: string): Promise<Result<DispatchBoard>> {
+    serveDispatchZoneBeside(this.#client);
     return staffDispatch.dispatchGetBoard(this.#client, { branch_id: branchId, date });
   }
 

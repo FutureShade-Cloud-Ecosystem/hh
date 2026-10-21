@@ -27,17 +27,25 @@ const minKeyLen = 32
 // caller by the assist package (Caller.ReadClaims), never from request input.
 // The field names are the keys of ai.claim_set in migration 0418.
 type Claims struct {
-	Audience      string   `json:"audience"`
+	Audience string `json:"audience"`
+	// Tier is the asker's identity tier (1 leadership, 2 manager, 3 frontline). The row policies require it
+	// to be within a view family's floor, so a tier the Go side never signs is still refused by the database.
+	// A claim without one verifies and reads as no tier: every floor refuses it.
+	Tier          int      `json:"tier"`
 	AskerID       string   `json:"asker_id"`
 	CustomerID    string   `json:"customer_id,omitempty"`
 	Global        bool     `json:"global"`
 	BranchIDs     []string `json:"branch_ids"`
 	CostBranchIDs []string `json:"cost_branch_ids"`
-	Margin        bool     `json:"margin"`
-	PaymentTrail  bool     `json:"payment_trail"`
-	PIIClasses    []string `json:"pii_classes"`
-	Capabilities  []string `json:"capabilities"`
-	ChannelIDs    []string `json:"channel_ids"`
+	// POCostBranchIDs are the branches where the asker may see what the dealer pays on a purchase order,
+	// decided by the per branch purchasing policy (the second vocabulary), not by the cost and margin role
+	// list. An old claim without the field reads as no purchase cost anywhere.
+	POCostBranchIDs []string `json:"po_cost_branch_ids"`
+	Margin          bool     `json:"margin"`
+	PaymentTrail    bool     `json:"payment_trail"`
+	PIIClasses      []string `json:"pii_classes"`
+	Capabilities    []string `json:"capabilities"`
+	ChannelIDs      []string `json:"channel_ids"`
 
 	// Set by the signer, never by a caller.
 	PID   int    `json:"pid"`
@@ -96,7 +104,7 @@ func (s *Signer) Sign(c Claims, pid int) (redact.Secret, error) {
 		return redact.Secret{}, fmt.Errorf("readtx: nonce: %w", err)
 	}
 	c.Nonce = hex.EncodeToString(n[:])
-	for _, l := range []*[]string{&c.BranchIDs, &c.CostBranchIDs, &c.PIIClasses, &c.Capabilities, &c.ChannelIDs} {
+	for _, l := range []*[]string{&c.BranchIDs, &c.CostBranchIDs, &c.POCostBranchIDs, &c.PIIClasses, &c.Capabilities, &c.ChannelIDs} {
 		if *l == nil {
 			*l = []string{}
 		}

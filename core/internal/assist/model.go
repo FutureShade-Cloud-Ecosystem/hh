@@ -72,6 +72,15 @@ type Caller struct {
 	// PaymentTrail is the role gate's answer to "does this caller hold the payment trail reads"
 	// (ruling 87), set by the handler. False means the reads that list payments leave them out.
 	PaymentTrail bool
+	// CostBranchIDs are the branches whose cost this caller's own screens would show, and Margin whether it
+	// sees margin: both decided by the handler from the dealer's cost and margin role list (the predicate the
+	// inventory, quote, pricing, tasks and dispatch screens ask), never from the request. Empty and false
+	// mean no cost and no margin.
+	CostBranchIDs []string
+	Margin        bool
+	// POCostBranchIDs are the branches where the per branch purchasing policy lets this caller see what the
+	// dealer pays on a purchase order (MANAGER_UP, ALL_STAFF, HIDDEN; the vocabulary the purchasing screens use).
+	POCostBranchIDs []string
 	// Address is the connection's trusted address (the demo mint's rule); it keys the demo rate
 	// limits and never grants anything.
 	Address string
@@ -127,6 +136,10 @@ type Field struct {
 type Item struct {
 	Title  string  `json:"title"`
 	Fields []Field `json:"fields"`
+	// Ref is the record this row is about (data.query rows), built by the server. Cite is the number the
+	// model may write as [N] to cite it; the service assigns it per exchange and checks every [N] it reads.
+	Ref  *Ref `json:"ref,omitempty"`
+	Cite int  `json:"cite,omitempty"`
 }
 
 // Result is what a command returns: a plain-English headline plus the records behind it.
@@ -149,6 +162,9 @@ type Result struct {
 	Note string `json:"note,omitempty"`
 	// Ref names the ONE record this answer is about, when there is exactly one. See Ref.
 	Ref *Ref `json:"ref,omitempty"`
+	// Notice and Scope ride up to the Answer (data.query).
+	Notice *Notice `json:"notice,omitempty"`
+	Scope  *Scope  `json:"scope,omitempty"`
 }
 
 // Ref is the record an answer is ABOUT, DIB-465's deep link, carried as data rather than as a URL.
@@ -198,6 +214,10 @@ const (
 	// contract, a typo here is a silently missing link, not an error, so it is a constant here for
 	// the same reason the other three are.
 	RefQuote = "quote"
+	// RefInvoice and RefPayment are slice 7a's: the receivables views cite an invoice or a payment by these kinds.
+	// A host that cannot open one shows the citation as a plain label, as it does for any kind it does not route.
+	RefInvoice = "invoice"
+	RefPayment = "payment"
 )
 
 // refTo builds a Ref, or nil when there is no addressable id. A half-ref (a kind with no id) would

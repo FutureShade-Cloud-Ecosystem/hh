@@ -95,17 +95,12 @@ function staffStatus(m: StaffMemberRow): string {
   return "ACTIVE";
 }
 
-function staffLastSignIn(m: StaffMemberRow): string {
-  if (m.email.includes("jordan")) return "not yet";
-  if (m.email.includes("casey")) return "6 weeks ago";
-  if (m.email.includes("dana")) return "today, 7:02 AM";
-  if (m.email.includes("morgan")) return "yesterday";
-  if (m.email.includes("sam")) return "today, 6:40 AM";
-  if (m.email.includes("elena")) return "today, 7:15 AM";
-  if (m.email.includes("marcus")) return "today, 6:02 AM";
-  if (m.email.includes("priya")) return "yesterday";
-  if (m.email.includes("tom")) return "3 days ago";
-  return "today";
+/**
+ * The staff read carries no sign in time (the row has no such field), so the
+ * column says so rather than inventing one.
+ */
+function staffLastSignIn(_m: StaffMemberRow): string {
+  return "Not recorded";
 }
 
 function renderRegister(model: StaffModel): TemplateResult {
@@ -244,7 +239,7 @@ function renderCreate(roles: readonly RoleRow[], branches: readonly BranchRow[])
         </label>
         <label class="field">
           <span class="field-label">Email</span>
-          <input class="text-field" type="email" value="jordan@gablelandscape.example" placeholder="jordan@gablelandscape.example" disabled />
+          <input class="text-field" type="email" value="name@example.com" placeholder="name@example.com" disabled />
         </label>
         <label class="field">
           <span class="field-label">Role</span>

@@ -105,7 +105,7 @@ test('closed by default, the prompt renders nothing a person can see or hear', (
 
 test('open, the card names the shell, the version, and what carries over', () => {
   const markup = visible(renderKit(ShellUpdate, { open: true, version: 'r18' }));
-  assert.ok(markup.includes('HH Field update ready'), 'the default shell name is HH Field');
+  assert.ok(markup.includes('>Field update ready<'), 'the default shell name is Field');
   assert.ok(markup.includes('r18 is downloaded'), 'the version line');
   assert.ok(
     markup.includes('Restart to update. Your sign in, your pins and everything in the outbox carry over; nothing queued is lost.'),
@@ -123,8 +123,8 @@ test('the two actions are Update now (the primary) and Later, under their action
 });
 
 test('the prompt names itself for the shell it updates', () => {
-  const markup = visible(renderKit(ShellUpdate, { open: true, shellName: 'HH Work', version: 'r7' }));
-  assert.ok(markup.includes('HH Work update ready'), 'the shell name rides the card');
+  const markup = visible(renderKit(ShellUpdate, { open: true, shellName: 'Work', version: 'r7' }));
+  assert.ok(markup.includes('>Work update ready<'), 'the shell name rides the card');
   assert.ok(markup.includes('r7 is downloaded'), 'and the version');
 });
 

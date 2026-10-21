@@ -1,7 +1,7 @@
 // The dispatch board's browser legs, on the stub: the way in, the load board's moves (put a load on a
 // truck, crew, dispatch, load many, reopen, move a date, cancel, commit, the gaps, auto assign), the
 // day board's lifecycle, the refusals in the core's words, the money rule, and both widths.
-import { test, expect, openBoard, resetStub, stubPost, stubToday } from "./helpers.js";
+import { test, expect, dispatchHandoff, openBoard, resetStub, stubPost, stubToday } from "./helpers.js";
 import type { Page } from "@playwright/test";
 
 const load = (page: Page, order: string) => page.locator("li.load", { hasText: order });
@@ -259,7 +259,7 @@ test("the day board shows every stop by stage and offers only the moves the life
   const run4 = truck(page, "RUN-PLM-4");
   await expect(run4.locator("[data-col='EN_ROUTE'] li.load")).toHaveCount(1);
   await expect(run4.locator("[data-col='LOADED'] li.load")).toHaveCount(1);
-  await expect(run4.locator("[data-pod-note]")).toContainText("HH Drive");
+  await expect(run4.locator("[data-pod-note]")).toContainText("Drive");
   await expect(run4.getByRole("button", { name: "Complete run" })).toBeVisible();
   // A ready stop on a planned run is loaded from here, a loaded one goes en route only once dispatched.
   const stop = load(page, "ORD-0012");
@@ -299,7 +299,7 @@ test("a failed read says so in words and offers to try again", async ({ page, re
   await page.addInitScript((await import("./helpers.js")).dispatchHandoff);
   await stubPost(request, "refuse", { status: 500, error: "internal error", path: "/api/v1/dispatch/loadboard", exact: true, reads: true });
   await page.goto("/");
-  await expect(page.locator("[data-error]")).toContainText("The server could not finish");
+  await expect(page.locator("[data-error]")).toContainText("The desk could not finish");
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.locator("[data-card]").first()).toBeVisible();
 });
@@ -508,4 +508,268 @@ test("a reopen the role gate refuses with a bare Forbidden reads as who may do i
   await truck(page, "RUN-PLM-1").getByRole("button", { name: "Reopen it" }).click();
   await expect(page.locator("[data-sheet-error]")).toHaveText("That is not yours to do. The Logistics Manager or a Branch Manager can.");
   await expect(page.locator("[data-sheet-error]")).not.toHaveText("Forbidden");
+});
+
+// Decision log row 1858: once a dealer is known its lockup leads and no mark or name of ours is drawn.
+test("the header leads with the served dealer and draws nothing of ours, in both themes", async ({ page, request }) => {
+  await page.route("**/api/v1/tenant/config", (route) =>
+    route.fulfill({ json: { id: "t1", dealer_name: "Gable Landscape Supply", logo_url: "", primary_color: "", support_email: "", support_phone: "" } }),
+  );
+  await openBoard(page, request);
+  const header = page.locator("dispatch-board-app hos-app-header");
+  await expect(header.locator("[data-testid='dealer-lockup']")).toContainText("Gable Landscape Supply");
+  await expect(header.locator("[data-testid='dealer-lockup']")).toContainText("Dispatch");
+  for (let pass = 0; pass < 2; pass += 1) {
+    const drawn = await header.evaluate((el) => (el.shadowRoot?.innerHTML ?? "") + (el.shadowRoot?.textContent ?? ""));
+    expect(drawn).not.toContain("Hardscape House");
+    expect(drawn).not.toContain("HH ");
+    expect(drawn).not.toContain('viewBox="0 0 3000 3000"');
+    if (pass === 0) await page.locator("dispatch-board-app [data-action='theme']").first().click();
+  }
+});
+
+// A long dealer name truncates inside its own cell: the lockup never overprints the role word or the controls (bar section 4, very long data).
+const LONG_NAMES = [
+  "Tri-County Landscape and Hardscape Supply Company Incorporated",
+  "Tri-County Landscape and Hardscape Supply Company Incorporated of the Greater Metropolitan Region",
+].map((name, i) => (i === 0 ? name.slice(0, 59).trim() : name.slice(0, 82).trim()));
+
+for (const name of LONG_NAMES) {
+  for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    test(`a ${name.length} character dealer name truncates and overlaps nothing at ${size.width}, both themes`, async ({ page, request }) => {
+      await page.setViewportSize(size);
+      await page.route("**/api/v1/tenant/config", (route) =>
+        route.fulfill({ json: { id: "t1", dealer_name: name, logo_url: "", primary_color: "", support_email: "", support_phone: "" } }),
+      );
+      await openBoard(page, request);
+      const header = page.locator("dispatch-board-app hos-app-header");
+      await expect(header.locator("[data-testid='dealer-lockup']")).toBeVisible();
+      for (let pass = 0; pass < 2; pass += 1) {
+        const facts = await header.evaluate((el) => {
+          const root = el.shadowRoot as ShadowRoot;
+          const box = (sel: string) => root.querySelector(sel)?.getBoundingClientRect() ?? null;
+          const product = root.querySelector(".brand-product") as HTMLElement;
+          const lockup = root.querySelector("[data-testid='dealer-lockup']") as HTMLElement;
+          const r = (b: DOMRect | null) => (b === null ? null : { l: b.left, r: b.right, t: b.top, b: b.bottom });
+          return {
+            lockup: r(box("[data-testid='dealer-lockup']")),
+            who: r(box(".who")),
+            controls: r(box(".controls")),
+            productHeight: product.getBoundingClientRect().height,
+            lineHeight: parseFloat(getComputedStyle(product).lineHeight) || parseFloat(getComputedStyle(product).fontSize) * 1.05,
+            title: lockup.getAttribute("title"),
+            truncated: product.scrollWidth > product.clientWidth,
+            overflowX: el.scrollWidth > el.clientWidth + 1,
+          };
+        });
+        type Box = { l: number; r: number; t: number; b: number };
+        const apart = (a: Box, b: Box) => a.r <= b.l + 0.5 || b.r <= a.l + 0.5 || a.b <= b.t + 0.5 || b.b <= a.t + 0.5;
+        expect(facts.title).toBe(name);
+        expect(facts.truncated).toBe(true);
+        expect(facts.productHeight).toBeLessThanOrEqual(facts.lineHeight + 1);
+        expect(facts.overflowX).toBe(false);
+        expect(apart(facts.lockup as Box, facts.who as Box), "lockup clear of the role word").toBe(true);
+        expect(apart(facts.lockup as Box, facts.controls as Box), "lockup clear of the controls").toBe(true);
+        if (size.width === 1440) expect((facts.lockup as Box).r).toBeLessThanOrEqual((facts.controls as Box).l + 0.5);
+        if (pass === 0) await page.locator("dispatch-board-app [data-action='theme']:visible").first().click();
+      }
+    });
+  }
+}
+
+test("UX-37d B29: a permanent refusal on load shows who can and offers no Try again button", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "refuse", { status: 403, error: "Forbidden", path: "/loadboard", reads: true });
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-error]")).toHaveText("That is not yours to do. The Logistics Manager or a Branch Manager can.");
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+});
+
+test("UX-37d B29: the problems strip labels its action Dismiss, including on an empty day with no trucks", async ({ page, request }) => {
+  await openBoard(page, request);
+  const strip = page.locator("[data-problems]");
+  await expect(strip).toBeVisible();
+  await expect(strip).not.toContainText("Mark applied");
+  await expect(strip.locator("button[data-action='apply-fix']").first()).toHaveText("Dismiss");
+  await page.getByRole("button", { name: "Next day" }).click();
+  await expect(strip.locator("[data-problem-kind='no-runs']")).toContainText("No trucks on the board yet. Open one to start the day.");
+  await expect(strip.locator("[data-problem-kind='no-runs'] button[data-action='apply-fix']")).toHaveText("Dismiss");
+});
+
+test("UX-37d B29: dealer words replace Staff login id, paste the order id, Latitude/Longitude, and core note across tabs", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("li.load", { hasText: "ORD-0029" }).getByRole("button", { name: "Split across trucks" }).click();
+  await expect(page.locator("[data-sheet='split-freight']")).toContainText("Left empty, the freight is divided evenly across the stops.");
+  await expect(page.locator("[data-sheet='split-freight']")).not.toContainText("the core divides");
+
+  await page.locator("[data-tab-id='schedule']").first().click();
+  await expect(page.locator("[data-schedule]")).toBeVisible();
+  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-schedule]")).not.toContainText("paste the order id");
+  await expect(page.locator("[data-schedule]")).toContainText("Map pin (optional)");
+  await expect(page.locator("[data-schedule]")).not.toContainText("Latitude, optional");
+  await expect(page.locator("[data-schedule]")).not.toContainText("Longitude, optional");
+
+  await page.locator("[data-tab-id='willcall']").first().click();
+  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-willcall]")).not.toContainText("paste the order id");
+
+  await page.locator("[data-tab-id='fleet']").first().click();
+  await page.locator("[data-drivers]").getByRole("button", { name: "Add driver" }).click();
+  await expect(page.locator("[data-sheet='add-driver']")).toContainText("Driver's sign in account");
+  await expect(page.locator("[data-sheet='add-driver']")).not.toContainText("Staff login id");
+
+  await page.locator("[data-tab-id='settings']").first().click();
+  await expect(page.locator("[data-rule='load_value_visibility']")).toContainText("Managers see the load value; others do not.");
+  await expect(page.locator("[data-rule='load_value_visibility']")).not.toContainText("A figure the core is told not to send");
+});
+
+test("UX-37d B30: quick cards state their period and the strip shows one As of <time> line in houseZone updated on reload", async ({ page, request }) => {
+  await resetStub(request);
+  const today = await stubToday(request);
+  const t1 = `${today}T18:04:00Z`;
+  const t2 = `${today}T18:19:00Z`;
+  const fmtLA = (iso: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" })
+      .format(new Date(iso))
+      .replace(/[\u202f\u00a0]/g, " ");
+  await page.clock.setFixedTime(new Date(t1));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+
+  await expect(page.locator("[data-card='card.deliveries']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.pickups']")).toContainText("open now");
+  await expect(page.locator("[data-card='card.unassigned']")).toContainText("next 14 days");
+  await expect(page.locator("[data-card='card.ready']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.requested']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.committed']")).toContainText("this day");
+  await expect(page.locator("[data-card='card.due']")).toContainText("next 14 days");
+
+  await expect(page.locator("[data-cards-as-of]")).toHaveCount(1);
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(t1)}`);
+
+  await page.clock.setFixedTime(new Date(t2));
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(t2)}`);
+});
+
+test("UX-37d fix round 1: the board serves business_zone from the surface config and shows stop and As of times in the Pacific clock without holding a data read", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const today = await stubToday(request);
+  const podInstant = `${today}T18:04:00Z`;
+  const readInstant = `${today}T18:15:00Z`;
+  const fmtLA = (iso: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" })
+      .format(new Date(iso))
+      .replace(/[\u202f\u00a0]/g, " ");
+  await stubPost(request, "stop", {
+    order_no: "ORD-0009",
+    status: "DELIVERED",
+    pod_received_by: "Site foreman",
+    pod_at: podInstant,
+  });
+  await page.clock.setFixedTime(new Date(readInstant));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible();
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(load(page, "ORD-0009")).toContainText(`Signed by Site foreman at ${fmtLA(podInstant)}`);
+  await page.locator("[data-tab-id='load']").first().click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${fmtLA(readInstant)}`);
+  const cfg = await (await request.post("/_stub/config", { data: {} })).json();
+  expect(cfg.reads).toBe(1);
+});
+
+test("UX-37d fix round 1: a stalling surface config route never holds the load board read", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { delay_ms: 8000 });
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible({ timeout: 2000 });
+});
+
+test("UX-37d round 2 P2-1: clock times on the board render in glossary 12-hour AM/PM form in houseZone with a plain space", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const today = await stubToday(request);
+  const podInstant = `${today}T15:15:00Z`;
+  const readInstant = `${today}T15:15:00Z`;
+  const expectedTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+    .format(new Date(podInstant))
+    .replace(/[\u202f\u00a0]/g, " ");
+  await stubPost(request, "stop", {
+    order_no: "ORD-0009",
+    status: "DELIVERED",
+    pod_received_by: "Site foreman",
+    pod_at: podInstant,
+  });
+  await page.clock.setFixedTime(new Date(readInstant));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-cards-as-of]")).toHaveText(`As of ${expectedTime}`);
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(load(page, "ORD-0009")).toContainText(`Signed by Site foreman at ${expectedTime}`);
+});
+
+test("UX-37d round 2 P2-2: Drive is named plainly without HH prefix on driver sheet, stop POD note, and day board matrix", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("[data-tab-id='fleet']").first().click();
+  await page.locator("[data-drivers]").getByRole("button", { name: "Add driver" }).click();
+  await expect(page.locator("#driver-login-hint")).toContainText("opens Drive and sees their own runs");
+  await expect(page.locator("#driver-login-hint")).not.toContainText("HH Drive");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.locator("[data-tab-id='day']").first().click();
+  await expect(page.locator("section.matrix")).toContainText("the driver signs for the delivery on Drive.");
+  await expect(page.locator("section.matrix")).not.toContainText("HH Drive");
+  await expect(page.locator("[data-pod-note]").first()).toHaveText("The driver signs for the delivery on Drive.");
+});
+
+test("UX-37d round 2 P2-3: order number hints use a neutral example SO-1041 without a fixture prefix", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.locator("[data-tab-id='schedule']").first().click();
+  await expect(page.locator("[data-schedule] #order-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-schedule] #order-hint")).not.toContainText("ORD-");
+
+  await page.locator("[data-tab-id='willcall']").first().click();
+  await expect(page.locator("[data-willcall] #wc-hint")).toHaveText("Order number on the paperwork, like SO-1041.");
+  await expect(page.locator("[data-willcall] #wc-hint")).not.toContainText("ORD-");
+});
+
+test("UX-37d round 2 P2-4: As of carries the glossary date when the read time is not today, else As of 8:15 AM", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  await page.clock.setFixedTime(new Date("2026-03-02T03:15:00Z"));
+  await page.addInitScript(dispatchHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card='card.deliveries']")).toBeVisible();
+
+  await page.clock.setFixedTime(new Date("2026-03-02T16:15:00Z"));
+  await page.locator("[data-card='card.deliveries']").click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText("As of Mar 1, 2026, 7:15 PM");
+
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator("[data-cards-as-of]")).toHaveText("As of 8:15 AM");
+});
+
+test("UX-37d round 2 P2-4 TZ: with machine TZ Asia/Tokyo and dealer America/Los_Angeles, a read that is today in Pacific renders As of 8:15 AM with no date", async ({ browser, request }) => {
+  await resetStub(request);
+  await stubPost(request, "config", { business_zone: "America/Los_Angeles" });
+  const context = await browser.newContext({ timezoneId: "Asia/Tokyo" });
+  try {
+    const page = await context.newPage();
+    await page.clock.setFixedTime(new Date("2026-03-02T16:15:00Z"));
+    await page.addInitScript(dispatchHandoff);
+    await page.goto("/");
+    await expect(page.locator("[data-cards-as-of]")).toHaveText("As of 8:15 AM");
+  } finally {
+    await context.close();
+  }
 });

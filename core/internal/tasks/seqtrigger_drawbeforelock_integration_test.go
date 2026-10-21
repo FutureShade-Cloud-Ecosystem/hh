@@ -55,18 +55,38 @@ func TestIntegration_DrawBeforeLock_ShortageTombstoneBesideAWrite(t *testing.T) 
 		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1`, dblOrgID)
 	})
 
+	store := NewShortageSyncStore(pool, nil)
+	filter := hhsync.ScopeFilter{OrgID: dblOrgID, Actor: "draw-before-lock-leg"}
+	engine := hhsync.NewEngine()
+	if err := engine.RegisterScope("shortages", store); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	info, _ := hhsync.Lookup("shortages")
+	before, err := engine.Pull(ctx, info, filter, 0, 100)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
 	park := testkit.NewDrawPark(t, pool, "shortages", 55010012)
 	touch := park.TouchRow("task_shortages", "note = note || '.'", dblShortID)
 	park.WaitParked("the touch stands between its row lock and its draw")
 
 	del := make(chan error, 1)
 	go func() {
-		rs, err := NewShortageSyncStore(pool, nil).Delete(ctx, hhsync.ScopeFilter{OrgID: dblOrgID, Actor: "draw-before-lock-leg"}, dblShortID, uuid.NewString())
-		if err == nil && rs.Seq <= 1 {
-			t.Errorf("the tombstone answered seq %d: the trigger's draw must come back", rs.Seq)
-		}
+		_, err := store.Delete(ctx, filter, dblShortID, uuid.NewString())
 		del <- err
 	}()
 	park.WaitBlocked("the tombstone waits")
 	park.Answers(map[string]chan error{"touch": touch, "tombstone": del})
+
+	pulled, err := engine.Pull(ctx, info, filter, before.LastSeq, 100)
+	if err != nil {
+		t.Fatalf("pull after: %v", err)
+	}
+	for _, tb := range pulled.Tombstones {
+		if tb.Id == dblShortID && tb.Seq > before.LastSeq {
+			return
+		}
+	}
+	t.Fatalf("the device did not receive the tombstone from cursor %d: %+v", before.LastSeq, pulled.Tombstones)
 }

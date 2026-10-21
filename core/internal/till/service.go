@@ -588,9 +588,16 @@ func (s *Service) CountTill(ctx context.Context, in CountInput) error {
 // ZReportFor returns expected vs actual vs over/short, DERIVED with the start float in the cash math
 // (never a stored per-tender column). Revealed AFTER the count.
 func (s *Service) ZReportFor(ctx context.Context, sessionID string) (ZReport, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ZReport{}, err
+	}
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return ZReport{}, err
+	}
+	if !caller.CanAccessBranch(sess.BranchID) {
+		return ZReport{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
 	}
 	return s.deriveZReport(ctx, sess)
 }
@@ -743,12 +750,17 @@ func (s *Service) CompleteTill(ctx context.Context, in CompleteInput) error {
 
 // GetSession returns a session with its tenders + movements (the operator reopen/lookup read).
 func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return SessionDetail{}, err
 	}
 	sess, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return SessionDetail{}, err
+	}
+	// The branch wall on a read of a drawer's tenders and movements, the words every till write gives.
+	if !caller.CanAccessBranch(sess.BranchID) {
+		return SessionDetail{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
 	}
 	tenders, err := s.store.SessionTenders(ctx, id)
 	if err != nil {
