@@ -154,7 +154,8 @@ func TestIntegration_MarkDepositedRefusesAReversedPaymentAndKeepsTheReplayNoOp(t
 	repo := till.NewRepository(r.pool)
 	ctx := context.Background()
 
-	reversed := r.payOnce(r.invoice("MD1", 1_000_000), 10_000)
+	// A reversed CHEQUE: a reversed CARD is claimable (ruling 55.4, below).
+	reversed := r.chequeOnce(r.invoice("MD1", 1_000_000), 10_000)
 	if err := r.reverse(reversed.ID); err != nil {
 		t.Fatalf("reverse: %v", err)
 	}
@@ -179,6 +180,19 @@ func TestIntegration_MarkDepositedRefusesAReversedPaymentAndKeepsTheReplayNoOp(t
 	}
 	if st, _, after := r.paymentState(live.ID); st != "DEPOSITED" || after != seq {
 		t.Errorf("a replayed MarkDeposited moved the payment: status %s seq %d -> %d", st, seq, after)
+	}
+
+	// Ruling 55.4: MarkDeposited follows the claim, the same predicate (reversed_at IS NULL OR method = 'CARD'), so a
+	// reversed CARD is deposited and a reversed cheque stays refused.
+	card := r.payOnce(r.invoice("MD4", 1_000_000), 10_000)
+	if err := r.reverse(card.ID); err != nil {
+		t.Fatalf("reverse the card: %v", err)
+	}
+	if err := repo.MarkDeposited(ctx, []string{card.ID}, "lo-line"); err != nil {
+		t.Errorf("MarkDeposited of a reversed CARD answered %v, want it deposited", err)
+	}
+	if st, _, _ := r.paymentState(card.ID); st != "DEPOSITED" {
+		t.Errorf("the reversed card reads %s after MarkDeposited, want DEPOSITED", st)
 	}
 
 	// A batch with one live and one reversed payment: the reversed one refuses the call, and the call
@@ -238,7 +252,8 @@ func TestIntegration_MarkDepositedReplayAfterDepositAndReversalIsRefused(t *test
 			r := newLORig(t, 4)
 			ctx := context.Background()
 			repo := till.NewRepository(r.pool)
-			p := r.payOnce(r.invoice("ED", 1_000_000), 10_000)
+			// A cheque: a reversed CARD that is already DEPOSITED replays as the idempotent no op (ruling 55.4).
+			p := r.chequeOnce(r.invoice("ED", 1_000_000), 10_000)
 			switch deposit {
 			case "MarkDeposited":
 				if err := repo.MarkDeposited(ctx, []string{p.ID}, "lo-edge"); err != nil {
