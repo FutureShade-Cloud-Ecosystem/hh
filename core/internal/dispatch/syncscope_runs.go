@@ -411,7 +411,9 @@ func (s *RunsSyncStore) crewInBranch(ctx context.Context, branchID, truckID, dri
 }
 
 // Write applies exactly the declared fields to one run under the
-// module's own rules, on a FOR UPDATE-locked pre-image so the recorded
+// module's own rules, on a FOR NO KEY UPDATE-locked pre-image (not FOR UPDATE: a stop write on
+// this run takes FOR KEY SHARE on the row at its foreign key check, and the two would cycle against
+// the stops counter this write draws next) so the recorded
 // transition is the one that landed: the status move runs the same
 // matrix the REST transitions run, DISPATCHED needs its crew (0090's
 // own CHECK), COMPLETED needs every stop settled (the precondition
@@ -460,7 +462,7 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 	arm, armArg := d.leg(runDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(truck_id::text,''), COALESCE(driver_id::text,''), notes FROM delivery_runs
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm+` FOR UPDATE`,
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm+` FOR NO KEY UPDATE`,
 		id, f.OrgID, armArg).Scan(&from, &truckID, &driverID, &fromNotes); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
@@ -492,6 +494,13 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 			// The stops draw their own scope's seq beside the move (the
 			// unassignment is a stop change a device's pull must see,
 			// same as the REST path's stamped AssignStop).
+			// The run's READY stops first, ascending, FOR NO KEY UPDATE (PR 556 round 3d): the statement below
+			// draws the stops counter in a CTE, which runs BEFORE it locks the rows it updates, and a single
+			// stop write holds one of those rows between its own lock and its draw. Rows first, then the
+			// counter. The run row is already held (the pre-image read).
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE run_id = $1::uuid AND status = 'READY' ORDER BY id FOR NO KEY UPDATE`, id); err != nil {
+				return sync.RowState{}, fmt.Errorf("dispatch: lock stops to unassign on sync cancel: %w", err)
+			}
 			if _, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 				UPDATE delivery_stops SET run_id = NULL, stop_no = 0, updated_at = now(),
 				       seq = (SELECT next_value FROM seq)
@@ -576,19 +585,18 @@ func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 		return sync.RowState{}, fmt.Errorf("dispatch: begin runs sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocateSyncSeqTx(ctx, tx, runsSyncScope)
-	if err != nil {
-		return sync.RowState{}, err
-	}
-	delArm, delArg := d.leg(runDriverCol, 4)
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
+	delArm, delArg := d.leg(runDriverCol, 3)
 	var deleted bool
+	var seq int64
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_runs SET
 			deleted_at = now(),
-			updated_at = now(),
-			seq        = $3
+			updated_at = now()
 		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+delArm+`
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
+		RETURNING (deleted_at IS NOT NULL), seq`, id, f.OrgID, delArg).Scan(&deleted, &seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
