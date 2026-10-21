@@ -62,19 +62,20 @@ func sf2p2Counts(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (nullOrg
 func TestSF2P2_AnInvoiceOfABoxProvisionedAfterMigrateTakesTheOrgAndGainsTheCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "sf2p2prov")
+	base, _ := sf2p2Counts(t, ctx, pool) // the migrations plant a few invoices of their own, before any org existed
 	sf2p2Invoice(t, ctx, pool, "SF2P2-INV-1", "INVOICE", prodTrenton)
 	sf2p2Invoice(t, ctx, pool, "SF2P2-INV-2", "INVOICE", prodKingston)
 	sf2p2Invoice(t, ctx, pool, "SF2P2-CM-1", "CREDIT_MEMO", prodTrenton) // written before any org existed
-	if n, has := sf2p2Counts(t, ctx, pool); n != 3 || has {
-		t.Fatalf("before provisioning: %d NULL org invoices and check %v, want 3 and no check", n, has)
+	if n, has := sf2p2Counts(t, ctx, pool); n != base+3 || has {
+		t.Fatalf("before provisioning: %d NULL org invoices and check %v, want %d and no check", n, has, base+3)
 	}
 	cfg := identity.PopulateConfig{OrgSlug: "sf2p2-dealer", OrgName: "SF2P2 Dealer", OrgTables: sf2p2Entries()}
 	report, err := identity.Populate(ctx, pool, cfg)
 	if err != nil {
 		t.Fatalf("populate: %v", err)
 	}
-	if report.OrgTables["invoices"] != 3 {
-		t.Errorf("the populate stamped %v, want 3 invoices", report.OrgTables)
+	if report.OrgTables["invoices"] != int64(base+3) {
+		t.Errorf("the populate stamped %v, want %d invoices", report.OrgTables, base+3)
 	}
 	if n, has := sf2p2Counts(t, ctx, pool); n != 0 || !has {
 		t.Errorf("after provisioning: %d NULL org invoices and validated check %v, want 0 and the check", n, has)
@@ -106,6 +107,7 @@ func TestSF2P2_AnInvoiceOfABoxProvisionedAfterMigrateTakesTheOrgAndGainsTheCheck
 func TestSF2P2_AnInvoiceAtALocationWithNoOrgRefusesWithNothingHalfWritten(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "sf2p2refuse")
+	base, _ := sf2p2Counts(t, ctx, pool)
 	sf2p2Invoice(t, ctx, pool, "SF2P2-R-1", "INVOICE", prodTrenton)
 	if _, err := pool.Exec(ctx, `INSERT INTO org (slug, name) VALUES ('sf2p2-r', 'SF2P2 R')`); err != nil {
 		t.Fatalf("plant an org: %v", err)
@@ -123,7 +125,7 @@ func TestSF2P2_AnInvoiceAtALocationWithNoOrgRefusesWithNothingHalfWritten(t *tes
 	if err == nil || !strings.Contains(err.Error(), "sit at a location with no org") || !strings.Contains(err.Error(), "by guessing") {
 		t.Fatalf("the stamp answered %v, want 0432's refusal words", err)
 	}
-	if n, has := sf2p2Counts(t, ctx, pool); n != 1 || has {
-		t.Errorf("after the refusal: %d NULL org invoices and check %v, want 1 and no check", n, has)
+	if n, has := sf2p2Counts(t, ctx, pool); n != base+1 || has {
+		t.Errorf("after the refusal: %d NULL org invoices and check %v, want %d and no check", n, has, base+1)
 	}
 }
