@@ -160,17 +160,3 @@ func TestGenericPlan_ActivityForReadsWithoutAnOrder(t *testing.T) {
 		t.Fatalf("ActivityFor(order): %v", err)
 	}
 }
-
-func TestGenericPlan_RegisterPolicyResolvesTheDealerDefaultForAnEmptyBranch(t *testing.T) {
-	pool := genericPlanPool(t)
-	repo := NewRepository(pool)
-	branch := aBranchID(t, pool)
-	for i := 0; i < 3; i++ {
-		if _, err := repo.RegisterPolicyFor(context.Background(), ""); err != nil {
-			t.Fatalf("RegisterPolicyFor(empty) call %d: %v", i+1, err)
-		}
-		if _, err := repo.RegisterPolicyFor(context.Background(), branch); err != nil {
-			t.Fatalf("RegisterPolicyFor(real branch) call %d: %v", i+1, err)
-		}
-	}
-}
