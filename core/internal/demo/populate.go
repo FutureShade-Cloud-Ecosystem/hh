@@ -248,13 +248,20 @@ var deactivatedUserIDs = map[string]bool{
 // work sits at, so its login reaches its own branch and nothing more: the
 // yard team's queue and claimed picks are the roadmap's Trenton story, and
 // the driver's seeded driver D1 and its runs are Kingston's, and the
-// dispatch persona's is Trenton, the main yard (Point Loma once the demo
+// dispatch persona's home is Trenton, the main yard (Point Loma once the demo
 // world renames it) whose Truck 03 and 04, open runs and two unloaded
-// delivery orders are the load board's material.
-var demoPersonas = []struct{ userID, email, roleCode, branchID string }{
-	{yardUserID, yardEmail, yardRoleCode, trentonBranchID},
-	{driverUserID, driverEmail, driverRoleCode, kingstonBranchID},
-	{dispatchUserID, dispatchEmail, dispatchRoleCode, trentonBranchID},
+// delivery orders are the load board's material. The dispatch persona also
+// works Kingston (Julian once renamed), the one persona with two yards: the
+// driver's runs sit there, and dispatch is gated on the run's branch, so no
+// other demo login could dispatch them and Drive's walk stopped at "The run
+// has not been dispatched".
+var demoPersonas = []struct {
+	userID, email, roleCode string
+	branchIDs               []string
+}{
+	{yardUserID, yardEmail, yardRoleCode, []string{trentonBranchID}},
+	{driverUserID, driverEmail, driverRoleCode, []string{kingstonBranchID}},
+	{dispatchUserID, dispatchEmail, dispatchRoleCode, []string{trentonBranchID, kingstonBranchID}},
 }
 
 // plantedEmailMoves is where the two real-domain addresses go: the
@@ -758,35 +765,36 @@ func convergePersonas(ctx context.Context, tx pgx.Tx, now time.Time) (converged,
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE user_branch_grants SET deleted_at = $3
-			 WHERE user_id = $1::uuid AND deleted_at IS NULL AND branch_id <> $2::uuid`,
-			p.userID, p.branchID, now)
+			 WHERE user_id = $1::uuid AND deleted_at IS NULL AND NOT (branch_id = ANY($2::uuid[]))`,
+			p.userID, p.branchIDs, now)
 		if err != nil {
 			return 0, 0, fmt.Errorf("demo-populate: persona branch grants: %w", err)
 		}
 		removed += int(tag.RowsAffected())
-		tag, err = tx.Exec(ctx, `
-			INSERT INTO user_branch_grants (user_id, branch_id)
-			SELECT $1::uuid, l.id FROM locations l WHERE l.id = $2::uuid
-			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
-			WHERE user_branch_grants.deleted_at IS NOT NULL`,
-			p.userID, p.branchID)
-		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: persona branch grant heal: %w", err)
+		for _, branchID := range p.branchIDs {
+			tag, err = tx.Exec(ctx, `
+				INSERT INTO user_branch_grants (user_id, branch_id)
+				SELECT $1::uuid, l.id FROM locations l WHERE l.id = $2::uuid
+				ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+				WHERE user_branch_grants.deleted_at IS NOT NULL`,
+				p.userID, branchID)
+			if err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: persona branch grant heal: %w", err)
+			}
+			if tag.RowsAffected() > 0 {
+				converged++
+			}
 		}
-		if tag.RowsAffected() > 0 {
-			converged++
-		}
-		// The verify half, whatever this run wrote: exactly one live grant,
-		// at the persona's own branch.
+		// The verify half, whatever this run wrote: exactly the persona's own branches, live.
 		var live, atOwn int
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*), count(*) FILTER (WHERE branch_id = $2::uuid)
+			SELECT count(*), count(*) FILTER (WHERE branch_id = ANY($2::uuid[]))
 			  FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
-			p.userID, p.branchID).Scan(&live, &atOwn); err != nil {
+			p.userID, p.branchIDs).Scan(&live, &atOwn); err != nil {
 			return 0, 0, fmt.Errorf("demo-populate: persona branch grant verify: %w", err)
 		}
-		if live != 1 || atOwn != 1 {
-			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds %d live branch grant(s) (%d at its own), the demo world works one branch", p.email, live, atOwn)
+		if live != len(p.branchIDs) || atOwn != len(p.branchIDs) {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the persona %s holds %d live branch grant(s) (%d at its own), the demo world gives it %d", p.email, live, atOwn, len(p.branchIDs))
 		}
 	}
 	return converged, removed, nil
@@ -1106,6 +1114,16 @@ func personaBranch(p flows.Persona) string {
 	return trentonBranchID
 }
 
+// personaBranches is every branch a persona works, its home first: the dispatch
+// persona (logistics-manager) also works Kingston, where the driver's runs are
+// (see demoPersonas); every other persona works only its home.
+func personaBranches(p flows.Persona) []string {
+	if p.ID == "logistics-manager" {
+		return []string{trentonBranchID, kingstonBranchID}
+	}
+	return []string{personaBranch(p)}
+}
+
 // insertPersonaAccounts writes the users rows of the enterable personas,
 // idempotently. The contractor personas have no row until the Pro cycle. The
 // rows carry no password hash and no platform id yet: identity.Populate's
@@ -1165,25 +1183,27 @@ func insertPersonaAccess(ctx context.Context, tx pgx.Tx) (roles, branches int, e
 				return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the persona %s would reach nothing", code, p.ID)
 			}
 		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO user_branch_grants (user_id, branch_id)
-			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
-			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
-			WHERE user_branch_grants.deleted_at IS NOT NULL`,
-			p.UserID, personaBranch(p))
-		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: sign in persona %s branch grant: %w", p.ID, err)
-		}
-		branches += int(tag.RowsAffected())
-		var live int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM user_branch_grants
-			 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
-			p.UserID, personaBranch(p)).Scan(&live); err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: sign in persona branch verify: %w", err)
-		}
-		if live == 0 {
-			return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the persona %s would reach no branch", personaBranch(p), p.ID)
+		for _, branchID := range personaBranches(p) {
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO user_branch_grants (user_id, branch_id)
+				SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
+				ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+				WHERE user_branch_grants.deleted_at IS NOT NULL`,
+				p.UserID, branchID)
+			if err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona %s branch grant: %w", p.ID, err)
+			}
+			branches += int(tag.RowsAffected())
+			var live int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM user_branch_grants
+				 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
+				p.UserID, branchID).Scan(&live); err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona branch verify: %w", err)
+			}
+			if live == 0 {
+				return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the persona %s would reach no branch", branchID, p.ID)
+			}
 		}
 	}
 	return roles, branches, nil
@@ -1201,12 +1221,14 @@ func writePersonaGrants(ctx context.Context, tx pgx.Tx, orgID string) (int, erro
 			continue
 		}
 		for _, role := range p.StaffRoles() {
-			ok, err := identity.EnsureStaffGrantAt(ctx, tx, orgID, p.Subject(), role, personaBranch(p))
-			if err != nil {
-				return 0, fmt.Errorf("demo-populate: sign in persona %s staff grant %s: %w", p.ID, role, err)
-			}
-			if ok {
-				inserted++
+			for _, branchID := range personaBranches(p) {
+				ok, err := identity.EnsureStaffGrantAt(ctx, tx, orgID, p.Subject(), role, branchID)
+				if err != nil {
+					return 0, fmt.Errorf("demo-populate: sign in persona %s staff grant %s: %w", p.ID, role, err)
+				}
+				if ok {
+					inserted++
+				}
 			}
 		}
 	}
