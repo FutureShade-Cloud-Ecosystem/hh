@@ -255,9 +255,9 @@ func TestIntegration_ClaimRefusalNamesOnlyThePaymentsThatDidNotMove(t *testing.T
 		t.Fatalf("reverse: %v", err)
 	}
 	line := r.statementLine(20_000)
-	_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
+	_, err := bankrec.NewRepository(r.pool).PersistMatchReach(context.Background(), bankrec.Match{
 		StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: live.ID,
-		Method: bankrec.MethodManual, AmountCents: 20_000}, []string{live.ID, gone.ID})
+		Method: bankrec.MethodManual, AmountCents: 20_000}, []string{live.ID, gone.ID}, bankrec.AllBranches)
 	if !isReversedRefusal(err, gone) {
 		t.Fatalf("the batch answered %v, want the claim sentence naming payment %s", err, gone.PaymentNo)
 	}

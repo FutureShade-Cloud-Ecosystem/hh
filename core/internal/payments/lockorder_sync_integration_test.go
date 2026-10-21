@@ -288,10 +288,10 @@ func (r *loRig) statementLine(cents int64) string {
 }
 
 func (r *loRig) match(lineID, paymentID string, cents int64) error {
-	_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
+	_, err := bankrec.NewRepository(r.pool).PersistMatchReach(context.Background(), bankrec.Match{
 		StatementLineID: lineID, TargetType: bankrec.TargetPayment, TargetRefID: paymentID,
 		Method: bankrec.MethodManual, AmountCents: cents,
-	}, []string{paymentID})
+	}, []string{paymentID}, bankrec.AllBranches)
 	return err
 }
 

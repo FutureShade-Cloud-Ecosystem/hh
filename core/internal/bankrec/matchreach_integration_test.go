@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -408,5 +409,41 @@ func TestIntegration_UnmatchReach_TheFenceHoldsBesideAWriterOfTheSamePaymentRow(
 	}
 	if _, ps, _ := w.written(t, line, reachPayB1); ps != "RECEIVED" && got["AB"] == http.StatusOK {
 		t.Errorf("after the global manager's unmatch the payment reads %s, want RECEIVED", ps)
+	}
+}
+
+// A nil reach REFUSES everywhere (SF-2d round 5): never "no fence". Every form that takes a reach answers the same
+// 403 and writes nothing; a dealer wide caller says AllBranches by name and matches.
+func TestIntegration_NilReach_RefusesEveryForm(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	svc := NewService(NewRepository(w.pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournalPoster(w.poster)
+	line := w.line(t, "NIL REACH", 5000)
+	isRefusal := func(what string, err error) {
+		t.Helper()
+		var ce clientError
+		if err == nil || !errors.As(err, &ce) || ce.status != http.StatusForbidden {
+			t.Errorf("%s with a nil reach answered %v, want the 403 refusal", what, err)
+		}
+	}
+	// The service: manual match (no CanAccessBranch on the input), auto match, unmatch.
+	_, err := svc.ManualMatch(ctx, MatchInput{Mode: "manual", StatementLineID: line, TargetType: TargetPayment, TargetRefID: reachPayA1, AmountCents: 5000}, "")
+	isRefusal("ManualMatch", err)
+	from, to := time.Now().Add(-24*time.Hour), time.Now().Add(48*time.Hour)
+	_, err = svc.AutoMatchReach(ctx, w.account, from, to, "", nil)
+	isRefusal("AutoMatchReach", err)
+	isRefusal("UnmatchReach", svc.UnmatchReach(ctx, "44444444-4444-4444-8444-444444444444", "", nil))
+	// The repository forms.
+	_, err = NewRepository(w.pool).PersistMatchReach(ctx, Match{StatementLineID: line, TargetType: TargetPayment, TargetRefID: reachPayA1, Method: MethodManual, AmountCents: 5000}, []string{reachPayA1}, nil)
+	isRefusal("PersistMatchReach", err)
+	_, _, _, err = NewRepository(w.pool).UnmatchReach(ctx, "44444444-4444-4444-8444-444444444444", "", nil)
+	isRefusal("Repository.UnmatchReach", err)
+	// Nothing was written.
+	if ls, ps, n := w.written(t, line, reachPayA1); ls != "UNMATCHED" || ps != "RECEIVED" || n != 0 {
+		t.Errorf("after the refusals: line %s, payment %s, match rows %d; want UNMATCHED, RECEIVED, 0", ls, ps, n)
+	}
+	// The named allow all matches.
+	if _, err := svc.ManualMatch(ctx, MatchInput{Mode: "manual", StatementLineID: line, TargetType: TargetPayment, TargetRefID: reachPayA1, AmountCents: 5000, CanAccessBranch: AllBranches}, ""); err != nil {
+		t.Errorf("AllBranches was refused: %v", err)
 	}
 }

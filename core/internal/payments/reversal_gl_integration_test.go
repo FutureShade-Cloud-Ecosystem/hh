@@ -225,7 +225,7 @@ func TestIntegration_ReversalGL_DepositedThenReversedComesOutOfTheBank(t *testin
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	if _, err := bank.ManualMatch(context.Background(), bankrec.MatchInput{
+	if _, err := bank.ManualMatch(context.Background(), bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
 		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
 	}, w.r.userID); err != nil {
 		t.Fatalf("the deposit (bank match): %v", err)
@@ -245,7 +245,7 @@ func TestIntegration_ReversalGL_ReversedThenTheDepositIsRefused(t *testing.T) {
 	rev := w.reverse(orig)
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	if _, err := bank.ManualMatch(context.Background(), bankrec.MatchInput{
+	if _, err := bank.ManualMatch(context.Background(), bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
 		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
 	}, w.r.userID); err == nil {
 		t.Fatalf("the deposit of a reversed payment was accepted")
@@ -358,7 +358,7 @@ func (w *reversalGLWorld) sequence(t *testing.T, unmatch, drainBeforeUnmatch boo
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
 		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
 	}, w.r.userID)
 	if err != nil {
@@ -372,7 +372,7 @@ func (w *reversalGLWorld) sequence(t *testing.T, unmatch, drainBeforeUnmatch boo
 	}
 	var res sequenceResult
 	if unmatch {
-		res.unmatchErr = bank.Unmatch(ctx, m.ID, w.r.userID)
+		res.unmatchErr = bank.UnmatchReach(ctx, m.ID, w.r.userID, bankrec.AllBranches)
 	}
 	w.drain()
 	res.nets = w.nets(keys, []string{line})
@@ -441,7 +441,7 @@ func TestIntegration_ReversalGL_TheAccountIsFixedAtReversalNotAtConsumption(t *t
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
 		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
 	}, w.r.userID)
 	if err != nil {
@@ -472,7 +472,7 @@ func TestIntegration_ReversalGL_AnUnmatchBesideAReversalOfTheSamePaymentIsRefuse
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
 		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
 	}, w.r.userID)
 	if err != nil {
@@ -489,7 +489,7 @@ func TestIntegration_ReversalGL_AnUnmatchBesideAReversalOfTheSamePaymentIsRefuse
 	}()
 	park.WaitParked("the reversal holds the payment row at its first counter draw")
 	unErr := make(chan error, 1)
-	go func() { unErr <- bank.Unmatch(ctx, m.ID, w.r.userID) }()
+	go func() { unErr <- bank.UnmatchReach(ctx, m.ID, w.r.userID, bankrec.AllBranches) }()
 	park.WaitBlocked("the unmatch queues on the payment row")
 	park.AnswersAllowing(map[string]chan error{"reversal": revErr, "unmatch": unErr}, map[string]string{"unmatch": "cannot be unmatched"})
 
@@ -587,7 +587,7 @@ func TestIntegration_ReversalGL_Round4_ChequeBankedByALodgementThenReversedCredi
 	})
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl}).WithLodgements(till.NewRepository(w.r.pool))
-	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement, TargetRefID: movement, AmountCents: 10_000}, w.r.userID)
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches, Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement, TargetRefID: movement, AmountCents: 10_000}, w.r.userID)
 	if err != nil {
 		t.Fatalf("the lodgement match: %v", err)
 	}
@@ -631,7 +631,7 @@ func (w *reversalGLWorld) sequenceFor(t *testing.T, method string) methodSequenc
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
-	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000}, w.r.userID)
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches, Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000}, w.r.userID)
 	if err != nil {
 		t.Fatalf("the deposit: %v", err)
 	}
