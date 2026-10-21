@@ -2934,7 +2934,11 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "GET" && path === "/api/v1/customers/search") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
-    const rows = CUSTOMERS.filter((customer) => customer.name.toLowerCase().includes(q) || customer.account_no.toLowerCase().includes(q));
+    // The core sends the available credit (limit less open, floored at zero) beside the two figures, so
+    // no client subtracts (UX-97). This stub admits every caller: the dealer's account position
+    // policy and its refusal are pinned in the core's tests and the Counter Till's legs.
+    const rows = CUSTOMERS.filter((customer) => customer.name.toLowerCase().includes(q) || customer.account_no.toLowerCase().includes(q))
+      .map((customer) => ({ ...customer, available_credit_cents: Math.max(0, customer.credit_limit_cents - customer.open_balance_cents) }));
     respondJson(response, 200, rows);
     return;
   }
@@ -2971,6 +2975,7 @@ const server = createServer(async (request, response) => {
       on_hold: HELD_STANDINGS.get(customer.id)?.on_hold === true,
       tax_exempt: false,
       balance_cents: customer.open_balance_cents,
+      available_credit_cents: Math.max(0, customer.credit_limit_cents - customer.open_balance_cents),
       is_active: true,
     });
     return;

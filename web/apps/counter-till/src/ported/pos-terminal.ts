@@ -5,7 +5,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from '@hardscapehouse/pos-kit/src/ported/ports.js';
 import {
-  availableCreditCents,
+  serverAvailableCreditCents,
   balanceAfterDepositCents,
   cartSubtotalCents,
   depositCentsFromTyped,
@@ -71,7 +71,7 @@ import {
   type RingKeyMemo,
   type ParkedInfo,
 } from './_pos.js'; // DIB-244/246/247/379
-import { evaluateAccountCheck } from './account-check-logic.js';
+import { evaluateAccountCheckUnderPolicy } from './account-check-position.js';
 // ── DIB-488 ── the tracked (never gated) sale-session flow + the stock-status line.
 import '@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js';
 import './pos-step-card.js'; // POS restructure: one accordion card, four times over
@@ -4466,6 +4466,7 @@ export class HosPosTerminal extends LitElement {
         ...picked,
         credit_limit_cents: fresh.credit_limit_cents,
         open_balance_cents: fresh.open_balance_cents,
+        available_credit_cents: fresh.available_credit_cents,
       };
     } catch {
       // the card keeps the figures it has: no fault banner over a fact nobody asked for
@@ -7002,10 +7003,10 @@ ${this.renderFulfilTiles()}
   private renderAccountCheck(): TemplateResult | typeof nothing {
     if (this.payMethod !== 'ACCOUNT' || !this.customer) return nothing;
 
-    const check = evaluateAccountCheck(this.customer, this.standing, {
+    const check = evaluateAccountCheckUnderPolicy(this.customer, this.standing, {
       isCreditBlockedRefusal: this.creditBlockedByServer,
       cashOnDemand:
-        cashOnDemandPosture(this.paymentOptions(), this.customer.payment_terms_days, this.customer.credit_limit_cents) !== null,
+        cashOnDemandPosture(this.paymentOptions(), this.customer.payment_terms_days, this.customer.credit_limit_cents ?? 0) !== null,
     });
     if (!check) return nothing;
 
@@ -7865,9 +7866,25 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   private renderCustomerIdentity(payStep = false) {
     const c = this.customer;
     if (c) {
-       // HH note: the reference subtracted the balance from the limit here; the core computes
-       // credit in HH, so the port asks the host seam (CLOSURE.md names it), already clamped.
-      const available = availableCreditCents(c);
+       // HH note: the reference subtracted the balance from the limit here. The core computes the
+       // available credit and sends it (UX-97): the card shows that figure and never subtracts.
+       // The figure is absent, not zero, when the dealer's account position policy withholds it
+       // from this caller, and the card then says so in words.
+      const available = serverAvailableCreditCents(c);
+      const held = this.standing.on_hold === true;
+      const withheld = available === null && c.credit_limit_cents === undefined;
+      /* On a held account the headroom is not what a clerk can spend: a green figure beside the
+         red hold tag reads as "can buy". While the hold stands the card says "On hold" where the
+         figure would be (rather than muting a number that still reads as headroom). */
+      const headroom = (label: string) =>
+        held
+          ? html`<span data-testid="cust-available-on-hold">${label} <span class="num out">On hold</span></span>`
+          : available === null
+            ? nothing
+            : html`<span data-testid="cust-available">${label} <span class="num avail">${formatMoney(available)}</span></span>`;
+      const outstanding = (c.open_balance_cents ?? 0) > 0
+        ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents ?? 0)}</span></span>`
+        : nothing;
       return html`<div class="custcard" data-testid=${payStep ? 'pay-customer-card' : 'customer-card'}>
         <span class="avatar" aria-hidden="true">${customerInitials(c.name)}</span>
         <div class="cmain">
@@ -7892,23 +7909,21 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
-            ${payStep
-              ? cashOnDemandPosture(this.paymentOptions(), c.payment_terms_days, c.credit_limit_cents) !== null
+            ${withheld
+              ? html`<span data-testid="cust-position-withheld">Credit position not shown for your role</span>`
+              : payStep
+              ? cashOnDemandPosture(this.paymentOptions(), c.payment_terms_days, c.credit_limit_cents ?? 0) !== null
                 ? /* Round 16 (FROM-PRINCIPAL 37 ii): the Cash On Demand account has no credit to be
                      available; the line the core's 500000 seed line used to buy it ("Credit
                      available $5,000.00") was a figure with no meaning for an account that pays
                      before release. The posture words replace it, read against the server's
                      payment options (one source of truth); a credit account keeps its figure. */
-                  html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
+                  html`${outstanding}
                     <span data-testid="cust-cod-posture">Cash On Demand: pay before release</span>`
-                : c.credit_limit_cents > 0
-                  ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>
-                    <span>Credit available <span class="num avail">${formatMoney(available)}</span></span>`
+                : (c.credit_limit_cents ?? 0) > 0
+                  ? html`${outstanding}${headroom('Credit available')}`
                   : html`<span>No credit line</span>`
-              : html`<span>Available (derived) <span class="num avail">${formatMoney(available)}</span></span>
-                ${c.open_balance_cents > 0
-                  ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents)}</span></span>`
-                  : nothing}`}
+              : html`${headroom('Available')}${outstanding}`}
             ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
                also gives me an opportunity to ask them to pay their bill": this is the thing that was
                missing when they did. It is one more entry in the same quiet fact row, in the same

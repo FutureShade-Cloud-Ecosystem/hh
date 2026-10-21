@@ -802,10 +802,21 @@ export function refundEstimateCents(
 }
 
 /**
- * The account's available headroom for the strip and the picker to display:
- * the limit and the balance are the customer read's own figures, already
- * server-side facts; the seam clamps the difference at zero. The ring's credit
- * gate is the enforcement; this is the display beside the name.
+ * The headroom the CORE computed for a customer read (UX-97): the search and the by-id read send
+ * `available_credit_cents` under the dealer's account position policy, and the browser shows that
+ * figure rather than subtracting. Null when the policy withheld it from this caller (the figure is
+ * absent, never zero), and the screen then says so in words or shows nothing.
+ */
+export function serverAvailableCreditCents(customer: { available_credit_cents?: number | null }): number | null {
+  const a = customer.available_credit_cents;
+  return typeof a === 'number' && Number.isFinite(a) ? a : null;
+}
+
+/**
+ * The browser-side headroom: limit minus balance, clamped at zero. NO LONGER USED BY THE DISPLAYS
+ * (they read the core's `serverAvailableCreditCents`); it remains for the account check's logic,
+ * which UX-97a owns, so its sentence is the one place the browser still subtracts. The ring's
+ * credit gate is the enforcement.
  */
 export function availableCreditCents(customer: {
   credit_limit_cents: number;

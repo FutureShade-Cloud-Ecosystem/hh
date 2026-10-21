@@ -1883,16 +1883,38 @@ function workspaceRowFor(userId) {
 // The counter's salesperson roster: the demo accounts, in flow-table order.
 const SALESPEOPLE = Object.values(USERS).map((account) => ({ id: account.user_id, name: account.display_name }));
 
-function customerSearchRow(customer) {
-  return {
+// The dealer's account position policy, as ar_invoice_policy.account_position_visibility holds it:
+// MANAGER_UP (the dealer default), ALL_STAFF or HIDDEN. The stub stands at the core's default, so a
+// Sales clerk is refused and a manager admitted; the other two values are pinned in the core's
+// tests, where a policy row can be set without leaking into parallel legs here.
+const accountPositionPolicy = "MANAGER_UP";
+
+function accountPositionAllowed(request) {
+  if (accountPositionPolicy === "ALL_STAFF") return callerFromRequest(request) !== null;
+  if (accountPositionPolicy === "MANAGER_UP") {
+    const caller = callerFromRequest(request);
+    return caller !== null && caller.account.tier <= 2;
+  }
+  return false; // HIDDEN, and anything unrecognised: fail closed
+}
+
+// The customer search row. The three position figures are present together or ABSENT, never zero,
+// exactly as the core marshals them; the available credit is the core's own (limit less open,
+// floored at zero), so the till never subtracts.
+function customerSearchRow(customer, request) {
+  const row = {
     id: customer.id,
     name: customer.name,
     account_no: customer.account_no,
     customer_type: customer.customer_type,
     payment_terms_days: customer.payment_terms_days,
-    credit_limit_cents: customer.credit_limit_cents,
-    open_balance_cents: customer.open_balance_cents,
   };
+  if (accountPositionAllowed(request)) {
+    row.credit_limit_cents = customer.credit_limit_cents;
+    row.open_balance_cents = customer.open_balance_cents;
+    row.available_credit_cents = Math.max(0, customer.credit_limit_cents - customer.open_balance_cents);
+  }
+  return row;
 }
 
 // The test suite asserts the app sends the demo org on its demo calls, so the
@@ -2386,7 +2408,7 @@ const server = createServer(async (request, response) => {
     }
     const rows = CUSTOMERS.filter(
       (c) => c.name.toLowerCase().includes(q) || c.account_no.toLowerCase().startsWith(q),
-    ).map(customerSearchRow);
+    ).map((c) => customerSearchRow(c, request));
     respondJson(response, 200, rows);
     return;
   }

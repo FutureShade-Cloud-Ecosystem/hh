@@ -117,7 +117,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, acct)
+	httpx.WriteJSON(w, http.StatusCreated, h.svc.AccountForWire(r.Context(), acct))
 }
 
 // updateBillingAddress handles PUT /api/v1/customers/{id}/billing-address, validates +
@@ -133,7 +133,7 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, acct)
+	httpx.WriteJSON(w, http.StatusOK, h.svc.AccountForWire(r.Context(), acct))
 }
 
 // writeErr maps service errors: client-input (incl. postal/province validation) → 400;

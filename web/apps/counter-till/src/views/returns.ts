@@ -671,8 +671,9 @@ function renderLinesStep(flow: ReturnsFlow): unknown {
               ${flow.isWalkIn
                 ? html`<p class="customer-meta" data-testid="returns-walkin-meta">Found by its receipt or order number. Goes back to cash or card only.</p>`
                 : html`<p class="customer-meta">
-                    ${customer?.account_no ?? ""} · ${customer === null ? "" : typeWords(customer.customer_type)} · Outstanding
-                    ${customer === null ? "" : formatMoney(customer.open_balance_cents)}
+                    ${customer?.account_no ?? ""} · ${customer === null ? "" : typeWords(customer.customer_type)}${customer?.open_balance_cents === undefined
+                      ? nothing
+                      : html` · Outstanding ${formatMoney(customer.open_balance_cents)}`}
                   </p>`}
             </div>
             <button type="button" class="btn-secondary" data-action="returns-another">Change customer</button>

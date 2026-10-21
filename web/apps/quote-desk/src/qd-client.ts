@@ -1019,6 +1019,8 @@ export class QdClient {
     const terms = integerAt(row, "payment_terms_days");
     const limit = integerAt(row, "credit_limit_cents");
     const open = integerAt(row, "balance_cents");
+    // The limit and the balance are absent, not zero, for a caller the dealer's account position policy
+    // refuses (UX-97): that is no read of the credit posture, so the desk says the server decides.
     if (terms === null || limit === null || open === null) return err("the customer's credit facts are not readable");
     return ok({ name: stringAt(row, "name") ?? customerName, paymentTermsDays: terms, creditLimitCents: limit, openBalanceCents: open });
   }

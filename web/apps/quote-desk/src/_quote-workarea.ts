@@ -105,15 +105,22 @@ export function initialsOf(name: string): string {
  * picker's stored credit facts. Facts only: no outstanding balance means
  * Account current; otherwise the outstanding amount is named, never hidden
  * behind a cheerful word.
+ *
+ * The available figure is the CORE's (UX-97): the customer search and read send
+ * `available_credit_cents` under the dealer's account position policy, and this
+ * line shows it and subtracts nothing. When the policy withheld the figures the
+ * line is empty, never a zero.
  */
 export function creditLine(
-  c: { credit_limit_cents: number; open_balance_cents: number },
+  c: { open_balance_cents?: number; available_credit_cents?: number },
   fmt: (cents: number) => string,
 ): string {
-  const available = c.credit_limit_cents - c.open_balance_cents;
-  const availablePart = `Credit available ${fmt(Math.max(available, 0))}`;
-  if (c.open_balance_cents <= 0) return `Account current · ${availablePart}`;
-  return `Outstanding ${fmt(c.open_balance_cents)} · ${availablePart}`;
+  const open = c.open_balance_cents;
+  const available = c.available_credit_cents;
+  if (typeof open !== "number" || typeof available !== "number") return "";
+  const availablePart = `Credit available ${fmt(available)}`;
+  if (open <= 0) return `Account current · ${availablePart}`;
+  return `Outstanding ${fmt(open)} · ${availablePart}`;
 }
 
 /** "Contractor" / "Retail" from the stored customer_type. */
