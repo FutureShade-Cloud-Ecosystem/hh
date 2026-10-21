@@ -206,6 +206,7 @@ type Sender interface {
 type RegisterService struct {
 	store      registerStore
 	money      receiptWriter
+	reapplied  reappliedReader
 	sender     Sender
 	statements statementRunner
 	clock      func() time.Time
@@ -230,6 +231,28 @@ func NewRegisterService(store registerStore) *RegisterService {
 // half-working: a receivables screen that took a payment and did not post it is worse than one that
 // says it cannot take payments today.
 func (s *RegisterService) WithMoney(w receiptWriter) *RegisterService { s.money = w; return s }
+
+// ReappliedSlice is one slice of a reversed payment's held money applied to an invoice (SF-2r): what the invoice's
+// Applied figure and its timeline add to the allocations the settle wrote.
+type ReappliedSlice struct {
+	PaymentNo   string
+	Method      string
+	AmountCents int64
+	AppliedAt   time.Time
+	AppliedBy   string // users.id, "" when none
+}
+
+// reappliedReader is the payments module's read of re-applied slices, reached through an interface (the module owns
+// the table; the census refuses a direct read).
+type reappliedReader interface {
+	ReappliedToInvoice(ctx context.Context, invoiceID string) ([]ReappliedSlice, error)
+}
+
+// WithReapplied binds the re-applied slices read. Nil leaves the register reading allocations alone.
+func (s *RegisterService) WithReapplied(r reappliedReader) *RegisterService {
+	s.reapplied = r
+	return s
+}
 
 // WithSender binds the delivery port.
 func (s *RegisterService) WithSender(n Sender) *RegisterService { s.sender = n; return s }

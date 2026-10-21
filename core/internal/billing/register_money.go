@@ -92,3 +92,25 @@ func (w *PaymentsReceiptWriter) ApplyReceived(ctx context.Context, in ApplyRecei
 		Preview:        in.Preview,
 	})
 }
+
+// PaymentsReappliedReader adapts *payments.Repository onto the register's read of re-applied slices (SF-2r): the
+// payments module owns payment_reapplications, so the register reads them through this seam and never the table.
+type PaymentsReappliedReader struct{ repo *payments.Repository }
+
+// NewPaymentsReappliedReader binds the register to the payments module's re-application read.
+func NewPaymentsReappliedReader(repo *payments.Repository) *PaymentsReappliedReader {
+	return &PaymentsReappliedReader{repo: repo}
+}
+
+// ReappliedToInvoice answers the slices applied to one invoice, translated onto the register's own type.
+func (w *PaymentsReappliedReader) ReappliedToInvoice(ctx context.Context, invoiceID string) ([]ReappliedSlice, error) {
+	rows, err := w.repo.ReappliedToInvoice(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ReappliedSlice, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ReappliedSlice{PaymentNo: r.PaymentNo, Method: r.Method, AmountCents: r.AmountCents, AppliedAt: r.AppliedAt, AppliedBy: r.AppliedBy})
+	}
+	return out, nil
+}

@@ -688,3 +688,9 @@ func (r *Repository) HeldFor(ctx context.Context, paymentID string, canAccessBra
 	}
 	return h, nil
 }
+
+// ReappliedToInvoice lists the slices of reversed payments' held money applied to one invoice, oldest first (SF-2r).
+// INERT in the red commit.
+func (r *Repository) ReappliedToInvoice(ctx context.Context, invoiceID string) ([]InvoiceReapplication, error) {
+	return nil, nil
+}
