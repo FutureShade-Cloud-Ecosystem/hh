@@ -41,7 +41,7 @@ import {
   boardProblems,
   carriesMoffett,
   capacityText,
-  deckSlotsForStops,
+  stopHoursForRun,
   dispatchConfirmWords,
   driverLine,
   fleetStateWord,
@@ -859,14 +859,15 @@ function timeAxisRow(view: DispatchLoadBoardView, model: BoardModel): TemplateRe
           ${TIME_AXIS_HOURS.map((h) => html`<div class="time-axis-cell head-hour" role="columnheader">${h}</div>`)}
         </div>
         ${rows.map((row) => {
-          const slots = deckSlotsForStops(row.stops, day);
+          const placed = stopHoursForRun(row.run, row.stops, day);
           return html`
             <div class="time-axis-row" role="row" data-axis-run-id=${row.run.id}>
               <div class="time-axis-cell axis-run" role="rowheader">
                 <button type="button" class="link" data-action="select-run" data-run-id=${row.run.id} aria-pressed=${model.selectedRunId === row.run.id ? "true" : "false"}>${row.run.run_no}</button>
+                ${placed.note ? html`<span class="small dim axis-note" data-axis-note>${placed.note}</span>` : nothing}
               </div>
               ${TIME_AXIS_HOURS.map((h) => {
-                const inHour = row.stops.some((s) => slots.has(s.stop_no) && Number(s.stop_no) === h + 1);
+                const inHour = placed.hours.has(h);
                 return html`<div class="time-axis-cell ${inHour ? "has-stop" : ""}" role="gridcell" data-hour=${h}></div>`;
               })}
             </div>
