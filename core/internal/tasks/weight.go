@@ -55,6 +55,7 @@ type WeightRequestInput struct {
 	UOM         string // the unit the yard must answer in; defaults to the line's own
 	Note        string
 	RequestedBy string
+	OrgID       string // the caller's org; empty takes the order branch's org at the insert
 }
 
 // WeightInput is the yard's answer.
@@ -147,6 +148,7 @@ func (s *Service) RequestWeight(ctx context.Context, in WeightRequestInput) (Tas
 		Priority:    PriorityHigh,
 		Source:      SourceManual,
 		CreatedBy:   in.RequestedBy,
+		OrgID:       in.OrgID,
 	})
 	if err != nil {
 		return Task{}, err

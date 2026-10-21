@@ -465,8 +465,9 @@ func (r *Repository) CreateDuplicateDraft(ctx context.Context, d ReorderDraft, c
 	// tax_cents = 0 by design: a DRAFT is pre-tax (M5 assesses tax downstream), the reorder rule.
 	err = tx.QueryRow(ctx,
 		`INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment,
-		                     subtotal_cents, tax_cents, total_cents, metadata, created_by)
-		 VALUES (next_order_no($2), $1, $2, 'DRAFT', $3, $4, 0, $4, $5, $6)
+		                     subtotal_cents, tax_cents, total_cents, metadata, created_by, org_id)
+		 VALUES (next_order_no($2), $1, $2, 'DRAFT', $3, $4, 0, $4, $5, $6,
+		         (SELECT l.org_id FROM locations l WHERE l.id = $2))
 		 RETURNING id::text, order_no::text, status`,
 		d.CustomerID, d.BranchID, d.Fulfillment, d.SubtotalCents, meta, createdByArg).
 		Scan(&res.OrderID, &res.OrderNo, &res.Status)
