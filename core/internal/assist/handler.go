@@ -53,6 +53,7 @@ type Handler struct {
 	costRoles    CostRoles
 	costBranches BranchReader
 	poPolicy     PurchaseCostPolicies
+	channels     ChannelMembership
 }
 
 // PaymentTrailReader says whether a caller holds the payment trail reads (ruling 87). The composition
@@ -81,6 +82,7 @@ func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, err
 	c.SessionKey = sc.SessionID
 	h.costFor(r.Context(), &c)
 	h.poCostFor(r.Context(), &c)
+	h.channelsFor(r.Context(), &c)
 	if h.trail == nil {
 		return c, nil
 	}
@@ -501,4 +503,33 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		}
 		httpx.Error(w, http.StatusInternalServerError, "Something went wrong on our side.")
 	}
+}
+
+// ChannelMembership is the House Messages membership read: the ids of the channels a person is in right now, as
+// the messaging module's own gates answer it (materialised membership, archived rooms left out, the money room
+// fence applied), read only. The composition root wires the messaging service behind it.
+type ChannelMembership interface {
+	ChannelIDs(ctx context.Context, userID string) ([]string, error)
+}
+
+// WithChannelMembership wires the read that fills the claim's channel ids. Without it no caller has any channel
+// (fail closed).
+func (h *Handler) WithChannelMembership(m ChannelMembership) *Handler {
+	h.channels = m
+	return h
+}
+
+// channelsFor resolves the caller's channels at request time. Every failure is no channel: an unwired read, a
+// caller with no role or no user id, or an error.
+func (h *Handler) channelsFor(ctx context.Context, c *Caller) {
+	c.ChannelIDs = nil
+	if h.channels == nil || !c.HasRole() || c.UserID == "" {
+		return
+	}
+	ids, err := h.channels.ChannelIDs(ctx, c.UserID)
+	if err != nil {
+		return
+	}
+	c.ChannelIDs = append([]string(nil), ids...)
+	sort.Strings(c.ChannelIDs)
 }

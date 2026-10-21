@@ -523,7 +523,7 @@ func TestStockTruth_FourBucketView_EveryBranchAlways(t *testing.T) {
 	p := mkProduct(t, pool, "W4B-BUCKETS")
 	seedBalance(t, pool, p, branch1, 50, 600)
 
-	rows, err := svc.AvailabilityAllBranches(ctx, p)
+	rows, err := svc.AvailabilityAllBranches(ctx, stampTestOrg(t, pool), p)
 	if err != nil {
 		t.Fatalf("AvailabilityAllBranches: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestStockTruth_FourBucketView_EveryBranchAlways(t *testing.T) {
 		t.Fatalf("ShipTransfer: %v", err)
 	}
 
-	rows, err = svc.AvailabilityAllBranches(ctx, p)
+	rows, err = svc.AvailabilityAllBranches(ctx, stampTestOrg(t, pool), p)
 	if err != nil {
 		t.Fatalf("AvailabilityAllBranches: %v", err)
 	}
@@ -877,11 +877,12 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 	pool := intPool(t)
 	svc := newIntSvc(pool)
 	ctx := context.Background()
+	org := stampTestOrg(t, pool)
 	p := mkProduct(t, pool, "W4B-BROWSE")
 	seedBalance(t, pool, p, branch1, 18, 450)
 	reserve(t, svc, pool, ReserveInput{ProductID: p, BranchID: branch1, ResType: ResTypeOrder, QtyBase: 6})
 
-	res, err := svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", BranchID: branch1})
+	res, err := svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", OrgID: org, BranchID: branch1})
 	if err != nil {
 		t.Fatalf("Browse: %v", err)
 	}
@@ -902,7 +903,7 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 
 	// in_stock_only grades AVAILABLE: hold the rest and the product must drop out.
 	reserve(t, svc, pool, ReserveInput{ProductID: p, BranchID: branch1, ResType: ResTypeOrder, QtyBase: 12})
-	res, err = svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", BranchID: branch1, InStockOnly: true})
+	res, err = svc.Browse(ctx, BrowseFilter{Text: "W4B-BROWSE", OrgID: org, BranchID: branch1, InStockOnly: true})
 	if err != nil {
 		t.Fatalf("Browse in-stock: %v", err)
 	}
@@ -911,4 +912,154 @@ func TestStockTruth_BrowseCarriesTheStockPosition(t *testing.T) {
 			t.Fatal("a fully hard-reserved product passed the in-stock-only filter")
 		}
 	}
+}
+
+// ux88OrgA and ux88OrgB are two invented org anchors for the dealer-org legs: the seeded branches carry
+// no org, so a leg that reads "the caller's branches" stamps them first and restores them after.
+const (
+	ux88OrgA = "88a00000-0000-4000-8000-000000000001"
+	ux88OrgB = "88a00000-0000-4000-8000-000000000002"
+)
+
+// stampTestOrg puts both seeded branches in org A for the leg and returns org A's id.
+func stampTestOrg(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgA})
+	return ux88OrgA
+}
+
+// stampBranchOrgs sets each named branch's org for the leg (planting the org anchors it needs) and
+// restores the branches to no org when the leg ends.
+func stampBranchOrgs(t *testing.T, pool *pgxpool.Pool, byBranch map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES
+		($1, 'ux88-org-a', 'UX88 Org A'), ($2, 'ux88-org-b', 'UX88 Org B') ON CONFLICT (id) DO NOTHING`, ux88OrgA, ux88OrgB); err != nil {
+		t.Fatalf("plant org anchors: %v", err)
+	}
+	prev := map[string]*string{}
+	for branch := range byBranch {
+		var org *string
+		if err := pool.QueryRow(ctx, `SELECT org_id::text FROM locations WHERE id = $1`, branch).Scan(&org); err != nil {
+			t.Fatalf("read branch org: %v", err)
+		}
+		prev[branch] = org
+	}
+	for branch, org := range byBranch {
+		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $2 WHERE id = $1`, branch, org); err != nil {
+			t.Fatalf("stamp branch org: %v", err)
+		}
+	}
+	// Each branch goes back to what it carried: a populate earlier in the run may have given the seeded
+	// branches an org, and a leg must leave the shared database as it found it.
+	t.Cleanup(func() {
+		for branch, org := range prev {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, branch, org)
+		}
+	})
+}
+
+// UX-88: the all-branch reads hold to the caller's org. Kingston sits in org B, Trenton in org A; an
+// org A caller sees Trenton only, an org B caller Kingston only, an org with no branch nothing, and an
+// empty org is refused. The peek carries no cost at all.
+func TestUX88_AllBranchReadsHeldToTheOrg(t *testing.T) {
+	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
+	svc := newIntSvc(pool)
+	ctx := context.Background()
+	p := mkProduct(t, pool, "UX88-ORG")
+	seedBalance(t, pool, p, branch1, 50, 600)
+	seedBalance(t, pool, p, branch2, 70, 700)
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+	plantNoOrgBranch(t, pool) // a branch with no org is in no org: neither peek may name it
+
+	codes := func(rows []BranchPeek) []string {
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.BranchCode)
+		}
+		return out
+	}
+	a, err := svc.AvailabilityPeek(ctx, ux88OrgA, p)
+	if err != nil || len(a) != 1 || a[0].BranchID != branch1 || a[0].OnHandBase != 50 {
+		t.Fatalf("org A peek = %v %+v, %v, want Trenton alone at 50", codes(a), a, err)
+	}
+	b, err := svc.AvailabilityPeek(ctx, ux88OrgB, p)
+	if err != nil || len(b) != 1 || b[0].BranchID != branch2 || b[0].OnHandBase != 70 {
+		t.Fatalf("org B peek = %v %+v, %v, want Kingston alone at 70", codes(b), b, err)
+	}
+	none, err := svc.AvailabilityPeek(ctx, "88a00000-0000-4000-8000-0000000000ff", p)
+	if err != nil || len(none) != 0 {
+		t.Fatalf("an org with no branch = %+v, %v, want nothing", none, err)
+	}
+	if _, err := svc.AvailabilityPeek(ctx, "", p); err == nil {
+		t.Fatal("an empty org must be refused, never read as every org")
+	}
+	full, err := svc.AvailabilityAllBranches(ctx, ux88OrgA, p)
+	if err != nil || len(full) != 1 || full[0].BranchID != branch1 || full[0].AvgCostCents != 600 {
+		t.Fatalf("org A full read = %+v, %v, want Trenton alone at cost 600", full, err)
+	}
+	if _, err := svc.AvailabilityAllBranches(ctx, "", p); err == nil {
+		t.Fatal("an empty org must be refused on the full read too")
+	}
+}
+
+// UX-88 round 2: the named branch reads hold to the org. Trenton is org A's, Kingston org B's; org A
+// naming Kingston, a missing branch or a value that is no uuid is not found with no figure, and an empty
+// org is refused on both the stock and the cost read.
+func TestUX88_NamedBranchReadsHeldToTheOrg(t *testing.T) {
+	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
+	svc := newIntSvc(pool)
+	ctx := context.Background()
+	p := mkProduct(t, pool, "UX88-NAMED")
+	seedBalance(t, pool, p, branch1, 50, 600)
+	seedBalance(t, pool, p, branch2, 70, 700)
+	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgB})
+	noOrg := plantNoOrgBranch(t, pool)
+
+	own, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch1)
+	if err != nil || own.OnHandBase != 50 || own.AvgCostCents != 600 {
+		t.Fatalf("own branch = %+v, %v, want 50 at cost 600", own, err)
+	}
+	for _, branch := range []string{branch2, noOrg, "00000000-0000-4000-8000-0000000000ee", "not-a-uuid"} {
+		got, err := svc.AvailabilityAtBranchInOrg(ctx, ux88OrgA, p, branch)
+		if err == nil || got.OnHandBase != 0 || got.AvgCostCents != 0 {
+			t.Fatalf("org A naming %q = %+v, %v, want not found with no figure", branch, got, err)
+		}
+		if _, _, err := svc.BranchCostInOrg(ctx, ux88OrgA, p, branch); err == nil {
+			t.Fatalf("org A cost at %q must be not found", branch)
+		}
+	}
+	if cost, found, err := svc.BranchCostInOrg(ctx, ux88OrgA, p, branch1); err != nil || !found || cost != 600 {
+		t.Fatalf("own branch cost = %d %v %v, want 600", cost, found, err)
+	}
+	if _, err := svc.AvailabilityAtBranchInOrg(ctx, "", p, branch1); err == nil {
+		t.Fatal("an empty org must be refused on the stock read")
+	}
+	if _, _, err := svc.BranchCostInOrg(ctx, "", p, branch1); err == nil {
+		t.Fatal("an empty org must be refused on the cost read")
+	}
+	if in, err := svc.BranchInOrg(ctx, ux88OrgA, branch2); err != nil || in {
+		t.Fatalf("Kingston in org A = %v, %v, want false", in, err)
+	}
+	if in, err := svc.BranchInOrg(ctx, ux88OrgA, noOrg); err != nil || in {
+		t.Fatalf("a branch with no org in org A = %v, %v, want false", in, err)
+	}
+}
+
+// plantNoOrgBranch plants a branch whose locations row carries no org and returns its id; it leaves with
+// the leg. The migration planted branches are not used for the no org legs because a populated box stamps
+// them with its org.
+func plantNoOrgBranch(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	const id = "88a00000-0000-4000-8000-0000000000b2"
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address)
+		VALUES ($1, $1, NULL, 'BRANCH', 'UX88NOINV', 'UX88 branch with no org', '{}')
+		ON CONFLICT (id) DO NOTHING`, id); err != nil {
+		t.Fatalf("plant the no org branch: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM locations WHERE id = $1`, id) })
+	return id
 }

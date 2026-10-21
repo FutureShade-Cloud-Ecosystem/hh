@@ -2,7 +2,7 @@ module github.com/FutureShade-Cloud-Ecosystem/hh/core
 
 go 1.26
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/google/uuid v1.6.0

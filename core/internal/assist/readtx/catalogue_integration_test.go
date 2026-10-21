@@ -41,26 +41,40 @@ var assistReaderViews = map[string]bool{
 	"ai.ar_aging":             true, // slice 7a
 	"ai.payments":             true, // slice 7a
 	"ai.payment_allocations":  true, // slice 7a
+	"ai.delivery_runs":        true, // slice 7b
+	"ai.delivery_stops":       true, // slice 7b
+	"ai.customers":            true, // slice 7b
+	"ai.customer_contacts":    true, // slice 7b
+	"ai.message_channels":     true, // slice 7b
 }
 
 // viewOwnerColumns is the exact set of base columns the view owner may read, and nothing else: column level
 // SELECT only, never a table grant. Each data slice adds the columns its views use.
 var viewOwnerColumns = map[string][]string{
-	"public.orders":               {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
-	"public.order_lines":          {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
-	"public.customers":            {"account_no", "id", "name"},                                                                                                                                                                                                                                    // slice 5
-	"public.locations":            {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
-	"public.stock_balances":       {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
-	"public.product_branch_costs": {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
-	"public.products":             {"base_uom", "id", "name", "sku"},                                                                                                                                                                                                                               // slice 6a                                                                                                                                        // slice 5
-	"public.quotes":               {"branch_id", "contact_name", "created_at", "customer_id", "customer_notes", "delivery_address", "delivery_fee_cents", "deposit_pct", "fulfillment", "id", "quote_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents", "valid_until"}, // slice 6b
-	"public.quote_lines":          {"description", "disc_pct", "id", "line_no", "line_total_cents", "product_id", "qty_base", "qty_entered", "quote_id", "uom_entered", "unit_price_cents"},                                                                                                        // slice 6b
-	"public.purchasing_pos":       {"branch_id", "currency", "delivery_method", "expected_at", "id", "notes", "ordered_at", "po_no", "status", "vendor_id"},                                                                                                                                        // slice 6b
-	"public.purchasing_po_lines":  {"billed_cents", "description", "id", "line_no", "po_id", "product_id", "qty_billed_base", "qty_ordered_base", "qty_received_base", "unit_cost_cents", "uom"},                                                                                                   // slice 6b
-	"public.vendors":              {"id", "name"},                                                                                                                                                                                                                                                  // slice 6b
-	"public.invoices":             {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
-	"public.payments":             {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
-	"public.payment_allocations":  {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+	"public.orders":                 {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
+	"public.order_lines":            {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
+	"public.customers":              {"account_no", "customer_type", "home_branch_id", "id", "is_active", "name", "on_hold", "payment_terms_days", "tax_exempt"},                                                                                                                                     // slice 5
+	"public.locations":              {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
+	"public.stock_balances":         {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
+	"public.product_branch_costs":   {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
+	"public.products":               {"base_uom", "id", "name", "sku"},                                                                                                                                                                                                                               // slice 6a                                                                                                                                        // slice 5
+	"public.quotes":                 {"branch_id", "contact_name", "created_at", "customer_id", "customer_notes", "delivery_address", "delivery_fee_cents", "deposit_pct", "fulfillment", "id", "quote_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents", "valid_until"}, // slice 6b
+	"public.quote_lines":            {"description", "disc_pct", "id", "line_no", "line_total_cents", "product_id", "qty_base", "qty_entered", "quote_id", "uom_entered", "unit_price_cents"},                                                                                                        // slice 6b
+	"public.purchasing_pos":         {"branch_id", "currency", "delivery_method", "expected_at", "id", "notes", "ordered_at", "po_no", "status", "vendor_id"},                                                                                                                                        // slice 6b
+	"public.purchasing_po_lines":    {"billed_cents", "description", "id", "line_no", "po_id", "product_id", "qty_billed_base", "qty_ordered_base", "qty_received_base", "unit_cost_cents", "uom"},                                                                                                   // slice 6b
+	"public.vendors":                {"id", "name"},                                                                                                                                                                                                                                                  // slice 6b
+	"public.invoices":               {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
+	"public.payments":               {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
+	"public.payment_allocations":    {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+	"public.delivery_runs":          {"branch_id", "completed_at", "dispatched_at", "driver_id", "id", "run_no", "scheduled_date", "status", "truck_id"},                                                                                                                                             // slice 7b
+	"public.delivery_stops":         {"address_line", "branch_id", "city", "contact_name", "contact_phone", "delivered_at", "failure_reason", "id", "order_id", "postal_code", "run_id", "scheduled_date", "status", "stop_no", "time_window"},                                                       // slice 7b
+	"public.dispatch_trucks":        {"code", "id"},                                                                                                                                                                                                                                                  // slice 7b
+	"public.dispatch_drivers":       {"id", "name"},                                                                                                                                                                                                                                                  // slice 7b
+	"public.customer_contacts":      {"created_at", "customer_id", "email", "id", "is_active", "is_primary", "name", "phone"},                                                                                                                                                                        // slice 7b
+	"public.msg_channels":           {"branch_id", "default_mode", "id", "is_archived", "kind", "name", "tier"},                                                                                                                                                                                      // slice 7b
+	"public.msg_members":            {"channel_id", "last_read_at", "user_id"},                                                                                                                                                                                                                       // slice 7b: the asker's own cursor and the count; no view names a member
+	"public.msg_messages":           {"author_id", "channel_id", "created_at", "deleted_at", "id"},                                                                                                                                                                                                   // slice 7b: never the body
+	"public.msg_notification_prefs": {"channel_id", "mode", "user_id"},                                                                                                                                                                                                                               // slice 7b: the asker's own mode
 }
 
 func (r Roles) all() []string {
@@ -310,6 +324,39 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		}
 	}
 
+	// 3d. The zone reader holds no privilege on schema ai once ai.dealer_day() exists (0428 takes back the CREATE
+	// and USAGE it needed to create it). The CREATE is checked with every schema below; USAGE here.
+	var dayExists bool
+	if err := conn.QueryRow(ctx, `SELECT to_regprocedure('ai.dealer_day()') IS NOT NULL`).Scan(&dayExists); err != nil {
+		return nil, err
+	}
+	if dayExists {
+		var usage bool
+		if err := conn.QueryRow(ctx, `SELECT has_schema_privilege($1, 'ai', 'USAGE')`, roles.ZoneReader).Scan(&usage); err != nil {
+			return nil, err
+		}
+		if usage {
+			add("the zone reader still holds USAGE on schema ai")
+		}
+	}
+
+	// 3e. The two definer functions' search paths, exactly. A definer function resolves its names through the
+	// path it was created with; pg_temp first, or one more schema, would let an object planted there answer.
+	for fn, want := range map[string]string{
+		"ai.claims()":     "search_path=pg_catalog, pg_temp",
+		"ai.dealer_day()": "search_path=pg_catalog, public, pg_temp",
+	} {
+		var cfg []string
+		var found bool
+		err := conn.QueryRow(ctx, `SELECT true, coalesce(proconfig, '{}') FROM pg_proc WHERE oid = to_regprocedure($1)`, fn).Scan(&found, &cfg)
+		if err != nil {
+			continue // the function does not exist in this database (a database that has run 0418 alone has no dealer_day)
+		}
+		if len(cfg) != 1 || cfg[0] != want {
+			add("%s has settings %v, want exactly [%s]", fn, cfg, want)
+		}
+	}
+
 	// 3c. The zone reader's column grants, as an exact set: two columns of system_settings, nothing else.
 	rows, err = collect(`
 		SELECT n.nspname || '.' || c.relname || '.' || a.attname
@@ -402,7 +449,7 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 	}
 	for _, row := range rows {
 		role, schema := row[0].(string), row[1].(string)
-		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner || role == roles.ZoneReader)) || (schema == "ai_pro" && role == roles.ViewOwner)
+		ok := (schema == "ai" && (role == roles.ClaimsOwner || role == roles.ViewOwner)) || (schema == "ai_pro" && role == roles.ViewOwner)
 		if !ok {
 			add("role %s holds CREATE on schema %s", role, schema)
 		}
@@ -517,7 +564,7 @@ func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
 	q := pgx.Identifier.Sanitize
 	for _, p := range []struct{ name, plant, revert, mention string }{
 		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
-		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.payment_terms_days"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no, customer_type, home_branch_id, payment_terms_days, on_hold, tax_exempt, is_active) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.credit_limit_cents"},
 		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
 	} {
 		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {

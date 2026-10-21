@@ -32,8 +32,12 @@ import (
 type BrowseFilter struct {
 	// Text runs against the trigram layer (sku + name + manufacturer + collection, 0118).
 	Text string `json:"text"`
-	// BranchID scopes the stock columns. "" = engagement-wide totals.
+	// BranchID scopes the stock columns. "" = every branch of the caller's org.
 	BranchID string `json:"branch_id"`
+	// OrgID is the dealer org the middleware resolved for the request (UX-88). Every stock and cost
+	// column holds to the branches of this org; an empty OrgID matches no branch, so a caller without
+	// an org reads zeros, never another org's figures.
+	OrgID string `json:"-"`
 
 	// The A-18 promoted UDF columns (0018).
 	ColorFamily []string `json:"color_family"`
@@ -275,12 +279,21 @@ func browseWhere(f BrowseFilter, skipField string, args *[]any) string {
 		// DIB-60: in stock means AVAILABLE. Correlated EXISTS rather than a join so a product with
 		// balance rows at several locations is counted once, not once per location.
 		bp := add(f.BranchID)
+		op := add(f.OrgID)
 		w = append(w, `EXISTS (SELECT 1 FROM stock_balances sb
 		                        WHERE sb.product_id = p.id
+		                          AND `+branchInOrg("sb.branch_id", op)+`
 		                          AND (`+bp+` = '' OR sb.branch_id = `+bp+`::uuid)
 		                          AND sb.on_hand_base - sb.qty_reserved > 0)`)
 	}
 	return strings.Join(w, " AND ")
+}
+
+// branchInOrg is the org predicate every stock and cost read of the browse carries: the branch column
+// names a branch whose locations row is in the caller's org. A branch of another org, or of no org,
+// is in no caller's org, and an empty org parameter matches nothing.
+func branchInOrg(column, orgParam string) string {
+	return column + ` IN (SELECT lo.id FROM locations lo WHERE lo.org_id = NULLIF(` + orgParam + `, '')::uuid)`
 }
 
 // itoaPos renders a positional parameter index.
@@ -311,6 +324,8 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 	where := browseWhere(f, "", &rowArgs)
 	branchParam := "$" + itoaPos(len(rowArgs)+1)
 	rowArgs = append(rowArgs, f.BranchID)
+	orgParam := "$" + itoaPos(len(rowArgs)+1)
+	rowArgs = append(rowArgs, f.OrgID)
 	limitParam := "$" + itoaPos(len(rowArgs)+1)
 	rowArgs = append(rowArgs, f.Limit)
 	offsetParam := "$" + itoaPos(len(rowArgs)+1)
@@ -329,6 +344,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		      SELECT SUM(sb.on_hand_base) AS on_hand, SUM(sb.qty_reserved) AS reserved
 		        FROM stock_balances sb
 		       WHERE sb.product_id = p.id
+		         AND `+branchInOrg("sb.branch_id", orgParam)+`
 		         AND (`+branchParam+` = '' OR sb.branch_id = `+branchParam+`::uuid)
 		  ) bal ON TRUE
 		  LEFT JOIN LATERAL (
@@ -336,6 +352,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		        FROM stock_transfer_lines tl
 		        JOIN stock_transfers t ON t.id = tl.transfer_id
 		       WHERE tl.product_id = p.id AND t.status = 'IN_TRANSIT'
+		         AND `+branchInOrg("t.to_branch_id", orgParam)+`
 		         AND tl.qty_shipped_base > tl.qty_received_base
 		         AND (`+branchParam+` = '' OR t.to_branch_id = `+branchParam+`::uuid)
 		  ) tr ON TRUE
@@ -343,6 +360,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		      SELECT ROUND(AVG(pbc.avg_unit_cost_cents))::bigint AS avg
 		        FROM product_branch_costs pbc
 		       WHERE pbc.product_id = p.id
+		         AND `+branchInOrg("pbc.branch_id", orgParam)+`
 		         AND (`+branchParam+` = '' OR pbc.branch_id = `+branchParam+`::uuid)
 		  ) cost ON TRUE
 		  LEFT JOIN LATERAL (
@@ -350,6 +368,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 		        FROM stock_balances sb
 		       WHERE sb.product_id = p.id
 		         AND sb.on_hand_base - sb.qty_reserved <= 0
+		         AND `+branchInOrg("sb.branch_id", orgParam)+`
 		         AND (`+branchParam+` = '' OR sb.branch_id = `+branchParam+`::uuid)
 		  ) outat ON TRUE
 		 WHERE `+where+`

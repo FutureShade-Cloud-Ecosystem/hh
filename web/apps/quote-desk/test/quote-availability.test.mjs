@@ -1,8 +1,8 @@
 // The availability chips' pure table: the server grades each line GREEN, THIN,
 // NONE or UNKNOWN and the app only words it. Ported from the ERP's
 // _order-depth availability helpers (there is no separate pure file there) and
-// adapted for HH: the peek shows every branch row the server returns, and the
-// average cost appears only when the server sent one.
+// adapted for HH: the peek shows every branch row the server returns, and it
+// speaks quantities only (the peek serves no cost).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -61,11 +61,9 @@ test("this branch's own row is marked", () => {
   assert.doesNotMatch(branchRowLabel(branch({ available_base: 2 }), "b2"), /this branch/);
 });
 
-test("average cost appears only when the server sent one, and never as a zero for unknown", () => {
-  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5 }), "x"), /cost/);
-  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 2599 }), "x"), /avg cost \$25\.99/);
-  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5, avg_cost_cents: undefined }), "x"), /cost|\$0/);
-  assert.match(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 0 }), "x"), /avg cost \$0\.00/);
+test("the peek row never speaks a cost, even from a row that carries one", () => {
+  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5 }), "x"), /cost|\$/);
+  assert.doesNotMatch(branchRowLabel(branch({ available_base: 5, avg_cost_cents: 2599 }), "x"), /cost|\$|2599|25\.99/);
 });
 
 test("soft held note speaks only when something is soft held", () => {
@@ -82,4 +80,16 @@ test("formatQty trims zeros and survives garbage", () => {
 test("no word carries an em or en dash", () => {
   const all = [availabilityLabel(line("THIN", 1, 2)), branchRowLabel(branch({ available_base: 1, in_transit_base: 2, avg_cost_cents: 5 }), "b1"), softHeldNote(line("GREEN", 1, 1, { soft_held_base: 3 }))];
   for (const s of all) assert.doesNotMatch(s, /[\u2013\u2014]/);
+});
+
+test("the peek reader keeps quantities and drops a cost a row should not carry", async () => {
+  const { readBranchPeeks } = await import("../src/_seam-wire.ts");
+  const row = {
+    product_id: "p1", branch_id: "b1", branch_code: "PLM", branch_name: "Point Loma",
+    on_hand_base: 5, reserved_base: 0, in_transit_base: 0, available_base: 5, soft_held_base: 0, avg_cost_cents: 2599,
+  };
+  const rows = readBranchPeeks({ branches: [row], seam_wired: true });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].available_base, 5);
+  assert.equal("avg_cost_cents" in rows[0], false);
 });

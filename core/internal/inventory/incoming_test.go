@@ -68,7 +68,7 @@ func (f *fakeIncoming) ProductStockByBranch(_ context.Context, _ string, _ Branc
 
 // BranchStock is the four-bucket position the nudge quotes, the same method name *Repository has,
 // which is what makes the seam a seam rather than a second read.
-func (f *fakeIncoming) BranchStock(_ context.Context, _, _ string) ([]BranchStock, error) {
+func (f *fakeIncoming) BranchStock(_ context.Context, _, _, _ string) ([]BranchStock, error) {
 	return f.rows, nil
 }
 

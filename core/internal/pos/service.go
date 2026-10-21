@@ -118,9 +118,9 @@ type posStore interface {
 	ReadCustomerTx(ctx context.Context, tx pgx.Tx, customerID string) (customerRec, error)
 	ResolveWalkIn(ctx context.Context) (string, error)
 	// multi-branch stock glance (non-tx read; M2 debt)
-	ReadStockOnHand(ctx context.Context, productID string) (map[string]float64, error)
+	ReadStockOnHand(ctx context.Context, orgID, productID string) (map[string]float64, error)
 	// DIB-488: unit meta + low thresholds for the counter stock-status line (non-tx read; M2 debt)
-	ReadStockUnitMeta(ctx context.Context, productID string) (baseUOM, sellUOM string, sellFactor float64, lowBase map[string]float64, err error)
+	ReadStockUnitMeta(ctx context.Context, orgID, productID string) (baseUOM, sellUOM string, sellFactor float64, lowBase map[string]float64, err error)
 	// DIB-488 rev 6 (item D): salesperson reads, validation + the counter selector (non-tx; M2 debt)
 	ReadStaffName(ctx context.Context, userID string) (string, bool, error)
 	ListSalespeople(ctx context.Context) ([]Salesperson, error)
@@ -1904,18 +1904,18 @@ func (s *Service) ListSalespeople(ctx context.Context) ([]Salesperson, error) {
 
 // StockGlance returns read-only multi-branch on-hand for a product (US-A19-08). It NEVER decrements or
 // allocates, the gate POS does not move inventory (M2). The read is isolated as M2 debt.
-func (s *Service) StockGlance(ctx context.Context, productID string) (StockGlance, error) {
-	if productID == "" {
+func (s *Service) StockGlance(ctx context.Context, orgID, productID string) (StockGlance, error) {
+	if productID == "" || orgID == "" {
 		return StockGlance{}, errBadRequest
 	}
-	onHand, err := s.store.ReadStockOnHand(ctx, productID)
+	onHand, err := s.store.ReadStockOnHand(ctx, orgID, productID)
 	if err != nil {
 		return StockGlance{}, err
 	}
 	// DIB-488: the unit meta that lets the counter speak the number in the item's sell unit, plus
 	// any authored low thresholds. All existing availability data (products / product_uoms / 0117
 	// reorder points), one read; the glance remains display-only.
-	baseUOM, sellUOM, sellFactor, lowBase, err := s.store.ReadStockUnitMeta(ctx, productID)
+	baseUOM, sellUOM, sellFactor, lowBase, err := s.store.ReadStockUnitMeta(ctx, orgID, productID)
 	if err != nil {
 		return StockGlance{}, err
 	}

@@ -47,10 +47,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 // always a caller; the only ways to arrive here without one are a wiring mistake and a test that
 // skipped the guard. Both of those must fail CLOSED, a fence whose absence means "show everything"
 // is the fence being off, and it would be off in exactly the situation nobody is watching.
-func (h *Handler) callerScope(r *http.Request) CallerScope {
+func (h *Handler) callerScope(r *http.Request, orgID string) CallerScope {
 	caller, _ := identity.StaffContextFromContext(r.Context())
 	if caller.Scope == identity.ScopeGlobal {
-		return CallerScope{AllBranches: true}
+		return CallerScope{OrgID: orgID, AllBranches: true}
 	}
 	ids := make([]string, 0, len(caller.Branches))
 	for id, granted := range caller.Branches {
@@ -62,7 +62,7 @@ func (h *Handler) callerScope(r *http.Request) CallerScope {
 	// list for the identical reason, "so a provider's SQL plan and any test assertion are stable" -
 	// and here it decides something a person sees: markCallerDefault lands the picker on the first
 	// live grant, so an unsorted list would open two logins of the same person on two different yards.
-	return CallerScope{BranchIDs: SortedGrants(ids)}
+	return CallerScope{OrgID: orgID, BranchIDs: SortedGrants(ids)}
 }
 
 // list backs GET /api/v1/branches, the branches THIS CALLER may reach, each with id, code, name,
@@ -79,7 +79,7 @@ func (h *Handler) callerScope(r *http.Request) CallerScope {
 // can read it. app/src/staff-roles.ts:305 already unwraps a `branches` envelope if one ever appears,
 // so the door back to one is open and costs two frontend edits, not three.
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	out, err := h.svc.ListFor(r.Context(), h.callerScope(r))
+	out, err := h.svc.ListFor(r.Context(), h.callerScope(r, caller.OrgID))
 	if err != nil {
 		h.log.Error("branches: list failed", "err", err)
 		httpx.Error(w, http.StatusServiceUnavailable, "branch lookup failed")

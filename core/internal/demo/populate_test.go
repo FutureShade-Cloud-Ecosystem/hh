@@ -847,3 +847,61 @@ func TestMigration0364LabelsEqualThePopulatesLabels(t *testing.T) {
 		}
 	}
 }
+
+// UX-88: every read of the stock, branch and reach family holds to the caller's org through the
+// location's org_id, and the migrations plant the demo branches with none. A demo world is whole only
+// when no seeded location is without an org, and a box that already carries org-less branches is
+// mended by its next apply (the seed's repair map) or its next populate. Both mend paths run the
+// built demo core, the way a box is built and re-applied.
+func TestDemoPopulate_NoSeededLocationHasNoOrg(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "locorg")
+	bin := buildDemoCore(t)
+	seedAndPopulate(t, bin, dsn)
+
+	orgless := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM locations WHERE org_id IS NULL`).Scan(&n); err != nil {
+			t.Fatalf("count the org-less locations: %v", err)
+		}
+		return n
+	}
+	var total int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM locations`).Scan(&total); err != nil || total == 0 {
+		t.Fatalf("the world holds %d locations (%v), want its branches", total, err)
+	}
+	if n := orgless(); n != 0 {
+		t.Fatalf("%d of %d seeded locations carry no org_id after the seed and the populate, want none", n, total)
+	}
+	var branches int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM locations l JOIN org o ON o.id = l.org_id WHERE l.loc_type = 'BRANCH' AND o.slug = 'hh-demo'`).Scan(&branches); err != nil || branches < 2 {
+		t.Fatalf("the demo org holds %d branches (%v), want at least Trenton and Kingston", branches, err)
+	}
+
+	// The two branches the migrations plant, Trenton and Kingston, are the demo dealer's own.
+	for _, id := range []string{"5d1b3f6e-0000-4000-9000-000000000001", "5d1b3f6e-0000-4000-9000-000000000002"} {
+		var slug string
+		if err := pool.QueryRow(ctx, `SELECT o.slug::text FROM locations l JOIN org o ON o.id = l.org_id WHERE l.id = $1::uuid`, id).Scan(&slug); err != nil || slug != "hh-demo" {
+			t.Fatalf("migration planted branch %s carries org %q (%v), want hh-demo", id, slug, err)
+		}
+	}
+
+	// An existing box with org-less branches is mended by its next seed apply (the repair map).
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = NULL`); err != nil {
+		t.Fatalf("clear the locations' org: %v", err)
+	}
+	env := subEnv(t, populateEnv(dsn))
+	runStep(t, bin, []string{"demoseed", "-apply", "-now", seedClock.Format(time.RFC3339)}, env)
+	if n := orgless(); n != 0 {
+		t.Fatalf("%d locations still carry no org after the next demoseed apply, the repair map must mend them", n)
+	}
+	// And by its next populate.
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = NULL`); err != nil {
+		t.Fatalf("clear the locations' org: %v", err)
+	}
+	runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, env)
+	if n := orgless(); n != 0 {
+		t.Fatalf("%d locations still carry no org after the next demo-populate", n)
+	}
+}

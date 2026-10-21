@@ -9,6 +9,8 @@ import (
 // use a fake. Kept narrow (list + default resolve) so the seam stays a read-only reader.
 type branchStore interface {
 	List(ctx context.Context) ([]Branch, error)
+	// ListInOrg is List held to the caller's dealer org; an empty org answers nothing.
+	ListInOrg(ctx context.Context, orgID string) ([]Branch, error)
 	DefaultBranchID(ctx context.Context) (string, error)
 	// Exists asks whether a branch id names a row this dealer actually has. It is on the SAME
 	// interface as the other two rather than a second seam because it is the same read of the same
@@ -92,7 +94,7 @@ func (s *Service) BranchNames(ctx context.Context, ids []string) (map[string]str
 // internal/assist reaches List directly through its own BranchLister interface and applies its own
 // fence, which is why List keeps its signature untouched.
 func (s *Service) ListFor(ctx context.Context, who CallerScope) ([]Branch, error) {
-	all, err := s.store.List(ctx)
+	all, err := s.store.ListInOrg(ctx, who.OrgID)
 	if err != nil {
 		return nil, err
 	}
