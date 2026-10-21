@@ -5581,6 +5581,7 @@ export type TillInvoicePaymentRecord = {
   received_by?: string;
   received_by_name?: string;
   received_at: string;
+  reversed_at?: string;
 };
 export type TillInvoicePayments = {
   invoice_id: string;

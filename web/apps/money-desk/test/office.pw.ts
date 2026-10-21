@@ -332,10 +332,9 @@ test("a payment is reversed with a reason, and the invoice is owing what it was"
   await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
   await expect(page.locator("[data-payment-row]", { hasText: "REV-" })).toContainText("Reversal");
   await expect(page.locator("[data-payment-row]", { hasText: "REV-" }).getByRole("button")).toHaveCount(0);
-  await page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button", { name: "Reverse" }).click();
-  await page.locator("[data-field='reverse-reason']").fill("Again");
-  await page.getByRole("button", { name: "Confirm reversed" }).click();
-  await expect(page.locator("[data-error]")).toHaveText("This payment has already been reversed.");
+  // A reversed payment is reversed or bounced, never both: the original offers neither Mark bounced nor Reverse again.
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" })).toContainText("Reversed");
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button")).toHaveCount(0);
 });
 
 test("on a phone the invoice's dispute form and the reversal fit the screen", async ({ page, request }) => {

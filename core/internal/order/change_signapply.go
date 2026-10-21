@@ -216,6 +216,14 @@ func (s *Service) changeApplyHooks(actor, orderID, key, note string) changeApply
 					QtyDeltaBase: l.QtyDeltaBase, LineDeltaCents: l.LineDeltaCents,
 				})
 			}
+			// This topic posts NOTHING to the GL, by design (SF-2d round 2, ruling 34.2). A change is signed and
+			// applied only to an order with no finalized invoice and no committed sale: the precheck above
+			// (assertNoMoneyAttached, re-run inside the apply transaction at change_repository.go:408) refuses
+			// otherwise, so no booked money moves here. What the change does to the order's total reaches the
+			// books when the order is invoiced, through the invoice (ar.invoice.finalized); billing changes
+			// after that go through adjusting documents, a supplementary invoice or a credit memo, which post
+			// through their own writers. (A SUPPLIER_DEPOSIT document is not an invoice for this predicate: its
+			// liability is fixed by the deposit, not by the order's total.)
 			return s.changeEvents.EnqueueTx(ctx, tx, ChangeAppliedTopic, ChangeAppliedEvent{
 				ChangeID: ev.ChangeID, ChangeNo: ev.ChangeNo, OrderID: ev.OrderID, BranchID: ev.BranchID,
 				DeltaCents: ev.DeltaCents, SubtotalCents: ev.SubtotalCents, TaxCents: ev.TaxCents,

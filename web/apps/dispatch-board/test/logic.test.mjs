@@ -909,3 +909,41 @@ test("dispatchConfirmWords names the truck, driver, and stop count, states that 
   assert.deepEqual(many.holds, ["ORD-0014 is held for payment and cannot be released until it is paid."]);
 });
 
+
+test("stopHoursForRun puts stops at 8:15 and 13:40 in the 8 and 13 hours, and does not draw a stop outside the axis", async () => {
+  const { stopHoursForRun } = await import("../src/dispatch-logic.js");
+  const day = "2026-10-16";
+  const placed = stopHoursForRun(
+    {},
+    [
+      { stop_no: 1, scheduled_date: day, time_window: "8:15" },
+      { stop_no: 2, scheduled_date: day, time_window: "1:40 PM" },
+      { stop_no: 3, scheduled_date: day, time_window: "18:30" },
+      { stop_no: 4, scheduled_date: "2026-10-17", time_window: "9:00" },
+    ],
+    day,
+    "America/Los_Angeles",
+  );
+  assert.deepEqual([...placed.hours].sort((a, b) => a - b), [8, 13]);
+  assert.equal(placed.outside, 1);
+  assert.match(placed.note, /1 stop falls outside 5 to 16, not drawn/);
+});
+
+test("stopHoursForRun without clock windows runs the stops on from the departure hour in the dealer's zone", async () => {
+  const { stopHoursForRun } = await import("../src/dispatch-logic.js");
+  const day = "2026-10-16";
+  // 15:15 UTC is 08:15 in Los Angeles in October.
+  const placed = stopHoursForRun(
+    { run_departs_at: "2026-10-16T15:15:00Z" },
+    [
+      { stop_no: 1, scheduled_date: day, time_window: "AM" },
+      { stop_no: 2, scheduled_date: day, time_window: "" },
+    ],
+    day,
+    "America/Los_Angeles",
+  );
+  assert.deepEqual([...placed.hours].sort((a, b) => a - b), [8, 9]);
+  const none = stopHoursForRun({}, [{ stop_no: 1, scheduled_date: day, time_window: "AM" }], day, "America/Los_Angeles");
+  assert.equal(none.hours.size, 0);
+  assert.match(none.note, /no time yet/);
+});

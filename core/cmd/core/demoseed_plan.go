@@ -151,13 +151,21 @@ const noHomeBranch = -1
 // purpose (the house rule), the tester's way to find and type it, and the home is the branch the
 // demo logins work so the branch-fenced search answers it.
 //
-// RULING, C01, C04 AND C08 ARE SHARED ACCOUNTS (Branch is noHomeBranch, a NULL home_branch_id).
+// RULING, C01, C04, C08 AND C09 ARE SHARED ACCOUNTS (Branch is noHomeBranch, a NULL home_branch_id).
 // The customer rule: an account homed at a branch is held to the callers who reach that branch, and
 // an account with no home is shared company-wide. Northline Hardscapes, Harbourview Builders and the
 // County of Hastings are ordered from at BOTH yards (their order book and invoices sit on each
 // branch's dashboards, and the quote and pick work at Trenton sits beside them), so no single home
 // is true for them, and homing them at either yard would hide them from the other. Shared is the
 // truth of the seed, and none of the three is yard-held.
+//
+// UX-94b, C09 IS SHARED TOO. Stonebrook, the one account on hold, was homed at Kingston, so no demo
+// login (every one works Trenton) could reach it and the till's On hold card never met real data.
+// Homing it at Trenton would be false: its three orders (O13, O24, O27) and three invoices (I09,
+// I13, I18) all sit at Kingston, and a hold is a company-wide credit fact that follows the account
+// wherever it buys. Shared is the truth, the same as the three above: no home, findable at both yards.
+// The account the branch fence now holds back is C06, the retail walk-up homed at Kingston, which
+// carries no document and which no demo login reaches.
 //
 // WHY THEY STAY FINDABLE AT BOTH YARDS. The staff customer search is branch-fenced
 // (customer/search_scope.go, U-park E4): it admits accounts homed to the searched branch AND accounts
@@ -177,7 +185,7 @@ var demoCustomers = []custSpec{
 	{"C06", "M. Okafor (demo retail)", "RETAIL", 0, 0, 0, false},
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
 	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, noHomeBranch, false},
-	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
+	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, noHomeBranch, true},
 	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
 

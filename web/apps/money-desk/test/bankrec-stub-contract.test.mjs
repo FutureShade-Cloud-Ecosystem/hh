@@ -299,6 +299,18 @@ test("an undo returns the line and the payment, keeps the history, and a second 
   const again = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
   assert.equal(again.status, 201);
   assert.equal((await ctl("GET", `/api/v1/bankrec/matches?statement_line_id=${wire.id}`)).json.length, 2);
+  // A deposit whose payment was reversed cannot be unmatched when it is not a card: refused in plain words, and
+  // nothing changes.
+  await fetch(`${base}/_stub/reverse-payment`, { method: "POST", body: JSON.stringify({ payment_id: IDS.paymentWire }) });
+  refused(await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: again.json.id }), 409, "a reversed cheque or cash payment cannot be matched again");
+  assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "MATCHED", "a refused unmatch leaves the line matched");
+  // A reversed CARD can be unmatched (SF-2d round 7): the wrong match is undone and the card is claimable again.
+  const card = await lineByRef("CARD SETTLEMENT BATCH 0143");
+  const cardMatch = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: card.id, target_type: "PAYMENT", target_ref_id: IDS.paymentGateway1 });
+  assert.equal(cardMatch.status, 201);
+  await fetch(`${base}/_stub/reverse-payment`, { method: "POST", body: JSON.stringify({ payment_id: IDS.paymentGateway1 }) });
+  assert.equal((await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: cardMatch.json.id })).status, 200);
+  assert.equal((await lineByRef("CARD SETTLEMENT BATCH 0143")).status, "UNMATCHED");
 });
 
 test("the rules answer a bare array, a new version retires the old, and the spec is the core's whole object", async () => {
@@ -380,6 +392,33 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   refused(await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`), 409, "is already COMPLETED");
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING }), 409, "is already COMPLETED");
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations/not-a-uuid/complete"), 404, "not found");
+});
+
+test("a match explains its line: a group, a lodgement of another amount and a journal already used are refused, and a signed off month's match cannot be undone", async () => {
+  await reset();
+  const wire = await lineByRef("WIRE FROM CONTRACTOR");
+  const cheque = await lineByRef("CHEQUE DEPOSIT");
+  const fee = await lineByRef("MONTHLY SERVICE FEE");
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "GROUP", target_ref_id: IDS.lodgement1 }), 422, "a group match is not available yet");
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "LODGEMENT", target_ref_id: IDS.lodgement1 }), 422, "that lodgement is for");
+  assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "UNMATCHED", "a refused match writes nothing");
+  const journal = "7a1e0000-0000-4000-9000-000000000004";
+  assert.equal((await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: journal })).status, 201);
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: journal }), 409, "that journal already explains another statement line");
+  // A journal a match posted as its clearing is spent too (SF-2j round 2).
+  const clearing = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  assert.equal(clearing.status, 201);
+  assert.ok(clearing.json.journal_id, "a payment match posts its clearing journal");
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: clearing.json.journal_id }), 409, "that journal already explains another statement line");
+  // A match inside a signed off month cannot be undone.
+  const opened = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  const paid = clearing.json;
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
+  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
+  assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`)).status, 200);
+  refused(await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: paid.id }), 409, "which is already reconciled and completed");
+  assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "MATCHED", "a refused undo writes nothing");
 });
 
 test("the walls: any staff reads, a manager imports, matches, undoes and opens a month, only the controller approves a rule and signs off", async () => {

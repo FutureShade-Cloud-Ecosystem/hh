@@ -246,11 +246,12 @@ export function createOfficeWorld(ctx) {
     if (p === undefined) return refuse(404, "payment not found");
     if (p.reverses !== undefined) return refuse(400, "payments: this payment cannot be reversed: it is itself a reversing entry, take the payment again as a new payment so the reason for re-charging is its own record");
     if (p.reversed === true) return refuse(409, "payments: this payment has already been reversed");
-    if (p.status === "VOID") return refuse(400, "payments: this payment cannot be reversed: status is VOID");
+    if (p.status === "BOUNCED") return refuse(400, "payments: this payment cannot be reversed: it was bounced, and a payment is reversed or bounced, never both");
+    if (p.status !== "RECEIVED" && p.status !== "DEPOSITED") return refuse(400, `payments: this payment cannot be reversed: status is ${p.status}, only a received or deposited payment can be reversed`);
     const reopened = [];
     for (const al of p.allocations) {
       const inv = world.invoices.find((i) => ctx.invNumber(i) === al.invoice_n);
-      if (p.status !== "BOUNCED") inv.balance_cents += al.amount_cents;
+      inv.balance_cents += al.amount_cents;
       reopened.push(inv.id);
     }
     p.reversed = true;

@@ -814,6 +814,24 @@ func LockPaymentRowsTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return rows.Err()
 }
 
+// PaymentReversedTx reports whether a payment has been reversed (reversed_at is set). The payments module owns the
+// table, so a module that must refuse an act on a reversed payment (bankrec's unmatch) asks here, on its own
+// transaction, after it has taken the payment row with LockPaymentRowsTx so the answer cannot change under it. A
+// missing row reads as not reversed.
+//
+// It also answers the payment's tender, because the one act that asks (the unmatch of a deposit) treats a reversed
+// CARD differently from every other tender (SF-2d round 7).
+func PaymentReversedTx(ctx context.Context, tx pgx.Tx, id string) (reversed bool, method string, err error) {
+	err = tx.QueryRow(ctx, `SELECT reversed_at IS NOT NULL, method FROM payments WHERE id = $1::uuid`, id).Scan(&reversed, &method)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("payments: read whether the payment was reversed: %w", err)
+	}
+	return reversed, method, nil
+}
+
 // PaymentBranchesTx returns the branch of each named payment, keyed by the lower cased id (an id with no row is
 // absent). The payments module owns the table; a module that must fence an act on a payment to the caller's branch
 // reach (bankrec's match) reads the branch here, on its own transaction, AFTER LockPaymentRowsTx has taken the rows:

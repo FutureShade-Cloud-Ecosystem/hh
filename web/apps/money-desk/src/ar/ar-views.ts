@@ -858,8 +858,8 @@ function paymentList(model: DeskModel, account: AccountModel): TemplateResult {
         (p) => html`
           <li data-payment-row>
             <span>${p.payment_no} · ${p.method.toLowerCase()} · ${formatMoney(p.amount_cents)}
-              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : p.status === "VOID" ? html`<span class="pill pill-plain">Reversal</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
-            ${p.status === "BOUNCED" || p.status === "VOID"
+              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : p.status === "VOID" ? html`<span class="pill pill-plain">Reversal</span>` : p.reversed_at !== undefined ? html`<span class="pill pill-plain">Reversed</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
+            ${p.status === "BOUNCED" || p.status === "VOID" || p.reversed_at !== undefined
               ? nothing
               : account.bounceFor === p.payment_id
                 ? html`<span class="inline-form"><label><span class="visually-hidden">Reason it bounced</span><input type="text" data-field="bounce-reason" placeholder="Why it came back, such as cheque returned NSF" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="bounce-confirm" data-payment-id="${p.payment_id}">Confirm bounced</button><button type="button" class="btn btn-secondary small-btn" data-action="bounce-cancel">Cancel</button></span>`
