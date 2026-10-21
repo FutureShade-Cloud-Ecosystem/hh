@@ -66,6 +66,17 @@ function addDays(base, n) {
   return iso(date);
 }
 const TODAY = iso(new Date());
+// The instant that reads as the given hour on TODAY in the stub's business zone, whatever the offset.
+function zonedAt(hour) {
+  for (let utc = 0; utc < 48; utc += 1) {
+    const at = new Date(`${TODAY}T00:00:00Z`);
+    at.setUTCHours(utc);
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit", hour: "numeric", hourCycle: "h23" }).formatToParts(at);
+    const get = (t) => parts.find((p) => p.type === t).value;
+    if (`${get("year")}-${get("month")}-${get("day")}` === TODAY && Number(get("hour")) === hour) return at.toISOString();
+  }
+  return null;
+}
 
 // ---- the world -----------------------------------------------------------------------------------
 
@@ -166,10 +177,10 @@ function seedWorld() {
     ...over,
   });
   const runs = [
-    run(1, { truck_id: trucks[0].id, driver_id: drivers[0].id }),
+    run(1, { truck_id: trucks[0].id, driver_id: drivers[0].id, run_departs_at: zonedAt(7) }),
     run(2, { truck_id: trucks[2].id }),
     run(3, { truck_id: trucks[3].id, driver_id: drivers[2].id }),
-    run(4, { truck_id: trucks[1].id, driver_id: drivers[1].id, status: "DISPATCHED", dispatched_at: `${TODAY}T07:00:00Z` }),
+    run(4, { truck_id: trucks[1].id, driver_id: drivers[1].id, status: "DISPATCHED", dispatched_at: `${TODAY}T07:00:00Z`, run_departs_at: zonedAt(6) }),
   ];
   const stops = [
     // Open work with no truck: the load board's staging lane.
@@ -330,6 +341,7 @@ function runView(r) {
   if (r.driver_id) out.driver_id = r.driver_id;
   if (truck) out.truck_code = truck.code;
   if (driver) out.driver_name = driver.name;
+  if (r.run_departs_at) out.run_departs_at = r.run_departs_at;
   if (r.dispatched_at) out.dispatched_at = r.dispatched_at;
   if (r.completed_at) out.completed_at = r.completed_at;
   if (r.reopened_at) out.reopened_at = r.reopened_at;

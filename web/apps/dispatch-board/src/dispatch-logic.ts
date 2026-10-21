@@ -1318,6 +1318,69 @@ export const TIME_AXIS_HOURS: readonly number[] = Object.freeze([
   5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 ]);
 
+/** The hour of day (0 to 23) an ISO instant falls in, in the dealer's zone, or null when it does not parse. */
+export function hourInZone(ts: string | null | undefined, zone: string = houseZone()): number | null {
+  if (!ts) return null;
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return null;
+  const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", hourCycle: "h23" })
+    .formatToParts(date)
+    .find((p) => p.type === "hour");
+  return part ? Number(part.value) % 24 : null;
+}
+
+/** The hour a clock time_window names ("8:15", "1:40 PM", "13:40"), or null for a word window ("AM"). */
+export function clockWindowHour(window: string | undefined): number | null {
+  const m = /^\s*(\d{1,2}):(\d{2})\s*([ap]\.?m\.?)?\s*$/i.exec(window ?? "");
+  if (!m) return null;
+  let h = Number(m[1]);
+  const mins = Number(m[2]);
+  if (mins > 59) return null;
+  if (m[3]) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (m[3].toLowerCase().startsWith("p") ? 12 : 0);
+  } else if (h > 23) return null;
+  return h;
+}
+
+/** Where a run's stops fall on the time axis. The payload carries no per-stop clock time, so the
+ *  hour of a stop is, in order: its clock time_window; else the run's departure hour (in the
+ *  dealer's zone) plus the stop's place in the day's sequence, one hour a stop; else unplaced.
+ *  A stop whose hour is outside the axis is not drawn; `outside` counts them and `note` says so. */
+export interface StopHours {
+  readonly hours: ReadonlySet<number>;
+  readonly outside: number;
+  readonly unplaced: number;
+  readonly note: string;
+}
+
+export function stopHoursForRun(
+  run: { readonly run_departs_at?: string | null },
+  stops: readonly Pick<DispatchLoadStop, "scheduled_date" | "stop_no" | "time_window">[],
+  today: string,
+  zone: string = houseZone(),
+): StopHours {
+  const departHour = hourInZone(run.run_departs_at, zone);
+  const first = TIME_AXIS_HOURS[0] ?? 0;
+  const last = TIME_AXIS_HOURS[TIME_AXIS_HOURS.length - 1] ?? 23;
+  const hours = new Set<number>();
+  let outside = 0;
+  let unplaced = 0;
+  let idx = 0;
+  for (const stop of [...stops].sort((a, b) => a.stop_no - b.stop_no)) {
+    if (stop.scheduled_date !== today) continue;
+    const h = clockWindowHour(stop.time_window) ?? (departHour === null ? null : departHour + idx);
+    idx += 1;
+    if (h === null) unplaced += 1;
+    else if (h < first || h > last) outside += 1;
+    else hours.add(h);
+  }
+  const parts: string[] = [];
+  if (outside > 0) parts.push(`${outside} ${outside === 1 ? "stop falls" : "stops fall"} outside ${first} to ${last}, not drawn`);
+  if (unplaced > 0) parts.push(`${unplaced} ${unplaced === 1 ? "stop has" : "stops have"} no time yet`);
+  return { hours, outside, unplaced, note: parts.join("; ") };
+}
+
 /** The Moffett forklift weight, in pounds. A Moffett rides on the back of a delivery truck: the
  *  load's net payload is the truck's capacity MINUS the Moffett's weight, never its full
  *  capacity. The house rule (this page) says the figure is named once, here. */

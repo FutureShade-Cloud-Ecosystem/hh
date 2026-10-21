@@ -401,3 +401,52 @@ export function renderReverse(om: OfficeModel, payment: { payment_id: string; pa
   }
   return html`<button type="button" class="btn btn-secondary small-btn" data-action="reverse-start" data-payment-id="${payment.payment_id}">Reverse</button>`;
 }
+
+/**
+ * The re-application's form for a reversed payment's row: the money the core still holds for it, the open invoice it
+ * goes on, how much and why. It follows the Reverse form above it (the same inline form, the same buttons, the same
+ * words of consequence), and the picker offers the account's open invoices as the receivables list drew them.
+ */
+export function renderReapply(
+  om: OfficeModel,
+  payment: { payment_id: string; payment_no: string },
+  open: readonly { id: string; invoice_no: string; balance_cents: number }[],
+  currentInvoiceId: string,
+): TemplateResult {
+  const view = om.reapplying;
+  const choices = open.filter((i) => i.balance_cents > 0);
+  if (view === null || view.paymentId !== payment.payment_id) {
+    // The invoice the panel is open on is picked to start with, when it is open: the id and balance ride data attributes.
+    const current = choices.find((i) => i.id === currentInvoiceId);
+    return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-start" data-payment-id="${payment.payment_id}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${current === undefined ? "" : String(current.balance_cents)}">Apply its money</button>`;
+  }
+  if (view.held === "loading") return html`<span class="dim small" role="status">Reading what is held.</span>`;
+  if (view.held === "error") return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
+  const held = view.held;
+  if (held.held_cents <= 0) {
+    return html`<span class="dim small" data-held>Nothing is held for this payment now.</span><button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
+  }
+  return html`
+    <form class="held-form" aria-label="Apply held money to an invoice" data-reapply-form>
+      <p class="callout" data-held><b>${formatMoney(held.held_cents)} is held for this customer.</b> The reversal put it back on their account as owing and kept the money. Putting it on an invoice settles that balance without taking the payment again.</p>
+      <p class="dim small">Put it on</p>
+      <div class="row-actions" role="group" aria-label="Invoice to put it on" data-reapply-invoices>
+        ${choices.length === 0
+          ? html`<span class="dim small">No open invoice to put it on.</span>`
+          : choices.map(
+              (i) => html`<button type="button" class="btn ${i.id === view.invoiceId ? "btn-primary" : "btn-secondary"} small-btn" data-action="reapply-pick" data-invoice-id="${i.id}" data-balance-cents="${String(i.balance_cents)}" aria-pressed="${i.id === view.invoiceId ? "true" : "false"}">${i.invoice_no} · ${formatMoney(i.balance_cents)}</button>`,
+            )}
+      </div>
+      <label>Amount <span class="dim small" data-held-up-to>(up to ${formatMoney(held.held_cents)})</span>
+        <input type="text" inputmode="decimal" data-field="reapply-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
+      <label>Why
+        <input type="text" data-field="reapply-reason" placeholder="Such as keyed on the wrong account" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-primary small-btn" data-action="reapply-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy || choices.length === 0}>Apply to invoice</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}

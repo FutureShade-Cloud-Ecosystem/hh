@@ -171,6 +171,16 @@ var tillRunSalt = time.Now().UnixNano()
 
 var tillStationSeq atomic.Int64
 
+// tillFixtureSeq counts fixture tags handed out inside this process.
+var tillFixtureSeq atomic.Int64
+
+// fixtureTag is unique per CALL, not only per process: tillRunSalt is fixed for a `go test`
+// process, so a leg keyed on it alone collides with itself under -count=N (the second pass
+// inserts the same account_no or order_no while the first pass's row is still there).
+func fixtureTag() string {
+	return fmt.Sprintf("%d-%d", tillRunSalt, tillFixtureSeq.Add(1))
+}
+
 func openTill(t *testing.T, pool *pgxpool.Pool, branchID string) string {
 	t.Helper()
 	ctx := context.Background()

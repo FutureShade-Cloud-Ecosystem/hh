@@ -281,6 +281,15 @@ test("matching the last lines lets the month sign off, and a signed off month is
   await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
   await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-error]")).toContainText(`${prior.words} is already signed off for this account, so its figures no longer change.`);
+  // A match inside the signed off month cannot be undone (SF-2j): refused in words, and the line stays matched.
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-error]")).toContainText(`That match belongs to ${prior.words}, which is already signed off, so it cannot be undone.`);
+  await expect(panel.locator("[data-history]")).toContainText("in force");
 });
 
 test("a zero closing balance is not sent quietly: the core's replacement is said", async ({ page, request }) => {
