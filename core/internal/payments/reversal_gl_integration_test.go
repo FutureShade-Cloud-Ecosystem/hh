@@ -391,8 +391,10 @@ func (w *reversalGLWorld) sequence(t *testing.T, unmatch, drainBeforeUnmatch boo
 	return res
 }
 
-// The GL must not depend on when the consumer runs, and the bank must never go negative. With the unmatch of a
-// reversed payment refused, "identical" means the refused unmatch changes nothing, in either drain order.
+// The GL must not depend on when the consumer runs, and the bank must never go negative. Since round 7 the unmatch of a
+// reversed CARD's deposit is allowed (the wrong match of a reversed card can be undone): it moves Dr 1000 / Cr 1010
+// back, the payment is RECEIVED and claimable again, and 2310 is untouched, in either drain order. The refusal for a
+// reversed cheque is pinned in reversal_unmatch_card_integration_test.go.
 func TestIntegration_ReversalGL_DepositedReversedUnmatchedIsTheSameWheneverTheConsumerRuns(t *testing.T) {
 	before := newReversalGLWorld(t).sequence(t, true, true)
 	after := newReversalGLWorld(t).sequence(t, true, false)
@@ -409,15 +411,15 @@ func TestIntegration_ReversalGL_DepositedReversedUnmatchedIsTheSameWheneverTheCo
 		}
 	}
 	for name, r := range map[string]sequenceResult{"before": before, "after": after} {
-		if r.unmatchErr == nil {
-			t.Errorf("%s: the unmatch of a reversed payment was accepted", name)
+		if r.unmatchErr != nil {
+			t.Errorf("%s: the unmatch of a reversed card's deposit was refused: %v", name, r.unmatchErr)
 		}
-		if r.lineStatus != "MATCHED" || r.payStatus != "DEPOSITED" {
-			t.Errorf("%s: the refused unmatch left the line %s and the payment %s, want MATCHED and DEPOSITED", name, r.lineStatus, r.payStatus)
+		if r.lineStatus != "UNMATCHED" || r.payStatus != "RECEIVED" {
+			t.Errorf("%s: after the unmatch the line reads %s and the payment %s, want UNMATCHED and RECEIVED", name, r.lineStatus, r.payStatus)
 		}
-		for code, want := range map[string]int64{"1000": 10_000, "1010": 0, "1100": 0, "2310": -10_000} {
+		for code, want := range map[string]int64{"1000": 0, "1010": 10_000, "1100": 0, "2310": -10_000} {
 			if r.nets[code] != want {
-				t.Errorf("%s: account %s nets %d, want %d (the bank holds the deposit, 2310 holds the reversed amount)", name, code, r.nets[code], want)
+				t.Errorf("%s: account %s nets %d, want %d (the card is back in clearing, 2310 holds the reversed amount)", name, code, r.nets[code], want)
 			}
 		}
 	}
@@ -473,7 +475,7 @@ func TestIntegration_ReversalGL_TheAccountDoesNotDependOnTheStatus(t *testing.T)
 func TestIntegration_ReversalGL_AnUnmatchBesideAReversalOfTheSamePaymentIsRefusedWithNothingWritten(t *testing.T) {
 	w := newReversalGLWorld(t)
 	ctx := context.Background()
-	orig := w.receipt("CARD", 10_000)
+	orig := w.receipt("CHEQUE", 10_000)
 	w.drain()
 	line := w.r.statementLine(10_000)
 	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})

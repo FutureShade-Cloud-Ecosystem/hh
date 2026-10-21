@@ -537,8 +537,7 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	// target is read, the payment row is taken (ascending, the payments module's own lock, which a reversal's FOR
 	// UPDATE queues behind), and before anything is written: first the caller's REACH fence (a payment outside the
 	// caller's branches answers exactly as a match that is not live), then the REVERSED refusal (a deposit whose
-	// payment was reversed cannot be unmatched: the reversal already took the money back out, so reverting the
-	// payment and reversing the clearing journal again would take it out twice).
+	// payment was reversed cannot be unmatched, except a CARD, see below).
 	var peekType, peekRef string
 	err = tx.QueryRow(ctx,
 		`SELECT target_type, COALESCE(target_ref_id::text, '') FROM bank_matches WHERE id::text = $1 AND unmatched_at IS NULL`,
@@ -560,12 +559,15 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 		if b, ok := branches[strings.ToLower(peekRef)]; !ok || !reach(b) {
 			return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
 		}
-		reversed, rerr := payments.PaymentReversedTx(ctx, tx, peekRef)
+		reversed, method, rerr := payments.PaymentReversedTx(ctx, tx, peekRef)
 		if rerr != nil {
 			return "", "", 0, rerr
 		}
-		if reversed {
-			return "", "", 0, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, so its money already left through the reversal")
+		// A reversed CARD may be unmatched (SF-2d round 7, S3's P2): the unmatch only moves Dr 1000 / Cr 1010 back,
+		// the card is claimable again (round 4) and 2310 is untouched, so a wrong match can be corrected. Every
+		// other reversed tender can never be claimed again, so its bank line could not be explained again.
+		if reversed && method != "CARD" {
+			return "", "", 0, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again")
 		}
 	}
 

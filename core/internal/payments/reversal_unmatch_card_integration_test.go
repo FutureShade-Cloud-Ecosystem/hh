@@ -23,7 +23,7 @@ func (w *reversalGLWorld) bankSvc() *bankrec.Service {
 func (w *reversalGLWorld) matchPayment(t *testing.T, bank *bankrec.Service, line, orig string) (bankrec.Match, error) {
 	t.Helper()
 	return bank.ManualMatch(context.Background(), bankrec.MatchInput{CanAccessBranch: bankrec.AllBranches,
-		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig,
 	}, w.r.userID)
 }
 
