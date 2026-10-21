@@ -20,6 +20,7 @@ type reappliedWorld struct {
 	f       *d510Fixture
 	repo    *payments.Repository
 	payment string
+	actor   string // a staff user the slices are applied by
 }
 
 func newReappliedWorld(t *testing.T, cents int64) (*reappliedWorld, string) {
@@ -35,13 +36,22 @@ func newReappliedWorld(t *testing.T, cents int64) (*reappliedWorld, string) {
 	if _, err := svc.Reverse(context.Background(), payments.ReverseInput{PaymentID: p.ID, Reason: "wrong account", IsManager: true}); err != nil {
 		t.Fatalf("reverse: %v", err)
 	}
-	return &reappliedWorld{f: f, repo: repo, payment: p.ID}, first
+	var actor string
+	if err := f.pool.QueryRow(context.Background(),
+		`INSERT INTO users (email, display_name, status) VALUES ($1, 'Applier Name', 'ACTIVE') RETURNING id::text`, "ra-"+f.tag+"@test.local").Scan(&actor); err != nil {
+		t.Fatalf("seed the applier: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `UPDATE payment_reapplications SET applied_by = NULL WHERE applied_by = $1::uuid`, actor)
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1::uuid`, actor)
+	})
+	return &reappliedWorld{f: f, repo: repo, payment: p.ID, actor: actor}, first
 }
 
 func (w *reappliedWorld) reapply(t *testing.T, key string, allocs ...payments.Allocation) {
 	t.Helper()
 	if _, err := payments.NewReverseService(w.repo).Reapply(context.Background(), payments.ReapplyInput{
-		PaymentID: w.payment, Reason: "rung on the wrong account", IdempotencyKey: key + w.f.tag, Allocations: allocs, IsManager: true,
+		PaymentID: w.payment, Reason: "rung on the wrong account", ActorID: w.actor, IdempotencyKey: key + w.f.tag, Allocations: allocs, IsManager: true,
 	}); err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
@@ -79,6 +89,9 @@ func TestRegister_AReappliedSliceShowsInAppliedAndTheTimeline(t *testing.T) {
 	entries := reappliedEntries(d)
 	if len(entries) != 1 || entries[0].AmountCents != 10_000 || !strings.Contains(entries[0].Detail, "PAY-") && !strings.Contains(entries[0].Detail, "CARD") {
 		t.Errorf("the timeline carries %+v, want one re applied entry of 10000 naming the payment", entries)
+	}
+	if entries != nil && entries[0].Actor != "Applier Name" {
+		t.Errorf("the entry is by %q, want the applier's display name", entries[0].Actor)
 	}
 	if entries != nil && entries[0].At.Before(time.Now().Add(-time.Minute)) {
 		t.Errorf("the entry is dated %v, want now", entries[0].At)

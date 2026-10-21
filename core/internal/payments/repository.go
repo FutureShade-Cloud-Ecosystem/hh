@@ -1204,8 +1204,70 @@ func (r *Repository) ReceivedPaymentsForInvoices(ctx context.Context, tx pgx.Tx,
 	return out, rows.Err()
 }
 
+// ReappliedToInvoice lists the slices of reversed payments' held money applied to one invoice, oldest first (SF-2r): the
+// register's applied entries for what re-application did, since it writes no payment_allocations row. The applier's
+// display name is joined here (users is this file's to read).
+func (r *Repository) ReappliedToInvoice(ctx context.Context, invoiceID string) ([]InvoiceReapplication, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	iid, err := uuid.Parse(invoiceID)
+	if err != nil {
+		return []InvoiceReapplication{}, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT ra.id::text, ra.payment_id::text, p.payment_no::text, p.method, ra.amount_cents, ra.created_at,
+		        COALESCE(ra.applied_by::text, ''), COALESCE(u.display_name, '')
+		   FROM payment_reapplications ra
+		   JOIN payments p ON p.id = ra.payment_id
+		   LEFT JOIN users u ON u.id = ra.applied_by
+		  WHERE ra.invoice_id = $1::uuid
+		  ORDER BY ra.created_at, ra.id`, iid.String())
+	if err != nil {
+		return nil, fmt.Errorf("reapplied: read: %w", err)
+	}
+	defer rows.Close()
+	out := []InvoiceReapplication{}
+	for rows.Next() {
+		var x InvoiceReapplication
+		if err := rows.Scan(&x.ID, &x.PaymentID, &x.PaymentNo, &x.Method, &x.AmountCents, &x.AppliedAt, &x.AppliedBy, &x.AppliedName); err != nil {
+			return nil, fmt.Errorf("reapplied: scan: %w", err)
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 // ReappliedToOrder lists the slices of reversed payments' held money applied to the invoices of one order, oldest first
-// (SF-2r round 2). INERT in the red commit.
+// (SF-2r round 2): the order's activity reads it through the order module's seam.
 func (r *Repository) ReappliedToOrder(ctx context.Context, orderID string) ([]OrderReapplication, error) {
-	return nil, nil
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	oid, err := uuid.Parse(orderID)
+	if err != nil {
+		return []OrderReapplication{}, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT ra.id::text, ra.payment_id::text, p.payment_no::text, p.method, i.invoice_no::text, ra.amount_cents,
+		        ra.created_at, COALESCE(ra.applied_by::text, ''), COALESCE(u.display_name, '')
+		   FROM payment_reapplications ra
+		   JOIN payments p ON p.id = ra.payment_id
+		   JOIN invoices i ON i.id = ra.invoice_id
+		   LEFT JOIN users u ON u.id = ra.applied_by
+		  WHERE i.order_id = $1::uuid
+		  ORDER BY ra.created_at, ra.id`, oid.String())
+	if err != nil {
+		return nil, fmt.Errorf("reapplied: read by order: %w", err)
+	}
+	defer rows.Close()
+	out := []OrderReapplication{}
+	for rows.Next() {
+		var x OrderReapplication
+		if err := rows.Scan(&x.ID, &x.PaymentID, &x.PaymentNo, &x.Method, &x.InvoiceNo, &x.AmountCents, &x.AppliedAt, &x.AppliedBy, &x.AppliedName); err != nil {
+			return nil, fmt.Errorf("reapplied: scan by order: %w", err)
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
 }

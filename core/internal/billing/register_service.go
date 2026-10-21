@@ -240,6 +240,7 @@ type ReappliedSlice struct {
 	AmountCents int64
 	AppliedAt   time.Time
 	AppliedBy   string // users.id, "" when none
+	AppliedName string // the applier's display name, "" when none
 }
 
 // reappliedReader is the payments module's read of re-applied slices, reached through an interface (the module owns
@@ -946,7 +947,7 @@ func withReappliedEntries(activity []ActivityEntry, slices []ReappliedSlice) []A
 	}
 	out := append([]ActivityEntry(nil), activity...)
 	for _, sl := range slices {
-		out = append(out, ActivityEntry{Kind: "PAYMENT", At: sl.AppliedAt, Detail: sl.PaymentNo + " · " + sl.Method + " · " + reappliedDetail, AmountCents: sl.AmountCents})
+		out = append(out, ActivityEntry{Kind: "PAYMENT", At: sl.AppliedAt, Detail: sl.PaymentNo + " · " + sl.Method + " · " + reappliedDetail, AmountCents: sl.AmountCents, Actor: sl.AppliedName})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	if len(out) > 40 {

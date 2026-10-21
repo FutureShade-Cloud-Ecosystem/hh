@@ -688,34 +688,3 @@ func (r *Repository) HeldFor(ctx context.Context, paymentID string, canAccessBra
 	}
 	return h, nil
 }
-
-// ReappliedToInvoice lists the slices of reversed payments' held money applied to one invoice, oldest first (SF-2r): the
-// register's applied entries for what re-application did, since it writes no payment_allocations row. Own tables only.
-func (r *Repository) ReappliedToInvoice(ctx context.Context, invoiceID string) ([]InvoiceReapplication, error) {
-	if r.pool == nil {
-		return nil, errNoDB
-	}
-	iid, err := uuid.Parse(invoiceID)
-	if err != nil {
-		return []InvoiceReapplication{}, nil
-	}
-	rows, err := r.pool.Query(ctx,
-		`SELECT ra.id::text, ra.payment_id::text, p.payment_no::text, p.method, ra.amount_cents, ra.created_at,
-		        COALESCE(ra.applied_by::text, '')
-		   FROM payment_reapplications ra JOIN payments p ON p.id = ra.payment_id
-		  WHERE ra.invoice_id = $1::uuid
-		  ORDER BY ra.created_at, ra.id`, iid.String())
-	if err != nil {
-		return nil, fmt.Errorf("reapplied: read: %w", err)
-	}
-	defer rows.Close()
-	out := []InvoiceReapplication{}
-	for rows.Next() {
-		var x InvoiceReapplication
-		if err := rows.Scan(&x.ID, &x.PaymentID, &x.PaymentNo, &x.Method, &x.AmountCents, &x.AppliedAt, &x.AppliedBy); err != nil {
-			return nil, fmt.Errorf("reapplied: scan: %w", err)
-		}
-		out = append(out, x)
-	}
-	return out, rows.Err()
-}

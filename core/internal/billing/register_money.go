@@ -110,7 +110,7 @@ func (w *PaymentsReappliedReader) ReappliedToInvoice(ctx context.Context, invoic
 	}
 	out := make([]ReappliedSlice, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, ReappliedSlice{PaymentNo: r.PaymentNo, Method: r.Method, AmountCents: r.AmountCents, AppliedAt: r.AppliedAt, AppliedBy: r.AppliedBy})
+		out = append(out, ReappliedSlice{PaymentNo: r.PaymentNo, Method: r.Method, AmountCents: r.AmountCents, AppliedAt: r.AppliedAt, AppliedBy: r.AppliedBy, AppliedName: r.AppliedName})
 	}
 	return out, nil
 }
