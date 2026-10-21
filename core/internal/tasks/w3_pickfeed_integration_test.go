@@ -38,6 +38,8 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/google/uuid"
 )
 
 // - the composition-root adapters, copied -
@@ -245,17 +247,32 @@ func todayUTC() string { return time.Now().UTC().Format("2006-01-02") }
 // TestPickFeed_AScheduledStopReachesTheYardQueueWithRealLines is the test the whole item exists for.
 // Before this wave the same assertion could only be made about fixture material.
 func TestPickFeed_AScheduledStopReachesTheYardQueueWithRealLines(t *testing.T) {
+	// The queue is the caller's org's (UX-81 round 5): the order and its task carry an org, and the read binds it.
+	orgID := uuid.NewString()
+	pool0 := yardPool(t)
+	if _, err := pool0.Exec(context.Background(), `INSERT INTO org (id, slug, name) VALUES ($1, $2, 'pick feed leg')`, orgID, "pickfeed-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool0.Exec(context.Background(), `DELETE FROM org WHERE id = $1`, orgID) }) // runs after the fixture's cleanup
 	f := newFeedFixture(t)
+	// The dealer is the branch's org (UX-81 round 6): the order and the task carry no org_id (production writes
+	// none), the yard's branch row does.
+	if _, err := f.pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, f.branch, orgID); err != nil {
+		t.Fatalf("stamp the branch's org: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1::uuid`, f.branch)
+	})
 	stop := f.schedule(t, todayUTC())
 
 	task, err := f.tasks.CreateFromOrder(context.Background(), CreateInput{
-		OrderID: f.orderID, Source: SourceManual,
+		OrderID: f.orderID, Source: SourceManual, OrgID: orgID,
 	})
 	if err != nil {
 		t.Fatalf("create pick task: %v", err)
 	}
 
-	entries, err := f.tasks.PickQueue(context.Background(), TaskFilter{BranchID: f.branch, Limit: 100})
+	entries, err := f.tasks.PickQueue(withOrg(context.Background(), orgID), TaskFilter{BranchID: f.branch, Limit: 100})
 	if err != nil {
 		t.Fatalf("pick queue: %v", err)
 	}
