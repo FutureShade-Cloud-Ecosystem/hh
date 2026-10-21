@@ -45,6 +45,13 @@ func (c Caller) ReadClaims() (readtx.Claims, error) {
 		}
 		poBranches = append(poBranches, id)
 	}
+	channels := make([]string, 0, len(c.ChannelIDs))
+	for _, id := range c.ChannelIDs {
+		if !uuidShape.MatchString(id) {
+			return readtx.Claims{}, errors.New("assist: a channel id is not a uuid")
+		}
+		channels = append(channels, id)
+	}
 	return readtx.Claims{
 		Audience:        readtx.AudienceStaff,
 		AskerID:         c.UserID,
@@ -55,5 +62,6 @@ func (c Caller) ReadClaims() (readtx.Claims, error) {
 		POCostBranchIDs: poBranches,
 		Margin:          c.Margin,
 		PaymentTrail:    c.PaymentTrail,
+		ChannelIDs:      channels,
 	}, nil
 }

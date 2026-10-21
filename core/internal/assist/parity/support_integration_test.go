@@ -30,14 +30,14 @@ func plantSecondBranch(t *testing.T, e *testsupport.Env) {
 	t.Helper()
 	ctx := testsupport.Ctx(t)
 	var n int
-	if err := e.Admin.QueryRow(ctx, `SELECT count(DISTINCT branch_id) FROM orders`).Scan(&n); err != nil {
+	if err := e.Admin.QueryRow(ctx, `SELECT count(DISTINCT o.branch_id) FROM orders o JOIN order_lines l ON l.order_id = o.id`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n >= 2 {
 		return
 	}
 	var other string
-	if err := e.Admin.QueryRow(ctx, `SELECT id::text FROM locations WHERE id NOT IN (SELECT branch_id FROM orders) ORDER BY id LIMIT 1`).Scan(&other); err != nil {
+	if err := e.Admin.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND id NOT IN (SELECT o.branch_id FROM orders o JOIN order_lines l ON l.order_id = o.id) ORDER BY id LIMIT 1`).Scan(&other); err != nil {
 		t.Fatalf("no second branch to plant orders at: %v", err)
 	}
 	tag := randomHex(t, 3)
@@ -70,10 +70,11 @@ func plantSecondBranch(t *testing.T, e *testsupport.Env) {
 	})
 }
 
-// Branches returns the distinct branches that hold orders, in id order.
+// Branches returns the distinct branches that hold orders with lines, in id order. An order with no line (a stray
+// one another package or a test left behind) does not make a branch a branch with orders to compare.
 func branchesWithOrders(t *testing.T, e *testsupport.Env) []string {
 	t.Helper()
-	rows, err := e.Admin.Query(testsupport.Ctx(t), `SELECT DISTINCT branch_id::text FROM orders ORDER BY 1`)
+	rows, err := e.Admin.Query(testsupport.Ctx(t), `SELECT DISTINCT o.branch_id::text FROM orders o JOIN order_lines l ON l.order_id = o.id ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
