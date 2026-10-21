@@ -284,9 +284,11 @@ INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered
  ('07000000-0000-4000-9000-000000000001',2,'a7000000-0000-4000-9000-000000000023','Gator polymeric sand',5,'BAG',5,2500,'BAG',12500)
 ON CONFLICT DO NOTHING;
 -- Two invoices (one paid, one open) + lines
-INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, created_by) VALUES
- ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', CURRENT_DATE - 30, CURRENT_DATE, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001'),
- ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001')
+-- org_id is the branch location's (SF-2p): NULL on a box whose locations carry no org yet (this seed runs before the
+-- populate that provisions the org), which 0432 allows there, and the branch's org on a box that has one.
+INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, created_by, org_id) VALUES
+ ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', CURRENT_DATE - 30, CURRENT_DATE, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000001')),
+ ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000002'))
 ON CONFLICT (invoice_no) DO NOTHING;
 INSERT INTO invoice_lines (invoice_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents) VALUES
  ('19000000-0000-4000-9000-000000000001',1,'a7000000-0000-4000-9000-000000000005','Brussels Block paver',1000,'SF',4100,300,'SF',300000),
