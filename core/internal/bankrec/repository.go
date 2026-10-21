@@ -497,6 +497,34 @@ func (r *Repository) GetLiveMatch(ctx context.Context, matchID string) (Match, e
 // a corrective re-match sees the payment claimable again. A match already unmatched → 409 conflict. Returns
 // the match's target facts so the service can post the offsetting reversal journal.
 func (r *Repository) Unmatch(ctx context.Context, matchID, userID string) (targetType, targetRef string, amount int64, err error) {
+	return r.UnmatchReach(ctx, matchID, userID, nil)
+}
+
+// PeekMatchTarget reads a match's target without locking: live is false for a match that does not exist or is
+// already unmatched. A match row's target fields never change, so the read cannot go stale.
+func (r *Repository) PeekMatchTarget(ctx context.Context, matchID string) (targetType, targetRef string, live bool, err error) {
+	if r.pool == nil {
+		return "", "", false, errNoDB
+	}
+	err = r.pool.QueryRow(ctx,
+		`SELECT target_type, COALESCE(target_ref_id::text, '') FROM bank_matches WHERE id::text = $1 AND unmatched_at IS NULL`,
+		matchID).Scan(&targetType, &targetRef)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("bankrec: read the match target: %w", err)
+	}
+	return targetType, targetRef, true, nil
+}
+
+// UnmatchReach is Unmatch fenced to the caller's branch reach (SF-2g round 2). For a PAYMENT target, inside the
+// transaction and before anything is written: the live match's target is read, the payment row is taken
+// (payments.LockPaymentRowsTx, FOR NO KEY UPDATE, which a reversal's FOR UPDATE queues behind), and its branch is
+// read through the payments module under that lock; a payment outside the reach answers exactly as a match that is
+// not live. The lock order is the payment row, then the match, the line and the payment update, the order SF-2d
+// round 2 gives Unmatch on its branch, so the two agree when both merge. A nil reach fences nothing.
+func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, reach func(branchID string) bool) (targetType, targetRef string, amount int64, err error) {
 	if r.pool == nil {
 		return "", "", 0, errNoDB
 	}
@@ -505,6 +533,31 @@ func (r *Repository) Unmatch(ctx context.Context, matchID, userID string) (targe
 		return "", "", 0, fmt.Errorf("bankrec: begin unmatch: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	if reach != nil {
+		var peekType, peekRef string
+		perr := tx.QueryRow(ctx,
+			`SELECT target_type, COALESCE(target_ref_id::text, '') FROM bank_matches WHERE id::text = $1 AND unmatched_at IS NULL`,
+			matchID).Scan(&peekType, &peekRef)
+		if errors.Is(perr, pgx.ErrNoRows) {
+			return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+		}
+		if perr != nil {
+			return "", "", 0, fmt.Errorf("bankrec: read the match to unmatch: %w", perr)
+		}
+		if peekType == TargetPayment && peekRef != "" {
+			if lerr := payments.LockPaymentRowsTx(ctx, tx, []string{peekRef}); lerr != nil {
+				return "", "", 0, fmt.Errorf("bankrec: lock payment: %w", lerr)
+			}
+			branches, berr := payments.PaymentBranchesTx(ctx, tx, []string{peekRef})
+			if berr != nil {
+				return "", "", 0, fmt.Errorf("bankrec: read the payment branch: %w", berr)
+			}
+			if b, ok := branches[strings.ToLower(peekRef)]; !ok || !reach(b) {
+				return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+			}
+		}
+	}
 
 	var lineID string
 	err = tx.QueryRow(ctx,

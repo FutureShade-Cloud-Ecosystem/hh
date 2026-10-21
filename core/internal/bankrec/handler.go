@@ -169,7 +169,7 @@ func (h *Handler) unmatch(w http.ResponseWriter, r *http.Request, caller guards.
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if err := h.svc.Unmatch(r.Context(), in.MatchID, actor(r)); err != nil {
+	if err := h.svc.UnmatchReach(r.Context(), in.MatchID, actor(r), caller.CanAccessBranch); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}

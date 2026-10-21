@@ -365,3 +365,48 @@ func TestIntegration_MatchReach_AnAutoMatchByABranchManagerSkipsAnotherBranchsLo
 		t.Errorf("control: a manager with reach over both: %d %s | line %s live %d; want the match made", code, out, ls, live)
 	}
 }
+
+// Concurrency for the unmatch: a writer holds the payment row between its lock and its counter draw
+// (testkit.DrawPark); a branch A manager's unmatch and a global manager's unmatch of the same match queue behind it
+// on the payment row, holding nothing, and when it finishes there is no deadlock, the global manager's unmatch
+// lands, and the branch A manager's never does.
+func TestIntegration_UnmatchReach_TheFenceHoldsBesideAWriterOfTheSamePaymentRow(t *testing.T) {
+	w := newReachWorld(t)
+	line := w.line(t, "REACH UNMATCH RACE", 5000)
+	code, body := w.post(w.callerAB, w.manual(line, reachPayB1))
+	if code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	var m Match
+	_ = json.Unmarshal([]byte(body), &m)
+	park := testkit.NewDrawPark(t, w.pool, "payments", 55010302)
+	touch := park.TouchRow("payments", "updated_at = now()", reachPayB1)
+	park.WaitParked("a writer holds the payment row at its counter draw")
+	type out struct {
+		who  string
+		code int
+	}
+	res := make(chan out, 2)
+	go func() { c, _ := w.unmatch(w.callerA, m.ID); res <- out{"A", c} }()
+	go func() { c, _ := w.unmatch(w.callerAB, m.ID); res <- out{"AB", c} }()
+	park.WaitBlocked("the unmatches queue on the payment row")
+	park.Answers(map[string]chan error{"writer": touch})
+	got := map[string]int{}
+	for i := 0; i < 2; i++ {
+		select {
+		case o := <-res:
+			got[o.who] = o.code
+		case <-time.After(30 * time.Second):
+			t.Fatal("an unmatch never finished")
+		}
+	}
+	if got["A"] == http.StatusOK {
+		t.Errorf("the branch A manager's unmatch of branch B's payment landed")
+	}
+	if got["AB"] != http.StatusOK && got["AB"] != http.StatusConflict {
+		t.Errorf("the global manager's unmatch answered %d", got["AB"])
+	}
+	if _, ps, _ := w.written(t, line, reachPayB1); ps != "RECEIVED" && got["AB"] == http.StatusOK {
+		t.Errorf("after the global manager's unmatch the payment reads %s, want RECEIVED", ps)
+	}
+}
