@@ -900,6 +900,14 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentsHeld = {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  reversed: boolean;
+  applied_cents: number;
+  held_cents: number;
+};
 export type PaymentsReapplyRequest = {
   reason: string;
   idempotency_key: string;

@@ -256,3 +256,5 @@ additions:
     reason: "HH-767 (HH-690b Leg A): a manager at the sale's branch resolves one open card refund attempt as REFUNDED (with the processor's refund_ref, so the same-key retry books without a second processor call) or NOT_REFUNDED (closing it FAILED and releasing the capture ceiling), separation of duties refusing the initiator; the ERP had no resolution route; no ERP source route."
   - route: "POST /api/v1/ar/payments/{id}/reapply"
     reason: "SF-2l: a manager applies the money a reversed payment holds in 2310 to open invoices of the payment's own customer (Dr 2310 / Cr AR through the settle's slice), capped at the held figure, idempotent by key; the ERP reversal posted no liability and so had nothing to re-apply; no ERP source route."
+  - route: "GET /api/v1/ar/payments/{id}/held"
+    reason: "SF-2l: what a reversed payment still holds in 2310 (amount less what was re-applied), the figure the desk's re-application form shows; the ERP reversal held nothing and had no such read; no ERP source route."

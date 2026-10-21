@@ -1709,6 +1709,34 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/ar/payments/{id}/held:
+    get:
+      operationId: paymentsHeldFor
+      tags: [staff-payments]
+      summary: What a payment holds in 2310 right now
+      description: >-
+        The reversed payment's amount less what has been re-applied to invoices; zero for a payment that was never
+        reversed, is itself a reversing entry or has no account. A plain read for the desk's re-application form: the
+        write judges the figure again under the payment row. A payment outside the caller's branch reach answers 404.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The held figure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsHeld"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # --- payment: the two manager routes over the card charge attempts (the
   # card charge design's section 4). Both are RequireManager and are
   # registered by the payment handler's RegisterRoutes beside the config
@@ -3430,6 +3458,17 @@ components:
           type: array
           description: The invoices the reversal put back onto the AR book
           items: { type: string, format: uuid }
+
+    PaymentsHeld:
+      type: object
+      required: [payment_id, payment_no, amount_cents, reversed, applied_cents, held_cents]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        reversed: { type: boolean }
+        applied_cents: { type: integer, format: int64, description: What re-application has already taken out of 2310 }
+        held_cents: { type: integer, format: int64, description: Amount less applied for a reversed payment with an account, else zero }
 
     PaymentsReapplyRequest:
       type: object

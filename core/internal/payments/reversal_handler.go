@@ -40,6 +40,22 @@ func (h *ReversalHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/payments/{id}/reverse", g.RequireManager(h.staff(h.reverse)))
 	// SF-2l: the money a reversal holds in 2310, applied to invoices of the same customer.
 	r.Handle("POST /api/v1/ar/payments/{id}/reapply", g.RequireManager(h.staff(h.reapply)))
+	r.Handle("GET /api/v1/ar/payments/{id}/held", g.RequireManager(h.staff(h.held)))
+}
+
+func (h *ReversalHandler) held(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	got, err := h.svc.Held(r.Context(), r.PathValue("id"), sc.IsManager(), sc.CanAccessBranch)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "payment not found")
+			return
+		}
+		h.log.Warn("payment held read failed", "payment_id", r.PathValue("id"), "err", err)
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 func (h *ReversalHandler) reapply(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

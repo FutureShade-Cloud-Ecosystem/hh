@@ -649,3 +649,42 @@ func (r *Repository) reapplyReplay(ctx context.Context, tx pgx.Tx, in ReapplyInp
 		HeldBeforeCents: heldNow + total, HeldAfterCents: heldNow, Lines: lines, Replayed: true,
 	}, true, nil
 }
+
+// HeldFor reads what one payment holds in 2310: amount less re-applied, for a reversed payment; zero otherwise. A
+// payment outside the caller's branch reach is not found.
+func (r *Repository) HeldFor(ctx context.Context, paymentID string, canAccessBranch func(branchID string) bool) (HeldFigure, error) {
+	if r.pool == nil {
+		return HeldFigure{}, errNoDB
+	}
+	pid, err := uuid.Parse(paymentID)
+	if err != nil {
+		return HeldFigure{}, ErrNotFound
+	}
+	var (
+		h          HeldFigure
+		branchID   string
+		reversedAt *time.Time
+		reversing  bool
+		hasAccount bool
+	)
+	err = r.pool.QueryRow(ctx,
+		`SELECT p.id::text, p.payment_no::text, p.amount_cents, p.branch_id::text, p.reversed_at,
+		        p.reverses_payment_id IS NOT NULL, p.customer_id IS NOT NULL,
+		        COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra WHERE ra.payment_id = p.id), 0)
+		   FROM payments p WHERE p.id = $1::uuid`, pid.String()).
+		Scan(&h.PaymentID, &h.PaymentNo, &h.AmountCents, &branchID, &reversedAt, &reversing, &hasAccount, &h.AppliedCents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return HeldFigure{}, ErrNotFound
+		}
+		return HeldFigure{}, fmt.Errorf("held: read payment: %w", err)
+	}
+	if canAccessBranch != nil && !canAccessBranch(branchID) {
+		return HeldFigure{}, ErrNotFound
+	}
+	h.Reversed = reversedAt != nil
+	if h.Reversed && !reversing && hasAccount {
+		h.HeldCents = h.AmountCents - h.AppliedCents
+	}
+	return h, nil
+}

@@ -22,13 +22,18 @@ import (
 
 func (w *reversalGLWorld) reapplyRoute(tier int, orig, body string) (int, string) {
 	w.r.t.Helper()
+	return w.route(tier, http.MethodPost, "/api/v1/ar/payments/"+orig+"/reapply", body)
+}
+
+func (w *reversalGLWorld) route(tier int, method, path, body string) (int, string) {
+	w.r.t.Helper()
 	h := payments.NewReversalHandler(payments.NewReverseService(w.r.repo), slog.New(slog.DiscardHandler)).
 		WithUserLinker(func(context.Context, string) (string, bool) { return w.r.userID, true })
 	sg := testkit.NewStaffGuards(w.r.t)
 	sg.SetAuthority(coreid.StaffAuthority{RoleID: "payables_receivables", Tier: tier, Scope: "global"})
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, sg.Guards)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/ar/payments/"+orig+"/reapply", strings.NewReader(body))
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer "+sg.Bearer(w.r.t))
 	r.Header.Set("X-Org", testkit.OrgNorthSlug)
 	r.Header.Set("Content-Type", "application/json")
@@ -46,6 +51,23 @@ func TestIntegration_ReapplyRoute_StatusesAndWords(t *testing.T) {
 		return fmt.Sprintf(`{"reason":"wrong account","idempotency_key":%q,"allocations":[{"invoice_id":%q,"amount_cents":%d}]}`, key, inv, cents)
 	}
 	k := "route-" + w.r.suffix
+	held := func() payments.HeldFigure {
+		code, out := w.route(2, http.MethodGet, "/api/v1/ar/payments/"+orig+"/held", "")
+		var h payments.HeldFigure
+		if code != http.StatusOK || json.Unmarshal([]byte(out), &h) != nil {
+			t.Fatalf("the held read answered %d %s", code, out)
+		}
+		return h
+	}
+	if h := held(); h.Reversed || h.HeldCents != 0 || h.AmountCents != 10_000 {
+		t.Errorf("a payment never reversed reads %+v, want it holding nothing", h)
+	}
+	if code, _ := w.route(3, http.MethodGet, "/api/v1/ar/payments/"+orig+"/held", ""); code != http.StatusForbidden {
+		t.Errorf("a front line caller read the held figure: %d, want 403", code)
+	}
+	if code, _ := w.route(2, http.MethodGet, "/api/v1/ar/payments/00000000-0000-4000-8000-0000000000aa/held", ""); code != http.StatusNotFound {
+		t.Errorf("the held figure of a missing payment answered %d, want 404", code)
+	}
 
 	if code, _ := w.reapplyRoute(3, orig, body(k+"-a", 1_000)); code != http.StatusForbidden {
 		t.Errorf("a front line caller answered %d, want 403 from the manager gate", code)
@@ -54,6 +76,9 @@ func TestIntegration_ReapplyRoute_StatusesAndWords(t *testing.T) {
 		t.Errorf("a payment never reversed answered %d %s, want 409 in words", code, out)
 	}
 	w.reverse(orig)
+	if h := held(); !h.Reversed || h.HeldCents != 10_000 || h.AppliedCents != 0 {
+		t.Errorf("a reversed payment reads %+v, want 10000 held", h)
+	}
 	if code, out := w.reapplyRoute(2, orig, `{"reason":"","idempotency_key":"x","allocations":[]}`); code != http.StatusBadRequest {
 		t.Errorf("no reason answered %d %s, want 400", code, out)
 	}
@@ -70,6 +95,9 @@ func TestIntegration_ReapplyRoute_StatusesAndWords(t *testing.T) {
 	var got payments.Reapplication
 	if err := json.Unmarshal([]byte(out), &got); err != nil || got.AppliedCents != 6_000 || got.HeldBeforeCents != 10_000 || got.HeldAfterCents != 4_000 || len(got.Lines) != 1 || got.Replayed {
 		t.Errorf("the 201 body reads %s (%v)", out, err)
+	}
+	if h := held(); h.HeldCents != 4_000 || h.AppliedCents != 6_000 {
+		t.Errorf("after 6000 the held read says %+v, want 4000 held and 6000 applied", h)
 	}
 	if code, out := w.reapplyRoute(2, orig, body(k+"-d", 6_000)); code != http.StatusOK || !strings.Contains(out, `"replayed":true`) {
 		t.Errorf("a replay answered %d %s, want 200 flagged as a replay", code, out)

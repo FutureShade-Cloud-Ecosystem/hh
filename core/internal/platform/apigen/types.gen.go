@@ -1038,6 +1038,15 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentsHeld struct {
+	PaymentId    string `json:"payment_id"`
+	PaymentNo    string `json:"payment_no"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reversed     bool   `json:"reversed"`
+	AppliedCents int64  `json:"applied_cents"`
+	HeldCents    int64  `json:"held_cents"`
+}
+
 type PaymentsReapplyRequest struct {
 	Reason         string                      `json:"reason"`
 	IdempotencyKey string                      `json:"idempotency_key"`

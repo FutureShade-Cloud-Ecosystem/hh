@@ -95,9 +95,21 @@ type Reapplication struct {
 	Replayed        bool          `json:"replayed"`
 }
 
+// HeldFigure is what one payment holds in 2310 right now: its amount less what has been re-applied, and zero for a
+// payment that was never reversed (or is itself a reversing entry), which holds nothing.
+type HeldFigure struct {
+	PaymentID    string `json:"payment_id"`
+	PaymentNo    string `json:"payment_no"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reversed     bool   `json:"reversed"`
+	AppliedCents int64  `json:"applied_cents"`
+	HeldCents    int64  `json:"held_cents"`
+}
+
 // reapplyStore is the persistence the re-application service needs.
 type reapplyStore interface {
 	ReapplyHeld(ctx context.Context, in ReapplyInput, now time.Time) (Reapplication, error)
+	HeldFor(ctx context.Context, paymentID string, canAccessBranch func(branchID string) bool) (HeldFigure, error)
 }
 
 // validateReapply is the request check that runs before any database is consulted: the ids are normalised to one
@@ -199,4 +211,16 @@ func sameReapplyBody(paymentID string, stored map[string]int64, storedPayment st
 
 func replayConflict() error {
 	return ReplayConflictError{Msg: "that idempotency key already re-applied held money differently; use a new key"}
+}
+
+// Held answers what a payment holds, for the desk's re-application form. A plain read, no lock: the figure the write
+// re-judges under the payment row. Manager only, like the write.
+func (s *ReverseService) Held(ctx context.Context, paymentID string, isManager bool, canAccessBranch func(branchID string) bool) (HeldFigure, error) {
+	if !isManager {
+		return HeldFigure{}, errors.New("payments: reading held money is a manager action")
+	}
+	if s.reapply == nil {
+		return HeldFigure{}, errors.New("payments: re-application is not wired")
+	}
+	return s.reapply.HeldFor(ctx, paymentID, canAccessBranch)
 }
