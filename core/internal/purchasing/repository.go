@@ -640,7 +640,7 @@ func (r *Repository) ToleranceTx(ctx context.Context, tx pgx.Tx, branchID string
 	err := r.q(tx).QueryRow(ctx, `
 		SELECT COALESCE(branch_id::text,''), qty_tolerance_pct, price_tolerance_pct, price_tolerance_abs_cents
 		  FROM purchasing_match_tolerance
-		 WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
+		 WHERE branch_id IS NULL OR branch_id = NULLIF($1, '')::uuid
 		 ORDER BY (branch_id IS NOT NULL) DESC
 		 LIMIT 1`, branchID).Scan(&t.BranchID, &t.QtyPct, &t.PricePct, &t.PriceAbsCents)
 	if errors.Is(err, pgx.ErrNoRows) {

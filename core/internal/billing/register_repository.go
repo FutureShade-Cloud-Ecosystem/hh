@@ -50,7 +50,7 @@ func (r *Repository) RegisterPolicyFor(ctx context.Context, branchID string) (Re
 		        reminder_tones, reminder_cooldown_hours, show_credits_default, default_branch_scope,
 		        workspace_split_pct, workspace_arrangement
 		   FROM ar_invoice_policy
-		  WHERE ($1 <> '' AND branch_id = $1::uuid) OR branch_id IS NULL
+		  WHERE branch_id = NULLIF($1,'')::uuid OR branch_id IS NULL
 		  ORDER BY branch_id NULLS LAST
 		  LIMIT 1`, branchID).
 		Scan(&bid, &p.AccountPositionVisibility, &p.DueSoonDays, &tones, &p.ReminderCooldownHours,
@@ -104,7 +104,7 @@ func (r *Repository) SetRegisterPolicy(ctx context.Context, p RegisterPolicy) (b
 		        workspace_split_pct         = $8,
 		        workspace_arrangement       = $9,
 		        updated_at                  = now()
-		  WHERE ($1 = '' AND branch_id IS NULL) OR ($1 <> '' AND branch_id = $1::uuid)`,
+		  WHERE ($1 = '' AND branch_id IS NULL) OR (branch_id = NULLIF($1,'')::uuid)`,
 		p.BranchID, p.AccountPositionVisibility, p.DueSoonDays, strings.Join(p.ReminderTones, ","),
 		p.ReminderCooldownHours, p.ShowCreditsDefault, p.DefaultBranchScope,
 		p.WorkspaceSplitPct, p.WorkspaceArrangement)
