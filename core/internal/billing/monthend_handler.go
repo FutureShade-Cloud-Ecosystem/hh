@@ -31,7 +31,15 @@ type MonthEndHandler struct {
 	statements *StatementService
 	log        *slog.Logger
 	zone       houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+	reach      WorkspaceReach  // the customer module's reach rule for the doors that name one account (UX-89)
 }
+
+// WithCustomerReach binds the customer reach rule the account statement read and a one account statement run
+// hold their customer to.
+func (h *MonthEndHandler) WithCustomerReach(c WorkspaceReach) *MonthEndHandler { h.reach = c; return h }
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *MonthEndHandler) CustomerReachWired() bool { return h.reach != nil }
 
 // WithZone binds the dealer's business day zone source: a named or defaulted as-of day is the
 // dealer's own calendar day. Nil keeps the Ontario dealer's.
@@ -247,6 +255,9 @@ func (h *MonthEndHandler) statementRun(w http.ResponseWriter, r *http.Request, _
 		h.writeErr(w, r, err)
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, req.CustomerID) {
+		return
+	}
 	caller, _ := identity.StaffContextFromContext(r.Context())
 	var only []string
 	if req.CustomerID != "" {
@@ -283,6 +294,9 @@ func (h *MonthEndHandler) getStatementRun(w http.ResponseWriter, r *http.Request
 // artefact itself, which is what the print path opens, the SAME bytes that were generated, never a
 // re-render, because a re-render is a different document.
 func (h *MonthEndHandler) latestStatement(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !FenceCustomer(w, r, h.reach, r.PathValue("customerID")) {
+		return
+	}
 	st, ok, err := h.statements.LatestStatement(r.Context(), r.PathValue("customerID"))
 	if err != nil {
 		h.writeErr(w, r, err)

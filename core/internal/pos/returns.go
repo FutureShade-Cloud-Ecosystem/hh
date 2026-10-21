@@ -1362,6 +1362,8 @@ func (s *Service) accountCreditAllowed(ctx context.Context, customerID string, i
 	if internalRail {
 		return nil
 	}
+	// Read directly, on purpose (customerFor's ruling): a return of the branch's own sale is held by the sale's
+	// branch, not by the account's home.
 	cust, err := s.store.ReadCustomer(ctx, customerID)
 	if err != nil {
 		return err

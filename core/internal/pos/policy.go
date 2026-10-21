@@ -179,6 +179,13 @@ func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) 
 	if !caller.CanAccessBranch(in.BranchID) {
 		return ParkedTicket{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
 	}
+	// THE CUSTOMER WALL: a ticket parked for an account names it, so the account is held to the caller's reach
+	// (and must exist) with the one customer answer.
+	if in.CustomerID != "" {
+		if _, err := s.customerFor(ctx, caller, in.CustomerID); err != nil {
+			return ParkedTicket{}, err
+		}
+	}
 	saleType := in.SaleType
 	if saleType == "" {
 		saleType = SaleCollectNow

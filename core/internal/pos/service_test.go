@@ -104,6 +104,9 @@ type fakeStore struct {
 	pickups       map[string]ReturnPickup
 	// A-06 portal return requests (methods live in return_requests_test.go)
 	returnRequests map[string]ReturnRequest
+	// requestReach is the branch list the last staff queue read handed the store (nil: every branch), UX-89.
+	requestReach    []string
+	requestReachSet bool
 	// -- item 9.4, Pay balance state (pay_balance_test.go's methods) --
 	owingOrders     []OwingOrder                    // canned find answer
 	owingTruncated  bool                            // canned find truncated flag

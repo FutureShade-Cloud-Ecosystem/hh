@@ -3,6 +3,7 @@ package messaging
 import (
 	"encoding/json"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,7 +32,18 @@ type Handler struct {
 	hub      *SSEHub     // optional; nil => the /stream route answers 501 and clients short-poll
 	tickets  *ticketAuth // optional; nil => /stream-ticket answers 501 and clients use the Bearer stream
 	log      *slog.Logger
+	reach    customerwall.Reach // the customer module's reach rule for the rep and inbound doors (UX-89)
 }
+
+// WithCustomerReach binds the customer module's reach rule (the one seam) the rep assignment, rep route and
+// inbound customer doors hold their customer to (UX-89). CustomerReachWired is the boot check that it was.
+func (h *Handler) WithCustomerReach(c customerwall.Reach) *Handler {
+	h.reach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *Handler) CustomerReachWired() bool { return h.reach != nil }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	if log == nil {
