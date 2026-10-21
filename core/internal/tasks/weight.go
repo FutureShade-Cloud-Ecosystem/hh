@@ -68,6 +68,11 @@ type WeightInput struct {
 	Weight  string // DECIMAL as string, must parse > 0
 	UOM     string
 	Note    string
+	// OrgID and Reach hold the answer to the caller's org and branch reach (UX-81c round 2): the answer rewrites the
+	// order line's quantity, so a task outside either is a missing task and nothing is written. A nil Reach is a
+	// system caller; an empty OrgID reads the task unscoped, as every system read does.
+	OrgID string
+	Reach func(branch string) (bool, error)
 }
 
 // WeightResult is one round trip's outcome, stated completely: the task (carrying the weight), and
@@ -192,9 +197,22 @@ func (s *Service) SubmitWeight(ctx context.Context, in WeightInput) (WeightResul
 		return WeightResult{}, httpx.BadRequestf("note is too long (max 400)")
 	}
 
+	// The task is read under the caller's org (the branch's org, GetTask) and held to the caller's branch reach before
+	// anything else is said or written: another dealer's task, or one on a branch the caller does not reach, is the
+	// same ErrNotFound as a missing task, so the answer tells nothing about it.
+	ctx = withOrg(ctx, in.OrgID)
 	pre, err := s.store.GetTask(ctx, in.TaskID)
 	if err != nil {
 		return WeightResult{}, err
+	}
+	if in.Reach != nil {
+		reach, err := in.Reach(pre.BranchID)
+		if err != nil {
+			return WeightResult{}, fmt.Errorf("%w: %v", ErrReachUnavailable, err)
+		}
+		if !reach {
+			return WeightResult{}, ErrNotFound
+		}
 	}
 	if pre.TaskType != TypeNeedWeight {
 		return WeightResult{}, ErrNotWeightTask

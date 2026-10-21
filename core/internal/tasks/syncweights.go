@@ -102,6 +102,24 @@ func (s *WeightSyncStore) orderBrief(ctx context.Context, orgID, orderID string)
 	return s.orders.OrderBrief(ctx, orderID)
 }
 
+// heldToReach answers ErrRowNotFound for a task on a branch the caller does not reach, exactly the answer a missing
+// task gets (UX-81c round 2): the weights scope held a task to the caller's org only, so a scoped caller of one branch
+// wrote to, and deleted, another branch's weight task. An unwired authority fences nothing, as the create; an
+// unreadable one is the plain retryable error.
+func (s *WeightSyncStore) heldToReach(ctx context.Context, f sync.ScopeFilter, branch string) error {
+	if s.staff == nil {
+		return nil
+	}
+	reach, err := s.callerReaches(ctx, f, branch)
+	if err != nil {
+		return err
+	}
+	if !reach {
+		return sync.ErrRowNotFound
+	}
+	return nil
+}
+
 // callerReaches is the pick door's rule over the same seams, never a second copy of it (SyncStore.callerReaches).
 func (s *WeightSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
 	return (&SyncStore{staff: s.staff, branchOrg: s.branchOrg}).callerReaches(ctx, f, branch)
@@ -404,15 +422,18 @@ func (s *WeightSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, fromUOM string
+	var from, fromUOM, branch string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, COALESCE(weight_uom, '') FROM tasks
+		`SELECT status, COALESCE(weight_uom, ''), COALESCE(branch_id::text, '') FROM tasks
 		 WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'NEED_WEIGHT' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &fromUOM); err != nil {
+		id, f.OrgID).Scan(&from, &fromUOM, &branch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for weight sync write: %w", id, err)
+	}
+	if err := s.heldToReach(ctx, f, branch); err != nil {
+		return sync.RowState{}, err
 	}
 
 	var r syncRow
@@ -537,6 +558,19 @@ func (s *WeightSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("tasks: begin weight sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var branch string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text, '') FROM tasks
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'NEED_WEIGHT' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&branch); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
+		return sync.RowState{}, fmt.Errorf("tasks: lock %q for weight sync delete: %w", id, err)
+	}
+	if err := s.heldToReach(ctx, f, branch); err != nil {
+		return sync.RowState{}, err
+	}
 	seq, err := allocateScopeSeqTx(ctx, tx, weightsSeqScope)
 	if err != nil {
 		return sync.RowState{}, err
