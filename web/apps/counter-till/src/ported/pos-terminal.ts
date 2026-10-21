@@ -6993,15 +6993,9 @@ ${this.renderFulfilTiles()}
               : nothing;
   }
 
+  /** The ways forward name what the clerk can do; a click only marks the card, it claims no send. */
   private selectWayForward(id: string): void {
     this.selectedWayForward = this.selectedWayForward === id ? null : id;
-    if (id === 'payment_now') {
-      this.setUtil('Payment option selected: ACH first (no fee) or card (2.9% surcharge).');
-    } else if (id === 'send_paylink') {
-      this.setUtil('Paylink sent to the owner phone on file. Works with no sign in on phone.');
-    } else if (id === 'ask_override') {
-      this.setUtil('Credit override request sent to controller with this order.');
-    }
   }
 
   /** Change 8: Counter Till account check when payMethod is ACCOUNT and a customer is attached. */
@@ -7010,6 +7004,8 @@ ${this.renderFulfilTiles()}
 
     const check = evaluateAccountCheck(this.customer, this.standing, {
       isCreditBlockedRefusal: this.creditBlockedByServer,
+      cashOnDemand:
+        cashOnDemandPosture(this.paymentOptions(), this.customer.payment_terms_days, this.customer.credit_limit_cents) !== null,
     });
     if (!check) return nothing;
 
@@ -7070,7 +7066,7 @@ ${this.renderFulfilTiles()}
                     @click=${() => this.selectWayForward(way.id)}
                   >
                     <span class="pos-way-title">${way.title}</span>
-                    <span class="pos-way-sub" title="to the owner's phone">${way.subtitle}</span>
+                    <span class="pos-way-sub">${way.subtitle}</span>
                     <span class="pos-way-body">${way.body}</span>
                   </button>
                 `,

@@ -585,6 +585,55 @@ test("a held account's check is blocked from the server's hold, whatever its nam
   await expect(check).not.toContainText("promise was missed");
 });
 
+test("clicking a way forward on a held account claims no send and makes no request", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C09", "Harbour Drywall Inc");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  await expect(page.getByTestId("pos-ways-grid")).toBeVisible();
+  const posts: string[] = [];
+  page.on("request", (req) => {
+    // The price reads re-post in the background; only a paylink, payment or override door counts.
+    if (req.method() !== "GET" && /paylink|override|\/ar\/|credit/.test(req.url())) posts.push(req.url());
+  });
+  for (const id of ["pos-way-payment-now", "pos-way-send-paylink", "pos-way-ask-override"]) {
+    await page.getByTestId(id).click();
+  }
+  expect(posts).toEqual([]);
+  const text = (await page.locator("body").innerText()).toLowerCase();
+  expect(text).not.toContain("paylink sent");
+  expect(text).not.toContain("request sent");
+  expect(text).not.toContain("2.9%");
+  expect(text).not.toContain("hold lifts");
+});
+
+test("a terms-0 account's check reads no terms on file, never thirty days", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C07", "Homeowner B Retail");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  const check = page.getByTestId("pos-account-check");
+  await expect(check).toContainText("No terms on file");
+  await expect(check).not.toContainText("30 days");
+  await expect(check).not.toContainText("No open promise");
+  await expect(check).not.toContainText("may buy on this account");
+});
+
+test("a cash on demand account's check reads cash on demand, not terms or credit", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  await openStep(page, "payment");
+  const charge = page.getByRole("button", { name: "Charge Account" });
+  if (await charge.count()) await charge.click();
+  const check = page.getByTestId("pos-account-check");
+  await expect(check).toContainText("Cash on demand: pay before release");
+  await expect(check).not.toContainText("Terms");
+  await expect(check).not.toContainText("may buy on this account");
+});
+
 test("the collapsed Items summary carries the priced lines' subtotal before the ring", async ({ page }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");

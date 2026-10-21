@@ -27,6 +27,8 @@ export interface AccountCheckStanding {
 export interface AccountCheckOptions {
   isCreditBlockedRefusal?: boolean;
   crewMemberName?: string;
+  /** The account pays before release (zero day terms with a credit line, and no on account shape offered). */
+  cashOnDemand?: boolean;
 }
 
 export interface WayForward {
@@ -37,26 +39,28 @@ export interface WayForward {
   testId: string;
 }
 
+// What the clerk can do and where it is done. None of these cards sends anything: the paylink and
+// the override are not wired to this card, so the words name the door and make no claim of a send.
 export const WAYS_FORWARD: readonly WayForward[] = [
   {
     id: 'payment_now',
     title: 'Take a payment now',
-    subtitle: 'ACH first, no fee',
-    body: 'Card adds a 2.9% surcharge, shown as its own line before you confirm. The hold lifts when it lands.',
+    subtitle: 'ask the account to pay',
+    body: 'Take the payment at the counter or the Money Desk. A hold is released by hand once the account is clear.',
     testId: 'pos-way-payment-now',
   },
   {
     id: 'send_paylink',
     title: 'Send a paylink',
-    subtitle: 'to the owner phone',
-    body: 'The link goes to the owner phone on file. It works with no sign in, on a phone.',
+    subtitle: 'from the Money Desk',
+    body: 'Ask the account to pay; a paylink is sent from the Money Desk.',
     testId: 'pos-way-send-paylink',
   },
   {
     id: 'ask_override',
     title: 'Ask the credit manager',
     subtitle: 'to override',
-    body: 'Sends the request to the controller with this order.',
+    body: 'Ask the credit manager to review the hold; an override is made on their desk.',
     testId: 'pos-way-ask-override',
   },
 ];
@@ -119,23 +123,33 @@ export function evaluateAccountCheck(
   });
   const availableCreditFormatted = availableCreditWords(calculatedAvailable);
 
+  const termsDays = customer.payment_terms_days && customer.payment_terms_days > 0 ? customer.payment_terms_days : 0;
+  const termsWords = termsDays > 0 ? `Terms ${termsDays} days` : 'No terms on file';
+
   if (!blocked) {
-    const termsDays = customer.payment_terms_days && customer.payment_terms_days > 0
-      ? customer.payment_terms_days
-      : 30;
-
     const crewMember = options?.crewMemberName || '';
-    const crewMemberLine = crewMember
-      ? `${crewMember} is a listed crew member of ${name} and may buy on this account. Every ticket needs a job and PO.`
-      : `${name} may buy on this account. Every ticket needs a job and PO.`;
-
-    const line1 = `Available credit ${availableCreditFormatted} · Terms ${termsDays} days · No open promise.`;
+    let title = 'In good standing';
+    let lines: string[];
+    let crewMemberLine: string;
+    if (options?.cashOnDemand === true) {
+      crewMemberLine = `${name} pays before release: the sale is paid before the goods go out.`;
+      lines = ['Cash on demand: pay before release.', crewMemberLine];
+    } else if (calculatedAvailable <= 0) {
+      title = 'No credit available';
+      crewMemberLine = 'No credit is available, so a charge to this account will be refused.';
+      lines = [`Available credit ${availableCreditFormatted} · ${termsWords}.`, crewMemberLine];
+    } else {
+      crewMemberLine = crewMember
+        ? `${crewMember} is a listed crew member of ${name} and may buy on this account. Every ticket needs a job and PO.`
+        : `${name} may buy on this account. Every ticket needs a job and PO.`;
+      lines = [`Available credit ${availableCreditFormatted} · ${termsWords}.`, crewMemberLine];
+    }
 
     return {
       standing: 'good_standing',
       isBlocked: false,
-      title: 'In good standing',
-      lines: [line1, crewMemberLine],
+      title,
+      lines,
       availableCreditFormatted,
       termsDays,
       crewMemberLine,
@@ -150,7 +164,7 @@ export function evaluateAccountCheck(
 
   const rawBucket = standing?.oldest_bucket || '';
   const bucketLabel = rawBucket === '' ? null : rawBucket.includes('days') ? rawBucket : `${rawBucket} days`;
-  const title = rawBucket === '' ? 'On hold' : `On hold: past due ${rawBucket}`;
+  const title = bucketLabel === null ? 'On hold' : `On hold: past due ${bucketLabel}`;
 
   const pastDuePart = pastDueFormatted
     ? ` · Past due ${pastDueFormatted}${bucketLabel ? `, ${bucketLabel}` : ''}.`
@@ -169,7 +183,7 @@ export function evaluateAccountCheck(
     title,
     lines,
     availableCreditFormatted,
-    termsDays: customer.payment_terms_days && customer.payment_terms_days > 0 ? customer.payment_terms_days : 30,
+    termsDays,
     crewMemberLine: crewLine,
     pastDueFormatted,
     bucketLabel,
