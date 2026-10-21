@@ -389,6 +389,14 @@ type BankJournalFacts struct {
 	BranchID  string
 	NetCents  int64 // debits minus credits on the named account's lines
 	TouchesGL bool  // at least one line is on that account
+	// Reversed: another journal names this one in reverses_journal_id. The GL keeps the original POSTED, so Posted
+	// alone cannot say a journal was cancelled.
+	Reversed bool
+	// ReversesAnother: this journal is itself a reversal of another.
+	ReversesAnother bool
+	// IdempotencyKey is the key the journal was posted under; a caller that posts its own journals recognises them
+	// by its key prefix.
+	IdempotencyKey string
 }
 
 // JournalForBank answers BankJournalFacts for one journal and one GL account code, found false when the id is no
@@ -404,7 +412,12 @@ func (s *Service) JournalForBank(ctx context.Context, journalID, glAccountCode s
 	if err != nil {
 		return BankJournalFacts{}, false, err
 	}
-	f := BankJournalFacts{Posted: j.Status == StatusPosted, BranchID: j.BranchID}
+	reversed, err := s.store.JournalIsReversed(ctx, journalID)
+	if err != nil {
+		return BankJournalFacts{}, false, err
+	}
+	f := BankJournalFacts{Posted: j.Status == StatusPosted, BranchID: j.BranchID, Reversed: reversed,
+		ReversesAnother: j.ReversesJournalID != "", IdempotencyKey: j.IdempotencyKey}
 	for _, l := range j.Lines {
 		if l.AccountCode == glAccountCode {
 			f.TouchesGL = true

@@ -328,7 +328,8 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		}
 		var held bool
 		if qerr := tx.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM bank_matches WHERE target_type = 'JOURNAL' AND target_ref_id::text = $1 AND unmatched_at IS NULL)`,
+			`SELECT EXISTS (SELECT 1 FROM bank_matches WHERE unmatched_at IS NULL
+			                 AND ((target_type = 'JOURNAL' AND target_ref_id::text = $1) OR journal_id::text = $1))`,
 			strings.ToLower(m.TargetRefID)).Scan(&held); qerr != nil {
 			return "", fmt.Errorf("bankrec: journal live match: %w", qerr)
 		}
@@ -854,7 +855,7 @@ func (r *Repository) CountUnmatchedInMonth(ctx context.Context, accountID string
 
 // CompleteReconciliation marks a reconciliation COMPLETED and emits bank.recon.completed in the SAME tx (so
 // the event is never published without the state change, or vice versa). Guarded on status OPEN.
-func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCode, completedBy string) (Reconciliation, error) {
+func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCode, completedBy string, recheck func(ctx context.Context, matches []JournalMatchFact) error) (Reconciliation, error) {
 	if r.pool == nil {
 		return Reconciliation{}, errNoDB
 	}
@@ -902,6 +903,37 @@ func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCo
 	}
 	if unmatched > 0 {
 		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d UNMATCHED line(s) remain for %d-%02d", unmatched, year, month)
+	}
+
+	// The month's live JOURNAL matches, read with the lines locked above, are rechecked by the caller through the GL
+	// seam (SF-2j round 2): a journal reversed since the match refuses the sign off.
+	if recheck != nil {
+		jrows, qerr := tx.Query(ctx, `
+			SELECT m.target_ref_id::text, l.description, l.amount_cents
+			  FROM bank_matches m JOIN bank_statement_lines l ON l.id = m.statement_line_id
+			 WHERE l.bank_account_id = $1::uuid AND m.target_type = 'JOURNAL' AND m.unmatched_at IS NULL
+			   AND m.target_ref_id IS NOT NULL
+			   AND EXTRACT(YEAR FROM l.txn_date) = $2 AND EXTRACT(MONTH FROM l.txn_date) = $3
+			 ORDER BY l.txn_date, l.id`, acctID, year, month)
+		if qerr != nil {
+			return Reconciliation{}, fmt.Errorf("bankrec: read the journal matches: %w", qerr)
+		}
+		var matches []JournalMatchFact
+		for jrows.Next() {
+			var m JournalMatchFact
+			if serr := jrows.Scan(&m.JournalID, &m.LineDescription, &m.LineAmountCents); serr != nil {
+				jrows.Close()
+				return Reconciliation{}, fmt.Errorf("bankrec: scan a journal match: %w", serr)
+			}
+			matches = append(matches, m)
+		}
+		jrows.Close()
+		if jerr := jrows.Err(); jerr != nil {
+			return Reconciliation{}, jerr
+		}
+		if rerr := recheck(ctx, matches); rerr != nil {
+			return Reconciliation{}, rerr
+		}
 	}
 
 	var rec Reconciliation

@@ -57,6 +57,13 @@ type LodgementFact struct {
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
 // *gl.Service. bankrec never reads gl_journals itself.
+// JournalMatchFact is one live JOURNAL match of a month, for CompleteReconciliation's recheck.
+type JournalMatchFact struct {
+	JournalID       string
+	LineDescription string
+	LineAmountCents int64
+}
+
 type JournalSource interface {
 	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
 }

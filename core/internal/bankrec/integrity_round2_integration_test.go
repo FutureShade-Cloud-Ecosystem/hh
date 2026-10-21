@@ -95,7 +95,9 @@ func TestIntegration_Round2_CompletionRechecksTheJournalMatchesOfTheMonth(t *tes
 	if err != nil {
 		t.Fatalf("open the month: %v", err)
 	}
-	t.Cleanup(func() { _, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID) })
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
+	})
 	// The journal is reversed after the match, before the sign off.
 	rev := w.plantJournal(t, "sf2j2-cmp-rev-"+itoa(stamp), "", "POSTED", []jl{{"1000", 0, 7300}, {"4950", 7300, 0}})
 	if _, err := w.pool.Exec(ctx, `UPDATE gl_journals SET reverses_journal_id = $1::uuid WHERE id = $2::uuid`, j, rev); err != nil {

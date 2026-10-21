@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 )
 
 // - import -
@@ -335,16 +336,62 @@ func (s *Service) checkJournalTarget(ctx context.Context, line StatementLine, in
 	if !found || (f.BranchID != "" && !in.CanAccessBranch(f.BranchID)) {
 		return errNotFound
 	}
+	return journalExplains(f, line.AmountCents)
+}
+
+// journalExplains says whether the facts of a journal let it explain a line of the given signed amount: POSTED, not
+// reversed, not itself a reversal, not one of bankrec's own postings (a clearing or an unmatch's reversal), touching
+// the bank account, for exactly the line's amount. The same rule runs at match time and again when a month is
+// completed.
+func journalExplains(f gl.BankJournalFacts, lineCents int64) error {
 	if !f.Posted {
 		return unprocessable("bankrec: that journal is not posted, so it cannot explain a bank line")
+	}
+	if f.Reversed {
+		return unprocessable("bankrec: that journal has been reversed, so it no longer explains a bank line")
+	}
+	if f.ReversesAnother {
+		return unprocessable("bankrec: that journal is itself a reversal, so it cannot explain a bank line")
+	}
+	if strings.HasPrefix(f.IdempotencyKey, "bankrec:") {
+		return unprocessable("bankrec: that journal was posted by the bank reconciliation itself, so it cannot explain a bank line")
 	}
 	if !f.TouchesGL {
 		return unprocessable("bankrec: that journal does not touch this bank account")
 	}
-	if f.NetCents != line.AmountCents {
-		return unprocessable("bankrec: that journal moves this bank account by %d cents and the line is %d cents", f.NetCents, line.AmountCents)
+	if f.NetCents != lineCents {
+		return unprocessable("bankrec: that journal moves this bank account by %d cents and the line is %d cents", f.NetCents, lineCents)
 	}
 	return nil
+}
+
+// recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2): every live JOURNAL match in the month is
+// read again through the GL seam and must still explain its line. A journal reversed since the match, or one that no
+// longer qualifies, refuses the sign off and names the line. It runs inside the completion's transaction, after the
+// month's lines are locked, so the set of matches cannot change under it. A month with journal matches cannot be
+// rechecked without the seam, and is refused.
+func (s *Service) recheckJournalMatches(glCode string) func(ctx context.Context, matches []JournalMatchFact) error {
+	return func(ctx context.Context, matches []JournalMatchFact) error {
+		if len(matches) == 0 {
+			return nil
+		}
+		for _, m := range matches {
+			if s.journals == nil {
+				return unprocessable("bankrec: cannot complete, the journal matched to %q cannot be checked", m.LineDescription)
+			}
+			f, found, err := s.journals.JournalForBank(ctx, m.JournalID, glCode)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer exists", m.LineDescription)
+			}
+			if jerr := journalExplains(f, m.LineAmountCents); jerr != nil {
+				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer explains it (%s)", m.LineDescription, strings.TrimPrefix(jerr.Error(), "bankrec: that journal "))
+			}
+		}
+		return nil
+	}
 }
 
 // UnmatchReach reverses a live match: it stamps the match unmatched (history kept), reverts its line to UNMATCHED,
@@ -508,7 +555,7 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy)
+	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode))
 	if err != nil {
 		return Reconciliation{}, err
 	}
