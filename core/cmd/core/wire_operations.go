@@ -158,6 +158,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithLodgements(tillRepo).
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithJournals(spine.glSvc).
 		WithAudit(auditSvc)
 	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 

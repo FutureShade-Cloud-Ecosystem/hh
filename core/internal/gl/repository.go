@@ -536,6 +536,18 @@ func (r *Repository) GetJournal(ctx context.Context, id string) (Journal, error)
 	return j, nil
 }
 
+// JournalIsReversed says whether another journal names this one in reverses_journal_id.
+func (r *Repository) JournalIsReversed(ctx context.Context, id string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var reversed bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gl_journals WHERE reverses_journal_id = $1::uuid)`, id).Scan(&reversed); err != nil {
+		return false, fmt.Errorf("gl: read whether the journal was reversed: %w", err)
+	}
+	return reversed, nil
+}
+
 func (r *Repository) ListJournals(ctx context.Context, f JournalFilter) ([]Journal, error) {
 	if r.pool == nil {
 		return nil, errNoDB

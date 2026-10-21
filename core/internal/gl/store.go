@@ -37,6 +37,9 @@ type glStore interface {
 	// fails, the journal is not saved. file is how a parked journal's approval request is filed atomically.
 	InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error)
 	GetJournal(ctx context.Context, id string) (Journal, error)
+	// JournalIsReversed says whether another journal names this one in reverses_journal_id (the GL keeps the original
+	// POSTED and adds a reversing journal).
+	JournalIsReversed(ctx context.Context, id string) (bool, error)
 	ListJournals(ctx context.Context, f JournalFilter) ([]Journal, error)
 	ApproveJournal(ctx context.Context, id, approverID string) (Journal, error)
 	// ApproveJournalTx posts a parked DRAFT within the caller's transaction (approvals-rail atomic

@@ -166,6 +166,20 @@ test("the core's refusals read in words that say what to do, and a walled route 
   ]) {
     assert.doesNotMatch(refusalWords(op, text, 409), /[0-9a-f]{8}-[0-9a-f]{4}-/, `${text} reaches the dealer with an id`);
   }
+  // SF-2j: what a manual match must explain, and the signed off month, in the dealer's words.
+  assert.equal(refusalWords("match", "bankrec: a group match is not available yet, match the line to a payment, a lodgement or a journal", 422), "A group match is not available yet. Match the line to a payment, a lodgement or a journal.");
+  assert.equal(refusalWords("match", "bankrec: that lodgement is for 5000 cents and the line is 500000 cents, so it does not explain the line", 422), `That lodgement is ${formatMoney(5000)} and the line is ${formatMoney(500000)}, so it does not explain the line. Pick the lodgement for the same amount.`);
+  assert.equal(refusalWords("match", "bankrec: that journal is not posted, so it cannot explain a bank line", 422), "That journal is not posted yet, so it cannot explain a bank line.");
+  assert.equal(refusalWords("match", "bankrec: that journal does not touch this bank account", 422), "That journal does not move this bank account, so it cannot explain this line.");
+  assert.equal(refusalWords("match", "bankrec: that journal moves this bank account by 3000 cents and the line is 5000 cents", 422), `That journal moves this account by ${formatMoney(3000)} and the line is ${formatMoney(5000)}. Pick the journal for the line's amount.`);
+  assert.equal(refusalWords("match", "bankrec: that journal already explains another statement line", 409), "That journal already explains another line.");
+  // SF-2j round 2: a reversed journal, a reversal, bankrec's own posting, a signed off month's line, and the recheck.
+  assert.equal(refusalWords("match", "bankrec: that journal has been reversed, so it no longer explains a bank line", 422), "That journal has been reversed, so it no longer explains a bank line.");
+  assert.equal(refusalWords("match", "bankrec: that journal is itself a reversal, so it cannot explain a bank line", 422), "That journal is itself a reversal, so it cannot explain a bank line.");
+  assert.equal(refusalWords("match", "bankrec: that journal was posted by the bank reconciliation itself, so it cannot explain a bank line", 422), "That journal was posted by the bank reconciliation itself, so it cannot explain a bank line. Pick a journal from the ledger.");
+  assert.equal(refusalWords("match", "bankrec: that statement line sits in a month that is already reconciled and completed, so it cannot be matched", 409), "That line sits in a month that is already signed off, so it cannot be matched.");
+  assert.equal(refusalWords("complete", `bankrec: cannot complete, the journal matched to the statement line "ACME FEE" no longer explains it (has been reversed, so it no longer explains a bank line)`, 422), `Not signed off: the journal matched to "ACME FEE" no longer explains that line. Undo the match and match the line again.`);
+  assert.equal(refusalWords("unmatch", "bankrec: that match sits in 2026-06, which is already reconciled and completed, so it cannot be unmatched", 409), `That match belongs to ${periodWords(2026, 6)}, which is already signed off, so it cannot be undone.`);
   assert.equal(refusalWords("match", "line abc / target def already has a live match", 409), "That target is already matched to this line.");
   assert.equal(
     refusalWords("unmatch", "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again", 409),
