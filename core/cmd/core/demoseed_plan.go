@@ -131,9 +131,12 @@ type custSpec struct {
 	Key, Name, Type string
 	TermsDays       int
 	CreditCents     int64
-	Branch          int
+	Branch          int // a branch index, or noHomeBranch for a shared account
 	OnHold          bool
 }
+
+// noHomeBranch is a custSpec.Branch that writes a NULL home_branch_id: a shared, company-wide account.
+const noHomeBranch = -1
 
 // Ten accounts, chosen so the counter surface has one of every pricing shape to render: two plain
 // RETAIL walk-ups (list price, no rule), four CONTRACTOR accounts (account price via a customer
@@ -148,33 +151,32 @@ type custSpec struct {
 // purpose (the house rule), the tester's way to find and type it, and the home is the branch the
 // demo logins work so the branch-fenced search answers it.
 //
-// RULING, C01 IS HOMED AT THE BRANCH THE DEMO LOGINS WORK. The staff customer search is
-// branch-fenced (customer/search_scope.go, U-park E4): it admits accounts homed to the searched
-// branch and accounts with no home, and that fence is the product's own security posture, not a
-// gap for a demo to route around. Every demo login carries exactly one branch grant, at Trenton,
-// and the quote world's documents sit at Trenton, so a customer homed to the other branch is
-// invisible to every search a tester can run while holding quotes the same tester is looking at:
-// Northline's quote was on the Quote Desk and "Northline" answered nothing at the till's picker,
-// the same account visible one screen over and unfindable on this one. C01's home is therefore
-// Trenton, beside its quotes. Its older order book stays where it always was, on the other
-// branch's dashboards, which read orders.branch_id and never the customer's home; the repair for
-// databases seeded before this ruling sits in the demoseed_repair pair.
+// RULING, C01, C04 AND C08 ARE SHARED ACCOUNTS (Branch is noHomeBranch, a NULL home_branch_id).
+// The customer rule: an account homed at a branch is held to the callers who reach that branch, and
+// an account with no home is shared company-wide. Northline Hardscapes, Harbourview Builders and the
+// County of Hastings are ordered from at BOTH yards (their order book and invoices sit on each
+// branch's dashboards, and the quote and pick work at Trenton sits beside them), so no single home
+// is true for them, and homing them at either yard would hide them from the other. Shared is the
+// truth of the seed, and none of the three is yard-held.
 //
-// THE SAME RULING HOLDS C04 AND C08. Orders O05 and O07 sit at the branch the demo logins work
-// (the yard's open picks live there), and their accounts, Harbourview Builders and the County, were
-// homed at the other branch, so both held documents at Trenton and were unfindable by name in the
-// staff search there (TestDemoWorld_CustomerSearch walks every customer with a document at that
-// branch). They are homed there now; their older book and invoices stay on the other branch's
-// dashboards, which read orders.branch_id and never the customer's home.
+// WHY THEY STAY FINDABLE AT BOTH YARDS. The staff customer search is branch-fenced
+// (customer/search_scope.go, U-park E4): it admits accounts homed to the searched branch AND accounts
+// with no home, and that fence is the product's own security posture, not a gap for a demo to route
+// around. Every demo login carries exactly one branch grant, at Trenton, so a customer homed to the
+// other branch would be invisible to every search a tester can run while holding documents the same
+// tester is looking at. A shared account has no home to be invisible from: it answers by name at
+// Trenton, and equally to a caller whose one grant is the other yard (TestDemoWorld_CustomerSearch
+// walks every customer with a document at Trenton and then searches as a caller at the other branch).
+// The repair for databases seeded with the older homes sits in the demoseed_repair pair.
 var demoCustomers = []custSpec{
-	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 1, false},
+	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, noHomeBranch, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
 	{"C03", "Quinte Paving & Design (demo)", "CONTRACTOR", 45, 7_500_000, 1, false},
-	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 1, false},
+	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, noHomeBranch, false},
 	{"C05", "Cedar Hollow Homes (demo)", "BUILDER", 30, 4_000_000, 1, false},
 	{"C06", "M. Okafor (demo retail)", "RETAIL", 0, 0, 0, false},
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
-	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 1, false},
+	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, noHomeBranch, false},
 	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
 	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
