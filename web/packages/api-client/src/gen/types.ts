@@ -997,7 +997,7 @@ export type BillingCustomerWorkspaceActivity = {
   kind: "INVOICE" | "PAYMENT" | "CREDIT_MEMO" | "ADJUSTMENT" | "NSF" | "WRITE_OFF";
   reference?: string;
   amount_cents: number;
-  balance_after_cents: number;
+  balance_after_cents?: number;
   branch_id?: string;
   memo?: string;
   occurred_at: string;
@@ -1007,7 +1007,8 @@ export type BillingCustomerWorkspace = {
   invoices_open: BillingCustomerWorkspaceInvoice[];
   invoices_closed: BillingCustomerWorkspaceInvoice[];
   invoices_disputed: BillingCustomerWorkspaceInvoice[];
-  payments: BillingCustomerWorkspacePayment[];
+  payments?: BillingCustomerWorkspacePayment[];
+  payments_withheld: boolean;
   credit_notes: BillingCustomerWorkspaceCreditNote[];
   statements: BillingCustomerWorkspaceStatement[];
   notes: BillingCustomerWorkspaceNote[];

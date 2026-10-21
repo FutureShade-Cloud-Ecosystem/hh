@@ -416,13 +416,13 @@ type ARReminderService struct {
 	baseURL string
 	now     func() time.Time
 	zone    houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
-	reach   CustomerReach   // the customer module's reach rule for the AP contact routes (UX-89); nil = the AR rule
+	reach   WorkspaceReach  // the customer module's reach rule for the AP contact routes (UX-89); nil = the AR rule
 }
 
 // WithCustomerReach binds the customer module's account rule the AP contact routes check an account with, in
 // place of the AR landing's own (home branch or an invoice in the branch), so the shared (no home) account
 // works at any branch and the AP contact agrees with every other customer door.
-func (s *ARReminderService) WithCustomerReach(c CustomerReach) *ARReminderService {
+func (s *ARReminderService) WithCustomerReach(c WorkspaceReach) *ARReminderService {
 	s.reach = c
 	return s
 }

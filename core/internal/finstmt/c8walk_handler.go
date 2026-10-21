@@ -149,11 +149,21 @@ func c8Errf(format string, args ...any) error {
 type C8WalkHandler struct {
 	repo  *billing.ARLandingRepository
 	log   *slog.Logger
-	reach billing.CustomerReach // the customer module's reach rule for the payment policy routes (UX-89)
+	reach billing.WorkspaceReach // the customer module's reach rule for the payment policy routes (UX-89)
+	// userLink adds the linked ERP users.id to the caller stamp. The customer reach rule is the customer read,
+	// which refuses a caller with no linked staff row, so these routes stamp it like every other door here.
+	userLink identity.UserIDLinker
+}
+
+// WithUserLinker binds the ERP users.id linker the caller stamp carries. Nil is legal (authority only), and
+// then no customer is reachable.
+func (h *C8WalkHandler) WithUserLinker(link identity.UserIDLinker) *C8WalkHandler {
+	h.userLink = link
+	return h
 }
 
 // WithCustomerReach binds the customer reach rule the payment policy routes hold their customer to.
-func (h *C8WalkHandler) WithCustomerReach(c billing.CustomerReach) *C8WalkHandler {
+func (h *C8WalkHandler) WithCustomerReach(c billing.WorkspaceReach) *C8WalkHandler {
 	h.reach = c
 	return h
 }
@@ -181,7 +191,7 @@ func (h *C8WalkHandler) RegisterC8WalkRoutes(r httpx.Registrar, g *guards.Guards
 // staff is the caller-stamp wrapper, identical shape to finstmt's caller_stamp.go's staff wrapper.
 func (h *C8WalkHandler) staffed(next guards.StaffHandler) guards.StaffHandler {
 	return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-		next(w, identity.StampRequest(r, caller, nil), caller)
+		next(w, identity.StampRequest(r, caller, h.userLink), caller)
 	}
 }
 

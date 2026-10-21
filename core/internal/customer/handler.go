@@ -140,13 +140,16 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 	}
 	// The customer wall, the account read's own rule: an account homed at a branch the caller cannot reach
 	// answers as not found, and nothing is written.
-	reachable, rerr := h.svc.AccountReachable(r.Context(), r.PathValue("id"))
-	if rerr != nil {
+	// The customer's own read decides (GetAccount, the account read's rule): an account homed at a branch the
+	// caller cannot reach, an id that is no account, and a caller with no linked staff row all answer not found,
+	// and nothing is written.
+	if _, rerr := h.svc.GetAccount(r.Context(), r.PathValue("id")); rerr != nil {
+		var bad httpx.BadRequestError
+		if errors.Is(rerr, ErrNotFound) || errors.Is(rerr, ErrUnauthenticated) || errors.As(rerr, &bad) {
+			httpx.Error(w, http.StatusNotFound, "not found")
+			return
+		}
 		h.writeErr(w, r, rerr)
-		return
-	}
-	if !reachable {
-		httpx.Error(w, http.StatusNotFound, "not found")
 		return
 	}
 	acct, err := h.svc.UpdateBillingAddress(r.Context(), r.PathValue("id"), addr)

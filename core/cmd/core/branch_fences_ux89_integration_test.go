@@ -440,14 +440,15 @@ func TestUX89R2_ARDoorsAgree(t *testing.T) {
 	sg := testkit.NewStaffGuards(t)
 	sg.SetAuthority(coreidentity.StaffAuthority{RoleID: "sales_manager", Tier: coreidentity.TierManager, Scope: coreidentity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reach := customerModuleReach{svc: customer.NewService(customer.NewRepository(pool))}
+	reach := billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool)))
+	link := func(context.Context, string) (string, bool) { return testkit.UserSalesMgrID, true } // the caller's linked staff row: the one seam reaches no unlinked caller
 	mux := http.NewServeMux()
 	arRepo := billing.NewARLandingRepository(pool)
 	billing.NewARLandingHandler(billing.NewARLandingService(arRepo),
 		billing.NewARReminderService(arRepo, billing.NewARLandingService(arRepo), billing.UnwiredSender{}, "").WithCustomerReach(reach), log).
-		WithCustomerReach(reach).RegisterRoutes(mux, sg.Guards)
-	billing.NewC8S3S4Handler(billing.NewRepository(pool), log).WithCustomerReach(reach).RegisterRoutes(mux, sg.Guards)
-	finstmt.NewC8WalkHandler(pool, log).WithCustomerReach(reach).RegisterC8WalkRoutes(mux, sg.Guards)
+		WithCustomerReach(reach).WithUserLinker(link).RegisterRoutes(mux, sg.Guards)
+	billing.NewC8S3S4Handler(billing.NewRepository(pool), log).WithUserLinker(link).WithCustomerReach(reach).RegisterRoutes(mux, sg.Guards)
+	finstmt.NewC8WalkHandler(pool, log).WithUserLinker(link).WithCustomerReach(reach).RegisterC8WalkRoutes(mux, sg.Guards)
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
 	token := sg.Bearer(t)

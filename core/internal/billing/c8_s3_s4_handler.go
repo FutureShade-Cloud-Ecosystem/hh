@@ -53,7 +53,7 @@ type C8S3S4Handler struct {
 	userLink identity.UserIDLinker
 	repo     *Repository
 	log      *slog.Logger
-	reach    CustomerReach // the customer module's reach rule (UX-89)
+	reach    WorkspaceReach // the customer module's reach rule (UX-89)
 }
 
 // NewC8S3S4Handler wires the three new operations over a billing Repository. The
@@ -67,7 +67,7 @@ func NewC8S3S4Handler(repo *Repository, log *slog.Logger) *C8S3S4Handler {
 }
 
 // WithCustomerReach binds the customer reach rule the statement preview holds its customer to (UX-89).
-func (h *C8S3S4Handler) WithCustomerReach(c CustomerReach) *C8S3S4Handler { h.reach = c; return h }
+func (h *C8S3S4Handler) WithCustomerReach(c WorkspaceReach) *C8S3S4Handler { h.reach = c; return h }
 
 // WithUserLinker binds the ERP users.id linker the caller-stamp carries. Nil is legal.
 func (h *C8S3S4Handler) WithUserLinker(link identity.UserIDLinker) *C8S3S4Handler {

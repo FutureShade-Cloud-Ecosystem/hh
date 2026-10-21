@@ -36,11 +36,11 @@ type ARLandingHandler struct {
 	reminders *ARReminderService
 	log       *slog.Logger
 	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
-	reach     CustomerReach   // the customer module's reach rule, for the AP contact routes (UX-89)
+	reach     WorkspaceReach  // the customer module's reach rule, for the AP contact routes (UX-89)
 }
 
 // WithCustomerReach binds the customer reach rule the AP contact routes hold their customer to.
-func (h *ARLandingHandler) WithCustomerReach(c CustomerReach) *ARLandingHandler {
+func (h *ARLandingHandler) WithCustomerReach(c WorkspaceReach) *ARLandingHandler {
 	h.reach = c
 	return h
 }

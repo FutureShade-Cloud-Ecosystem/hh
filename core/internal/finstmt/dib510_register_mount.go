@@ -77,10 +77,12 @@ func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
 	return h
 }
 
-// WithCustomerReach binds the customer module's reach rule the statement preview, the payment policy and the
-// hold and paylink routes hold their customer to (UX-89). CustomerReachWired is the boot check that it was.
-func (h *Handler) WithCustomerReach(c billing.CustomerReach) *Handler {
-	h.customerReach = c
+// WithCustomerReach binds the customer module's reach rule every customer taking door here is held to: the
+// account workspace and its notes (UX-93), the statement preview, the payment policy, the hold and the
+// paylink (UX-89). Unbound, the workspace answers not found for every customer and boot refuses
+// (CustomerReachWired).
+func (h *Handler) WithCustomerReach(r billing.WorkspaceReach) *Handler {
+	h.customerReach = r
 	return h
 }
 
@@ -130,7 +132,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	// Walk change 8 S5/S6/S8: promises list, account payment policy, reminder rules + enrol/exempt.
 	// Lives here because cmd/server/main.go is off limits to a lane and the same pool backs it;
 	// see c8walk_handler.go's header for why these handlers are in finstmt and not in billing.
-	NewC8WalkHandler(pool, h.log).WithCustomerReach(h.customerReach).RegisterC8WalkRoutes(r, g)
+	NewC8WalkHandler(pool, h.log).WithUserLinker(h.userLink).WithCustomerReach(h.customerReach).RegisterC8WalkRoutes(r, g)
 
 	// -- the customer account workspace (Change 8 S2 + S2M) ----------------------------------------
 	// Mounted from this composition seam for the same reason the register is: cmd/server/main.go
@@ -142,7 +144,11 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	if h.svc != nil && h.svc.now != nil {
 		creditSvc = creditSvc.WithClock(h.svc.now)
 	}
-	billing.NewWorkspaceHandler(repo, creditSvc, h.log).RegisterRoutes(r, g)
+	billing.NewWorkspaceHandler(repo, creditSvc, h.log).
+		WithUserLinker(h.userLink).
+		WithPaymentTrail(h.paymentTrail).
+		WithCustomerReach(h.customerReach).
+		RegisterRoutes(r, g)
 
 	// -- the C8 S3 + S4 + S3M surface (manual hold, paylink, statement preview) ---------------------
 	// Three new operations beside the workspace handler. The handler rides the same billing
