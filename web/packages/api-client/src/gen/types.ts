@@ -900,6 +900,39 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentsHeld = {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  reversed: boolean;
+  applied_cents: number;
+  held_cents: number;
+};
+export type PaymentsReapplyRequest = {
+  reason: string;
+  idempotency_key: string;
+  allocations: PaymentsReapplyAllocation[];
+};
+export type PaymentsReapplyAllocation = {
+  invoice_id: string;
+  amount_cents: number;
+};
+export type PaymentsReapplication = {
+  payment_id: string;
+  batch_id: string;
+  applied_cents: number;
+  held_before_cents: number;
+  held_after_cents: number;
+  replayed: boolean;
+  lines: PaymentsReapplyLine[];
+};
+export type PaymentsReapplyLine = {
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  outcome: "CLOSES" | "PART";
+  balance_after_cents: number;
+};
 export type PaymentCardAttemptSummary = {
   ref: string;
   id: string;
@@ -5581,6 +5614,7 @@ export type TillInvoicePaymentRecord = {
   received_by?: string;
   received_by_name?: string;
   received_at: string;
+  reversed_at?: string;
 };
 export type TillInvoicePayments = {
   invoice_id: string;

@@ -184,6 +184,13 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: SQL uuid guard (no <> '' beside a ::uuid cast of the same parameter)
+        working-directory: core
+        # A parameter guarded by <> '' beside a ::uuid cast of itself fails with invalid input syntax
+        # for type uuid once the planner casts it inside an index condition (PR 585). The test walks
+        # every Go file under core and names the file and line of each statement; the same test also
+        # runs inside the untagged suite below, so this step only gives the failure a name.
+        run: go test -count=1 ./internal/platform/uuidguard/
       - name: Test core
         working-directory: core
         # The untagged suite. The database-gated legs skip politely here
@@ -263,12 +270,13 @@ jobs:
         working-directory: web
         run: node scripts/ci-web-shards.mjs run ${{ matrix.shard }} 6
 
-  # The one check the gate reads. It fails unless every job it needs finished
-  # with success: a skipped or cancelled shard fails it, never passes it.
+  # The one check the gate reads. It needs every job in this file (core, web,
+  # demo and integration; add a new job here too) and fails unless each
+  # finished with success: a skipped or cancelled shard fails it, never passes it.
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [core, web]
+    needs: [core, web, demo, integration]
     if: always()
     steps:
       - name: Every needed job succeeded
@@ -292,9 +300,8 @@ jobs:
   # catalogue rows, so each gate variable points at an already-migrated
   # database of its own).
   #
-  # The job is deliberately not a required check: its first runs are read
-  # by the lead, not relied on (the plan's own wording), and the required
-  # status stays the ci job alone until the lead says otherwise.
+  # The ci job above needs this job, so a red or unfinished demo job holds
+  # the one required status (the ci job) red or pending.
   demo:
     name: demo tag and the gated database legs
     runs-on: ubuntu-latest
@@ -468,8 +475,7 @@ jobs:
   # gate database at all: each builds one from zero off the DATABASE_URL
   # server, which the service allows.
   #
-  # Like the demo job, this job's first runs are read by the lead, not
-  # relied on.
+  # Like the demo job, the ci job above needs this job.
   integration:
     name: integration tag suite on a migrated and seeded database
     runs-on: ubuntu-latest

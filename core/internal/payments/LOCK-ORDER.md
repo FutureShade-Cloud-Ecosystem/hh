@@ -97,6 +97,7 @@ conflict; the share was never something these writers needed to hold back.
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | POS pay balance take (item 9.4) | order row (`FOR NO KEY UPDATE`), payments counter (not advancing), the order's open invoice rows (`FOR NO KEY UPDATE`, ascending), the raise of an uninvoiced remainder's invoice through the desk's writer (a new invoice: invoices counter +1, item 9 review P2-2), payment insert through the till's tender (payments feed +1), invoice balance moves (invoices counter +1 each) | yes: the order row is the order's own first step, then the register settle's own sequence; the raise draws the invoices counter (step 4) before the settle's own counter draws, the same step every invoice-inserting writer takes after its invoice row locks |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
+| `ReapplyHeld` (SF-2l, `reversal.go`) | payment row `FOR UPDATE`, the named invoice rows `FOR NO KEY UPDATE` ascending, then the invoices counter (one draw per balance move); no payments counter, it stamps no payments row | yes: the payment row first as a reversal and a bounce take it, the invoices after, the counter last; the DrawPark leg parks one apply at its first invoices counter draw while a second queues on the payment row |
 | `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one; the terminal writers `MarkDeposited` and bankrec's claim and release also take the payment row first and, since the sync seq trigger (0422), the payments counter after it (the batch ones take every named payment row ascending, `FOR NO KEY UPDATE`, through `payments.LockPaymentRowsTx`, before the UPDATE draws the counter), and no invoice |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
 | POS return, cash or card refund (the till refund rail) | per-sale advisory lock, the restock's stock rows (the restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam, taken only when the return restocks), payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows the return takes, the order's own steps 2 then 3, and a paid sale's return (no invoice row) draws no counter at all (the delta reviews' P2); the stock rows sit ahead of every counter because the ring and the cancel's settlement both take stock rows before the invoices counter, so a return that drew a counter first could meet either head on (round 3's ring and cancel legs pin both meetings) |
@@ -337,6 +338,40 @@ from a joined CTE, and refuses a `FOR UPDATE OF <other alias>` as a lock of this
 above: a trigger relying `UPDATE` of products, customers, vendors or pricing_list_prices must take the table's
 counter, by literal or by a `Lock...Seq` helper named for it, earlier in the same function.
 
+## The till session row, and the completed month (SF-2j)
+
+Two edges outside the payments chain, each decided in the writer's own transaction:
+
+- **The till session row before any movement insert or count.** `till.Repository.InsertMovement` takes
+  `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE` first, checks the session is OPEN under that
+  lock, then inserts the movement; `SetCounted`'s guarded UPDATE takes the same lock strength on the same row. A
+  count and a movement of one session therefore serialise: the movement either commits before the count (and is
+  counted) or reads COUNTED and refuses. `FOR NO KEY UPDATE`, not `FOR UPDATE`, because no key column of
+  `till_sessions` is ever set by either writer and the movement's own foreign key takes `FOR KEY SHARE` on the same
+  row, which a `NO KEY UPDATE` does not conflict with (a stronger lock would queue every movement behind every
+  other movement's foreign key check for nothing). The plain OPEN read in `recordMovement` is now only a fast
+  refusal; the locked read decides. Leg: `TestIntegration_MovementBesideACountOfTheSameSession`.
+- **The bank reconciliation row, then its advisory key, before every other bankrec lock (SF-2j round 2).**
+  `CompleteReconciliation` takes the reconciliation row `FOR UPDATE`, then
+  `pg_advisory_xact_lock(hashtextextended('bankrec-recon|<account>|<year>|<month>', 0))`, then the month's lines, and
+  rechecks the month's JOURNAL matches through the GL seam (a read, no lock). Every other bankrec writer takes the
+  reconciliation row of the line's month `FOR SHARE` (it conflicts with completion's `FOR UPDATE`) and then the shared
+  form of the same key FIRST, before any payment row and before any line: `UnmatchReach`, `PersistMatchReach` (manual
+  and auto matches), and `ImportLines` (the key only, for each month the file touches, ascending). The order is
+  therefore: the reconciliation row, the key, the payment rows, the match, the line, the payment update. Completion
+  first: the writer waits and reads COMPLETED, and an unmatch or a match of a line in a COMPLETED month is refused.
+  The writer first: completion waits for its commit and its recount sees what it wrote. No row yet: a row made later is
+  OPEN and its completion needs the exclusive key, which the writer's shared hold blocks until it commits. The prefix
+  keeps the key from hashing like another module's text. The cycle this order closes: an unmatch holding payment P
+  waiting for the reconciliation row that completion holds, completion waiting for a line a match has updated, that
+  match waiting for P. With the reconciliation row first in every writer, no writer holds a payment or a line while
+  it waits for the row. Lock modes: the share form lets writers of one month run together; only completion excludes
+  them.
+- **The till session row on the other two doors (SF-2j round 2).** `GetSessionTx` (used by `TakeTender` and the cash
+  `RefundTender`, inside the caller's transaction) reads the session row `FOR SHARE`: tenders and refunds on one
+  session do not wait on each other, and a count (`SetCounted`'s `FOR NO KEY UPDATE`) queues behind them or finds
+  them committed. The session row is the first row either transaction takes in the till, so no cycle results.
+
 ## The legs
 
 `lockorder_integration_test.go` (this package) and `lockorder_pos_return_test.go` (cmd/core, the ones that need the
@@ -353,6 +388,7 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
   BEFORE UPDATE trigger inside the counter upsert (red on the main shape), and beside credits on its invoices,
   parked past its first re-open
 - the multi-invoice `ReversePayment` against NSF bounces on its invoices
+- a reversal beside a bank match of the SAME payment, both orders (`lockorder_reversed_integration_test.go`): reversal first, the match is refused (the claim carries `reversed_at IS NULL` in the UPDATE that decides it), match first, the reversal proceeds (reversal.go refuses only a reversed, reversing or VOID payment); both take the payment rows ascending (`payments.LockPaymentRowsTx`, a batch takes every named row first), then the payments counter, and neither deadlocks
 - the NSF pair against each settle (single invoice)
 - the multi-invoice NSF against a settle naming the invoices in the other order (red without the bounce's
   payments counter)

@@ -105,6 +105,7 @@ func (b *builder) depositSales() {
 			"customer_id", demoID("customer:"+s.Cust),
 			"order_id", demoID(orderKey),
 			"branch_id", b.branchID(s.Branch),
+			"org_id", driverOrgStamp(),
 			"status", "PARTIALLY_PAID",
 			"issue_date", b.day(-s.AgeDay), "due_date", due,
 			"subtotal_cents", subtotal, "tax_cents", tax, "total_cents", total,

@@ -219,12 +219,16 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 
 func (b *builder) customers() {
 	for _, c := range demoCustomers {
+		var home any // a shared account (noHomeBranch) writes NULL
+		if c.Branch != noHomeBranch {
+			home = b.branchID(c.Branch)
+		}
 		b.add(insert("customers", "(id)",
 			"id", demoID("customer:"+c.Key),
 			"account_no", demoPrefix+c.Key,
 			"name", c.Name,
 			"customer_type", c.Type,
-			"home_branch_id", b.branchID(c.Branch),
+			"home_branch_id", home,
 			"payment_terms_days", c.TermsDays,
 			"credit_limit_cents", c.CreditCents,
 			"on_hold", c.OnHold,
@@ -537,6 +541,7 @@ func (b *builder) invoices() {
 			"customer_id", demoID("customer:"+s.Cust),
 			"order_id", orderID,
 			"branch_id", b.branchID(s.Branch),
+			"org_id", driverOrgStamp(),
 			"status", status,
 			"issue_date", b.agoDays(s.IssueAge),
 			"due_date", b.day(s.DueOffset),
@@ -673,6 +678,7 @@ func (b *builder) counterSale(s saleSpec, mint func(string) string, no string) {
 			"customer_id", demoID("customer:"+s.Cust),
 			"order_id", mint(orderKey),
 			"branch_id", b.branchID(s.Branch),
+			"org_id", driverOrgStamp(),
 			"status", status,
 			"issue_date", b.day(-s.AgeDay), "due_date", due,
 			"subtotal_cents", subtotal, "tax_cents", tax, "total_cents", total,

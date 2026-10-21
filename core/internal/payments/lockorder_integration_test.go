@@ -96,6 +96,7 @@ func newLORig(t *testing.T, size int32) *loRig {
 		_, _ = r.obs.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, r.custID)
 		_, _ = r.obs.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, r.custID)
 		_, _ = r.obs.Exec(c, `DELETE FROM payment_nsf WHERE customer_id = $1::uuid`, r.custID)
+		_, _ = r.obs.Exec(c, `DELETE FROM payment_reapplications WHERE customer_id = $1::uuid`, r.custID)
 		_, _ = r.obs.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, r.custID)
 		_, _ = r.obs.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
 			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, r.custID)

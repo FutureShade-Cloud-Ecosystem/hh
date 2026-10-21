@@ -380,19 +380,19 @@ func TestQuotePlan_PaverAndBulkPricesClearTheFloorExceptTheNamedStories(t *testi
 		"C08/P04": "R04, the municipal supply agreement",
 		"C08/P05": "R04, the municipal supply agreement",
 		// The paver pairs no seeded rule covers, left to the shared tiers: recorded exposures, not
-		// stories. No seeded line carries any of them. C09 sits behind the branch fence (homed at
-		// the branch no demo login reaches); C03 is reachable at the demo logins' branch, and a
+		// stories. No seeded line carries any of them. C09 is a shared account, reachable at the
+		// demo logins' branch (UX-94b), and its pairs are exposures like C03's; C03 is reachable at the demo logins' branch, and a
 		// paver line for it would trip the chip the same way C10's did.
 		"C03/P01": "no rule of its own, left to the shared tier (recorded exposure)",
 		"C03/P02": "no rule of its own, left to the shared tier (recorded exposure)",
 		"C03/P03": "no rule of its own, left to the shared tier (recorded exposure)",
 		"C03/P04": "no rule of its own, left to the shared tier (recorded exposure)",
 		"C03/P05": "no rule of its own, left to the shared tier (recorded exposure)",
-		"C09/P01": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
-		"C09/P02": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
-		"C09/P03": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
-		"C09/P04": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
-		"C09/P05": "no rule of its own, left to the shared tier, behind the branch fence (recorded exposure)",
+		"C09/P01": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C09/P02": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C09/P03": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C09/P04": "no rule of its own, left to the shared tier (recorded exposure)",
+		"C09/P05": "no rule of its own, left to the shared tier (recorded exposure)",
 	}
 	seen := map[string]bool{}
 	for _, c := range demoCustomers {

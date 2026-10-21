@@ -187,8 +187,8 @@ test("with no signal a customer is never shown with invented credit or terms", a
     await row.click();
     await expect(page.getByText("Maple Ridge Contracting").first()).toBeVisible();
   }
-  const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-  expect(body).not.toMatch(/Available \(derived\) \$0\.00/i);
-  expect(body).not.toMatch(/Terms\s+d\b/i);
-  expect(body).not.toMatch(/Cash On Demand account/i);
+  // getByText pierces the till's shadow root; body.innerText() does not, and would pass on an empty read.
+  await expect(page.getByText(/Available \(derived\) \$0\.00/i)).toHaveCount(0);
+  await expect(page.getByText(/Terms\s+d\b/i)).toHaveCount(0);
+  await expect(page.getByText(/Cash On Demand account/i)).toHaveCount(0);
 });

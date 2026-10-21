@@ -260,6 +260,8 @@ func healthyRules() []RuleRef {
 		"payment.received":       {"cash", "ar", "card_clearing"},
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"payment.reversed":       {"ar", "refund_payable"},
+		"payment.reapplied":      {"ar", "refund_payable"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
@@ -309,5 +311,154 @@ func TestAC14_TillOverShort(t *testing.T) {
 	}
 	if len(fZero.journals) != 0 {
 		t.Fatalf("a balanced drawer must book nothing, got %d journals", len(fZero.journals))
+	}
+}
+
+// SF-2d round 4 (ruled): every payment.reversed is Dr AR / Cr 2310 refund_payable, the full amount, whatever the
+// tender, the session, the register or the deposit status; one journal however often the event is delivered; and the
+// account never depends on a status the payload or the payment reader carries.
+func TestPaymentReversedLegs(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name, method, status string
+		payload              map[string]any
+	}{
+		{"cheque undeposited", "CHEQUE", "RECEIVED", map[string]any{}},
+		{"card in clearing", "CARD", "RECEIVED", map[string]any{}},
+		{"card deposited", "CARD", "DEPOSITED", map[string]any{"original_cleared": true, "original_status": "DEPOSITED"}},
+		{"cheque deposited", "CHEQUE", "DEPOSITED", map[string]any{"original_cleared": true}},
+		{"cash", "CASH", "RECEIVED", map[string]any{"original_cleared": false}},
+	}
+	for _, c := range cases {
+		f := newFakeStore()
+		svc := newTestService(f).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: c.method, Status: c.status, AmountCents: 12000}})
+		payload := map[string]any{"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": c.method, "branch_id": "b1"}
+		for k, v := range c.payload {
+			payload[k] = v
+		}
+		for i := 0; i < 2; i++ { // delivered twice
+			if err := svc.consume(ctx, ev("payment.reversed", payload)); err != nil {
+				t.Fatalf("%s: consume: %v", c.name, err)
+			}
+		}
+		d := f.lastInserted()
+		wantLeg(t, d, "1100", 12000, 0)
+		wantLeg(t, d, "2310", 0, 12000)
+		if !d.balanced() {
+			t.Fatalf("%s: unbalanced", c.name)
+		}
+		if d.IdempotencyKey != "payment.reversed:rev1" {
+			t.Fatalf("%s: key %q", c.name, d.IdempotencyKey)
+		}
+	}
+	// An old payload (no branch, no status facts) posts the same way: the account never read the status.
+	fOld := newFakeStore()
+	svcOld := newTestService(fOld).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: "CARD", Status: "DEPOSITED", AmountCents: 500}})
+	if err := svcOld.consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev9", "reverses_payment_id": "orig9", "amount_cents": 500})); err != nil {
+		t.Fatalf("old payload: %v", err)
+	}
+	wantLeg(t, fOld.lastInserted(), "2310", 0, 500)
+	// A complete payload needs no payment reader at all.
+	fNo := newFakeStore()
+	if err := newTestService(fNo).consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev8", "reverses_payment_id": "orig8", "amount_cents": 700, "method": "CHEQUE", "branch_id": "b1"})); err != nil {
+		t.Fatalf("a complete payload with no reader: %v", err)
+	}
+	wantLeg(t, fNo.lastInserted(), "2310", 0, 700)
+	// A malformed event is an error, never a silent ack.
+	svc := newTestService(newFakeStore()).WithPaymentReader(fakePaymentReader{})
+	if err := svc.consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev1"})); err == nil {
+		t.Fatal("a reversal naming no original must be refused")
+	}
+}
+
+// The topic is posted by the consumer and its two roles are required at boot.
+func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
+	found := false
+	for _, topic := range PostedTopics {
+		if topic == "payment.reversed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("payment.reversed must be a topic the posting consumer owns")
+	}
+	for _, role := range []string{"ar", "refund_payable"} {
+		f := newFakeStore()
+		svc := newTestService(f)
+		var without []RuleRef
+		for _, r := range healthyRules() {
+			if r.EventType == "payment.reversed" && r.LineRole == role {
+				continue
+			}
+			without = append(without, r)
+		}
+		f.activeRules = without
+		if err := svc.ValidatePostingRules(context.Background()); err == nil {
+			t.Fatalf("a missing payment.reversed %s rule must fail the boot validation", role)
+		}
+	}
+}
+
+// SF-2l (ruled 49.3 and 52): a re-application of the money a reversal holds is Dr 2310 refund_payable / Cr AR for the
+// total, one journal per request however often the event is delivered, on the branch the payload carries.
+func TestPaymentReappliedLegs(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f)
+	payload := map[string]any{"batch_id": "batch1", "payment_id": "orig1", "amount_cents": 9000, "method": "CHEQUE", "branch_id": "b1"}
+	for i := 0; i < 2; i++ { // delivered twice
+		if err := svc.consume(ctx, ev("payment.reapplied", payload)); err != nil {
+			t.Fatalf("consume: %v", err)
+		}
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "2310", 9000, 0)
+	wantLeg(t, d, "1100", 0, 9000)
+	if !d.balanced() {
+		t.Fatal("unbalanced")
+	}
+	if d.IdempotencyKey != "payment.reapplied:batch1" || d.BranchID != "b1" || d.SourceRefID != "orig1" {
+		t.Fatalf("key %q branch %q source ref %q", d.IdempotencyKey, d.BranchID, d.SourceRefID)
+	}
+	if len(f.journals) != 1 {
+		t.Fatalf("delivered twice, %d journals", len(f.journals))
+	}
+	for _, bad := range []map[string]any{
+		{"payment_id": "orig1", "amount_cents": 100},
+		{"batch_id": "b", "amount_cents": 100},
+		{"batch_id": "b", "payment_id": "orig1"},
+		{"batch_id": "b", "payment_id": "orig1", "amount_cents": -5},
+	} {
+		if err := newTestService(newFakeStore()).consume(ctx, ev("payment.reapplied", bad)); err == nil {
+			t.Fatalf("a malformed re-application %v was acked", bad)
+		}
+	}
+}
+
+// The topic is posted by the consumer and its two roles are required at boot.
+func TestPaymentReapplied_IsAPostedTopicWithRequiredRules(t *testing.T) {
+	found := false
+	for _, topic := range PostedTopics {
+		if topic == "payment.reapplied" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("payment.reapplied must be a topic the posting consumer owns")
+	}
+	for _, role := range []string{"ar", "refund_payable"} {
+		f := newFakeStore()
+		svc := newTestService(f)
+		var without []RuleRef
+		for _, r := range healthyRules() {
+			if r.EventType == "payment.reapplied" && r.LineRole == role {
+				continue
+			}
+			without = append(without, r)
+		}
+		f.activeRules = without
+		if err := svc.ValidatePostingRules(context.Background()); err == nil {
+			t.Fatalf("a missing payment.reapplied/%s rule must fail validation", role)
+		}
 	}
 }

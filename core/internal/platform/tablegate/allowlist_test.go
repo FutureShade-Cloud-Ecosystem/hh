@@ -192,8 +192,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/syncscope_invoices.go",
-		tables: []string{"orders"},
-		reason: "the invoice sync scope resolves the order's org for the sync fence (SELECT org_id FROM orders), read only",
+		tables: []string{"orders", "locations"},
+		reason: "the invoice sync scope holds the order the document bills to the caller's org for the sync fence, through the order's branch and the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-95a: no writer stamps orders.org_id; row 2954)",
 	},
 	{
 		module: "branches",
@@ -296,9 +296,9 @@ var allowlist = []allowlistEntry{
 	{
 		module: "dispatch",
 		file:   "core/internal/dispatch/repository_w3.go",
-		tables: []string{"customers", "orders"},
+		tables: []string{"customers", "locations", "orders"},
 		writes: []string{"scope_sequences"},
-		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows",
+		reason: "the Wave 3 reads (pick feed, MTO, reschedule, scan trail) read the order and customer facts the stops carry; the 0213 seq stamp marks its rows; the org held ticket and pending feed reads hold the stop's or order's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 rounds 5 and 6: no writer stamps orders.org_id; approved, decision record row 2879)",
 	},
 	{
 		module: "dispatch",
@@ -506,6 +506,12 @@ var allowlist = []allowlistEntry{
 		// the outbox store implementation itself lives here: PgOutboxStore is
 		// the write and read side of the 0013 bus every producer inserts to.
 		reason: "the transactional outbox store's own implementation (PgOutboxStore); the bus is the table and this module is its keeper",
+	},
+	{
+		module: "order",
+		file:   "core/internal/order/repository.go",
+		tables: []string{"locations"},
+		reason: "the org held brief read (OrderBriefInOrg) holds an order's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 round 6: no writer stamps orders.org_id; approved, decision record row 2879)",
 	},
 	{
 		module: "order",
@@ -992,9 +998,9 @@ var allowlist = []allowlistEntry{
 	{
 		module: "tasks",
 		file:   "core/internal/tasks/repository.go",
-		tables: []string{},
+		tables: []string{"locations"},
 		writes: []string{"scope_sequences"},
-		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above)",
+		reason: "sync allocator: the 0213 seq stamp on pushed rows (shared pattern above); the REST reads (GetTask, ListTasks, the transition lock) hold a task's branch to the caller's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-81 round 6: no writer stamps tasks.org_id on every path; approved, decision record row 2879)",
 	},
 	{
 		module: "tax",

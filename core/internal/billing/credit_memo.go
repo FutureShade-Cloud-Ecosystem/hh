@@ -217,7 +217,10 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 		return doc, nil
 	}
 
-	plan, err := w.planCreditMemo(ctx, in)
+	// The plan read here is a fast refusal and, for an accommodation, the plan itself. A REVERSAL is planned AGAIN
+	// inside insertCreditMemo's transaction, under the lock on the reversed invoice, because what the invoice has
+	// left to credit can only be read there: two reversals of one invoice must not both pass the cap (SF-2e).
+	plan, err := w.planCreditMemo(ctx, w.pool, in)
 	if err != nil {
 		return InvoiceDoc{}, err
 	}
@@ -225,7 +228,7 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 		return InvoiceDoc{}, ErrNothingToInvoice
 	}
 
-	doc, err := w.insertCreditMemo(ctx, in, plan)
+	doc, plan, err := w.insertCreditMemo(ctx, in, plan)
 	if err != nil {
 		if isUniqueViolation(err) {
 			if existing, ok, ferr := w.findByKey(ctx, in.IdempotencyKey); ferr == nil && ok {
@@ -268,11 +271,18 @@ type creditPlan struct {
 }
 
 // planCreditMemo resolves REVERSAL or ACCOMMODATION into one shape.
-func (w *InvoiceWriter) planCreditMemo(ctx context.Context, in CreditMemoInput) (creditPlan, error) {
+func (w *InvoiceWriter) planCreditMemo(ctx context.Context, q planQuerier, in CreditMemoInput) (creditPlan, error) {
 	if in.ReversesInvoiceID == "" {
 		return w.planAccommodation(ctx, in)
 	}
-	return w.planReversal(ctx, in)
+	return w.planReversal(ctx, q, in)
+}
+
+// planQuerier is the read side of a pool or a transaction: planReversal runs on the pool as a fast refusal and again
+// on the memo's transaction, where the remainder is read under the lock.
+type planQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // planAccommodation: the amount is a subtotal, tax is assessed through the shared seam.
@@ -308,15 +318,20 @@ func (w *InvoiceWriter) planAccommodation(ctx context.Context, in CreditMemoInpu
 	}, nil
 }
 
-// planReversal: mirror the original. Tax is COPIED, never re-assessed.
-func (w *InvoiceWriter) planReversal(ctx context.Context, in CreditMemoInput) (creditPlan, error) {
+// planReversal: mirror what the original has LEFT. Tax is COPIED from the original, never re-assessed.
+//
+// The cap (SF-2e): the remainder is the original's subtotal less the subtotal of every credit memo already linked to
+// it (reverses_invoice_id), and its tax less theirs. A whole reversal credits the remainder; a partial one is capped
+// at it; an invoice credited in full has nothing left. Run inside the memo's transaction, under the reversed invoice's
+// FOR NO KEY UPDATE lock, the sum cannot change between this read and the insert.
+func (w *InvoiceWriter) planReversal(ctx context.Context, q planQuerier, in CreditMemoInput) (creditPlan, error) {
 	var (
 		p                         creditPlan
 		origSub, origTax, origTot int64
 		docType, sourceKind       string
 		customerID, brnch         string
 	)
-	err := w.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::text,
        subtotal_cents, tax_cents, total_cents
   FROM invoices WHERE id = $1`, in.ReversesInvoiceID).
@@ -342,10 +357,28 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 		return creditPlan{}, httpx.BadRequestf("the credit memo's customer must match the invoice it reverses")
 	}
 
-	// A PARTIAL credit: the caller named an amount smaller than the original. One summary line, and
-	// the tax is PRO-RATED from the original's own tax rather than re-assessed, same reason as above.
-	if in.AmountCents > 0 && in.AmountCents < origSub {
-		tax := moneyutil.AllocateLargestRemainder(origTax, []int64{in.AmountCents, origSub - in.AmountCents})[0]
+	// What earlier memos already took. Memos hold negative figures; the sums are read positive.
+	var prevSub, prevTax int64
+	if err := q.QueryRow(ctx, `
+SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
+  FROM invoices WHERE reverses_invoice_id = $1::uuid AND doc_type = 'CREDIT_MEMO' AND status <> 'VOID'`,
+		in.ReversesInvoiceID).Scan(&prevSub, &prevTax); err != nil {
+		return creditPlan{}, fmt.Errorf("billing: read what is already credited: %w", err)
+	}
+	remSub, remTax := origSub-prevSub, origTax-prevTax
+	if remSub <= 0 {
+		return creditPlan{}, httpx.BadRequestf("invoice %s has nothing left to credit: it has already been credited in full", p.origNo)
+	}
+	if in.AmountCents > remSub {
+		return creditPlan{}, httpx.BadRequestf("a credit memo cannot be more than invoice %s has left to credit: %s before tax (%s with tax) is left",
+			p.origNo, money(remSub), money(remSub+remTax))
+	}
+
+	// A PARTIAL credit: the caller named an amount smaller than what is left. One summary line, and the tax is
+	// PRO-RATED from the tax that is left (the original's own tax for the first memo) rather than re-assessed, same
+	// reason as above. A credit of exactly what is left finishes the invoice's tax to the cent.
+	if in.AmountCents > 0 && in.AmountCents < remSub {
+		tax := moneyutil.AllocateLargestRemainder(remTax, []int64{in.AmountCents, remSub - in.AmountCents})[0]
 		desc := in.Memo
 		if desc == "" {
 			desc = "Partial credit against " + p.origNo
@@ -357,12 +390,23 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 		}}
 		return p, nil
 	}
-	if in.AmountCents > origSub {
-		return creditPlan{}, httpx.BadRequestf("a credit memo cannot exceed the invoice it reverses")
+	if prevSub > 0 {
+		// A whole reversal (or a credit of exactly what is left) after earlier memos: the lines are partly credited
+		// already, so what is left is one summary line, with the tax that is left.
+		desc := in.Memo
+		if desc == "" {
+			desc = "Credit against " + p.origNo + ", what was left"
+		}
+		p.subtotal, p.tax = remSub, remTax
+		p.lines = []OrderInvoiceLine{{
+			LineNo: 1, Description: desc, QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
+			UnitPriceCents: remSub, PriceUOM: "EA", LineTotalCents: remSub,
+		}}
+		return p, nil
 	}
 
 	// FULL reversal: every line, mirrored.
-	rows, err := w.pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 SELECT line_no, COALESCE(order_line_id::text,''), COALESCE(product_id::text,''), description,
        qty_entered::text, uom_entered, qty_base::text, unit_price_cents, price_uom, line_total_cents
   FROM invoice_lines WHERE invoice_id = $1 ORDER BY line_no`, in.ReversesInvoiceID)
@@ -395,23 +439,13 @@ SELECT line_no, COALESCE(order_line_id::text,''), COALESCE(product_id::text,''),
 }
 
 // insertCreditMemo writes the header, the negated lines and the AR subledger row in ONE transaction.
-func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput, plan creditPlan) (InvoiceDoc, error) {
-	total := plan.subtotal + plan.tax
-	perLineTax := make([]int64, len(plan.lines))
-	if plan.tax != 0 {
-		weights := make([]int64, len(plan.lines))
-		for i, l := range plan.lines {
-			weights[i] = l.LineTotalCents
-		}
-		perLineTax = moneyutil.AllocateLargestRemainder(plan.tax, weights)
-	}
-
+func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput, plan creditPlan) (InvoiceDoc, creditPlan, error) {
 	customerID, branchID := in.CustomerID, in.BranchID
 	if customerID == "" || branchID == "" {
 		if err := w.pool.QueryRow(ctx,
 			`SELECT customer_id::text, branch_id::text FROM invoices WHERE id = $1`,
 			in.ReversesInvoiceID).Scan(&customerID, &branchID); err != nil {
-			return InvoiceDoc{}, httpx.BadRequestf("a credit memo needs a customer and a branch")
+			return InvoiceDoc{}, plan, httpx.BadRequestf("a credit memo needs a customer and a branch")
 		}
 	}
 	sourceKind := in.SourceKind
@@ -426,12 +460,14 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 	// otherwise be issued tomorrow and due tomorrow, one day late for its whole life.
 	zone, err := houseday.Resolve(ctx, w.zone)
 	if err != nil {
-		return InvoiceDoc{}, err
+		return InvoiceDoc{}, plan, err
 	}
 	issueDate := zone.Today(w.now)
 	dueDate := issueDate
 
 	var doc InvoiceDoc
+	var total int64
+	var perLineTax []int64
 	err = w.inTx(ctx, func(tx pgx.Tx) error {
 		// The parent rows first, in the order internal/payments/LOCK-ORDER.md names: the order row (step 1),
 		// then the invoice this memo reverses (step 3, FOR NO KEY UPDATE), and only then the insert, whose
@@ -451,18 +487,48 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 				return fmt.Errorf("lock the invoice the credit memo reverses: %w", err)
 			}
 		}
+		// The cap (SF-2e): a REVERSAL is planned here, under the lock just taken, so the remainder it reads (the
+		// invoice less every memo already linked to it) cannot change before this memo's row is inserted. A second
+		// reversal of the same invoice queues on the lock above and then sees this memo in its sum.
+		if in.ReversesInvoiceID != "" {
+			locked, perr := w.planReversal(ctx, tx, in)
+			if perr != nil {
+				return perr
+			}
+			if locked.subtotal == 0 && locked.tax == 0 {
+				return ErrNothingToInvoice
+			}
+			plan = locked
+		}
+		total = plan.subtotal + plan.tax
+		perLineTax = make([]int64, len(plan.lines))
+		if plan.tax != 0 {
+			weights := make([]int64, len(plan.lines))
+			for i, l := range plan.lines {
+				weights[i] = l.LineTotalCents
+			}
+			perLineTax = moneyutil.AllocateLargestRemainder(plan.tax, weights)
+		}
+		orgID, oerr := branchOrgID(ctx, tx, branchID)
+		if oerr != nil {
+			return oerr
+		}
 		var id, no string
+		// The memo's org is its branch's (SF-2p), the org the staff feed fences on (`i.org_id = $1`; the sync
+		// handler filters on the caller's org, which is the branch location's), so Counter Till serves it. The seq
+		// is drawn by 0422's trg_sync_seq_draw on this INSERT; no explicit draw is added here.
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id)
+                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
 VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
-        $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10)
+        $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
+        $11)
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,
-			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID),
+			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
 		).Scan(&id, &no)
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)
@@ -512,9 +578,9 @@ VALUES ($1, 'CREDIT_MEMO', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return nil
 	})
 	if err != nil {
-		return InvoiceDoc{}, err
+		return InvoiceDoc{}, plan, err
 	}
-	return doc, nil
+	return doc, plan, nil
 }
 
 // creditMemoMemo names the document on the subledger row.

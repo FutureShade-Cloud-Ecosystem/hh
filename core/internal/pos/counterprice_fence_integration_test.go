@@ -39,8 +39,8 @@ func TestIntegration_CounterPrices_BranchFence(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM products ORDER BY id LIMIT 1`).Scan(&productID); err != nil {
 		t.Skipf("no seeded product: %v", err)
 	}
-	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM customers ORDER BY id LIMIT 1`).Scan(&customerID); err != nil {
-		t.Skipf("no seeded customer: %v", err)
+	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM customers WHERE home_branch_id IS NULL OR home_branch_id::text = $1 ORDER BY id LIMIT 1`, branches[0]).Scan(&customerID); err != nil {
+		t.Skipf("no seeded customer the granted branch may trade with: %v", err)
 	}
 	in := func(branch string) CounterPriceInput {
 		return CounterPriceInput{BranchID: branch, CustomerID: customerID, Items: []CounterPriceItem{{ProductID: productID, QtyEntered: 1}}}

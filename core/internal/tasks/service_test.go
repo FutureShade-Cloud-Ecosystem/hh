@@ -1,10 +1,19 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // - fakes -
@@ -352,4 +361,206 @@ func TestListTasks_RejectsBadStatus(t *testing.T) {
 	if _, err := svc.ListTasks(context.Background(), TaskFilter{Status: "BOGUS"}); err == nil {
 		t.Fatal("want bad-request for unknown status filter, got nil")
 	}
+}
+
+// UX-81 round 2: a task is never born with no branch. An order brief that answers none is refused, with words
+// the caller can show, and no task is written.
+func TestCreateFromOrderRefusesAnOrderWithNoBranch(t *testing.T) {
+	svc, store, notifier := newSvc(t)
+	svc.WithOrderReader(fakeOrderReader{orders: map[string]OrderBrief{knownOrder: {ID: knownOrder, BranchID: ""}}})
+	_, err := svc.CreateFromOrder(context.Background(), CreateInput{OrderID: knownOrder})
+	var br httpx.BadRequestError
+	if !errors.As(err, &br) || !strings.Contains(br.Msg, "no branch") {
+		t.Fatalf("an order with no branch must be refused in plain words, got %v", err)
+	}
+	if len(store.tasks) != 0 || len(notifier.posts) != 0 {
+		t.Fatalf("a refused create writes nothing and tells no one: %d tasks, %d posts", len(store.tasks), len(notifier.posts))
+	}
+}
+
+// UX-81 round 3: a task is created only for an order on a branch the caller reaches. The REST create answers an
+// order outside the caller's reach EXACTLY as it answers an unknown order, 422 "order not found" (the door's own
+// answer for an order it cannot use), so the refusal tells nothing: a 403 "branch out of scope" would confirm the
+// order exists on another branch.
+func TestCreateRefusesAnOrderOutsideTheCallersBranchReachAsUnknown(t *testing.T) {
+	const otherBranch = "99999999-9999-4999-8999-999999999999"
+	create := func(sc identity.StaffContext, order string) (*Handler, *fakeStore, int, string) {
+		svc, store, _ := newSvc(t)
+		h := NewHandler(svc, nil)
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(`{"order_id":"`+order+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r = r.WithContext(identity.ContextWithStaff(r.Context(), sc))
+		w := httptest.NewRecorder()
+		h.create(w, r, guards.StaffCaller{})
+		return h, store, w.Code, strings.TrimSpace(w.Body.String())
+	}
+	scoped := func(branch string) identity.StaffContext {
+		return identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", RoleCode: "YARD_TEAM", Tier: identity.TierFrontline,
+			Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{branch: true}}
+	}
+	_, _, unknownCode, unknownBody := create(scoped(branchA), "33333333-3333-4333-8333-333333333333")
+	if unknownCode != http.StatusUnprocessableEntity || !strings.Contains(unknownBody, "order not found") {
+		t.Fatalf("the unknown order answer is the pattern: %d %s", unknownCode, unknownBody)
+	}
+	_, store, code, body := create(scoped(otherBranch), knownOrder)
+	if code != unknownCode || body != unknownBody {
+		t.Errorf("an order on another branch must answer exactly as an unknown order (%d %s), got %d %s", unknownCode, unknownBody, code, body)
+	}
+	if len(store.tasks) != 0 {
+		t.Errorf("a refused create writes nothing: %d tasks", len(store.tasks))
+	}
+	if _, store, code, body := create(scoped(branchA), knownOrder); code != http.StatusCreated || len(store.tasks) != 1 {
+		t.Errorf("the order's own branch still creates: %d %s, %d tasks", code, body, len(store.tasks))
+	}
+	global := scoped(branchA)
+	global.Scope, global.Tier, global.Branches = identity.ScopeGlobal, identity.TierLeadership, nil
+	if _, _, code, body := create(global, knownOrder); code != http.StatusCreated {
+		t.Errorf("a GLOBAL caller still creates: %d %s", code, body)
+	}
+}
+
+// orgOrderReader answers an order only inside the org that owns it, the shape of the real adapter (UX-81 round 4).
+type orgOrderReader struct{ owner map[string]string } // order id -> owning org
+
+func (o orgOrderReader) OrderBrief(_ context.Context, id string) (OrderBrief, error) {
+	return OrderBrief{ID: id, BranchID: branchA}, nil // the unscoped read, which a caller of the org held store never reaches
+}
+
+func (o orgOrderReader) OrderBriefInOrg(_ context.Context, orgID, id string) (OrderBrief, error) {
+	if o.owner[id] != orgID {
+		return OrderBrief{}, ErrUnknownOrder
+	}
+	return OrderBrief{ID: id, BranchID: branchA}, nil
+}
+
+// The REST create hands its caller's org to the order read: another org's order is the 422 an unknown order gets,
+// and no task is written (UX-81 round 4).
+func TestCreateReadsTheOrderUnderTheCallersOrg(t *testing.T) {
+	const north, south = "3ef10000-0000-4000-8000-000000000001", "3ef10000-0000-4000-8000-000000000002"
+	svc, store, _ := newSvc(t)
+	svc.WithOrderReader(orgOrderReader{owner: map[string]string{knownOrder: south}})
+	h := NewHandler(svc, nil).WithBranchOrgReader(branchesOfOrg{branchA: {south: true, north: true}})
+	global := identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive}
+	post := func(order, org string) (int, string) {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewBufferString(`{"order_id":"`+order+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r = r.WithContext(identity.ContextWithStaff(r.Context(), global))
+		w := httptest.NewRecorder()
+		h.create(w, r, guards.StaffCaller{StaffScope: authz.StaffScope{OrgID: org}})
+		return w.Code, strings.TrimSpace(w.Body.String())
+	}
+	code, body := post(knownOrder, north)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(body, "order not found") || len(store.tasks) != 0 {
+		t.Errorf("a GLOBAL caller of org north naming org south's order gets the unknown order 422 and writes nothing: %d %s, %d tasks", code, body, len(store.tasks))
+	}
+	if code, body := post(knownOrder, south); code != http.StatusCreated {
+		t.Errorf("the owning org still creates: %d %s", code, body)
+	}
+}
+
+// branchesOfOrg is the branch to org seam double: branch id -> the orgs it belongs to.
+type branchesOfOrg map[string]map[string]bool
+
+func (b branchesOfOrg) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
+	return b[branchID][orgID], nil
+}
+
+// UX-81 round 5: every fallback taken on an empty org refuses. Each is listed in the report.
+func TestAnEmptyOrgRefusesInsteadOfReadingUnscoped(t *testing.T) {
+	const org = "3ef10000-0000-4000-8000-000000000001"
+	ctx := context.Background()
+
+	// 1. CreateFromOrder with the org held order read wired and no org.
+	svc, store, _ := newSvc(t)
+	svc.WithOrderReader(orgOrderReader{owner: map[string]string{knownOrder: org}})
+	if _, err := svc.CreateFromOrder(ctx, CreateInput{OrderID: knownOrder}); !errors.Is(err, ErrUnknownOrder) || len(store.tasks) != 0 {
+		t.Errorf("a create with no org refuses as an unknown order and writes nothing: %v, %d tasks", err, len(store.tasks))
+	}
+
+	// 2 and 3. The service's ticket read and the pending feed with the org held source wired and no org bound.
+	svc.WithPickSource(orgSource{})
+	if _, err := svc.pickTicket(ctx, knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("a ticket read with no org bound refuses: %v", err)
+	}
+	if _, _, err := svc.PendingTickets(ctx, "", 10, 0); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the pending feed with no org bound refuses: %v", err)
+	}
+	if _, err := svc.pickTicket(withOrg(ctx, org), knownOrder); err != nil {
+		t.Errorf("with an org bound the ticket read goes through: %v", err)
+	}
+
+	// 4 and 5. The sync store's order read and ticket read.
+	s := NewSyncStore(nil, orgOrderReader{owner: map[string]string{knownOrder: org}}, nil).WithPickSource(orgSource{})
+	if _, err := s.orderBrief(ctx, "", knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the sync create's order read with no org refuses: %v", err)
+	}
+	if _, err := s.pickTicket(ctx, "", knownOrder); !errors.Is(err, ErrUnknownOrder) {
+		t.Errorf("the sync ticket read with no org refuses: %v", err)
+	}
+
+	// 6. The task list: a read that names no org lists nothing (the repository is checked in the integration legs).
+	// 7. A served request that names no org never reaches a handler.
+	h := NewHandler(svc, nil)
+	called := false
+	w := httptest.NewRecorder()
+	h.staff(func(http.ResponseWriter, *http.Request, guards.StaffCaller) { called = true })(w,
+		httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil), guards.StaffCaller{})
+	if called || w.Code != http.StatusForbidden {
+		t.Errorf("a caller that names no org is refused before any read: called %v, %d", called, w.Code)
+	}
+}
+
+// orgSource is a pick source that holds the org read (and the pending feed), the shape of the real adapter.
+type orgSource struct{}
+
+func (orgSource) PickTicket(context.Context, string) (PickTicket, error) {
+	return PickTicket{}, errors.New("the unscoped read must never be taken")
+}
+func (orgSource) PendingTickets(context.Context, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, errors.New("the unscoped read must never be taken")
+}
+func (orgSource) PickTicketInOrg(context.Context, string, string) (PickTicket, error) {
+	return PickTicket{OrderID: knownOrder}, nil
+}
+func (orgSource) PendingTicketsInOrg(context.Context, string, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, nil
+}
+
+// The yard fence bounds the named branch to the caller's org, whatever the caller's scope: a GLOBAL caller names a
+// branch of another org and is out of scope; the unreadable seam is a retry (503), never an allow.
+func TestYardFenceBoundsTheBranchToTheCallersOrg(t *testing.T) {
+	const north, south = "3ef10000-0000-4000-8000-000000000001", "3ef10000-0000-4000-8000-000000000002"
+	const northBranch, southBranch = "3ef10000-0000-4000-8000-000000000011", "3ef10000-0000-4000-8000-000000000013"
+	svc, _, _ := newSvc(t)
+	h := NewHandler(svc, nil).WithBranchOrgReader(branchesOfOrg{northBranch: {north: true}, southBranch: {south: true}})
+	global := identity.StaffContext{UserID: "eeeeeeee-0000-4000-8000-000000000001", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive}
+	fence := func(h *Handler, branch string) int {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?branch_id="+branch, nil)
+		r = r.WithContext(withOrg(identity.ContextWithStaff(r.Context(), global), north))
+		w := httptest.NewRecorder()
+		if h.yardBranchFence(w, r) {
+			return http.StatusOK
+		}
+		return w.Code
+	}
+	if c := fence(h, southBranch); c != http.StatusForbidden {
+		t.Errorf("a GLOBAL caller of north naming south's branch is out of scope: %d", c)
+	}
+	if c := fence(h, northBranch); c != http.StatusOK {
+		t.Errorf("a GLOBAL caller of north naming north's branch passes: %d", c)
+	}
+	if c := fence(NewHandler(svc, nil), northBranch); c != http.StatusForbidden {
+		t.Errorf("a handler with no branch to org seam fails closed once an org is bound: %d", c)
+	}
+	if c := fence(NewHandler(svc, nil).WithBranchOrgReader(failingBranchOrg{}), northBranch); c != http.StatusServiceUnavailable {
+		t.Errorf("an unreadable branch to org seam is a retry (503), not an allow: %d", c)
+	}
+}
+
+type failingBranchOrg struct{}
+
+func (failingBranchOrg) BranchInOrg(context.Context, string, string) (bool, error) {
+	return false, errors.New("locations unreadable")
 }

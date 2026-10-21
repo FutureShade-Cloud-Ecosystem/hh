@@ -149,13 +149,19 @@ test("a line matched by hand to a payment leaves the unmatched list, and the ref
   // An id the core does not hold as a received payment: the core's 409, in words.
   await panel.getByRole("textbox", { name: "Payment id" }).fill("b9000000-0000-4000-8000-0000000000ff");
   await panel.getByRole("button", { name: "Match line" }).click();
-  await expect(page.locator("[data-error]")).toContainText("That payment is not waiting to be deposited");
+  await expect(page.locator("[data-error]")).toContainText("That payment cannot be found, so it cannot be deposited.");
   await expect(page.locator("[data-line-panel]")).toBeVisible();
   // The real payment.
   await panel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
   await panel.getByRole("button", { name: "Match line" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Matched. The clearing entry posted to the ledger.");
   await expect(row(page, "WIRE FROM CONTRACTOR")).toHaveCount(0);
+  // A real payment that is no longer waiting (just matched): the sentence names it by its NUMBER, never its id.
+  await chooseLine(page, "MONTHLY SERVICE FEE");
+  await panel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+  await panel.getByRole("button", { name: "Match line" }).click();
+  await expect(page.locator("[data-error]")).toContainText("Payment PAY-000104 is not waiting to be deposited");
+  await expect(page.locator("[data-error]")).not.toContainText(WIRE_PAYMENT);
   await page.getByRole("button", { name: "Matched", exact: true }).click();
   await expect(row(page, "WIRE FROM CONTRACTOR")).toContainText("Matched");
 });
@@ -275,6 +281,15 @@ test("matching the last lines lets the month sign off, and a signed off month is
   await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
   await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-error]")).toContainText(`${prior.words} is already signed off for this account, so its figures no longer change.`);
+  // A match inside the signed off month cannot be undone (SF-2j): refused in words, and the line stays matched.
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-error]")).toContainText(`That match belongs to ${prior.words}, which is already signed off, so it cannot be undone.`);
+  await expect(panel.locator("[data-history]")).toContainText("in force");
 });
 
 test("a zero closing balance is not sent quietly: the core's replacement is said", async ({ page, request }) => {
@@ -387,6 +402,43 @@ test("a refused write names who may do it, never the bare gate word", async ({ p
   await page.locator("[data-rule-form]").getByRole("textbox", { name: "Code" }).fill("gateway-ref-exact");
   await page.locator("[data-rule-form]").getByRole("button", { name: "Approve version" }).click();
   await expect(page.locator("[data-error]")).toContainText("Approving a match rule is for the Financial Controller.");
+});
+
+test("an undo of a reversed CARD deposit goes through, so a wrong match can be corrected", async ({ page, request }) => {
+  await openBank(page, request);
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Auto match paired 4 lines");
+  // The payments are reversed behind the desk's back (the stub's control stands for the payments module).
+  const reversed = await request.post("/_stub/reverse-payment", { data: { all: true } });
+  expect(reversed.ok()).toBeTruthy();
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "CARD SETTLEMENT BATCH 0143");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Match undone. The line is unmatched again.");
+});
+
+test("an undo of a deposit whose payment was reversed is refused in words, for a payment that is not a card, and the line stays matched", async ({ page, request }) => {
+  await openBank(page, request);
+  await tab(page, "match");
+  // The wire payment (not a card) is matched by hand, then reversed behind the desk's back.
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  await page.locator("[data-line-panel]").getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+  await page.locator("[data-line-panel]").getByRole("button", { name: "Match line" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Matched. The clearing entry posted to the ledger.");
+  const reversed = await request.post("/_stub/reverse-payment", { data: { all: true } });
+  expect(reversed.ok()).toBeTruthy();
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-error]")).toContainText("This deposit cannot be undone: the payment was reversed, and a reversed cheque or cash payment cannot be matched again.");
+  // Nothing changed: the line is still matched and its history still reads in force.
+  await expect(panel.locator("[data-history]")).toContainText("in force");
+  await expect(panel.getByRole("button", { name: "Undo match" })).toBeVisible();
 });
 
 test("a refused sign off and a refused undo are said in words and change nothing", async ({ page, request }) => {

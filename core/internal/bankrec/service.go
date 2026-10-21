@@ -2,12 +2,14 @@ package bankrec
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 )
 
 // - import -
@@ -98,11 +100,17 @@ type MatchSummary struct {
 	Matches   []Match `json:"matches"`
 }
 
-// AutoMatch runs the APPROVED rules over the account's UNMATCHED credit lines in [from, to), posting each
+// AutoMatchReach runs the APPROVED rules over the account's UNMATCHED credit lines in [from, to), posting each
 // winner's clearing journal (via JournalPoster) and flipping the paired card payments to DEPOSITED. Every
 // step is idempotent: a re-run only sees still-UNMATCHED lines, re-posts the same journal keys, and
-// re-flips only RECEIVED payments (AC2-4).
-func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time.Time, matchedBy string) (MatchSummary, error) {
+// re-flips only RECEIVED payments (AC2-4). It is fenced to the caller's branch reach (SF-2g): the proposals are
+// built from the till's unreconciled card payments, which a client cannot name, but the set is the dealer's whole
+// book, so the candidates are cut to the payments and lodgements of branches the caller reaches before any line is
+// matched, and the claim fences again. A nil reach REFUSES (SF-2d round 5); a dealer wide caller passes AllBranches.
+func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to time.Time, matchedBy string, reach func(string) bool) (MatchSummary, error) {
+	if reach == nil {
+		return MatchSummary{}, errNoReach
+	}
 	if accountID == "" {
 		return MatchSummary{}, badRequest("bankrec: bank_account_id is required")
 	}
@@ -119,12 +127,26 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 		if pmts, err = s.payments.UnreconciledCardPayments(ctx, from, to); err != nil {
 			return MatchSummary{}, err
 		}
+		kept := pmts[:0:0]
+		for _, p := range pmts {
+			if reach(p.BranchID) {
+				kept = append(kept, p)
+			}
+		}
+		pmts = kept
 	}
 	var lodg []Lodgement
 	if s.lodgements != nil {
 		if lodg, err = s.lodgements.OpenLodgements(ctx, from, to); err != nil {
 			return MatchSummary{}, err
 		}
+		kept := lodg[:0:0]
+		for _, l := range lodg {
+			if reach(l.BranchID) {
+				kept = append(kept, l)
+			}
+		}
+		lodg = kept
 	}
 
 	summary := MatchSummary{}
@@ -134,7 +156,12 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 			summary.Unmatched++
 			continue
 		}
-		m, perr := s.persistProposal(ctx, prop, matchedBy)
+		m, perr := s.persistProposal(ctx, prop, matchedBy, reach)
+		if errors.Is(perr, errMonthCompleted) {
+			// A line imported into a signed off month stays unmatched; the run goes on.
+			summary.Unmatched++
+			continue
+		}
 		if perr != nil {
 			return summary, perr
 		}
@@ -154,7 +181,7 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
 // duplicate/racing match is rejected with NO second clearing journal. The journal is keyed on the match id so
 // a corrective re-match posts fresh legs.
-func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string) (Match, error) {
+func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string, reach func(string) bool) (Match, error) {
 	m := Match{
 		StatementLineID: prop.Line.ID,
 		TargetType:      prop.TargetType,
@@ -164,7 +191,15 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
 	}
-	id, err := s.repo.PersistMatch(ctx, m, prop.PaymentIDs)
+	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
+	if prop.TargetType == TargetLodgement {
+		if ok, lerr := s.lodgementReachable(ctx, prop.TargetRef, reach); lerr != nil {
+			return Match{}, lerr
+		} else if !ok {
+			return Match{}, errNotFound
+		}
+	}
+	id, err := s.repo.PersistMatchReach(ctx, m, prop.PaymentIDs, reach)
 	if err != nil {
 		return Match{}, err
 	}
@@ -187,6 +222,9 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 // journal for PAYMENT/LODGEMENT targets. GROUP/JOURNAL targets post no new journal. Kept in the same match
 // history as AUTO matches (AC6).
 func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy string) (Match, error) {
+	if in.CanAccessBranch == nil {
+		return Match{}, errNoReach // a nil reach never means "no fence" (SF-2d round 5); a dealer wide caller passes AllBranches
+	}
 	if in.StatementLineID == "" {
 		return Match{}, badRequest("bankrec: statement_line_id is required")
 	}
@@ -217,7 +255,32 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
-	id, err := s.repo.PersistMatch(ctx, m, claim)
+	switch in.TargetType {
+	case TargetGroup:
+		// GROUP is a "manual grouping header" (migration 0033, matcher.go) with no member set: nothing resolves
+		// what it groups, so a match to it explains no money. Refused until members exist.
+		return Match{}, unprocessable("bankrec: a group match is not available yet, match the line to a payment, a lodgement or a journal")
+	case TargetLodgement:
+		// A LODGEMENT target must exist and be in the caller's reach (SF-2g round 2); otherwise it answers exactly as
+		// a missing target, with nothing written. The facts come from the till's seam. The lodgement must also be
+		// for the line's own amount: the clearing journal posts the line's amount, and the matcher's own tolerance
+		// for a lodgement reference is zero (SF-2j).
+		facts, found, lerr := s.lodgementFacts(ctx, in.TargetRefID)
+		if lerr != nil {
+			return Match{}, lerr
+		}
+		if !found || !in.CanAccessBranch(facts.BranchID) {
+			return Match{}, errNotFound
+		}
+		if facts.AmountCents != line.AmountCents {
+			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
+		}
+	case TargetJournal:
+		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
+			return Match{}, jerr
+		}
+	}
+	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
 	if err != nil {
 		return Match{}, err
 	}
@@ -238,18 +301,135 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	return m, nil
 }
 
-// Unmatch reverses a live match: it stamps the match unmatched (history kept), reverts its line to UNMATCHED,
+// lodgementReachable says whether a lodgement exists and sits in a branch the caller reaches, through the till's
+// seam. An unwired seam cannot say, so with a reach to enforce it answers not reachable (fail closed).
+func (s *Service) lodgementReachable(ctx context.Context, ref string, reach func(string) bool) (bool, error) {
+	if s.lodgements == nil || ref == "" {
+		return false, nil
+	}
+	f, found, err := s.lodgements.LodgementFacts(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return found && reach(f.BranchID), nil
+}
+
+// lodgementFacts reads a lodgement's branch and amount through the till's seam. An unwired seam or an empty id is a
+// missing lodgement (fail closed).
+func (s *Service) lodgementFacts(ctx context.Context, ref string) (LodgementFact, bool, error) {
+	if s.lodgements == nil || ref == "" {
+		return LodgementFact{}, false, nil
+	}
+	return s.lodgements.LodgementFacts(ctx, ref)
+}
+
+// checkJournalTarget refuses a JOURNAL target that does not explain the line: it must be a POSTED journal (read
+// through the GL seam) that touches the bank account's GL code for exactly the line's signed amount. A journal with
+// a branch outside the caller's reach answers as missing; a journal with no branch is dealer wide, like the bank
+// line itself. That no other live match holds it is checked in the write's transaction (PersistMatchReach).
+func (s *Service) checkJournalTarget(ctx context.Context, line StatementLine, in MatchInput) error {
+	if s.journals == nil || in.TargetRefID == "" {
+		return errNotFound
+	}
+	acct, err := s.repo.GetAccount(ctx, line.BankAccountID)
+	if err != nil {
+		return err
+	}
+	f, found, err := s.journals.JournalForBank(ctx, in.TargetRefID, acct.GLAccountCode)
+	if err != nil {
+		return err
+	}
+	if !found || (f.BranchID != "" && !in.CanAccessBranch(f.BranchID)) {
+		return errNotFound
+	}
+	return journalExplains(f, line.AmountCents)
+}
+
+// journalExplains says whether the facts of a journal let it explain a line of the given signed amount: POSTED, not
+// reversed, not itself a reversal, not one of bankrec's own postings (a clearing or an unmatch's reversal), touching
+// the bank account, for exactly the line's amount. The same rule runs at match time and again when a month is
+// completed.
+func journalExplains(f gl.BankJournalFacts, lineCents int64) error {
+	if !f.Posted {
+		return unprocessable("bankrec: that journal is not posted, so it cannot explain a bank line")
+	}
+	if f.Reversed {
+		return unprocessable("bankrec: that journal has been reversed, so it no longer explains a bank line")
+	}
+	if f.ReversesAnother {
+		return unprocessable("bankrec: that journal is itself a reversal, so it cannot explain a bank line")
+	}
+	if strings.HasPrefix(f.IdempotencyKey, "bankrec:") {
+		return unprocessable("bankrec: that journal was posted by the bank reconciliation itself, so it cannot explain a bank line")
+	}
+	if !f.TouchesGL {
+		return unprocessable("bankrec: that journal does not touch this bank account")
+	}
+	if f.NetCents != lineCents {
+		return unprocessable("bankrec: that journal moves this bank account by %d cents and the line is %d cents", f.NetCents, lineCents)
+	}
+	return nil
+}
+
+// recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2): every live JOURNAL match in the month is
+// read again through the GL seam and must still explain its line. A journal reversed since the match, or one that no
+// longer qualifies, refuses the sign off and names the line. It runs inside the completion's transaction, after the
+// month's lines are locked, so the set of matches cannot change under it. A month with journal matches cannot be
+// rechecked without the seam, and is refused.
+func (s *Service) recheckJournalMatches(glCode string) func(ctx context.Context, matches []JournalMatchFact) error {
+	return func(ctx context.Context, matches []JournalMatchFact) error {
+		if len(matches) == 0 {
+			return nil
+		}
+		for _, m := range matches {
+			if s.journals == nil {
+				return unprocessable("bankrec: cannot complete, the journal matched to %q cannot be checked", m.LineDescription)
+			}
+			f, found, err := s.journals.JournalForBank(ctx, m.JournalID, glCode)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer exists", m.LineDescription)
+			}
+			if jerr := journalExplains(f, m.LineAmountCents); jerr != nil {
+				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer explains it (%s)", m.LineDescription, strings.TrimPrefix(jerr.Error(), "bankrec: that journal "))
+			}
+		}
+		return nil
+	}
+}
+
+// UnmatchReach reverses a live match: it stamps the match unmatched (history kept), reverts its line to UNMATCHED,
 // releases any claimed payment back to RECEIVED (all in one tx), and posts a REVERSING clearing journal under
 // a NEW idempotency key (unmatchKey) that cancels the original legs, so the GL no longer carries a phantom
 // clearing entry and a corrective re-match books its own fresh journal (never reusing the stale line key).
 // NOTE: the reversal mirrors the target-type clearing legs by amount (PAYMENT: DR1010/CR1000; LODGEMENT:
 // DR1020/CR1000), which is exact for gateway/lodgement matches; a fuzzy fee-split match leaves its 6300 fee
 // residue for a controller adjustment (documented, fee is not carried on the match row).
-func (s *Service) Unmatch(ctx context.Context, matchID, userID string) error {
+//
+// It is fenced to the caller's branch reach (SF-2g round 2). A match whose target is a payment or a
+// lodgement outside the reach answers exactly as a match that is not live, with nothing written. A nil reach REFUSES
+// (SF-2d round 5). For a PAYMENT target the check runs inside the unmatch's transaction under the payment row lock; for a
+// LODGEMENT target it is read through the till's seam first (the lodgement's branch is immutable). JOURNAL and GROUP
+// targets carry no branch bankrec can read: they move no money and post no journal, and are listed in the report.
+func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reach func(string) bool) error {
+	if reach == nil {
+		return errNoReach
+	}
 	if matchID == "" {
 		return badRequest("bankrec: match_id is required")
 	}
-	targetType, _, amount, err := s.repo.Unmatch(ctx, matchID, userID)
+	if tt, ref, live, perr := s.repo.PeekMatchTarget(ctx, matchID); perr != nil {
+		return perr
+	} else if live && tt == TargetLodgement {
+		if ok, lerr := s.lodgementReachable(ctx, ref, reach); lerr != nil {
+			return lerr
+		} else if !ok {
+			return conflict("bankrec: match %s is not live (already unmatched)", matchID)
+		}
+	}
+	targetType, _, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
 	if err != nil {
 		return err
 	}
@@ -381,7 +561,7 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy)
+	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode))
 	if err != nil {
 		return Reconciliation{}, err
 	}

@@ -44,7 +44,7 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 	// Customer type drives the engine tier; a walk-in/prospect prices RETAIL.
 	customerType := "RETAIL"
 	if in.CustomerID != "" {
-		cust, err := s.store.ReadCustomer(ctx, in.CustomerID)
+		cust, err := s.customerFor(ctx, caller, in.CustomerID)
 		if err != nil {
 			return PricingOrder{}, err
 		}
@@ -63,6 +63,11 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 			UOMEntered:   ln.UOMEntered,
 		})
 		if err != nil {
+			// A pricing gap (no conversion for the unit asked, no retail anchor) is a line to correct: a 4xx in
+			// words that names the line, as create sale gives it, never a bare 500.
+			if st, msg, ok := pricing.ClientStatus(err); ok {
+				return PricingOrder{}, clientErr(st, "line %d: %s", i+1, msg)
+			}
 			return PricingOrder{}, err
 		}
 		sku, name, err := s.store.ReadProductSnapshot(ctx, ln.ProductID)

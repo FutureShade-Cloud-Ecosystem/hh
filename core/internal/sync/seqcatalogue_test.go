@@ -572,7 +572,7 @@ func TestSeqCatalogue_BiteHardDelete(t *testing.T) {
 var drawBeforeLockAccepted = map[string]string{
 	"billing.clearDepositDocument invoices":                   "deposit_cancel.go re-reads and locks the deposit document FOR NO KEY UPDATE (lockDepositDocumentRow) before the settlement calls it",
 	"payments.applyAllocations invoices":                      "lockAndTotal locks every allocated invoice FOR NO KEY UPDATE earlier in the same transaction (RecordReceipt, counter receipt)",
-	"payments.AllocateToInvoiceTx invoices":                   "the till's tender seam calls it under the money lock order (the invoice row is already held, payments/LOCK-ORDER.md steps 2 to 4)",
+	"payments.applySliceTx invoices":                          "the settle slice both callers run under the money lock order holds the invoice row already: the till's tender seam (AllocateToInvoiceTx) and the re-application (ReapplyHeld) lock it FOR NO KEY UPDATE first (payments/LOCK-ORDER.md steps 2 to 4)",
 	"quote.recomputeTotals quotes":                            "every caller (line add, edit and delete, terms) runs after lockQuoteForEdit has taken the quote row FOR NO KEY UPDATE",
 	"quote.UpdateValidUntilGuarded quotes":                    "lockQuoteForEdit takes the quote row FOR NO KEY UPDATE on the line before",
 	"customerquote.RotateOnSend customer_quote":               "the service loads the quote FOR UPDATE (GetQuoteLockTx) before the rotation, so the row is held when the counter is drawn",
@@ -769,7 +769,7 @@ var counterFirstTables = map[string][]string{
 // counterFirstAccepted: a trigger relying writer of a counter first table that takes no counter first, with the
 // reason it cannot cross anything. Key: "<package dir>.<function> <table>".
 var counterFirstAccepted = map[string]string{
-	"core.repairNorthlineHome customers":         "demo seed repair (demo tag): runs once at provisioning of a demo database, alone, with no load batch and no REST traffic",
+	"core.repairSharedAccountHomes customers":    "demo seed repair (demo tag): runs once at provisioning of a demo database, alone, with no load batch and no REST traffic",
 	"core.renameScrubbedDemoCustomers customers": "demo seed scrub (demo tag): runs once at provisioning of a demo database, alone",
 }
 

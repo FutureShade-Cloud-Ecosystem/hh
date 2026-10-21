@@ -143,7 +143,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
-	till.NewHandler(tillSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	tillHandler := till.NewHandler(tillSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !tillHandler.CustomerReachWired() {
+		panic("till: customer reach not wired - payment attempts would record against any named account")
+	}
+	tillHandler.RegisterRoutes(r, g)
 
 	// DIB-387: the quote conversion's credit/hold gate, closable now till
 	// has landed. The pin wired the SAME gate instance the POS ring uses;
@@ -158,6 +162,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithLodgements(tillRepo).
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithJournals(spine.glSvc).
 		WithAudit(auditSvc)
 	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -174,7 +179,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
 		WithAudit(auditSvc)
-	lien.NewHandler(lienSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	lienHandler := lien.NewHandler(lienSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !lienHandler.CustomerReachWired() {
+		panic("lien: customer reach not wired - a lien job would open for any named account")
+	}
+	lienHandler.RegisterRoutes(r, g)
 
 	// A-15 (W6): inventory counts over inventory's count seam and the GL
 	// (the reason leg and the 1200 leg both resolve through the GL).
@@ -269,7 +278,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W5-D: the conversational tier registers through its own entry
 	// point on a second Handler value, exactly as at the pin (this
 	// surface needs neither the hub nor the tickets).
-	messaging.NewHandler(messagingSvc, log).WithUserLinker(link).RegisterConversationRoutes(r, g)
+	messagingConversationHandler := messaging.NewHandler(messagingSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !messagingConversationHandler.CustomerReachWired() {
+		panic("messaging: customer reach not wired - the rep and inbound customer doors would serve any named account")
+	}
+	messagingConversationHandler.RegisterConversationRoutes(r, g)
 
 	// The approvals rail's messaging seams (0075): the notifier fans
 	// cards and decision echoes into the hub, best-effort, never failing
@@ -291,7 +304,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
 		WithChatNotifier(taskChatNotifier{svc: messagingSvc}).
 		WithLogger(log)
-	tasks.NewHandler(tasksSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	branchOrg := branchOrgAdapter{repo: branches.NewRepository(pool)}
+	tasksHandler := tasks.NewHandler(tasksSvc, log).WithUserLinker(link).WithBranchOrgReader(branchOrg)
+	tasksHandler.RegisterRoutes(r, g)
 
 	// The sync core (HH-3.5 #165): the engine with the pilot scope
 	// pick_tasks wired over the tasks module's own adapter (the module
@@ -331,7 +346,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 			return sc, true, nil
 		}
 	}
-	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff).
+		WithBranchOrgReader(branchOrg)
 	if pool != nil {
 		// The pull carries each task's ticket, built by the same feed the REST door reads.
 		pickSync.WithPickSource(newDispatchPickSource(pool, orderRepo, log))
@@ -597,7 +613,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// the system of record; the post is visibility.
 	payment.AlertFunc = cardAttemptEscalations{svc: messagingSvc}.post
 
-	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	warrantyHandler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !warrantyHandler.CustomerReachWired() {
+		panic("warranty: customer reach not wired - a claim would file for any named account")
+	}
+	warrantyHandler.RegisterRoutes(r, g)
 	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
 	warrantyW5Handler.RegisterW5Routes(r, g)
 	warrantyW5Handler.RegisterPublicRoutes(r)
@@ -702,6 +722,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// A shortage created through sync tells the counter as the REST report does, through the yard
 	// service's notifier.
 	shortageSync.WithNoticer(yardTasksSvc)
+	// The creates' order reads and the ticket reads are held to the caller's org (UX-81 round 4); a box that
+	// wired a seam without the org held read refuses to boot rather than read across orgs.
+	if pool != nil && (!pickSync.OrgScoped() || !yardTasksSvc.OrgScoped()) {
+		panic("tasks: the pick order and ticket reads are not org scoped - a caller could create on, or read the ticket of, another org's order")
+	}
 	if pool != nil && !pickSync.PickDoorWired() {
 		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
 	}
@@ -714,11 +739,16 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	// The yard fence's money half: a held ticket's still owed figure and the skid answer's deposit
 	// pair ride only for a caller on the configuration's cost and margin list (tasks/cost_gate.go).
-	yardHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	yardHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg).WithBranchOrgReader(branchOrg)
 	if !yardHandler.CostRolesWired() {
 		panic("tasks: cost roles not wired - the yard payloads would answer the still owed and deposit figures to every caller")
 	}
 	yardHandler.RegisterYardRoutes(r, g)
+	// The yard REST doors' fences bound a GLOBAL caller's reach to its own org's branches through the branch to org
+	// seam (UX-81 round 5); a handler without it would admit another dealer's branch id.
+	if pool != nil && (!tasksHandler.BranchOrgWired() || !yardHandler.BranchOrgWired()) {
+		panic("tasks: the yard REST fences are not bound to the caller's org - a GLOBAL caller could reach another dealer's branch")
+	}
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
@@ -884,6 +914,35 @@ func (a orderReaderAdapter) OrderBrief(ctx context.Context, orderID string) (tas
 		return tasks.OrderBrief{}, err
 	}
 	return tasks.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+// OrderBriefInOrg is the org held read the tasks creates use (UX-81 round 4): an order of another org maps onto
+// ErrUnknownOrder, the same as a missing one.
+func (a orderReaderAdapter) OrderBriefInOrg(ctx context.Context, orgID, orderID string) (tasks.OrderBrief, error) {
+	b, err := a.repo.OrderBriefInOrg(ctx, orgID, orderID)
+	if err != nil {
+		if errors.Is(err, order.ErrNotFound) {
+			return tasks.OrderBrief{}, tasks.ErrUnknownOrder
+		}
+		return tasks.OrderBrief{}, err
+	}
+	return tasks.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+var (
+	_ tasks.OrgOrderReader = orderReaderAdapter{}
+	_ tasks.OrgPickSource  = dispatchPickSource{}
+	// OrgPendingSource: the pending feed keyed by branch, held to the caller's org (UX-81 round 5).
+	_ tasks.OrgPendingSource = dispatchPickSource{}
+	_ tasks.BranchOrgReader  = branchOrgAdapter{}
+)
+
+// branchOrgAdapter answers the one fact the tasks module may not read itself: whether a location is a branch of an
+// org (UX-81 round 5). It rides the branches module's own read.
+type branchOrgAdapter struct{ repo *branches.Repository }
+
+func (a branchOrgAdapter) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	return a.repo.BranchInOrg(ctx, orgID, branchID)
 }
 
 // taskChatNotifier satisfies tasks.ChatNotifier over messaging's
@@ -1410,6 +1469,19 @@ func (a dispatchPickSource) PickTicket(ctx context.Context, orderID string) (tas
 	return a.markHeld(ctx, pickTicketFromFeed(t))
 }
 
+// PickTicketInOrg is PickTicket held to the caller's org (UX-81 round 4): a foreign order's ticket is the same
+// tasks.ErrUnknownOrder as an unknown one.
+func (a dispatchPickSource) PickTicketInOrg(ctx context.Context, orgID, orderID string) (tasks.PickTicket, error) {
+	t, err := a.feed.TicketForOrderInOrg(ctx, orgID, orderID)
+	if err != nil {
+		if errors.Is(err, dispatch.ErrNotFound) {
+			return tasks.PickTicket{}, tasks.ErrUnknownOrder
+		}
+		return tasks.PickTicket{}, err
+	}
+	return a.markHeld(ctx, pickTicketFromFeed(t))
+}
+
 // markHeld stamps the pay before release hold's mark on a pickup ticket from
 // billing's one hold read. Only a pickup or will call order can be held (a
 // delivery keeps dispatch's own gate), so a delivery ticket costs no read.
@@ -1432,6 +1504,20 @@ func (a dispatchPickSource) markHeld(ctx context.Context, t tasks.PickTicket) (t
 
 func (a dispatchPickSource) PendingTickets(ctx context.Context, branchID string, limit, offset int) ([]tasks.PickTicket, int, error) {
 	feed, total, err := a.feed.PendingTickets(ctx, branchID, limit, offset)
+	return a.pendingTickets(ctx, feed, total, err)
+}
+
+// PendingTicketsInOrg is PendingTickets held to the caller's org (UX-81 round 5): the branch keyed feed lists
+// nothing of another org's customers, orders or lines.
+func (a dispatchPickSource) PendingTicketsInOrg(ctx context.Context, orgID, branchID string, limit, offset int) ([]tasks.PickTicket, int, error) {
+	feed, total, err := a.feed.PendingTicketsInOrg(ctx, orgID, branchID, limit, offset)
+	if err != nil && errors.Is(err, dispatch.ErrNotFound) {
+		return nil, 0, tasks.ErrUnknownOrder
+	}
+	return a.pendingTickets(ctx, feed, total, err)
+}
+
+func (a dispatchPickSource) pendingTickets(ctx context.Context, feed []dispatch.PickFeedTicket, total int, err error) ([]tasks.PickTicket, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}

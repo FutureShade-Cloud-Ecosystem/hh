@@ -56,7 +56,7 @@ func (r *ARLandingRepository) ReadARLandingPolicy(ctx context.Context, branchID 
 	err := r.pool.QueryRow(ctx, `
 		SELECT `+arLandingPolicyColumns+`
 		  FROM ar_landing_policy
-		 WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
+		 WHERE branch_id IS NULL OR branch_id = NULLIF($1, '')::uuid
 		 ORDER BY branch_id NULLS LAST
 		 LIMIT 1`, branchID).Scan(
 		&p.AgingWarnDays, &p.AgingEscalateDays, &p.ReminderCadenceDays,
@@ -864,6 +864,11 @@ func (r *ARLandingRepository) ListPromisesEnriched(ctx context.Context, status [
 	}
 	args := []any{effStatus}
 	where := []string{"p.status = ANY($1)"}
+	// THE BRANCH WALL (UX-89 round 3 P2-A): a promise is on a document, so the list is held to the branch of
+	// its invoice, the receivables register's own rule. A global caller is unbounded; a promise on no invoice
+	// is read only by a global caller.
+	args = append(args, reachFromContext(ctx).SQLArg())
+	where = append(where, fmt.Sprintf("($%d::uuid[] IS NULL OR i.branch_id = ANY($%d::uuid[]))", len(args), len(args)))
 	if customerID != "" {
 		args = append(args, customerID)
 		where = append(where, fmt.Sprintf("p.customer_id = $%d::uuid", len(args)))

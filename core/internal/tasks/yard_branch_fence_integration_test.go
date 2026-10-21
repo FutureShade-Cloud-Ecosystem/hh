@@ -315,8 +315,10 @@ func TestYardBranchFence_TheFenceAnswersBeforeTheHolderGuard(t *testing.T) {
 	}
 	stage := g.syncPush("B", "pick_tasks", apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update",
 		Payload: map[string]any{"id": g.task, "status": "STAGED", "stage_location": "Bay 3"}})
-	if stage.Status != "rejected" || stage.Error == nil || !strings.Contains(*stage.Error, "branch out of scope") {
-		t.Errorf("sync stage from another branch on a claimed pick must be rejected with the branch refusal, got %+v", stage)
+	// UX-81 round 2: the sync door answers "row not found" (Load is held to the pull's reach), never the holder's
+	// words; the REST door keeps its 403 branch words.
+	if stage.Status != "rejected" || stage.Error == nil || !strings.Contains(*stage.Error, "not found") || strings.Contains(*stage.Error, "someone else") {
+		t.Errorf("sync stage from another branch on a claimed pick must be rejected as not found, got %+v", stage)
 	}
 	g.untouched(t)
 }

@@ -79,10 +79,10 @@ function fresh() {
       line(7, 25, "WIRE FROM CONTRACTOR", "", 30_000),
     ],
     payments: [
-      { id: IDS.paymentGateway1, gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
-      { id: IDS.paymentGateway2, gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
-      { id: IDS.paymentBatch, gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
-      { id: IDS.paymentWire, gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
+      { id: IDS.paymentGateway1, payment_no: "PAY-000101", method: "CARD", gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
+      { id: IDS.paymentGateway2, payment_no: "PAY-000102", method: "CARD", gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
+      { id: IDS.paymentBatch, payment_no: "PAY-000103", method: "CARD", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
+      { id: IDS.paymentWire, payment_no: "PAY-000104", method: "EFT", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
     ],
     lodgements: [{ id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050 }],
     matches: [],
@@ -411,10 +411,39 @@ export function createBankrecWorld() {
     if (line === undefined) return clientError(404, "not found");
     if (line.status !== "UNMATCHED") return clientError(409, `statement line ${line.id} is ${line.status}, not UNMATCHED`);
     const amount = input.amount_cents ? input.amount_cents : line.amount_cents;
+    // A LODGEMENT target must exist (SF-2g round 2); an unknown one, like one the caller's branch does not reach,
+    // answers as a missing target, with nothing written.
+    // SF-2j: a GROUP has no member set, so it explains nothing; a lodgement explains the line only at its own amount;
+    // a journal explains one line.
+    if (input.target_type === "GROUP") return clientError(422, "a group match is not available yet, match the line to a payment, a lodgement or a journal");
+    if (input.target_type === "LODGEMENT") {
+      const lodgement = world.lodgements.find((l) => l.id === input.target_ref_id);
+      if (lodgement === undefined) return clientError(404, "not found");
+      if (lodgement.amount_cents !== line.amount_cents) {
+        return clientError(422, `that lodgement is for ${lodgement.amount_cents} cents and the line is ${line.amount_cents} cents, so it does not explain the line`);
+      }
+    }
+    // SF-2j round 2: a line inside a signed off month cannot be matched.
+    {
+      const year = Number(line.txn_date.slice(0, 4));
+      const month = Number(line.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === line.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        return clientError(409, "that statement line sits in a month that is already reconciled and completed, so it cannot be matched");
+      }
+    }
+    // A journal is spent by a JOURNAL match to it and by being another live match's clearing (journal_id).
+    if (input.target_type === "JOURNAL" && input.target_ref_id && world.matches.some((m) => !m.unmatched_at && ((m.target_type === "JOURNAL" && m.target_ref_id === input.target_ref_id) || m.journal_id === input.target_ref_id))) {
+      return clientError(409, "that journal already explains another statement line");
+    }
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.
     if (input.target_type === "PAYMENT" && input.target_ref_id) {
       const payment = world.payments.find((p) => p.id === input.target_ref_id && p.status === "RECEIVED");
-      if (payment === undefined) return clientError(409, "payment already claimed or not RECEIVED (claimed 0 of 1)");
+      // The core names the payment by its number (read through the payments module), never its id; a payment with
+      // no row reads as plain words.
+      if (payment === undefined) {
+        const known = world.payments.find((p) => p.id === input.target_ref_id);
+        return clientError(409, `payment already claimed, reversed or not RECEIVED: ${known === undefined ? "a payment that cannot be found" : known.payment_no} (claimed 0 of 1)`);
+      }
       payment.status = "DEPOSITED";
     }
     line.status = "MATCHED";
@@ -440,6 +469,19 @@ export function createBankrecWorld() {
     if (!UUID.test(input.match_id)) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
     const match = world.matches.find((m) => m.id === input.match_id && !m.unmatched_at);
     if (match === undefined) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
+    const matchedLine = world.lines.find((l) => l.id === match.statement_line_id);
+    if (matchedLine !== undefined) {
+      const year = Number(matchedLine.txn_date.slice(0, 4));
+      const month = Number(matchedLine.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === matchedLine.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        return clientError(409, `that match sits in ${year}-${pad(month)}, which is already reconciled and completed, so it cannot be unmatched`);
+      }
+    }
+    // A deposit whose payment was reversed cannot be unmatched, except a reversed CARD (SF-2d round 7): a card is
+    // claimable again, while a reversed cheque, cash, EFT or other payment can never be matched again.
+    if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed && p.method !== "CARD")) {
+      return clientError(409, "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
+    }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
     if (line !== undefined && line.status === "MATCHED") line.status = "UNMATCHED";
@@ -529,6 +571,18 @@ export function createBankrecWorld() {
     const method = req.method;
     if (method === "POST" && path === "/_stub/reset") {
       reset();
+      return { status: 200, body: { ok: true } };
+    }
+    // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
+    if (method === "POST" && path === "/_stub/reverse-payment") {
+      const input = JSON.parse(bodyText || "{}");
+      if (input.all === true) {
+        for (const p of world.payments) p.reversed = true;
+        return { status: 200, body: { ok: true } };
+      }
+      const payment = world.payments.find((p) => p.id === input.payment_id);
+      if (payment === undefined) return { status: 404, body: { error: "not found" } };
+      payment.reversed = true;
       return { status: 200, body: { ok: true } };
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;

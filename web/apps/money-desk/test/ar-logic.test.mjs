@@ -69,6 +69,9 @@ test("a refused release and a refused journal approval name who may do it", () =
     assert.ok(!words.includes("Forbidden"), words);
   }
   assert.ok(refusalWords("release-hold", "Forbidden", 403).includes("credit hold"));
+  // A payment is reversed or bounced, never both (SF-2d round 7): the core's two refusals read as sentences.
+  assert.equal(refusalWords("bounce", "till: this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)", 409), "This payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both).");
+  assert.equal(refusalWords("reverse", "payments: this payment cannot be reversed: it was bounced, and a payment is reversed or bounced, never both", 400), "This payment cannot be reversed: it was bounced, and a payment is reversed or bounced, never both.");
   assert.ok(refusalWords("approve-journal", "Forbidden", 403).includes("journal"));
 });
 

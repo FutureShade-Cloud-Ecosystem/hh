@@ -53,7 +53,7 @@ type tillStore interface {
 
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// PaymentNSFContext resolves the finance facts of a payment for the NSF decision (non-tx read).
-	PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, found bool, err error)
+	PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, reversed, found bool, err error)
 	// NSFPolicyFor reads the branch NSF policy (branch row overrides the org default).
 	NSFPolicyFor(ctx context.Context, branchID string) (NSFPolicy, error)
 	// MarkNSF performs the full atomic NSF reversal (flip BOUNCED, reverse allocations, reopen invoices,
@@ -597,7 +597,9 @@ func (s *Service) ZReportFor(ctx context.Context, sessionID string) (ZReport, er
 		return ZReport{}, err
 	}
 	if !caller.CanAccessBranch(sess.BranchID) {
-		return ZReport{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
+		// Not found, as for a session that does not exist: a refusal naming the branch is an existence
+		// oracle on random session ids (the pos by id reads answer the same way).
+		return ZReport{}, errNotFound
 	}
 	return s.deriveZReport(ctx, sess)
 }
@@ -758,9 +760,10 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 	if err != nil {
 		return SessionDetail{}, err
 	}
-	// The branch wall on a read of a drawer's tenders and movements, the words every till write gives.
+	// The branch wall on a read of a drawer's tenders and movements. Not found, as for a session that does
+	// not exist: a refusal naming the branch is an existence oracle on random session ids.
 	if !caller.CanAccessBranch(sess.BranchID) {
-		return SessionDetail{}, forbidden("till: caller cannot access branch %s", sess.BranchID)
+		return SessionDetail{}, errNotFound
 	}
 	tenders, err := s.store.SessionTenders(ctx, id)
 	if err != nil {
@@ -796,6 +799,18 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 
 // Policy returns the branch variance threshold + close grain.
 func (s *Service) Policy(ctx context.Context, branchID string) (TillPolicy, error) {
+	// The branch wall: a branch's variance threshold, close grain and blind close setting are read only by
+	// a caller granted that branch, with the words every till write gives. A read naming no branch answers
+	// the dealer default, as before.
+	if branchID != "" {
+		caller, err := s.caller(ctx)
+		if err != nil {
+			return TillPolicy{}, err
+		}
+		if !caller.CanAccessBranch(branchID) {
+			return TillPolicy{}, forbidden("till: caller cannot access branch %s", branchID)
+		}
+	}
 	return s.store.Policy(ctx, branchID)
 }
 
@@ -818,7 +833,7 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	if in.PaymentID == "" {
 		return NSFResult{}, unprocessable("till: payment_id is required")
 	}
-	_, branchID, status, _, _, found, err := s.store.PaymentNSFContext(ctx, in.PaymentID)
+	_, branchID, status, _, _, reversed, found, err := s.store.PaymentNSFContext(ctx, in.PaymentID)
 	if err != nil {
 		return NSFResult{}, err
 	}
@@ -832,6 +847,9 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	// Fast idempotent guard (the store re-checks under FOR UPDATE to close the race).
 	if status == "BOUNCED" {
 		return NSFResult{}, errAlreadyBounced
+	}
+	if reversed {
+		return NSFResult{}, errPaymentReversed
 	}
 	policy, err := s.store.NSFPolicyFor(ctx, branchID)
 	if err != nil {

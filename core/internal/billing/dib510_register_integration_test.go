@@ -599,14 +599,12 @@ func TestCustomerActivity_PaymentRowsReachOnlyACallerWhoAsksForThem(t *testing.T
 // OR does not short circuit, and once the driver's prepared statement has turned into a generic plan (after five
 // uses on a connection with real branch ids, as the register's own reads give it) the cast is evaluated for the
 // empty branch and the read fails with an invalid uuid. Found by the assistant's account position claim (slice 7c),
-// which reads the default beside the branches on every request.
+// which reads the default beside the branches on every request. The connection forces the generic plan from its
+// first use, so the test does not depend on the pool handing the same connection back.
 func TestRegisterPolicy_TheDealerDefaultResolvesAfterTheStatementHasBeenUsedWithRealBranches(t *testing.T) {
-	pool := intPool(t)
+	pool := genericPlanPool(t)
 	repo := NewRepository(pool)
-	var branch string
-	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' ORDER BY code LIMIT 1`).Scan(&branch); err != nil {
-		t.Fatal(err)
-	}
+	branch := aBranchID(t, pool)
 	for i := 0; i < 12; i++ {
 		if _, err := repo.RegisterPolicyFor(context.Background(), branch); err != nil {
 			t.Fatalf("call %d for a branch: %v", i+1, err)

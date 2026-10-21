@@ -163,8 +163,13 @@ type MatchInput struct {
 
 	StatementLineID string `json:"statement_line_id"` // manual
 	TargetType      string `json:"target_type"`       // manual
-	TargetRefID     string `json:"target_ref_id"`     // manual
-	AmountCents     int64  `json:"amount_cents"`      // manual (optional; defaults to line amount)
+	TargetRefID     string `json:"target_ref_id"`
+
+	// CanAccessBranch is the caller's branch reach, set by the handler from the guard-resolved authority and never
+	// read from the request (SF-2g). A payment or lodgement target outside it answers exactly as a missing one. It
+	// MUST be set: a nil reach REFUSES the match (SF-2d round 5); a dealer wide internal caller passes AllBranches.
+	CanAccessBranch func(branchID string) bool `json:"-"`            // manual
+	AmountCents     int64                      `json:"amount_cents"` // manual (optional; defaults to line amount)
 }
 
 // UnmatchInput stamps a live match unmatched (history kept) and reverts its line to UNMATCHED.
@@ -210,6 +215,13 @@ func conflict(format string, a ...any) error {
 }
 
 var (
-	errNotFound     = clientError{status: http.StatusNotFound, msg: "bankrec: not found"}
+	errNotFound = clientError{status: http.StatusNotFound, msg: "bankrec: not found"}
+	// errNoReach refuses a call that carries no branch reach (SF-2d round 5): a nil reach never means "no fence".
+	errNoReach      = clientError{status: http.StatusForbidden, msg: "bankrec: no branch reach was given"}
 	errUnauthorized = clientError{status: http.StatusUnauthorized, msg: "bankrec: unauthenticated"}
 )
+
+// AllBranches is the explicit allow all reach: a dealer wide internal caller (a test, a batch job that is not acting
+// for a branch caller) passes it by name, so that "reaches every branch" is something a caller says and a nil reach
+// never silently means. The handlers pass the caller's own reach and never this.
+func AllBranches(string) bool { return true }

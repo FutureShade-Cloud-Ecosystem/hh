@@ -447,6 +447,16 @@ func TestGapApprovalsDecisionLegs(t *testing.T) {
 func TestGapApprovalsFences(t *testing.T) {
 	f := newGapFixture(t)
 	ctx := context.Background()
+	// UX-89: a filing is held to the filer's branch grants, so the two org principal needs the south branch
+	// grant a real south filer holds (the kit plants branch grants for the north principals only).
+	if _, err := f.pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)`,
+		testkit.UserTwoOrgID, testkit.BranchSouthAID, testkit.OrgSouthID); err != nil {
+		t.Fatalf("plant the south branch grant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM user_branch_grants WHERE user_id = $1 AND branch_id = $2`,
+			testkit.UserTwoOrgID, testkit.BranchSouthAID)
+	})
 	info, _ := sync.Lookup("approvals")
 	north := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}
 	south := sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubTwoOrg}
@@ -1002,5 +1012,106 @@ func assertGapEq(t *testing.T, name string, want, got map[string]any) {
 	t.Helper()
 	if fmt.Sprint(want) != fmt.Sprint(got) {
 		t.Fatalf("%s: the server state changed: %v, want %v", name, got, want)
+	}
+}
+
+// TestGapInvoicesFenceHoldsThroughTheBranchOrg (UX-95a): the invoices create
+// fence holds an order to the caller's org through the order's BRANCH
+// (orders.branch_id to locations.org_id), because no production order writer
+// stamps orders.org_id. Each order below is inserted the way its writer does,
+// with the column list of that writer and no org_id: the till's
+// (pos/repository.go InsertOrder) and the Quote Desk's (quote/convert.go
+// convertInsertSQL). Before the fix the fence read orders.org_id and refused
+// every one of them.
+func TestGapInvoicesFenceHoldsThroughTheBranchOrg(t *testing.T) {
+	f := newGapFixture(t)
+	ctx := context.Background()
+	info, _ := sync.Lookup("invoices")
+	north := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubSalesManager}
+
+	const (
+		tillOrderID  = "3ef10000-0000-4000-8000-0000000000f3"
+		tillLineID   = "3ef10000-0000-4000-8000-0000000000f4"
+		quoteOrderID = "3ef10000-0000-4000-8000-0000000000f5"
+		quoteLineID  = "3ef10000-0000-4000-8000-0000000000f6"
+		southOrderID = "3ef10000-0000-4000-8000-0000000000f7"
+		southLineID  = "3ef10000-0000-4000-8000-0000000000f8"
+		orphanOrder  = "3ef10000-0000-4000-8000-0000000000f9"
+		orphanLine   = "3ef10000-0000-4000-8000-0000000000fa"
+		orphanBranch = "3ef10000-0000-4000-8000-0000000000fb"
+	)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("seed: %v (statement %.60s)", err, q)
+		}
+	}
+	orders := []string{tillOrderID, quoteOrderID, southOrderID, orphanOrder}
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, id := range orders {
+			_, _ = f.pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE order_id = $1::uuid)`, id)
+			_, _ = f.pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1::uuid`, id)
+			_, _ = f.pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1::uuid`, id)
+			_, _ = f.pool.Exec(c, `DELETE FROM orders WHERE id = $1::uuid`, id)
+		}
+		_, _ = f.pool.Exec(c, `DELETE FROM order_no_sequences WHERE branch_id = $1::uuid`, orphanBranch)
+		_, _ = f.pool.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, orphanBranch)
+	})
+	line := func(lineID, orderID string) {
+		exec(`INSERT INTO order_lines (id, order_id, line_no, product_id, description, qty_entered,
+			uom_entered, qty_base, fulfilled_base, unit_price_cents, price_uom, line_total_cents)
+			VALUES ($1::uuid, $2::uuid, 1, $3::uuid, 'Fixture fence line', 10, 'EA', 10, 10, 1000, 'EA', 10000)`,
+			lineID, orderID, testkit.ProductID)
+	}
+	// The till's insert: pos/repository.go InsertOrder's column list, no org_id.
+	tillOrder := func(id, branch string) {
+		exec(`INSERT INTO orders (id, order_no, customer_id, branch_id, status, fulfillment, requested_date,
+			subtotal_cents, tax_cents, total_cents, created_by, metadata,
+			po_job_ref, salesperson_id, job_address, job_reference)
+			VALUES ($1::uuid, next_order_no($2::uuid), $3::uuid, $2::uuid, 'CONFIRMED', 'PICKUP', NULL,
+			10000, 0, 10000, NULL, '{}'::jsonb, '', NULL, '', '')`,
+			id, branch, testkit.TenantAlphaID)
+	}
+	tillOrder(tillOrderID, testkit.BranchNorthAID)
+	line(tillLineID, tillOrderID)
+	// The Quote Desk's insert: convert.go convertInsertSQL's column list, no org_id,
+	// fulfilled so the writer can bill it.
+	exec(`INSERT INTO orders (id, order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents,
+		freight_cents, quoted_freight_cents, status, fulfillment)
+		SELECT $2::uuid, next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents,
+		delivery_fee_cents, delivery_fee_cents, 'CONFIRMED', 'PICKUP'
+		FROM quotes WHERE id = $1::uuid`, testkit.QuoteAlphaID, quoteOrderID)
+	line(quoteLineID, quoteOrderID)
+	// Another dealer's order: the south org's branch, still no org_id.
+	tillOrder(southOrderID, testkit.BranchSouthAID)
+	line(southLineID, southOrderID)
+	// A branch whose locations row carries no org: the order is unattributable.
+	exec(`INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address, org_id)
+		VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', 'FXORPH', 'Fixture orphan branch', '{}', NULL)`, orphanBranch)
+	tillOrder(orphanOrder, orphanBranch)
+	line(orphanLine, orphanOrder)
+
+	create := func(orderID string) apigen.SyncPushResult {
+		res := gapPush(t, f.engine, info, north, []apigen.SyncPushOperation{
+			gapOp("create", uuid.NewString(), map[string]any{"order_id": orderID}, nil),
+		})
+		return res[0]
+	}
+	for name, orderID := range map[string]string{"till-shaped": tillOrderID, "quote-desk-shaped": quoteOrderID} {
+		r := create(orderID)
+		if r.Status != "applied" || r.Seq == nil {
+			t.Fatalf("%s order with no org_id was not invoiced for its own dealer: %+v err %v", name, r, r.Error)
+		}
+	}
+	for name, orderID := range map[string]string{"another dealer's": southOrderID, "no-org branch": orphanOrder} {
+		r := create(orderID)
+		if r.Status != "rejected" || r.Error == nil || !strings.Contains(*r.Error, "row not found") {
+			t.Fatalf("%s order answered %+v err %v (want row not found)", name, r, r.Error)
+		}
+		var n int
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE order_id = $1::uuid`, orderID).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%s order raised %d invoices (err %v), want none", name, n, err)
+		}
 	}
 }

@@ -2669,6 +2669,80 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/ar/payments/{id}/reapply:
+    post:
+      operationId: paymentsReapplyHeld
+      tags:
+        - staff-payments
+      summary: Apply the money a reversed payment holds to invoices of the same customer
+      description: "A reversal posts Dr AR / Cr 2310 \"Customer Refunds and Unapplied Cash\": the money stays with the dealer, held for the customer. This applies up to what the payment still holds to one or more OPEN invoices of the payment's own customer, in the payment's own branch, each taking at most its payable (balance less holdback): Dr 2310 / Cr AR, the invoice balances and the AR subledger moving through the settle's own slice. A request above the held figure, a payment that was never reversed (or is itself a reversing entry), and an invoice that is not open, is in another branch or takes less than asked are refused in words with nothing written. A payment outside the caller's branch reach, and an invoice of another account, a missing one or one outside the reach, answer 404. The request carries an idempotency key: the same key with the same payment and the same invoice amounts answers the first result (200) and writes nothing, and a spent key with anything else is refused 409. An applied slice is final here: this item builds no way back into 2310."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentsReapplyRequest"
+      responses:
+        "200":
+          description: A replay of a request already applied, the first result with the live balances
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsReapplication"
+        "201":
+          description: The held money applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsReapplication"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/payments/{id}/held:
+    get:
+      operationId: paymentsHeldFor
+      tags:
+        - staff-payments
+      summary: What a payment holds in 2310 right now
+      description: "The reversed payment's amount less what has been re-applied to invoices; zero for a payment that was never reversed, is itself a reversing entry or has no account. A plain read for the desk's re-application form: the write judges the figure again under the payment row. A payment outside the caller's branch reach answers 404."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The held figure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsHeld"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/payments/card-attempts:
     get:
       operationId: paymentListCardAttempts
@@ -32008,6 +32082,124 @@ components:
           items:
             type: string
             format: uuid
+    PaymentsHeld:
+      type: object
+      required:
+        - payment_id
+        - payment_no
+        - amount_cents
+        - reversed
+        - applied_cents
+        - held_cents
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        reversed:
+          type: boolean
+        applied_cents:
+          type: integer
+          format: int64
+          description: What re-application has already taken out of 2310
+        held_cents:
+          type: integer
+          format: int64
+          description: Amount less applied for a reversed payment with an account
+          else zero: null
+    PaymentsReapplyRequest:
+      type: object
+      required:
+        - reason
+        - idempotency_key
+        - allocations
+      properties:
+        reason:
+          type: string
+          description: Mandatory; a re-application without a reason is refused
+        idempotency_key:
+          type: string
+          description: One key per request; a retry under it answers the first result
+        allocations:
+          type: array
+          description: The invoices and the cents each takes, at most 100, no invoice twice
+          items:
+            $ref: "#/components/schemas/PaymentsReapplyAllocation"
+    PaymentsReapplyAllocation:
+      type: object
+      required:
+        - invoice_id
+        - amount_cents
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+          format: int64
+    PaymentsReapplication:
+      type: object
+      required:
+        - payment_id
+        - batch_id
+        - applied_cents
+        - held_before_cents
+        - held_after_cents
+        - lines
+        - replayed
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        batch_id:
+          type: string
+          format: uuid
+          description: The request, and the key of its one GL journal
+        applied_cents:
+          type: integer
+          format: int64
+        held_before_cents:
+          type: integer
+          format: int64
+          description: What the payment held before this request (a replay reads the held figures as they stand now)
+        held_after_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentsReapplyLine"
+    PaymentsReapplyLine:
+      type: object
+      required:
+        - invoice_id
+        - invoice_no
+        - applied_cents
+        - outcome
+        - balance_after_cents
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        applied_cents:
+          type: integer
+          format: int64
+        outcome:
+          type: string
+          enum:
+            - CLOSES
+            - PART
+        balance_after_cents:
+          type: integer
+          format: int64
     PaymentCardAttemptSummary:
       type: object
       description: "One manager-readable attempt row: the reconciliation facts (amount, branch, till session, time, sale key) beside the charge's own answers (status, the charge and reversal refs, the bounded diagnostic). ref is the id's short form, the name the needs-manager answers carry; id is the whole value, the resolve route's path parameter. The row never carries a leg key, a note or a resolver: it is the reconciliation view, not the row's every column."
@@ -48820,6 +49012,10 @@ components:
         received_at:
           type: string
           format: date-time
+        reversed_at:
+          type: string
+          format: date-time
+          description: Set when the payment was reversed; a reversed payment is never also bounced
     TillInvoicePayments:
       type: object
       description: "The per-invoice settlement view: every payment applied to it, attributed"

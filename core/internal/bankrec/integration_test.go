@@ -213,6 +213,15 @@ func (f *fakePayments) MarkDeposited(_ context.Context, ids []string, lineID str
 
 type fakeLodgements struct{ open []Lodgement }
 
+func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (LodgementFact, bool, error) {
+	for _, l := range f.open {
+		if l.MovementID == id {
+			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents}, true, nil
+		}
+	}
+	return LodgementFact{}, false, nil
+}
+
 func (f *fakeLodgements) OpenLodgements(_ context.Context, _, _ time.Time) ([]Lodgement, error) {
 	return f.open, nil
 }
@@ -303,7 +312,7 @@ func TestIntegration_AC2_GatewayMatch(t *testing.T) {
 	poster := newDBPoster(pool)
 	svc := NewService(NewRepository(pool)).WithPayments(pay).WithJournalPoster(poster)
 	from, to := win()
-	sum, err := svc.AutoMatch(context.Background(), acct, from, to, "")
+	sum, err := svc.AutoMatchReach(context.Background(), acct, from, to, "", AllBranches)
 	if err != nil {
 		t.Fatalf("automatch: %v", err)
 	}
@@ -337,7 +346,7 @@ func TestIntegration_AC3_LodgementMatch(t *testing.T) {
 	poster := newDBPoster(pool)
 	svc := NewService(NewRepository(pool)).WithLodgements(lodg).WithJournalPoster(poster)
 	from, to := win()
-	sum, err := svc.AutoMatch(context.Background(), acct, from, to, "")
+	sum, err := svc.AutoMatchReach(context.Background(), acct, from, to, "", AllBranches)
 	if err != nil {
 		t.Fatalf("automatch: %v", err)
 	}
@@ -370,7 +379,7 @@ func TestIntegration_AC4_FeeSplitIdempotent(t *testing.T) {
 	svc := NewService(NewRepository(pool)).WithPayments(pay).WithJournalPoster(poster)
 	from, to := win()
 
-	sum, err := svc.AutoMatch(context.Background(), acct, from, to, "")
+	sum, err := svc.AutoMatchReach(context.Background(), acct, from, to, "", AllBranches)
 	if err != nil {
 		t.Fatalf("automatch: %v", err)
 	}
@@ -386,7 +395,7 @@ func TestIntegration_AC4_FeeSplitIdempotent(t *testing.T) {
 	firstCount := countJournals(t, pool)
 
 	// Re-run: the line is already MATCHED, so nothing new matches and no second journal posts.
-	sum2, err := svc.AutoMatch(context.Background(), acct, from, to, "")
+	sum2, err := svc.AutoMatchReach(context.Background(), acct, from, to, "", AllBranches)
 	if err != nil {
 		t.Fatalf("automatch replay: %v", err)
 	}
@@ -429,7 +438,7 @@ func TestIntegration_B2_NoDoubleMatchOrJournal(t *testing.T) {
 	from, to := win()
 
 	// First match claims the payment + posts one clearing journal.
-	if _, err := svc.AutoMatch(ctx, acct, from, to, ""); err != nil {
+	if _, err := svc.AutoMatchReach(ctx, acct, from, to, "", AllBranches); err != nil {
 		t.Fatalf("first automatch: %v", err)
 	}
 	assertLineStatus(t, pool, line1, LineMatched)
@@ -440,7 +449,7 @@ func TestIntegration_B2_NoDoubleMatchOrJournal(t *testing.T) {
 
 	// Second attempt: a MANUAL match of a different statement line to the SAME (now-DEPOSITED) payment must be
 	// rejected by the in-tx payment-claim guard (RowsAffected != expected), and post NO second journal.
-	_, err := svc.ManualMatch(ctx, MatchInput{
+	_, err := svc.ManualMatch(ctx, MatchInput{CanAccessBranch: AllBranches,
 		Mode: "manual", StatementLineID: line2, TargetType: TargetPayment, TargetRefID: payID,
 	}, "")
 	if err == nil {
@@ -480,7 +489,7 @@ func TestIntegration_Unmatch_ReversesPaymentClearing(t *testing.T) {
 	from, to := win()
 
 	// Match: post the AC2 clearing legs (DR1000/CR1010) and claim the payment.
-	sum, err := svc.AutoMatch(ctx, acct, from, to, "")
+	sum, err := svc.AutoMatchReach(ctx, acct, from, to, "", AllBranches)
 	if err != nil {
 		t.Fatalf("automatch: %v", err)
 	}
@@ -509,7 +518,7 @@ func TestIntegration_Unmatch_ReversesPaymentClearing(t *testing.T) {
 	}
 
 	// Unmatch: the inverse of the match.
-	if err := svc.Unmatch(ctx, matchID, ""); err != nil {
+	if err := svc.UnmatchReach(ctx, matchID, "", AllBranches); err != nil {
 		t.Fatalf("unmatch: %v", err)
 	}
 
@@ -611,9 +620,11 @@ func TestIntegration_AC6_ManualMatchHistory(t *testing.T) {
 	d := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	lineID := insertLine(t, pool, acct, d, "MANUAL DEPOSIT", "MAN-1", 12345)
 	poster := newDBPoster(pool)
-	svc := NewService(NewRepository(pool)).WithJournalPoster(poster)
+	// A manual LODGEMENT target must exist (SF-2g round 2): the till's seam holds this one.
+	lodgements := &fakeLodgements{open: []Lodgement{{MovementID: "44444444-4444-4444-8444-444444444444", BranchID: aBranch(t, pool), AmountCents: 12345}}}
+	svc := NewService(NewRepository(pool)).WithJournalPoster(poster).WithLodgements(lodgements)
 
-	m, err := svc.ManualMatch(context.Background(), MatchInput{
+	m, err := svc.ManualMatch(context.Background(), MatchInput{CanAccessBranch: AllBranches,
 		Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "44444444-4444-4444-8444-444444444444",
 	}, "")
 	if err != nil {
@@ -621,7 +632,7 @@ func TestIntegration_AC6_ManualMatchHistory(t *testing.T) {
 	}
 	assertLineStatus(t, pool, lineID, LineMatched)
 
-	if err := svc.Unmatch(context.Background(), m.ID, ""); err != nil {
+	if err := svc.UnmatchReach(context.Background(), m.ID, "", AllBranches); err != nil {
 		t.Fatalf("unmatch: %v", err)
 	}
 	assertLineStatus(t, pool, lineID, LineUnmatched)
@@ -634,7 +645,7 @@ func TestIntegration_AC6_ManualMatchHistory(t *testing.T) {
 		t.Fatalf("expected 1 unmatched historical row, got %d", len(hist))
 	}
 	// Re-match is allowed once the line is UNMATCHED again; history grows.
-	if _, err := svc.ManualMatch(context.Background(), MatchInput{
+	if _, err := svc.ManualMatch(context.Background(), MatchInput{CanAccessBranch: AllBranches,
 		Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "44444444-4444-4444-8444-444444444444",
 	}, ""); err != nil {
 		t.Fatalf("re-match: %v", err)
@@ -669,8 +680,9 @@ func TestIntegration_AC7_ReconGuardsAndEmission(t *testing.T) {
 
 	// Match the line manually so 0 unmatched remain.
 	poster := newDBPoster(pool)
-	svcM := NewService(NewRepository(pool)).WithJournalPoster(poster)
-	if _, err := svcM.ManualMatch(ctx, MatchInput{Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "55555555-5555-4555-8555-555555555555"}, ""); err != nil {
+	lodgementsM := &fakeLodgements{open: []Lodgement{{MovementID: "55555555-5555-4555-8555-555555555555", BranchID: aBranch(t, pool), AmountCents: 70000}}}
+	svcM := NewService(NewRepository(pool)).WithJournalPoster(poster).WithLodgements(lodgementsM)
+	if _, err := svcM.ManualMatch(ctx, MatchInput{CanAccessBranch: AllBranches, Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement, TargetRefID: "55555555-5555-4555-8555-555555555555"}, ""); err != nil {
 		t.Fatalf("manual match: %v", err)
 	}
 

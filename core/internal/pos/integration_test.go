@@ -171,6 +171,16 @@ var tillRunSalt = time.Now().UnixNano()
 
 var tillStationSeq atomic.Int64
 
+// tillFixtureSeq counts fixture tags handed out inside this process.
+var tillFixtureSeq atomic.Int64
+
+// fixtureTag is unique per CALL, not only per process: tillRunSalt is fixed for a `go test`
+// process, so a leg keyed on it alone collides with itself under -count=N (the second pass
+// inserts the same account_no or order_no while the first pass's row is still there).
+func fixtureTag() string {
+	return fmt.Sprintf("%d-%d", tillRunSalt, tillFixtureSeq.Add(1))
+}
+
 func openTill(t *testing.T, pool *pgxpool.Pool, branchID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -385,8 +395,11 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	}
 	var custID string
 	if err := pool.QueryRow(admin,
-		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
-		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
+		// UX-89: the control sale below is made on the caller's own branch, so the account must be one that
+		// branch may trade with (homed there, or shared with no home), or the customer wall answers not found.
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000
+		    AND (home_branch_id IS NULL OR home_branch_id::text = $1) ORDER BY account_no LIMIT 1`, homeBranch).Scan(&custID); err != nil {
+		t.Skipf("no CONTRACTOR with credit seeded for the caller's branch: %v", err)
 	}
 
 	// A rep granted ONLY homeBranch, ringing against otherBranch.

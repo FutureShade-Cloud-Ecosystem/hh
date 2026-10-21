@@ -44,7 +44,7 @@ func (r *Repository) Policy(ctx context.Context, branchID string) (Policy, error
 	q := `SELECT COALESCE(branch_id::text,''), je_approval_threshold_cents, fiscal_year_start_month,
 	             cost_basis_strategy, exclude_special_buys, notes
 	      FROM gl_policy
-	      WHERE branch_id IS NULL OR ($1 <> '' AND branch_id = $1::uuid)
+	      WHERE branch_id IS NULL OR branch_id = NULLIF($1, '')::uuid
 	      ORDER BY (branch_id IS NOT NULL) DESC
 	      LIMIT 1`
 	var p Policy
@@ -93,7 +93,7 @@ func postingAccountsOn(ctx context.Context, q rowQuerier, eventType, branchID st
 		`SELECT line_role, account_code::text, (branch_id IS NOT NULL) AS is_branch
 		 FROM posting_rules
 		 WHERE event_type = $1 AND is_active
-		   AND (branch_id IS NULL OR ($2 <> '' AND branch_id = $2::uuid))
+		   AND (branch_id IS NULL OR branch_id = NULLIF($2, '')::uuid)
 		 ORDER BY is_branch`, eventType, branchID) // NULL (default) first, branch override last
 	if err != nil {
 		return nil, fmt.Errorf("gl: posting accounts %q: %w", eventType, err)
@@ -534,6 +534,18 @@ func (r *Repository) GetJournal(ctx context.Context, id string) (Journal, error)
 	}
 	j.Lines = lines
 	return j, nil
+}
+
+// JournalIsReversed says whether another journal names this one in reverses_journal_id.
+func (r *Repository) JournalIsReversed(ctx context.Context, id string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var reversed bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gl_journals WHERE reverses_journal_id = $1::uuid)`, id).Scan(&reversed); err != nil {
+		return false, fmt.Errorf("gl: read whether the journal was reversed: %w", err)
+	}
+	return reversed, nil
 }
 
 func (r *Repository) ListJournals(ctx context.Context, f JournalFilter) ([]Journal, error) {
@@ -1179,7 +1191,7 @@ func (r *Repository) ListApprovers(ctx context.Context, policyType, branchID str
 		   FROM gl_approver_assignments a
 		   LEFT JOIN users u ON u.id = a.user_id
 		  WHERE a.policy_type = $1
-		    AND (a.branch_id IS NULL OR ($2 <> '' AND a.branch_id = $2::uuid))
+		    AND (a.branch_id IS NULL OR a.branch_id = NULLIF($2, '')::uuid)
 		  ORDER BY a.branch_id NULLS FIRST, a.created_at`, policyType, branchID)
 	if err != nil {
 		return nil, fmt.Errorf("gl: list approvers: %w", err)

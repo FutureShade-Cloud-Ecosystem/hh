@@ -90,7 +90,11 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// HH-419: the floor preview's margin legs ride only to the cost and margin list, the same rule the
 	// stock reads answer through; the boot fail-fast keeps an unwired boot from handing every pricing
 	// editor each product's margin, and so its cost.
-	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	pricingHandler := pricing.NewHandler(pricingSvc, log).WithUserLinker(link).WithCostRoles(roleCfg).
+		WithCustomerReach(billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool))))
+	if !pricingHandler.CustomerReachWired() {
+		panic("pricing: customer reach not wired - resolve and the low margin report would price any named account")
+	}
 	if !pricingHandler.CostRolesWired() {
 		panic("pricing: cost roles not wired - the floor preview would answer the margin legs to every editor")
 	}
@@ -228,7 +232,11 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	quoteInvoicer, quotePayer := quoteMoneyDoor(pool, orderSvc)
 	quoteStaffSvc.WithOrderInvoicer(quoteInvoicer).WithCounterPayer(quotePayer)
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
-	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant)
+	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant).
+		WithCustomerReach(newCustomerWall(pool))
+	if !quoteStaffHandler.CustomerReachWired() {
+		panic("quote: customer reach not wired - quote create would file a quote for any named account")
+	}
 	quoteStaffHandler.RegisterStaffRoutes(r, g)
 	quoteStaffHandler.RegisterShareRoutes(r, g)
 	quoteStaffHandler.RegisterPublicRoutes(r)
@@ -862,4 +870,11 @@ func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quot
 		AmountCents: out.Payment.AmountCents, ReceivedAt: out.Payment.ReceivedAt,
 		Reference: out.Reference, ReceivedBy: out.ReceivedBy, Replayed: out.Replayed,
 	}, nil
+}
+
+// newCustomerWall is the one customer wall every staff door that takes a customer holds its customer to
+// (UX-89): the customer module's own rule, billing.CustomerModuleReach over the customer read. Each module
+// receives this seam and panics at boot without it.
+func newCustomerWall(pool *pgxpool.Pool) billing.CustomerModuleReach {
+	return billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool)))
 }

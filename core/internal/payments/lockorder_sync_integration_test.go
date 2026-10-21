@@ -288,23 +288,24 @@ func (r *loRig) statementLine(cents int64) string {
 }
 
 func (r *loRig) match(lineID, paymentID string, cents int64) error {
-	_, err := bankrec.NewRepository(r.pool).PersistMatch(context.Background(), bankrec.Match{
+	_, err := bankrec.NewRepository(r.pool).PersistMatchReach(context.Background(), bankrec.Match{
 		StatementLineID: lineID, TargetType: bankrec.TargetPayment, TargetRefID: paymentID,
 		Method: bankrec.MethodManual, AmountCents: cents,
-	}, []string{paymentID})
+	}, []string{paymentID}, bankrec.AllBranches)
 	return err
 }
 
 // (b) a bank match beside a reversal of the SAME payment, in both orders. The first writer parks holding the
 // payment row and the payments counter; the second queues behind it. Neither may deadlock, and the original
-// payment and the reversing entry must reach the payer's feed past the cursor.
+// payment and the reversing entry must reach the payer's feed past the cursor. Reversal first, the match is
+// refused (a reversed payment is never banked, SF-2b); match first, both commit.
 func TestIntegration_LockOrder_BankMatchBesideReversalOfTheSamePaymentReachesTheFeed(t *testing.T) {
 	for _, first := range []string{"reversal first", "match first"} {
 		t.Run(first, func(t *testing.T) {
 			loPoolSizes(t, func(t *testing.T, size int32) {
 				r := newLORig(t, size)
 				inv := r.invoice("SB", 1_000_000)
-				p := r.payOnce(inv, 10_000)
+				p := r.chequeOnce(inv, 10_000)
 				r.stampOrg()
 				line := r.statementLine(10_000)
 				f := r.feeds()
@@ -328,7 +329,20 @@ func TestIntegration_LockOrder_BankMatchBesideReversalOfTheSamePaymentReachesThe
 				bErr := make(chan error, 1)
 				go func() { bErr <- b() }()
 				r.waitSessions(bName+" queued behind it", 1, condLockWaiter)
-				loBothAnswered(t, aName, loAnswer(t, aName, aErr), bName, loAnswer(t, bName, bErr))
+				aRes, bRes := loAnswer(t, aName, aErr), loAnswer(t, bName, bErr)
+				if first == "reversal first" {
+					// A reversed payment is never matched (SF-2b): the reversal commits, the match is
+					// refused by the claim's own UPDATE, and nothing deadlocks.
+					t.Logf("%s: %v | %s: %v", aName, aRes, bName, bRes)
+					if aRes != nil || !isReversedRefusal(bRes, p) {
+						t.Fatalf("reversal first: reversal %v, match %v; want the reversal done and the match refused naming the reversal", aRes, bRes)
+					}
+					if st, _, _ := r.paymentState(p.ID); st == "DEPOSITED" {
+						t.Errorf("reversal first: the refused match left the payment %s, want it not DEPOSITED", st)
+					}
+				} else {
+					loBothAnswered(t, aName, aRes, bName, bRes)
+				}
 
 				_, pays := f.pull(t, f.payInfo, f.tenant, payCur)
 				requireFresh(t, "the payment", pays, payCur, p.ID, "")
