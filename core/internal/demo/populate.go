@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -510,6 +511,15 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
 		OrgSlug: demoOrgSlug,
 		OrgName: demoOrgName,
+		// The other modules' org stamps, each through its owner's seam (SF-2p2): a world populated after migrate gives
+		// its invoices their org and gains the check.
+		OrgTables: []identity.OrgStampEntry{{
+			Name:  "invoices",
+			Stamp: func(ctx context.Context, db identity.DBTX) (int64, error) { return billing.StampInvoiceOrgs(ctx, db) },
+			Unstamped: func(ctx context.Context, db identity.DBTX) (int64, error) {
+				return billing.UnstampedInvoiceOrgs(ctx, db)
+			},
+		}},
 		Directory: staticDirectory{
 			salesEmail:      salesPlatformID,
 			managerEmail:    managerPlatformID,
