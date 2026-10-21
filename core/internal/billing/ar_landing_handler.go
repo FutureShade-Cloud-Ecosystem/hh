@@ -155,6 +155,9 @@ func (h *ARLandingHandler) sendReminder(w http.ResponseWriter, r *http.Request, 
 		h.writeErr(w, r, err)
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, in.CustomerID) {
+		return
+	}
 	caller, _ := identity.StaffContextFromContext(r.Context())
 	sent, err := h.reminders.Send(r.Context(), in, caller.UserID)
 	if err != nil {
@@ -168,6 +171,9 @@ func (h *ARLandingHandler) reminderHistory(w http.ResponseWriter, r *http.Reques
 	if h.reminders == nil {
 		httpx.Error(w, http.StatusServiceUnavailable,
 			"reminders are not configured on this server, the AR send seam is not wired")
+		return
+	}
+	if !FenceCustomer(w, r, h.reach, r.URL.Query().Get("customer_id")) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

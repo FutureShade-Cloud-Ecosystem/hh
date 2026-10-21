@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -69,6 +70,9 @@ func (h *Handler) listRepAssignments(w http.ResponseWriter, r *http.Request, cal
 	if !ok {
 		return
 	}
+	if !customerwall.Fence(w, r, h.reach, custID) {
+		return
+	}
 	rows, err := h.svc.ListRepAssignments(r.Context(), repID, custID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -113,6 +117,9 @@ func (h *Handler) assignRep(w http.ResponseWriter, r *http.Request, caller guard
 			return
 		}
 	}
+	if !customerwall.Fence(w, r, h.reach, req.CustomerID) {
+		return
+	}
 	a, err := h.svc.AssignRep(r.Context(), c, req.CustomerID, req.OrderID, req.RepUserID, req.Source, req.Note)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -141,6 +148,9 @@ func (h *Handler) unassignRep(w http.ResponseWriter, r *http.Request, caller gua
 	if !ok {
 		return
 	}
+	if !customerwall.Fence(w, r, h.reach, custID) {
+		return
+	}
 	if err := h.svc.UnassignRep(r.Context(), custID, orderID); err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -165,6 +175,9 @@ func (h *Handler) previewRoute(w http.ResponseWriter, r *http.Request, caller gu
 	}
 	orderID, ok := queryUUID(w, r, "order_id")
 	if !ok {
+		return
+	}
+	if !customerwall.Fence(w, r, h.reach, custID) {
 		return
 	}
 	a, level, err := h.svc.ResolveRep(r.Context(), custID, orderID)
@@ -205,6 +218,9 @@ func (h *Handler) inboundCustomer(w http.ResponseWriter, r *http.Request, caller
 			httpx.Error(w, http.StatusBadRequest, "invalid branch_id")
 			return
 		}
+	}
+	if !customerwall.Fence(w, r, h.reach, in.CustomerID) {
+		return
 	}
 	res, err := h.svc.RouteCustomerMessage(r.Context(), in)
 	if err != nil {

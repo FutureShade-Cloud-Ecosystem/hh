@@ -230,6 +230,9 @@ func (h *C8WalkHandler) listPromises(w http.ResponseWriter, r *http.Request, cal
 		}
 	}
 	customerID := q.Get("customer_id")
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
+		return
+	}
 	cursor := q.Get("cursor")
 	limit := c8AtoiOr(q.Get("limit"), 50)
 	rows, next, err := h.repo.ListPromisesEnriched(r.Context(), statuses, customerID, cursor, limit)
@@ -344,6 +347,9 @@ func (h *C8WalkHandler) enrolReminder(w http.ResponseWriter, r *http.Request, ca
 		httpx.Error(w, http.StatusBadRequest, "invalid rule_id")
 		return
 	}
+	if !billing.FenceCustomer(w, r, h.reach, in.CustomerID) {
+		return
+	}
 	res, err := h.repo.EnrolReminder(r.Context(), in.CustomerID, in.RuleID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -368,6 +374,9 @@ func (h *C8WalkHandler) exemptReminder(w http.ResponseWriter, r *http.Request, c
 	}
 	if _, err := uuid.Parse(in.RuleID); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid rule_id")
+		return
+	}
+	if !billing.FenceCustomer(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	if strings.TrimSpace(in.Note) == "" {

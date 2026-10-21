@@ -9,25 +9,14 @@ package billing
 import (
 	"net/http"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 )
 
-// FenceCustomer holds one named customer to the caller's reach and writes the one answer when it fails: 404
-// the "customer not found" envelope (httpx.Error), the same words for an unreachable account and an unknown one. It reports whether
-// the request may go on. A nil reach (the DB free unit tests) lets the request through; the composition root
-// refuses to boot without one.
+// FenceCustomer holds one named customer to the caller's reach with the one customer answer; it is the shared
+// platform wall (customerwall.Fence), kept here under the name the AR doors already call.
 func FenceCustomer(w http.ResponseWriter, r *http.Request, reach WorkspaceReach, customerID string) bool {
-	if reach == nil || customerID == "" {
+	if reach == nil { // a typed nil interface would not compare equal inside Fence
 		return true
 	}
-	ok, err := reach.CustomerReachable(r.Context(), customerID)
-	if err != nil {
-		httpx.Error(w, http.StatusServiceUnavailable, "the customer lookup failed")
-		return false
-	}
-	if !ok {
-		httpx.Error(w, http.StatusNotFound, "customer not found")
-		return false
-	}
-	return true
+	return customerwall.Fence(w, r, reach, customerID)
 }

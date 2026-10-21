@@ -427,8 +427,8 @@ func (s *ARReminderService) WithCustomerReach(c WorkspaceReach) *ARReminderServi
 	return s
 }
 
-// apAccount is the account check the three AP contact operations make: the customer module's rule when
-// bound, the AR landing's own otherwise.
+// apAccount is the account check the three AP contact operations and the reminder send and history make: the
+// customer module's rule when bound (the one seam), the AR landing's own otherwise (the DB free unit tests).
 func (s *ARReminderService) apAccount(ctx context.Context, customerID string) error {
 	if s.reach == nil {
 		return s.account(ctx, customerID)
@@ -500,7 +500,7 @@ func (s *ARReminderService) Send(ctx context.Context, in SendReminderInput, acto
 			return prior, nil
 		}
 	}
-	if err := s.account(ctx, in.CustomerID); err != nil {
+	if err := s.apAccount(ctx, in.CustomerID); err != nil {
 		return ReminderSend{}, err
 	}
 	p := s.landing.Policy(ctx, "")
@@ -625,7 +625,7 @@ func (s *ARReminderService) History(ctx context.Context, customerID string, limi
 		limit = 50
 	}
 	if customerID != "" {
-		if err := s.account(ctx, customerID); err != nil {
+		if err := s.apAccount(ctx, customerID); err != nil {
 			return nil, err
 		}
 	}

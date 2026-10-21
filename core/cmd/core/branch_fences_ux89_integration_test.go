@@ -424,6 +424,9 @@ func TestUX89R2_EveryCustomerDoorAgrees(t *testing.T) {
 	if n := count(`SELECT count(*) FROM customer_category_overrides WHERE id = $1 AND discount_bps = 5000`, overrideB); n != 1 {
 		t.Errorf("a refused override write changed North B's override")
 	}
+
+	// Round 3: the walk over every staff route in openapi.yaml that takes a customer (customer_door_walk_integration_test.go).
+	walkEveryCustomerDoor(t, graph.pool, custB, custShared, unknown)
 }
 
 // Round 2, item 121.3: the AR doors that take a customer hold the same wall with the same one answer

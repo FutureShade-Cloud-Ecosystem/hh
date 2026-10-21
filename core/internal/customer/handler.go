@@ -64,12 +64,32 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// fenceAccount holds the customer named in the path to the caller's reach by the customer read's own rule
+// (GetAccount): an account homed at a branch the caller cannot reach, an id that is no account, and a caller
+// with no linked staff row all answer 404 "not found" (what the account read answers), and nothing is read or
+// written. It reports whether the request may go on.
+func (h *Handler) fenceAccount(w http.ResponseWriter, r *http.Request, id string) bool {
+	if _, err := h.svc.GetAccount(r.Context(), id); err != nil {
+		var bad httpx.BadRequestError
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthenticated) || errors.As(err, &bad) {
+			httpx.Error(w, http.StatusNotFound, "not found")
+			return false
+		}
+		h.writeErr(w, r, err)
+		return false
+	}
+	return true
+}
+
 // smsConsent backs the consent control's read. GET /api/v1/customers/{id}/sms-consent.
 //
 // A customer with no row answers 200 with consent:false, recorded:false, NOT 404. "Nobody has ever
 // asked this customer" is an answer, and the empty-never-an-error rule applies to it exactly as it
 // does to an empty list.
 func (h *Handler) smsConsent(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
+		return
+	}
 	out, err := h.svc.GetSMSConsent(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -95,6 +115,9 @@ func (h *Handler) setSMSConsent(w http.ResponseWriter, r *http.Request, _ guards
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
 		return
 	}
 	out, err := h.svc.SetSMSConsent(r.Context(), r.PathValue("id"), in.Consent, in.PhoneE164)
@@ -140,16 +163,7 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 	}
 	// The customer wall, the account read's own rule: an account homed at a branch the caller cannot reach
 	// answers as not found, and nothing is written.
-	// The customer's own read decides (GetAccount, the account read's rule): an account homed at a branch the
-	// caller cannot reach, an id that is no account, and a caller with no linked staff row all answer not found,
-	// and nothing is written.
-	if _, rerr := h.svc.GetAccount(r.Context(), r.PathValue("id")); rerr != nil {
-		var bad httpx.BadRequestError
-		if errors.Is(rerr, ErrNotFound) || errors.Is(rerr, ErrUnauthenticated) || errors.As(rerr, &bad) {
-			httpx.Error(w, http.StatusNotFound, "not found")
-			return
-		}
-		h.writeErr(w, r, rerr)
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
 		return
 	}
 	acct, err := h.svc.UpdateBillingAddress(r.Context(), r.PathValue("id"), addr)

@@ -232,7 +232,11 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	quoteInvoicer, quotePayer := quoteMoneyDoor(pool, orderSvc)
 	quoteStaffSvc.WithOrderInvoicer(quoteInvoicer).WithCounterPayer(quotePayer)
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
-	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant)
+	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant).
+		WithCustomerReach(newCustomerWall(pool))
+	if !quoteStaffHandler.CustomerReachWired() {
+		panic("quote: customer reach not wired - quote create would file a quote for any named account")
+	}
 	quoteStaffHandler.RegisterStaffRoutes(r, g)
 	quoteStaffHandler.RegisterShareRoutes(r, g)
 	quoteStaffHandler.RegisterPublicRoutes(r)
@@ -866,4 +870,11 @@ func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quot
 		AmountCents: out.Payment.AmountCents, ReceivedAt: out.Payment.ReceivedAt,
 		Reference: out.Reference, ReceivedBy: out.ReceivedBy, Replayed: out.Replayed,
 	}, nil
+}
+
+// newCustomerWall is the one customer wall every staff door that takes a customer holds its customer to
+// (UX-89): the customer module's own rule, billing.CustomerModuleReach over the customer read. Each module
+// receives this seam and panics at boot without it.
+func newCustomerWall(pool *pgxpool.Pool) billing.CustomerModuleReach {
+	return billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool)))
 }

@@ -468,9 +468,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// half.
 	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
-	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
+	monthEndHandler := billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithZone(newDealerZone(pool)).
-		WithUserLinker(link).RegisterRoutes(r, g)
+		WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).
+		WithUserLinker(link)
+	if !monthEndHandler.CustomerReachWired() {
+		panic("billing: customer reach not wired - the account statement read and a one account statement run would serve any named account")
+	}
+	monthEndHandler.RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
 		WithAccountChecker(posAccountAdapter{svc: customerSvc})
