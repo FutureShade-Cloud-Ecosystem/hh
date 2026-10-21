@@ -148,8 +148,8 @@ test("the core's refusals read in words that say what to do, and a walled route 
     `Payments PAY-000101, PAY-000102 are not waiting to be deposited: for each, ${causes}`,
   );
   assert.equal(
-    refusalWords("match", "payment already claimed, reversed or not RECEIVED: a payment that no longer exists (claimed 0 of 1)", 409),
-    "That payment no longer exists, so it cannot be deposited.",
+    refusalWords("match", "payment already claimed, reversed or not RECEIVED: a payment that cannot be found (claimed 0 of 1)", 409),
+    "That payment cannot be found, so it cannot be deposited.",
   );
   assert.doesNotMatch(refusalWords("match", "payment already claimed, reversed or not RECEIVED: PAY-000104 (claimed 0 of 1)", 409), /[0-9a-f]{8}-[0-9a-f]{4}-/);
   // A sentence without ids (an older core) still reads as words.

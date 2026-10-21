@@ -251,7 +251,7 @@ test("a manual match pairs a line to a payment or a journal, the refusals come i
   // The core's claim sentence: the stable words (found in the core's source), then the NUMBER of the payment that did
   // not move and the count ("payment already claimed, reversed or not RECEIVED: <payment no> (claimed N of M)").
   refused(gone, 409, "payment already claimed, reversed or not RECEIVED");
-  assert.ok(gone.json.error.includes(": a payment that no longer exists (claimed 0 of 1)"), `the claim sentence names the payment in words and the count: ${gone.json.error}`);
+  assert.ok(gone.json.error.includes(": a payment that cannot be found (claimed 0 of 1)"), `the claim sentence names the payment in words and the count: ${gone.json.error}`);
   assert.ok(!gone.json.error.includes("b9000000-"), `the claim sentence never carries an id: ${gone.json.error}`);
   assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "UNMATCHED", "a refused claim leaves the line unmatched");
   const paid = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });

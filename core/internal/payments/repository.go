@@ -858,7 +858,7 @@ func PaymentLabel(numbers map[string]string, id string) string {
 	if no := numbers[strings.ToLower(id)]; no != "" {
 		return no
 	}
-	return "a payment that no longer exists"
+	return "a payment that cannot be found"
 }
 
 // lockPaymentsSequenceSQL takes the payments feed counter row WITHOUT advancing it: the upsert writes
