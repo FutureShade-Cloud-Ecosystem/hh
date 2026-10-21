@@ -29,6 +29,9 @@ func registryProblems(t *testing.T, env *testsupport.Env) []string {
 		if err := rows.Scan(&col); err != nil {
 			t.Fatal(err)
 		}
+		if i := strings.LastIndex(col, "."); i > 0 && assist.InternalView(col[:i]) {
+			continue // an internal view feeds another view and is granted to no reader (the catalogue test holds it)
+		}
 		inDB[col] = true
 	}
 	reg := assist.RegisteredColumns()

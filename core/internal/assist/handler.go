@@ -54,6 +54,7 @@ type Handler struct {
 	costBranches BranchReader
 	poPolicy     PurchaseCostPolicies
 	channels     ChannelMembership
+	accountPos   AccountPositionPolicies
 }
 
 // PaymentTrailReader says whether a caller holds the payment trail reads (ruling 87). The composition
@@ -83,6 +84,7 @@ func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, err
 	h.costFor(r.Context(), &c)
 	h.poCostFor(r.Context(), &c)
 	h.channelsFor(r.Context(), &c)
+	h.accountPositionFor(r.Context(), &c)
 	if h.trail == nil {
 		return c, nil
 	}
@@ -532,4 +534,70 @@ func (h *Handler) channelsFor(ctx context.Context, c *Caller) {
 	}
 	c.ChannelIDs = append([]string(nil), ids...)
 	sort.Strings(c.ChannelIDs)
+}
+
+// DealerDefaultBranch is the all zero uuid the claim's account position branches use for the dealer default
+// policy, which customers homed to no branch follow.
+const DealerDefaultBranch = "00000000-0000-0000-0000-000000000000"
+
+// AccountPositionPolicies is the receivables register's per branch account position policy: the word
+// ar_invoice_policy.account_position_visibility resolves to for a branch (the branch row, else the dealer default;
+// an empty branch is the dealer default). The composition root wires billing's own policy read behind it.
+type AccountPositionPolicies interface {
+	AccountPositionVisibility(ctx context.Context, branchID string) (string, error)
+}
+
+// WithAccountPositionPolicy wires the policy that decides the claim's account position branches. Without it no
+// caller has any account position (fail closed).
+func (h *Handler) WithAccountPositionPolicy(p AccountPositionPolicies) *Handler {
+	h.accountPos = p
+	return h
+}
+
+// accountPositionFor mirrors the register's accountAllowed, branch by branch: ALL_STAFF shows the account position
+// to any staff caller, MANAGER_UP to a manager or better (tier 1 or 2), and every other word (HIDDEN, anything a
+// later migration adds, an unreadable policy) to no one. The branches are the caller's reach: its grants, or every
+// branch for a global caller; the dealer default is always asked too, for the customers homed to no branch.
+func (h *Handler) accountPositionFor(ctx context.Context, c *Caller) {
+	c.AccountPositionBranchIDs = nil
+	if h.accountPos == nil || !c.HasRole() {
+		return
+	}
+	reach := c.BranchIDs
+	if c.Global {
+		if h.costBranches == nil {
+			return
+		}
+		bs, err := h.costBranches.Branches(ctx, *c)
+		if err != nil {
+			return
+		}
+		reach = nil
+		for _, b := range bs {
+			reach = append(reach, b.BranchID)
+		}
+	}
+	manager := c.Tier == 1 || c.Tier == 2
+	allowed := func(branch string) bool {
+		word, err := h.accountPos.AccountPositionVisibility(ctx, branch)
+		if err != nil {
+			return false
+		}
+		switch word {
+		case policyAllStaff:
+			return true
+		case "MANAGER_UP":
+			return manager
+		}
+		return false
+	}
+	if allowed("") {
+		c.AccountPositionBranchIDs = append(c.AccountPositionBranchIDs, DealerDefaultBranch)
+	}
+	for _, id := range reach {
+		if allowed(id) {
+			c.AccountPositionBranchIDs = append(c.AccountPositionBranchIDs, id)
+		}
+	}
+	sort.Strings(c.AccountPositionBranchIDs)
 }

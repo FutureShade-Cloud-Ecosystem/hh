@@ -45,6 +45,13 @@ func (c Caller) ReadClaims() (readtx.Claims, error) {
 		}
 		poBranches = append(poBranches, id)
 	}
+	positionBranches := make([]string, 0, len(c.AccountPositionBranchIDs))
+	for _, id := range c.AccountPositionBranchIDs {
+		if !uuidShape.MatchString(id) {
+			return readtx.Claims{}, errors.New("assist: an account position branch id is not a uuid")
+		}
+		positionBranches = append(positionBranches, id)
+	}
 	channels := make([]string, 0, len(c.ChannelIDs))
 	for _, id := range c.ChannelIDs {
 		if !uuidShape.MatchString(id) {
@@ -53,15 +60,16 @@ func (c Caller) ReadClaims() (readtx.Claims, error) {
 		channels = append(channels, id)
 	}
 	return readtx.Claims{
-		Audience:        readtx.AudienceStaff,
-		AskerID:         c.UserID,
-		Tier:            c.Tier,
-		Global:          c.Global,
-		BranchIDs:       branches,
-		CostBranchIDs:   costBranches,
-		POCostBranchIDs: poBranches,
-		Margin:          c.Margin,
-		PaymentTrail:    c.PaymentTrail,
-		ChannelIDs:      channels,
+		Audience:                 readtx.AudienceStaff,
+		AskerID:                  c.UserID,
+		Tier:                     c.Tier,
+		Global:                   c.Global,
+		BranchIDs:                branches,
+		CostBranchIDs:            costBranches,
+		POCostBranchIDs:          poBranches,
+		Margin:                   c.Margin,
+		PaymentTrail:             c.PaymentTrail,
+		ChannelIDs:               channels,
+		AccountPositionBranchIDs: positionBranches,
 	}, nil
 }

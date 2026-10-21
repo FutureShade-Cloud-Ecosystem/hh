@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// Roles are the eight database role names of one database. Role names are
+// Roles are the nine database role names of one database. Role names are
 // cluster wide and dealer databases may share a cluster, so every name carries
 // a suffix derived from the database name. Migration 0418 derives the same
 // suffix in SQL; the integration test holds the two together.
@@ -29,6 +29,10 @@ type Roles struct {
 	// ZoneReader owns ai.dealer_day() (migration 0427): a NOLOGIN role that can read the business zone row of
 	// system_settings and run the settings module's zone rule, and nothing else. It is an assist role.
 	ZoneReader string
+	// PositionOwner owns ai.account_positions (migration 0429): a NOLOGIN role whose one row policy on invoices
+	// shows it every branch's invoices, so a customer's open balance is the whole account as the receivables
+	// register computes it. It is an assist role, and no assist role reads the view it owns but the view owner.
+	PositionOwner string
 }
 
 const maxSuffix = 30
@@ -62,6 +66,7 @@ func RolesFor(database string) Roles {
 		ProLogin:      "assist_pro_login_" + s,
 		FunctionUsers: "app_function_users_" + s,
 		ZoneReader:    "assist_zone_reader_" + s,
+		PositionOwner: "assist_position_owner_" + s,
 	}
 }
 

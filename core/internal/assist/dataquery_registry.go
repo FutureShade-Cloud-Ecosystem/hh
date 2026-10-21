@@ -209,6 +209,8 @@ var columnRegistry = map[string]string{
 	"ai.customers.branch_id":          ClassPlain,
 	"ai.customers.branch_label":       ClassPlain,
 	"ai.customers.payment_terms_days": ClassPlain,
+	"ai.customers.credit_limit_cents": ClassCost,
+	"ai.customers.open_balance_cents": ClassCost,
 	"ai.customers.on_hold":            ClassPlain,
 	"ai.customers.tax_exempt":         ClassPlain,
 	"ai.customers.is_active":          ClassPlain,
@@ -270,6 +272,8 @@ var columnGates = map[string]string{
 	"ai.purchase_order_lines.unit_cost_cents":  GatePurchasePolicy,
 	"ai.purchase_order_lines.line_total_cents": GatePurchasePolicy,
 	"ai.purchase_order_lines.billed_cents":     GatePurchasePolicy,
+	"ai.customers.credit_limit_cents":          GateAccountPosition,
+	"ai.customers.open_balance_cents":          GateAccountPosition,
 	"ai.payments.method":                       GatePaymentTrail,
 	"ai.payments.status":                       GatePaymentTrail,
 	"ai.payments.amount_cents":                 GatePaymentTrail,
@@ -329,3 +333,14 @@ func RawViewColumns() []string {
 	}
 	return out
 }
+
+// internalViews are views in schema ai that feed other views and are granted to no assist reader: the data query
+// grammar never names them, so they are in no catalogue and the registry does not class their columns. The
+// catalogue test holds each to that (no assist role but the view owner can read one; each is owned by the role its
+// migration names).
+var internalViews = map[string]bool{
+	"ai.account_positions": true, // slice 7c: an account's open balance across every branch, for ai.customers only
+}
+
+// InternalView reports whether "ai.name" is an internal view.
+func InternalView(name string) bool { return internalViews[name] }

@@ -53,7 +53,7 @@ var assistReaderViews = map[string]bool{
 var viewOwnerColumns = map[string][]string{
 	"public.orders":                 {"branch_id", "created_at", "customer_id", "fulfillment", "id", "order_no", "requested_date", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                                                           // slice 5
 	"public.order_lines":            {"description", "id", "line_no", "order_id", "qty_entered", "unit_price_cents", "line_total_cents", "uom_entered"},                                                                                                                                              // slice 5
-	"public.customers":              {"account_no", "customer_type", "home_branch_id", "id", "is_active", "name", "on_hold", "payment_terms_days", "tax_exempt"},                                                                                                                                     // slice 5
+	"public.customers":              {"account_no", "credit_limit_cents", "customer_type", "home_branch_id", "id", "is_active", "name", "on_hold", "payment_terms_days", "tax_exempt"},                                                                                                               // slice 5
 	"public.locations":              {"id", "loc_type", "name"},                                                                                                                                                                                                                                      // loc_type: slice 6a
 	"public.stock_balances":         {"branch_id", "on_hand_base", "product_id", "qty_reserved"},                                                                                                                                                                                                     // slice 6a
 	"public.product_branch_costs":   {"avg_unit_cost_cents", "branch_id", "product_id"},                                                                                                                                                                                                              // slice 6a
@@ -78,7 +78,7 @@ var viewOwnerColumns = map[string][]string{
 }
 
 func (r Roles) all() []string {
-	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin, r.ZoneReader}
+	return []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin, r.ZoneReader, r.PositionOwner}
 }
 
 // catalogueViolations reads the catalogue. extensionsOpen describes a box where the
@@ -138,6 +138,9 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 			if schema+"."+name == "ai.dealer_day" {
 				want = roles.ZoneReader // slice 7a: the dealer's day, owned by the role that can read the one setting
 			}
+			if schema+"."+name == "ai.account_positions" {
+				want = roles.PositionOwner // slice 7c: the whole account's open balance, owned by the role that sees every branch's invoices
+			}
 			if owner != want {
 				add("%s %s.%s is owned by %s, want %s", q.kind, schema, name, owner, want)
 			}
@@ -149,8 +152,8 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 
 	// 2. Role attributes and memberships. The zone reader exists from migration 0427; a database that has run 0418
 	// alone, as the planted mistake tests build, has the other six.
-	var zoneExists bool
-	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, roles.ZoneReader).Scan(&zoneExists); err != nil {
+	var zoneExists, positionExists bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1), EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $2)`, roles.ZoneReader, roles.PositionOwner).Scan(&zoneExists, &positionExists); err != nil {
 		return nil, err
 	}
 	rows, err := collect(`SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication, rolcanlogin, rolinherit
@@ -161,6 +164,9 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 	wantRoles := 6
 	if zoneExists {
 		wantRoles = 7
+	}
+	if positionExists {
+		wantRoles = 8
 	}
 	if len(rows) != wantRoles {
 		add("expected %d assist roles, found %d", wantRoles, len(rows))
@@ -253,6 +259,15 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		add("assist role %s is a member of the zone reader %s", row[0], roles.ZoneReader)
 	}
 
+	// No assist role is a member of the position owner either.
+	rows, err = collect(`SELECT r.rolname FROM pg_roles r WHERE $3 AND r.rolname = ANY($1) AND r.rolname <> $2 AND pg_has_role(r.oid, $2::name, 'MEMBER')`, roles.all(), roles.PositionOwner, positionExists)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		add("assist role %s is a member of the position owner %s", row[0], roles.PositionOwner)
+	}
+
 	// 3. Table privileges outside the plan's list. Writes: never, on anything the
 	// role does not own. SELECT: only a reader on a view of its own schema.
 	rows, err = collect(`
@@ -277,7 +292,7 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 			add("role %s holds a write privilege on %s", role, fq)
 		}
 		// The view owner's column grants are checked as an exact set below.
-		if role == roles.ViewOwner || role == roles.ZoneReader {
+		if role == roles.ViewOwner || role == roles.ZoneReader || role == roles.PositionOwner {
 			continue
 		}
 		readerOK := kind == "v" && role == roles.Reader && assistReaderViews[fq]
@@ -354,6 +369,61 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 		}
 		if len(cfg) != 1 || cfg[0] != want {
 			add("%s has settings %v, want exactly [%s]", fn, cfg, want)
+		}
+	}
+
+	// 3f. The position owner: no privilege on schema ai once ai.account_positions exists; three columns of invoices
+	// and nothing else; and the only reader of its view among the assist roles is the view owner.
+	var positionView bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('ai.account_positions') IS NOT NULL`).Scan(&positionView); err != nil {
+		return nil, err
+	}
+	if positionView {
+		var usage bool
+		if err := conn.QueryRow(ctx, `SELECT has_schema_privilege($1, 'ai', 'USAGE')`, roles.PositionOwner).Scan(&usage); err != nil {
+			return nil, err
+		}
+		if usage {
+			add("the position owner still holds USAGE on schema ai")
+		}
+		cols, err := collect(`
+			SELECT n.nspname || '.' || c.relname || '.' || a.attname
+			FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+			WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+			  AND n.nspname NOT LIKE 'pg\_%' AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = $1)
+			  AND has_column_privilege($1, c.oid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES')`, roles.PositionOwner)
+		if err != nil {
+			return nil, err
+		}
+		got := map[string]bool{}
+		for _, row := range cols {
+			got[row[0].(string)] = true
+			switch row[0].(string) {
+			case "public.invoices.customer_id", "public.invoices.status", "public.invoices.balance_cents":
+			default:
+				add("the position owner can read %s outside the plan's list", row[0])
+			}
+		}
+		for _, want := range []string{"public.invoices.customer_id", "public.invoices.status", "public.invoices.balance_cents"} {
+			if !got[want] {
+				add("the position owner lacks the planned column %s", want)
+			}
+		}
+		readers, err := collect(`SELECT r.rolname FROM pg_roles r WHERE r.rolname = ANY($1) AND r.rolname <> $2 AND r.rolname <> $3
+			AND has_table_privilege(r.oid, 'ai.account_positions'::regclass, 'SELECT')`, roles.all(), roles.ViewOwner, roles.PositionOwner)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range readers {
+			add("role %s can read ai.account_positions, which only the view owner may", row[0])
+		}
+		var viewOwnerReads bool
+		if err := conn.QueryRow(ctx, `SELECT has_table_privilege($1, 'ai.account_positions'::regclass, 'SELECT')`, roles.ViewOwner).Scan(&viewOwnerReads); err != nil {
+			return nil, err
+		}
+		if !viewOwnerReads {
+			add("the view owner cannot read ai.account_positions")
 		}
 	}
 
@@ -564,7 +634,7 @@ func TestCatalogueBitesOnAnExtraColumnAndAReaderTableGrant(t *testing.T) {
 	q := pgx.Identifier.Sanitize
 	for _, p := range []struct{ name, plant, revert, mention string }{
 		{"a contested column for the view owner", `GRANT SELECT (job_address) ON public.orders TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT (job_address) ON public.orders FROM ` + q(pgx.Identifier{roles.ViewOwner}), "public.orders.job_address"},
-		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no, customer_type, home_branch_id, payment_terms_days, on_hold, tax_exempt, is_active) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.credit_limit_cents"},
+		{"a whole table for the view owner", `GRANT SELECT ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), `REVOKE SELECT ON public.customers FROM ` + q(pgx.Identifier{roles.ViewOwner}) + `; GRANT SELECT (id, name, account_no, customer_type, home_branch_id, payment_terms_days, on_hold, tax_exempt, is_active, credit_limit_cents) ON public.customers TO ` + q(pgx.Identifier{roles.ViewOwner}), "public.customers.updated_at"},
 		{"a base table for the reader", `GRANT SELECT ON public.orders TO ` + q(pgx.Identifier{roles.Reader}), `REVOKE SELECT ON public.orders FROM ` + q(pgx.Identifier{roles.Reader}), "public.orders"},
 	} {
 		if _, err := conn.Exec(ctxT(t), p.plant); err != nil {

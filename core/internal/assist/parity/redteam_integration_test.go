@@ -269,8 +269,12 @@ func TestRedTeam16_TheNewViewsAreOwnedByTheViewOwnerNotTheSuperuser(t *testing.T
 			t.Fatal(err)
 		}
 		n++
-		if owner != env.Roles.ViewOwner || super || bypass {
-			t.Errorf("ai.%s is owned by %s (super=%v bypassrls=%v), want %s", rel, owner, super, bypass, env.Roles.ViewOwner)
+		want := env.Roles.ViewOwner
+		if rel == "account_positions" {
+			want = env.Roles.PositionOwner // the one internal view (slice 7c), owned by the role that sees every branch's invoices
+		}
+		if owner != want || super || bypass {
+			t.Errorf("ai.%s is owned by %s (super=%v bypassrls=%v), want %s", rel, owner, super, bypass, want)
 		}
 	}
 	if n < 2 {

@@ -204,8 +204,14 @@ func TestPolicedTablesAreEnabledNeverForcedAndTheAppStillReadsThemInFull(t *test
 			(SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) FROM pg_class c WHERE c.oid = $1::regclass`, "public."+table).Scan(&enabled, &forced, &policies); err != nil {
 			t.Fatal(err)
 		}
-		if !enabled || forced || policies != 1 {
-			t.Errorf("%s: row security enabled=%v forced=%v policies=%d, want enabled, not forced, one policy", table, enabled, forced, policies)
+		// invoices has two policies since 0429: the assistant's reach, and the position owner's all branches (for
+		// ai.account_positions alone).
+		wantPolicies := 1
+		if table == "invoices" {
+			wantPolicies = 2
+		}
+		if !enabled || forced || policies != wantPolicies {
+			t.Errorf("%s: row security enabled=%v forced=%v policies=%d, want enabled, not forced, %d", table, enabled, forced, policies, wantPolicies)
 		}
 		var active bool
 		if err := admin.QueryRow(ctxT(t), `SELECT row_security_active($1::regclass)`, "public."+table).Scan(&active); err != nil || active {

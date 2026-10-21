@@ -101,12 +101,18 @@ const (
 	GatePurchasePolicy = "purchase_policy"
 	// GatePaymentTrail is the role gate's admission to the two payment trail routes (ruling 87), carried in the claim.
 	GatePaymentTrail = "payment_trail"
+	// GateAccountPosition is the receivables register's per branch account position policy, carried in the claim
+	// as the home branches whose customers' credit limit and open balance the asker may see.
+	GateAccountPosition = "account_position"
 )
 
 // columnHeld is classHeld for one column: a cost column is held according to the vocabulary that governs it.
 func columnHeld(c Caller, col ColumnDef) bool {
 	if col.Class == ClassCost && col.Gate == GatePurchasePolicy {
 		return c.HasRole() && len(c.POCostBranchIDs) > 0
+	}
+	if col.Class == ClassCost && col.Gate == GateAccountPosition {
+		return c.HasRole() && len(c.AccountPositionBranchIDs) > 0
 	}
 	return classHeld(c, col.Class)
 }
@@ -518,7 +524,7 @@ func customersView() ViewDef { return classify(rawCustomersView()) }
 func rawCustomersView() ViewDef {
 	return ViewDef{
 		Name: "ai.customers", Schema: "ai", Table: "customers", Title: "Customers", MinTier: 2, Large: true,
-		About: "One row per customer account: account number, name, type, home branch, payment terms, whether it is on hold, tax exempt and active.",
+		About: "One row per customer account: account number, name, type, home branch, payment terms, whether it is on hold, tax exempt and active and, where you may see an account's position, its credit limit and open balance in cents.",
 		Columns: []ColumnDef{
 			{Name: "id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
 			{Name: "account_no", Label: "Account", Type: typeText, Filter: true, Group: true, Search: true},
@@ -527,6 +533,8 @@ func rawCustomersView() ViewDef {
 			{Name: "branch_id", Label: "Home branch id", Type: typeUUID, Filter: true, Hidden: true},
 			{Name: "branch_label", Label: "Home branch", Type: typeText, Filter: true, Group: true},
 			{Name: "payment_terms_days", Label: "Payment terms (days)", Type: typeInt, Filter: true, Group: true, Agg: true},
+			{Name: "credit_limit_cents", Label: "Credit limit", Type: typeCents, Filter: true, Agg: true},
+			{Name: "open_balance_cents", Label: "Open balance", Type: typeCents, Filter: true, Agg: true},
 			{Name: "on_hold", Label: "On hold", Type: typeText, Filter: true, Group: true},
 			{Name: "tax_exempt", Label: "Tax exempt", Type: typeText, Filter: true, Group: true},
 			{Name: "is_active", Label: "Active", Type: typeText, Filter: true, Group: true},

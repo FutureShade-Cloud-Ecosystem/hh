@@ -61,3 +61,6 @@ core/internal/messaging/payment_access.go
 core/internal/messaging/repository.go
 core/internal/assist/adapters/channel_membership.go
 core/db/migrations/0428_assist_delivery_crm_messages.sql
+core/db/migrations/0429_assist_account_position_barriers.sql
+core/internal/assist/adapters/account_position_policy.go
+core/internal/billing/register_repository.go

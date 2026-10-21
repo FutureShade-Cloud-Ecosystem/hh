@@ -41,11 +41,16 @@ type Claims struct {
 	// decided by the per branch purchasing policy (the second vocabulary), not by the cost and margin role
 	// list. An old claim without the field reads as no purchase cost anywhere.
 	POCostBranchIDs []string `json:"po_cost_branch_ids"`
-	Margin          bool     `json:"margin"`
-	PaymentTrail    bool     `json:"payment_trail"`
-	PIIClasses      []string `json:"pii_classes"`
-	Capabilities    []string `json:"capabilities"`
-	ChannelIDs      []string `json:"channel_ids"`
+	// AccountPositionBranchIDs are the home branches whose customers' account position (credit limit and open
+	// balance) this asker may see, decided by the receivables register's own per branch policy
+	// (ar_invoice_policy.account_position_visibility). The all zero uuid stands for the dealer default, which the
+	// customers homed to no branch follow. An old claim without the field reads as no account position anywhere.
+	AccountPositionBranchIDs []string `json:"account_position_branch_ids"`
+	Margin                   bool     `json:"margin"`
+	PaymentTrail             bool     `json:"payment_trail"`
+	PIIClasses               []string `json:"pii_classes"`
+	Capabilities             []string `json:"capabilities"`
+	ChannelIDs               []string `json:"channel_ids"`
 
 	// Set by the signer, never by a caller.
 	PID   int    `json:"pid"`

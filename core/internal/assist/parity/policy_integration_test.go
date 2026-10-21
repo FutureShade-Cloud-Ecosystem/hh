@@ -32,6 +32,13 @@ func countAsViewOwner(t *testing.T, env *testsupport.Env, c readtx.Claims, table
 // stand on its own.
 func countAsViewOwnerWith(t *testing.T, env *testsupport.Env, c readtx.Claims, table string, pre ...string) int {
 	t.Helper()
+	return countAsRoleWith(t, env, env.Roles.ViewOwner, c, table, pre...)
+}
+
+// countAsRoleWith is countAsViewOwnerWith for any assist role (the position owner reads invoices under its own
+// policy), granting it ai.claims() for the length of the rolled back transaction.
+func countAsRoleWith(t *testing.T, env *testsupport.Env, role string, c readtx.Claims, table string, pre ...string) int {
+	t.Helper()
 	ctx := testsupport.Ctx(t)
 	signer, err := readtx.NewSigner(redact.NewSecret(env.Key))
 	if err != nil {
@@ -42,7 +49,7 @@ func countAsViewOwnerWith(t *testing.T, env *testsupport.Env, c readtx.Claims, t
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	vo := pgx.Identifier{env.Roles.ViewOwner}.Sanitize()
+	vo := pgx.Identifier{role}.Sanitize()
 	if _, err := tx.Exec(ctx, `GRANT EXECUTE ON FUNCTION ai.claims() TO `+vo); err != nil {
 		t.Fatal(err)
 	}

@@ -771,7 +771,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	assist.NewHandler(assistSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).
 		WithCostGate(spine.roleCfg, assistDeps.Branches).
 		WithPurchaseCostPolicy(assistadapt.NewPurchaseCostPolicy(ops.purchasingSvc)).
-		WithChannelMembership(assistadapt.NewChannelMembership(ops.messagingSvc)).RegisterRoutes(r, g)
+		WithChannelMembership(assistadapt.NewChannelMembership(ops.messagingSvc)).
+		WithAccountPositionPolicy(assistadapt.NewAccountPositionPolicy(billingRepo)).RegisterRoutes(r, g)
 
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
 	// consumers (order's multi-ship invoicer, warranty's customer credit,

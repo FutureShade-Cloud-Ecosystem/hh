@@ -30,6 +30,7 @@ func TestRolesExistWithTheirAttributes(t *testing.T) {
 		{roles.Login, true, false, ""},
 		{roles.ProLogin, true, false, ""},
 		{roles.ZoneReader, false, true, ""},
+		{roles.PositionOwner, false, true, ""},
 	} {
 		var super, bypass, createRole, createDB, repl, login, inherit bool
 		err := conn.QueryRow(ctxT(t), `SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication, rolcanlogin, rolinherit
@@ -110,6 +111,10 @@ func TestSchemasAndGrantsAreExactlyPlan31(t *testing.T) {
 	sch(roles.ZoneReader, "ai", "USAGE", false)
 	sch(roles.ZoneReader, "ai", "CREATE", false)
 	sch(roles.ZoneReader, "ai_pro", "CREATE", false)
+	// ai.account_positions is created by the position owner and 0429 then takes the schema privileges back.
+	sch(roles.PositionOwner, "ai", "USAGE", false)
+	sch(roles.PositionOwner, "ai", "CREATE", false)
+	sch(roles.PositionOwner, "ai_pro", "CREATE", false)
 	// The logins hold nothing of their own (NOINHERIT): the reader's grants
 	// reach them only through SET ROLE.
 	sch(roles.Login, "ai", "USAGE", false)

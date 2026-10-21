@@ -28,7 +28,7 @@ func TestSuffixNeverCollidesTwoNamesThatNormaliseAlike(t *testing.T) {
 func TestSuffixOfALongNameFitsEveryRoleName(t *testing.T) {
 	long := strings.Repeat("x", 63)
 	r := RolesFor(long)
-	for _, name := range []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin, r.FunctionUsers, r.ZoneReader} {
+	for _, name := range []string{r.ViewOwner, r.ClaimsOwner, r.Reader, r.ProReader, r.Login, r.ProLogin, r.FunctionUsers, r.ZoneReader, r.PositionOwner} {
 		if len(name) > 63 {
 			t.Errorf("role name %q is %d bytes, over the identifier limit of 63", name, len(name))
 		}
@@ -38,7 +38,7 @@ func TestSuffixOfALongNameFitsEveryRoleName(t *testing.T) {
 	}
 }
 
-func TestRolesForCarriesTheEightNames(t *testing.T) {
+func TestRolesForCarriesTheNineNames(t *testing.T) {
 	r := RolesFor("hh")
 	want := Roles{
 		ViewOwner:     "assist_view_owner_hh",
@@ -49,6 +49,7 @@ func TestRolesForCarriesTheEightNames(t *testing.T) {
 		ProLogin:      "assist_pro_login_hh",
 		FunctionUsers: "app_function_users_hh",
 		ZoneReader:    "assist_zone_reader_hh",
+		PositionOwner: "assist_position_owner_hh",
 	}
 	if r != want {
 		t.Fatalf("RolesFor(hh) = %+v, want %+v", r, want)
