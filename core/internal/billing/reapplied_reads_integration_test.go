@@ -134,3 +134,35 @@ func TestRegister_AReversalNetsTheAppliedFigureToZero(t *testing.T) {
 		t.Errorf("after a reversal Applied reads %d, want 0 (balance %d of total %d)", d.Totals.AppliedCents, d.Totals.BalanceCents, d.Totals.TotalCents)
 	}
 }
+
+// PR 602 round 2: a payment, its reversal and the re-application read as one applied line, one reversed line (the
+// reversal's contra row, its amount negative) and one re applied line in the invoice's timeline, nothing doubled.
+func TestRegister_AReversalReadsAsItsOwnActInTheTimeline(t *testing.T) {
+	w, first := newReappliedWorld(t, 10_000)
+	w.reapply(t, "ra-timeline-", payments.Allocation{InvoiceID: first, AmountCents: 10_000})
+	d := w.detail(t, first)
+	var applied, reversed, reapplied []ActivityEntry
+	for _, e := range d.Activity {
+		if e.Kind != "PAYMENT" {
+			continue
+		}
+		switch {
+		case strings.Contains(e.Detail, "re applied from a reversed payment"):
+			reapplied = append(reapplied, e)
+		case strings.Contains(strings.ToLower(e.Detail), "reversed"):
+			reversed = append(reversed, e)
+		default:
+			applied = append(applied, e)
+		}
+	}
+	t.Logf("timeline %+v", d.Activity)
+	if len(applied) != 1 || applied[0].AmountCents != 10_000 {
+		t.Errorf("applied entries %+v, want one of +10000", applied)
+	}
+	if len(reversed) != 1 || reversed[0].AmountCents != -10_000 {
+		t.Errorf("reversed entries %+v, want one of -10000", reversed)
+	}
+	if len(reapplied) != 1 || reapplied[0].AmountCents != 10_000 {
+		t.Errorf("re applied entries %+v, want one of +10000", reapplied)
+	}
+}
