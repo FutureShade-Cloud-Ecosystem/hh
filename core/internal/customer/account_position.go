@@ -36,6 +36,15 @@ func (s *Service) PositionAllowed(ctx context.Context, branchID string) bool {
 	return s.position.AccountPositionAllowed(ctx, branchID)
 }
 
+// IsCashOnDemand is the account's cash on demand posture: zero day terms WITH a credit line. It is the
+// rule pos.paymentOptionsFor writes (the pay before release option is offered to exactly this
+// account), computed here from the raw account so the core can state it as its own field. It is a
+// payment rule, not a figure: it rides the wire whatever the account position policy says, so a
+// caller refused the limit still learns the account pays before release.
+func IsCashOnDemand(paymentTermsDays int, creditLimitCents int64) bool {
+	return paymentTermsDays <= 0 && creditLimitCents > 0
+}
+
 // SearchResultWire is the staff search row on the wire. The two position figures are pointers that
 // are nil, and so absent, when the caller is refused the account position.
 type SearchResultWire struct {
@@ -44,6 +53,8 @@ type SearchResultWire struct {
 	AccountNo        string `json:"account_no"`
 	CustomerType     string `json:"customer_type"`
 	PaymentTermsDays int    `json:"payment_terms_days"`
+	// CashOnDemand is always present, under every policy (see IsCashOnDemand).
+	CashOnDemand     bool   `json:"cash_on_demand"`
 	CreditLimitCents *int64 `json:"credit_limit_cents,omitempty"`
 	OpenBalanceCents *int64 `json:"open_balance_cents,omitempty"`
 	// AvailableCreditCents is the core's own headroom (limit minus open, never below zero), so no
@@ -56,6 +67,8 @@ type SearchResultWire struct {
 // figures are absent from the response unless the gate admits the caller.
 type AccountWire struct {
 	Account
+	// CashOnDemand is always present, under every policy (see IsCashOnDemand).
+	CashOnDemand     bool   `json:"cash_on_demand"`
 	CreditLimitCents *int64 `json:"credit_limit_cents,omitempty"`
 	BalanceCents     *int64 `json:"balance_cents,omitempty"`
 	// AvailableCreditCents is the core's own headroom (limit minus balance, never below zero), so no
@@ -79,7 +92,8 @@ func (s *Service) SearchForWire(ctx context.Context, rows []SearchResult, branch
 	out := make([]SearchResultWire, 0, len(rows))
 	for _, r := range rows {
 		w := SearchResultWire{ID: r.ID, Name: r.Name, AccountNo: r.AccountNo,
-			CustomerType: r.CustomerType, PaymentTermsDays: r.PaymentTermsDays}
+			CustomerType: r.CustomerType, PaymentTermsDays: r.PaymentTermsDays,
+			CashOnDemand: IsCashOnDemand(r.PaymentTermsDays, r.CreditLimitCents)}
 		if allowed {
 			limit, open := r.CreditLimitCents, r.OpenBalanceCents
 			avail := availableCredit(limit, open)
@@ -92,7 +106,7 @@ func (s *Service) SearchForWire(ctx context.Context, rows []SearchResult, branch
 
 // AccountForWire shapes the by-id read under the policy of the account's own home branch.
 func (s *Service) AccountForWire(ctx context.Context, a Account) AccountWire {
-	w := AccountWire{Account: a}
+	w := AccountWire{Account: a, CashOnDemand: IsCashOnDemand(a.PaymentTermsDays, a.CreditLimitCents)}
 	if s.PositionAllowed(ctx, a.BranchID) {
 		limit, bal := a.CreditLimitCents, a.BalanceCents
 		avail := availableCredit(limit, bal)

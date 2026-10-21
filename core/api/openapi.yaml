@@ -34072,6 +34072,7 @@ components:
         - account_no
         - customer_type
         - payment_terms_days
+        - cash_on_demand
       properties:
         id:
           type: string
@@ -34091,6 +34092,9 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: "The account pays before release: zero day terms with a credit line, the rule the payment options offer pay before release by. A payment rule, not a figure, so it is present under every account position policy."
         credit_limit_cents:
           type: integer
           format: int64
@@ -34113,6 +34117,7 @@ components:
         - customer_type
         - branch_id
         - payment_terms_days
+        - cash_on_demand
         - on_hold
         - tax_exempt
         - is_active
@@ -34138,6 +34143,9 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: The account pays before release (zero day terms with a credit line). A payment rule, not a figure, so it is present under every account position policy.
         credit_limit_cents:
           type: integer
           format: int64

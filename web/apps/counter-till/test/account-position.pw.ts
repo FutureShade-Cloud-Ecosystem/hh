@@ -141,6 +141,41 @@ test("on a held account the available figure steps aside for On hold beside the 
   await expect(card.locator(".num.avail")).toHaveCount(0);
 });
 
+test("a refused clerk reads Cash on demand: pay before release on C10, from the core's own field, with no figure", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  const { body, row } = await search(page, "C10", "Cash On Demand Landscaping");
+  const hit = body.find((h) => h.account_no === "C10") as Record<string, unknown>;
+  expect(hit.cash_on_demand, "the core states the posture whatever the policy").toBe(true);
+  for (const key of FIGURE_KEYS) expect(Object.keys(hit)).not.toContain(key);
+  await expect(row).not.toContainText("$");
+  await pickAndOpenCard(page, row, "Cash On Demand Landscaping");
+  const card = page.getByTestId("customer-card");
+  await expect(card.getByTestId("cust-cod-posture")).toHaveText(/cash on demand: pay before release/i);
+  await expect(card).not.toContainText("$");
+  await expect(card.getByTestId("cust-position-withheld")).toHaveCount(0);
+
+  await openStep(page, "items");
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
+  await openStep(page, "payment");
+  const charge = page.getByRole("button", { name: "Charge Account" });
+  if (await charge.count()) await charge.click();
+  const check = page.getByTestId("pos-account-check");
+  await expect(check).toContainText(/cash on demand: pay before release/i);
+  await expect(check).not.toContainText("$");
+  await expect(check).not.toContainText("No credit available");
+});
+
+test("an ordinary account's card for a refused clerk does not claim cash on demand", async ({ page }) => {
+  await signIn(page, "Sales");
+  const { body, row } = await search(page, "C02", "Fenwick Builders Ltd");
+  expect((body.find((h) => h.account_no === "C02") as Record<string, unknown>).cash_on_demand).toBe(false);
+  await pickAndOpenCard(page, row, "Fenwick Builders Ltd");
+  await expect(page.getByTestId("customer-card").getByTestId("cust-cod-posture")).toHaveCount(0);
+});
+
 if (shots !== "") {
   for (const [width, height] of [
     [1440, 900],
@@ -167,6 +202,47 @@ if (shots !== "") {
           await theme(page, mode);
           await page.screenshot({ path: `${shots}/card-held-${width}-${mode}-${label}.png` });
         });
+      }
+    }
+  }
+}
+
+// Round 2 shots for the visual read: the till card and the account check for a clerk and a manager,
+// on an ordinary account, a held account and the cash on demand account.
+const r2 = process.env.UX97_R2_SHOTS_DIR ?? "";
+if (r2 !== "") {
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+  ] as const) {
+    for (const mode of ["light", "charcoal"] as const) {
+      for (const [role, who] of [
+        ["Sales", "clerk"],
+        ["Sales manager", "manager"],
+      ] as const) {
+        for (const [term, name, kind] of [
+          ["C02", "Fenwick Builders Ltd", "ordinary"],
+          ["C09", "Harbour Drywall Inc", "held"],
+          ["C10", "Cash On Demand Landscaping", "cod"],
+        ] as const) {
+          test(`r2 shots: ${kind} account, ${who}, ${width}, ${mode}`, async ({ page }) => {
+            await page.setViewportSize({ width, height });
+            await signIn(page, role);
+            await theme(page, mode);
+            const { row } = await search(page, term, name);
+            await pickAndOpenCard(page, row, name);
+            await theme(page, mode);
+            await page.screenshot({ path: `${r2}/card-${kind}-${who}-${width}-${mode}.png` });
+            await openStep(page, "items");
+            await page.getByTestId("pos-scan-input").fill("charcoal");
+            await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
+            await openStep(page, "payment");
+            const charge = page.getByRole("button", { name: "Charge Account" });
+            if (await charge.count()) await charge.click();
+            await theme(page, mode);
+            await page.screenshot({ path: `${r2}/check-${kind}-${who}-${width}-${mode}.png` });
+          });
+        }
       }
     }
   }

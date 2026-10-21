@@ -16,6 +16,8 @@ export interface PosCustomer {
    * the dealer's policy refuses this caller. The core computes the available figure; the browser
    * never subtracts it.
    */
+  /** The core's own statement that the account pays before release, present under every policy. */
+  cash_on_demand?: boolean;
   credit_limit_cents?: number;
   open_balance_cents?: number;
   available_credit_cents?: number;

@@ -71,7 +71,7 @@ import {
   type RingKeyMemo,
   type ParkedInfo,
 } from './_pos.js'; // DIB-244/246/247/379
-import { evaluateAccountCheckUnderPolicy } from './account-check-position.js';
+import { evaluateAccountCheck } from './account-check-logic.js';
 // ── DIB-488 ── the tracked (never gated) sale-session flow + the stock-status line.
 import '@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js';
 import './pos-step-card.js'; // POS restructure: one accordion card, four times over
@@ -4467,6 +4467,7 @@ export class HosPosTerminal extends LitElement {
         credit_limit_cents: fresh.credit_limit_cents,
         open_balance_cents: fresh.open_balance_cents,
         available_credit_cents: fresh.available_credit_cents,
+        cash_on_demand: fresh.cash_on_demand,
       };
     } catch {
       // the card keeps the figures it has: no fault banner over a fact nobody asked for
@@ -7003,10 +7004,10 @@ ${this.renderFulfilTiles()}
   private renderAccountCheck(): TemplateResult | typeof nothing {
     if (this.payMethod !== 'ACCOUNT' || !this.customer) return nothing;
 
-    const check = evaluateAccountCheckUnderPolicy(this.customer, this.standing, {
+    const check = evaluateAccountCheck(this.customer, this.standing, {
       isCreditBlockedRefusal: this.creditBlockedByServer,
       cashOnDemand:
-        cashOnDemandPosture(this.paymentOptions(), this.customer.payment_terms_days, this.customer.credit_limit_cents ?? 0) !== null,
+        cashOnDemandPosture(this.paymentOptions(), this.customer.cash_on_demand) !== null,
     });
     if (!check) return nothing;
 
@@ -7882,6 +7883,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           : available === null
             ? nothing
             : html`<span data-testid="cust-available">${label} <span class="num avail">${formatMoney(available)}</span></span>`;
+      const codPosture = cashOnDemandPosture(this.paymentOptions(), c.cash_on_demand) !== null;
       const outstanding = (c.open_balance_cents ?? 0) > 0
         ? html`<span>Outstanding <span class="num out">${formatMoney(c.open_balance_cents ?? 0)}</span></span>`
         : nothing;
@@ -7910,9 +7912,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
             ${withheld
-              ? html`<span data-testid="cust-position-withheld">Credit position not shown for your role</span>`
+              ? /* The posture is the core's own field and rides every policy: a clerk refused the
+                   figures still reads that the account pays before release. */
+                codPosture
+                ? html`<span data-testid="cust-cod-posture">Cash On Demand: pay before release</span>`
+                : html`<span data-testid="cust-position-withheld">Credit position not shown for your role</span>`
               : payStep
-              ? cashOnDemandPosture(this.paymentOptions(), c.payment_terms_days, c.credit_limit_cents ?? 0) !== null
+              ? codPosture
                 ? /* Round 16 (FROM-PRINCIPAL 37 ii): the Cash On Demand account has no credit to be
                      available; the line the core's 500000 seed line used to buy it ("Credit
                      available $5,000.00") was a figure with no meaning for an account that pays

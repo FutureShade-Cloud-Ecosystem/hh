@@ -30,7 +30,7 @@ test('a good standing account shows the server figures and no invented crew memb
 });
 
 test('a Palmera with no limit shows its true figure in words, never 12,540.00', () => {
-  const res = evaluateAccountCheck({ name: 'Palmera Landscapes' });
+  const res = evaluateAccountCheck({ name: 'Palmera Landscapes', credit_limit_cents: 0, open_balance_cents: 0 });
   assert.ok(res !== null);
   assert.equal(res.standing, 'good_standing');
   assert.ok(!res.lines.join(' ').includes('12,540'));
@@ -118,7 +118,7 @@ test('a held account shows only the standing the server gave, with three ways fo
 });
 
 test('a held account with a bare standing invents no past due, bucket, promise or credit', () => {
-  const res = evaluateAccountCheck({ name: 'Bluffside Builders', on_hold: true });
+  const res = evaluateAccountCheck({ name: 'Bluffside Builders', on_hold: true, credit_limit_cents: 0, open_balance_cents: 0 });
   assert.equal(res.title, 'On hold');
   assert.equal(res.pastDueFormatted, null);
   assert.equal(res.bucketLabel, null);
@@ -247,4 +247,52 @@ test('an account with no available credit never reads may buy on this account', 
   assert.ok(!res.lines.join(' ').includes('may buy on this account'));
   assert.equal(res.lines[1], 'No credit is available, so a charge to this account will be refused.');
   assert.equal(res.title, 'No credit available');
+});
+
+// UX-97: the account check under the dealer's account position policy. Figures withheld: words, never
+// a zero line and never a figure. (Folded in from the wrapper this round.)
+import { positionWithheld, POSITION_WITHHELD_WORDS } from './account-check-logic.ts';
+
+const withFigures = { name: 'A Builder', payment_terms_days: 30, credit_limit_cents: 1500000, open_balance_cents: 246000 };
+const withheld = { name: 'A Builder', payment_terms_days: 30 };
+
+test('with the figures present the check carries them and a figure-bearing customer is not withheld', () => {
+  assert.equal(positionWithheld(withFigures), false);
+  const res = evaluateAccountCheck(withFigures, { on_hold: false });
+  assert.equal(res.lines[0], 'Available credit $12,540.00 · Terms 30 days.');
+});
+
+test('a withheld account on a cash on demand posture says pay before release and names no figure', () => {
+  const res = evaluateAccountCheck(withheld, { on_hold: false }, { cashOnDemand: true });
+  assert.equal(res.standing, 'good_standing');
+  assert.ok(res.lines.join(' ').includes('Cash on demand: pay before release.'));
+  assert.ok(!res.lines.join(' ').includes('$'));
+  assert.ok(!res.lines.join(' ').includes('No credit available'));
+});
+
+test('a withheld account with no hold says so, names no figure and does not claim the credit line is zero', () => {
+  assert.equal(positionWithheld(withheld), true);
+  const res = evaluateAccountCheck(withheld, { on_hold: false });
+  assert.equal(res.standing, 'good_standing');
+  assert.equal(res.title, 'No hold on this account');
+  const text = res.lines.join(' ');
+  assert.ok(text.includes(POSITION_WITHHELD_WORDS));
+  for (const bad of ['$', 'No credit available', 'used up', 'none (', 'may buy on this account']) {
+    assert.ok(!text.includes(bad), `${bad} must not appear: ${text}`);
+  }
+});
+
+test('a withheld account on hold is blocked from the server hold, with the ways forward and no figure', () => {
+  const res = evaluateAccountCheck(withheld, { on_hold: true, past_due_cents: 1482000, oldest_bucket: '61 to 90' });
+  assert.equal(res.standing, 'blocked');
+  assert.equal(res.waysForward.length, 3);
+  assert.equal(res.title, 'On hold: past due 61 to 90 days');
+  assert.ok(res.lines[0].startsWith(POSITION_WITHHELD_WORDS));
+  assert.ok(!res.lines[0].includes('Available credit'));
+  assert.ok(res.lines[0].includes('$14,820.00'), 'the past due figure is the standing read, not the position');
+});
+
+test('a withheld account is not blocked from its name or number', () => {
+  const res = evaluateAccountCheck({ ...withheld, name: 'Bluffside Builders', account_no: 'C09' }, { on_hold: false });
+  assert.equal(res.isBlocked, false);
 });

@@ -1908,6 +1908,9 @@ function customerSearchRow(customer, request) {
     account_no: customer.account_no,
     customer_type: customer.customer_type,
     payment_terms_days: customer.payment_terms_days,
+    // The core states the cash on demand posture (zero day terms with a credit line) as its own field,
+    // under every policy: it is a payment rule, not a figure.
+    cash_on_demand: customer.payment_terms_days <= 0 && customer.credit_limit_cents > 0,
   };
   if (accountPositionAllowed(request)) {
     row.credit_limit_cents = customer.credit_limit_cents;

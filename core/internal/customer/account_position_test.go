@@ -128,3 +128,42 @@ func TestAvailableCredit_IsFlooredAtZero(t *testing.T) {
 		}
 	}
 }
+
+// UX-97 round 2: the cash on demand posture is a payment rule, not a figure. It rides the wire whatever
+// the visibility policy says, so a refused clerk still learns the account pays before release.
+func TestCashOnDemandRule(t *testing.T) {
+	for _, c := range []struct {
+		terms int
+		limit int64
+		want  bool
+	}{{0, 500_000, true}, {30, 500_000, false}, {0, 0, false}, {30, 0, false}} {
+		if got := IsCashOnDemand(c.terms, c.limit); got != c.want {
+			t.Errorf("IsCashOnDemand(%d, %d) = %v, want %v", c.terms, c.limit, got, c.want)
+		}
+	}
+}
+
+func TestCashOnDemandRidesTheWireWhateverThePolicy(t *testing.T) {
+	cod := Account{CustomerID: readID, BranchID: "b-1", PaymentTermsDays: 0, CreditLimitCents: 500_000}
+	rows := []SearchResult{{ID: "1", PaymentTermsDays: 0, CreditLimitCents: 500_000}, {ID: "2", PaymentTermsDays: 30, CreditLimitCents: 500_000}}
+	for name, svc := range map[string]*Service{
+		"refused": NewService(newFakeStore()).WithPositionGate(&branchGate{allow: map[string]bool{}}),
+		"unbound": NewService(newFakeStore()),
+		"allowed": NewService(newFakeStore()).WithPositionGate(&branchGate{allow: map[string]bool{"b-1": true}}),
+	} {
+		if got := wireJSON(t, svc.AccountForWire(context.Background(), cod)); !strings.Contains(got, `"cash_on_demand":true`) {
+			t.Errorf("%s: by-id read must carry cash_on_demand true: %s", name, got)
+		}
+		got := wireJSON(t, svc.SearchForWire(context.Background(), rows, "b-1"))
+		if !strings.Contains(got, `"id":"1"`) || strings.Count(got, `"cash_on_demand":true`) != 1 || strings.Count(got, `"cash_on_demand":false`) != 1 {
+			t.Errorf("%s: search must say true for the zero day account and false for the terms account: %s", name, got)
+		}
+	}
+	// A refused response still carries no figure.
+	refused := wireJSON(t, NewService(newFakeStore()).AccountForWire(context.Background(), cod))
+	for _, bad := range []string{"credit_limit_cents", "balance_cents", "available_credit_cents", "500000"} {
+		if strings.Contains(refused, bad) {
+			t.Errorf("%s must stay off the wire: %s", bad, refused)
+		}
+	}
+}

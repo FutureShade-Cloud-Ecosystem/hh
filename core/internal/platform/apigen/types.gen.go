@@ -1713,6 +1713,7 @@ type CustomerSearchResult struct {
 	AccountNo            string `json:"account_no"`
 	CustomerType         string `json:"customer_type"`
 	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CashOnDemand         bool   `json:"cash_on_demand"`
 	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
 	OpenBalanceCents     *int64 `json:"open_balance_cents,omitempty"`
 	AvailableCreditCents *int64 `json:"available_credit_cents,omitempty"`
@@ -1725,6 +1726,7 @@ type CustomerAccount struct {
 	CustomerType         string `json:"customer_type"`
 	BranchId             string `json:"branch_id"`
 	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CashOnDemand         bool   `json:"cash_on_demand"`
 	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
 	OnHold               bool   `json:"on_hold"`
 	TaxExempt            bool   `json:"tax_exempt"`

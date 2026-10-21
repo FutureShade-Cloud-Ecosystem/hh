@@ -189,3 +189,46 @@ func TestUX97CustomerReadsFollowTheAccountPositionPolicy(t *testing.T) {
 		t.Fatalf("a refused caller still finds the account: %d %s", code, body)
 	}
 }
+
+// UX-97 round 2: the cash on demand posture is stated by the core as its own field under every policy
+// value, to the front-line clerk the policy refuses the figures, and to the manager alike.
+func TestUX97CashOnDemandIsStatedWhateverThePolicy(t *testing.T) {
+	fx := newXRoleFixture(t)
+	pool := fx.env.fixturePool()
+	t.Cleanup(pool.Close)
+	qdsrPlant(t, pool,
+		qdsrAccount{id: qdsrClearID, accountNo: "UX97-TERMS", name: "Fixture Terms Account", branch: qdsrNorthA, limitCents: 500_000},
+		qdsrAccount{id: qdsrHeldID, accountNo: "UX97-COD", name: "Fixture Cod Account", branch: qdsrNorthA, limitCents: 400_000},
+	)
+	if _, err := pool.Exec(context.Background(), `UPDATE customers SET payment_terms_days = 0 WHERE id = $1`, qdsrHeldID); err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range []string{"MANAGER_UP", "ALL_STAFF", "HIDDEN"} {
+		qdsrSetPolicy(t, pool, policy, "", "")
+		for _, sub := range []string{testkit.SubInsideSales, testkit.SubGeneralMgr} {
+			code, body := qdsrGet(t, fx, sub, "/api/v1/customers/"+qdsrHeldID)
+			if got := qdsrJSON(t, code, body); got["cash_on_demand"] != true {
+				t.Fatalf("%s %s: the zero day account with a line says cash_on_demand true: %s", policy, sub, body)
+			}
+			code, body = qdsrGet(t, fx, sub, "/api/v1/customers/"+qdsrClearID)
+			if got := qdsrJSON(t, code, body); got["cash_on_demand"] != false {
+				t.Fatalf("%s %s: an account on terms says cash_on_demand false: %s", policy, sub, body)
+			}
+			code, body = qdsrGet(t, fx, sub, "/api/v1/customers/search?q=UX97-COD&branch_id="+qdsrNorthA)
+			var rows []map[string]any
+			if code != http.StatusOK || json.Unmarshal([]byte(body), &rows) != nil || len(rows) != 1 || rows[0]["cash_on_demand"] != true {
+				t.Fatalf("%s %s: the search carries cash_on_demand true: %d %s", policy, sub, code, body)
+			}
+		}
+		// The refused clerk gets the posture and still no figure.
+		if policy != "ALL_STAFF" {
+			code, body := qdsrGet(t, fx, testkit.SubInsideSales, "/api/v1/customers/"+qdsrHeldID)
+			got := qdsrJSON(t, code, body)
+			for _, k := range []string{"credit_limit_cents", "balance_cents", "available_credit_cents"} {
+				if _, has := got[k]; has {
+					t.Fatalf("%s: the clerk must not receive %s: %s", policy, k, body)
+				}
+			}
+		}
+	}
+}

@@ -1490,6 +1490,7 @@ export type CustomerSearchResult = {
   account_no: string;
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   payment_terms_days: number;
+  cash_on_demand: boolean;
   credit_limit_cents?: number;
   open_balance_cents?: number;
   available_credit_cents?: number;
@@ -1501,6 +1502,7 @@ export type CustomerAccount = {
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   branch_id: string;
   payment_terms_days: number;
+  cash_on_demand: boolean;
   credit_limit_cents?: number;
   on_hold: boolean;
   tax_exempt: boolean;
