@@ -60,7 +60,7 @@ func TestWeightSyncCreate_HoldsTheCallersOrgAndBranchReach(t *testing.T) {
 		return n
 	}
 
-	wantErr := create(store(southOrder, global), southF, uuid.NewString())
+	wantErr := create(store(unknownOrders{}, global), southF, uuid.NewString())
 	if wantErr == nil || !errors.Is(wantErr, hhsync.ErrOpRefused) {
 		t.Fatalf("the unknown order refusal is the pattern: %v", wantErr)
 	}
