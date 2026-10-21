@@ -1073,12 +1073,12 @@ type OrderPayment struct {
 }
 
 // AllocateToInvoiceTx applies one payment slice to one invoice on the caller's
-// transaction: the allocation row, the balance move with its invoices feed
-// stamp and status flip, and the subledger PAYMENT row with the running
-// account balance under the locks the caller already holds (the money lock
-// order above). It is applyAllocations' per-slice body without the outbox
-// emit, which the till's tender owns for a payment it wrote: one spelling of
-// applying money to an invoice, so the ledger keeps one answer to the question.
+// transaction: the allocation row, then the settle slice (applySliceTx: the balance
+// move with its invoices feed stamp and status flip, and the subledger PAYMENT row
+// with the running account balance under the locks the caller already holds, the
+// money lock order above). It is applyAllocations' per-slice body without the
+// outbox emit, which the till's tender owns for a payment it wrote: one spelling
+// of applying money to an invoice, so the ledger keeps one answer to the question.
 func (r *Repository) AllocateToInvoiceTx(ctx context.Context, tx pgx.Tx, s OrderPayment) error {
 	var by any
 	if s.AllocatedBy != "" {
@@ -1090,6 +1090,32 @@ func (r *Repository) AllocateToInvoiceTx(ctx context.Context, tx pgx.Tx, s Order
 		s.PaymentID, s.InvoiceID, s.AmountCents, by); err != nil {
 		return fmt.Errorf("payments: allocation: %w", err)
 	}
+	return applySliceTx(ctx, tx, slice{
+		CustomerID: s.CustomerID, InvoiceID: s.InvoiceID, BranchID: s.BranchID, AmountCents: s.AmountCents,
+		SourceType: "payment", SourceRefID: s.PaymentID,
+	})
+}
+
+// slice is one invoice's share of money being applied: the settle's own unit. SourceType and SourceRefID name the
+// act on the subledger row ("payment" and the payment for a settle, "payment_reapply" and the reversed payment for a
+// re-application), and Memo is the row's free text.
+type slice struct {
+	CustomerID, InvoiceID, BranchID string
+	AmountCents                     int64
+	SourceType, SourceRefID, Memo   string
+}
+
+// applySliceTx is the settle slice every way of applying money to an invoice shares: the invoice's balance move (with
+// its invoices feed seq and the status flip to PAID at zero, PARTIALLY_PAID otherwise) and the AR subledger PAYMENT
+// row, whose balance_after is the account's open balances after the move. The caller holds the invoice row (the money
+// lock order, step 3) and writes whatever record of the act it owns (an allocation row, a re-application row) and its
+// outbox event.
+func applySliceTx(ctx context.Context, tx pgx.Tx, s slice) error {
+	// The invoice's balance move also draws a fresh INVOICES feed
+	// seq beside the write (billing's own counter, the 0213
+	// convention): a payment landing is the invoice change the
+	// payer's device must see on its invoices feed, and a money
+	// move that no pull can see is a feed that lies by omission.
 	if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
 UPDATE invoices
 		   SET balance_cents = balance_cents - $3,
@@ -1111,9 +1137,9 @@ UPDATE invoices
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO customer_transactions
-		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id)
-		 VALUES ($1::uuid, 'PAYMENT', $2, $3, 'payment', $4::uuid, $5::uuid)`,
-		s.CustomerID, -s.AmountCents, runningAR, s.PaymentID, s.BranchID); err != nil {
+		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		 VALUES ($1::uuid, 'PAYMENT', $2, $3, $4, $5::uuid, $6::uuid, $7)`,
+		s.CustomerID, -s.AmountCents, runningAR, s.SourceType, s.SourceRefID, s.BranchID, s.Memo); err != nil {
 		return fmt.Errorf("payments: subledger row: %w", err)
 	}
 	return nil

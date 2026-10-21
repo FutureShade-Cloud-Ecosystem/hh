@@ -261,6 +261,79 @@ export function createOfficeWorld(ctx) {
     return ok({ label: "VOID", original_payment_id: p.id, reversal_payment_id: reversal.id, reversal_no: reversal.no, amount_cents: p.amount_cents, reason, same_day: true, reopened_invoices: reopened }, 201);
   }
 
+  // ---- the money a reversal holds, applied to an invoice (core/internal/payments reapply.go, reversal.go) ----------------
+
+  /** What the payment holds: amount less what was re-applied, for a reversed original; zero otherwise. */
+  function heldOf(p) {
+    const applied = p.reapplied_cents ?? 0;
+    return { applied, held: p.reversed === true && p.reverses === undefined ? p.amount_cents - applied : 0 };
+  }
+
+  function heldFor(id) {
+    const p = ctx.world().payments.find((x) => x.id === id);
+    if (p === undefined) return refuse(404, "payment not found");
+    const { applied, held } = heldOf(p);
+    return ok({ payment_id: p.id, payment_no: p.no, amount_cents: p.amount_cents, reversed: p.reversed === true, applied_cents: applied, held_cents: held });
+  }
+
+  function reapplyHeld(id, body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    world.reapplyKeys ??= new Map();
+    // The service's checks, in its order (reapply.go validateReapply), before the store is reached.
+    const reason = String(body.reason ?? "").trim();
+    if (reason === "") return refuse(400, "payments: a re-application reason is required");
+    const key = String(body.idempotency_key ?? "").trim();
+    if (key === "") return refuse(400, "re-applying held money needs an idempotency key");
+    if (!UUID_RE.test(id)) return refuse(400, "payment id must be a uuid");
+    const asked = Array.isArray(body.allocations) ? body.allocations : [];
+    if (asked.length === 0) return refuse(400, "name at least one invoice to apply the held money to");
+    const seen = new Set();
+    for (const a of asked) {
+      if (!UUID_RE.test(String(a.invoice_id ?? ""))) return refuse(400, "invoice ids must be uuids");
+      if (seen.has(a.invoice_id)) return refuse(400, `the same invoice is named twice: ${a.invoice_id}`);
+      seen.add(a.invoice_id);
+      if (!Number.isInteger(a.amount_cents) || a.amount_cents <= 0) return refuse(400, "each amount applied must be greater than zero");
+    }
+    const p = world.payments.find((x) => x.id === id);
+    if (p === undefined) return refuse(404, "payment not found");
+    // A replay is judged under the payment, before the account and the held figure.
+    const spent = world.reapplyKeys.get(key);
+    if (spent !== undefined) {
+      const same = spent.payment === id && spent.lines.length === asked.length && asked.every((a) => spent.lines.some((l) => l.invoice_id === a.invoice_id && l.applied_cents === a.amount_cents));
+      if (!same) return refuse(409, "that idempotency key already re-applied held money differently; use a new key");
+      const live = spent.lines.map((l) => {
+        const inv = world.invoices.find((i) => i.id === l.invoice_id);
+        return { ...l, balance_after_cents: inv.balance_cents, outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART" };
+      });
+      const { held } = heldOf(p);
+      const total = live.reduce((n, l) => n + l.applied_cents, 0);
+      return ok({ payment_id: id, batch_id: spent.batch, applied_cents: total, held_before_cents: held + total, held_after_cents: held, lines: live, replayed: true });
+    }
+    if (p.reverses !== undefined) return refuse(409, "payments: no money is held for this payment: it is itself a reversing entry, the money is held for the payment it reversed");
+    if (p.reversed !== true) return refuse(409, "payments: no money is held for this payment: it has not been reversed");
+    const { held } = heldOf(p);
+    const total = asked.reduce((n, a) => n + a.amount_cents, 0);
+    if (total > held) return refuse(409, `payments: that is more than the payment still holds (${held} cents held, ${total} asked for)`);
+    const targets = [];
+    for (const a of [...asked].sort((x, y) => (x.invoice_id < y.invoice_id ? -1 : 1))) {
+      const inv = world.invoices.find((i) => i.id === a.invoice_id && i.acct === p.acct);
+      if (inv === undefined) return refuse(404, `invoice not found: ${a.invoice_id}`);
+      if (inv.balance_cents <= 0) return refuse(400, `invoice ${inv.invoice_no} is not open, held money can only be applied to an open invoice`);
+      if (a.amount_cents > inv.balance_cents) return refuse(400, `invoice ${inv.invoice_no} can take at most ${inv.balance_cents} cents right now; refresh and retry`);
+      targets.push({ inv, cents: a.amount_cents });
+    }
+    world.counter += 1;
+    const batch = ctx.uuid("d", 700 + world.counter);
+    const lines = targets.map((t) => {
+      t.inv.balance_cents -= t.cents;
+      return { invoice_id: t.inv.id, invoice_no: t.inv.invoice_no, applied_cents: t.cents, outcome: t.inv.balance_cents <= 0 ? "CLOSES" : "PART", balance_after_cents: t.inv.balance_cents };
+    });
+    p.reapplied_cents = (p.reapplied_cents ?? 0) + total;
+    world.reapplyKeys.set(key, { payment: id, batch, lines: lines.map((l) => ({ invoice_id: l.invoice_id, invoice_no: l.invoice_no, applied_cents: l.applied_cents })) });
+    return ok({ payment_id: id, batch_id: batch, applied_cents: total, held_before_cents: held, held_after_cents: held - total, lines, replayed: false }, 201);
+  }
+
   // ---- settings: the register, the returned payment fee, automatic holds ----------------------------------------------------
 
   const TONE_RANK = { FRIENDLY: 0, FIRM: 1, FINAL: 2 };
@@ -390,6 +463,10 @@ export function createOfficeWorld(ctx) {
     }
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reverse$/);
     if (m && method === "POST") return reversePayment(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reapply$/);
+    if (m && method === "POST") return reapplyHeld(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/held$/);
+    if (m && method === "GET") return heldFor(m[1]);
     if (method === "POST" && path === "/api/v1/ar/reminders") {
       // The act is gated on the capability, not only the payload: a base plan caller who hand crafts the POST is refused.
       if (w.landingPolicy.ar_tier !== "PRO") return refuse(403, gateWords.base);

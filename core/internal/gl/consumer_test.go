@@ -261,6 +261,7 @@ func healthyRules() []RuleRef {
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":       {"ar", "refund_payable"},
+		"payment.reapplied":      {"ar", "refund_payable"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
@@ -394,6 +395,70 @@ func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
 		f.activeRules = without
 		if err := svc.ValidatePostingRules(context.Background()); err == nil {
 			t.Fatalf("a missing payment.reversed %s rule must fail the boot validation", role)
+		}
+	}
+}
+
+// SF-2l (ruled 49.3 and 52): a re-application of the money a reversal holds is Dr 2310 refund_payable / Cr AR for the
+// total, one journal per request however often the event is delivered, on the branch the payload carries.
+func TestPaymentReappliedLegs(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f)
+	payload := map[string]any{"batch_id": "batch1", "payment_id": "orig1", "amount_cents": 9000, "method": "CHEQUE", "branch_id": "b1"}
+	for i := 0; i < 2; i++ { // delivered twice
+		if err := svc.consume(ctx, ev("payment.reapplied", payload)); err != nil {
+			t.Fatalf("consume: %v", err)
+		}
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "2310", 9000, 0)
+	wantLeg(t, d, "1100", 0, 9000)
+	if !d.balanced() {
+		t.Fatal("unbalanced")
+	}
+	if d.IdempotencyKey != "payment.reapplied:batch1" || d.BranchID != "b1" || d.SourceRefID != "orig1" {
+		t.Fatalf("key %q branch %q source ref %q", d.IdempotencyKey, d.BranchID, d.SourceRefID)
+	}
+	if len(f.journals) != 1 {
+		t.Fatalf("delivered twice, %d journals", len(f.journals))
+	}
+	for _, bad := range []map[string]any{
+		{"payment_id": "orig1", "amount_cents": 100},
+		{"batch_id": "b", "amount_cents": 100},
+		{"batch_id": "b", "payment_id": "orig1"},
+		{"batch_id": "b", "payment_id": "orig1", "amount_cents": -5},
+	} {
+		if err := newTestService(newFakeStore()).consume(ctx, ev("payment.reapplied", bad)); err == nil {
+			t.Fatalf("a malformed re-application %v was acked", bad)
+		}
+	}
+}
+
+// The topic is posted by the consumer and its two roles are required at boot.
+func TestPaymentReapplied_IsAPostedTopicWithRequiredRules(t *testing.T) {
+	found := false
+	for _, topic := range PostedTopics {
+		if topic == "payment.reapplied" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("payment.reapplied must be a topic the posting consumer owns")
+	}
+	for _, role := range []string{"ar", "refund_payable"} {
+		f := newFakeStore()
+		svc := newTestService(f)
+		var without []RuleRef
+		for _, r := range healthyRules() {
+			if r.EventType == "payment.reapplied" && r.LineRole == role {
+				continue
+			}
+			without = append(without, r)
+		}
+		f.activeRules = without
+		if err := svc.ValidatePostingRules(context.Background()); err == nil {
+			t.Fatalf("a missing payment.reapplied/%s rule must fail validation", role)
 		}
 	}
 }

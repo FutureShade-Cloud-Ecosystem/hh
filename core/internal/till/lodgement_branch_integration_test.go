@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// LodgementBranch (SF-2g round 2) answers the branch of a LODGEMENT movement through its session, and nothing for
+// LodgementFacts (SF-2g round 2) answers the branch of a LODGEMENT movement through its session, and nothing for
 // another movement type, an unknown id or text that is no id.
-func TestIntegration_LodgementBranch(t *testing.T) {
+func TestIntegration_LodgementFacts(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
 	var branch, user, session, lodgement, paidIn string
@@ -37,12 +37,12 @@ func TestIntegration_LodgementBranch(t *testing.T) {
 	}
 	lodgement, paidIn = ins("LODGEMENT"), ins("PAID_IN")
 	repo := NewRepository(pool)
-	got, found, err := repo.LodgementBranch(ctx, lodgement)
-	if err != nil || !found || got != branch {
-		t.Fatalf("a lodgement answered branch %q found %v err %v, want %q", got, found, err, branch)
+	got, found, err := repo.LodgementFacts(ctx, lodgement)
+	if err != nil || !found || got.BranchID != branch || got.AmountCents != 1000 {
+		t.Fatalf("a lodgement answered %+v found %v err %v, want branch %q and 1000 cents", got, found, err, branch)
 	}
 	for name, id := range map[string]string{"a paid in movement": paidIn, "an unknown id": "33333333-3333-4333-8333-3333333333ee", "text": "not-an-id"} {
-		if _, found, err := repo.LodgementBranch(ctx, id); err != nil || found {
+		if _, found, err := repo.LodgementFacts(ctx, id); err != nil || found {
 			t.Errorf("%s: found %v err %v, want not found", name, found, err)
 		}
 	}

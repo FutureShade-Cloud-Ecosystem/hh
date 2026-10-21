@@ -213,13 +213,13 @@ func (f *fakePayments) MarkDeposited(_ context.Context, ids []string, lineID str
 
 type fakeLodgements struct{ open []Lodgement }
 
-func (f *fakeLodgements) LodgementBranch(_ context.Context, id string) (string, bool, error) {
+func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (LodgementFact, bool, error) {
 	for _, l := range f.open {
 		if l.MovementID == id {
-			return l.BranchID, true, nil
+			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents}, true, nil
 		}
 	}
-	return "", false, nil
+	return LodgementFact{}, false, nil
 }
 
 func (f *fakeLodgements) OpenLodgements(_ context.Context, _, _ time.Time) ([]Lodgement, error) {

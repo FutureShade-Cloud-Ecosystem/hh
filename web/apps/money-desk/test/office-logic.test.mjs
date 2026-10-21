@@ -105,7 +105,7 @@ test("a moment reads as the days since it, from elapsed time and never a guessed
 
 // ---- an invoice: send, dispute, a payment reversal -----------------------------------------------------------------
 
-import { disputeCheck, disputeOutcomeWord, disputeReasonWord, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
+import { disputeCheck, disputeOutcomeWord, disputeReasonWord, reapplyCheck, reapplyWords, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
 
 test("a dispute is checked before it is sent: a reason, an amount in dollars, never above the balance", () => {
   assert.deepEqual(disputeCheck({ reason: "DAMAGED", amountText: "100.00", note: " Cracked pallets ", balanceCents: 96_000 }), { ok: true, reason: "DAMAGED", amountCents: 10_000, note: "Cracked pallets" });
@@ -127,6 +127,26 @@ test("a reversal needs a reason, and says what it undid in dollars the server na
   const done = { label: "VOID", original_payment_id: "p", reversal_payment_id: "r", reversal_no: "REV-0101", amount_cents: 2500, reason: "x", same_day: true, reopened_invoices: ["a", "b"] };
   assert.equal(reversalWords(done, "PAY-0101"), "Payment PAY-0101 is reversed as a void, the same day. $25.00 is owing again on 2 invoices.");
   assert.equal(reversalWords({ ...done, label: "REVERSAL", same_day: false, reopened_invoices: ["a"] }, "PAY-0101"), "Payment PAY-0101 is reversed as a reversal. $25.00 is owing again on 1 invoice.");
+});
+
+test("held money is checked before it is sent: an invoice, an amount in dollars, never above what is held or what is open, and a reason", () => {
+  const ok = { invoiceId: "inv-1", amountText: "10.00", reason: " Keyed on the wrong account ", heldCents: 2500, balanceCents: 9000 };
+  assert.deepEqual(reapplyCheck(ok), { ok: true, invoiceId: "inv-1", amountCents: 1000, reason: "Keyed on the wrong account" });
+  assert.match(reapplyCheck({ ...ok, invoiceId: "" }).words, /Choose the invoice/);
+  assert.match(reapplyCheck({ ...ok, balanceCents: null }).words, /Choose the invoice/);
+  assert.match(reapplyCheck({ ...ok, amountText: " " }).words, /Enter the amount to apply, such as 100.00/);
+  assert.match(reapplyCheck({ ...ok, amountText: "10.001" }).words, /dollars and cents/);
+  assert.match(reapplyCheck({ ...ok, amountText: "0" }).words, /more than zero/);
+  assert.equal(reapplyCheck({ ...ok, amountText: "25.01" }).words, "That is more than the $25.00 still held for this payment.");
+  assert.equal(reapplyCheck({ ...ok, amountText: "20.00", balanceCents: 1500 }).words, "That is more than the invoice's open balance of $15.00.");
+  assert.match(reapplyCheck({ ...ok, reason: "  " }).words, /Enter why the money is being applied/);
+  assert.equal(reapplyCheck({ ...ok, amountText: "25.00" }).ok, true, "the whole held amount is allowed");
+});
+
+test("a re-application says what moved and what is still held, in the dollars the server named", () => {
+  const done = { payment_id: "p", batch_id: "b", applied_cents: 1000, held_before_cents: 2500, held_after_cents: 1500, replayed: false, lines: [{ invoice_id: "i", invoice_no: "INV-1001", applied_cents: 1000, outcome: "PART", balance_after_cents: 5000 }] };
+  assert.equal(reapplyWords(done, "PAY-0101"), "$10.00 of payment PAY-0101 is applied to invoice INV-1001. $15.00 is still held for this payment.");
+  assert.equal(reapplyWords({ ...done, applied_cents: 2500, held_after_cents: 0 }, "PAY-0101"), "$25.00 of payment PAY-0101 is applied to invoice INV-1001. Nothing is held for this payment now.");
 });
 
 test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {
