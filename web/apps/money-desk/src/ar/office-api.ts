@@ -23,6 +23,8 @@ import {
   type BillingReminderSend,
   type BillingReminderSendPage,
   type BillingStatementRunResult,
+  type PaymentsHeld,
+  type PaymentsReapplication,
   type PaymentsReversalResult,
   type Result,
   type TillCreditHoldPage,
@@ -115,6 +117,20 @@ export class OfficeApi {
 
   reversePayment(paymentId: string, reason: string): Promise<Result<PaymentsReversalResult>> {
     return staffPayments.paymentsReversePayment(this.#client, paymentId, { reason });
+  }
+
+  /** What a reversed payment still holds in 2310: the figure the re-application form shows. */
+  heldFor(paymentId: string): Promise<Result<PaymentsHeld>> {
+    return staffPayments.paymentsHeldFor(this.#client, paymentId);
+  }
+
+  /** Applies up to what a reversed payment holds to one invoice of the same customer; one key per attempt. */
+  reapplyHeld(paymentId: string, input: { invoiceId: string; amountCents: number; reason: string; key: string }): Promise<Result<PaymentsReapplication>> {
+    return staffPayments.paymentsReapplyHeld(this.#client, paymentId, {
+      reason: input.reason,
+      idempotency_key: input.key,
+      allocations: [{ invoice_id: input.invoiceId, amount_cents: input.amountCents }],
+    });
   }
 
   // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds -------------------

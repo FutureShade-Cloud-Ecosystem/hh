@@ -298,6 +298,59 @@ test("a payment is reversed once, reopens what it paid, and is refused in the co
   refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "this payment was reversed, so it cannot be marked bounced");
 });
 
+test("a reversed payment's held money is read, applied to an invoice, replayed once and refused in the core's words", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const other = await invoiceOf("INV-1001");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "ra-1" });
+  const id = paid.json.payment_id;
+  const held = `/api/v1/ar/payments/${id}/held`;
+  const apply = `/api/v1/ar/payments/${id}/reapply`;
+  const body = (key, invoice, cents) => ({ reason: "Keyed on the wrong account", idempotency_key: key, allocations: [{ invoice_id: invoice.id, amount_cents: cents }] });
+  // Never reversed: it holds nothing.
+  const none = await call("GET", held);
+  assert.equal(none.status, 200);
+  holds("PaymentsHeld", none.json);
+  assert.deepEqual([none.json.reversed, none.json.held_cents], [false, 0]);
+  refused(await call("POST", apply, body("ra-k1", inv, 100)), 409, "it has not been reversed");
+  refused(await call("GET", "/api/v1/ar/payments/00000000-0000-4000-8000-0000000000aa/held"), 404, "payment not found");
+  assert.equal((await call("POST", `/api/v1/ar/payments/${id}/reverse`, { reason: "Keyed on the wrong account" })).status, 201);
+  const reversed = await call("GET", held);
+  holds("PaymentsHeld", reversed.json);
+  assert.deepEqual([reversed.json.reversed, reversed.json.amount_cents, reversed.json.held_cents], [true, 2500, 2500]);
+  // The service's checks first, then the store's.
+  refused(await call("POST", apply, { ...body("ra-k2", inv, 100), reason: " " }), 400, "payments: a re-application reason is required");
+  refused(await call("POST", apply, { ...body("", inv, 100) }), 400, "re-applying held money needs an idempotency key");
+  refused(await call("POST", apply, { reason: "x", idempotency_key: "ra-k3", allocations: [] }), 400, "name at least one invoice to apply the held money to");
+  refused(await call("POST", apply, body("ra-k4", inv, 2501)), 409, "that is more than the payment still holds");
+  refused(await call("POST", apply, body("ra-k5", { id: "00000000-0000-4000-8000-0000000000bb" }, 100)), 404, "invoice not found");
+  // The apply: the held money goes on an invoice of the account, and the balance moves with it.
+  const before = other.balance_cents;
+  const first = await call("POST", apply, body("ra-k6", other, 1000));
+  assert.equal(first.status, 201);
+  holds("PaymentsReapplication", first.json);
+  assert.deepEqual([first.json.applied_cents, first.json.held_before_cents, first.json.held_after_cents, first.json.replayed], [1000, 2500, 1500, false]);
+  assert.equal((await invoiceOf("INV-1001")).balance_cents, before - 1000);
+  assert.equal((await call("GET", held)).json.held_cents, 1500);
+  // The same key and body answers the first result, writes nothing; the same key with another amount is a conflict.
+  const replay = await call("POST", apply, body("ra-k6", other, 1000));
+  assert.equal(replay.status, 200);
+  holds("PaymentsReapplication", replay.json);
+  assert.deepEqual([replay.json.replayed, replay.json.batch_id], [true, first.json.batch_id]);
+  assert.equal((await invoiceOf("INV-1001")).balance_cents, before - 1000);
+  refused(await call("POST", apply, body("ra-k6", other, 1100)), 409, "that idempotency key already re-applied held money differently; use a new key");
+  // Never twice: what is left can be applied once, and no more.
+  refused(await call("POST", apply, body("ra-k7", other, 1501)), 409, "that is more than the payment still holds");
+  assert.equal((await call("POST", apply, body("ra-k8", other, 1500))).status, 201);
+  assert.equal((await call("GET", held)).json.held_cents, 0);
+  refused(await call("POST", apply, body("ra-k9", other, 1)), 409, "that is more than the payment still holds");
+  // The reversing row holds nothing.
+  const list = await call("GET", `/api/v1/ar/invoices/${inv.id}/payments`);
+  const row = list.json.items.find((p) => p.status === "VOID");
+  refused(await call("POST", `/api/v1/ar/payments/${row.payment_id}/reapply`, body("ra-k10", other, 1)), 409, "it is itself a reversing entry, the money is held for the payment it reversed");
+  assert.ok(coreSource.includes("the money is held for the payment it reversed"));
+});
+
 test("a bounced payment cannot be reversed, and the core says why", async () => {
   await reset();
   const inv = await invoiceOf("INV-1002");

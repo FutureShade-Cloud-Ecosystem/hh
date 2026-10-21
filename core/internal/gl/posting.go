@@ -45,6 +45,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
 	case "payment.reversed":
 		draft, post, err = s.buildPaymentReversed(ctx, e.Payload)
+	case "payment.reapplied":
+		draft, post, err = s.buildPaymentReapplied(ctx, e.Payload)
 	case "order.fulfilled":
 		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
 	case "deposit.released":
@@ -490,6 +492,58 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),
 			cr(refundCode, amount, "held for the customer (payment reversed)"),
+		},
+	}, true, nil
+}
+
+type paymentReappliedPayload struct {
+	BatchID     string `json:"batch_id"`   // the request: one journal per batch
+	PaymentID   string `json:"payment_id"` // the reversed original whose held money is applied
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	BranchID    string `json:"branch_id"`
+}
+
+// buildPaymentReapplied books the re-application of money a reversal holds: Dr 2310 refund_payable / Cr AR for the
+// total applied (SF-2l, ruled 49.3 and 52). It is the mirror of buildPaymentReversed: the reversal put the money in
+// 2310 and reopened the invoices' AR, and applying it to invoices clears the liability and takes the AR back out, the
+// invoice balances and the AR subledger having moved in the same transaction (payments.applySliceTx). One journal per
+// request, keyed on its batch, so a retry of the outbox row posts once. The branch is the payment's, which every
+// invoice the request names shares (the write refuses any other).
+func (s *Service) buildPaymentReapplied(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentReappliedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reapplied payload: %w", err)
+	}
+	if p.BatchID == "" || p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reapplied missing batch_id or payment_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.reapplied has no amount")
+	}
+	et := "payment.reapplied"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	refundCode, err := pick(rules, et, "refund_payable")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.reapplied:" + p.BatchID,
+		Memo:           "Held payment re-applied to invoices " + p.Method,
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(refundCode, p.AmountCents, "held money applied (payment re-applied)"),
+			cr(arCode, p.AmountCents, "AR cleared (payment re-applied)"),
 		},
 	}, true, nil
 }
@@ -1129,6 +1183,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":       {"ar", "refund_payable"},
+		"payment.reapplied":      {"ar", "refund_payable"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
