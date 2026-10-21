@@ -192,8 +192,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/syncscope_invoices.go",
-		tables: []string{"orders"},
-		reason: "the invoice sync scope resolves the order's org for the sync fence (SELECT org_id FROM orders), read only",
+		tables: []string{"orders", "locations"},
+		reason: "the invoice sync scope holds the order the document bills to the caller's org for the sync fence, through the order's branch and the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-95a: no writer stamps orders.org_id; row 2954)",
 	},
 	{
 		module: "branches",

@@ -232,11 +232,12 @@ export const boardStyles = css`
      stops laid out by stop_no. Each cell is a token-sized square, never a hand-rolled px. */
   .time-axis { background: var(--hh-card); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-12); margin-bottom: var(--hh-s-16); overflow-x: auto; }
   .time-axis-grid { display: grid; grid-template-columns: minmax(120px, 160px) repeat(12, minmax(48px, 1fr)); gap: var(--hh-s-4); min-width: 720px; }
-  .time-axis-row { display: contents; }
+  .time-axis-head, .time-axis-row { display: contents; }
   .time-axis-cell { display: flex; align-items: center; justify-content: center; min-height: 36px; padding: var(--hh-s-4); border-radius: var(--hh-radius-control); border: 1px dashed var(--hh-line); background: transparent; color: var(--hh-text-dim); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .time-axis-cell.head-run, .time-axis-cell.head-hour { border: 0; background: transparent; color: var(--hh-text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
   .time-axis-cell.has-stop { background: color-mix(in srgb, var(--hh-state-good) 18%, var(--hh-card)); color: var(--hh-text); border-color: var(--hh-state-good); border-style: solid; font-weight: 700; }
-  .time-axis-cell.axis-run { background: transparent; border: 0; color: var(--hh-text); font-family: var(--hh-font-mono); font-weight: 700; font-size: 14px; }
+  .time-axis-cell.axis-run { background: transparent; border: 0; color: var(--hh-text); font-family: var(--hh-font-mono); font-weight: 700; font-size: 14px; flex-direction: column; gap: var(--hh-s-4); text-align: center; }
+  .time-axis-cell.axis-run .axis-note { font-family: inherit; font-weight: 400; font-size: 11px; }
 
   /* WALK-C16: the run-detail drawer. It opens beside the board on desktop and at the top on
      phone, and never carries the same content twice. */

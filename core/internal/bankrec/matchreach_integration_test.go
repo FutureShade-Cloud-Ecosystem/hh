@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,7 @@ type reachWorld struct {
 	pay      *fakePayments
 	lodg     *fakeLodgements
 	poster   *dbPoster
+	journals *gl.Service
 	callerA  guards.StaffCaller
 	callerAB guards.StaffCaller
 }
@@ -76,9 +78,10 @@ func newReachWorld(t *testing.T) *reachWorld {
 		t.Fatalf("deposit: %v", err)
 	}
 	w.poster = newDBPoster(pool)
+	w.journals = gl.NewService(gl.NewRepository(pool))
 	w.pay = &fakePayments{}
 	w.lodg = &fakeLodgements{}
-	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournalPoster(w.poster)
+	svc := NewService(NewRepository(pool)).WithPayments(w.pay).WithLodgements(w.lodg).WithJournals(w.journals).WithJournalPoster(w.poster)
 	w.h = NewHandler(svc, slog.Default())
 	w.callerA = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{w.branchA}}}
 	w.callerAB = guards.StaffCaller{StaffAuthority: identity.StaffAuthority{Tier: identity.TierManager, Scope: identity.ScopeGlobal}}
@@ -367,10 +370,11 @@ func TestIntegration_MatchReach_AnAutoMatchByABranchManagerSkipsAnotherBranchsLo
 	}
 }
 
-// Concurrency for the unmatch: a writer holds the payment row between its lock and its counter draw
-// (testkit.DrawPark); a branch A manager's unmatch and a global manager's unmatch of the same match queue behind it
-// on the payment row, holding nothing, and when it finishes there is no deadlock, the global manager's unmatch
-// lands, and the branch A manager's never does.
+// Concurrency for the unmatch, deterministic (SF-2j, S3's P3 2): a writer holds the payment row between its lock and
+// its counter draw (testkit.DrawPark). The branch A manager's unmatch is queued ALONE behind it, on the payment row,
+// holding nothing; when the writer finishes the unmatch is refused as a match that is not live and nothing is written
+// (line MATCHED, payment DEPOSITED, no reversing journal). Only then does the global manager's unmatch of the same
+// match run, as the control: it lands.
 func TestIntegration_UnmatchReach_TheFenceHoldsBesideAWriterOfTheSamePaymentRow(t *testing.T) {
 	w := newReachWorld(t)
 	line := w.line(t, "REACH UNMATCH RACE", 5000)
@@ -380,34 +384,38 @@ func TestIntegration_UnmatchReach_TheFenceHoldsBesideAWriterOfTheSamePaymentRow(
 	}
 	var m Match
 	_ = json.Unmarshal([]byte(body), &m)
+	_, _, journalsBefore := w.matchRows(t, line)
 	park := testkit.NewDrawPark(t, w.pool, "payments", 55010302)
 	touch := park.TouchRow("payments", "updated_at = now()", reachPayB1)
 	park.WaitParked("a writer holds the payment row at its counter draw")
 	type out struct {
-		who  string
 		code int
+		body string
 	}
-	res := make(chan out, 2)
-	go func() { c, _ := w.unmatch(w.callerA, m.ID); res <- out{"A", c} }()
-	go func() { c, _ := w.unmatch(w.callerAB, m.ID); res <- out{"AB", c} }()
-	park.WaitBlocked("the unmatches queue on the payment row")
+	res := make(chan out, 1)
+	go func() { c, b := w.unmatch(w.callerA, m.ID); res <- out{c, b} }()
+	park.WaitBlocked("the branch A manager's unmatch queues on the payment row")
 	park.Answers(map[string]chan error{"writer": touch})
-	got := map[string]int{}
-	for i := 0; i < 2; i++ {
-		select {
-		case o := <-res:
-			got[o.who] = o.code
-		case <-time.After(30 * time.Second):
-			t.Fatal("an unmatch never finished")
-		}
+	var a out
+	select {
+	case a = <-res:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the branch A manager's unmatch never finished")
 	}
-	if got["A"] == http.StatusOK {
-		t.Errorf("the branch A manager's unmatch of branch B's payment landed")
+	ls, ps, _ := w.written(t, line, reachPayB1)
+	_, live, journals := w.matchRows(t, line)
+	t.Logf("branch A's unmatch behind the writer: %d %s | line %s payment %s live matches %d", a.code, a.body, ls, ps, live)
+	if a.code != http.StatusConflict {
+		t.Errorf("the branch A manager's unmatch answered %d, want 409 (a match that is not live)", a.code)
 	}
-	if got["AB"] != http.StatusOK && got["AB"] != http.StatusConflict {
-		t.Errorf("the global manager's unmatch answered %d", got["AB"])
+	if ls != "MATCHED" || ps != "DEPOSITED" || live != 1 || journals != journalsBefore {
+		t.Errorf("the refused unmatch wrote: line %s, payment %s, live matches %d, reversing journals %d to %d", ls, ps, live, journalsBefore, journals)
 	}
-	if _, ps, _ := w.written(t, line, reachPayB1); ps != "RECEIVED" && got["AB"] == http.StatusOK {
+	// Control: the global manager's unmatch of the same match lands.
+	if c, b := w.unmatch(w.callerAB, m.ID); c != http.StatusOK {
+		t.Fatalf("control: the global manager's unmatch answered %d %s", c, b)
+	}
+	if _, ps, _ := w.written(t, line, reachPayB1); ps != "RECEIVED" {
 		t.Errorf("after the global manager's unmatch the payment reads %s, want RECEIVED", ps)
 	}
 }

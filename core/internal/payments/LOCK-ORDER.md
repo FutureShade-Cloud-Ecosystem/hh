@@ -337,6 +337,40 @@ from a joined CTE, and refuses a `FOR UPDATE OF <other alias>` as a lock of this
 above: a trigger relying `UPDATE` of products, customers, vendors or pricing_list_prices must take the table's
 counter, by literal or by a `Lock...Seq` helper named for it, earlier in the same function.
 
+## The till session row, and the completed month (SF-2j)
+
+Two edges outside the payments chain, each decided in the writer's own transaction:
+
+- **The till session row before any movement insert or count.** `till.Repository.InsertMovement` takes
+  `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE` first, checks the session is OPEN under that
+  lock, then inserts the movement; `SetCounted`'s guarded UPDATE takes the same lock strength on the same row. A
+  count and a movement of one session therefore serialise: the movement either commits before the count (and is
+  counted) or reads COUNTED and refuses. `FOR NO KEY UPDATE`, not `FOR UPDATE`, because no key column of
+  `till_sessions` is ever set by either writer and the movement's own foreign key takes `FOR KEY SHARE` on the same
+  row, which a `NO KEY UPDATE` does not conflict with (a stronger lock would queue every movement behind every
+  other movement's foreign key check for nothing). The plain OPEN read in `recordMovement` is now only a fast
+  refusal; the locked read decides. Leg: `TestIntegration_MovementBesideACountOfTheSameSession`.
+- **The bank reconciliation row, then its advisory key, before every other bankrec lock (SF-2j round 2).**
+  `CompleteReconciliation` takes the reconciliation row `FOR UPDATE`, then
+  `pg_advisory_xact_lock(hashtextextended('bankrec-recon|<account>|<year>|<month>', 0))`, then the month's lines, and
+  rechecks the month's JOURNAL matches through the GL seam (a read, no lock). Every other bankrec writer takes the
+  reconciliation row of the line's month `FOR SHARE` (it conflicts with completion's `FOR UPDATE`) and then the shared
+  form of the same key FIRST, before any payment row and before any line: `UnmatchReach`, `PersistMatchReach` (manual
+  and auto matches), and `ImportLines` (the key only, for each month the file touches, ascending). The order is
+  therefore: the reconciliation row, the key, the payment rows, the match, the line, the payment update. Completion
+  first: the writer waits and reads COMPLETED, and an unmatch or a match of a line in a COMPLETED month is refused.
+  The writer first: completion waits for its commit and its recount sees what it wrote. No row yet: a row made later is
+  OPEN and its completion needs the exclusive key, which the writer's shared hold blocks until it commits. The prefix
+  keeps the key from hashing like another module's text. The cycle this order closes: an unmatch holding payment P
+  waiting for the reconciliation row that completion holds, completion waiting for a line a match has updated, that
+  match waiting for P. With the reconciliation row first in every writer, no writer holds a payment or a line while
+  it waits for the row. Lock modes: the share form lets writers of one month run together; only completion excludes
+  them.
+- **The till session row on the other two doors (SF-2j round 2).** `GetSessionTx` (used by `TakeTender` and the cash
+  `RefundTender`, inside the caller's transaction) reads the session row `FOR SHARE`: tenders and refunds on one
+  session do not wait on each other, and a count (`SetCounted`'s `FOR NO KEY UPDATE`) queues behind them or finds
+  them committed. The session row is the first row either transaction takes in the till, so no cycle results.
+
 ## The legs
 
 `lockorder_integration_test.go` (this package) and `lockorder_pos_return_test.go` (cmd/core, the ones that need the
