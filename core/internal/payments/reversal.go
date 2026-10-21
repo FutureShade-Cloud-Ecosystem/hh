@@ -48,9 +48,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // ActPaymentReversed is the audit verb for a reversal.
@@ -415,7 +417,235 @@ func (s *ReverseService) Reverse(ctx context.Context, in ReverseInput) (Reversal
 	return rev, nil
 }
 
-// ReapplyHeld is the re-application's write (reapply.go states the rules). INERT in the red commit.
+// ReapplyHeld re-applies the money a reversed payment holds in 2310 to invoices of the payment's own customer
+// (SF-2l; reapply.go states the rules). ONE transaction, in the one money lock order (LOCK-ORDER.md):
+//
+//  1. the payment row FOR UPDATE, the first lock a reversal and a bounce take too, so a re-application beside either
+//     of them, or beside another re-application of the same payment, serialises here;
+//  2. the named invoice rows FOR NO KEY UPDATE in ascending id order, every one before the first balance move draws
+//     the invoices counter. No payments counter is drawn: nothing here stamps a payments row.
+//
+// Every judgement (the replay, the account, the held figure, the invoices) runs under those locks and BEFORE the first
+// write, so a refused request writes nothing. The write is the settle's own slice (applySliceTx) per invoice, one
+// payment_reapplications row each, and one payment.reapplied outbox row for the GL (Dr 2310 / Cr AR for the total).
 func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.Time) (Reapplication, error) {
-	return Reapplication{}, errors.New("payments: re-application is not built yet")
+	if r.pool == nil {
+		return Reapplication{}, errNoDB
+	}
+	in, err := validateReapply(in)
+	if err != nil {
+		return Reapplication{}, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Reapplication{}, fmt.Errorf("reapply: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		customerID, method, branchID string
+		amount                       int64
+		reversedAt                   *time.Time
+		isItselfAReversal            bool
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, amount_cents, reversed_at,
+		        reverses_payment_id IS NOT NULL
+		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
+		Scan(&customerID, &method, &branchID, &amount, &reversedAt, &isItselfAReversal)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Reapplication{}, ErrNotFound
+		}
+		return Reapplication{}, fmt.Errorf("reapply: lock payment: %w", err)
+	}
+	// The branch door, before anything about the payment is revealed: not found, as for a missing id.
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(branchID) {
+		return Reapplication{}, ErrNotFound
+	}
+
+	var taken int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0) FROM payment_reapplications WHERE payment_id = $1::uuid`,
+		in.PaymentID).Scan(&taken); err != nil {
+		return Reapplication{}, fmt.Errorf("reapply: read applied: %w", err)
+	}
+
+	// The replay is judged under the payment row lock, so a twin that committed while this request waited on the row is
+	// already visible: the same key and the same body answers the first result and writes nothing.
+	if replay, ok, err := r.reapplyReplay(ctx, tx, in, amount, taken); err != nil {
+		return Reapplication{}, err
+	} else if ok {
+		return replay, nil
+	}
+
+	switch {
+	case isItselfAReversal:
+		return Reapplication{}, fmt.Errorf("%w: it is itself a reversing entry, the money is held for the payment it reversed", ErrNotReapplicable)
+	case reversedAt == nil:
+		return Reapplication{}, fmt.Errorf("%w: it has not been reversed", ErrNotReapplicable)
+	case customerID == "":
+		return Reapplication{}, fmt.Errorf("%w: it has no account to hold the money for", ErrNotReapplicable)
+	}
+	held := amount - taken
+	var total int64
+	for _, a := range in.Allocations {
+		total += a.AmountCents
+	}
+	if total > held {
+		return Reapplication{}, fmt.Errorf("%w (%d cents held, %d asked for)", ErrReapplyOverHeld, held, total)
+	}
+
+	// The named invoice rows, ascending (the sort is the validation's), taken before any write. An invoice that is
+	// missing, another account's or outside the caller's branch reach is the same not found.
+	type target struct {
+		a       Allocation
+		no      string
+		balance int64
+	}
+	targets := make([]target, 0, len(in.Allocations))
+	for _, a := range in.Allocations {
+		var (
+			no, invBranch, status string
+			balance, holdback     int64
+		)
+		err := tx.QueryRow(ctx,
+			`SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status
+			   FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
+			a.InvoiceID, customerID).Scan(&no, &balance, &holdback, &invBranch, &status)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Reapplication{}, NoSuchInvoiceError{InvoiceID: a.InvoiceID}
+			}
+			return Reapplication{}, fmt.Errorf("reapply: lock invoice %s: %w", a.InvoiceID, err)
+		}
+		if in.CanAccessBranch != nil && !in.CanAccessBranch(invBranch) {
+			return Reapplication{}, NoSuchInvoiceError{InvoiceID: a.InvoiceID}
+		}
+		if status != "FINALIZED" && status != "PARTIALLY_PAID" {
+			return Reapplication{}, httpx.BadRequestf("invoice %s is not open, held money can only be applied to an open invoice", no)
+		}
+		if invBranch != branchID {
+			return Reapplication{}, httpx.BadRequestf(
+				"invoice %s is in another branch than the payment: the money is held in the payment's branch, apply it to that branch's invoices", no)
+		}
+		payable := balance - holdback
+		if payable < 0 {
+			payable = 0
+		}
+		if a.AmountCents > payable {
+			return Reapplication{}, httpx.BadRequestf("invoice %s can take at most %d cents right now; refresh and retry", no, payable)
+		}
+		targets = append(targets, target{a: a, no: no, balance: balance})
+	}
+
+	batchID := uuid.NewString()
+	lines := make([]ReapplyLine, 0, len(targets))
+	for _, t := range targets {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO payment_reapplications
+			   (batch_id, payment_id, invoice_id, customer_id, branch_id, amount_cents, reason, applied_by, idempotency_key)
+			 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8::uuid, $9)`,
+			batchID, in.PaymentID, t.a.InvoiceID, customerID, branchID, t.a.AmountCents, in.Reason,
+			nullableUUID(in.ActorID), in.IdempotencyKey); err != nil {
+			return Reapplication{}, fmt.Errorf("reapply: record the application on %s: %w", t.no, err)
+		}
+		if err := applySliceTx(ctx, tx, slice{
+			CustomerID: customerID, InvoiceID: t.a.InvoiceID, BranchID: branchID, AmountCents: t.a.AmountCents,
+			SourceType: "payment_reapply", SourceRefID: in.PaymentID, Memo: "re-applied from a reversed payment: " + in.Reason,
+		}); err != nil {
+			return Reapplication{}, err
+		}
+		after := t.balance - t.a.AmountCents
+		outcome := ApplyOutcomePart
+		if after <= 0 {
+			outcome = ApplyOutcomeCloses
+		}
+		lines = append(lines, ReapplyLine{
+			InvoiceID: t.a.InvoiceID, InvoiceNo: t.no, AppliedCents: t.a.AmountCents, Outcome: outcome, BalanceAfterCents: after,
+		})
+	}
+
+	// Transactional outbox, in the SAME transaction, so the GL books Dr 2310 / Cr AR exactly once (the identical
+	// discipline the settle and the reversal use). The branch is the payment's: the invoices share it (checked above).
+	invoiceIDs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		invoiceIDs = append(invoiceIDs, t.a.InvoiceID)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"batch_id":     batchID,
+		"payment_id":   in.PaymentID,
+		"customer_id":  customerID,
+		"branch_id":    branchID,
+		"amount_cents": total,
+		"method":       method,
+		"reason":       in.Reason,
+		"invoice_ids":  invoiceIDs,
+	})
+	if err != nil {
+		return Reapplication{}, fmt.Errorf("reapply: marshal payment.reapplied: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO events_outbox (topic, payload) VALUES ('payment.reapplied', $1)`, payload); err != nil {
+		return Reapplication{}, fmt.Errorf("reapply: emit payment.reapplied: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Reapplication{}, fmt.Errorf("reapply: commit: %w", err)
+	}
+	return Reapplication{
+		PaymentID: in.PaymentID, BatchID: batchID, AppliedCents: total,
+		HeldBeforeCents: held, HeldAfterCents: held - total, Lines: lines,
+	}, nil
+}
+
+// reapplyReplay judges a request's key against the rows it already wrote, on the caller's transaction (which holds the
+// payment row). The same key with the same body answers the first result: its batch, its lines at the invoices'
+// balances NOW, and the held figures as they stand now (before = after plus what the request applied). A key that wrote
+// anything else is a conflict.
+func (r *Repository) reapplyReplay(ctx context.Context, tx pgx.Tx, in ReapplyInput, amount, taken int64) (Reapplication, bool, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT ra.batch_id::text, ra.payment_id::text, ra.invoice_id::text, ra.amount_cents, i.invoice_no::text, i.balance_cents
+		   FROM payment_reapplications ra JOIN invoices i ON i.id = ra.invoice_id
+		  WHERE ra.idempotency_key = $1 ORDER BY ra.invoice_id`, in.IdempotencyKey)
+	if err != nil {
+		return Reapplication{}, false, fmt.Errorf("reapply: read the key: %w", err)
+	}
+	defer rows.Close()
+	var (
+		batch, storedPayment string
+		stored               = map[string]int64{}
+		lines                []ReapplyLine
+		total                int64
+	)
+	for rows.Next() {
+		var l ReapplyLine
+		var invoiceBalance int64
+		var payment string
+		if err := rows.Scan(&batch, &payment, &l.InvoiceID, &l.AppliedCents, &l.InvoiceNo, &invoiceBalance); err != nil {
+			return Reapplication{}, false, fmt.Errorf("reapply: scan the key: %w", err)
+		}
+		storedPayment = payment
+		stored[l.InvoiceID] = l.AppliedCents
+		l.BalanceAfterCents = invoiceBalance
+		l.Outcome = ApplyOutcomePart
+		if invoiceBalance <= 0 {
+			l.Outcome = ApplyOutcomeCloses
+		}
+		total += l.AppliedCents
+		lines = append(lines, l)
+	}
+	if err := rows.Err(); err != nil {
+		return Reapplication{}, false, err
+	}
+	if len(lines) == 0 {
+		return Reapplication{}, false, nil
+	}
+	if !sameReapplyBody(in.PaymentID, stored, storedPayment, in) {
+		return Reapplication{}, false, replayConflict()
+	}
+	heldNow := amount - taken
+	return Reapplication{
+		PaymentID: in.PaymentID, BatchID: batch, AppliedCents: total,
+		HeldBeforeCents: heldNow + total, HeldAfterCents: heldNow, Lines: lines, Replayed: true,
+	}, true, nil
 }
