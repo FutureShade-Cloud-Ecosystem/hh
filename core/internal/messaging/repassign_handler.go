@@ -58,7 +58,8 @@ func queryUUID(w http.ResponseWriter, r *http.Request, name string) (string, boo
 }
 
 func (h *Handler) listRepAssignments(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	if _, ok := h.caller(r); !ok {
+	c, ok := h.caller(r)
+	if !ok {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -73,7 +74,15 @@ func (h *Handler) listRepAssignments(w http.ResponseWriter, r *http.Request, cal
 	if !customerwall.Fence(w, r, h.reach, custID) {
 		return
 	}
-	rows, err := h.svc.ListRepAssignments(r.Context(), repID, custID)
+	// The list's reach comes from the stamped caller. A rep's own book is the one open arm, and it is open only
+	// when rep_user_id is the caller's own linked users.id.
+	scope := RepListScope{Global: c.IsGlobal(), OwnBook: repID != "" && repID == c.UserID}
+	for id, granted := range c.Branches {
+		if granted {
+			scope.BranchIDs = append(scope.BranchIDs, id)
+		}
+	}
+	rows, err := h.svc.ListRepAssignments(r.Context(), repID, custID, scope)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

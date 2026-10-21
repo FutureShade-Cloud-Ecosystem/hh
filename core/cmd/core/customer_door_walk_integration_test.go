@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
@@ -53,7 +54,8 @@ type customerDoor struct {
 	class  doorClass
 	path   string // concrete path, %C% = the customer id
 	body   string // request body, %C% = the customer id
-	reason string // exempt only
+	reason string // exempt and agree: why the door is not a plain wall
+	words  string // wall only: the 404 body when it is not the seam's own
 }
 
 const (
@@ -87,7 +89,7 @@ func walkDoors() []customerDoor {
 		{route: "POST /api/v1/billing/ar/customers/{customer_id}/notes", class: doorWall, path: "/api/v1/billing/ar/customers/%C%/notes", body: `{"body":"walk"}`},
 		{route: "GET /api/v1/billing/ar/customers/{customer_id}/statements/{statement_id}/preview", class: doorWall, path: "/api/v1/billing/ar/customers/%C%/statements/" + walkUUID2 + "/preview"},
 		{route: "GET /api/v1/billing/ar/customers/{customer_id}/workspace", class: doorWall, path: "/api/v1/billing/ar/customers/%C%/workspace"},
-		{route: "GET /api/v1/customers/{id}", class: doorWall, path: "/api/v1/customers/%C%"},
+		{route: "GET /api/v1/customers/{id}", class: doorWall, path: "/api/v1/customers/%C%", words: `{"error":"not found"}`},
 		{route: "PUT /api/v1/customers/{id}/billing-address", class: doorWall, path: "/api/v1/customers/%C%/billing-address", body: `{"postal":"K8V 5P7","province":"ON"}`},
 		{route: "GET /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent"},
 		{route: "PUT /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent", body: `{"consent":false}`},
@@ -102,7 +104,7 @@ func walkDoors() []customerDoor {
 		{route: "POST /api/v1/pos/margin-glance", class: doorWall, path: "/api/v1/pos/margin-glance", body: `{"branch_id":"` + A + `","customer_id":"%C%","lines":[` + line + `]}`},
 		{route: "POST /api/v1/pos/parked", class: doorWall, path: "/api/v1/pos/parked", body: `{"branch_id":"` + A + `","customer_id":"%C%","lines":[` + line + `]}`},
 		{route: "POST /api/v1/pos/pricing-orders", class: doorWall, path: "/api/v1/pos/pricing-orders", body: `{"branch_id":"` + A + `","customer_id":"%C%","lines":[` + line + `]}`},
-		{route: "GET /api/v1/pos/quick-picks", class: doorAgree, path: "/api/v1/pos/quick-picks?customer_id=%C%&branch_id=" + A},
+		{route: "GET /api/v1/pos/quick-picks", class: doorAgree, path: "/api/v1/pos/quick-picks?customer_id=%C%&branch_id=" + A, reason: "walled through CounterPrices (customerFor); priceQuickPicks swallows the 404 into the unpriced RETAIL grid, so the answer is alike, not a 404"},
 		{route: "POST /api/v1/pos/returns-across", class: doorAgree, path: "/api/v1/pos/returns-across", body: `{"customer_id":"%C%","orders":[]}`},
 		{route: "GET /api/v1/pos/returns/customer-lines", class: doorAgree, path: "/api/v1/pos/returns/customer-lines?customer_id=%C%&branch_id=" + A},
 		{route: "POST /api/v1/pos/returns/preview", class: doorAgree, path: "/api/v1/pos/returns/preview", body: `{"customer_id":"%C%","orders":[]}`},
@@ -247,7 +249,7 @@ func walkEveryCustomerDoor(t *testing.T, pool *pgxpool.Pool, custB, custShared, 
 	t.Logf("customer doors found in openapi.yaml: %d", len(discovered))
 	for _, route := range discovered {
 		d := registry[route]
-		t.Logf("  %-6s %s", d.class, route)
+		t.Logf("  %-6s %s %s", d.class, route, d.reason)
 	}
 
 	// The reminder send is part of accelerated AR (the PRO tier); the walk turns the dealer default on for its own
@@ -263,63 +265,173 @@ func walkEveryCustomerDoor(t *testing.T, pool *pgxpool.Pool, custB, custShared, 
 		_, _ = pool.Exec(context.Background(), `UPDATE ar_landing_policy SET ar_tier = $1 WHERE branch_id IS NULL`, oldTier)
 	})
 
-	sg := testkit.NewStaffGuards(t)
-	sg.Harness.Membership.SetMember(testkit.SubSalesManager, testkit.OrgNorthSlug, true)
-	sg.SetAuthority(identity.StaffAuthority{RoleID: "sales_manager", Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}})
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mux := http.NewServeMux()
-	belt := buildSmsBelt(pool, log)
-	money := wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
-	ops := wireOperations(mux, pool, sg.Guards, log, money, "fx-ticket-key", belt.outbox)
-	wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: dashVaultKey(t)}, mustRoleConfigForWire(), belt)
-	token := sg.Harness.Minter.StaffToken(t, testkit.SubSalesManager)
-	call := func(d customerDoor, cust string) *httptest.ResponseRecorder {
-		method := strings.SplitN(d.route, " ", 2)[0]
-		req := httptest.NewRequest(method, strings.ReplaceAll(d.path, "%C%", cust), strings.NewReader(strings.ReplaceAll(d.body, "%C%", cust)))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
-		req.Header.Set("Content-Type", "application/json")
-		rsp := httptest.NewRecorder()
-		mux.ServeHTTP(rsp, req)
-		return rsp
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
+	one := func(q string, args ...any) string {
+		t.Helper()
+		var v string
+		if err := pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("plant (%.60s): %v", q, err)
+		}
+		return v
 	}
-	// North B's account holds a statement, so the statement read has something to leak (and answers "not found"
-	// for want of data otherwise, which an unwalled door would share with the wall).
-	var runID string
-	if err := pool.QueryRow(context.Background(), `INSERT INTO ar_statement_runs (mode, as_of_date, status) VALUES ('INTERIM', current_date, 'COMPLETED') RETURNING id::text`).Scan(&runID); err != nil {
-		t.Fatalf("plant a statement run: %v", err)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("plant (%.60s): %v", q, err)
+		}
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO ar_statements (run_id, customer_id, as_of_date) VALUES ($1::uuid, $2::uuid, current_date)`, runID, custB); err != nil {
-		t.Fatalf("plant a statement: %v", err)
+	// North B's account holds a statement from a run at North A, as a North A caller's interim run files it, so
+	// the statement read has something to leak (a run with no branch is never shown to a scoped caller, so a
+	// no branch run would let an unwalled door pass for want of data).
+	runID := one(`INSERT INTO ar_statement_runs (mode, branch_id, as_of_date, status) VALUES ('INTERIM', $1::uuid, current_date, 'COMPLETED') RETURNING id::text`, testkit.BranchNorthAID)
+	exec(`INSERT INTO ar_statements (run_id, customer_id, as_of_date) VALUES ($1::uuid, $2::uuid, current_date)`, runID, custB)
+
+	// Round 4 fixtures: North B's account with an invoice and a promise at each branch, and rep assignments.
+	invoice := func(branch, tag string) string {
+		return one(`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date, current_date, 700, 0, 700, 700, now(), $4::uuid) RETURNING id::text`,
+			"R4-INV-"+tag+"-"+suffix, custB, branch, testkit.OrgNorthID)
 	}
+	invA, invB := invoice(testkit.BranchNorthAID, "A"), invoice(testkit.BranchNorthBID, "B")
+	for inv, note := range map[string]string{invA: "R4-PROMISE-A-" + suffix, invB: "R4-PROMISE-B-" + suffix} {
+		exec(`INSERT INTO ar_promises_to_pay (invoice_id, customer_id, promised_cents, promised_date, promised_by, note)
+			VALUES ($1::uuid, $2::uuid, 700, current_date + 5, '', $3)`, inv, custB, note)
+	}
+	custB2 := one(`INSERT INTO customers (account_no, name, customer_type, home_branch_id, org_id) VALUES ($1, 'UX89 R4 B two', 'CONTRACTOR', $2::uuid, $3::uuid) RETURNING id::text`,
+		"UX89R4-B2-"+suffix, testkit.BranchNorthBID, testkit.OrgNorthID)
+	// custB is in the caller's own book; custB2 in another rep's; the shared account in another rep's.
+	exec(`INSERT INTO rep_assignments (customer_id, rep_user_id, source) VALUES ($1::uuid, $2::uuid, 'MANUAL')`, custB, testkit.UserSalesMgrID)
+	exec(`INSERT INTO rep_assignments (customer_id, rep_user_id, source) VALUES ($1::uuid, $2::uuid, 'MANUAL')`, custB2, testkit.UserInsideSalesID)
+	exec(`INSERT INTO rep_assignments (customer_id, rep_user_id, source) VALUES ($1::uuid, $2::uuid, 'MANUAL')`, custShared, testkit.UserInsideSalesID)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ar_statements WHERE run_id = $1`, runID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ar_statement_runs WHERE id = $1`, runID)
+		bg := context.Background()
+		ids := []string{custB, custB2, custShared}
+		_, _ = pool.Exec(bg, `DELETE FROM rep_assignments WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = pool.Exec(bg, `DELETE FROM ar_promises_to_pay WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = pool.Exec(bg, `DELETE FROM invoices WHERE customer_id::text = ANY($1)`, ids)
+		_, _ = pool.Exec(bg, `DELETE FROM ar_statements WHERE run_id = $1`, runID)
+		_, _ = pool.Exec(bg, `DELETE FROM ar_statement_runs WHERE id = $1`, runID)
+		_, _ = pool.Exec(bg, `DELETE FROM customers WHERE id = $1`, custB2)
 	})
 	before := customerRowCounts(t, pool, custB)
-	for _, route := range discovered {
-		d, ok := registry[route]
-		if !ok || d.class == doorExempt {
-			continue
+
+	// The walk runs as three roles, each granted North A only. A manager door is a 403 for the base tier role,
+	// the same for both ids; the wall assertions apply where the role reaches the door.
+	roles := []struct {
+		name string
+		auth identity.StaffAuthority
+	}{
+		{"sales_manager", identity.StaffAuthority{RoleID: "sales_manager", Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}}},
+		{"payables_receivables", identity.StaffAuthority{RoleID: "payables_receivables", Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}}},
+		{"inside_sales", identity.StaffAuthority{RoleID: "inside_sales", Tier: 3, Scope: identity.ScopeBranch, Branches: []string{testkit.BranchNorthAID}}},
+	}
+	const nf = `{"error":"customer not found"}`
+	for ri, role := range roles {
+		sg := testkit.NewStaffGuards(t)
+		sg.Harness.Membership.SetMember(testkit.SubSalesManager, testkit.OrgNorthSlug, true)
+		sg.SetAuthority(role.auth)
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		mux := http.NewServeMux()
+		belt := buildSmsBelt(pool, log)
+		money := wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
+		ops := wireOperations(mux, pool, sg.Guards, log, money, "fx-ticket-key", belt.outbox)
+		wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: dashVaultKey(t)}, mustRoleConfigForWire(), belt)
+		token := sg.Harness.Minter.StaffToken(t, testkit.SubSalesManager)
+		raw := func(method, path, body string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+			req.Header.Set("Content-Type", "application/json")
+			rsp := httptest.NewRecorder()
+			mux.ServeHTTP(rsp, req)
+			return rsp
 		}
-		b, u := call(d, custB), call(d, unknown)
-		// A body may echo the id asked about (customer lines does); the answers are compared with the id masked.
-		bBody := strings.ReplaceAll(b.Body.String(), custB, "<id>")
-		uBody := strings.ReplaceAll(u.Body.String(), unknown, "<id>")
-		if b.Code != u.Code || bBody != uBody {
-			t.Errorf("%s (%s): North B's account answered %d %q, an unknown id %d %q: the door does not agree", route, d.class, b.Code, b.Body.String(), u.Code, u.Body.String())
+		call := func(d customerDoor, cust string) *httptest.ResponseRecorder {
+			method := strings.SplitN(d.route, " ", 2)[0]
+			return raw(method, strings.ReplaceAll(d.path, "%C%", cust), strings.ReplaceAll(d.body, "%C%", cust))
 		}
-		if d.class == doorWall {
-			if b.Code != http.StatusNotFound {
-				t.Errorf("%s: a wall door must answer 404 for North B's account, got %d %q", route, b.Code, b.Body.String())
-			}
-			// The shared account is probed on reads only: a write for it would land and tie the fixture down.
-			if !strings.HasPrefix(d.route, "GET ") {
+		for _, route := range discovered {
+			d, ok := registry[route]
+			if !ok || d.class == doorExempt {
 				continue
 			}
-			if s := call(d, custShared); s.Code == http.StatusNotFound && strings.Contains(s.Body.String(), "customer not found") {
-				t.Errorf("%s: the shared (no home) account must not be answered customer not found, got %d %q", route, s.Code, s.Body.String())
+			b, u := call(d, custB), call(d, unknown)
+			// A body may echo the id asked about (customer lines does); the answers are compared with the id masked.
+			bBody := strings.ReplaceAll(b.Body.String(), custB, "<id>")
+			uBody := strings.ReplaceAll(u.Body.String(), unknown, "<id>")
+			if b.Code != u.Code || bBody != uBody {
+				t.Errorf("[%s] %s (%s): North B's account answered %d %q, an unknown id %d %q: the door does not agree", role.name, route, d.class, b.Code, b.Body.String(), u.Code, u.Body.String())
 			}
+			if d.class != doorWall || (b.Code == http.StatusForbidden && u.Code == http.StatusForbidden) {
+				continue // the role gate refused both alike; nothing behind it is reached
+			}
+			if strings.HasSuffix(d.route, "/pos/margin-glance") && b.Code == http.StatusOK && strings.TrimSpace(b.Body.String()) == "{}" {
+				continue // a role without margin visibility gets the empty glance before any account is read
+			}
+			if b.Code != http.StatusNotFound {
+				t.Errorf("[%s] %s: a wall door must answer 404 for North B's account, got %d %q", role.name, route, b.Code, b.Body.String())
+			}
+			// The seam's own words, so a door that answers 404 for want of data cannot pass as a wall. The one
+			// exception is the account read, whose 404 word has always been "not found".
+			want := nf
+			if d.words != "" {
+				want = d.words
+			}
+			if b.Code == http.StatusNotFound && strings.TrimSpace(b.Body.String()) != want {
+				t.Errorf("[%s] %s: a wall door answers %s, got %q", role.name, route, want, b.Body.String())
+			}
+			// The shared account is probed on reads only: a write for it would land and tie the fixture down.
+			if strings.HasPrefix(d.route, "GET ") {
+				if sh := call(d, custShared); sh.Code == http.StatusNotFound && strings.Contains(sh.Body.String(), "customer not found") {
+					t.Errorf("[%s] %s: the shared (no home) account must not be answered customer not found, got %d %q", role.name, route, sh.Code, sh.Body.String())
+				}
+			}
+		}
+		if ri != 0 {
+			continue
+		}
+
+		// Round 4 list legs and real document legs, as the North A sales manager.
+		get := func(path string) string {
+			rsp := raw(http.MethodGet, path, "")
+			if rsp.Code != http.StatusOK {
+				t.Fatalf("GET %s: %d %s", path, rsp.Code, rsp.Body.String())
+			}
+			return rsp.Body.String()
+		}
+		// P2-A: the unfiltered promises list is held to the invoice's branch.
+		promises := get("/api/v1/ar/promises")
+		if !strings.Contains(promises, "R4-PROMISE-A-"+suffix) || strings.Contains(promises, "R4-PROMISE-B-"+suffix) {
+			t.Errorf("the promises list must hold the North A invoice's promise and not the North B invoice's: %s", promises)
+		}
+		// P2-B: the rep assignments list is held to the customer rule, with the one open arm.
+		own := get("/api/v1/messaging/rep-assignments?rep_user_id=" + testkit.UserSalesMgrID)
+		if !strings.Contains(own, custB) {
+			t.Errorf("a rep lists their own book across branches (rep_user_id is the caller's own users.id): %s", own)
+		}
+		other := get("/api/v1/messaging/rep-assignments?rep_user_id=" + testkit.UserInsideSalesID)
+		if strings.Contains(other, custB2) || !strings.Contains(other, custShared) {
+			t.Errorf("a chosen other rep_user_id meets the filter (no North B account, the shared one stays): %s", other)
+		}
+		all := get("/api/v1/messaging/rep-assignments")
+		if strings.Contains(all, custB) || strings.Contains(all, custB2) || !strings.Contains(all, custShared) {
+			t.Errorf("an unfiltered rep assignments list is held to reach: %s", all)
+		}
+		// A real document leg for payments apply: North B's account naming its North A invoice is a document the
+		// branch holds (preview applies); naming its North B invoice answers exactly as an unknown account does.
+		apply := func(cust, inv string) *httptest.ResponseRecorder {
+			return raw(http.MethodPost, "/api/v1/ar/payments/apply", fmt.Sprintf(`{"customer_id":%q,"method":"CASH","amount_cents":100,"invoice_ids":[%q],"idempotency_key":"r4-%s","preview":true}`, cust, inv, suffix))
+		}
+		if rsp := apply(custB, invA); rsp.Code != http.StatusOK {
+			t.Errorf("apply preview on the North A invoice of a yard held account: want 200, got %d %s", rsp.Code, rsp.Body.String())
+		}
+		bB, uB := apply(custB, invB), apply(unknown, invB)
+		if bB.Code != uB.Code || strings.ReplaceAll(bB.Body.String(), custB, "<id>") != strings.ReplaceAll(uB.Body.String(), unknown, "<id>") {
+			t.Errorf("apply naming the North B invoice must answer as an unknown account does: %d %q | %d %q", bB.Code, bB.Body.String(), uB.Code, uB.Body.String())
+		}
+		if bB.Code == http.StatusOK {
+			t.Errorf("apply preview reached North B's invoice: %s", bB.Body.String())
 		}
 	}
 	// No refused write landed: every table that carries a customer_id holds the same rows for North B's account

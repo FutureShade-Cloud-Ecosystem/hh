@@ -66,13 +66,13 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 
 // fenceAccount holds the customer named in the path to the caller's reach by the customer read's own rule
 // (GetAccount): an account homed at a branch the caller cannot reach, an id that is no account, and a caller
-// with no linked staff row all answer 404 "not found" (what the account read answers), and nothing is read or
+// with no linked staff row all answer 404 "customer not found", the seam's own words (the account read itself keeps its older "not found"), and nothing is read or
 // written. It reports whether the request may go on.
 func (h *Handler) fenceAccount(w http.ResponseWriter, r *http.Request, id string) bool {
 	if _, err := h.svc.GetAccount(r.Context(), id); err != nil {
 		var bad httpx.BadRequestError
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthenticated) || errors.As(err, &bad) {
-			httpx.Error(w, http.StatusNotFound, "not found")
+			httpx.Error(w, http.StatusNotFound, "customer not found")
 			return false
 		}
 		h.writeErr(w, r, err)

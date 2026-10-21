@@ -39,6 +39,16 @@ func TestIntegration_YardHeldAccount_RulingPerDocument(t *testing.T) {
 		t.Fatalf("the swap's replacement order must price as before for a yard held account: %v then %v", atHome, got)
 	}
 
+	// the return preview of the branch's own sale, naming the yard held account, is a document the branch holds.
+	prev := s.do(http.MethodPost, "/api/v1/pos/returns/preview", s.bearer(trentonClerkSub), "", map[string]any{
+		"customer_id": cust,
+		"orders": []any{map[string]any{"order_id": orig.OrderID, "lines": []any{
+			map[string]any{"order_line_id": s.lineOf(orig.OrderID), "qty_base": 1, "reason_code": "OTHER", "disposition": "RESTOCK"}}}},
+	})
+	if prev.Code != http.StatusOK {
+		t.Fatalf("the return preview of the branch's own sale to a yard held account must answer, got %d: %s", prev.Code, prev.Body.String())
+	}
+
 	// a RETURN of the branch's own sale is allowed.
 	ret := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", s.returnBody(key(), orig, 0, RefundCash, 1))
 	if ret.Code != http.StatusCreated && ret.Code != http.StatusOK {

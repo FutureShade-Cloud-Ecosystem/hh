@@ -81,7 +81,7 @@ func (f *fakeStore) RepAssignmentsForCustomer(_ context.Context, customerID stri
 	return out, nil
 }
 
-func (f *fakeStore) ListRepAssignments(_ context.Context, repUserID, customerID string) ([]RepAssignment, error) {
+func (f *fakeStore) ListRepAssignments(_ context.Context, repUserID, customerID string, _ RepListScope) ([]RepAssignment, error) {
 	out := []RepAssignment{}
 	for _, a := range f.w5().assignments {
 		if repUserID != "" && a.RepUserID != repUserID {
