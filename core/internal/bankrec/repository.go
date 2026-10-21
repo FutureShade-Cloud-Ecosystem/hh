@@ -677,6 +677,16 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	return targetType, targetRef, amount, nil
 }
 
+func absInt64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// centsText is the dealer's dollars; the repository shares the service's writer.
+func centsText(cents int64) string { return dollars(cents) }
+
 // errMonthCompleted refuses a match of a line inside a COMPLETED reconciliation's month. The auto run skips such a
 // line instead of stopping.
 var errMonthCompleted = conflict("bankrec: that statement line sits in a month that is already reconciled and completed, so it cannot be matched")
@@ -900,7 +910,7 @@ func (r *Repository) CountUnmatchedInMonth(ctx context.Context, accountID string
 
 // CompleteReconciliation marks a reconciliation COMPLETED and emits bank.recon.completed in the SAME tx (so
 // the event is never published without the state change, or vice versa). Guarded on status OPEN.
-func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCode, completedBy string, recheck func(ctx context.Context, matches []JournalMatchFact) error) (Reconciliation, error) {
+func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCode, completedBy string, recheck func(ctx context.Context, matches []JournalMatchFact) error, ledger func(ctx context.Context, year, month int) (int64, error)) (Reconciliation, error) {
 	if r.pool == nil {
 		return Reconciliation{}, errNoDB
 	}
@@ -981,14 +991,54 @@ func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCo
 		}
 	}
 
+	// The variance is recomputed HERE, after the month's lock, never trusted from the figures stored when the month was
+	// opened (SF-2s): the ledger can move after the open (any posting to the bank account in the month), and a
+	// statement balance that was derived from the lines goes stale when a line is imported. The ledger comes through
+	// the GLBalanceReader seam. The statement balance is the stated one kept as stored, unless it equals the net of the
+	// lines as they stood at the open (what a derived balance is: a typed zero is replaced by that net), in which case it
+	// is derived again from the lines now (read in this transaction, the lines locked above). The stated and the derived
+	// are not stored apart, so a stated balance that happens to equal the net at the open is treated as derived: a
+	// refresh of the figures settles it. What the lock cannot freeze: the GL. A posting committed between this read and
+	// the commit is not seen; it shows as a later period's variance.
+	var storedStmt int64
+	var openedAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_balance_cents, updated_at FROM bank_reconciliations WHERE id = $1::uuid`, id).Scan(&storedStmt, &openedAt); err != nil {
+		return Reconciliation{}, fmt.Errorf("bankrec: read the stored statement balance: %w", err)
+	}
+	var netAtOpen, netNow int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents) FILTER (WHERE created_at <= $4), 0), COALESCE(SUM(amount_cents), 0)
+		  FROM bank_statement_lines
+		 WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2 AND EXTRACT(MONTH FROM txn_date) = $3`,
+		acctID, year, month, openedAt).Scan(&netAtOpen, &netNow); err != nil {
+		return Reconciliation{}, fmt.Errorf("bankrec: recompute the statement balance: %w", err)
+	}
+	stmt := storedStmt
+	if storedStmt == netAtOpen {
+		stmt = netNow
+	}
+	var gl int64
+	if ledger != nil {
+		g, lerr := ledger(ctx, year, month)
+		if lerr != nil {
+			return Reconciliation{}, lerr
+		}
+		gl = g
+	}
+	if variance := stmt - gl; variance != 0 {
+		return Reconciliation{}, unprocessable("bankrec: cannot complete, the statement reads %s and the ledger reads %s (%s apart); they must agree, refresh the figures and match what is open",
+			centsText(stmt), centsText(gl), centsText(absInt64(variance)))
+	}
+
 	var rec Reconciliation
 	err = tx.QueryRow(ctx, `
 		UPDATE bank_reconciliations
-		SET status = 'COMPLETED', completed_by = $2, completed_at = now(), updated_at = now()
+		SET status = 'COMPLETED', completed_by = $2, completed_at = now(), updated_at = now(),
+		    statement_balance_cents = $3, gl_balance_cents = $4, variance_cents = $5
 		WHERE id = $1 AND status = 'OPEN'
 		RETURNING id::text, bank_account_id::text, year, month, statement_balance_cents, gl_balance_cents,
 		          variance_cents, status, completed_at`,
-		id, nullStr(completedBy)).
+		id, nullStr(completedBy), stmt, gl, stmt-gl).
 		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents, &rec.GLBalanceCents,
 			&rec.VarianceCents, &rec.Status, &rec.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {

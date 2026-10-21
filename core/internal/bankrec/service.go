@@ -3,6 +3,8 @@ package bankrec
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -371,6 +373,31 @@ func journalExplains(f gl.BankJournalFacts, lineCents int64) error {
 	return nil
 }
 
+// dollars writes cents as a dealer reads them, "$1,234.50" ("-$45.00" below zero).
+func dollars(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	whole := strconv.FormatInt(cents/100, 10)
+	for i := len(whole) - 3; i > 0; i -= 3 {
+		whole = whole[:i] + "," + whole[i:]
+	}
+	return fmt.Sprintf("%s$%s.%02d", sign, whole, cents%100)
+}
+
+// ledgerBalance reads the bank account's GL balance for a month through the GLBalanceReader seam (no GL table read
+// here), for CompleteReconciliation to take inside its transaction after the month's lock. An unwired reader reads
+// as zero, the same as OpenReconciliation stores.
+func (s *Service) ledgerBalance(glCode string) func(ctx context.Context, year, month int) (int64, error) {
+	return func(ctx context.Context, year, month int) (int64, error) {
+		if s.balances == nil {
+			return 0, nil
+		}
+		return s.balances.GLBalanceCents(ctx, glCode, year, month, "")
+	}
+}
+
 // recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2): every live JOURNAL match in the month is
 // read again through the GL seam and must still explain its line. A journal reversed since the match, or one that no
 // longer qualifies, refuses the sign off and names the line. It runs inside the completion's transaction, after the
@@ -561,7 +588,7 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode))
+	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode), s.ledgerBalance(acct.GLAccountCode))
 	if err != nil {
 		return Reconciliation{}, err
 	}
