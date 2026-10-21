@@ -314,20 +314,24 @@ func (s *InvoicesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	}
 	// The org fence on the ORDER the document bills: the writer
 	// derives the document's branch from the order's facts, so the
-	// fence reads the order row's own org stamp (0213) before the
-	// writer runs, fail closed on a NULL or foreign org. The orders
-	// read is reference data this module's seams already sit beside
-	// (the writer's facts come from the order module's own source);
-	// the pricing module's products read records the same posture.
-	var orderOrg *string
+	// fence reads the order's org before the writer runs, fail closed
+	// on a missing, foreign or org-less order. The dealer is the
+	// order's BRANCH's org (UX-95a, as UX-81 round 6 and UX-88 hold
+	// it): no writer stamps orders.org_id (the till, the quote
+	// convert, duplicate and reorder insert none), but every order
+	// has a branch and the branch's locations row carries the org.
+	// The orders and locations reads are reference data this module's
+	// seams already sit beside (the writer's facts come from the
+	// order module's own source); the pricing module's products read
+	// records the same posture.
+	var inOrg bool
 	if err := s.pool.QueryRow(ctx,
-		`SELECT org_id::text FROM orders WHERE id = $1::uuid`, orderID).Scan(&orderOrg); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return sync.RowState{}, sync.ErrRowNotFound
-		}
+		`SELECT EXISTS (SELECT 1 FROM orders o
+		                  JOIN locations l ON l.id = o.branch_id AND l.org_id = $2::uuid
+		                 WHERE o.id = $1::uuid)`, orderID, f.OrgID).Scan(&inOrg); err != nil {
 		return sync.RowState{}, fmt.Errorf("billing: invoices sync order fence: %w", err)
 	}
-	if orderOrg == nil || *orderOrg != f.OrgID {
+	if !inOrg {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
 
