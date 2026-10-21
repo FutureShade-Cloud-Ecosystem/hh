@@ -509,6 +509,10 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 			}
 			perLineTax = moneyutil.AllocateLargestRemainder(plan.tax, weights)
 		}
+		orgID, oerr := branchOrgID(ctx, tx, branchID)
+		if oerr != nil {
+			return oerr
+		}
 		var id, no string
 		// The memo's org is its branch's (SF-2p), the org the staff feed fences on (`i.org_id = $1`; the sync
 		// handler filters on the caller's org, which is the branch location's), so Counter Till serves it. The seq
@@ -520,11 +524,11 @@ INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issu
                       doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
 VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
         $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
-        (SELECT org_id FROM locations WHERE id = $3::uuid))
+        $11)
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,
-			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID),
+			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
 		).Scan(&id, &no)
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)
