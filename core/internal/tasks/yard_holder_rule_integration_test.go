@@ -304,8 +304,10 @@ func TestYardHolderRule_AnotherBranchMeetsTheFenceFirst(t *testing.T) {
 			g.authority = func() (identity.StaffContext, bool, error) { return g.otherBranch(g.b), true, nil }
 			res := g.syncPush("C (other branch)", "pick_tasks", apigen.SyncPushOperation{ClientId: uuid.NewString(), Op: "update",
 				Payload: map[string]any{"id": g.task, "status": leg.to}})
-			if res.Status != "rejected" || res.Error == nil || !strings.Contains(*res.Error, "branch out of scope") {
-				t.Errorf("sync %s from another branch must be rejected by the branch fence, got %+v", leg.name, res)
+			// UX-81 round 2: not found (Load is held to the pull's reach), never a holder answer; the REST doors keep
+			// the 403 branch words above.
+			if res.Status != "rejected" || res.Error == nil || !strings.Contains(*res.Error, "not found") || strings.Contains(*res.Error, "someone else") {
+				t.Errorf("sync %s from another branch must be rejected as not found, got %+v", leg.name, res)
 			}
 			if s := g.status(); s != leg.from {
 				t.Errorf("a rejected op changes nothing: the pick is %s", s)

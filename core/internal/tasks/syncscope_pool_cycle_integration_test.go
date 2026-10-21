@@ -48,7 +48,8 @@ const tasksCycleOrderID = "a0e41500-0000-4000-8000-000000000003"
 type tasksCycleOrders struct{}
 
 func (tasksCycleOrders) OrderBrief(context.Context, string) (OrderBrief, error) {
-	return OrderBrief{ID: tasksCycleOrderID}, nil
+	// A branch: a pick is never born with none (UX-81 round 2).
+	return OrderBrief{ID: tasksCycleOrderID, BranchID: "a0e41500-0000-4000-8000-0000000000b1"}, nil
 }
 
 const tasksCycleRowID = "a0e30000-0000-4000-8000-000000000015"

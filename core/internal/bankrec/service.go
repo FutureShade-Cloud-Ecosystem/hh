@@ -103,6 +103,14 @@ type MatchSummary struct {
 // step is idempotent: a re-run only sees still-UNMATCHED lines, re-posts the same journal keys, and
 // re-flips only RECEIVED payments (AC2-4).
 func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time.Time, matchedBy string) (MatchSummary, error) {
+	return s.AutoMatchReach(ctx, accountID, from, to, matchedBy, nil)
+}
+
+// AutoMatchReach is AutoMatch fenced to the caller's branch reach (SF-2g): the proposals are built from the till's
+// unreconciled card payments, which a client cannot name, but the set is the dealer's whole book, so the candidates
+// are cut to the payments of branches the caller reaches before any line is matched, and the claim fences again.
+// A nil reach fences nothing.
+func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to time.Time, matchedBy string, reach func(string) bool) (MatchSummary, error) {
 	if accountID == "" {
 		return MatchSummary{}, badRequest("bankrec: bank_account_id is required")
 	}
@@ -119,11 +127,29 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 		if pmts, err = s.payments.UnreconciledCardPayments(ctx, from, to); err != nil {
 			return MatchSummary{}, err
 		}
+		if reach != nil {
+			kept := pmts[:0:0]
+			for _, p := range pmts {
+				if reach(p.BranchID) {
+					kept = append(kept, p)
+				}
+			}
+			pmts = kept
+		}
 	}
 	var lodg []Lodgement
 	if s.lodgements != nil {
 		if lodg, err = s.lodgements.OpenLodgements(ctx, from, to); err != nil {
 			return MatchSummary{}, err
+		}
+		if reach != nil {
+			kept := lodg[:0:0]
+			for _, l := range lodg {
+				if reach(l.BranchID) {
+					kept = append(kept, l)
+				}
+			}
+			lodg = kept
 		}
 	}
 
@@ -134,7 +160,7 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 			summary.Unmatched++
 			continue
 		}
-		m, perr := s.persistProposal(ctx, prop, matchedBy)
+		m, perr := s.persistProposal(ctx, prop, matchedBy, reach)
 		if perr != nil {
 			return summary, perr
 		}
@@ -154,7 +180,7 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
 // duplicate/racing match is rejected with NO second clearing journal. The journal is keyed on the match id so
 // a corrective re-match posts fresh legs.
-func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string) (Match, error) {
+func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string, reach func(string) bool) (Match, error) {
 	m := Match{
 		StatementLineID: prop.Line.ID,
 		TargetType:      prop.TargetType,
@@ -164,7 +190,15 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
 	}
-	id, err := s.repo.PersistMatch(ctx, m, prop.PaymentIDs)
+	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
+	if prop.TargetType == TargetLodgement && reach != nil {
+		if ok, lerr := s.lodgementReachable(ctx, prop.TargetRef, reach); lerr != nil {
+			return Match{}, lerr
+		} else if !ok {
+			return Match{}, errNotFound
+		}
+	}
+	id, err := s.repo.PersistMatchReach(ctx, m, prop.PaymentIDs, reach)
 	if err != nil {
 		return Match{}, err
 	}
@@ -217,7 +251,16 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
-	id, err := s.repo.PersistMatch(ctx, m, claim)
+	// A LODGEMENT target must exist and be in the caller's reach (SF-2g round 2); otherwise it answers exactly as a
+	// missing target, with nothing written. The fact comes from the till's seam.
+	if in.TargetType == TargetLodgement && in.CanAccessBranch != nil {
+		if ok, lerr := s.lodgementReachable(ctx, in.TargetRefID, in.CanAccessBranch); lerr != nil {
+			return Match{}, lerr
+		} else if !ok {
+			return Match{}, errNotFound
+		}
+	}
+	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
 	if err != nil {
 		return Match{}, err
 	}
@@ -246,10 +289,43 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 // DR1020/CR1000), which is exact for gateway/lodgement matches; a fuzzy fee-split match leaves its 6300 fee
 // residue for a controller adjustment (documented, fee is not carried on the match row).
 func (s *Service) Unmatch(ctx context.Context, matchID, userID string) error {
+	return s.UnmatchReach(ctx, matchID, userID, nil)
+}
+
+// lodgementReachable says whether a lodgement exists and sits in a branch the caller reaches, through the till's
+// seam. An unwired seam cannot say, so with a reach to enforce it answers not reachable (fail closed).
+func (s *Service) lodgementReachable(ctx context.Context, ref string, reach func(string) bool) (bool, error) {
+	if s.lodgements == nil || ref == "" {
+		return false, nil
+	}
+	branch, found, err := s.lodgements.LodgementBranch(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return found && reach(branch), nil
+}
+
+// UnmatchReach is Unmatch fenced to the caller's branch reach (SF-2g round 2). A match whose target is a payment or a
+// lodgement outside the reach answers exactly as a match that is not live, with nothing written. A nil reach fences
+// nothing. For a PAYMENT target the check runs inside the unmatch's transaction under the payment row lock; for a
+// LODGEMENT target it is read through the till's seam first (the lodgement's branch is immutable). JOURNAL and GROUP
+// targets carry no branch bankrec can read: they move no money and post no journal, and are listed in the report.
+func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reach func(string) bool) error {
 	if matchID == "" {
 		return badRequest("bankrec: match_id is required")
 	}
-	targetType, _, amount, err := s.repo.Unmatch(ctx, matchID, userID)
+	if reach != nil {
+		if tt, ref, live, perr := s.repo.PeekMatchTarget(ctx, matchID); perr != nil {
+			return perr
+		} else if live && tt == TargetLodgement {
+			if ok, lerr := s.lodgementReachable(ctx, ref, reach); lerr != nil {
+				return lerr
+			} else if !ok {
+				return conflict("bankrec: match %s is not live (already unmatched)", matchID)
+			}
+		}
+	}
+	targetType, _, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
 	if err != nil {
 		return err
 	}

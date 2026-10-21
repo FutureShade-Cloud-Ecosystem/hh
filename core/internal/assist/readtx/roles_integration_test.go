@@ -104,8 +104,11 @@ func TestSchemasAndGrantsAreExactlyPlan31(t *testing.T) {
 	sch(roles.ViewOwner, "ai", "USAGE", true)
 	sch(roles.ViewOwner, "ai_pro", "CREATE", true)
 	sch(roles.ViewOwner, "ai_pro", "USAGE", true)
-	sch(roles.ZoneReader, "ai", "USAGE", true)
-	sch(roles.ZoneReader, "ai", "CREATE", true)
+	// ai.dealer_day() is created by the zone reader and migration 0428 then takes the schema privileges back: a
+	// definer function runs as its owner without needing USAGE on its own schema unless its body names it, and
+	// this one names pg_catalog and public only.
+	sch(roles.ZoneReader, "ai", "USAGE", false)
+	sch(roles.ZoneReader, "ai", "CREATE", false)
 	sch(roles.ZoneReader, "ai_pro", "CREATE", false)
 	// The logins hold nothing of their own (NOINHERIT): the reader's grants
 	// reach them only through SET ROLE.
