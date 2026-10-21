@@ -53,3 +53,11 @@ bank match.
   match posts Dr bank / Cr clearing). It has no live caller today. A caller that used it would leave the GL on the
   clearing account while the status says DEPOSITED, and a later reversal would credit the bank for money the GL never
   moved there. It must post its own clearing journal before it gains a caller.
+- RULED, NOT YET BUILT (SF-2d round 4, blocked on the items in SF2D-REPORT.md): a reversal moves no money at the bank.
+  A reversal of money NOT yet banked credits the receipt's own account (1020 undeposited funds for cash and cheque,
+  1010 card clearing for a card), as built. A reversal of money ALREADY in the bank (banked by a till lodgement match
+  or by a bank payment match) credits a liability posting role, customer refunds and unapplied cash, never the bank
+  and never undeposited funds. That liability is cleared later either by the refund that pays it out (Dr the liability,
+  Cr the bank) or by re-application of the money to an invoice (Dr the liability, Cr AR). At the time of writing
+  neither the account nor either clearing path exists, and the reversal of banked money still credits the bank (a
+  deposit by payment match) or undeposited funds (a lodgement), which is the gap this rule closes.

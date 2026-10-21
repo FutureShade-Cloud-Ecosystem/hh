@@ -545,8 +545,12 @@ export function createBankrecWorld() {
     }
     // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
     if (method === "POST" && path === "/_stub/reverse-payment") {
-      const id = JSON.parse(bodyText || "{}").payment_id;
-      const payment = world.payments.find((p) => p.id === id);
+      const input = JSON.parse(bodyText || "{}");
+      if (input.all === true) {
+        for (const p of world.payments) p.reversed = true;
+        return { status: 200, body: { ok: true } };
+      }
+      const payment = world.payments.find((p) => p.id === input.payment_id);
       if (payment === undefined) return { status: 404, body: { error: "not found" } };
       payment.reversed = true;
       return { status: 200, body: { ok: true } };

@@ -395,6 +395,25 @@ test("a refused write names who may do it, never the bare gate word", async ({ p
   await expect(page.locator("[data-error]")).toContainText("Approving a match rule is for the Financial Controller.");
 });
 
+test("an undo of a deposit whose payment was reversed is refused in words and the line stays matched", async ({ page, request }) => {
+  await openBank(page, request);
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Auto match paired 4 lines");
+  // The payments are reversed behind the desk's back (the stub's control stands for the payments module).
+  const reversed = await request.post("/_stub/reverse-payment", { data: { all: true } });
+  expect(reversed.ok()).toBeTruthy();
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "CARD SETTLEMENT BATCH 0143");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-error]")).toContainText("This deposit cannot be undone: the payment was reversed, so its money already left through the reversal.");
+  // Nothing changed: the line is still matched and its history still reads in force.
+  await expect(panel.locator("[data-history]")).toContainText("in force");
+  await expect(panel.getByRole("button", { name: "Undo match" })).toBeVisible();
+});
+
 test("a refused sign off and a refused undo are said in words and change nothing", async ({ page, request }) => {
   await openBank(page, request);
   await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
