@@ -423,7 +423,16 @@ export function createBankrecWorld() {
         return clientError(422, `that lodgement is for ${lodgement.amount_cents} cents and the line is ${line.amount_cents} cents, so it does not explain the line`);
       }
     }
-    if (input.target_type === "JOURNAL" && input.target_ref_id && world.matches.some((m) => m.target_type === "JOURNAL" && m.target_ref_id === input.target_ref_id && !m.unmatched_at)) {
+    // SF-2j round 2: a line inside a signed off month cannot be matched.
+    {
+      const year = Number(line.txn_date.slice(0, 4));
+      const month = Number(line.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === line.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        return clientError(409, "that statement line sits in a month that is already reconciled and completed, so it cannot be matched");
+      }
+    }
+    // A journal is spent by a JOURNAL match to it and by being another live match's clearing (journal_id).
+    if (input.target_type === "JOURNAL" && input.target_ref_id && world.matches.some((m) => !m.unmatched_at && ((m.target_type === "JOURNAL" && m.target_ref_id === input.target_ref_id) || m.journal_id === input.target_ref_id))) {
       return clientError(409, "that journal already explains another statement line");
     }
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.

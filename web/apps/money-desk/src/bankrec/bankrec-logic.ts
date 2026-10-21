@@ -209,6 +209,18 @@ export function refusalWords(action: string, message: string, status: number): s
   if (journalApart !== null) {
     return `That journal moves this account by ${formatMoney(Number(journalApart[1]))} and the line is ${formatMoney(Number(journalApart[2]))}. Pick the journal for the line's amount.`;
   }
+  if (lower.includes("that journal has been reversed")) return "That journal has been reversed, so it no longer explains a bank line.";
+  if (lower.includes("that journal is itself a reversal")) return "That journal is itself a reversal, so it cannot explain a bank line.";
+  if (lower.includes("that journal was posted by the bank reconciliation itself")) {
+    return "That journal was posted by the bank reconciliation itself, so it cannot explain a bank line. Pick a journal from the ledger.";
+  }
+  if (lower.includes("sits in a month that is already reconciled and completed, so it cannot be matched")) {
+    return "That line sits in a month that is already signed off, so it cannot be matched.";
+  }
+  const recheck = /cannot complete, the journal matched to (?:the statement line )?"([^"]*)" (?:no longer explains it|no longer exists|cannot be checked)/i.exec(message);
+  if (recheck !== null) {
+    return `Not signed off: the journal matched to "${recheck[1]}" no longer explains that line. Undo the match and match the line again.`;
+  }
   if (lower.includes("that journal already explains another statement line")) return "That journal already explains another line.";
   const lockedMonth = /that match sits in (\d{4})-(\d{2}), which is already reconciled and completed/i.exec(message);
   if (lockedMonth !== null) {

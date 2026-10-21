@@ -405,10 +405,15 @@ test("a match explains its line: a group, a lodgement of another amount and a jo
   const journal = "7a1e0000-0000-4000-9000-000000000004";
   assert.equal((await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: journal })).status, 201);
   refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: journal }), 409, "that journal already explains another statement line");
+  // A journal a match posted as its clearing is spent too (SF-2j round 2).
+  const clearing = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  assert.equal(clearing.status, 201);
+  assert.ok(clearing.json.journal_id, "a payment match posts its clearing journal");
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: clearing.json.journal_id }), 409, "that journal already explains another statement line");
   // A match inside a signed off month cannot be undone.
   const opened = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
   await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
-  const paid = (await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire })).json;
+  const paid = clearing.json;
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
   await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
   assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`)).status, 200);
