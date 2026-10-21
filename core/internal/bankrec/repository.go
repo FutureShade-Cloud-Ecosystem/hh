@@ -293,6 +293,17 @@ func (r *Repository) UnmatchedCreditLines(ctx context.Context, accountID string,
 // The clearing journal is posted by the SERVICE only AFTER this returns, so a rejected duplicate posts NO
 // journal. The journal id is written back via SetMatchJournal.
 func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs []string) (string, error) {
+	return r.PersistMatchReach(ctx, m, claimPaymentIDs, nil)
+}
+
+// PersistMatchReach is PersistMatch fenced to the caller's branch reach (SF-2g). Under the payment rows' lock (the
+// same ascending lock the claim takes), the branch of each named payment is read through the payments module and
+// checked against reach; a payment outside it, or one that does not exist, is not claimed and is reported EXACTLY as
+// a missing payment is, with no number: the caller cannot tell "not yours" from "not there". The branch is a fact
+// of the row read under its lock, in the claim's own transaction, so another writer cannot move the payment between
+// the check and the claim; and a refusal rolls the whole transaction back, so nothing is written. A nil reach
+// fences nothing.
+func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymentIDs []string, reach func(branchID string) bool) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
@@ -317,6 +328,24 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 		if lerr := payments.LockPaymentRowsTx(ctx, tx, claimPaymentIDs); lerr != nil {
 			return "", fmt.Errorf("bankrec: lock payments: %w", lerr)
 		}
+		// The ids the claim may touch: all of them, or only those the caller reaches. A hidden id is never
+		// updated and never named.
+		claimable := claimPaymentIDs
+		hidden := map[string]bool{}
+		if reach != nil {
+			branches, berr := payments.PaymentBranchesTx(ctx, tx, claimPaymentIDs)
+			if berr != nil {
+				return "", fmt.Errorf("bankrec: read the payment branches: %w", berr)
+			}
+			claimable = nil
+			for _, pid := range claimPaymentIDs {
+				if b, ok := branches[strings.ToLower(pid)]; ok && reach(b) {
+					claimable = append(claimable, pid)
+				} else {
+					hidden[strings.ToLower(pid)] = true
+				}
+			}
+		}
 		rows, cerr := tx.Query(ctx,
 			`UPDATE payments
 			   SET status = 'DEPOSITED',
@@ -324,7 +353,7 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 			       updated_at = now()
 			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
 			 RETURNING id::text`,
-			claimPaymentIDs, m.StatementLineID)
+			claimable, m.StatementLineID)
 		if cerr != nil {
 			return "", fmt.Errorf("bankrec: claim payment: %w", cerr)
 		}
@@ -357,12 +386,23 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 			// match (money-desk bankrec-logic.ts).
 			// The numbers come through the payments module, which owns the table (no read here). The
 			// dealer reads a payment number, never an id.
-			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, unmoved)
+			// Only a payment the caller reaches is looked up for its number; a hidden one reads as missing.
+			var visible []string
+			for _, pid := range unmoved {
+				if !hidden[strings.ToLower(pid)] {
+					visible = append(visible, pid)
+				}
+			}
+			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, visible)
 			if nerr != nil {
 				return "", fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
 			}
 			labels := make([]string, 0, len(unmoved))
 			for _, pid := range unmoved {
+				if hidden[strings.ToLower(pid)] {
+					labels = append(labels, payments.PaymentLabel(nil, pid))
+					continue
+				}
 				labels = append(labels, payments.PaymentLabel(numbers, pid))
 			}
 			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",

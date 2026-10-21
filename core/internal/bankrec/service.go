@@ -103,6 +103,14 @@ type MatchSummary struct {
 // step is idempotent: a re-run only sees still-UNMATCHED lines, re-posts the same journal keys, and
 // re-flips only RECEIVED payments (AC2-4).
 func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time.Time, matchedBy string) (MatchSummary, error) {
+	return s.AutoMatchReach(ctx, accountID, from, to, matchedBy, nil)
+}
+
+// AutoMatchReach is AutoMatch fenced to the caller's branch reach (SF-2g): the proposals are built from the till's
+// unreconciled card payments, which a client cannot name, but the set is the dealer's whole book, so the candidates
+// are cut to the payments of branches the caller reaches before any line is matched, and the claim fences again.
+// A nil reach fences nothing.
+func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to time.Time, matchedBy string, reach func(string) bool) (MatchSummary, error) {
 	if accountID == "" {
 		return MatchSummary{}, badRequest("bankrec: bank_account_id is required")
 	}
@@ -119,6 +127,15 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 		if pmts, err = s.payments.UnreconciledCardPayments(ctx, from, to); err != nil {
 			return MatchSummary{}, err
 		}
+		if reach != nil {
+			kept := pmts[:0:0]
+			for _, p := range pmts {
+				if reach(p.BranchID) {
+					kept = append(kept, p)
+				}
+			}
+			pmts = kept
+		}
 	}
 	var lodg []Lodgement
 	if s.lodgements != nil {
@@ -134,7 +151,7 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 			summary.Unmatched++
 			continue
 		}
-		m, perr := s.persistProposal(ctx, prop, matchedBy)
+		m, perr := s.persistProposal(ctx, prop, matchedBy, reach)
 		if perr != nil {
 			return summary, perr
 		}
@@ -154,7 +171,7 @@ func (s *Service) AutoMatch(ctx context.Context, accountID string, from, to time
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
 // duplicate/racing match is rejected with NO second clearing journal. The journal is keyed on the match id so
 // a corrective re-match posts fresh legs.
-func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string) (Match, error) {
+func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string, reach func(string) bool) (Match, error) {
 	m := Match{
 		StatementLineID: prop.Line.ID,
 		TargetType:      prop.TargetType,
@@ -164,7 +181,7 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
 	}
-	id, err := s.repo.PersistMatch(ctx, m, prop.PaymentIDs)
+	id, err := s.repo.PersistMatchReach(ctx, m, prop.PaymentIDs, reach)
 	if err != nil {
 		return Match{}, err
 	}
@@ -217,7 +234,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
-	id, err := s.repo.PersistMatch(ctx, m, claim)
+	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
 	if err != nil {
 		return Match{}, err
 	}

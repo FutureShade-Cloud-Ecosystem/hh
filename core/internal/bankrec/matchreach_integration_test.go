@@ -24,6 +24,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -190,5 +191,46 @@ func TestIntegration_MatchReach_AnAutoMatchByABranchManagerSkipsAnotherBranchsPa
 	ls, ps, n = w.written(t, line, reachPayB1)
 	if code != http.StatusOK || ls != "MATCHED" || ps != "DEPOSITED" || n != 1 {
 		t.Errorf("control: a manager with reach over both: %d %s | line %s payment %s matches %d; want the match made", code, body, ls, ps, n)
+	}
+}
+
+// Concurrency: the branch is read under the payment row lock the claim takes. A writer holding that row between its
+// lock and its counter draw (testkit.DrawPark) makes the fenced match queue on the row, holding nothing; when the
+// writer finishes the match reads the branch and claims, with no deadlock; and the branch A manager's attempt on
+// the same row, started behind it, is refused as missing when the row is released.
+func TestIntegration_MatchReach_TheFenceHoldsBesideAWriterOfTheSamePaymentRow(t *testing.T) {
+	w := newReachWorld(t)
+	park := testkit.NewDrawPark(t, w.pool, "payments", 55010301)
+	touch := park.TouchRow("payments", "updated_at = now()", reachPayB1)
+	park.WaitParked("a writer holds the payment row at its counter draw")
+
+	lineOut, lineAB := w.line(t, "REACH RACE OUT", 5000), w.line(t, "REACH RACE BOTH", 5000)
+	outcome := make(chan [2]any, 2)
+	go func() { c, b := w.post(w.callerA, w.manual(lineOut, reachPayB1)); outcome <- [2]any{c, b} }()
+	go func() { c, b := w.post(w.callerAB, w.manual(lineAB, reachPayB1)); outcome <- [2]any{c, b} }()
+	park.WaitBlocked("the matches queue on the payment row")
+	park.Answers(map[string]chan error{"writer": touch})
+	got := map[int]int{}
+	for i := 0; i < 2; i++ {
+		select {
+		case o := <-outcome:
+			got[o[0].(int)]++
+		case <-time.After(30 * time.Second):
+			t.Fatal("a match never finished")
+		}
+	}
+	// One of them (the one holding reach, if it ran first) claimed the payment, the other found it taken or hidden:
+	// never two claims, never a deadlock, and never a claim for the branch A manager.
+	var matches int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM bank_matches WHERE target_ref_id = $1::uuid AND unmatched_at IS NULL`, reachPayB1).Scan(&matches); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if matches > 1 {
+		t.Errorf("the payment has %d live matches", matches)
+	}
+	var byA int
+	_ = w.pool.QueryRow(context.Background(), `SELECT count(*) FROM bank_matches WHERE statement_line_id = $1::uuid`, lineOut).Scan(&byA)
+	if byA != 0 {
+		t.Errorf("the branch A manager's match on branch B's payment was written")
 	}
 }
