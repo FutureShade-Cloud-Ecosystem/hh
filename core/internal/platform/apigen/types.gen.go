@@ -1038,6 +1038,35 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentsReapplyRequest struct {
+	Reason         string                      `json:"reason"`
+	IdempotencyKey string                      `json:"idempotency_key"`
+	Allocations    []PaymentsReapplyAllocation `json:"allocations"`
+}
+
+type PaymentsReapplyAllocation struct {
+	InvoiceId   string `json:"invoice_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PaymentsReapplication struct {
+	PaymentId       string                `json:"payment_id"`
+	BatchId         string                `json:"batch_id"`
+	AppliedCents    int64                 `json:"applied_cents"`
+	HeldBeforeCents int64                 `json:"held_before_cents"`
+	HeldAfterCents  int64                 `json:"held_after_cents"`
+	Replayed        bool                  `json:"replayed"`
+	Lines           []PaymentsReapplyLine `json:"lines"`
+}
+
+type PaymentsReapplyLine struct {
+	InvoiceId         string `json:"invoice_id"`
+	InvoiceNo         string `json:"invoice_no"`
+	AppliedCents      int64  `json:"applied_cents"`
+	Outcome           string `json:"outcome"`
+	BalanceAfterCents int64  `json:"balance_after_cents"`
+}
+
 type PaymentCardAttemptSummary struct {
 	Ref           string    `json:"ref"`
 	Id            string    `json:"id"`
