@@ -1144,7 +1144,7 @@ type BillingCustomerWorkspaceActivity struct {
 	Kind              string    `json:"kind"`
 	Reference         *string   `json:"reference,omitempty"`
 	AmountCents       int64     `json:"amount_cents"`
-	BalanceAfterCents int64     `json:"balance_after_cents"`
+	BalanceAfterCents *int64    `json:"balance_after_cents,omitempty"`
 	BranchId          *string   `json:"branch_id,omitempty"`
 	Memo              *string   `json:"memo,omitempty"`
 	OccurredAt        time.Time `json:"occurred_at"`
@@ -1155,7 +1155,8 @@ type BillingCustomerWorkspace struct {
 	InvoicesOpen     []BillingCustomerWorkspaceInvoice    `json:"invoices_open"`
 	InvoicesClosed   []BillingCustomerWorkspaceInvoice    `json:"invoices_closed"`
 	InvoicesDisputed []BillingCustomerWorkspaceInvoice    `json:"invoices_disputed"`
-	Payments         []BillingCustomerWorkspacePayment    `json:"payments"`
+	Payments         *[]BillingCustomerWorkspacePayment   `json:"payments,omitempty"`
+	PaymentsWithheld bool                                 `json:"payments_withheld"`
 	CreditNotes      []BillingCustomerWorkspaceCreditNote `json:"credit_notes"`
 	Statements       []BillingCustomerWorkspaceStatement  `json:"statements"`
 	Notes            []BillingCustomerWorkspaceNote       `json:"notes"`
