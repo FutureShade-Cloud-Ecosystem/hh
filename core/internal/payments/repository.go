@@ -814,6 +814,22 @@ func LockPaymentRowsTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return rows.Err()
 }
 
+// PaymentReversedTx reports whether a payment has been reversed (reversed_at is set). The payments module owns the
+// table, so a module that must refuse an act on a reversed payment (bankrec's unmatch) asks here, on its own
+// transaction, after it has taken the payment row with LockPaymentRowsTx so the answer cannot change under it. A
+// missing row reads as not reversed.
+func PaymentReversedTx(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	var reversed bool
+	err := tx.QueryRow(ctx, `SELECT reversed_at IS NOT NULL FROM payments WHERE id = $1::uuid`, id).Scan(&reversed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("payments: read whether the payment was reversed: %w", err)
+	}
+	return reversed, nil
+}
+
 // PaymentNumbersTx returns payment_no for a set of payment ids, keyed by the lower cased id. The payments
 // module owns the table, so other modules that refuse a payment in words a dealer reads (the bank claim,
 // MarkDeposited) take the number from here and never print the id. An id with no row is absent from the map.

@@ -380,3 +380,42 @@ func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
 		}
 	}
 }
+
+// SF-2d round 2: the account is read from the payload (fixed when the reversal happened), not from the payment's
+// status when the consumer runs; a payload without the new facts (an older row) falls back to the read.
+func TestPaymentReversed_PostsFromThePayloadNotTheCurrentStatus(t *testing.T) {
+	ctx := context.Background()
+	// The payload says cleared; the payment now reads RECEIVED (an unmatch got in): the bank is credited.
+	f := newFakeStore()
+	svc := newTestService(f).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "other", Method: "CARD", Status: "RECEIVED", AmountCents: 1}})
+	if err := svc.consume(ctx, ev("payment.reversed", map[string]any{
+		"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": "CARD",
+		"original_cleared": true, "branch_id": "b1",
+	})); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "1000", 0, 12000)
+	if d.BranchID != "b1" {
+		t.Fatalf("the journal took branch %q, want the payload's b1", d.BranchID)
+	}
+	// The payload says not cleared; the payment reads DEPOSITED: the card clearing account is credited.
+	f2 := newFakeStore()
+	svc2 := newTestService(f2).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: "CARD", Status: "DEPOSITED", AmountCents: 12000}})
+	if err := svc2.consume(ctx, ev("payment.reversed", map[string]any{
+		"payment_id": "rev2", "reverses_payment_id": "orig2", "amount_cents": 12000, "method": "CARD",
+		"original_cleared": false, "branch_id": "b1",
+	})); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	wantLeg(t, f2.lastInserted(), "1010", 0, 12000)
+	// A complete payload needs no payment reader at all.
+	f3 := newFakeStore()
+	if err := newTestService(f3).consume(ctx, ev("payment.reversed", map[string]any{
+		"payment_id": "rev3", "reverses_payment_id": "orig3", "amount_cents": 500, "method": "CHEQUE",
+		"original_cleared": false, "branch_id": "b1",
+	})); err != nil {
+		t.Fatalf("a complete payload with no reader: %v", err)
+	}
+	wantLeg(t, f3.lastInserted(), "1020", 0, 500)
+}

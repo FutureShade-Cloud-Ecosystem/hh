@@ -466,6 +466,35 @@ func (r *Repository) Unmatch(ctx context.Context, matchID, userID string) (targe
 	}
 	defer tx.Rollback(ctx)
 
+	// A deposit whose payment was reversed cannot be unmatched: the reversal already took the money back out of the
+	// account the deposit put it in (the GL credits the bank), so reverting the payment to RECEIVED and reversing
+	// the clearing journal again would take it out twice. Decided here, inside the transaction that would change
+	// the rows: the match's target is read, the payment row is taken (ascending, the payments module's own lock,
+	// which a reversal's FOR UPDATE queues behind), and the payments module says whether it was reversed. Nothing
+	// has been written when this refuses.
+	var peekType, peekRef string
+	err = tx.QueryRow(ctx,
+		`SELECT target_type, COALESCE(target_ref_id::text, '') FROM bank_matches WHERE id = $1 AND unmatched_at IS NULL`,
+		matchID).Scan(&peekType, &peekRef)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+	}
+	if err != nil {
+		return "", "", 0, fmt.Errorf("bankrec: read the match to unmatch: %w", err)
+	}
+	if peekType == TargetPayment && peekRef != "" {
+		if lerr := payments.LockPaymentRowsTx(ctx, tx, []string{peekRef}); lerr != nil {
+			return "", "", 0, fmt.Errorf("bankrec: lock payment: %w", lerr)
+		}
+		reversed, rerr := payments.PaymentReversedTx(ctx, tx, peekRef)
+		if rerr != nil {
+			return "", "", 0, rerr
+		}
+		if reversed {
+			return "", "", 0, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, so its money already left through the reversal")
+		}
+	}
+
 	var lineID string
 	err = tx.QueryRow(ctx,
 		`UPDATE bank_matches SET unmatched_at = now(), unmatched_by = $2

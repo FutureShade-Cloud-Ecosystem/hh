@@ -421,15 +421,26 @@ type paymentReversedPayload struct {
 	ReversesPaymentID string `json:"reverses_payment_id"` // the original receipt
 	AmountCents       int64  `json:"amount_cents"`
 	Method            string `json:"method"`
+	// The facts fixed under the payment row lock when the reversal was written (SF-2d round 2). A row written
+	// before they existed carries neither, and the builder falls back to reading the payment.
+	OriginalCleared *bool  `json:"original_cleared"`
+	BranchID        string `json:"branch_id"`
 }
 
 // buildPaymentReversed books the reversal of a received payment: Dr AR / Cr the account the original receipt's cash
-// leg sits on NOW, chosen the way buildPaymentBounced chooses it: 1000 bank if the original was DEPOSITED (a bank
-// match moved it out of clearing), else 1010 card clearing for a card, else 1020 undeposited funds. The payload does
-// not carry the original's status, and the status is not a fact the payments module puts on the event, so it is read
-// through the sibling payment seam (PaymentReader), as the receipt builder does. A deposit of a reversed payment is
-// refused (SF-2b), so the status read here cannot move between the reversal and this posting except by an unmatch,
-// whose own clearing journal puts the money back on 1010 or 1020, and then this reversal credits that same account.
+// leg sat on WHEN THE REVERSAL HAPPENED, chosen the way buildPaymentBounced chooses it: 1000 bank if the original
+// was DEPOSITED (a bank match had moved it out of clearing), else 1010 card clearing for a card, else 1020
+// undeposited funds. The payload carries the original's cleared state and branch, read by reversal.go under the
+// payment row lock, so the account does not depend on when this consumer runs: reading the payment's status here
+// would give a different answer before and after an unmatch. (An unmatch of a reversed payment is refused in
+// bankrec, so the status cannot move afterwards either.)
+//
+// FALLBACK for a row that predates the payload fields (a DEAD row the boot requeue picks up): the payment is read
+// through the sibling payment seam, as before. That is safe for the rows that exist: the topic was never posted
+// before 0426, so every older row is a DEAD row on a database that has had reversals, and for those the current
+// status is the best fact left. It is NOT safe for one case: an older reversal whose original was unmatched after
+// it, which the refusal now prevents but could already have happened; that row posts to the account the status
+// reads now. No real data holds such a row (the topic has only been live on the demo box).
 //
 // The reversal is the FULL amount of the original against AR, as the subledger's contra rows are (reversal.go gives
 // back every allocation of the payment): a partly allocated or multi invoice original reverses the same one amount.
@@ -441,26 +452,38 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 	if p.PaymentID == "" || p.ReversesPaymentID == "" {
 		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed missing payment_id or reverses_payment_id")
 	}
-	if s.payments == nil {
-		return journalDraft{}, false, fmt.Errorf("gl: payment reader not configured")
-	}
-	f, err := s.payments.PaymentForGL(ctx, p.ReversesPaymentID)
-	if err != nil {
-		return journalDraft{}, false, err
-	}
-	amount := p.AmountCents
-	if amount == 0 {
-		amount = f.AmountCents
+	amount, method, branch := p.AmountCents, p.Method, p.BranchID
+	cleared := false
+	if p.OriginalCleared != nil && branch != "" {
+		cleared = *p.OriginalCleared
+	} else {
+		if s.payments == nil {
+			return journalDraft{}, false, fmt.Errorf("gl: payment reader not configured")
+		}
+		f, err := s.payments.PaymentForGL(ctx, p.ReversesPaymentID)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if p.OriginalCleared != nil {
+			cleared = *p.OriginalCleared
+		} else {
+			cleared = f.Status == "DEPOSITED"
+		}
+		if branch == "" {
+			branch = f.BranchID
+		}
+		if amount == 0 {
+			amount = f.AmountCents
+		}
+		if method == "" {
+			method = f.Method
+		}
 	}
 	if amount == 0 {
 		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed has no amount")
 	}
-	method := p.Method
-	if method == "" {
-		method = f.Method
-	}
 	et := "payment.reversed"
-	rules, err := s.store.PostingAccounts(ctx, et, f.BranchID)
+	rules, err := s.store.PostingAccounts(ctx, et, branch)
 	if err != nil {
 		return journalDraft{}, false, err
 	}
@@ -470,7 +493,7 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 	}
 	cashRole := "undeposited"
 	switch {
-	case f.Status == "DEPOSITED":
+	case cleared:
 		cashRole = "bank"
 	case method == "CARD":
 		cashRole = "card_clearing"
@@ -484,7 +507,7 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		SourceRefID:    p.PaymentID,
 		IdempotencyKey: "payment.reversed:" + p.PaymentID,
 		Memo:           "Payment reversal " + method,
-		BranchID:       f.BranchID,
+		BranchID:       branch,
 		OccurredAt:     s.clock(),
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),

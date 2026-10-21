@@ -23,6 +23,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
@@ -427,5 +428,83 @@ func TestIntegration_ReversalGL_DepositedThenReversedIsTheSameInBothDrainOrders(
 		if before.nets[code] != 0 {
 			t.Errorf("account %s nets %d, want 0", code, before.nets[code])
 		}
+	}
+}
+
+// (a) alone: the account is fixed in the payload when the reversal happens. Whatever the payment's status reads
+// when the consumer runs (here forced back to RECEIVED, as an old unmatch would have), the reversal credits the
+// bank the deposit had put the money in.
+func TestIntegration_ReversalGL_TheAccountIsFixedAtReversalNotAtConsumption(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.receipt("CARD", 10_000)
+	w.drain()
+	line := w.r.statementLine(10_000)
+	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
+	}, w.r.userID)
+	if err != nil {
+		t.Fatalf("the deposit: %v", err)
+	}
+	rev := w.reverse(orig)
+	keys := append(caseKeys(orig, rev), "bankrec:match:"+m.ID)
+	w.cleanupJournals(keys, []string{line})
+	if _, err := w.r.obs.Exec(ctx, `UPDATE payments SET status = 'RECEIVED' WHERE id = $1::uuid`, orig); err != nil {
+		t.Fatalf("force the status: %v", err)
+	}
+	w.drain()
+	got := w.nets(keys, []string{line})
+	for code, n := range got {
+		if n != 0 {
+			t.Errorf("account %s nets %d: the reversal followed the status the consumer read, not the one at reversal (%v)", code, n, got)
+		}
+	}
+}
+
+// (b) beside a reversal of the SAME payment: the reversal is the parked session (testkit.DrawPark, holding the
+// payment row FOR UPDATE at its first counter draw), the unmatch queues behind it on the payment row, and when the
+// reversal commits the unmatch is refused with nothing written. No deadlock either way.
+func TestIntegration_ReversalGL_AnUnmatchBesideAReversalOfTheSamePaymentIsRefusedWithNothingWritten(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.receipt("CARD", 10_000)
+	w.drain()
+	line := w.r.statementLine(10_000)
+	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
+	}, w.r.userID)
+	if err != nil {
+		t.Fatalf("the deposit: %v", err)
+	}
+	w.cleanupJournals([]string{"bankrec:match:" + m.ID, "bankrec:unmatch:" + m.ID, "payment.received:" + orig}, []string{line})
+
+	park := testkit.NewDrawPark(t, w.r.pool, "payments", 55010201)
+	revErr := make(chan error, 1)
+	go func() {
+		_, err := payments.NewRepository(park.Pool).ReversePayment(ctx, payments.ReverseInput{
+			PaymentID: orig, Reason: "unmatch beside reversal", ActorID: w.r.userID, IsManager: true}, time.Now())
+		revErr <- err
+	}()
+	park.WaitParked("the reversal holds the payment row at its first counter draw")
+	unErr := make(chan error, 1)
+	go func() { unErr <- bank.Unmatch(ctx, m.ID, w.r.userID) }()
+	park.WaitBlocked("the unmatch queues on the payment row")
+	park.AnswersAllowing(map[string]chan error{"reversal": revErr, "unmatch": unErr}, map[string]string{"unmatch": "cannot be unmatched"})
+
+	var lineStatus, payStatus string
+	var live int
+	if err := w.r.obs.QueryRow(ctx, `SELECT status FROM bank_statement_lines WHERE id = $1::uuid`, line).Scan(&lineStatus); err != nil {
+		t.Fatalf("read the line: %v", err)
+	}
+	if err := w.r.obs.QueryRow(ctx, `SELECT status FROM payments WHERE id = $1::uuid`, orig).Scan(&payStatus); err != nil {
+		t.Fatalf("read the payment: %v", err)
+	}
+	if err := w.r.obs.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key = 'bankrec:unmatch:'||$1`, m.ID).Scan(&live); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if lineStatus != "MATCHED" || payStatus != "DEPOSITED" || live != 0 {
+		t.Errorf("after the refused unmatch: line %s, payment %s, unmatch journals %d; want MATCHED, DEPOSITED, 0", lineStatus, payStatus, live)
 	}
 }

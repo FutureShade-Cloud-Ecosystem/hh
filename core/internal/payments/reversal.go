@@ -296,6 +296,12 @@ UPDATE invoices
 		"method":              method,
 		"reason":              in.Reason,
 		"invoice_ids":         reopened,
+		// The facts the GL's account choice needs, read under the payment row lock this transaction holds, so the
+		// account is fixed when the reversal happens and not when the consumer runs (SF-2d round 2): whether the
+		// original had been deposited (cleared to the bank), and its branch.
+		"original_status":  status,
+		"original_cleared": status == "DEPOSITED",
+		"branch_id":        branchID,
 	})
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: marshal payment.reversed: %w", err)
