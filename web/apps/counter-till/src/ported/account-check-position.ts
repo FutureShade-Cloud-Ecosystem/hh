@@ -17,7 +17,7 @@ import {
   type AccountCheckResult,
   type AccountCheckStanding,
 } from './account-check-logic.js';
-import { formatMoney } from '../money.js';
+import { formatMoney } from "../money.js";
 
 /** What stands where the credit figure would be for a caller the policy refuses. */
 export const POSITION_WITHHELD_WORDS = 'Credit position not shown for your role';
