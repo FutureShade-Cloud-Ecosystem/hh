@@ -337,6 +337,29 @@ from a joined CTE, and refuses a `FOR UPDATE OF <other alias>` as a lock of this
 above: a trigger relying `UPDATE` of products, customers, vendors or pricing_list_prices must take the table's
 counter, by literal or by a `Lock...Seq` helper named for it, earlier in the same function.
 
+## The till session row, and the completed month (SF-2j)
+
+Two edges outside the payments chain, each decided in the writer's own transaction:
+
+- **The till session row before any movement insert or count.** `till.Repository.InsertMovement` takes
+  `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE` first, checks the session is OPEN under that
+  lock, then inserts the movement; `SetCounted`'s guarded UPDATE takes the same lock strength on the same row. A
+  count and a movement of one session therefore serialise: the movement either commits before the count (and is
+  counted) or reads COUNTED and refuses. `FOR NO KEY UPDATE`, not `FOR UPDATE`, because no key column of
+  `till_sessions` is ever set by either writer and the movement's own foreign key takes `FOR KEY SHARE` on the same
+  row, which a `NO KEY UPDATE` does not conflict with (a stronger lock would queue every movement behind every
+  other movement's foreign key check for nothing). The plain OPEN read in `recordMovement` is now only a fast
+  refusal; the locked read decides. Leg: `TestIntegration_MovementBesideACountOfTheSameSession`.
+- **The bank reconciliation row, then its advisory key, before an unmatch's writes.** `CompleteReconciliation`
+  takes the reconciliation row `FOR UPDATE`, then `pg_advisory_xact_lock(hashtextextended(acct|year|month, 0))`,
+  then the month's lines. `bankrec.Repository.UnmatchReach` takes the same row `FOR SHARE` (it conflicts with
+  completion's `FOR UPDATE`), then the shared form of the same advisory key, then reads the status and refuses a
+  COMPLETED month, all before the match, the line or the payment is written. Completion first: the unmatch waits
+  and reads COMPLETED. Unmatch first: completion waits for the unmatch's commit and its recount sees the reopened
+  line. No reconciliation row yet: a row made after the check is OPEN and its completion needs the exclusive form
+  of the advisory key, which the unmatch's shared hold blocks until it commits. Same order (row, then key) in both
+  writers, so no cycle. The payment row, when the match has one, is taken before both.
+
 ## The legs
 
 `lockorder_integration_test.go` (this package) and `lockorder_pos_return_test.go` (cmd/core, the ones that need the
