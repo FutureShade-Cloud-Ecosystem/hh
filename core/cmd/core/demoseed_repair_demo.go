@@ -5,22 +5,20 @@
 // carries, for databases the OLD plan already seeded.
 //
 // WHY A REPAIR AT ALL. The applier is INSERT-only, by construction, so a change to a row the plan
-// already wrote (C01's home branch, moved to Trenton by plan.go's ruling) lands only on databases
-// that had never been seeded: on every box seeded before the ruling, the customers row conflicts
-// and the apply writes nothing, and the visual bug the ruling fixes (the customer with quotes at
-// Trenton unfindable in the branch-fenced search there) survives on exactly the box a demo is shown
-// from. The scrub-name pass (demoseed_scrubname_demo.go) exists for the same class of row, with the
-// same answer, and this file follows its guarantees one for one:
+// already wrote (the home branch of C01, C04 and C08, which the plan now leaves empty so the three
+// are shared accounts) lands only on databases that had never been seeded: on every box seeded
+// before the ruling, the customers row conflicts and the apply writes nothing, and the three keep a
+// yard's home that is not true of them. The scrub-name pass (demoseed_scrubname_demo.go) exists for
+// the same class of row, with the same answer, and this file follows its guarantees one for one:
 //
-//   - ONE row addressed by its FIXED id, the plan's own demoID("customer:C01"), never a filter
-//     over names or accounts;
-//   - the WHERE names the exact value being repaired (the first branch by code order, the home the
-//     old plan wrote), so the second run matches no row, and a row somebody re-homed by hand is
-//     left alone, the same deference apply.go shows every row it did not create;
-//   - ONE column moves (home_branch_id, and updated_at), nothing can delete, and the statement
-//     list is fixed in this file, never built from input;
-//   - a single-branch deployment (or a box whose first branch is already the target) repairs
-//     nothing: from and to are the same branch and the pass is skipped whole.
+//   - a FIXED list of rows addressed by the plan's own ids, demoID("customer:C01") and its two
+//     peers, never a filter over names or accounts;
+//   - the WHERE names the exact values being repaired (the seed's own branches, the homes any older
+//     plan wrote), so the second run matches no row, and a row somebody re-homed by hand to a
+//     branch the seed does not own is left alone, the same deference apply.go shows every row it
+//     did not create;
+//   - ONE column moves (home_branch_id, to NULL, and updated_at), nothing can delete, and the
+//     statement list is fixed in this file, never built from input.
 //
 // The default build's side is demoseed_repair_default.go, a no-op stub, so a default binary
 // carries no home-branch write at all; demoseed_scrubname_build_test.go's repair leg proves the
@@ -40,7 +38,7 @@ import (
 // A set value (even one a hand chose) never matches, and a repaired row never matches again.
 const productApplicationRepairSQL = `UPDATE products SET application = $1, updated_at = $2 WHERE id = $3::uuid AND (application IS NULL OR application = '')`
 
-// repairDemoWorld re-homes the one account the ruling moved, inside the apply transaction, and
+// repairDemoWorld un-homes the accounts the ruling made shared, inside the apply transaction, and
 // returns how many rows it repaired. On the second run against the same world the row already
 // reads its new home, the statement matches nothing, and the answer is 0.
 func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
@@ -80,7 +78,7 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
-	n, err := repairNorthlineHome(ctx, tx, now, branches)
+	n, err := repairSharedAccountHomes(ctx, tx, now, branches)
 	return fixed + stamped + sequenced + tasks + locs + world + reps + grants + n, err
 }
 
@@ -91,7 +89,7 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 // existence, so a non-home row (even tombstoned) seats the yard persona in the other yard's
 // rooms. The persona is resolved by email (both the 0200 address and the reserved demo alias
 // the populate moves it to), and the home branch is decided from the seed's own resolved
-// branches (the yard branch repairNorthlineHome and repairDemoOrderReps use), never a literal
+// branches (the yard branch repairDemoOrderReps uses), never a literal
 // branch name.
 const yardPersonaBranchGrantRepairSQL = `DELETE FROM user_branch_grants
 	 WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::citext[]))
@@ -145,8 +143,8 @@ func repairDemoOrderReps(ctx context.Context, tx txExec, now time.Time, branches
 	if len(branches) == 0 {
 		return 0, nil
 	}
-	// The yard branch the demo logins work: the second by code order, the same branch
-	// repairNorthlineHome re-homes onto; a single-branch box has only the one yard.
+	// The yard branch the demo logins work: the second by code order; a single-branch box has
+	// only the one yard.
 	yard := branches[len(branches)-1].ID
 	tag, err := tx.Exec(ctx, orderRepRepairSQL, personaQuoteSales, now, yard, demoOpenOrderStatuses, demoMarker)
 	if err != nil {
@@ -222,24 +220,39 @@ func repairDemoProductApplications(ctx context.Context, tx txExec, now time.Time
 	return total, nil
 }
 
-// repairNorthlineHome is the home-branch repair, split out so the pass above can run beside it.
-func repairNorthlineHome(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
+// sharedDemoAccountIDs is the fixed ids of the accounts the plan seeds with no home, from the plan's
+// own table.
+func sharedDemoAccountIDs() []string {
+	var ids []string
+	for _, c := range demoCustomers {
+		if c.Branch == noHomeBranch {
+			ids = append(ids, demoID("customer:"+c.Key))
+		}
+	}
+	return ids
+}
+
+func branchIDs(branches []branch) []string {
+	ids := make([]string, 0, len(branches))
+	for _, br := range branches {
+		ids = append(ids, br.ID)
+	}
+	return ids
+}
+
+// repairSharedAccountHomes is the home-branch repair, split out so the pass above can run beside it.
+// The one statement clears the home of the demo accounts the plan now seeds as shared. The guard
+// names the old values, any of the seed's own branches, so a repaired row (NULL) never matches again
+// and a home somebody set by hand to another branch is left alone.
+func repairSharedAccountHomes(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
 	if len(branches) == 0 {
 		return 0, nil
 	}
-	from := branches[0].ID // by code order, the home the plan wrote before the ruling
-	to := from
-	if len(branches) > 1 {
-		to = branches[1].ID
-	}
-	if from == to {
-		return 0, nil // a single-branch box homes every account at the branch it has
-	}
 	tag, err := tx.Exec(ctx,
-		`UPDATE customers SET home_branch_id = $1::uuid, updated_at = $2 WHERE id = $3::uuid AND home_branch_id = $4::uuid`,
-		to, now, demoID("customer:C01"), from)
+		`UPDATE customers SET home_branch_id = NULL, updated_at = $1 WHERE id = ANY($2::uuid[]) AND home_branch_id = ANY($3::uuid[])`,
+		now, sharedDemoAccountIDs(), branchIDs(branches))
 	if err != nil {
-		return 0, fmt.Errorf("demoseed: re-homing the Northline account to the branch the demo logins work: %w", err)
+		return 0, fmt.Errorf("demoseed: making the Northline, Harbourview and County accounts shared: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
 }
@@ -373,18 +386,17 @@ func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branc
 				unowned, branches[len(branches)-1].Code)
 		}
 	}
-	if len(branches) > 1 && branches[0].ID != branches[1].ID {
+	if len(branches) > 0 {
 		var waiting int
 		if err := rows.QueryRow(ctx,
-			`SELECT count(*) FROM customers WHERE id = $1::uuid AND home_branch_id = $2::uuid`,
-			demoID("customer:C01"), branches[0].ID).Scan(&waiting); err != nil {
+			`SELECT count(*) FROM customers WHERE id = ANY($1::uuid[]) AND home_branch_id = ANY($2::uuid[])`,
+			sharedDemoAccountIDs(), branchIDs(branches)).Scan(&waiting); err != nil {
 			// A read that cannot run says nothing rather than guessing: the plan's silence is the
 			// honest answer, the apply's own report is the authoritative one.
 			return
 		}
 		if waiting > 0 {
-			fmt.Fprintf(out, "  home repair    the Northline account moves to %s with -apply, it is still homed at %s\n",
-				branches[1].Code, branches[0].Code)
+			fmt.Fprintf(out, "  home repair    %d shared demo account(s) lose their yard home with -apply, Northline, Harbourview and the County are company-wide\n", waiting)
 		}
 	}
 }

@@ -19,6 +19,11 @@ package main
 // route, as the demo Sales login, and must come back. The fence's own negative space is asserted
 // beside it: the house WALK-IN account is excluded by the search on purpose and stays excluded.
 //
+// UX-94: Northline, Harbourview and the County are SHARED accounts (NULL home), because they are
+// ordered from at both yards. The proof asserts the NULL after a fresh apply and after the repair
+// on a box seeded with the old homes, and that each is findable by name at Trenton and by a
+// caller whose one grant is the other yard (Julian).
+//
 // The database gate is the demo world proofs' own variable, and the harness refuses an address that
 // is not local.
 
@@ -134,6 +139,22 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 		t.Fatalf("only %d customers hold documents at Trenton, the demo world's Trenton book is missing", len(wants))
 	}
 
+	// The three shared accounts hold no home after a fresh apply.
+	assertShared := func(when string) {
+		t.Helper()
+		for _, key := range sharedKeys {
+			var home *string
+			if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1::uuid`,
+				demoID("customer:"+key)).Scan(&home); err != nil {
+				t.Fatalf("%s: reading %s's home: %v", when, key, err)
+			}
+			if home != nil {
+				t.Errorf("%s: %s is homed at %s, want no home (a shared account)", when, key, *home)
+			}
+		}
+	}
+	assertShared("after a fresh apply")
+
 	// Search each one by the distinctive half of its name, the way a tester types it.
 	for _, w := range wants {
 		term := w.name
@@ -169,48 +190,94 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 		t.Error("the house WALK-IN account leaked into the picker's results, the search excludes it on purpose")
 	}
 
-	// THE REPAIR LEG, the path a demo box already seeded before the ruling takes. The apply is
-	// INSERT-only, so the plan's own customers row cannot move on a database that already holds it;
-	// the demoseed_repair pair's one guarded UPDATE is what re-homes it. Reproduce the old world
-	// exactly (the row homed at the first branch by code order), run the apply again, and the
-	// search must find Bluffside once more. A second apply after it must repair nothing: the
-	// guard names the value it repairs, so a repaired row is out of its reach.
+	// THE JULIAN LEG. A caller whose one grant is the other yard finds each shared account by name
+	// there too: no home means no yard to be invisible from.
+	var orgID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, demoOrgSlug).Scan(&orgID); err != nil {
+		t.Fatalf("the demo org: %v", err)
+	}
 	var kingstonID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'JUL'`).Scan(&kingstonID); err != nil {
 		t.Fatalf("the Kingston branch: %v", err)
 	}
-	rehome := func(to string) {
+	const julianSubject = "de110000-0000-4000-9000-0000000000a4"
+	if _, err := pool.Exec(ctx, `
+		WITH u AS (
+		  INSERT INTO users (email, display_name, status, org_id, platform_user_id)
+		  VALUES ('sales.julian.ux94@hh-demo.invalid', 'Sales at Julian (UX-94 proof)', 'ACTIVE', $1, $2) RETURNING id)
+		INSERT INTO user_branch_grants (user_id, branch_id, org_id) SELECT id, $3, $1 FROM u`,
+		orgID, julianSubject, kingstonID); err != nil {
+		t.Fatalf("plant the Julian login: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, 'inside_sales', $2, $3)`,
+		julianSubject, orgID, kingstonID); err != nil {
+		t.Fatalf("plant the Julian grant: %v", err)
+	}
+	appwrite.setTeam(julianSubject, "org-"+demoOrgSlug)
+	julian := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, julianSubject), who: "Sales at Julian"}
+	// The names are read from the database: the populate's scrub pass renames the demo accounts, so
+	// the plan's own name is not the name a tester types.
+	sharedTerms := map[string]string{}
+	for _, key := range sharedKeys {
+		var name string
+		if err := pool.QueryRow(ctx, `SELECT name FROM customers WHERE id = $1::uuid`, demoID("customer:"+key)).Scan(&name); err != nil {
+			t.Fatalf("reading %s's name: %v", key, err)
+		}
+		sharedTerms[key] = strings.TrimSuffix(name, " (demo)")
+	}
+	findShared := func(c *tillClient, branchID, key string) bool {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = $1::uuid WHERE id = $2::uuid`,
-			to, demoID("customer:C01")); err != nil {
-			t.Fatalf("planting the old home for the repair leg: %v", err)
+		rsp := c.call("GET", "/api/v1/customers/search?q="+url.QueryEscape(sharedTerms[key])+"&branch_id="+branchID, nil)
+		rsp.ok(t, http.StatusOK)
+		return strings.Contains(string(rsp.body), demoID("customer:"+key))
+	}
+	for _, key := range sharedKeys {
+		if !findShared(julian, kingstonID, key) {
+			t.Errorf("%s is not findable by name for a Julian-scoped caller, a shared account must answer at both yards", key)
 		}
 	}
-	foundAgain := func() bool {
+
+	// THE REPAIR LEG, the path a demo box already seeded with the old homes takes. The apply is
+	// INSERT-only, so the plan's own customers rows cannot move on a database that already holds
+	// them; the demoseed_repair pair's one guarded UPDATE is what un-homes them. Reproduce the old
+	// world (C01 and C08 homed at the first branch by code order, C04 at Trenton), run the apply
+	// again, and all three must read NULL and stay findable at Trenton. A second apply must repair
+	// nothing: the guard names the old homes, so a repaired row is out of its reach.
+	oldHome := map[string]string{"C01": kingstonID, "C04": trentonBranchID, "C08": kingstonID}
+	for key, home := range oldHome {
+		if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = $1::uuid WHERE id = $2::uuid`,
+			home, demoID("customer:"+key)); err != nil {
+			t.Fatalf("planting %s's old home for the repair leg: %v", key, err)
+		}
+	}
+	if findShared(sales, trentonBranchID, "C01") {
+		t.Fatal("the repair leg's premise is wrong: Northline homed at Kingston is already findable at Trenton")
+	}
+	qwApply(t)
+	assertShared("after the repair apply")
+	for _, key := range sharedKeys {
+		if !findShared(sales, trentonBranchID, key) {
+			t.Errorf("after the repair apply, %s is not findable by name at Trenton", key)
+		}
+	}
+	// A second apply writes nothing to those rows: a repaired row is never touched twice.
+	var stamp1, stamp2 string
+	read := func(dst *string) {
 		t.Helper()
-		rsp := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape("Bluffside")+"&branch_id="+trentonBranchID, nil)
-		rsp.ok(t, http.StatusOK)
-		return strings.Contains(string(rsp.body), demoID("customer:C01"))
+		if err := pool.QueryRow(ctx, `SELECT string_agg(updated_at::text, ',' ORDER BY id) FROM customers WHERE id = ANY($1::uuid[])`,
+			[]string{demoID("customer:C01"), demoID("customer:C04"), demoID("customer:C08")}).Scan(dst); err != nil {
+			t.Fatalf("reading the shared accounts' stamps: %v", err)
+		}
 	}
-	rehome(kingstonID)
-	if foundAgain() {
-		t.Fatal("the repair leg's premise is wrong: Bluffside homed at Kingston is already findable at Trenton")
-	}
+	read(&stamp1)
 	qwApply(t)
-	var home string
-	if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1`, demoID("customer:C01")).Scan(&home); err != nil {
-		t.Fatalf("reading Bluffside's home after the repair: %v", err)
+	read(&stamp2)
+	if stamp1 != stamp2 {
+		t.Errorf("the second apply touched the shared accounts again (%s then %s); the guard must match nothing once repaired", stamp1, stamp2)
 	}
-	if home != trentonBranchID {
-		t.Fatalf("the apply's repair pass left Bluffside homed at %s, want Trenton %s", home, trentonBranchID)
-	}
-	if !foundAgain() {
-		t.Error("after the repair apply, Bluffside is still not findable by name at Trenton")
-	}
-	// A second apply repairs nothing: the guard names the old home, and a row already at Trenton
-	// (by the repair before it or by a hand) is out of its reach.
-	qwApply(t)
-	if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1`, demoID("customer:C01")).Scan(&home); err != nil || home != trentonBranchID {
-		t.Errorf("the second apply moved Bluffside's home again (%s, err %v); the guard must match nothing once repaired", home, err)
-	}
+	assertShared("after the second apply")
 }
+
+// sharedKeys are the demo accounts the plan seeds with no home branch.
+var sharedKeys = []string{"C01", "C04", "C08"}
