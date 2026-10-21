@@ -127,17 +127,39 @@ func (s *WeightSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter,
 
 // Pull returns the page of NEED_WEIGHT task changes past since, live rows
 // and tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate and the caller's branch reach.
 func (s *WeightSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := weightScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// The branch reach clause is the pick scope's pull rule (SyncStore.pullReach), part of the query so the page
+	// fills with the rows the caller reaches and `seq > since` stays exact (UX-81c round 3). GLOBAL adds no clause,
+	// and a task with no branch is no scoped caller's. An unwired authority fences nothing, as the create.
+	reachSQL := ""
+	var branches []string
+	if s.staff != nil {
+		var reach bool
+		var err error
+		branches, reach, err = (&SyncStore{staff: s.staff}).pullReach(ctx, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !reach {
+			return []sync.Entity{}, []sync.Tombstone{}, nil
+		}
+		if branches != nil {
+			reachSQL = " AND branch_id = ANY($4::uuid[])"
+		}
+	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks
-		WHERE %s AND seq IS NOT NULL AND seq > $2
+		WHERE %s AND seq IS NOT NULL AND seq > $2%s
 		ORDER BY seq ASC
-		LIMIT $3`, syncColumns, where)
+		LIMIT $3`, syncColumns, where, reachSQL)
 	args = append(args, since, limit)
+	if branches != nil {
+		args = append(args, branches)
+	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tasks: weight sync pull: %w", err)
@@ -193,7 +215,8 @@ func (s *WeightSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, k
 }
 
 // Load reads one NEED_WEIGHT row by id under the org predicate; a row
-// outside the caller's org is the same as an absent one.
+// outside the caller's org, or on a branch outside the caller's reach, is the
+// same as an absent one.
 func (s *WeightSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	return s.load(ctx, s.pool, f, id)
 }
@@ -222,6 +245,12 @@ func (s *WeightSyncStore) load(ctx context.Context, db weightQuerier, f sync.Sco
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: weight sync load: %w", err)
+	}
+	if err := s.heldToReach(ctx, f, r.task.BranchID); err != nil {
+		if errors.Is(err, sync.ErrRowNotFound) {
+			return sync.RowState{}, false, nil
+		}
+		return sync.RowState{}, false, err
 	}
 	rs, err := rowStateOf(r)
 	return rs, true, err

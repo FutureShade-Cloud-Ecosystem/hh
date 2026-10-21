@@ -158,3 +158,66 @@ func TestWeightAnswer_SyncWriteAndDeleteHoldTheCallersBranchReach(t *testing.T) 
 		t.Errorf("the task's own branch deletes: %v", err)
 	}
 }
+
+// UX-81c round 3: the weights sync Pull and Load hold the caller's branch reach as the pick scope's pull does. A device
+// scoped to branch B pulls and loads nothing of branch A's weight tasks, a deleted one's tombstone included, and its
+// own branch's task still pulls and loads.
+func TestWeightSyncPullAndLoadHoldTheCallersBranchReach(t *testing.T) {
+	d := newPickDoor(t)
+	north := d.org
+	stampBranch(t, d, d.branchA, north)
+	stampBranch(t, d, d.branchB, north)
+	staffOf := func(sc identity.StaffContext) identity.SyncStaffResolver {
+		return func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, true, nil }
+	}
+	branches := branchesOfOrg{d.branchA: {north: true}, d.branchB: {north: true}}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	orderA, orderB := uuid.NewString(), uuid.NewString()
+	owner := map[string]string{orderA: north, orderB: north}
+	create := func(order, branch string) string {
+		s := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: branch}, nil).
+			WithStaffAuthority(staffOf(global)).WithBranchOrgReader(branches)
+		row, err := s.Create(context.Background(), d.f, uuid.NewString(), map[string]any{"order_id": order, "order_line_no": 1})
+		if err != nil {
+			t.Fatalf("create weight task: %v", err)
+		}
+		return row.ID
+	}
+	onA, onB, goneOnA := create(orderA, d.branchA), create(orderB, d.branchB), create(orderA, d.branchA)
+	byGlobal := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchA}, nil).
+		WithStaffAuthority(staffOf(global)).WithBranchOrgReader(branches)
+	if _, err := byGlobal.Delete(context.Background(), d.f, goneOnA, uuid.NewString()); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	deviceB := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchB}, nil).
+		WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchB))).WithBranchOrgReader(branches)
+
+	items, tombs, err := deviceB.Pull(context.Background(), d.f, 0, 100)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	for _, it := range items {
+		if it.ID == onA {
+			t.Errorf("a branch B device pulled branch A's weight task")
+		}
+	}
+	for _, tb := range tombs {
+		if tb.ID == goneOnA {
+			t.Errorf("a branch B device pulled the tombstone of branch A's deleted weight task")
+		}
+	}
+	if len(items) != 1 || items[0].ID != onB {
+		t.Errorf("the device pulls its own branch's task and only that: %d items", len(items))
+	}
+	if _, found, err := deviceB.Load(context.Background(), d.f, onA); err != nil || found {
+		t.Errorf("loading branch A's weight task answers a missing row: found %v err %v", found, err)
+	}
+	if _, found, err := deviceB.Load(context.Background(), d.f, onB); err != nil || !found {
+		t.Errorf("loading its own branch's weight task works: found %v err %v", found, err)
+	}
+	// A GLOBAL caller of the org still pulls both.
+	if all, _, err := byGlobal.Pull(context.Background(), d.f, 0, 100); err != nil || len(all) != 2 {
+		t.Errorf("a GLOBAL caller still pulls every branch of its org: %d items, %v", len(all), err)
+	}
+}
