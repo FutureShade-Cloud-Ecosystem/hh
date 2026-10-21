@@ -48820,6 +48820,10 @@ components:
         received_at:
           type: string
           format: date-time
+        reversed_at:
+          type: string
+          format: date-time
+          description: Set when the payment was reversed; a reversed payment is never also bounced
     TillInvoicePayments:
       type: object
       description: "The per-invoice settlement view: every payment applied to it, attributed"

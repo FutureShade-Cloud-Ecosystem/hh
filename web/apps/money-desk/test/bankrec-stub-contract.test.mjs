@@ -299,10 +299,18 @@ test("an undo returns the line and the payment, keeps the history, and a second 
   const again = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
   assert.equal(again.status, 201);
   assert.equal((await ctl("GET", `/api/v1/bankrec/matches?statement_line_id=${wire.id}`)).json.length, 2);
-  // A deposit whose payment was reversed cannot be unmatched: refused in plain words, and nothing changes.
+  // A deposit whose payment was reversed cannot be unmatched when it is not a card: refused in plain words, and
+  // nothing changes.
   await fetch(`${base}/_stub/reverse-payment`, { method: "POST", body: JSON.stringify({ payment_id: IDS.paymentWire }) });
-  refused(await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: again.json.id }), 409, "cannot be unmatched");
+  refused(await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: again.json.id }), 409, "a reversed cheque or cash payment cannot be matched again");
   assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "MATCHED", "a refused unmatch leaves the line matched");
+  // A reversed CARD can be unmatched (SF-2d round 7): the wrong match is undone and the card is claimable again.
+  const card = await lineByRef("CARD SETTLEMENT BATCH 0143");
+  const cardMatch = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: card.id, target_type: "PAYMENT", target_ref_id: IDS.paymentGateway1 });
+  assert.equal(cardMatch.status, 201);
+  await fetch(`${base}/_stub/reverse-payment`, { method: "POST", body: JSON.stringify({ payment_id: IDS.paymentGateway1 }) });
+  assert.equal((await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: cardMatch.json.id })).status, 200);
+  assert.equal((await lineByRef("CARD SETTLEMENT BATCH 0143")).status, "UNMATCHED");
 });
 
 test("the rules answer a bare array, a new version retires the old, and the spec is the core's whole object", async () => {

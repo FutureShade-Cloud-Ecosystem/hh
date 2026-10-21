@@ -859,6 +859,8 @@ function invoicePayments(inv) {
         payment_amount_cents: p.amount_cents,
         allocated_at: p.received_at,
         received_at: p.received_at,
+        // The core stamps reversed_at on the original of a reversal (its status stays as it was).
+        ...(p.reversed === true ? { reversed_at: p.received_at } : {}),
       };
     });
   return { invoice_id: inv.id, invoice_no: inv.invoice_no, branch_id: BRANCH, items };
@@ -1332,6 +1334,8 @@ async function handle(req, res) {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "the request body must be JSON");
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
+    // A payment is reversed or bounced, never both (SF-2d round 7).
+    if (p.reversed === true) return refuse(res, 409, "this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)");
     p.status = "BOUNCED";
     p.fee_cents = officeWorld.state().nsf.fee_cents;
     p.reason = String(body.reason ?? "");

@@ -168,8 +168,8 @@ test("the core's refusals read in words that say what to do, and a walled route 
   }
   assert.equal(refusalWords("match", "line abc / target def already has a live match", 409), "That target is already matched to this line.");
   assert.equal(
-    refusalWords("unmatch", "bankrec: this deposit cannot be unmatched: the payment was reversed, so its money already left through the reversal", 409),
-    "This deposit cannot be undone: the payment was reversed, so its money already left through the reversal.",
+    refusalWords("unmatch", "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again", 409),
+    "This deposit cannot be undone: the payment was reversed, and a reversed cheque or cash payment cannot be matched again.",
   );
   assert.equal(refusalWords("unmatch", "match abc is not live (already unmatched)", 409), "That match was already undone. Reload to see where the line stands.");
   assert.equal(refusalWords("rule", "another APPROVED version of \"x\" already exists", 409), "Another version of this rule was approved a moment ago. Reload the rules and try again.");

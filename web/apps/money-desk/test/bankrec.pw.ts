@@ -395,7 +395,7 @@ test("a refused write names who may do it, never the bare gate word", async ({ p
   await expect(page.locator("[data-error]")).toContainText("Approving a match rule is for the Financial Controller.");
 });
 
-test("an undo of a deposit whose payment was reversed is refused in words and the line stays matched", async ({ page, request }) => {
+test("an undo of a reversed CARD deposit goes through, so a wrong match can be corrected", async ({ page, request }) => {
   await openBank(page, request);
   await tab(page, "match");
   await page.getByRole("button", { name: "Run auto match" }).click();
@@ -408,7 +408,25 @@ test("an undo of a deposit whose payment was reversed is refused in words and th
   const panel = page.locator("[data-line-panel]");
   await panel.getByRole("button", { name: "Undo match" }).click();
   await panel.getByRole("button", { name: "Confirm undo" }).click();
-  await expect(page.locator("[data-error]")).toContainText("This deposit cannot be undone: the payment was reversed, so its money already left through the reversal.");
+  await expect(page.locator("[data-notice]")).toContainText("Match undone. The line is unmatched again.");
+});
+
+test("an undo of a deposit whose payment was reversed is refused in words, for a payment that is not a card, and the line stays matched", async ({ page, request }) => {
+  await openBank(page, request);
+  await tab(page, "match");
+  // The wire payment (not a card) is matched by hand, then reversed behind the desk's back.
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  await page.locator("[data-line-panel]").getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+  await page.locator("[data-line-panel]").getByRole("button", { name: "Match line" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Matched. The clearing entry posted to the ledger.");
+  const reversed = await request.post("/_stub/reverse-payment", { data: { all: true } });
+  expect(reversed.ok()).toBeTruthy();
+  await page.getByRole("button", { name: "Matched", exact: true }).click();
+  await chooseLine(page, "WIRE FROM CONTRACTOR");
+  const panel = page.locator("[data-line-panel]");
+  await panel.getByRole("button", { name: "Undo match" }).click();
+  await panel.getByRole("button", { name: "Confirm undo" }).click();
+  await expect(page.locator("[data-error]")).toContainText("This deposit cannot be undone: the payment was reversed, and a reversed cheque or cash payment cannot be matched again.");
   // Nothing changed: the line is still matched and its history still reads in force.
   await expect(panel.locator("[data-history]")).toContainText("in force");
   await expect(panel.getByRole("button", { name: "Undo match" })).toBeVisible();

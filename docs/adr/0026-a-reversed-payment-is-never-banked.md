@@ -52,7 +52,8 @@ bank match.
    shortage and the close posts Dr 6350 / Cr 1020. Crediting 1020 at the reversal would credit it twice in either
    case, driving it below zero while the bank holds the money. The account therefore depends on no status, no
    deposit, no lodgement, and no payload fact: there is no fallback by status. `payment.bounced` is its own rule
-   (that money never arrived) and is untouched.
+   (that money never arrived) and is untouched. A payment is reversed or bounced, never both: a reversal takes only a
+   RECEIVED or DEPOSITED payment and a bounce refuses a reversed one, each decided under the payment row lock.
 8. **2310 is cleared by the act that moves the money.** Re-application to an invoice (Dr 2310 / Cr AR; also the right
    way to fix a payment rung on the wrong account, since a new tender would count the cash twice in the drawer),
    a pay out (Dr 2310 / Cr where the money leaves: 1020 with a PAID_OUT movement from the drawer, 1000 from the bank),
@@ -66,10 +67,11 @@ bank match.
   a row changes).
 - A core message that a web package reads is a contract: the Money Desk's stub contract test finds each sentence in the
   core's source, so a message change runs every web contract test and stub that reads it.
-- The ledger side is SF-2d (decisions 6 to 8). An unmatch of a reversed payment is refused (its money already left
-  through the reversal), and the `payment.reversed` payload keeps the original's status facts and branch for the
+- The ledger side is SF-2d (decisions 6 to 8). An unmatch of a reversed CARD's deposit is allowed (it only moves Dr 1000 / Cr 1010 back, the card is claimable
+  again and 2310 is untouched), while a reversed cheque, cash, EFT or other payment's is refused (it can never be
+  claimed again), and the `payment.reversed` payload keeps the original's status facts and branch for the
   audit only.
 - LATENT: `till.Repository.MarkDeposited` sets a payment DEPOSITED without posting a clearing journal (only a bank
-  match posts Dr bank / Cr clearing). It has no live caller today. A caller that used it would leave the GL on the
+  match posts Dr bank / Cr clearing). It has no live caller today (it follows the claim's predicate, a reversed CARD is deposited and every other reversed tender refused). A caller that used it would leave the GL on the
   clearing account while the status says DEPOSITED, and a deposit-status payment would show as banked in the matcher while the
   GL never moved the money there. It must post its own clearing journal before it gains a caller.
