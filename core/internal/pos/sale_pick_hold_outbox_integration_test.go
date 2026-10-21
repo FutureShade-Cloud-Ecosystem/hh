@@ -48,7 +48,7 @@ func TestIntegration_PickHold_OutboxDrainLeavesTheOwingOrderInProcess(t *testing
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		VALUES ($1, 'Outbox hold proof', 'CONTRACTOR', 0, 5000000)
 		RETURNING id::text`,
-		fmt.Sprintf("P2B-%d", tillRunSalt)).Scan(&custID); err != nil {
+		fmt.Sprintf("P2B-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the cash on demand customer: %v", err)
 	}
 	t.Cleanup(func() {
