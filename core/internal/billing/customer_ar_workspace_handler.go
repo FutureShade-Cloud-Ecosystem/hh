@@ -66,6 +66,10 @@ type WorkspaceHandler struct {
 	// userLink is the ERP users.id linker the caller stamp carries. Nil stamps authority
 	// only; every id-consuming read fails closed.
 	userLink identity.UserIDLinker
+	// trail says whether a caller holds the payment trail reads (ruling 87); reach holds the
+	// customer to the caller's branches (UX-93). Both fail closed when unbound.
+	trail PaymentTrailReader
+	reach WorkspaceReach
 }
 
 // NewWorkspaceHandler wires the handler. store is required; credit is optional (nil
@@ -119,6 +123,21 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		return
 	}
 
+	reachable, err := h.reachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if !reachable {
+		httpx.Error(w, http.StatusNotFound, "customer not found")
+		return
+	}
+	held, err := h.holdsTrail(r.Context(), caller.PlatformUserID, caller.OrgID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+
 	out := CustomerWorkspace{
 		InvoicesOpen:     []CustomerWorkspaceInvoice{},
 		InvoicesClosed:   []CustomerWorkspaceInvoice{},
@@ -129,6 +148,7 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		Notes:            []CustomerWorkspaceNote{},
 		Activity:         []ARActivity{},
 	}
+	out.PaymentsWithheld = !held
 	hdr, err := h.store.WorkspaceHeader(r.Context(), customerID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -139,6 +159,11 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		// right answer; 200 with an empty header would be a panel that lies.
 		httpx.Error(w, http.StatusNotFound, "customer not found")
 		return
+	}
+	if !held {
+		// The last payment's date and amount are the payment trail too (ruling 87).
+		hdr.LastPaymentAt = nil
+		hdr.LastPaymentCents = 0
 	}
 	out.Header = hdr
 
@@ -215,9 +240,13 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 	out.InvoicesClosed = closed
 	out.InvoicesDisputed = disputed
 
-	if out.Payments, err = h.store.WorkspacePayments(r.Context(), customerID); err != nil {
-		h.writeErr(w, r, err)
-		return
+	if held {
+		if out.Payments, err = h.store.WorkspacePayments(r.Context(), customerID); err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+	} else {
+		out.Payments = nil
 	}
 	if out.CreditNotes, err = h.store.WorkspaceCreditNotes(r.Context(), customerID); err != nil {
 		h.writeErr(w, r, err)
@@ -236,7 +265,7 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 	// means the workspace and the invoice detail share one definition of "the activity
 	// timeline", and neither can drift.
 	if h.credit != nil {
-		acts, err := h.credit.CustomerActivity(r.Context(), customerID, 10, true)
+		acts, err := h.credit.CustomerActivity(r.Context(), customerID, 10, held)
 		if err != nil && !errors.Is(err, ErrCustomerActivityNotConfigured) {
 			h.writeErr(w, r, err)
 			return
@@ -264,12 +293,23 @@ func (h *WorkspaceHandler) addNote(w http.ResponseWriter, r *http.Request, calle
 		httpx.Error(w, http.StatusBadRequest, "customer_id is not a uuid")
 		return
 	}
+	reachable, err := h.reachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if !reachable {
+		httpx.Error(w, http.StatusNotFound, "customer not found")
+		return
+	}
 	var in AddNoteInput
 	if err := decode(r, &in); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	authorID := strings.TrimSpace(caller.PlatformUserID)
+	// The author is the linked staff row (users.id, a uuid), never the platform id: FB Console ids are
+	// not uuids, and the reach check above has already refused a caller with no linked row.
+	authorID := strings.TrimSpace(identity.StaffUserIDFromContext(r.Context()))
 	note, err := h.store.AddNote(r.Context(), customerID, authorID, in)
 	if err != nil {
 		h.writeErr(w, r, err)

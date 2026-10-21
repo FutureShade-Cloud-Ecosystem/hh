@@ -236,7 +236,17 @@ func (r *Repository) UpdateBillingAddress(ctx context.Context, customerID string
 	if err != nil {
 		return Account{}, fmt.Errorf("encode billing_address: %w", err)
 	}
-	tag, err := r.pool.Exec(ctx,
+	// The customers counter first, without advancing it, then the row (a load batch holds the counter before its
+	// item rows, LD-5; PR 556 round 3e).
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Account{}, fmt.Errorf("update billing_address for %q: %w", customerID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockCustomersSeqTx(ctx, tx); err != nil {
+		return Account{}, err
+	}
+	tag, err := tx.Exec(ctx,
 		`UPDATE customers SET billing_address = $1, updated_at = now() WHERE id = $2`, b, customerID)
 	if err != nil {
 		// A malformed (non-UUID) customerID raises SQLSTATE 22P02 on the uuid PK cast. Fold it into
@@ -250,6 +260,9 @@ func (r *Repository) UpdateBillingAddress(ctx context.Context, customerID string
 	}
 	if tag.RowsAffected() == 0 {
 		return Account{}, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Account{}, fmt.Errorf("update billing_address for %q: %w", customerID, err)
 	}
 	return r.ResolveAccount(ctx, customerID)
 }

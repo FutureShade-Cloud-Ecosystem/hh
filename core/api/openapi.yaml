@@ -32139,9 +32139,11 @@ components:
         last_payment_at:
           type: string
           format: date-time
+          description: Absent when the caller does not hold the payment trail (ruling 87).
         last_payment_cents:
           type: integer
           format: int64
+          description: Absent when the caller does not hold the payment trail (ruling 87).
         aging:
           $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
@@ -32380,7 +32382,6 @@ components:
       required:
         - kind
         - amount_cents
-        - balance_after_cents
         - occurred_at
       properties:
         kind:
@@ -32400,6 +32401,7 @@ components:
         balance_after_cents:
           type: integer
           format: int64
+          description: Absent when the caller does not hold the payment trail (ruling 87).
         branch_id:
           type: string
           format: uuid
@@ -32416,7 +32418,7 @@ components:
         - invoices_open
         - invoices_closed
         - invoices_disputed
-        - payments
+        - payments_withheld
         - credit_notes
         - statements
         - notes
@@ -32439,8 +32441,12 @@ components:
             $ref: "#/components/schemas/BillingCustomerWorkspaceInvoice"
         payments:
           type: array
+          description: Absent, not blanked, when the caller does not hold the payment trail (ruling 87); payments_withheld says so.
           items:
             $ref: "#/components/schemas/BillingCustomerWorkspacePayment"
+        payments_withheld:
+          type: boolean
+          description: True when the caller does not hold the payment trail, so the payment list and the header's last payment are absent. Not the same as no payments.
         credit_notes:
           type: array
           items:

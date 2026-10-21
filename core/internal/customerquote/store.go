@@ -193,13 +193,10 @@ func (s *Store) InsertQuote(ctx context.Context, q DBTX, in QuoteRow, seq int64)
 // online draft edit reappears in the tenant's pull feed.
 func (s *Store) UpdateDraftQuote(ctx context.Context, q DBTX, tenantID, orgID, quoteID string, in QuoteRow) (QuoteRow, error) {
 	row, ok, err := scanQuote(q.QueryRow(ctx,
-		`WITH seq AS (INSERT INTO scope_sequences (scope) VALUES ('`+ScopeCustomerQuote+`')
-		              ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		              RETURNING next_value)
-		UPDATE customer_quote SET
+		`UPDATE customer_quote SET
 		   markup_bps = $4, lines = $5, labour_lines = $6, overhead_lines = $7,
 		   hide_line_prices = $8, customer_contact = $9, valid_until = $10,
-		   supplier_price_horizon = $11, updated_at = now(), seq = (SELECT next_value FROM seq)
+		   supplier_price_horizon = $11, updated_at = now()
 		 WHERE id = $1 AND tenant_id = $2 AND org_id = $3 AND status = 'draft' AND deleted_at IS NULL
 		 RETURNING `+quoteCols,
 		quoteID, tenantID, orgID, in.MarkupBps, in.LinesJSON, in.LabourJSON, in.OverheadJSON,

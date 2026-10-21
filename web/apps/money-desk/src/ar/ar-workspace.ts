@@ -103,6 +103,24 @@ export function accountStatusBadgeText(status: string): string {
   }
 }
 
+// WITHHELD_WORDS is what stands where a payment figure would be when the caller does not hold the
+// payment trail (ruling 87). The server leaves the figures out; the screen says so rather than
+// showing "$0.00" or "No payments".
+export const WITHHELD_WORDS = "Not shown for your role";
+
+export type LastPaymentFacts =
+  | { readonly kind: "withheld" }
+  | { readonly kind: "none" }
+  | { readonly kind: "paid"; readonly at: string; readonly cents: number };
+
+// lastPaymentFacts reads the header's last payment, telling an absent figure (withheld) from no payment.
+export function lastPaymentFacts(workspace: BillingCustomerWorkspace): LastPaymentFacts {
+  if (workspace.payments_withheld) return { kind: "withheld" };
+  const h = workspace.header;
+  if (h.last_payment_at == null) return { kind: "none" };
+  return { kind: "paid", at: h.last_payment_at, cents: h.last_payment_cents ?? 0 };
+}
+
 // renderWorkspaceHeader is the top card the S2 desktop and the S2M bottom bar both
 // carry: the customer's name, account code, status badge, credit limit, utilization
 // bar, terms, primary AP contact and the 5-bucket aging row.
@@ -181,9 +199,12 @@ export function renderWorkspaceHeader(
           <dd>${h.primary_ap_contact_name || "(none tagged)"}${h.primary_ap_contact_email ? html` <span class="dim small">· ${h.primary_ap_contact_email}</span>` : nothing}</dd>
         </div>
         <div><dt>Last payment</dt>
-          <dd>${h.last_payment_at != null
-            ? html`${formatWorkspaceMoney(h.last_payment_cents ?? 0)} on ${formatWorkspaceDate(h.last_payment_at)}`
-            : html`<span class="dim">No payments on file</span>`}</dd>
+          <dd>${(() => {
+            const lp = lastPaymentFacts(workspace);
+            return lp.kind === "paid"
+              ? html`${formatWorkspaceMoney(lp.cents)} on ${formatWorkspaceDate(lp.at)}`
+              : html`<span class="dim" data-payments-withheld=${lp.kind === "withheld" ? "true" : nothing}>${lp.kind === "withheld" ? WITHHELD_WORDS : "No payments on file"}</span>`;
+          })()}</dd>
         </div>
       </dl>
     </header>
@@ -232,8 +253,12 @@ export function renderWorkspaceOverview(workspace: BillingCustomerWorkspace): Te
         </article>
         <article class="card">
           <h3>Last payment</h3>
-          <p class="big-number">${h.last_payment_at != null ? formatWorkspaceDate(h.last_payment_at) : "None"}</p>
-          <p class="dim small">${h.last_payment_at != null ? formatWorkspaceMoney(h.last_payment_cents ?? 0) : "no payments on file"}</p>
+          ${(() => {
+            const lp = lastPaymentFacts(workspace);
+            if (lp.kind === "withheld") return html`<p class="dim small" data-payments-withheld="true">${WITHHELD_WORDS}</p>`;
+            return html`<p class="big-number">${lp.kind === "paid" ? formatWorkspaceDate(lp.at) : "None"}</p>
+          <p class="dim small">${lp.kind === "paid" ? formatWorkspaceMoney(lp.cents) : "no payments on file"}</p>`;
+          })()}
         </article>
       </div>
 
@@ -349,7 +374,8 @@ export function renderWorkspacePayments(
   workspace: BillingCustomerWorkspace,
   onApply: (creditNoteId: string) => void,
 ): TemplateResult {
-  const payRows = workspace.payments.map((p) => html`
+  const payments = workspace.payments ?? [];
+  const payRows = payments.map((p) => html`
     <tr class="payment-row">
       <td>${p.payment_no}</td>
       <td>${formatWorkspaceDate(p.received_at)}</td>
@@ -377,8 +403,12 @@ export function renderWorkspacePayments(
   void onApply;
   return html`
     <section class="ar-workspace-payments">
-      <h3>Payments (${workspace.payments.length})</h3>
-      ${workspace.payments.length === 0
+      ${workspace.payments_withheld
+        ? html`<h3>Payments</h3><p class="dim" data-payments-withheld="true">${WITHHELD_WORDS}</p>`
+        : html`<h3>Payments (${payments.length})</h3>`}
+      ${workspace.payments_withheld
+        ? nothing
+        : payments.length === 0
         ? html`<p class="dim">No payments on this account.</p>`
         : html`
           <table class="payment-table">
@@ -506,7 +536,10 @@ export function renderWorkspaceSummaryCard(
         <dt>Balance</dt><dd>${formatWorkspaceMoney(h.open_cents)}</dd>
         <dt>Available</dt><dd>${formatWorkspaceMoney(h.available_credit_cents)}</dd>
         <dt>Past due</dt><dd>${formatWorkspaceMoney(h.overdue_cents)}</dd>
-        <dt>Last payment</dt><dd>${h.last_payment_at ? formatWorkspaceDate(h.last_payment_at) : "None"}</dd>
+        <dt>Last payment</dt><dd>${(() => {
+          const lp = lastPaymentFacts(workspace);
+          return lp.kind === "withheld" ? WITHHELD_WORDS : lp.kind === "paid" ? formatWorkspaceDate(lp.at) : "None";
+        })()}</dd>
       </dl>
       ${pinned
         ? html`
