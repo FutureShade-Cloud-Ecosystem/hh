@@ -575,6 +575,38 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 		}
 	}
 
+	// No unmatch inside a COMPLETED reconciliation's month. The month is the line's txn_date month (the same key
+	// CompleteReconciliation uses). Lock order matches completion: the reconciliation row (FOR SHARE, which conflicts
+	// with completion's FOR UPDATE), then the shared form of completion's advisory key. Completion first: we wait
+	// and read COMPLETED. Unmatch first: completion waits for our commit and its recount sees the reopened line.
+	// No row yet: a row made later is OPEN, and its completion needs the exclusive advisory key, which our shared
+	// hold blocks until we commit.
+	var recAcct string
+	var recYear, recMonth int
+	cerr := tx.QueryRow(ctx,
+		`SELECT l.bank_account_id::text, EXTRACT(YEAR FROM l.txn_date)::int, EXTRACT(MONTH FROM l.txn_date)::int
+		   FROM bank_matches m JOIN bank_statement_lines l ON l.id = m.statement_line_id
+		  WHERE m.id::text = $1 AND m.unmatched_at IS NULL`, matchID).Scan(&recAcct, &recYear, &recMonth)
+	if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
+		return "", "", 0, fmt.Errorf("bankrec: read the line month: %w", cerr)
+	}
+	if cerr == nil {
+		var recStatus string
+		serr := tx.QueryRow(ctx,
+			`SELECT status FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2 AND month = $3 FOR SHARE`,
+			recAcct, recYear, recMonth).Scan(&recStatus)
+		if serr != nil && !errors.Is(serr, pgx.ErrNoRows) {
+			return "", "", 0, fmt.Errorf("bankrec: read the reconciliation: %w", serr)
+		}
+		if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`,
+			fmt.Sprintf("%s|%d|%d", recAcct, recYear, recMonth)); lerr != nil {
+			return "", "", 0, fmt.Errorf("bankrec: recon advisory lock: %w", lerr)
+		}
+		if recStatus == ReconCompleted {
+			return "", "", 0, conflict("bankrec: that match sits in %d-%02d, which is already reconciled and completed, so it cannot be unmatched", recYear, recMonth)
+		}
+	}
+
 	var lineID string
 	err = tx.QueryRow(ctx,
 		`UPDATE bank_matches SET unmatched_at = now(), unmatched_by = $2
