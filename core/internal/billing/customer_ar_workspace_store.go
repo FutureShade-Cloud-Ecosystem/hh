@@ -68,7 +68,7 @@ type CustomerWorkspaceHeader struct {
 	PrimaryAPContactEmail string                 `json:"primary_ap_contact_email,omitempty"`
 	PrimaryAPContactPhone string                 `json:"primary_ap_contact_phone,omitempty"`
 	LastPaymentAt         *time.Time             `json:"last_payment_at,omitempty"`
-	LastPaymentCents      int64                  `json:"last_payment_cents"`
+	LastPaymentCents      int64                  `json:"last_payment_cents,omitempty"`
 	Aging                 CustomerWorkspaceAging `json:"aging"`
 }
 
@@ -180,11 +180,14 @@ type CustomerWorkspaceNote struct {
 // marshals as null in Go and as a missing field in JSON, so every list is initialised to
 // its empty slice before being filled, by the same rule the register's handler applies.
 type CustomerWorkspace struct {
-	Header           CustomerWorkspaceHeader       `json:"header"`
-	InvoicesOpen     []CustomerWorkspaceInvoice    `json:"invoices_open"`
-	InvoicesClosed   []CustomerWorkspaceInvoice    `json:"invoices_closed"`
-	InvoicesDisputed []CustomerWorkspaceInvoice    `json:"invoices_disputed"`
-	Payments         []CustomerWorkspacePayment    `json:"payments"`
+	Header           CustomerWorkspaceHeader    `json:"header"`
+	InvoicesOpen     []CustomerWorkspaceInvoice `json:"invoices_open"`
+	InvoicesClosed   []CustomerWorkspaceInvoice `json:"invoices_closed"`
+	InvoicesDisputed []CustomerWorkspaceInvoice `json:"invoices_disputed"`
+	Payments         []CustomerWorkspacePayment `json:"payments,omitempty"`
+	// PaymentsWithheld is true when the caller does not hold the payment trail (ruling 87): the
+	// payment list is then absent, and a screen must not read the absence as "no payments".
+	PaymentsWithheld bool                          `json:"payments_withheld"`
 	CreditNotes      []CustomerWorkspaceCreditNote `json:"credit_notes"`
 	Statements       []CustomerWorkspaceStatement  `json:"statements"`
 	Notes            []CustomerWorkspaceNote       `json:"notes"`

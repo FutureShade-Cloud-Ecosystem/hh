@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -119,7 +120,8 @@ type fakeCreditForWorkspace struct {
 	activity []ARActivity
 	actErr   error
 
-	gotID string
+	gotID           string
+	gotWithPayments bool
 }
 
 func (f *fakeCreditForWorkspace) CustomerAging(_ context.Context, customerID string) (AgingRow, time.Time, bool, error) {
@@ -127,8 +129,9 @@ func (f *fakeCreditForWorkspace) CustomerAging(_ context.Context, customerID str
 	return f.agingRow, f.asOf, f.found, f.agingErr
 }
 
-func (f *fakeCreditForWorkspace) CustomerActivity(_ context.Context, customerID string, _ int, _ bool) ([]ARActivity, error) {
+func (f *fakeCreditForWorkspace) CustomerActivity(_ context.Context, customerID string, _ int, withPayments bool) ([]ARActivity, error) {
 	f.gotID = customerID
+	f.gotWithPayments = withPayments
 	return f.activity, f.actErr
 }
 
@@ -149,7 +152,7 @@ type workspaceCreditSeam interface {
 // credit seam. nil-credit is the optional case the seam supports (the handler skips
 // the aging field).
 func newWorkspaceHandlerForTest(store *fakeWorkspaceStore, credit workspaceCreditSeam) *WorkspaceHandler {
-	return NewWorkspaceHandler(store, credit, nil)
+	return NewWorkspaceHandler(store, credit, nil).WithPaymentTrail(&fakeTrail{held: true}).WithCustomerReach(&fakeReach{ok: true})
 }
 
 // -- reconciliation to the penny ----------------------------------------------------------------
@@ -392,6 +395,8 @@ func TestWorkspaceAddNote_PassesAuthorAndBody(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/billing/ar/customers/c1b00000-0000-4000-a000-000000000099/notes", body)
 	r.Header.Set("Content-Type", "application/json")
 	r.SetPathValue("customer_id", "c1b00000-0000-4000-a000-000000000099")
+	// The author is the linked staff row (a uuid), not the platform id (UX-93 round 2).
+	r = r.WithContext(identity.ContextWithStaffUserID(r.Context(), "5a5a0000-0000-4000-9000-000000000042"))
 	rr := httptest.NewRecorder()
 	h.addNote(rr, r, staffCaller())
 
@@ -401,7 +406,7 @@ func TestWorkspaceAddNote_PassesAuthorAndBody(t *testing.T) {
 	if store.addedForID != "c1b00000-0000-4000-a000-000000000099" {
 		t.Errorf("addedForID=%q", store.addedForID)
 	}
-	if store.addedByAuthorID != "de110000-0000-4000-9000-000000000007" {
+	if store.addedByAuthorID != "5a5a0000-0000-4000-9000-000000000042" {
 		t.Errorf("addedByAuthorID=%q", store.addedByAuthorID)
 	}
 	if len(store.addedNotes) != 1 {
