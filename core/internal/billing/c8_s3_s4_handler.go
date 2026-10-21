@@ -93,6 +93,18 @@ func (h *C8S3S4Handler) staff(next guards.StaffHandler) guards.StaffHandler {
 	}
 }
 
+// linkedStaffID is the caller's linked staff users.id, the only id these doors may write into a uuid
+// column: FB Console platform ids are not uuids. A caller with no linked staff row is refused with
+// nothing written (403: unlike the workspace reads, these doors have no branch reach to answer 404 from).
+func linkedStaffID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := strings.TrimSpace(identity.StaffUserIDFromContext(r.Context()))
+	if id == "" {
+		httpx.Error(w, http.StatusForbidden, "your sign in is not linked to a staff account")
+		return "", false
+	}
+	return id, true
+}
+
 // -- POST /api/v1/ar/holds ---------------------------------------------------------------------
 //
 // billingCreateHold: manager-gated manual credit hold by hand. Wraps Repository.PlaceHold
@@ -137,7 +149,10 @@ func (h *C8S3S4Handler) createHold(w http.ResponseWriter, r *http.Request, calle
 		httpx.Error(w, http.StatusNotFound, "no such customer: "+in.CustomerID)
 		return
 	}
-	actorID := strings.TrimSpace(caller.PlatformUserID)
+	actorID, ok := linkedStaffID(w, r)
+	if !ok {
+		return
+	}
 	_, placed, err := h.repo.PlaceHold(r.Context(), in.CustomerID, "MANUAL", in.Reason, actorID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -222,7 +237,10 @@ func (h *C8S3S4Handler) sendPaylink(w http.ResponseWriter, r *http.Request, call
 		httpx.Error(w, http.StatusNotFound, "no such customer: "+in.CustomerID)
 		return
 	}
-	actorID := strings.TrimSpace(caller.PlatformUserID)
+	actorID, ok := linkedStaffID(w, r)
+	if !ok {
+		return
+	}
 	token := paylinkToken(in.CustomerID, in.InvoiceID, in.AmountCents, channel)
 	url := paylinkURL(token)
 	status := "QUEUED"
