@@ -68,8 +68,14 @@ func scanSession(row pgx.Row) (TillSession, error) {
 
 // - in-caller-tx writes (A-19 sale path) -
 
+// GetSessionTx reads the session row FOR SHARE inside the caller's transaction (SF-2j round 2). The caller checks
+// the session is OPEN on this read, and the share lock holds until it commits, so a count (SetCounted's UPDATE takes
+// FOR NO KEY UPDATE) queues behind the tender or the cash refund that read OPEN, or finds it committed: nothing is
+// written to a session after its count. FOR SHARE and not FOR NO KEY UPDATE because tenders and refunds on one
+// session need not wait on each other (shares do not conflict), only on the count and on a movement, which takes
+// FOR NO KEY UPDATE. The session row is the first row either transaction takes in this module, so no cycle results.
 func (r *Repository) GetSessionTx(ctx context.Context, tx pgx.Tx, id string) (TillSession, error) {
-	return scanSession(tx.QueryRow(ctx, `SELECT `+sessionCols+` FROM till_sessions WHERE id = $1`, id))
+	return scanSession(tx.QueryRow(ctx, `SELECT `+sessionCols+` FROM till_sessions WHERE id = $1 FOR SHARE`, id))
 }
 
 func (r *Repository) FindPaymentByKey(ctx context.Context, tx pgx.Tx, key string) (string, string, bool, error) {
