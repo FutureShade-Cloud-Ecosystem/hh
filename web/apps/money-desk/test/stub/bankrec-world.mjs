@@ -413,7 +413,19 @@ export function createBankrecWorld() {
     const amount = input.amount_cents ? input.amount_cents : line.amount_cents;
     // A LODGEMENT target must exist (SF-2g round 2); an unknown one, like one the caller's branch does not reach,
     // answers as a missing target, with nothing written.
-    if (input.target_type === "LODGEMENT" && !world.lodgements.some((l) => l.id === input.target_ref_id)) return clientError(404, "not found");
+    // SF-2j: a GROUP has no member set, so it explains nothing; a lodgement explains the line only at its own amount;
+    // a journal explains one line.
+    if (input.target_type === "GROUP") return clientError(422, "a group match is not available yet, match the line to a payment, a lodgement or a journal");
+    if (input.target_type === "LODGEMENT") {
+      const lodgement = world.lodgements.find((l) => l.id === input.target_ref_id);
+      if (lodgement === undefined) return clientError(404, "not found");
+      if (lodgement.amount_cents !== line.amount_cents) {
+        return clientError(422, `that lodgement is for ${lodgement.amount_cents} cents and the line is ${line.amount_cents} cents, so it does not explain the line`);
+      }
+    }
+    if (input.target_type === "JOURNAL" && input.target_ref_id && world.matches.some((m) => m.target_type === "JOURNAL" && m.target_ref_id === input.target_ref_id && !m.unmatched_at)) {
+      return clientError(409, "that journal already explains another statement line");
+    }
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.
     if (input.target_type === "PAYMENT" && input.target_ref_id) {
       const payment = world.payments.find((p) => p.id === input.target_ref_id && p.status === "RECEIVED");
@@ -448,6 +460,14 @@ export function createBankrecWorld() {
     if (!UUID.test(input.match_id)) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
     const match = world.matches.find((m) => m.id === input.match_id && !m.unmatched_at);
     if (match === undefined) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
+    const matchedLine = world.lines.find((l) => l.id === match.statement_line_id);
+    if (matchedLine !== undefined) {
+      const year = Number(matchedLine.txn_date.slice(0, 4));
+      const month = Number(matchedLine.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === matchedLine.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        return clientError(409, `that match sits in ${year}-${pad(month)}, which is already reconciled and completed, so it cannot be unmatched`);
+      }
+    }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
     if (line !== undefined && line.status === "MATCHED") line.status = "UNMATCHED";

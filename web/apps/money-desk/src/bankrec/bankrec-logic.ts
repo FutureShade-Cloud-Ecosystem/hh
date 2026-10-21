@@ -196,6 +196,24 @@ export function refusalWords(action: string, message: string, status: number): s
     if (ids.length === 1) return `Payment ${ids[0]} is not waiting to be deposited: ${causes}`;
     return `Payments ${ids.join(", ")} are not waiting to be deposited: for each, ${causes}`;
   }
+  if (lower.includes("a group match is not available yet")) {
+    return "A group match is not available yet. Match the line to a payment, a lodgement or a journal.";
+  }
+  const lodgementApart = /that lodgement is for (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
+  if (lodgementApart !== null) {
+    return `That lodgement is ${formatMoney(Number(lodgementApart[1]))} and the line is ${formatMoney(Number(lodgementApart[2]))}, so it does not explain the line. Pick the lodgement for the same amount.`;
+  }
+  if (lower.includes("that journal is not posted")) return "That journal is not posted yet, so it cannot explain a bank line.";
+  if (lower.includes("that journal does not touch this bank account")) return "That journal does not move this bank account, so it cannot explain this line.";
+  const journalApart = /that journal moves this bank account by (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
+  if (journalApart !== null) {
+    return `That journal moves this account by ${formatMoney(Number(journalApart[1]))} and the line is ${formatMoney(Number(journalApart[2]))}. Pick the journal for the line's amount.`;
+  }
+  if (lower.includes("that journal already explains another statement line")) return "That journal already explains another line.";
+  const lockedMonth = /that match sits in (\d{4})-(\d{2}), which is already reconciled and completed/i.exec(message);
+  if (lockedMonth !== null) {
+    return `That match belongs to ${periodWords(Number(lockedMonth[1]), Number(lockedMonth[2]))}, which is already signed off, so it cannot be undone.`;
+  }
   if (lower.includes("already has a live match")) return "That target is already matched to this line.";
   if (lower.includes("is not live (already unmatched)")) return "That match was already undone. Reload to see where the line stands.";
   if (lower.includes("another approved version")) return "Another version of this rule was approved a moment ago. Reload the rules and try again.";
