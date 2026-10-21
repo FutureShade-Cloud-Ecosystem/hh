@@ -79,10 +79,10 @@ function fresh() {
       line(7, 25, "WIRE FROM CONTRACTOR", "", 30_000),
     ],
     payments: [
-      { id: IDS.paymentGateway1, gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
-      { id: IDS.paymentGateway2, gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
-      { id: IDS.paymentBatch, gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
-      { id: IDS.paymentWire, gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
+      { id: IDS.paymentGateway1, payment_no: "PAY-000101", gateway_ref: "GTW-2101", amount_cents: 128_000, received: day(3), status: "RECEIVED" },
+      { id: IDS.paymentGateway2, payment_no: "PAY-000102", gateway_ref: "GTW-2102", amount_cents: 98_000, received: day(9), status: "RECEIVED" },
+      { id: IDS.paymentBatch, payment_no: "PAY-000103", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
+      { id: IDS.paymentWire, payment_no: "PAY-000104", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
     ],
     lodgements: [{ id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050 }],
     matches: [],
@@ -414,7 +414,12 @@ export function createBankrecWorld() {
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.
     if (input.target_type === "PAYMENT" && input.target_ref_id) {
       const payment = world.payments.find((p) => p.id === input.target_ref_id && p.status === "RECEIVED");
-      if (payment === undefined) return clientError(409, "payment already claimed or not RECEIVED (claimed 0 of 1)");
+      // The core names the payment by its number (read through the payments module), never its id; a payment with
+      // no row reads as plain words.
+      if (payment === undefined) {
+        const known = world.payments.find((p) => p.id === input.target_ref_id);
+        return clientError(409, `payment already claimed, reversed or not RECEIVED: ${known === undefined ? "a payment that cannot be found" : known.payment_no} (claimed 0 of 1)`);
+      }
       payment.status = "DEPOSITED";
     }
     line.status = "MATCHED";

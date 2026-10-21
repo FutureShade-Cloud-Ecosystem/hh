@@ -49,3 +49,15 @@ core/internal/till/history.go
 core/cmd/core/wire_roles.go
 core/internal/assist/conversation_store.go
 core/db/migrations/0427_assist_receivables_payments.sql
+# Slice 7b: what decides which delivery runs and stops, customers, contacts and channels an asker reaches: the
+# dispatch reads and their branch fence, the customer screens' reach, the invoice detail's contact, the messaging
+# module's membership read and its room fence, the handler's claim fill and the adapter, migration 0428.
+core/internal/dispatch/service.go
+core/internal/dispatch/repository.go
+core/internal/customer/account_read.go
+core/internal/customer/search_scope.go
+core/internal/messaging/member_channels.go
+core/internal/messaging/payment_access.go
+core/internal/messaging/repository.go
+core/internal/assist/adapters/channel_membership.go
+core/db/migrations/0428_assist_delivery_crm_messages.sql
