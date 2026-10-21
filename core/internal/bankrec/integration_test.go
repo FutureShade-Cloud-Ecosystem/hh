@@ -213,6 +213,15 @@ func (f *fakePayments) MarkDeposited(_ context.Context, ids []string, lineID str
 
 type fakeLodgements struct{ open []Lodgement }
 
+func (f *fakeLodgements) LodgementBranch(_ context.Context, id string) (string, bool, error) {
+	for _, l := range f.open {
+		if l.MovementID == id {
+			return l.BranchID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 func (f *fakeLodgements) OpenLodgements(_ context.Context, _, _ time.Time) ([]Lodgement, error) {
 	return f.open, nil
 }

@@ -24,7 +24,7 @@ func TestAttachTicketData_BuildsTheRESTTicketWithoutTheFigure(t *testing.T) {
 	})
 	s := NewSyncStore(nil, nil, nil).WithPickSource(src)
 	data := map[string]any{"id": "t1"}
-	s.attachTicketData(context.Background(), reachAll, "b1", "o1", data)
+	s.attachTicketData(context.Background(), "", reachAll, "b1", "o1", data)
 	tk, ok := data["ticket"].(map[string]any)
 	if !ok {
 		t.Fatalf("no ticket: %v", data)
@@ -46,14 +46,14 @@ func TestAttachTicketData_DegradesWithoutASourceOrAnOrder(t *testing.T) {
 		"failing": NewSyncStore(nil, nil, nil).WithPickSource(failingPickSource{}),
 	} {
 		data := map[string]any{}
-		s.attachTicketData(context.Background(), reachAll, "b1", "o1", data)
+		s.attachTicketData(context.Background(), "", reachAll, "b1", "o1", data)
 		if _, has := data["ticket"]; has {
 			t.Fatalf("%s: a ticket appeared", name)
 		}
 	}
 	s := NewSyncStore(nil, nil, nil).WithPickSource(NewStubPickSource())
 	data := map[string]any{}
-	s.attachTicketData(context.Background(), reachAll, "b1", "", data)
+	s.attachTicketData(context.Background(), "", reachAll, "b1", "", data)
 	if _, has := data["ticket"]; has {
 		t.Fatal("no order id must attach nothing")
 	}
@@ -68,13 +68,13 @@ func TestAttachTicketData_NeedsReachOfTheRowsBranch(t *testing.T) {
 	}
 	for name, reach := range cases {
 		data := map[string]any{}
-		s.attachTicketData(context.Background(), reach, "theirs", "o1", data)
+		s.attachTicketData(context.Background(), "", reach, "theirs", "o1", data)
 		if _, has := data["ticket"]; has {
 			t.Fatalf("%s: a ticket appeared", name)
 		}
 	}
 	data := map[string]any{}
-	s.attachTicketData(context.Background(), func(b string) bool { return b == "mine" }, "mine", "o1", data)
+	s.attachTicketData(context.Background(), "", func(b string) bool { return b == "mine" }, "mine", "o1", data)
 	if _, has := data["ticket"]; !has {
 		t.Fatal("own branch must carry the ticket")
 	}
