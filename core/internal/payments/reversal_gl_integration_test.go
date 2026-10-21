@@ -335,3 +335,97 @@ func TestIntegration_ReversalGL_AMultiInvoicePaymentReversesItsFullAmount(t *tes
 		t.Errorf("the reversal journal debits AR %d, want the full 10000", amt)
 	}
 }
+
+// - Round 2: the reversal's account is fixed when the reversal happens -
+
+// sequence runs deposited by a bank match, reversed, then (optionally) unmatched, with the GL consumer drained
+// either BEFORE the unmatch (the reversal is posted while the payment still reads DEPOSITED) or AFTER it (posted
+// when the payment, if the unmatch went through, reads RECEIVED). It returns the GL net per account over the
+// case's journals, the unmatch's error, and the line and payment states.
+type sequenceResult struct {
+	nets          map[string]int64
+	unmatchErr    error
+	lineStatus    string
+	payStatus     string
+	reversalCount int
+}
+
+func (w *reversalGLWorld) sequence(t *testing.T, unmatch, drainBeforeUnmatch bool) sequenceResult {
+	t.Helper()
+	ctx := context.Background()
+	orig := w.receipt("CARD", 10_000)
+	w.drain()
+	line := w.r.statementLine(10_000)
+	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000,
+	}, w.r.userID)
+	if err != nil {
+		t.Fatalf("the deposit (bank match): %v", err)
+	}
+	rev := w.reverse(orig)
+	keys := append(caseKeys(orig, rev), "bankrec:match:"+m.ID, "bankrec:unmatch:"+m.ID)
+	w.cleanupJournals(keys, []string{line})
+	if drainBeforeUnmatch {
+		w.drain()
+	}
+	var res sequenceResult
+	if unmatch {
+		res.unmatchErr = bank.Unmatch(ctx, m.ID, w.r.userID)
+	}
+	w.drain()
+	res.nets = w.nets(keys, []string{line})
+	if err := w.r.obs.QueryRow(ctx, `SELECT status FROM bank_statement_lines WHERE id = $1::uuid`, line).Scan(&res.lineStatus); err != nil {
+		t.Fatalf("read the line: %v", err)
+	}
+	if err := w.r.obs.QueryRow(ctx, `SELECT status FROM payments WHERE id = $1::uuid`, orig).Scan(&res.payStatus); err != nil {
+		t.Fatalf("read the payment: %v", err)
+	}
+	return res
+}
+
+// The GL must not depend on when the consumer runs, and the bank must never go negative. With the unmatch of a
+// reversed payment refused, "identical" means the refused unmatch changes nothing, in either drain order.
+func TestIntegration_ReversalGL_DepositedReversedUnmatchedIsTheSameWheneverTheConsumerRuns(t *testing.T) {
+	before := newReversalGLWorld(t).sequence(t, true, true)
+	after := newReversalGLWorld(t).sequence(t, true, false)
+	t.Logf("consumer drained BEFORE the unmatch: GL net %v | unmatch: %v | line %s payment %s", before.nets, before.unmatchErr, before.lineStatus, before.payStatus)
+	t.Logf("consumer drained AFTER the unmatch:  GL net %v | unmatch: %v | line %s payment %s", after.nets, after.unmatchErr, after.lineStatus, after.payStatus)
+	for name, r := range map[string]sequenceResult{"before": before, "after": after} {
+		if r.nets["1000"] < 0 {
+			t.Errorf("%s: the bank account nets %d, it went negative", name, r.nets["1000"])
+		}
+	}
+	for code := range before.nets {
+		if before.nets[code] != after.nets[code] {
+			t.Errorf("the GL depends on timing: account %s nets %d (consumer first) against %d (consumer after)", code, before.nets[code], after.nets[code])
+		}
+	}
+	for name, r := range map[string]sequenceResult{"before": before, "after": after} {
+		if r.unmatchErr == nil {
+			t.Errorf("%s: the unmatch of a reversed payment was accepted", name)
+		}
+		if r.lineStatus != "MATCHED" || r.payStatus != "DEPOSITED" {
+			t.Errorf("%s: the refused unmatch left the line %s and the payment %s, want MATCHED and DEPOSITED", name, r.lineStatus, r.payStatus)
+		}
+		for code, n := range r.nets {
+			if n != 0 {
+				t.Errorf("%s: account %s nets %d, want 0 (the money went back through the reversal)", name, code, n)
+			}
+		}
+	}
+}
+
+// The plain case, deposited then reversed with no unmatch, is the same in both drain orders.
+func TestIntegration_ReversalGL_DepositedThenReversedIsTheSameInBothDrainOrders(t *testing.T) {
+	before := newReversalGLWorld(t).sequence(t, false, true)
+	after := newReversalGLWorld(t).sequence(t, false, false)
+	for code := range before.nets {
+		if before.nets[code] != after.nets[code] {
+			t.Errorf("account %s nets %d (drained between) against %d (drained at the end)", code, before.nets[code], after.nets[code])
+		}
+		if before.nets[code] != 0 {
+			t.Errorf("account %s nets %d, want 0", code, before.nets[code])
+		}
+	}
+}
