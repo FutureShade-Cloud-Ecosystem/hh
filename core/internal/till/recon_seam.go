@@ -10,6 +10,7 @@ package till
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/jackc/pgx/v5"
 )
 
 // UnreconciledCardPayments returns the CARD payments received in [from, to) that are still RECEIVED (not yet
@@ -167,6 +169,27 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// LodgementBranch answers the branch of one lodgement (a till_movements row of type LODGEMENT), found false when
+// the id is no lodgement or not a uuid. A movement row is never updated or deleted and its branch is its session's,
+// so the fact is immutable.
+func (r *Repository) LodgementBranch(ctx context.Context, movementID string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var branch string
+	err := r.pool.QueryRow(ctx,
+		`SELECT s.branch_id::text
+		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
+		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&branch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("till: lodgement branch: %w", err)
+	}
+	return branch, true, nil
 }
 
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the

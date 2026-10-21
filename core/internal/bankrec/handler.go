@@ -140,6 +140,7 @@ func (h *Handler) match(w http.ResponseWriter, r *http.Request, caller guards.St
 	}
 	switch in.Mode {
 	case "manual":
+		in.CanAccessBranch = caller.CanAccessBranch // the caller's reach, never the request's word
 		m, err := h.svc.ManualMatch(r.Context(), in, actor(r))
 		if err != nil {
 			h.writeErr(w, r, err)
@@ -152,7 +153,7 @@ func (h *Handler) match(w http.ResponseWriter, r *http.Request, caller guards.St
 			h.writeErr(w, r, err)
 			return
 		}
-		summary, err := h.svc.AutoMatch(r.Context(), in.BankAccountID, from, to, actor(r))
+		summary, err := h.svc.AutoMatchReach(r.Context(), in.BankAccountID, from, to, actor(r), caller.CanAccessBranch)
 		if err != nil {
 			h.writeErr(w, r, err)
 			return
@@ -168,7 +169,7 @@ func (h *Handler) unmatch(w http.ResponseWriter, r *http.Request, caller guards.
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if err := h.svc.Unmatch(r.Context(), in.MatchID, actor(r)); err != nil {
+	if err := h.svc.UnmatchReach(r.Context(), in.MatchID, actor(r), caller.CanAccessBranch); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
