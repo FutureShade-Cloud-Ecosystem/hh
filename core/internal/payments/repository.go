@@ -814,6 +814,37 @@ func LockPaymentRowsTx(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return rows.Err()
 }
 
+// PaymentNumbersTx returns payment_no for a set of payment ids, keyed by the lower cased id. The payments
+// module owns the table, so other modules that refuse a payment in words a dealer reads (the bank claim,
+// MarkDeposited) take the number from here and never print the id. An id with no row is absent from the map.
+func PaymentNumbersTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text, payment_no::text FROM payments WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("payments: read the payment numbers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, no string
+		if err := rows.Scan(&id, &no); err != nil {
+			return nil, fmt.Errorf("payments: read the payment numbers: %w", err)
+		}
+		out[strings.ToLower(id)] = no
+	}
+	return out, rows.Err()
+}
+
+// PaymentLabel is what a dealer reads for one payment: its number, or a plain word when the row is gone. Never the id.
+func PaymentLabel(numbers map[string]string, id string) string {
+	if no := numbers[strings.ToLower(id)]; no != "" {
+		return no
+	}
+	return "a payment that cannot be found"
+}
+
 // lockPaymentsSequenceSQL takes the payments feed counter row WITHOUT advancing it: the upsert writes
 // the value it already holds, so the row lock is taken and no feed number is used up. The insert arm
 // seeds a missing row at 0, not at the column default of 1, so the settle's own increment that

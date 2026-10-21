@@ -11,6 +11,8 @@ package till
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
@@ -44,8 +46,20 @@ func (r *Repository) UnreconciledCardPayments(ctx context.Context, from, to time
 	return out, rows.Err()
 }
 
+// ErrPaymentReversed is MarkDeposited's refusal of a payment that has been reversed. A reversal stamps
+// reversed_at on the original and leaves its status RECEIVED, so the status alone cannot say the money
+// went back; a reversed payment is never banked.
+var ErrPaymentReversed = clientError{status: http.StatusConflict, msg: "till: a reversed payment cannot be marked deposited"}
+
 // MarkDeposited flips the given RECEIVED payments to DEPOSITED and stamps the matching bank statement line id
-// into metadata (traceability). Idempotent: only RECEIVED rows transition, so a replay is a no-op.
+// into metadata (traceability). Idempotent: only RECEIVED rows transition, so a replay of an already DEPOSITED
+// payment is a no-op. A REVERSED payment is refused (ErrPaymentReversed), and the whole call rolls back, so a
+// caller that gets the refusal finds no row moved.
+//
+// The refusal is decided by the UPDATE itself: its row lock and its WHERE (re-checked after a concurrent
+// commit, which is how a reversal beside it is seen) carry `reversed_at IS NULL`. There is no pre-check read.
+// Rows the UPDATE did not move are then read, only to say why: a reversed one refuses; a payment that is
+// already DEPOSITED (or not there) is the no-op it has always been.
 func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, statementLineID string) error {
 	if r.pool == nil {
 		return errNoDB
@@ -64,14 +78,62 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 	if err := payments.LockPaymentRowsTx(ctx, tx, paymentIDs); err != nil {
 		return fmt.Errorf("till: mark deposited: %w", err)
 	}
-	if _, err := tx.Exec(ctx,
+	rows, err := tx.Query(ctx,
 		`UPDATE payments
 		 SET status = 'DEPOSITED',
 		     metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 		     updated_at = now()
-		 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED'`,
-		paymentIDs, statementLineID); err != nil {
+		 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
+		 RETURNING id::text`,
+		paymentIDs, statementLineID)
+	if err != nil {
 		return fmt.Errorf("till: mark deposited: %w", err)
+	}
+	moved := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("till: mark deposited: scan: %w", err)
+		}
+		moved[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("till: mark deposited: %w", err)
+	}
+	if len(moved) < len(paymentIDs) {
+		var reversed []string
+		rrows, err := tx.Query(ctx,
+			`SELECT id::text FROM payments WHERE id = ANY($1::uuid[]) AND reversed_at IS NOT NULL ORDER BY id`, paymentIDs)
+		if err != nil {
+			return fmt.Errorf("till: mark deposited: read the unmoved: %w", err)
+		}
+		for rrows.Next() {
+			var id string
+			if err := rrows.Scan(&id); err != nil {
+				rrows.Close()
+				return fmt.Errorf("till: mark deposited: scan the unmoved: %w", err)
+			}
+			if !moved[id] {
+				reversed = append(reversed, id)
+			}
+		}
+		rrows.Close()
+		if err := rrows.Err(); err != nil {
+			return fmt.Errorf("till: mark deposited: %w", err)
+		}
+		if len(reversed) > 0 {
+			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, reversed)
+			if nerr != nil {
+				return fmt.Errorf("till: mark deposited: read the payment numbers: %w", nerr)
+			}
+			labels := make([]string, 0, len(reversed))
+			for _, id := range reversed {
+				labels = append(labels, payments.PaymentLabel(numbers, id))
+			}
+			return fmt.Errorf("%w: %s", ErrPaymentReversed, strings.Join(labels, ", "))
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("till: mark deposited: commit: %w", err)

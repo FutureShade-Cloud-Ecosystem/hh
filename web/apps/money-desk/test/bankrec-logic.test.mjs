@@ -136,7 +136,36 @@ test("the core's refusals read in words that say what to do, and a walled route 
   assert.equal(refusalWords("open", "reconciliation for 2031-06 is already COMPLETED", 409), "June 2031 is already signed off for this account, so its figures no longer change.");
   assert.equal(refusalWords("match", "statement line abc is MATCHED, not UNMATCHED", 409), "That line is already matched. Reload to see where it stands.");
   assert.equal(refusalWords("match", "statement line abc is not UNMATCHED", 409), "That line is already matched. Reload to see where it stands.");
-  assert.equal(refusalWords("match", "payment already claimed or not RECEIVED (claimed 0 of 1)", 409), "That payment is not waiting to be deposited: it is already matched to another line, or it is not a received payment.");
+  const causes = "it is already matched to another line, it was reversed, or it is not a received payment.";
+  // The core's sentence names the payment that did not move by its NUMBER, and three causes; the dealer's
+  // sentence carries the number and never a uuid.
+  assert.equal(
+    refusalWords("match", "payment already claimed, reversed or not RECEIVED: PAY-000104 (claimed 0 of 1)", 409),
+    `Payment PAY-000104 is not waiting to be deposited: ${causes}`,
+  );
+  assert.equal(
+    refusalWords("match", "bankrec: payment already claimed, reversed or not RECEIVED: PAY-000101, PAY-000102 (claimed 1 of 3)", 409),
+    `Payments PAY-000101, PAY-000102 are not waiting to be deposited: for each, ${causes}`,
+  );
+  assert.equal(
+    refusalWords("match", "payment already claimed, reversed or not RECEIVED: a payment that cannot be found (claimed 0 of 1)", 409),
+    "That payment cannot be found, so it cannot be deposited.",
+  );
+  assert.doesNotMatch(refusalWords("match", "payment already claimed, reversed or not RECEIVED: PAY-000104 (claimed 0 of 1)", 409), /[0-9a-f]{8}-[0-9a-f]{4}-/);
+  // A sentence without ids (an older core) still reads as words.
+  assert.equal(refusalWords("match", "payment already claimed, reversed or not RECEIVED (claimed 0 of 1)", 409), `That payment is not waiting to be deposited: ${causes}`);
+  // No refusal text a dealer reads carries a uuid: every core sentence that holds an id is rewritten without it.
+  const someId = "b9000000-0000-4000-8000-0000000000ff";
+  for (const [op, text] of [
+    ["match", `bankrec: statement line ${someId} is MATCHED, not UNMATCHED`],
+    ["match", `bankrec: statement line ${someId} is not UNMATCHED`],
+    ["match", `bankrec: line ${someId} / target ${someId} already has a live match`],
+    ["unmatch", `bankrec: match ${someId} is not live (already unmatched)`],
+    ["open", `bankrec: reconciliation ${someId} is not OPEN`],
+    ["match", "bankrec: payment already claimed, reversed or not RECEIVED: PAY-000104 (claimed 0 of 1)"],
+  ]) {
+    assert.doesNotMatch(refusalWords(op, text, 409), /[0-9a-f]{8}-[0-9a-f]{4}-/, `${text} reaches the dealer with an id`);
+  }
   assert.equal(refusalWords("match", "line abc / target def already has a live match", 409), "That target is already matched to this line.");
   assert.equal(refusalWords("unmatch", "match abc is not live (already unmatched)", 409), "That match was already undone. Reload to see where the line stands.");
   assert.equal(refusalWords("rule", "another APPROVED version of \"x\" already exists", 409), "Another version of this rule was approved a moment ago. Reload the rules and try again.");
