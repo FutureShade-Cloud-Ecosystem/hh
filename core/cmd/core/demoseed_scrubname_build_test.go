@@ -90,8 +90,8 @@ func TestDefaultBuildCarriesNoScrubRename(t *testing.T) {
 // the statement addresses is derived (demoID), so the statement text is the marker that cannot
 // appear in a default build by accident.
 var homeRepairSignatures = []string{
-	`UPDATE customers SET home_branch_id = $1::uuid, updated_at = $2 WHERE id = $3::uuid AND home_branch_id = $4::uuid`,
-	"re-homing the Northline account",
+	`UPDATE customers SET home_branch_id = NULL, updated_at = $1 WHERE id = ANY($2::uuid[]) AND home_branch_id = ANY($3::uuid[])`,
+	"making the Northline, Harbourview and County accounts shared",
 }
 
 // TestDefaultBuildCarriesNoHomeBranchRepair holds the repair pair's gate the same way the rename
