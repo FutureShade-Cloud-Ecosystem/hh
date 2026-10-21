@@ -506,6 +506,7 @@ var ownedObjects = map[string]string{
 	"payment_config":                  "payment",           // 0027_payment_config
 	"payment_intents":                 "payments",          // 0103_payment_intents
 	"payment_nsf":                     "payments",          // 0035_nsf_credit_hold
+	"payment_reapplications":          "payments",          // 0431_payment_reapplications
 	"payments":                        "payments",          // 0010_payments_till
 	"permission_approval_requests":    "identity",          // 0016_permission_approvals
 	"plan":                            "planflow",          // 0214_new_entities_and_pricing
