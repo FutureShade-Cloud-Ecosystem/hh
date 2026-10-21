@@ -319,7 +319,7 @@ func TestMessages_NoBodyAndNoMemberReachesTheView(t *testing.T) {
 }
 
 // Membership is resolved at each request, not remembered: a user taken out of a channel reads it in no later
-// answer, a user put into one reads it at once, and the claim of a request already made does not change.
+// answer, a user put into one reads it at once, and a claim signed before the change lists no channel the user has since left.
 func TestMessages_MembershipIsResolvedLiveAtEachRequest(t *testing.T) {
 	env := testsupport.Open(t)
 	w := plantMsgWorld(t, env)
@@ -357,8 +357,54 @@ func TestMessages_MembershipIsResolvedLiveAtEachRequest(t *testing.T) {
 	if has(after, "c1") || !has(after, "c2") {
 		t.Errorf("after the change u1 should read c2 and not c1")
 	}
-	// The earlier claim still says what it said: a claim is the answer at the moment it was signed.
-	if !has(before, "c1") {
-		t.Errorf("a claim already signed changed")
+	// The earlier claim still names c1, but the view requires the asker's own member row as well (PR 581 read P3 2),
+	// so a claim signed before the change lists no channel the user has since left.
+	if has(before, "c1") {
+		t.Errorf("a claim signed before the user left c1 still lists it")
 	}
+}
+
+// A stale or mistaken claim cannot list a channel (PR 581 read P3 2, FROM-PRINCIPAL item 52). The signed list is
+// server made, so this is not reachable today, but the view requires the asker's own member row as well: a claim
+// that names channels the asker is not in lists none of them, and still lists the ones they are in.
+func TestMessages_AClaimNamingChannelsTheAskerIsNotInListsNoneOfThem(t *testing.T) {
+	env := testsupport.Open(t)
+	w := plantMsgWorld(t, env)
+	ctx := testsupport.Ctx(t)
+	pool, err := pgxpool.New(ctx, env.AdminURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	msgSvc := messaging.NewService(messaging.NewRepository(pool))
+	h := assist.NewHandler(nil, nil).WithChannelMembership(adapters.NewChannelMembership(msgSvc))
+	u1 := w.callers()[0].sc
+	if _, err := msgSvc.ListMyChannels(ctx, messaging.Caller{UserID: u1.UserID}); err != nil {
+		t.Fatal(err)
+	}
+	_, claims := claimsOf(t, h, u1)
+	// u1 is not in c2 (u2 and u3), c6-others (u2) or the archived room's neighbours; name them anyway.
+	stale := claims
+	stale.ChannelIDs = append(append([]string(nil), claims.ChannelIDs...), w.channels["c2"], w.channels["c6-others"])
+	listed := map[string]bool{}
+	readRows(t, env, stale, `SELECT id::text FROM ai.message_channels`, func(rs pgx.Rows) error {
+		var id string
+		if err := rs.Scan(&id); err != nil {
+			return err
+		}
+		listed[id] = true
+		return nil
+	})
+	for _, n := range []string{"c2", "c6-others"} {
+		if listed[w.channels[n]] {
+			t.Errorf("a claim naming %s lists it for a user who is not in it", n)
+		}
+	}
+	for _, n := range []string{"c1", "c3-dm", "c5-muted", "c7-mentions"} {
+		if !listed[w.channels[n]] {
+			t.Errorf("a claim naming %s no longer lists it for a user who is in it", n)
+		}
+	}
+	// The base tables are not narrowed by this (they hold the signed list alone); the view is.
+	_ = readtx.AudienceStaff
 }
