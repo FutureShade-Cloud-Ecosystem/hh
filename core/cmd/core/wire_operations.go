@@ -756,7 +756,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("payments: gateway selection refused to boot: " + unionGwErr.Error())
 	}
 	ops.unionGateway = unionGateway
-	w3bPaymentsRepo := payments.NewRepository(pool)
+	w3bPaymentsRepo := payments.NewRepository(pool).WithTill(tillSvc)
 	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway).WithCurrency(newDealerCurrency(pool))
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.

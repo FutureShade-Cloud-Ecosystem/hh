@@ -1,0 +1,308 @@
+//go:build integration
+
+// payout_integration_test.go: held money leaves 2310 only by the act that moves it (SF-2m, SF-2n; ruling 52.3).
+//
+// A reversal posts Dr AR / Cr 2310 and the money is held for the customer. SF-2l applies it to an invoice. These legs
+// are the other acts: cash handed back from the drawer (Dr 2310 / Cr 1020 with a PAID_OUT movement), a cheque or
+// transfer (Dr 2310 / Cr 1000), and the write off after the count has posted the shortage (Dr 2310 / Cr 6350). Each runs
+// through the real settle, reversal, till, pay out service and GL consumer, and ends with the accounts at their true
+// balances and the held figure fallen by the amount.
+package payments_test
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+)
+
+var payoutSeq int
+
+// payoutRepo is a payments repository with the till's seam bound, on the world's own pool.
+func (w *reversalGLWorld) payoutRepo() *payments.Repository {
+	return payments.NewRepository(w.r.pool).WithTill(till.NewService(till.NewRepository(w.r.pool)))
+}
+
+func (w *reversalGLWorld) payOut(repo *payments.Repository, orig, kind string, cents int64, extra func(*payments.PayoutInput)) (payments.Payout, error) {
+	w.r.t.Helper()
+	payoutSeq++
+	in := payments.PayoutInput{
+		PaymentID: orig, Kind: kind, AmountCents: cents, Reason: "paid back to the customer", ActorID: w.r.userID,
+		IdempotencyKey: fmt.Sprintf("payout-%s-%d", w.r.suffix, payoutSeq), IsManager: true,
+	}
+	if extra != nil {
+		extra(&in)
+	}
+	return payments.NewReverseService(repo).PayOut(w.r.staffCtx(), in)
+}
+
+type payoutState struct {
+	rows, movements, outbox, subledger int
+}
+
+func (w *reversalGLWorld) payoutState(orig string) payoutState {
+	w.r.t.Helper()
+	var s payoutState
+	c := context.Background()
+	_ = w.r.obs.QueryRow(c, `SELECT count(*) FROM payment_payouts WHERE payment_id = $1::uuid`, orig).Scan(&s.rows)
+	_ = w.r.obs.QueryRow(c, `SELECT count(*) FROM till_movements m WHERE m.reason LIKE 'HELD PAYOUT%' AND m.created_by = $1::uuid`, w.r.userID).Scan(&s.movements)
+	_ = w.r.obs.QueryRow(c, `SELECT count(*) FROM events_outbox WHERE topic = 'payment.paid_out' AND payload->>'payment_id' = $1`, orig).Scan(&s.outbox)
+	_ = w.r.obs.QueryRow(c, `SELECT count(*) FROM customer_transactions WHERE customer_id = $1::uuid`, w.r.custID).Scan(&s.subledger)
+	return s
+}
+
+func (w *reversalGLWorld) heldOf(orig string) payments.HeldFigure {
+	w.r.t.Helper()
+	h, err := w.r.repo.HeldFor(context.Background(), orig, nil)
+	if err != nil {
+		w.r.t.Fatalf("held: %v", err)
+	}
+	return h
+}
+
+func (w *reversalGLWorld) payoutNets(orig, rev string, extra ...string) map[string]int64 {
+	w.r.t.Helper()
+	keys := append(caseKeys(orig, rev), extra...)
+	w.cleanupJournals(keys, nil)
+	return w.walkNets(keys, nil)
+}
+
+func (w *reversalGLWorld) cleanupPayouts() {
+	w.r.t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.r.obs.Exec(c, `DELETE FROM payment_payouts WHERE customer_id = $1::uuid`, w.r.custID)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM till_movements WHERE reason LIKE 'HELD PAYOUT%' AND created_by = $1::uuid`, w.r.userID)
+	})
+}
+
+// (1) Cash handed back from the drawer: Dr 2310 / Cr 1020, a PAID_OUT movement on the open session, the held figure and
+// the session's expected cash both fall by it.
+func TestIntegration_Payout_DrawerCashLandsAPaidOutMovement(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	session := w.openSession()
+	orig := w.registerReceipt("CASH", 10_000)
+	w.inSession(session, orig)
+	w.drain()
+	rev := w.reverse(orig)
+	repo := w.payoutRepo()
+	res, err := w.payOut(repo, orig, payments.PayoutDrawer, 4_000, func(in *payments.PayoutInput) { in.TillSessionID = session })
+	if err != nil {
+		t.Fatalf("the drawer pay out was refused: %v", err)
+	}
+	if res.HeldBeforeCents != 10_000 || res.HeldAfterCents != 6_000 {
+		t.Errorf("held %d to %d, want 10000 to 6000", res.HeldBeforeCents, res.HeldAfterCents)
+	}
+	if h := w.heldOf(orig); h.HeldCents != 6_000 || h.PaidOutCents != 4_000 {
+		t.Errorf("the held read says %+v, want 6000 held and 4000 paid out", h)
+	}
+	mv, err := till.NewRepository(w.r.pool).MovementTotalsByMethod(context.Background(), session)
+	if err != nil {
+		t.Fatalf("movements: %v", err)
+	}
+	if mv["CASH"].PaidOut != 4_000 {
+		t.Errorf("the session's cash paid out reads %d, want 4000 (expected cash falls with it)", mv["CASH"].PaidOut)
+	}
+	got := w.payoutNets(orig, rev, "payment.paid_out:"+res.PayoutID)
+	wantNets(t, "drawer pay out", got, map[string]int64{"1020": 6_000, "1100": 0, "2310": -6_000})
+}
+
+// (2) A cheque or transfer written to the customer: Dr 2310 / Cr 1000, the reference recorded and required.
+func TestIntegration_Payout_BankChequeCreditsTheBank(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	orig := w.receipt("CHEQUE", 10_000)
+	w.drain()
+	rev := w.reverse(orig)
+	repo := w.payoutRepo()
+	if _, err := w.payOut(repo, orig, payments.PayoutBank, 10_000, nil); err == nil {
+		t.Errorf("a bank pay out was accepted with no cheque or transfer reference")
+	}
+	res, err := w.payOut(repo, orig, payments.PayoutBank, 10_000, func(in *payments.PayoutInput) { in.Reference = "CHQ 100245" })
+	if err != nil {
+		t.Fatalf("the bank pay out was refused: %v", err)
+	}
+	var ref string
+	if err := w.r.obs.QueryRow(context.Background(), `SELECT reference FROM payment_payouts WHERE id = $1::uuid`, res.PayoutID).Scan(&ref); err != nil || ref != "CHQ 100245" {
+		t.Errorf("the reference reads %q (%v), want it recorded", ref, err)
+	}
+	if h := w.heldOf(orig); h.HeldCents != 0 {
+		t.Errorf("the held figure reads %d, want 0", h.HeldCents)
+	}
+	got := w.payoutNets(orig, rev, "payment.paid_out:"+res.PayoutID)
+	wantNets(t, "bank pay out", got, map[string]int64{"1000": -10_000, "1020": 10_000, "1100": 0, "2310": 0})
+}
+
+// (3) Every arm is refused above the held figure, for a non manager, and for an out of reach payment (answered as
+// missing), with nothing written; a replay answers the first result.
+func TestIntegration_Payout_RefusalsWriteNothing(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	session := w.openSession()
+	orig := w.registerReceipt("CASH", 10_000)
+	w.inSession(session, orig)
+	w.drain()
+	w.reverse(orig)
+	repo := w.payoutRepo()
+	// A payment never reversed holds nothing.
+	fresh := w.r.invoice("RPO", 50_000)
+	if err := w.r.settle("register", fresh, 3_000); err != nil {
+		t.Fatalf("a second cheque: %v", err)
+	}
+	var plain string
+	if err := w.r.obs.QueryRow(context.Background(), `SELECT payment_id::text FROM payment_allocations WHERE invoice_id = $1::uuid`, fresh).Scan(&plain); err != nil {
+		t.Fatalf("find it: %v", err)
+	}
+	before := w.payoutState(orig)
+	drawer := func(in *payments.PayoutInput) { in.TillSessionID = session }
+	bank := func(in *payments.PayoutInput) { in.Reference = "EFT 9" }
+	cases := []struct {
+		name string
+		kind string
+		cut  int64
+		set  func(*payments.PayoutInput)
+		want string
+	}{
+		{"drawer above held", payments.PayoutDrawer, 10_001, drawer, "holds"},
+		{"bank above held", payments.PayoutBank, 10_001, bank, "holds"},
+	}
+	for _, c := range cases {
+		if _, err := w.payOut(repo, orig, c.kind, c.cut, c.set); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s answered %v, want it refused in words (%q)", c.name, err, c.want)
+		}
+	}
+	for _, kind := range []string{payments.PayoutDrawer, payments.PayoutBank} {
+		set := drawer
+		if kind == payments.PayoutBank {
+			set = bank
+		}
+		if _, err := w.payOut(repo, orig, kind, 1_000, func(in *payments.PayoutInput) { set(in); in.IsManager = false }); err == nil {
+			t.Errorf("a %s pay out was accepted from a caller who is not a manager", kind)
+		}
+		if _, err := w.payOut(repo, orig, kind, 1_000, func(in *payments.PayoutInput) {
+			set(in)
+			in.CanAccessBranch = func(string) bool { return false }
+		}); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("an out of reach %s pay out answered %v, want it missing", kind, err)
+		}
+		if _, err := w.payOut(repo, orig, kind, 1_000, func(in *payments.PayoutInput) { set(in); in.Reason = " " }); err == nil {
+			t.Errorf("a %s pay out was accepted with no reason", kind)
+		}
+	}
+	if _, err := w.payOut(repo, plain, payments.PayoutBank, 1_000, bank); err == nil {
+		t.Errorf("held money was paid out of a payment that was never reversed")
+	}
+	if after := w.payoutState(orig); after != before {
+		t.Errorf("a refused pay out wrote: before %+v after %+v", before, after)
+	}
+	// The control, and the replay: the whole held amount goes through once.
+	first, err := w.payOut(repo, orig, payments.PayoutBank, 10_000, func(in *payments.PayoutInput) { bank(in); in.IdempotencyKey = "po-replay-" + w.r.suffix })
+	if err != nil {
+		t.Fatalf("the whole held amount was refused after the refusals: %v", err)
+	}
+	again, err := w.payOut(repo, orig, payments.PayoutBank, 10_000, func(in *payments.PayoutInput) { bank(in); in.IdempotencyKey = "po-replay-" + w.r.suffix })
+	if err != nil || !again.Replayed || again.PayoutID != first.PayoutID {
+		t.Errorf("a replay answered %+v (%v), want the first result flagged as a replay", again, err)
+	}
+	if _, err := w.payOut(repo, orig, payments.PayoutBank, 9_000, func(in *payments.PayoutInput) { bank(in); in.IdempotencyKey = "po-replay-" + w.r.suffix }); err == nil {
+		t.Errorf("a spent key was accepted with another amount")
+	}
+	if st := w.payoutState(orig); st.rows != 1 || st.outbox != 1 {
+		t.Errorf("after the replays the case reads %+v, want one payout and one event", st)
+	}
+}
+
+// (4) A pay out and a re-application racing on one payment cannot together exceed the held figure: the writer that holds
+// the payment row first lands, the other is refused. The park holds the re-application between its payment row and the
+// invoices counter draw.
+func TestIntegration_Payout_BesideAReapplicationNeverExceedsTheHeldFigure(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	orig := w.receipt("CHEQUE", 10_000)
+	inv := w.invoiceOf(orig)
+	w.drain()
+	w.reverse(orig)
+	park := testkit.NewDrawPark(t, w.r.pool, "invoices", 55020901)
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := w.reapplyKeyed(payments.NewRepository(park.Pool), orig, "po-race-a-"+w.r.suffix, payments.Allocation{InvoiceID: inv, AmountCents: 7_000})
+		first <- err
+	}()
+	park.WaitParked("the re-application holds the payment row at the invoices counter draw")
+	go func() {
+		_, err := w.payOut(w.payoutRepo(), orig, payments.PayoutBank, 7_000, func(in *payments.PayoutInput) { in.Reference = "CHQ race" })
+		second <- err
+	}()
+	park.WaitBlocked("the pay out queues on the payment row")
+	park.AnswersAllowing(map[string]chan error{"first": first, "second": second}, map[string]string{"second": "holds"})
+	h := w.heldOf(orig)
+	t.Logf("after the race: %+v", h)
+	if h.HeldCents != 3_000 || h.AppliedCents != 7_000 || h.PaidOutCents != 0 {
+		t.Errorf("the race left %+v, want the re-application to hold 7000 and the pay out refused", h)
+	}
+	if st := w.payoutState(orig); st.rows != 0 {
+		t.Errorf("the refused pay out wrote %+v", st)
+	}
+}
+
+// (6) The write off (SF-2n): refused before the count has posted the shortage, accepted after, and 6350 nets the
+// shortage back. The cash left the drawer unrecorded, so the close posts Dr 6350 / Cr 1020 and the write off clears 2310.
+func TestIntegration_Payout_WriteOffWaitsForTheCountThenClearsTheShortage(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	session := w.openSession()
+	orig := w.registerReceipt("CASH", 10_000)
+	w.inSession(session, orig)
+	w.drain()
+	rev := w.reverse(orig)
+	repo := w.payoutRepo()
+	before := w.payoutState(orig)
+	if _, err := w.payOut(repo, orig, payments.PayoutWriteOff, 10_000, nil); err == nil || !strings.Contains(err.Error(), "count for this payment's session is not complete yet") {
+		t.Errorf("a write off before the count answered %v, want it refused in words about the count", err)
+	}
+	w.closeSession(session, 0) // the cash is gone: counted 0 against 10000 expected
+	if after := w.payoutState(orig); after != before {
+		t.Errorf("the refused write off wrote: before %+v after %+v", before, after)
+	}
+	if _, err := w.payOut(repo, orig, payments.PayoutWriteOff, 10_001, nil); err == nil {
+		t.Errorf("a write off above the held figure was accepted")
+	}
+	res, err := w.payOut(repo, orig, payments.PayoutWriteOff, 10_000, nil)
+	if err != nil {
+		t.Fatalf("the write off after the count was refused: %v", err)
+	}
+	if h := w.heldOf(orig); h.HeldCents != 0 {
+		t.Errorf("the held figure reads %d, want 0", h.HeldCents)
+	}
+	if _, err := w.payOut(repo, orig, payments.PayoutWriteOff, 1, nil); err == nil {
+		t.Errorf("a second write off was accepted with nothing held")
+	}
+	got := w.payoutNets(orig, rev, "payment.paid_out:"+res.PayoutID, "till.session.completed:"+session)
+	wantNets(t, "write off", got, map[string]int64{"1020": 0, "1100": 0, "2310": 0, "6350": 0})
+}
+
+// A write off needs a payment rung through a till session, and a session that was SHORT.
+func TestIntegration_Payout_WriteOffNeedsASessionWithAShortage(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	orig := w.receipt("CHEQUE", 10_000)
+	w.drain()
+	w.reverse(orig)
+	repo := w.payoutRepo()
+	if _, err := w.payOut(repo, orig, payments.PayoutWriteOff, 1_000, nil); err == nil || !strings.Contains(err.Error(), "till session") {
+		t.Errorf("a write off of a payment with no till session answered %v, want it refused in words", err)
+	}
+	session := w.openSession()
+	cash := w.registerReceipt("CASH", 5_000)
+	w.inSession(session, cash)
+	w.drain()
+	w.reverse(cash)
+	w.closeSession(session, 5_000) // the drawer is exactly as expected: no shortage
+	if _, err := w.payOut(repo, cash, payments.PayoutWriteOff, 1_000, nil); err == nil || !strings.Contains(err.Error(), "no shortage") {
+		t.Errorf("a write off against a session with no shortage answered %v, want it refused in words", err)
+	}
+}
