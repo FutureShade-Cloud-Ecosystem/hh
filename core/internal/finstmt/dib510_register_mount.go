@@ -143,6 +143,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 		WithUserLinker(h.userLink).
 		WithPaymentTrail(h.paymentTrail).
 		WithCustomerReach(h.customerReach).
+		WithAccountPosition(billing.NewAccountPositionGate(repo)).
 		RegisterRoutes(r, g)
 
 	// -- the C8 S3 + S4 + S3M surface (manual hold, paylink, statement preview) ---------------------

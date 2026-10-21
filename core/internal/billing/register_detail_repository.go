@@ -431,6 +431,7 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 	var lastPaymentCents int64
 	err = r.pool.QueryRow(ctx,
 		`SELECT c.id::text, c.name, c.account_no::text, c.payment_terms_days, c.credit_limit_cents,
+		        COALESCE(c.home_branch_id::text, ''),
 		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
 		                   WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
 		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
@@ -448,7 +449,7 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 		   FROM customers c
 		   LEFT JOIN ar_ap_contacts a ON a.customer_id = c.id
 		  WHERE c.id = $1::uuid`, customerID, day).
-		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents,
+		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents, &h.HomeBranchID,
 			&h.OpenCents, &h.OverdueCents, &onHold, &hasOpenDispute,
 			&apName, &apEmail, &apPhone, &lastPaymentAt, &lastPaymentCents)
 	if err != nil {

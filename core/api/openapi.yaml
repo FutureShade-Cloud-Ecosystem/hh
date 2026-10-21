@@ -32091,12 +32091,7 @@ components:
         - account_no
         - status
         - terms_days
-        - credit_limit_cents
-        - open_cents
-        - available_credit_cents
-        - overdue_cents
-        - utilization_bps
-        - aging
+        - account_position_withheld
       properties:
         customer_id:
           type: string
@@ -32105,6 +32100,9 @@ components:
           type: string
         account_no:
           type: string
+        account_position_withheld:
+          type: boolean
+          description: True when the dealer's account position policy refuses this caller. The credit limit, open, available, overdue, utilization and aging are then absent entirely (never 0); a screen says so in words. The status badge is operational and stays.
         status:
           type: string
           enum:
@@ -32118,18 +32116,22 @@ components:
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         open_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         available_credit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         overdue_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         utilization_bps:
           type: integer
-          description: OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
+          description: Absent when account_position_withheld. OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
         primary_ap_contact_name:
           type: string
         primary_ap_contact_email:
@@ -32145,7 +32147,9 @@ components:
           format: int64
           description: Absent when the caller does not hold the payment trail (ruling 87).
         aging:
-          $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
+          description: Absent when account_position_withheld.
+          allOf:
+            - $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
       type: object
       description: The 5-bucket aging breakdown the workspace overview tab opens with. The five buckets sum to OpenCents and the four late buckets sum to OverdueCents; the server checks the sum before returning the payload.
@@ -33869,15 +33873,13 @@ components:
           type: boolean
     CustomerSearchResult:
       type: object
-      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture."
+      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture. The two position figures follow the dealer's account position policy (ar_invoice_policy.account_position_visibility, per branch): they are absent entirely, never 0, for a caller the policy refuses."
       required:
         - id
         - name
         - account_no
         - customer_type
         - payment_terms_days
-        - credit_limit_cents
-        - open_balance_cents
       properties:
         id:
           type: string
@@ -33900,13 +33902,18 @@ components:
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         open_balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance
+          description: The account's current AR balance. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the open balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
     CustomerAccount:
       type: object
-      description: The resolved view of a customers row
+      description: "The resolved view of a customers row. On the staff reads the credit limit and balance follow the dealer's account position policy: absent entirely, never 0, for a caller the policy refuses."
       required:
         - customer_id
         - account_no
@@ -33914,10 +33921,8 @@ components:
         - customer_type
         - branch_id
         - payment_terms_days
-        - credit_limit_cents
         - on_hold
         - tax_exempt
-        - balance_cents
         - is_active
       properties:
         customer_id:
@@ -33944,6 +33949,7 @@ components:
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         on_hold:
           type: boolean
         tax_exempt:
@@ -33951,7 +33957,11 @@ components:
         balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance, composed in by the billing read
+          description: The account's current AR balance, composed in by the billing read. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
         is_active:
           type: boolean
     CustomerCreate:

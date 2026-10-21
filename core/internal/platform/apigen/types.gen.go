@@ -1058,22 +1058,23 @@ type PaymentCardAttemptResolve struct {
 }
 
 type BillingCustomerWorkspaceHeader struct {
-	CustomerId            string                        `json:"customer_id"`
-	Name                  string                        `json:"name"`
-	AccountNo             string                        `json:"account_no"`
-	Status                string                        `json:"status"`
-	TermsDays             int                           `json:"terms_days"`
-	CreditLimitCents      int64                         `json:"credit_limit_cents"`
-	OpenCents             int64                         `json:"open_cents"`
-	AvailableCreditCents  int64                         `json:"available_credit_cents"`
-	OverdueCents          int64                         `json:"overdue_cents"`
-	UtilizationBps        int                           `json:"utilization_bps"`
-	PrimaryApContactName  *string                       `json:"primary_ap_contact_name,omitempty"`
-	PrimaryApContactEmail *string                       `json:"primary_ap_contact_email,omitempty"`
-	PrimaryApContactPhone *string                       `json:"primary_ap_contact_phone,omitempty"`
-	LastPaymentAt         *time.Time                    `json:"last_payment_at,omitempty"`
-	LastPaymentCents      *int64                        `json:"last_payment_cents,omitempty"`
-	Aging                 BillingCustomerWorkspaceAging `json:"aging"`
+	CustomerId              string     `json:"customer_id"`
+	Name                    string     `json:"name"`
+	AccountNo               string     `json:"account_no"`
+	AccountPositionWithheld bool       `json:"account_position_withheld"`
+	Status                  string     `json:"status"`
+	TermsDays               int        `json:"terms_days"`
+	CreditLimitCents        *int64     `json:"credit_limit_cents,omitempty"`
+	OpenCents               *int64     `json:"open_cents,omitempty"`
+	AvailableCreditCents    *int64     `json:"available_credit_cents,omitempty"`
+	OverdueCents            *int64     `json:"overdue_cents,omitempty"`
+	UtilizationBps          *int       `json:"utilization_bps,omitempty"`
+	PrimaryApContactName    *string    `json:"primary_ap_contact_name,omitempty"`
+	PrimaryApContactEmail   *string    `json:"primary_ap_contact_email,omitempty"`
+	PrimaryApContactPhone   *string    `json:"primary_ap_contact_phone,omitempty"`
+	LastPaymentAt           *time.Time `json:"last_payment_at,omitempty"`
+	LastPaymentCents        *int64     `json:"last_payment_cents,omitempty"`
+	Aging                   *struct{}  `json:"aging,omitempty"`
 }
 
 type BillingCustomerWorkspaceAging struct {
@@ -1669,27 +1670,29 @@ type TourRestartedResult struct {
 }
 
 type CustomerSearchResult struct {
-	Id               string `json:"id"`
-	Name             string `json:"name"`
-	AccountNo        string `json:"account_no"`
-	CustomerType     string `json:"customer_type"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	CreditLimitCents int64  `json:"credit_limit_cents"`
-	OpenBalanceCents int64  `json:"open_balance_cents"`
+	Id                   string `json:"id"`
+	Name                 string `json:"name"`
+	AccountNo            string `json:"account_no"`
+	CustomerType         string `json:"customer_type"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
+	OpenBalanceCents     *int64 `json:"open_balance_cents,omitempty"`
+	AvailableCreditCents *int64 `json:"available_credit_cents,omitempty"`
 }
 
 type CustomerAccount struct {
-	CustomerId       string `json:"customer_id"`
-	AccountNo        string `json:"account_no"`
-	Name             string `json:"name"`
-	CustomerType     string `json:"customer_type"`
-	BranchId         string `json:"branch_id"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	CreditLimitCents int64  `json:"credit_limit_cents"`
-	OnHold           bool   `json:"on_hold"`
-	TaxExempt        bool   `json:"tax_exempt"`
-	BalanceCents     int64  `json:"balance_cents"`
-	IsActive         bool   `json:"is_active"`
+	CustomerId           string `json:"customer_id"`
+	AccountNo            string `json:"account_no"`
+	Name                 string `json:"name"`
+	CustomerType         string `json:"customer_type"`
+	BranchId             string `json:"branch_id"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
+	OnHold               bool   `json:"on_hold"`
+	TaxExempt            bool   `json:"tax_exempt"`
+	BalanceCents         *int64 `json:"balance_cents,omitempty"`
+	AvailableCreditCents *int64 `json:"available_credit_cents,omitempty"`
+	IsActive             bool   `json:"is_active"`
 }
 
 type CustomerCreate struct {

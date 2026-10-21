@@ -29,6 +29,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -70,6 +71,38 @@ type CustomerWorkspaceHeader struct {
 	LastPaymentAt         *time.Time             `json:"last_payment_at,omitempty"`
 	LastPaymentCents      int64                  `json:"last_payment_cents,omitempty"`
 	Aging                 CustomerWorkspaceAging `json:"aging"`
+
+	// HomeBranchID is the customer's home branch, which picks the policy row the account position
+	// is gated by. Never on the wire.
+	HomeBranchID string `json:"-"`
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves the limit, open, available, overdue, utilization and aging keys
+	// off the wire entirely (byte absent, never 0) and says so in account_position_withheld.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the header, leaving the account position figures off the wire when the policy
+// refused the caller. The embedded alias carries every other field; the shallower pointer fields
+// below shadow the figures (encoding/json takes the shallowest name) and are nil, so omitted, when
+// withheld.
+func (h CustomerWorkspaceHeader) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceHeader
+	w := struct {
+		plain
+		CreditLimitCents     *int64                  `json:"credit_limit_cents,omitempty"`
+		OpenCents            *int64                  `json:"open_cents,omitempty"`
+		AvailableCreditCents *int64                  `json:"available_credit_cents,omitempty"`
+		OverdueCents         *int64                  `json:"overdue_cents,omitempty"`
+		UtilizationBps       *int                    `json:"utilization_bps,omitempty"`
+		Aging                *CustomerWorkspaceAging `json:"aging,omitempty"`
+		Withheld             bool                    `json:"account_position_withheld"`
+	}{plain: plain(h), Withheld: h.PositionWithheld}
+	if !h.PositionWithheld {
+		w.CreditLimitCents, w.OpenCents = &h.CreditLimitCents, &h.OpenCents
+		w.AvailableCreditCents, w.OverdueCents = &h.AvailableCreditCents, &h.OverdueCents
+		w.UtilizationBps, w.Aging = &h.UtilizationBps, &h.Aging
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspaceAging is the 5-bucket breakdown the Overview tab opens with. It is the

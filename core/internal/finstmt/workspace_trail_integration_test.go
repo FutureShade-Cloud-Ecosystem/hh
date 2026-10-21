@@ -261,3 +261,71 @@ func TestIntegration_Workspace_NoteSavesForANonUuidPlatformId(t *testing.T) {
 		t.Fatalf("only the linked caller's note is saved: n=%d err=%v", n, err)
 	}
 }
+
+// -- UX-97: the customer workspace follows the dealer's account position policy -----------------------
+
+func TestIntegration_Workspace_AccountPositionPolicy(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	id := seedCustomer(t, pool, "-P")
+	link := func(context.Context, string) (string, bool) { return "a1b2c3d4-0000-4000-9000-000000000001", true }
+	path := "/api/v1/billing/ar/customers/" + id + "/workspace"
+
+	call := func(tier int, role string) (int, string) {
+		h := NewHandler(NewService(NewRepository(pool)), slog.New(slog.DiscardHandler)).
+			WithUserLinker(link).WithPaymentTrail(trailFake(true)).
+			WithCustomerReach(billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool))))
+		sg := testkit.NewStaffGuards(t)
+		sg.SetAuthority(coreid.StaffAuthority{RoleID: role, Tier: tier, Scope: "branch", Branches: []string{trenton}})
+		mux := http.NewServeMux()
+		h.RegisterRoutes(mux, sg.Guards)
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Authorization", "Bearer "+sg.Bearer(t))
+		r.Header.Set("X-Org", testkit.OrgNorthSlug)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, r)
+		return rec.Code, rec.Body.String()
+	}
+	setDefault := func(v string) {
+		if _, err := pool.Exec(ctx, `UPDATE ar_invoice_policy SET account_position_visibility = $1 WHERE branch_id IS NULL`, v); err != nil {
+			t.Fatalf("set policy: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `UPDATE ar_invoice_policy SET account_position_visibility = 'MANAGER_UP' WHERE branch_id IS NULL`)
+		_, _ = pool.Exec(c, `DELETE FROM ar_invoice_policy WHERE branch_id = $1::uuid`, trenton)
+	})
+	figureKeys := []string{`"credit_limit_cents"`, `"open_cents"`, `"available_credit_cents"`, `"overdue_cents"`, `"utilization_bps"`, `"aging"`}
+	check := func(label string, tier int, role string, wantFigures bool) {
+		t.Helper()
+		code, body := call(tier, role)
+		if code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", label, code, body)
+		}
+		for _, k := range figureKeys {
+			if has := strings.Contains(body, k); has != wantFigures {
+				t.Fatalf("%s: %s present=%v, want %v: %s", label, k, has, wantFigures, body)
+			}
+		}
+		if wantFigures != strings.Contains(body, `"account_position_withheld":false`) {
+			t.Fatalf("%s: the withheld flag disagrees: %s", label, body)
+		}
+	}
+
+	setDefault("MANAGER_UP")
+	check("MANAGER_UP manager", 2, "payables_receivables", true)
+	check("MANAGER_UP clerk", 3, "inside_sales", false)
+	setDefault("ALL_STAFF")
+	check("ALL_STAFF clerk", 3, "inside_sales", true)
+	setDefault("HIDDEN")
+	check("HIDDEN manager", 2, "payables_receivables", false)
+	// The customer's home branch row decides: HIDDEN there refuses even under a permissive default.
+	setDefault("ALL_STAFF")
+	if _, err := pool.Exec(ctx, `INSERT INTO ar_invoice_policy (branch_id, account_position_visibility) VALUES ($1::uuid, 'HIDDEN')
+		ON CONFLICT (branch_id) DO UPDATE SET account_position_visibility = 'HIDDEN'`, trenton); err != nil {
+		t.Fatal(err)
+	}
+	check("HIDDEN home branch under ALL_STAFF default, manager", 2, "payables_receivables", false)
+	check("HIDDEN home branch under ALL_STAFF default, clerk", 3, "inside_sales", false)
+}

@@ -921,19 +921,20 @@ export type BillingCustomerWorkspaceHeader = {
   customer_id: string;
   name: string;
   account_no: string;
+  account_position_withheld: boolean;
   status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
   terms_days: number;
-  credit_limit_cents: number;
-  open_cents: number;
-  available_credit_cents: number;
-  overdue_cents: number;
-  utilization_bps: number;
+  credit_limit_cents?: number;
+  open_cents?: number;
+  available_credit_cents?: number;
+  overdue_cents?: number;
+  utilization_bps?: number;
   primary_ap_contact_name?: string;
   primary_ap_contact_email?: string;
   primary_ap_contact_phone?: string;
   last_payment_at?: string;
   last_payment_cents?: number;
-  aging: BillingCustomerWorkspaceAging;
+  aging?: BillingCustomerWorkspaceAging;
 };
 export type BillingCustomerWorkspaceAging = {
   current_cents: number;
@@ -1456,8 +1457,9 @@ export type CustomerSearchResult = {
   account_no: string;
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   payment_terms_days: number;
-  credit_limit_cents: number;
-  open_balance_cents: number;
+  credit_limit_cents?: number;
+  open_balance_cents?: number;
+  available_credit_cents?: number;
 };
 export type CustomerAccount = {
   customer_id: string;
@@ -1466,10 +1468,11 @@ export type CustomerAccount = {
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   branch_id: string;
   payment_terms_days: number;
-  credit_limit_cents: number;
+  credit_limit_cents?: number;
   on_hold: boolean;
   tax_exempt: boolean;
-  balance_cents: number;
+  balance_cents?: number;
+  available_credit_cents?: number;
   is_active: boolean;
 };
 export type CustomerCreate = {

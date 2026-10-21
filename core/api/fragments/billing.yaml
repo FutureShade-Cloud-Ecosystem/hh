@@ -3443,16 +3443,18 @@ components:
         - account_no
         - status
         - terms_days
-        - credit_limit_cents
-        - open_cents
-        - available_credit_cents
-        - overdue_cents
-        - utilization_bps
-        - aging
+        - account_position_withheld
       properties:
         customer_id: { type: string, format: uuid }
         name: { type: string }
         account_no: { type: string }
+        account_position_withheld:
+          type: boolean
+          description: >-
+            True when the dealer's account position policy refuses this caller. The
+            credit limit, open, available, overdue, utilization and aging are then
+            absent entirely (never 0); a screen says so in words. The status badge
+            is operational and stays.
         status:
           type: string
           enum: [CURRENT, CREDIT_APPROVED, CREDIT_HOLD, UNDER_REVIEW]
@@ -3461,14 +3463,26 @@ components:
             account carries a balance inside terms; CREDIT_HOLD when the master
             on_hold bit is set; UNDER_REVIEW when an open dispute exists.
         terms_days: { type: integer }
-        credit_limit_cents: { type: integer, format: int64 }
-        open_cents: { type: integer, format: int64 }
-        available_credit_cents: { type: integer, format: int64 }
-        overdue_cents: { type: integer, format: int64 }
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        open_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        overdue_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
         utilization_bps:
           type: integer
           description: >-
-            OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A
+            Absent when account_position_withheld. OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A
             zero limit reads 0; an over-limit account reads 10000+ (the bar reads
             "over limit" past 10000, an honest answer).
         primary_ap_contact_name: { type: string }
@@ -3482,7 +3496,10 @@ components:
           type: integer
           format: int64
           description: Absent when the caller does not hold the payment trail (ruling 87).
-        aging: { $ref: "#/components/schemas/BillingCustomerWorkspaceAging" }
+        aging:
+          description: Absent when account_position_withheld.
+          allOf:
+            - $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
       type: object
       description: >-

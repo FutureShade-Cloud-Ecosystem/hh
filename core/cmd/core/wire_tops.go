@@ -217,7 +217,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
 	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
-		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)})
+		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}).
+		// UX-97: the dealer's account position policy, the register's own gate.
+		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
 	customer.NewHandler(customerSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-1 branches: the read the ledger claimed VERIFIED and the dashboard's

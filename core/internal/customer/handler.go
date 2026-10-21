@@ -60,7 +60,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, h.svc.AccountForWire(r.Context(), out))
 }
 
 // smsConsent backs the consent control's read. GET /api/v1/customers/{id}/sms-consent.
@@ -192,8 +192,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, caller guards.S
 		}
 		return
 	}
-	if out == nil {
-		out = []SearchResult{} // an empty search returns [] not null
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	// An empty search returns [] not null; the figures are on the wire only under the dealer's policy.
+	httpx.WriteJSON(w, http.StatusOK, h.svc.SearchForWire(r.Context(), out, branchID))
 }
