@@ -170,6 +170,7 @@ test("the core's refusals read in words that say what to do, and a walled route 
   assert.equal(refusalWords("unmatch", "match abc is not live (already unmatched)", 409), "That match was already undone. Reload to see where the line stands.");
   assert.equal(refusalWords("rule", "another APPROVED version of \"x\" already exists", 409), "Another version of this rule was approved a moment ago. Reload the rules and try again.");
   assert.equal(refusalWords("rule", "spec.kind must be one of gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy", 422), "Pick one of the three match kinds.");
+  assert.equal(refusalWords("match", "bankrec: not found", 404), "Not found. Reload to see what is there now.");
   assert.equal(refusalWords("load", "not found", 404), "Not found. Reload to see what is there now.");
   assert.equal(refusalWords("load", "internal error", 500), "The bank reconciliation service did not answer. Reload to try again.");
   assert.equal(refusalWords("load", "", 0), "The bank reconciliation service did not answer. Reload to try again.");

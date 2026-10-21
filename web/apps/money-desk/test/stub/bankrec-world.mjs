@@ -411,6 +411,9 @@ export function createBankrecWorld() {
     if (line === undefined) return clientError(404, "not found");
     if (line.status !== "UNMATCHED") return clientError(409, `statement line ${line.id} is ${line.status}, not UNMATCHED`);
     const amount = input.amount_cents ? input.amount_cents : line.amount_cents;
+    // A LODGEMENT target must exist (SF-2g round 2); an unknown one, like one the caller's branch does not reach,
+    // answers as a missing target, with nothing written.
+    if (input.target_type === "LODGEMENT" && !world.lodgements.some((l) => l.id === input.target_ref_id)) return clientError(404, "not found");
     // A PAYMENT target is claimed in the same step (received to deposited); the others claim nothing.
     if (input.target_type === "PAYMENT" && input.target_ref_id) {
       const payment = world.payments.find((p) => p.id === input.target_ref_id && p.status === "RECEIVED");

@@ -254,6 +254,9 @@ test("a manual match pairs a line to a payment or a journal, the refusals come i
   assert.ok(gone.json.error.includes(": a payment that cannot be found (claimed 0 of 1)"), `the claim sentence names the payment in words and the count: ${gone.json.error}`);
   assert.ok(!gone.json.error.includes("b9000000-"), `the claim sentence never carries an id: ${gone.json.error}`);
   assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "UNMATCHED", "a refused claim leaves the line unmatched");
+  // A lodgement target that is not there (or not in the caller's reach) answers as a missing target.
+  refused(await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "LODGEMENT", target_ref_id: "b9000000-0000-4000-8000-0000000000ee" }), 404, "not found");
+  assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "UNMATCHED", "a refused lodgement target leaves the line unmatched");
   const paid = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
   assert.equal(paid.status, 201);
   holds("BankRecMatch", paid.json);
