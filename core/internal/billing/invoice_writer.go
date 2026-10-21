@@ -1076,6 +1076,20 @@ SELECT id::text, invoice_no::text, doc_type, customer_id::text, order_id::text, 
 // -- small shared helpers (this file + credit_memo.go) ------------------------------------------
 
 // inTx runs fn in a transaction, rolling back on any error.
+// branchOrgID reads the org a branch's location carries (nil when the location has none yet: a box that has not been
+// provisioned). It sits in this file, beside the invoice writer's own org stamp, because the locations anchor read is
+// allowlisted here (tablegate); the credit memo takes its org through it.
+func branchOrgID(ctx context.Context, tx pgx.Tx, branchID string) (any, error) {
+	var org *string
+	if err := tx.QueryRow(ctx, `SELECT org_id::text FROM locations WHERE id = $1::uuid`, branchID).Scan(&org); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("billing: read the branch's org: %w", err)
+	}
+	if org == nil {
+		return nil, nil
+	}
+	return *org, nil
+}
+
 func (w *InvoiceWriter) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {

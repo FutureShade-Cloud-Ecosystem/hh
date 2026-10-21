@@ -38,6 +38,81 @@ func NewReversalHandler(svc *ReverseService, log *slog.Logger) *ReversalHandler 
 // stops an in-process caller that bypassed HTTP, and neither is a substitute for the other.
 func (h *ReversalHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/payments/{id}/reverse", g.RequireManager(h.staff(h.reverse)))
+	// SF-2l: the money a reversal holds in 2310, applied to invoices of the same customer.
+	r.Handle("POST /api/v1/ar/payments/{id}/reapply", g.RequireManager(h.staff(h.reapply)))
+	r.Handle("GET /api/v1/ar/payments/{id}/held", g.RequireManager(h.staff(h.held)))
+}
+
+func (h *ReversalHandler) held(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	got, err := h.svc.Held(r.Context(), r.PathValue("id"), sc.IsManager(), sc.CanAccessBranch)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "payment not found")
+			return
+		}
+		h.log.Warn("payment held read failed", "payment_id", r.PathValue("id"), "err", err)
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, got)
+}
+
+func (h *ReversalHandler) reapply(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var req struct {
+		Reason         string `json:"reason"`
+		IdempotencyKey string `json:"idempotency_key"`
+		Allocations    []struct {
+			InvoiceID   string `json:"invoice_id"`
+			AmountCents int64  `json:"amount_cents"`
+		} `json:"allocations"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	allocs := make([]Allocation, 0, len(req.Allocations))
+	for _, a := range req.Allocations {
+		allocs = append(allocs, Allocation{InvoiceID: a.InvoiceID, AmountCents: a.AmountCents})
+	}
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	res, err := h.svc.Reapply(r.Context(), ReapplyInput{
+		PaymentID:       r.PathValue("id"),
+		Reason:          req.Reason,
+		ActorID:         sc.UserID,
+		IdempotencyKey:  req.IdempotencyKey,
+		Allocations:     allocs,
+		IsManager:       sc.IsManager(),
+		CanAccessBranch: sc.CanAccessBranch,
+	})
+	if err != nil {
+		var noInvoice NoSuchInvoiceError
+		var replay ReplayConflictError
+		var bad httpx.BadRequestError
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "payment not found")
+		case errors.As(err, &noInvoice):
+			httpx.Error(w, http.StatusNotFound, "invoice not found: "+noInvoice.InvoiceID)
+		case errors.As(err, &replay):
+			httpx.Error(w, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrNotReapplicable), errors.Is(err, ErrReapplyOverHeld):
+			// 409, not 400: the request was well formed and the state of the held money says no.
+			httpx.Error(w, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrReapplyReasonRequired), errors.As(err, &bad):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			h.log.Warn("payment re-application failed", "payment_id", r.PathValue("id"), "err", err)
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, res)
 }
 
 func (h *ReversalHandler) reverse(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

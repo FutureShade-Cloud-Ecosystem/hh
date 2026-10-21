@@ -30,6 +30,9 @@ func TestCensus_ReceivablesWorkLevelRoutes(t *testing.T) {
 		// The bounced queue lists payments (number, method, amount): the same trail, the same level.
 		{"GET", "/api/v1/ar/bounced", "work", "counter-till,money-desk"},
 		{"POST", "/api/v1/ar/payments/{id}/reverse", "manage", "money-desk"},
+		// SF-2l: applying the money a reversal holds is a manager act, like the reversal itself.
+		{"POST", "/api/v1/ar/payments/{id}/reapply", "manage", "money-desk"},
+		{"GET", "/api/v1/ar/payments/{id}/held", "manage", "money-desk"},
 	}
 	for _, w := range want {
 		found := false
