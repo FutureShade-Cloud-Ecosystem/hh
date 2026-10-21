@@ -510,13 +510,17 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 			perLineTax = moneyutil.AllocateLargestRemainder(plan.tax, weights)
 		}
 		var id, no string
+		// The memo's org is its branch's (SF-2p), the org the staff feed fences on (`i.org_id = $1`; the sync
+		// handler filters on the caller's org, which is the branch location's), so Counter Till serves it. The seq
+		// is drawn by 0422's trg_sync_seq_draw on this INSERT; no explicit draw is added here.
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id)
+                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
 VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
-        $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10)
+        $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
+        (SELECT org_id FROM locations WHERE id = $3::uuid))
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,

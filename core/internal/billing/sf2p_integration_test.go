@@ -124,9 +124,12 @@ func TestIntegration_SF2p_TheBackfillStampsANullOrgInvoiceAndReServesIt(t *testi
 	if err := tx.QueryRow(ctx, `SELECT org_id::text, seq, (org_id = $2::uuid AND seq IS NOT NULL) FROM invoices WHERE id = $1::uuid`, id, testkit.OrgNorthID).Scan(&org, &seq, &visible); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	t.Logf("after 0432: org %v seq %v (before: seq %v)", org, seq, seqBefore)
+	if org == nil || seq == nil {
+		t.Fatalf("after 0432 the invoice carries org %v and seq %v", org, seq)
+	}
+	t.Logf("after 0432: org %s seq %d", *org, *seq)
 	if !visible || (seqBefore != nil && *seq <= *seqBefore) {
-		t.Errorf("the backfilled invoice is not served on the staff arm: org %v, seq %v (before %v)", org, seq, seqBefore)
+		t.Errorf("the backfilled invoice is not served on the staff arm: org %s, seq %d", *org, *seq)
 	}
 	var nulls int
 	_ = tx.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE org_id IS NULL`).Scan(&nulls)
