@@ -2,6 +2,7 @@ package bankrec
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -156,6 +157,11 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 			continue
 		}
 		m, perr := s.persistProposal(ctx, prop, matchedBy, reach)
+		if errors.Is(perr, errMonthCompleted) {
+			// A line imported into a signed off month stays unmatched; the run goes on.
+			summary.Unmatched++
+			continue
+		}
 		if perr != nil {
 			return summary, perr
 		}

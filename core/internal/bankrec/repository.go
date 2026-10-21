@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -130,6 +131,24 @@ func (r *Repository) ImportLines(ctx context.Context, accountID, profileID, file
 		return "", 0, fmt.Errorf("bankrec: begin import: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// Each month the file touches is locked in the shared form of the reconciliation key, in ascending order, so an
+	// import serialises against a completion of that month as CompleteReconciliation's comment says (SF-2j round 2).
+	months := map[string][2]int{}
+	var keys []string
+	for _, l := range lines {
+		k := fmt.Sprintf("%04d-%02d", l.TxnDate.Year(), int(l.TxnDate.Month()))
+		if _, ok := months[k]; !ok {
+			months[k] = [2]int{l.TxnDate.Year(), int(l.TxnDate.Month())}
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, lkerr := lockReconMonthShared(ctx, tx, accountID, months[k][0], months[k][1]); lkerr != nil {
+			return "", 0, lkerr
+		}
+	}
 
 	importID, err = r.InsertImportAudit(ctx, tx, accountID, profileID, filename, ImportStatusImported, "", len(lines), importedBy)
 	if err != nil {
@@ -311,6 +330,28 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		return "", fmt.Errorf("bankrec: begin match: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// The lock order of every bankrec writer (LOCK-ORDER.md): the reconciliation row of the line's month FOR SHARE and
+	// the shared advisory key FIRST, before the line UPDATE and before any payment row. A line inside a COMPLETED month
+	// is refused: a line imported after the sign off would otherwise post a clearing into a signed off month. A line
+	// that does not exist falls through to the UPDATE's own refusal below.
+	var lineAcct string
+	var lineYear, lineMonth int
+	lerr0 := tx.QueryRow(ctx,
+		`SELECT bank_account_id::text, EXTRACT(YEAR FROM txn_date)::int, EXTRACT(MONTH FROM txn_date)::int FROM bank_statement_lines WHERE id::text = $1`,
+		m.StatementLineID).Scan(&lineAcct, &lineYear, &lineMonth)
+	if lerr0 != nil && !errors.Is(lerr0, pgx.ErrNoRows) {
+		return "", fmt.Errorf("bankrec: read the line to match: %w", lerr0)
+	}
+	if lerr0 == nil {
+		status, lkerr := lockReconMonthShared(ctx, tx, lineAcct, lineYear, lineMonth)
+		if lkerr != nil {
+			return "", lkerr
+		}
+		if status == ReconCompleted {
+			return "", errMonthCompleted
+		}
+	}
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE bank_statement_lines SET status = 'MATCHED' WHERE id = $1 AND status = 'UNMATCHED'`, m.StatementLineID)
@@ -635,6 +676,10 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	}
 	return targetType, targetRef, amount, nil
 }
+
+// errMonthCompleted refuses a match of a line inside a COMPLETED reconciliation's month. The auto run skips such a
+// line instead of stopping.
+var errMonthCompleted = conflict("bankrec: that statement line sits in a month that is already reconciled and completed, so it cannot be matched")
 
 // reconKey is the advisory key CompleteReconciliation and every other writer that must see a month's status share. The
 // prefix keeps it from ever hashing like another module's text (SF-2j round 2).
