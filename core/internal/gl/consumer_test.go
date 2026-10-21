@@ -260,7 +260,7 @@ func healthyRules() []RuleRef {
 		"payment.received":       {"cash", "ar", "card_clearing"},
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
-		"payment.reversed":       {"ar", "bank", "undeposited", "card_clearing"},
+		"payment.reversed":       {"ar", "refund_payable"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
@@ -313,32 +313,36 @@ func TestAC14_TillOverShort(t *testing.T) {
 	}
 }
 
-// SF-2d, the payment reversal's legs: Dr AR / Cr the account the original receipt's cash leg sits on now, chosen the
-// way the bounce chooses it (DEPOSITED to the bank, else card to clearing, else undeposited funds), the full amount,
-// and one journal however often the event is delivered.
+// SF-2d round 4 (ruled): every payment.reversed is Dr AR / Cr 2310 refund_payable, the full amount, whatever the
+// tender, the session, the register or the deposit status; one journal however often the event is delivered; and the
+// account never depends on a status the payload or the payment reader carries.
 func TestPaymentReversedLegs(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
-		name, method, status, want string
+		name, method, status string
+		payload              map[string]any
 	}{
-		{"cheque undeposited", "CHEQUE", "RECEIVED", "1020"},
-		{"card in clearing", "CARD", "RECEIVED", "1010"},
-		{"card deposited", "CARD", "DEPOSITED", "1000"},
-		{"cheque deposited", "CHEQUE", "DEPOSITED", "1000"},
+		{"cheque undeposited", "CHEQUE", "RECEIVED", map[string]any{}},
+		{"card in clearing", "CARD", "RECEIVED", map[string]any{}},
+		{"card deposited", "CARD", "DEPOSITED", map[string]any{"original_cleared": true, "original_status": "DEPOSITED"}},
+		{"cheque deposited", "CHEQUE", "DEPOSITED", map[string]any{"original_cleared": true}},
+		{"cash", "CASH", "RECEIVED", map[string]any{"original_cleared": false}},
 	}
 	for _, c := range cases {
 		f := newFakeStore()
 		svc := newTestService(f).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: c.method, Status: c.status, AmountCents: 12000}})
+		payload := map[string]any{"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": c.method, "branch_id": "b1"}
+		for k, v := range c.payload {
+			payload[k] = v
+		}
 		for i := 0; i < 2; i++ { // delivered twice
-			if err := svc.consume(ctx, ev("payment.reversed", map[string]any{
-				"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": c.method,
-			})); err != nil {
+			if err := svc.consume(ctx, ev("payment.reversed", payload)); err != nil {
 				t.Fatalf("%s: consume: %v", c.name, err)
 			}
 		}
 		d := f.lastInserted()
 		wantLeg(t, d, "1100", 12000, 0)
-		wantLeg(t, d, c.want, 0, 12000)
+		wantLeg(t, d, "2310", 0, 12000)
 		if !d.balanced() {
 			t.Fatalf("%s: unbalanced", c.name)
 		}
@@ -346,6 +350,19 @@ func TestPaymentReversedLegs(t *testing.T) {
 			t.Fatalf("%s: key %q", c.name, d.IdempotencyKey)
 		}
 	}
+	// An old payload (no branch, no status facts) posts the same way: the account never read the status.
+	fOld := newFakeStore()
+	svcOld := newTestService(fOld).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: "CARD", Status: "DEPOSITED", AmountCents: 500}})
+	if err := svcOld.consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev9", "reverses_payment_id": "orig9", "amount_cents": 500})); err != nil {
+		t.Fatalf("old payload: %v", err)
+	}
+	wantLeg(t, fOld.lastInserted(), "2310", 0, 500)
+	// A complete payload needs no payment reader at all.
+	fNo := newFakeStore()
+	if err := newTestService(fNo).consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev8", "reverses_payment_id": "orig8", "amount_cents": 700, "method": "CHEQUE", "branch_id": "b1"})); err != nil {
+		t.Fatalf("a complete payload with no reader: %v", err)
+	}
+	wantLeg(t, fNo.lastInserted(), "2310", 0, 700)
 	// A malformed event is an error, never a silent ack.
 	svc := newTestService(newFakeStore()).WithPaymentReader(fakePaymentReader{})
 	if err := svc.consume(ctx, ev("payment.reversed", map[string]any{"payment_id": "rev1"})); err == nil {
@@ -353,7 +370,7 @@ func TestPaymentReversedLegs(t *testing.T) {
 	}
 }
 
-// The topic is posted by the consumer and its four roles are required at boot.
+// The topic is posted by the consumer and its two roles are required at boot.
 func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
 	found := false
 	for _, topic := range PostedTopics {
@@ -364,7 +381,7 @@ func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
 	if !found {
 		t.Fatal("payment.reversed must be a topic the posting consumer owns")
 	}
-	for _, role := range []string{"ar", "bank", "undeposited", "card_clearing"} {
+	for _, role := range []string{"ar", "refund_payable"} {
 		f := newFakeStore()
 		svc := newTestService(f)
 		var without []RuleRef
@@ -379,43 +396,4 @@ func TestPaymentReversed_IsAPostedTopicWithRequiredRules(t *testing.T) {
 			t.Fatalf("a missing payment.reversed %s rule must fail the boot validation", role)
 		}
 	}
-}
-
-// SF-2d round 2: the account is read from the payload (fixed when the reversal happened), not from the payment's
-// status when the consumer runs; a payload without the new facts (an older row) falls back to the read.
-func TestPaymentReversed_PostsFromThePayloadNotTheCurrentStatus(t *testing.T) {
-	ctx := context.Background()
-	// The payload says cleared; the payment now reads RECEIVED (an unmatch got in): the bank is credited.
-	f := newFakeStore()
-	svc := newTestService(f).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "other", Method: "CARD", Status: "RECEIVED", AmountCents: 1}})
-	if err := svc.consume(ctx, ev("payment.reversed", map[string]any{
-		"payment_id": "rev1", "reverses_payment_id": "orig1", "amount_cents": 12000, "method": "CARD",
-		"original_cleared": true, "branch_id": "b1",
-	})); err != nil {
-		t.Fatalf("consume: %v", err)
-	}
-	d := f.lastInserted()
-	wantLeg(t, d, "1000", 0, 12000)
-	if d.BranchID != "b1" {
-		t.Fatalf("the journal took branch %q, want the payload's b1", d.BranchID)
-	}
-	// The payload says not cleared; the payment reads DEPOSITED: the card clearing account is credited.
-	f2 := newFakeStore()
-	svc2 := newTestService(f2).WithPaymentReader(fakePaymentReader{facts: PaymentFacts{BranchID: "b1", Method: "CARD", Status: "DEPOSITED", AmountCents: 12000}})
-	if err := svc2.consume(ctx, ev("payment.reversed", map[string]any{
-		"payment_id": "rev2", "reverses_payment_id": "orig2", "amount_cents": 12000, "method": "CARD",
-		"original_cleared": false, "branch_id": "b1",
-	})); err != nil {
-		t.Fatalf("consume: %v", err)
-	}
-	wantLeg(t, f2.lastInserted(), "1010", 0, 12000)
-	// A complete payload needs no payment reader at all.
-	f3 := newFakeStore()
-	if err := newTestService(f3).consume(ctx, ev("payment.reversed", map[string]any{
-		"payment_id": "rev3", "reverses_payment_id": "orig3", "amount_cents": 500, "method": "CHEQUE",
-		"original_cleared": false, "branch_id": "b1",
-	})); err != nil {
-		t.Fatalf("a complete payload with no reader: %v", err)
-	}
-	wantLeg(t, f3.lastInserted(), "1020", 0, 500)
 }

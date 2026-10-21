@@ -305,7 +305,7 @@ func TestIntegration_LockOrder_BankMatchBesideReversalOfTheSamePaymentReachesThe
 			loPoolSizes(t, func(t *testing.T, size int32) {
 				r := newLORig(t, size)
 				inv := r.invoice("SB", 1_000_000)
-				p := r.payOnce(inv, 10_000)
+				p := r.chequeOnce(inv, 10_000)
 				r.stampOrg()
 				line := r.statementLine(10_000)
 				f := r.feeds()

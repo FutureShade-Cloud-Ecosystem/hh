@@ -415,35 +415,31 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 }
 
 // paymentReversedPayload is what payments/reversal.go emits in the reversal's own transaction: the reversing row's
-// id, the original's id, the full amount, the original's method.
+// id, the original's id, the full amount, the original's method, and (round 2) the original's status facts and
+// branch read under the payment row lock, kept for the audit.
 type paymentReversedPayload struct {
 	PaymentID         string `json:"payment_id"`          // the reversing (VOID) payments row
 	ReversesPaymentID string `json:"reverses_payment_id"` // the original receipt
 	AmountCents       int64  `json:"amount_cents"`
 	Method            string `json:"method"`
-	// The facts fixed under the payment row lock when the reversal was written (SF-2d round 2). A row written
-	// before they existed carries neither, and the builder falls back to reading the payment.
-	OriginalCleared *bool  `json:"original_cleared"`
-	BranchID        string `json:"branch_id"`
+	BranchID          string `json:"branch_id"`
 }
 
-// buildPaymentReversed books the reversal of a received payment: Dr AR / Cr the account the original receipt's cash
-// leg sat on WHEN THE REVERSAL HAPPENED, chosen the way buildPaymentBounced chooses it: 1000 bank if the original
-// was DEPOSITED (a bank match had moved it out of clearing), else 1010 card clearing for a card, else 1020
-// undeposited funds. The payload carries the original's cleared state and branch, read by reversal.go under the
-// payment row lock, so the account does not depend on when this consumer runs: reading the payment's status here
-// would give a different answer before and after an unmatch. (An unmatch of a reversed payment is refused in
-// bankrec, so the status cannot move afterwards either.)
+// buildPaymentReversed books the reversal of a received payment: Dr AR / Cr 2310 refund_payable, the money held for
+// the customer, for EVERY reversal, whatever the tender, session, register or deposit status (SF-2d round 4, ruled).
 //
-// FALLBACK for a row that predates the payload fields (a DEAD row the boot requeue picks up): the payment is read
-// through the sibling payment seam, as before. That is safe for the rows that exist: the topic was never posted
-// before 0426, so every older row is a DEAD row on a database that has had reversals, and for those the current
-// status is the best fact left. It is NOT safe for one case: an older reversal whose original was unmatched after
-// it, which the refusal now prevents but could already have happened; that row posts to the account the status
-// reads now. No real data holds such a row (the topic has only been live on the demo box).
+// Why never the receipt's own account: a reversal leaves the original payment RECEIVED, and the till's expected
+// tenders count every RECEIVED payment of the session. So the money is either still in the drawer, where it is
+// lodged and the bank match clears 1020, or gone unrecorded, where the count shows the shortage and the close posts
+// Dr 6350 / Cr 1020. Crediting 1020 at the reversal credits it twice in either case. 2310 holds the amount until the
+// act that moves the money clears it (re-application, pay out or write off). The account therefore depends on no
+// status, no deposit, no payload fact: there is no fallback by status, and an old payload posts the same way.
+// payment.bounced is its own rule (that money never arrived) and is untouched.
 //
 // The reversal is the FULL amount of the original against AR, as the subledger's contra rows are (reversal.go gives
 // back every allocation of the payment): a partly allocated or multi invoice original reverses the same one amount.
+// The branch (a fact of the payment, not of its status) comes from the payload, and for a row written before the
+// payload carried it, from the payment reader; the amount and method likewise.
 func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p paymentReversedPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -453,27 +449,16 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		return journalDraft{}, false, fmt.Errorf("gl: payment.reversed missing payment_id or reverses_payment_id")
 	}
 	amount, method, branch := p.AmountCents, p.Method, p.BranchID
-	cleared := false
-	if p.OriginalCleared != nil && branch != "" {
-		cleared = *p.OriginalCleared
-	} else {
-		if s.payments == nil {
-			return journalDraft{}, false, fmt.Errorf("gl: payment reader not configured")
-		}
+	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
 		f, err := s.payments.PaymentForGL(ctx, p.ReversesPaymentID)
 		if err != nil {
 			return journalDraft{}, false, err
 		}
-		if p.OriginalCleared != nil {
-			cleared = *p.OriginalCleared
-		} else {
-			cleared = f.Status == "DEPOSITED"
+		if amount == 0 {
+			amount = f.AmountCents
 		}
 		if branch == "" {
 			branch = f.BranchID
-		}
-		if amount == 0 {
-			amount = f.AmountCents
 		}
 		if method == "" {
 			method = f.Method
@@ -491,14 +476,7 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
-	cashRole := "undeposited"
-	switch {
-	case cleared:
-		cashRole = "bank"
-	case method == "CARD":
-		cashRole = "card_clearing"
-	}
-	cashCode, err := pick(rules, et, cashRole)
+	refundCode, err := pick(rules, et, "refund_payable")
 	if err != nil {
 		return journalDraft{}, false, err
 	}
@@ -511,7 +489,7 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		OccurredAt:     s.clock(),
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),
-			cr(cashCode, amount, "reverse receipt ("+method+")"),
+			cr(refundCode, amount, "held for the customer (payment reversed)"),
 		},
 	}, true, nil
 }
@@ -1150,7 +1128,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"payment.received":       {"cash", "ar", "card_clearing"},
 		"tax.relief.assessed":    {"hst_full", "fn_relief"},
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
-		"payment.reversed":       {"ar", "bank", "undeposited", "card_clearing"},
+		"payment.reversed":       {"ar", "refund_payable"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},

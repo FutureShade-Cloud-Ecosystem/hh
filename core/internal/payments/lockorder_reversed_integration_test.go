@@ -21,11 +21,13 @@ package payments_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
@@ -42,6 +44,26 @@ func isReversedRefusal(err error, p payments.Payment) bool {
 	return strings.Contains(err.Error(), "payment already claimed, reversed or not RECEIVED: ") &&
 		strings.Contains(msg, strings.ToLower(p.PaymentNo)) &&
 		!strings.Contains(msg, strings.ToLower(p.ID))
+}
+
+// chequeOnce takes a CHEQUE payment through the AR register on one invoice and returns it. A reversed CARD payment is
+// matchable since SF-2d round 4 (the processor settles the capture anyway); SF-2b's rule, a reversed payment is never
+// matched, holds for every other tender, so the legs of that rule take a cheque.
+func (r *loRig) chequeOnce(invoiceID string, cents int64) payments.Payment {
+	r.t.Helper()
+	if _, err := r.register().RecordPayment(context.Background(), billing.ReceiptInput{
+		InvoiceID: invoiceID, Method: "CHEQUE", AmountCents: cents, Reference: "chq lo", IdempotencyKey: fmt.Sprintf("lo-%d", time.Now().UnixNano()),
+	}); err != nil {
+		r.t.Fatalf("seed cheque: %v", err)
+	}
+	var p payments.Payment
+	if err := r.obs.QueryRow(context.Background(),
+		`SELECT p.id::text, p.payment_no::text, p.amount_cents FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		  WHERE a.invoice_id = $1::uuid AND p.reverses_payment_id IS NULL`, invoiceID).Scan(&p.ID, &p.PaymentNo, &p.AmountCents); err != nil {
+		r.t.Fatalf("find the cheque: %v", err)
+	}
+	p.Method = "CHEQUE"
+	return p
 }
 
 func (r *loRig) reverse(paymentID string) error {
@@ -76,7 +98,7 @@ func TestIntegration_LockOrder_ReversalBesideBankMatchOfTheSamePayment(t *testin
 	t.Run("reversal first: the match is refused", func(t *testing.T) {
 		loPoolSizes(t, func(t *testing.T, size int32) {
 			r := newLORig(t, size)
-			p := r.payOnce(r.invoice("RV1", 1_000_000), 10_000)
+			p := r.chequeOnce(r.invoice("RV1", 1_000_000), 10_000)
 			line := r.statementLine(10_000)
 			r.armSeqWindow("payments")
 			revErr := make(chan error, 1)
@@ -106,7 +128,7 @@ func TestIntegration_LockOrder_ReversalBesideBankMatchOfTheSamePayment(t *testin
 	t.Run("match first: the reversal proceeds (reversal.go refuses only a reversed, reversing or VOID payment)", func(t *testing.T) {
 		loPoolSizes(t, func(t *testing.T, size int32) {
 			r := newLORig(t, size)
-			p := r.payOnce(r.invoice("RV2", 1_000_000), 10_000)
+			p := r.chequeOnce(r.invoice("RV2", 1_000_000), 10_000)
 			line := r.statementLine(10_000)
 			r.armSeqWindow("payments")
 			matchErr := make(chan error, 1)
@@ -175,7 +197,7 @@ func TestIntegration_MarkDepositedRefusesAReversedPaymentAndKeepsTheReplayNoOp(t
 // write changes no row, so the payments feed is not told anything.
 func TestIntegration_AReversedPaymentCannotBeMatchedOrDeposited(t *testing.T) {
 	r := newLORig(t, 4)
-	p := r.payOnce(r.invoice("PL1", 1_000_000), 10_000)
+	p := r.chequeOnce(r.invoice("PL1", 1_000_000), 10_000)
 	line := r.statementLine(10_000)
 	if err := r.reverse(p.ID); err != nil {
 		t.Fatalf("reverse: %v", err)
@@ -249,8 +271,8 @@ func TestIntegration_MarkDepositedReplayAfterDepositAndReversalIsRefused(t *test
 // payment answers with the reversed one's id, not the live one's, and moves neither (the claim rolls back whole).
 func TestIntegration_ClaimRefusalNamesOnlyThePaymentsThatDidNotMove(t *testing.T) {
 	r := newLORig(t, 4)
-	live := r.payOnce(r.invoice("NM1", 1_000_000), 10_000)
-	gone := r.payOnce(r.invoice("NM2", 1_000_000), 10_000)
+	live := r.chequeOnce(r.invoice("NM1", 1_000_000), 10_000)
+	gone := r.chequeOnce(r.invoice("NM2", 1_000_000), 10_000)
 	if err := r.reverse(gone.ID); err != nil {
 		t.Fatalf("reverse: %v", err)
 	}

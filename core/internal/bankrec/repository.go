@@ -343,12 +343,17 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 				hidden[strings.ToLower(pid)] = true
 			}
 		}
+		// A reversed payment is refused here (SF-2b) EXCEPT a CARD (SF-2d round 4, ruling 52.2): the reversal is a ledger
+		// act that does not touch the gateway, so the processor settles the captured card anyway, and the settlement
+		// line has to be explained. The money did arrive; the claim moves the payment to DEPOSITED and the match posts
+		// the clearing (Dr 1000 / Cr 1010) that the reversal's credit to 2310 leaves standing. Every other tender
+		// that was reversed (cash, cheque, EFT) is never matched: no deposit of it can be real.
 		rows, cerr := tx.Query(ctx,
 			`UPDATE payments
 			   SET status = 'DEPOSITED',
 			       metadata = metadata || jsonb_build_object('bank_statement_line_id', $2::text),
 			       updated_at = now()
-			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL
+			 WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND (reversed_at IS NULL OR method = 'CARD')
 			 RETURNING id::text`,
 			claimable, m.StatementLineID)
 		if cerr != nil {
