@@ -296,6 +296,10 @@ test("an undo returns the line and the payment, keeps the history, and a second 
   const again = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
   assert.equal(again.status, 201);
   assert.equal((await ctl("GET", `/api/v1/bankrec/matches?statement_line_id=${wire.id}`)).json.length, 2);
+  // A deposit whose payment was reversed cannot be unmatched: refused in plain words, and nothing changes.
+  await fetch(`${base}/_stub/reverse-payment`, { method: "POST", body: JSON.stringify({ payment_id: IDS.paymentWire }) });
+  refused(await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: again.json.id }), 409, "cannot be unmatched");
+  assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "MATCHED", "a refused unmatch leaves the line matched");
 });
 
 test("the rules answer a bare array, a new version retires the old, and the spec is the core's whole object", async () => {

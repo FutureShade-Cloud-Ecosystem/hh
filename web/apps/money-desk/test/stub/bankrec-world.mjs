@@ -445,6 +445,10 @@ export function createBankrecWorld() {
     if (!UUID.test(input.match_id)) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
     const match = world.matches.find((m) => m.id === input.match_id && !m.unmatched_at);
     if (match === undefined) return clientError(409, `match ${input.match_id} is not live (already unmatched)`);
+    // A deposit whose payment was reversed cannot be unmatched: the reversal already took the money back out.
+    if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed)) {
+      return clientError(409, "bankrec: this deposit cannot be unmatched: the payment was reversed, so its money already left through the reversal");
+    }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
     if (line !== undefined && line.status === "MATCHED") line.status = "UNMATCHED";
@@ -534,6 +538,14 @@ export function createBankrecWorld() {
     const method = req.method;
     if (method === "POST" && path === "/_stub/reset") {
       reset();
+      return { status: 200, body: { ok: true } };
+    }
+    // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
+    if (method === "POST" && path === "/_stub/reverse-payment") {
+      const id = JSON.parse(bodyText || "{}").payment_id;
+      const payment = world.payments.find((p) => p.id === id);
+      if (payment === undefined) return { status: 404, body: { error: "not found" } };
+      payment.reversed = true;
       return { status: 200, body: { ok: true } };
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;

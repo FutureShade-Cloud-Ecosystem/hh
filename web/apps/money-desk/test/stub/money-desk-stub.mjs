@@ -977,6 +977,11 @@ async function handle(req, res) {
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
   }
+  if (method === "POST" && path === "/_stub/reverse-payment") {
+    const body = await readBody(req);
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (path.startsWith("/api/v1/assist/") || path.startsWith("/_stub/assist")) {
     if (path.startsWith("/api/v1/") && (req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;

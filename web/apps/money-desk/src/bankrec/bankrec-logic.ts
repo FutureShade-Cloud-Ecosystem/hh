@@ -197,6 +197,9 @@ export function refusalWords(action: string, message: string, status: number): s
     return `Payments ${ids.join(", ")} are not waiting to be deposited: for each, ${causes}`;
   }
   if (lower.includes("already has a live match")) return "That target is already matched to this line.";
+  if (lower.includes("cannot be unmatched")) {
+    return "This deposit cannot be undone: the payment was reversed, so its money already left through the reversal.";
+  }
   if (lower.includes("is not live (already unmatched)")) return "That match was already undone. Reload to see where the line stands.";
   if (lower.includes("another approved version")) return "Another version of this rule was approved a moment ago. Reload the rules and try again.";
   if (lower.includes("spec.kind must be one of")) return "Pick one of the three match kinds.";
