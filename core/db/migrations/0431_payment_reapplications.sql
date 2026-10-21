@@ -36,6 +36,10 @@ CREATE INDEX idx_payment_reapplications_payment ON payment_reapplications(paymen
 CREATE INDEX idx_payment_reapplications_invoice ON payment_reapplications(invoice_id);
 CREATE INDEX idx_payment_reapplications_batch ON payment_reapplications(batch_id);
 
+-- LOCK ORDER: the guard takes the payment row at the insert, so a writer must already hold the payment row before it
+-- locks any invoice (payments/LOCK-ORDER.md: the payment row, then the invoice rows ascending, then the counters). A
+-- call site that locked invoices first and then inserted here would invert that order against the reversal, the bounce
+-- and the service, each of which takes the payment row first.
 CREATE FUNCTION payment_reapplications_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   v_amount   BIGINT;

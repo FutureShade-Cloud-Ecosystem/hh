@@ -72,6 +72,9 @@ export interface OfficeHost {
 export interface ReapplyView {
   readonly paymentId: string;
   readonly held: PaymentsHeld | "loading" | "error";
+  /** The invoice picked to take the money, with its open balance as the screen drew it ("" and null until one is picked). */
+  readonly invoiceId: string;
+  readonly balanceCents: number | null;
 }
 
 /** The panel an invoice's extra actions open, and what it is about. */
@@ -590,16 +593,16 @@ export class OfficeDesk {
   }
 
   /** Opens the form for a reversed payment: the core is asked what it still holds, and the form waits on that figure. */
-  async #startReapply(paymentId: string): Promise<void> {
-    this.#reapplying = { paymentId, held: "loading" };
+  async #startReapply(paymentId: string, invoiceId: string, balanceCents: number | null): Promise<void> {
+    this.#reapplying = { paymentId, held: "loading", invoiceId, balanceCents };
     this.#host.repaint();
     const got = await this.#api.heldFor(paymentId);
     if (this.#reapplying === null || this.#reapplying.paymentId !== paymentId) return;
     if (!got.ok) {
-      this.#reapplying = { paymentId, held: "error" };
+      this.#reapplying = { paymentId, held: "error", invoiceId, balanceCents };
       this.#fail("reapply", got);
     } else {
-      this.#reapplying = { paymentId, held: got.value };
+      this.#reapplying = { paymentId, held: got.value, invoiceId, balanceCents };
     }
     this.#host.repaint();
   }
@@ -609,15 +612,14 @@ export class OfficeDesk {
     if (this.#busy) return;
     const view = this.#reapplying;
     if (view === null || view.paymentId !== paymentId || typeof view.held === "string") return;
-    // The picker's value is the invoice's id and its open balance as the screen drew it, "id:cents": the screens bind
-    // no value beyond the field, and the balance only bounds what the press will send, the core judges it again.
-    const [invoiceId = "", balance = ""] = this.#host.field("reapply-invoice").split(":");
+    // The invoice is the one picked (a press on its button): the id and its open balance as the screen drew it. The
+    // balance only bounds what the press will send, the core judges it again.
     const check = reapplyCheck({
-      invoiceId,
+      invoiceId: view.invoiceId,
       amountText: this.#host.field("reapply-amount"),
       reason: this.#host.field("reapply-reason"),
       heldCents: view.held.held_cents,
-      balanceCents: balance === "" ? null : Number(balance),
+      balanceCents: view.balanceCents,
     });
     if (!check.ok) return this.#stop(check.words);
     const attempt = `reapply:${paymentId}:${check.invoiceId}:${check.amountCents}`;
@@ -742,7 +744,13 @@ export class OfficeDesk {
         void this.#reversePayment(attr("data-payment-id"), attr("data-payment-no"));
         return true;
       case "reapply-start":
-        void this.#startReapply(attr("data-payment-id"));
+        void this.#startReapply(attr("data-payment-id"), attr("data-invoice-id"), attr("data-balance-cents") === "" ? null : Number(attr("data-balance-cents")));
+        return true;
+      case "reapply-pick":
+        if (this.#reapplying !== null) {
+          this.#reapplying = { ...this.#reapplying, invoiceId: attr("data-invoice-id"), balanceCents: Number(attr("data-balance-cents")) };
+          this.#host.repaint();
+        }
         return true;
       case "reapply-cancel":
         this.#reapplying = null;

@@ -11,9 +11,12 @@ package payments_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
@@ -444,5 +447,55 @@ func TestIntegration_Reapply_TheTableRefusesAnOverApplyWhoeverWritesIt(t *testin
 	}
 	if err := insert(1, "direct-more-"+w.r.suffix); err == nil {
 		t.Errorf("the table took a cent beyond the held amount")
+	}
+}
+
+// Another branch's invoice is refused in words ("in another branch than the payment": the 2310 liability sits in the
+// payment's branch and the journal carries one), and an invoice outside the caller's reach answers as missing. Both
+// write nothing, and the same payment's money still goes on an invoice of its own branch.
+func TestIntegration_Reapply_AnotherBranchAndAnOutOfReachInvoice(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.receipt("CHEQUE", 10_000)
+	inv := w.invoiceOf(orig)
+	var theirs string
+	other := uuid.NewString()
+	if _, err := w.r.obs.Exec(ctx, `INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name)
+		VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', 'RB'||$2, 'reapply other branch')`, other, w.r.suffix); err != nil {
+		t.Fatalf("seed a second branch: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.r.obs.Exec(c, `DELETE FROM invoices WHERE branch_id = $1::uuid`, other)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, other)
+	})
+	if err := w.r.obs.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
+		VALUES ('RB-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE + 30, 50000, 0, 50000, 50000, now()) RETURNING id::text`, w.r.suffix, w.r.custID, other).Scan(&theirs); err != nil {
+		t.Fatalf("seed the other branch's invoice: %v", err)
+	}
+	w.drain()
+	w.reverse(orig)
+	before := w.reapplyState(orig, inv, theirs)
+	apply := func(reach func(string) bool, key string) error {
+		reapplySeq++
+		_, err := w.reapplySvc(w.r.repo).Reapply(ctx, payments.ReapplyInput{
+			PaymentID: orig, Reason: "branch leg", ActorID: w.r.userID, IdempotencyKey: fmt.Sprintf("%s-%s-%d", key, w.r.suffix, reapplySeq),
+			Allocations: []payments.Allocation{{InvoiceID: theirs, AmountCents: 1_000}}, IsManager: true, CanAccessBranch: reach,
+		})
+		return err
+	}
+	if err := apply(func(string) bool { return true }, "wide"); err == nil || !strings.Contains(err.Error(), "in another branch than the payment") {
+		t.Errorf("another branch's invoice with reach over both answered %v, want the another branch words", err)
+	}
+	var missing payments.NoSuchInvoiceError
+	err := apply(func(b string) bool { return b != other }, "narrow")
+	if !errors.As(err, &missing) {
+		t.Errorf("an out of reach invoice answered %v, want it missing", err)
+	}
+	if after := w.reapplyState(orig, inv, theirs); after != before {
+		t.Errorf("a refused apply wrote: before %+v after %+v", before, after)
+	}
+	if _, err := w.reapplyOn(orig, payments.Allocation{InvoiceID: inv, AmountCents: 10_000}); err != nil {
+		t.Errorf("the payment's own branch was refused after the refusals: %v", err)
 	}
 }

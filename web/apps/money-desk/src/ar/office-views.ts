@@ -414,8 +414,11 @@ export function renderReapply(
   currentInvoiceId: string,
 ): TemplateResult {
   const view = om.reapplying;
+  const choices = open.filter((i) => i.balance_cents > 0);
   if (view === null || view.paymentId !== payment.payment_id) {
-    return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-start" data-payment-id="${payment.payment_id}">Apply its money</button>`;
+    // The invoice the panel is open on is picked to start with, when it is open: the id and balance ride data attributes.
+    const current = choices.find((i) => i.id === currentInvoiceId);
+    return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-start" data-payment-id="${payment.payment_id}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${current === undefined ? "" : String(current.balance_cents)}">Apply its money</button>`;
   }
   if (view.held === "loading") return html`<span class="dim small" role="status">Reading what is held.</span>`;
   if (view.held === "error") return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
@@ -423,20 +426,20 @@ export function renderReapply(
   if (held.held_cents <= 0) {
     return html`<span class="dim small" data-held>Nothing is held for this payment now.</span><button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
   }
-  const choices = open.filter((i) => i.balance_cents > 0);
   return html`
     <form class="held-form" aria-label="Apply held money to an invoice" data-reapply-form>
       <p class="callout" data-held><b>${formatMoney(held.held_cents)} is held for this customer.</b> The reversal put it back on their account as owing and kept the money. Putting it on an invoice settles that balance without taking the payment again.</p>
-      <div class="two">
-        <label>Invoice
-          <select data-field="reapply-invoice">
-            ${choices.length === 0 ? html`<option value="">No open invoice to put it on</option>` : choices.map((i) => html`<option value="${i.id}:${i.balance_cents}" ?selected=${i.id === currentInvoiceId}>${i.invoice_no} · ${formatMoney(i.balance_cents)}</option>`)}
-          </select>
-        </label>
-        <label>Amount
-          <input type="text" inputmode="decimal" data-field="reapply-amount" placeholder="Up to ${formatMoney(held.held_cents)}" autocomplete="off" />
-        </label>
+      <p class="dim small">Put it on</p>
+      <div class="row-actions" role="group" aria-label="Invoice to put it on" data-reapply-invoices>
+        ${choices.length === 0
+          ? html`<span class="dim small">No open invoice to put it on.</span>`
+          : choices.map(
+              (i) => html`<button type="button" class="btn ${i.id === view.invoiceId ? "btn-primary" : "btn-secondary"} small-btn" data-action="reapply-pick" data-invoice-id="${i.id}" data-balance-cents="${String(i.balance_cents)}" aria-pressed="${i.id === view.invoiceId ? "true" : "false"}">${i.invoice_no} · ${formatMoney(i.balance_cents)}</button>`,
+            )}
       </div>
+      <label>Amount <span class="dim small" data-held-up-to>(up to ${formatMoney(held.held_cents)})</span>
+        <input type="text" inputmode="decimal" data-field="reapply-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
       <label>Why
         <input type="text" data-field="reapply-reason" placeholder="Such as keyed on the wrong account" autocomplete="off" />
       </label>

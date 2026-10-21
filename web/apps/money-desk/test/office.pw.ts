@@ -357,7 +357,8 @@ test("a reversed payment's held money is put on an invoice, never more than is h
   const row = page.locator("[data-payment-row]", { hasText: "PAY-0101" });
   await row.getByRole("button", { name: "Apply its money" }).click();
   await expect(page.locator("[data-held]")).toContainText("$250.00 is held for this customer.");
-  await expect(page.locator("[data-field='reapply-invoice']")).toContainText("INV-1005");
+  // The invoice the panel is open on is picked to start with.
+  await expect(page.locator("[data-reapply-invoices] button[aria-pressed='true']")).toContainText("INV-1005");
   await noSidewaysScroll(page);
   // Checked before anything is sent.
   await page.getByRole("button", { name: "Apply to invoice" }).click();
