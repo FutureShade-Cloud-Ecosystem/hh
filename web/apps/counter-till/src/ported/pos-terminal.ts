@@ -6998,7 +6998,7 @@ ${this.renderFulfilTiles()}
     if (id === 'payment_now') {
       this.setUtil('Payment option selected: ACH first (no fee) or card (2.9% surcharge).');
     } else if (id === 'send_paylink') {
-      this.setUtil('Paylink sent to (619) 555-0142. Works with no sign in on phone.');
+      this.setUtil('Paylink sent to the owner phone on file. Works with no sign in on phone.');
     } else if (id === 'ask_override') {
       this.setUtil('Credit override request sent to controller with this order.');
     }

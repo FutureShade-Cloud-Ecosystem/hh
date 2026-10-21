@@ -556,6 +556,35 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
 });
 
+test("an unheld account's check is good standing and names no crew member the till was never given", async ({ page }) => {
+  await signIn(page, "Sales");
+  // Palmera is unheld on the stub: no hold, so good standing, and no crew member the till was never given.
+  await pickAccount(page, "C03", "Palmera Landscapes");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  const check = page.getByTestId("pos-account-check");
+  await expect(check).toHaveAttribute("data-standing", "good_standing");
+  await expect(check).toContainText("Palmera Landscapes may buy on this account");
+  await expect(check).not.toContainText("Luis Ortega");
+  await expect(page.getByTestId("pos-ways-grid")).toHaveCount(0);
+});
+
+test("a held account's check is blocked from the server's hold, whatever its name", async ({ page }) => {
+  await signIn(page, "Sales");
+  const check = page.getByTestId("pos-account-check");
+  // A held account (C09 on the stub) is blocked from the server's hold, with the three ways forward
+  // and no past due figure the server did not give.
+  await pickAccount(page, "C09", "Harbour Drywall Inc");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  await expect(check).toHaveAttribute("data-standing", "blocked");
+  await expect(page.getByTestId("pos-ways-grid")).toBeVisible();
+  await expect(check).not.toContainText("14,820");
+  await expect(check).not.toContainText("promise was missed");
+});
+
 test("the collapsed Items summary carries the priced lines' subtotal before the ring", async ({ page }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");

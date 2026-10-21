@@ -49,7 +49,7 @@ export const WAYS_FORWARD: readonly WayForward[] = [
     id: 'send_paylink',
     title: 'Send a paylink',
     subtitle: 'to the owner phone',
-    body: '(619) 555-0142. It works with no sign in, on a phone.',
+    body: 'The link goes to the owner phone on file. It works with no sign in, on a phone.',
     testId: 'pos-way-send-paylink',
   },
   {
@@ -63,12 +63,11 @@ export const WAYS_FORWARD: readonly WayForward[] = [
 
 /**
  * Check whether an account is blocked / on hold.
- * Blocked when:
+ * Blocked only from what the server says:
  * - credit gate returned a 409 credit_blocked refusal
  * - customer has on_hold flag set
  * - account standing reports on_hold
- * - customer is Bluffside Builders (the demo on-hold account)
- * - customer is Harbour Drywall Inc (account C09 on credit hold)
+ * Never from a customer name or an account number.
  */
 export function isAccountBlocked(
   customer: AccountCheckCustomer | null | undefined,
@@ -79,9 +78,6 @@ export function isAccountBlocked(
   if (options?.isCreditBlockedRefusal === true) return true;
   if (customer.on_hold === true) return true;
   if (standing?.on_hold === true) return true;
-  const name = (customer.name || '').trim().toLowerCase();
-  if (name === 'bluffside builders') return true;
-  if (customer.account_no === 'C09') return true;
   return false;
 }
 
@@ -98,9 +94,14 @@ export interface AccountCheckResult {
   waysForward: readonly WayForward[];
 }
 
+/** The available credit in words: the server's figure when positive, else a plain statement. */
+function availableCreditWords(availableCents: number): string {
+  return availableCents > 0 ? formatMoney(availableCents) : 'none (the credit line is used up or not set)';
+}
+
 /**
  * Evaluate customer account standing and format all presentation facts.
- * Pure logic testable without browser or DOM.
+ * Pure logic testable without browser or DOM. Every figure and name comes from the arguments.
  */
 export function evaluateAccountCheck(
   customer: AccountCheckCustomer | null | undefined,
@@ -111,25 +112,19 @@ export function evaluateAccountCheck(
 
   const blocked = isAccountBlocked(customer, standing, options);
   const name = (customer.name || '').trim();
-  const lowerName = name.toLowerCase();
-  const isPalmera = lowerName === 'palmera landscapes';
-  const isBluffside = lowerName === 'bluffside builders';
 
   const calculatedAvailable = availableCreditCents({
     credit_limit_cents: customer.credit_limit_cents ?? 0,
     open_balance_cents: customer.open_balance_cents ?? 0,
   });
+  const availableCreditFormatted = availableCreditWords(calculatedAvailable);
 
   if (!blocked) {
-    const availCents = calculatedAvailable > 0
-      ? calculatedAvailable
-      : (isPalmera ? 1254000 : calculatedAvailable);
-    const availableCreditFormatted = formatMoney(availCents);
     const termsDays = customer.payment_terms_days && customer.payment_terms_days > 0
       ? customer.payment_terms_days
       : 30;
 
-    const crewMember = options?.crewMemberName || (isPalmera ? 'Luis Ortega' : '');
+    const crewMember = options?.crewMemberName || '';
     const crewMemberLine = crewMember
       ? `${crewMember} is a listed crew member of ${name} and may buy on this account. Every ticket needs a job and PO.`
       : `${name} may buy on this account. Every ticket needs a job and PO.`;
@@ -150,33 +145,32 @@ export function evaluateAccountCheck(
     };
   }
 
-  const availCents = calculatedAvailable > 0
-    ? calculatedAvailable
-    : (isBluffside ? 318000 : calculatedAvailable);
-  const availableCreditFormatted = formatMoney(availCents);
+  const pastDueCents = standing?.past_due_cents && standing.past_due_cents > 0 ? standing.past_due_cents : 0;
+  const pastDueFormatted = pastDueCents > 0 ? formatMoney(pastDueCents) : null;
 
-  const pastDueCents = (standing?.past_due_cents && standing.past_due_cents > 0)
-    ? standing.past_due_cents
-    : 1482000;
-  const pastDueFormatted = formatMoney(pastDueCents);
+  const rawBucket = standing?.oldest_bucket || '';
+  const bucketLabel = rawBucket === '' ? null : rawBucket.includes('days') ? rawBucket : `${rawBucket} days`;
+  const title = rawBucket === '' ? 'On hold' : `On hold: past due ${rawBucket}`;
 
-  const rawBucket = standing?.oldest_bucket || '61 to 90';
-  const bucketLabel = rawBucket.includes('days') ? rawBucket : `${rawBucket} days`;
-  const title = `On hold: past due ${rawBucket}, promise missed`;
-
-  const line1 = `Available credit ${availableCreditFormatted}, but the account is on hold · Past due ${pastDueFormatted}, ${bucketLabel}.`;
-  const line2 = standing?.promise_text ||
-    'Open promise: $10,000.00 by last Friday, not received. The second reminder went out and the promise was missed.';
-  const line3 = 'The crew member may buy on this account, but it is on hold. Three ways forward:';
+  const pastDuePart = pastDueFormatted
+    ? ` · Past due ${pastDueFormatted}${bucketLabel ? `, ${bucketLabel}` : ''}.`
+    : '.';
+  const line1 = `Available credit ${availableCreditFormatted}, but the account is on hold${pastDuePart}`;
+  const crewLine = options?.crewMemberName
+    ? `${options.crewMemberName} may buy on this account, but it is on hold. Three ways forward:`
+    : 'The account is on hold. Three ways forward:';
+  const lines = [line1];
+  if (standing?.promise_text) lines.push(standing.promise_text);
+  lines.push(crewLine);
 
   return {
     standing: 'blocked',
     isBlocked: true,
     title,
-    lines: [line1, line2, line3],
+    lines,
     availableCreditFormatted,
-    termsDays: customer.payment_terms_days ?? 30,
-    crewMemberLine: line3,
+    termsDays: customer.payment_terms_days && customer.payment_terms_days > 0 ? customer.payment_terms_days : 30,
+    crewMemberLine: crewLine,
     pastDueFormatted,
     bucketLabel,
     waysForward: WAYS_FORWARD,
