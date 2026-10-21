@@ -89,12 +89,20 @@ func TestIntegration_Browse_RowNamesTheBranchesItIsOutOf(t *testing.T) {
 	pool := intPool(t)
 	svc := newIntSvc(pool)
 	ctx := context.Background()
+	org := stampTestOrg(t, pool)
 
 	manufacturer, inStockID, outID, outBranchName := mkOutAtFixSet(t, pool)
+	// The fixture's own yard has no org; the browse holds to the caller's org, so it joins the leg's org.
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH' AND org_id IS NULL`, org); err != nil {
+		t.Fatalf("stamp the fixture yard: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE org_id = $1`, org)
+	})
 	// The composition root binds the branches seam (the branch rows' owner); the test binds the
 	// real service over the same pool, the names coming from the branch rows the seed planted.
 	svc = svc.WithBranchNameReader(branches.NewService(branches.NewRepository(pool)))
-	res, err := svc.Browse(ctx, BrowseFilter{Text: manufacturer, Limit: 200})
+	res, err := svc.Browse(ctx, BrowseFilter{Text: manufacturer, OrgID: org, Limit: 200})
 	if err != nil {
 		t.Fatalf("browse the out-at fixtures: %v", err)
 	}

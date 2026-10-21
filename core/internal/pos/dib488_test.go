@@ -60,7 +60,7 @@ func TestStockGlance_CarriesUnitMetaAndLowThresholds(t *testing.T) {
 		baseUOM: "PC", sellUOM: "SF", sellFactor: 4.1,
 		lowBase: map[string]float64{"branch-trt": 50},
 	}
-	g, err := h.svc.StockGlance(context.Background(), "prod-1")
+	g, err := h.svc.StockGlance(context.Background(), "org-1", "prod-1")
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestStockGlance_NoThresholds_LowBaseAbsentNotEmpty(t *testing.T) {
 	h := newHarness()
 	h.store.stock["prod-2"] = map[string]float64{"branch-trt": 10}
 	h.store.stockMeta["prod-2"] = fakeStockMeta{baseUOM: "EA", sellUOM: "EA", sellFactor: 1}
-	g, err := h.svc.StockGlance(context.Background(), "prod-2")
+	g, err := h.svc.StockGlance(context.Background(), "org-1", "prod-2")
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}
