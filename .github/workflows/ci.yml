@@ -418,8 +418,8 @@ jobs:
       - name: Pull the demo image's base images through the mirror
         run: |
           set -euo pipefail
-          docker pull mirror.gcr.io/library/golang@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
-          docker tag mirror.gcr.io/library/golang@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa golang:1.27-alpine
+          docker pull mirror.gcr.io/library/golang@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
+          docker tag mirror.gcr.io/library/golang@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd golang:1.27-alpine
           for img in node:22-alpine caddy:2.10.2 alpine:3.20; do
             docker pull "mirror.gcr.io/library/$img"
             docker tag "mirror.gcr.io/library/$img" "$img"
