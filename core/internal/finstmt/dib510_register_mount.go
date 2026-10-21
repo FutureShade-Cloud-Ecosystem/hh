@@ -112,6 +112,9 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	svc := billing.NewRegisterService(repo).
 		WithZone(h.zone).
 		WithMoney(billing.NewPaymentsReceiptWriter(payments.NewRepository(pool))).
+		// The money a reversal held and a manager put on an invoice (SF-2r): the payments module owns the table, so the
+		// register's Applied figure and timeline read it through this seam.
+		WithReapplied(billing.NewPaymentsReappliedReader(payments.NewRepository(pool))).
 		// The SHIPPED statement generator (billing/statements.go), the same one the month-end run
 		// drives. The bulk bar produces statements; it does not compose them.
 		WithStatements(billing.NewStatementService(repo).WithZone(h.zone))

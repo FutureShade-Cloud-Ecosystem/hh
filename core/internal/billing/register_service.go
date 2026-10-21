@@ -366,6 +366,17 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
+	// Re-application writes no allocation, so the payments module's own read adds the slices of a reversed payment's
+	// held money applied to this invoice: the Applied figure and the timeline both carry them (SF-2r).
+	var slices []ReappliedSlice
+	if s.reapplied != nil {
+		if slices, err = s.reapplied.ReappliedToInvoice(ctx, invoiceID); err != nil {
+			return InvoiceDetail{}, err
+		}
+		for _, sl := range slices {
+			applied += sl.AmountCents
+		}
+	}
 	block, onHold, accountDisputed, err := s.store.CustomerBlockFor(ctx, h.CustomerID)
 	if err != nil {
 		return InvoiceDetail{}, err
@@ -381,6 +392,9 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID, withPayments)
 	if err != nil {
 		return InvoiceDetail{}, err
+	}
+	if withPayments {
+		activity = withReappliedEntries(activity, slices)
 	}
 	lastContact, err := s.store.LastContactFor(ctx, h.CustomerID)
 	if err != nil {
@@ -919,4 +933,24 @@ func (s *RegisterService) StatementsForSelection(ctx context.Context, invoiceIDs
 		out.RunIDs = []string{}
 	}
 	return out, nil
+}
+
+// reappliedDetail is the words of a re-applied slice's timeline entry: the reversed payment it came from and how.
+const reappliedDetail = "re applied from a reversed payment"
+
+// withReappliedEntries adds one PAYMENT entry per re-applied slice to the timeline and keeps it newest first and at
+// the same forty rows the read is bounded to, so a slice is as visible as any applied entry beside it.
+func withReappliedEntries(activity []ActivityEntry, slices []ReappliedSlice) []ActivityEntry {
+	if len(slices) == 0 {
+		return activity
+	}
+	out := append([]ActivityEntry(nil), activity...)
+	for _, sl := range slices {
+		out = append(out, ActivityEntry{Kind: "PAYMENT", At: sl.AppliedAt, Detail: sl.PaymentNo + " · " + sl.Method + " · " + reappliedDetail, AmountCents: sl.AmountCents})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	return out
 }
