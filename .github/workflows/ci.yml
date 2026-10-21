@@ -184,6 +184,13 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: SQL uuid guard (no <> '' beside a ::uuid cast of the same parameter)
+        working-directory: core
+        # A parameter guarded by <> '' beside a ::uuid cast of itself fails with invalid input syntax
+        # for type uuid once the planner casts it inside an index condition (PR 585). The test walks
+        # every Go file under core and names the file and line of each statement; the same test also
+        # runs inside the untagged suite below, so this step only gives the failure a name.
+        run: go test -count=1 ./internal/platform/uuidguard/
       - name: Test core
         working-directory: core
         # The untagged suite. The database-gated legs skip politely here
