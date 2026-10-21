@@ -31,7 +31,7 @@ func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditP
 		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
 		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled
 		   FROM ar_credit_policy
-		  WHERE ($1 <> '' AND branch_id = $1::uuid) OR branch_id IS NULL
+		  WHERE branch_id = NULLIF($1, '')::uuid OR branch_id IS NULL
 		  ORDER BY branch_id NULLS LAST
 		  LIMIT 1`, branchID).
 		Scan(&bid, &p.AgingBucketDays, &p.AgingThresholdCents, &p.AgingHoldEnabled,
@@ -66,7 +66,7 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE ar_credit_policy
 		    SET auto_hold_enabled = $2, updated_at = now()
-		  WHERE ($1 = '' AND branch_id IS NULL) OR ($1 <> '' AND branch_id = $1::uuid)`,
+		  WHERE ($1 = '' AND branch_id IS NULL) OR branch_id = NULLIF($1, '')::uuid`,
 		branchID, enabled)
 	if err != nil {
 		return fmt.Errorf("billing: set auto_hold_enabled: %w", err)
