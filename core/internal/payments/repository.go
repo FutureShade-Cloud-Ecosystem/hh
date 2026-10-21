@@ -1181,12 +1181,15 @@ type InvoicePayment struct {
 }
 
 // ReceivedPaymentsForInvoices lists the RECEIVED payments allocated to the
-// given invoices, oldest first (the money trail), on the caller's transaction.
+// given invoices, oldest first (the money trail), on the caller's transaction. A reversed original keeps status
+// RECEIVED (the reversal stamps reversed_at), so it is left out: its money was returned by the reversal, and the
+// trail is the money now held against the order (PR 602 round 2). The list's type has no reversed marker to add, so
+// leaving the row out keeps every consumer's shape.
 func (r *Repository) ReceivedPaymentsForInvoices(ctx context.Context, tx pgx.Tx, invoiceIDs []string) ([]InvoicePayment, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT a.invoice_id::text, p.id::text, p.method, p.amount_cents
 		  FROM payment_allocations a
-		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED'
+		  JOIN payments p ON p.id = a.payment_id AND p.status = 'RECEIVED' AND p.reversed_at IS NULL
 		 WHERE a.invoice_id = ANY($1::uuid[])
 		 ORDER BY p.received_at, p.id`, invoiceIDs)
 	if err != nil {
