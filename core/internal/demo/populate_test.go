@@ -308,10 +308,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if counts.UsersLinked != 27 || counts.UsersUnlinked != 7 {
 		t.Errorf("linked %d / unlinked %d users, want the 13 demo role accounts and the 14 sign in personas linked and the 7 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	// 28 grants: the 13 of the role accounts (nine branch scoped, four
-	// global) and 15 of the personas (ten branch scoped, five global).
-	if counts.StaffGrants != 28 || counts.StaffGrantsBranch != 19 || counts.StaffGrantsGlobal != 9 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 13 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	// 29 grants: the 13 of the role accounts (nine branch scoped, four
+	// global) and 16 of the personas (eleven branch scoped, five global: the
+	// logistics manager holds a second branch grant at Kingston).
+	if counts.StaffGrants != 29 || counts.StaffGrantsBranch != 20 || counts.StaffGrantsGlobal != 9 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 13 and the personas' 16", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)

@@ -1114,6 +1114,16 @@ func personaBranch(p flows.Persona) string {
 	return trentonBranchID
 }
 
+// personaBranches is every branch a persona works, its home first: the dispatch
+// persona (logistics-manager) also works Kingston, where the driver's runs are
+// (see demoPersonas); every other persona works only its home.
+func personaBranches(p flows.Persona) []string {
+	if p.ID == "logistics-manager" {
+		return []string{trentonBranchID, kingstonBranchID}
+	}
+	return []string{personaBranch(p)}
+}
+
 // insertPersonaAccounts writes the users rows of the enterable personas,
 // idempotently. The contractor personas have no row until the Pro cycle. The
 // rows carry no password hash and no platform id yet: identity.Populate's
@@ -1173,25 +1183,27 @@ func insertPersonaAccess(ctx context.Context, tx pgx.Tx) (roles, branches int, e
 				return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the persona %s would reach nothing", code, p.ID)
 			}
 		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO user_branch_grants (user_id, branch_id)
-			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
-			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
-			WHERE user_branch_grants.deleted_at IS NOT NULL`,
-			p.UserID, personaBranch(p))
-		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: sign in persona %s branch grant: %w", p.ID, err)
-		}
-		branches += int(tag.RowsAffected())
-		var live int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM user_branch_grants
-			 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
-			p.UserID, personaBranch(p)).Scan(&live); err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: sign in persona branch verify: %w", err)
-		}
-		if live == 0 {
-			return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the persona %s would reach no branch", personaBranch(p), p.ID)
+		for _, branchID := range personaBranches(p) {
+			tag, err := tx.Exec(ctx, `
+				INSERT INTO user_branch_grants (user_id, branch_id)
+				SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
+				ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+				WHERE user_branch_grants.deleted_at IS NOT NULL`,
+				p.UserID, branchID)
+			if err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona %s branch grant: %w", p.ID, err)
+			}
+			branches += int(tag.RowsAffected())
+			var live int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM user_branch_grants
+				 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
+				p.UserID, branchID).Scan(&live); err != nil {
+				return 0, 0, fmt.Errorf("demo-populate: sign in persona branch verify: %w", err)
+			}
+			if live == 0 {
+				return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the persona %s would reach no branch", branchID, p.ID)
+			}
 		}
 	}
 	return roles, branches, nil
@@ -1209,12 +1221,14 @@ func writePersonaGrants(ctx context.Context, tx pgx.Tx, orgID string) (int, erro
 			continue
 		}
 		for _, role := range p.StaffRoles() {
-			ok, err := identity.EnsureStaffGrantAt(ctx, tx, orgID, p.Subject(), role, personaBranch(p))
-			if err != nil {
-				return 0, fmt.Errorf("demo-populate: sign in persona %s staff grant %s: %w", p.ID, role, err)
-			}
-			if ok {
-				inserted++
+			for _, branchID := range personaBranches(p) {
+				ok, err := identity.EnsureStaffGrantAt(ctx, tx, orgID, p.Subject(), role, branchID)
+				if err != nil {
+					return 0, fmt.Errorf("demo-populate: sign in persona %s staff grant %s: %w", p.ID, role, err)
+				}
+				if ok {
+					inserted++
+				}
 			}
 		}
 	}

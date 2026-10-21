@@ -498,13 +498,13 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		// dispatch board (manage) and House Messages (work).
 		wantOK(t, "the dispatch board at Trenton (dispatch-board, manage)", "/api/v1/dispatch/trucks?branch_id="+trentonID, lm)
 		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", lm)
-		// L-branch: the role's own branch only.
-		if codes := branchCodes(t, lm); !sameSet(codes, []string{"PLM"}) {
-			t.Errorf("the Logistics Manager reaches %v, want Trenton alone", codes)
+		// L-branch: the role works both yards (UX-100): the driver's runs are Kingston's and
+		// dispatch is gated on the run's branch, so the dispatcher must reach Kingston to
+		// dispatch them.
+		if codes := branchCodes(t, lm); !sameSet(codes, []string{"PLM", "JUL"}) {
+			t.Errorf("the Logistics Manager reaches %v, want both yards", codes)
 		}
-		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, lm); status != http.StatusForbidden {
-			t.Errorf("the dispatch board at Kingston: status %d body %s, want the branch fence's 403", status, raw)
-		}
+		wantOK(t, "the dispatch board at Kingston (dispatch-board, manage)", "/api/v1/dispatch/trucks?branch_id="+kingstonID, lm)
 		// L-wall: the till, the Quote Desk, Yard Pick, Buying and Stock, the Money
 		// Desk and Dealer Admin all sit at None for the role.
 		wantWall(t, "the till's policy (counter-till, None)", "/api/v1/pos/policy", lm)
