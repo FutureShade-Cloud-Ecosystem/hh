@@ -68,8 +68,14 @@ func scanSession(row pgx.Row) (TillSession, error) {
 
 // - in-caller-tx writes (A-19 sale path) -
 
+// GetSessionTx reads the session row FOR SHARE inside the caller's transaction (SF-2j round 2). The caller checks
+// the session is OPEN on this read, and the share lock holds until it commits, so a count (SetCounted's UPDATE takes
+// FOR NO KEY UPDATE) queues behind the tender or the cash refund that read OPEN, or finds it committed: nothing is
+// written to a session after its count. FOR SHARE and not FOR NO KEY UPDATE because tenders and refunds on one
+// session need not wait on each other (shares do not conflict), only on the count and on a movement, which takes
+// FOR NO KEY UPDATE. The session row is the first row either transaction takes in this module, so no cycle results.
 func (r *Repository) GetSessionTx(ctx context.Context, tx pgx.Tx, id string) (TillSession, error) {
-	return scanSession(tx.QueryRow(ctx, `SELECT `+sessionCols+` FROM till_sessions WHERE id = $1`, id))
+	return scanSession(tx.QueryRow(ctx, `SELECT `+sessionCols+` FROM till_sessions WHERE id = $1 FOR SHARE`, id))
 }
 
 func (r *Repository) FindPaymentByKey(ctx context.Context, tx pgx.Tx, key string) (string, string, bool, error) {
@@ -298,16 +304,40 @@ func (r *Repository) SessionMovements(ctx context.Context, sessionID string) ([]
 	return out, rows.Err()
 }
 
+// InsertMovement writes a drawer movement against an OPEN session, serialised with the count (SF-2j). It takes the
+// session row FOR NO KEY UPDATE in its own transaction, re-reads the status UNDER that lock, and only then inserts:
+// the service's earlier OPEN read is a courtesy, this is the check. SetCounted's UPDATE of the same row takes the
+// same lock strength, so a count and a movement serialise (whichever holds the row first, the other sees the
+// result): a movement can no longer land on a session counted between a plain read and the insert.
+//
+// FOR NO KEY UPDATE and not FOR UPDATE: the movement's foreign key to the session takes FOR KEY SHARE on the
+// session row, which NO KEY UPDATE does not conflict with, and no key column of till_sessions changes here or in
+// the count (its only unique index besides the id is partial). The lock order is the till session row before any
+// movement insert or count (LOCK-ORDER.md).
 func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if r.pool == nil {
 		return errNoDB
 	}
-	_, err := r.pool.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy))
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("till: begin movement: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE`, m.TillSessionID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("till: lock the session for a movement: %w", err)
+	}
+	if status != StatusOpen {
+		return clientErr(409, "till: movements require an OPEN session")
+	}
+	if _, err := tx.Exec(ctx, insertMovementSQL,
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
@@ -440,6 +470,9 @@ func (r *Repository) InsertDenominations(ctx context.Context, sessionID, phase s
 	return tx.Commit(ctx)
 }
 
+// SetCounted flips an OPEN session to COUNTED. The guarded UPDATE takes the session row's lock (FOR NO KEY UPDATE
+// strength: no key column is set), the same lock a movement's insert takes first (InsertMovement), so the two
+// serialise (SF-2j).
 func (r *Repository) SetCounted(ctx context.Context, sessionID, countedBy string, at time.Time, closingFloatCents int64) error {
 	if r.pool == nil {
 		return errNoDB
