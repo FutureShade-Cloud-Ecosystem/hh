@@ -508,3 +508,136 @@ func TestIntegration_ReversalGL_AnUnmatchBesideAReversalOfTheSamePaymentIsRefuse
 		t.Errorf("after the refused unmatch: line %s, payment %s, unmatch journals %d; want MATCHED, DEPOSITED, 0", lineStatus, payStatus, live)
 	}
 }
+
+// - Round 4: a reversal of banked money credits a liability, never the bank or undeposited funds (BLOCKED) -
+//
+// The ruling: a reversal moves no money at the bank. Money already in the bank (banked by a till LODGEMENT match or by a
+// bank PAYMENT match) is credited to a LIABILITY role, not to 1000 and not to 1020; money not yet banked credits the
+// receipt's own account. These legs state the rule account agnostically (the reversal's credit leg must sit on a
+// LIABILITY account, and the reversal's own lines must not touch 1000 or 1020), so they hold whichever liability
+// account the ruling lands on. They are SKIPPED until the two things round 4 stopped on are decided (see the report):
+// the new account and its migration number, and how a lodged payment is known to be banked per payment.
+
+type journalLeg struct {
+	code, kind string
+	dr, cr     int64
+}
+
+func (w *reversalGLWorld) reversalLegs(revID string) []journalLeg {
+	w.r.t.Helper()
+	rows, err := w.r.obs.Query(context.Background(), `
+		SELECT a.code, a.account_type, COALESCE(l.debit_cents, 0), COALESCE(l.credit_cents, 0)
+		  FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.idempotency_key = 'payment.reversed:' || $1 ORDER BY l.line_no`, revID)
+	if err != nil {
+		w.r.t.Fatalf("read the reversal journal: %v", err)
+	}
+	defer rows.Close()
+	var out []journalLeg
+	for rows.Next() {
+		var l journalLeg
+		if err := rows.Scan(&l.code, &l.kind, &l.dr, &l.cr); err != nil {
+			w.r.t.Fatalf("scan: %v", err)
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// assertLiabilityReversal: Dr AR, Cr a LIABILITY account, nothing on 1000 or 1020 from the reversal itself.
+func assertLiabilityReversal(t *testing.T, name string, legs []journalLeg) {
+	t.Helper()
+	t.Logf("%s: the reversal journal's own lines: %+v", name, legs)
+	var sawAR, sawLiability bool
+	for _, l := range legs {
+		switch {
+		case l.code == "1100" && l.dr > 0:
+			sawAR = true
+		case l.cr > 0 && l.kind == "LIABILITY":
+			sawLiability = true
+		case l.cr > 0:
+			t.Errorf("%s: the reversal credits %s (%s), want a liability account, never the bank or undeposited funds", name, l.code, l.kind)
+		}
+	}
+	if !sawAR || !sawLiability {
+		t.Errorf("%s: want Dr AR and Cr a liability, got %+v", name, legs)
+	}
+}
+
+const round4Blocked = "BLOCKED (SF-2d round 4): needs the liability account and its migration number, and a per payment fact for money lodged through the till; see SF2D-REPORT.md Round 4"
+
+// (a) a cheque banked through a till LODGEMENT match, then reversed.
+func TestIntegration_ReversalGL_Round4_ChequeBankedByALodgementThenReversedCreditsALiability(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.receipt("CHEQUE", 10_000)
+	w.drain()
+	var session, movement string
+	if err := w.r.obs.QueryRow(ctx, `INSERT INTO till_sessions (branch_id, station, opened_by) VALUES ($1::uuid, 'R4TEST', $2::uuid) RETURNING id::text`, w.r.branchID, w.r.userID).Scan(&session); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if err := w.r.obs.QueryRow(ctx, `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
+		VALUES ($1::uuid, 'LODGEMENT', 'CHEQUE', 10000, 'round 4', 'R4-SLIP', $2::uuid) RETURNING id::text`, session, w.r.userID).Scan(&movement); err != nil {
+		t.Fatalf("lodgement: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.r.obs.Exec(c, `DELETE FROM till_movements WHERE till_session_id = $1::uuid`, session)
+		_, _ = w.r.obs.Exec(c, `DELETE FROM till_sessions WHERE id = $1::uuid`, session)
+	})
+	line := w.r.statementLine(10_000)
+	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl}).WithLodgements(till.NewRepository(w.r.pool))
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement, TargetRefID: movement, AmountCents: 10_000}, w.r.userID)
+	if err != nil {
+		t.Fatalf("the lodgement match: %v", err)
+	}
+	rev := w.reverse(orig)
+	keys := append(caseKeys(orig, rev), "bankrec:match:"+m.ID)
+	w.cleanupJournals(keys, []string{line})
+	w.drain()
+	t.Logf("(a) GL net by account: %v", w.nets(keys, []string{line}))
+	t.Skip(round4Blocked)
+	assertLiabilityReversal(t, "(a) cheque lodged then reversed", w.reversalLegs(rev))
+}
+
+// (b) a card deposited by a PAYMENT match, then reversed.
+func TestIntegration_ReversalGL_Round4_CardDepositedByAPaymentMatchThenReversedCreditsALiability(t *testing.T) {
+	w := newReversalGLWorld(t)
+	res := w.sequenceFor(t, "CARD")
+	t.Logf("(b) GL net by account: %v", res.nets)
+	t.Skip(round4Blocked)
+	assertLiabilityReversal(t, "(b) card deposited then reversed", res.legs)
+}
+
+// (c) a cheque deposited by a PAYMENT match, then reversed: only the reversal journal's own lines (the deposit
+// journal itself is SF-2h's, a PAYMENT match always credits 1010).
+func TestIntegration_ReversalGL_Round4_ChequeDepositedByAPaymentMatchThenReversedCreditsALiability(t *testing.T) {
+	w := newReversalGLWorld(t)
+	res := w.sequenceFor(t, "CHEQUE")
+	t.Logf("(c) GL net by account: %v", res.nets)
+	t.Skip(round4Blocked)
+	assertLiabilityReversal(t, "(c) cheque deposited then reversed", res.legs)
+}
+
+type methodSequence struct {
+	nets map[string]int64
+	legs []journalLeg
+}
+
+func (w *reversalGLWorld) sequenceFor(t *testing.T, method string) methodSequence {
+	t.Helper()
+	ctx := context.Background()
+	orig := w.receipt(method, 10_000)
+	w.drain()
+	line := w.r.statementLine(10_000)
+	bank := bankrec.NewService(bankrec.NewRepository(w.r.pool)).WithJournalPoster(glPosterOver{w.gl})
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetPayment, TargetRefID: orig, AmountCents: 10_000}, w.r.userID)
+	if err != nil {
+		t.Fatalf("the deposit: %v", err)
+	}
+	rev := w.reverse(orig)
+	keys := append(caseKeys(orig, rev), "bankrec:match:"+m.ID)
+	w.cleanupJournals(keys, []string{line})
+	w.drain()
+	return methodSequence{nets: w.nets(keys, []string{line}), legs: w.reversalLegs(rev)}
+}
