@@ -68,6 +68,16 @@ func defaultBranchID(ctx context.Context, q pgxQuerier) (string, error) {
 // List returns both branches (locations rows with loc_type='BRANCH'), each flagged with
 // whether it is the system default. Ordered by code (KGN, TRT) so the response is stable.
 func (r *Repository) List(ctx context.Context) ([]Branch, error) {
+	return r.list(ctx, false, "")
+}
+
+// ListInOrg is List held to one dealer org (UX-88): the branches whose locations row carries this org.
+// A branch of another org, or of no org, is in no caller's org, and an empty org matches nothing.
+func (r *Repository) ListInOrg(ctx context.Context, orgID string) ([]Branch, error) {
+	return r.list(ctx, true, orgID)
+}
+
+func (r *Repository) list(ctx context.Context, inOrg bool, orgID string) ([]Branch, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -93,7 +103,8 @@ func (r *Repository) List(ctx context.Context) ([]Branch, error) {
 		SELECT id::text, code::text, name, address, is_active
 		FROM locations
 		WHERE loc_type = 'BRANCH'
-		ORDER BY code`)
+		  AND (NOT $1::bool OR org_id = NULLIF($2, '')::uuid)
+		ORDER BY code`, inOrg, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("branches: list: %w", err)
 	}

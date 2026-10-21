@@ -138,6 +138,7 @@ func TestIntegration_EveryCellMatchesWhatTheCatalogueServicesReport(t *testing.T
 
 	inv := inventoryService(pool)
 	products := productService(pool, inv)
+	stampSeededBranches(t, pool)
 
 	rows, err := products.List(ctx, product.Filter{ActiveOnly: true})
 	if err != nil {
@@ -146,7 +147,7 @@ func TestIntegration_EveryCellMatchesWhatTheCatalogueServicesReport(t *testing.T
 	if len(rows) == 0 {
 		t.Skip("no active products seeded")
 	}
-	browse, err := inv.Browse(ctx, inventory.BrowseFilter{Limit: stockReadLimit})
+	browse, err := inv.Browse(ctx, inventory.BrowseFilter{Limit: stockReadLimit, OrgID: testkit.OrgNorthID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,4 +299,34 @@ func TestIntegration_AFilterThatMatchesNothingStillDownloadsASheet(t *testing.T)
 	if c, _ := cellAt(sheet, "A3"); c.Inline.Text != "SKU" {
 		t.Error("an empty result must still carry its headers, a button that does nothing reads as broken")
 	}
+}
+
+// stampSeededBranches puts the seeded branches (which carry no org) in the fixture north org for the
+// leg, so the stock reads, which hold to the caller's org (UX-88), have branches to answer for. The
+// request the handler leg makes resolves to the same org.
+func stampSeededBranches(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	prev := map[string]*string{}
+	rows, err := pool.Query(ctx, `SELECT id::text, org_id::text FROM locations WHERE code IN ('TRT','KGN')`)
+	if err != nil {
+		t.Fatalf("read the seeded branches' orgs: %v", err)
+	}
+	for rows.Next() {
+		var id string
+		var org *string
+		if err := rows.Scan(&id, &org); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		prev[id] = org
+	}
+	rows.Close()
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1 WHERE code IN ('TRT','KGN')`, testkit.OrgNorthID); err != nil {
+		t.Fatalf("stamp the seeded branches: %v", err)
+	}
+	t.Cleanup(func() {
+		for id, org := range prev {
+			_, _ = pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, id, org)
+		}
+	})
 }

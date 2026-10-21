@@ -1144,7 +1144,7 @@ type BillingCustomerWorkspaceActivity struct {
 	Kind              string    `json:"kind"`
 	Reference         *string   `json:"reference,omitempty"`
 	AmountCents       int64     `json:"amount_cents"`
-	BalanceAfterCents int64     `json:"balance_after_cents"`
+	BalanceAfterCents *int64    `json:"balance_after_cents,omitempty"`
 	BranchId          *string   `json:"branch_id,omitempty"`
 	Memo              *string   `json:"memo,omitempty"`
 	OccurredAt        time.Time `json:"occurred_at"`
@@ -1155,7 +1155,8 @@ type BillingCustomerWorkspace struct {
 	InvoicesOpen     []BillingCustomerWorkspaceInvoice    `json:"invoices_open"`
 	InvoicesClosed   []BillingCustomerWorkspaceInvoice    `json:"invoices_closed"`
 	InvoicesDisputed []BillingCustomerWorkspaceInvoice    `json:"invoices_disputed"`
-	Payments         []BillingCustomerWorkspacePayment    `json:"payments"`
+	Payments         *[]BillingCustomerWorkspacePayment   `json:"payments,omitempty"`
+	PaymentsWithheld bool                                 `json:"payments_withheld"`
 	CreditNotes      []BillingCustomerWorkspaceCreditNote `json:"credit_notes"`
 	Statements       []BillingCustomerWorkspaceStatement  `json:"statements"`
 	Notes            []BillingCustomerWorkspaceNote       `json:"notes"`
@@ -8317,9 +8318,21 @@ type QuoteBranchStock struct {
 	AvgCostCents  *int64  `json:"avg_cost_cents,omitempty"`
 }
 
-type QuoteBranchStockList struct {
-	Branches  []QuoteBranchStock `json:"branches"`
-	SeamWired bool               `json:"seam_wired"`
+type QuoteBranchPeek struct {
+	ProductId     string  `json:"product_id"`
+	BranchId      string  `json:"branch_id"`
+	BranchCode    string  `json:"branch_code"`
+	BranchName    string  `json:"branch_name"`
+	OnHandBase    float64 `json:"on_hand_base"`
+	ReservedBase  float64 `json:"reserved_base"`
+	InTransitBase float64 `json:"in_transit_base"`
+	AvailableBase float64 `json:"available_base"`
+	SoftHeldBase  float64 `json:"soft_held_base"`
+}
+
+type QuoteBranchPeekList struct {
+	Branches  []QuoteBranchPeek `json:"branches"`
+	SeamWired bool              `json:"seam_wired"`
 }
 
 type QuoteExpiredHold struct {

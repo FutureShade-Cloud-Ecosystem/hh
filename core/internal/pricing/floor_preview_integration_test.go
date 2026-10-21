@@ -23,7 +23,7 @@ import (
 // every branch row's own cost beside the highest, so a branch-less preview grades each branch.
 type poolCandidates struct{ pool *pgxpool.Pool }
 
-func (c poolCandidates) CandidateProducts(ctx context.Context, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
+func (c poolCandidates) CandidateProducts(ctx context.Context, _, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
 	rows, err := c.pool.Query(ctx, `
 		SELECT p.id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name, p.base_uom::text,
 		       COALESCE(MAX(pbc.avg_unit_cost_cents), 0),

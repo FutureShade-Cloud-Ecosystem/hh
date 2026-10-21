@@ -204,10 +204,14 @@ type StampReport struct {
 	UserRolesStamped        int64
 	UserBranchGrantsStamped int64
 	PortalTenantsStamped    int64
+	// LocationsStamped counts the location rows (the branches the migrations plant and their zones)
+	// that carried no org and took the anchor. Every stock, branch and reach read holds to the caller's
+	// org through the location's org_id (UX-88), so a box whose branches carry none answers empty.
+	LocationsStamped int64
 }
 
 // StampOrgScope is plan step 2: org_id backfill on the three carried staff
-// tables. The ERP is single-org (0213), so every carried row takes the one
+// tables and on the locations (the branches and their zones). The ERP is single-org (0213), so every carried row takes the one
 // anchor. user_branch_grants.org_id is read-path load-bearing (the
 // resolver's branchGrants predicates on it); users.org_id and
 // user_roles.org_id are sync-scope consistency stamping, not read-path
@@ -229,6 +233,7 @@ func StampOrgScope(ctx context.Context, db DBTX, orgID string) (StampReport, err
 		{&r.UsersStamped, `UPDATE users SET org_id = $1 WHERE org_id IS NULL`},
 		{&r.UserRolesStamped, `UPDATE user_roles SET org_id = $1 WHERE org_id IS NULL`},
 		{&r.UserBranchGrantsStamped, `UPDATE user_branch_grants SET org_id = $1 WHERE org_id IS NULL`},
+		{&r.LocationsStamped, `UPDATE locations SET org_id = $1, updated_at = now() WHERE org_id IS NULL`},
 	}
 	for _, s := range steps {
 		tag, err := db.Exec(ctx, s.sql, orgID)

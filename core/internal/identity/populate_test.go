@@ -311,9 +311,13 @@ func TestPopulateEndToEnd(t *testing.T) {
 			t.Fatalf("seed/org: %+v", report)
 		}
 		f.orgID = report.OrgID
-		wantStamp := StampReport{UsersStamped: 17, UserRolesStamped: 13, UserBranchGrantsStamped: 11, PortalTenantsStamped: 2}
+		wantStamp := StampReport{UsersStamped: 17, UserRolesStamped: 13, UserBranchGrantsStamped: 11, PortalTenantsStamped: 2, LocationsStamped: 4}
 		if report.Stamp != wantStamp {
 			t.Fatalf("stamp = %+v, want %+v", report.Stamp, wantStamp)
+		}
+		var orgless int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM locations WHERE org_id IS NULL`).Scan(&orgless); err != nil || orgless != 0 {
+			t.Fatalf("locations without an org after populate = %d (%v), want none: every read holds to the caller's org through the location (UX-88)", orgless, err)
 		}
 		if report.Link != (LinkReport{}) {
 			t.Fatalf("link without a directory = %+v, want zero", report.Link)

@@ -437,7 +437,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithRegisterTaxLabel(newTaxWords(pool)).RegisterRoutes(r, g)
+	finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).WithRegisterTaxLabel(newTaxWords(pool)).RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { QuoteAcceptOnBehalfRequest, QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteDecisionResult, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuotePublicView, QuoteRejectOnBehalfRequest, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteSettingsGrant, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
+import type { QuoteAcceptOnBehalfRequest, QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchPeekList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteDecisionResult, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuoteOrderPaymentRequest, QuoteOrderPaymentResult, QuotePolicy, QuotePublicView, QuoteRejectOnBehalfRequest, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteSettingsGrant, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
@@ -26,8 +26,8 @@ export async function quoteAvailabilityBranches(
   client: ApiClient,
   productId: string | number,
   call?: ApiCallOptions
-): Promise<Result<QuoteBranchStockList>> {
-  return client.request<QuoteBranchStockList>({
+): Promise<Result<QuoteBranchPeekList>> {
+  return client.request<QuoteBranchPeekList>({
     method: "GET",
     path: "/api/v1/quote-availability/{productId}/branches",
     pathParams: { productId },

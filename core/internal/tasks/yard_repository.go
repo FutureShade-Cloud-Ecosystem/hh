@@ -305,20 +305,19 @@ func (r *Repository) ResolveShortage(ctx context.Context, in ResolveShortageInpu
 	// The resolve draws a fresh shortages seq (the desk's correction is the
 	// write a stale device replay must meet) and bumps the parent task's
 	// own seq beside it, the same two-draw shape InsertShortage pays,
-	// because the task's projection carries the shortage counts.
-	shortageSeq, err := allocateScopeSeqTx(ctx, tx, shortagesSeqScope)
-	if err != nil {
-		return Shortage{}, Task{}, err
-	}
+	// because the task's projection carries the shortage counts. The
+	// shortage's draw is the sync seq trigger's (0422): the row lock first,
+	// then the counter. An explicit draw ahead of the UPDATE would take the
+	// counter before the row and cross a writer that relies on the trigger
+	// (PR 556 round 3c).
 	sh, err := scanShortage(tx.QueryRow(ctx, `
 		UPDATE task_shortages SET
 			resolved_at = now(),
 			resolved_by = NULLIF($3,'')::uuid,
-			resolution  = $4,
-			seq         = $5
+			resolution  = $4
 		WHERE id = $1::uuid AND task_id = $2::uuid AND resolved_at IS NULL
 		RETURNING `+shortageColumns,
-		in.ShortageID, in.TaskID, in.ActorID, in.Resolution, shortageSeq))
+		in.ShortageID, in.TaskID, in.ActorID, in.Resolution))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Either it is not this task's shortage / does not exist, or it is already closed. One

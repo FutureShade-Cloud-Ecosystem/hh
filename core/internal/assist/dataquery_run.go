@@ -242,7 +242,7 @@ func (q *ReadQuerier) Query(ctx context.Context, c Caller, raw string) (Result, 
 	for _, r := range rows {
 		it := Item{}
 		for i, out := range comp.Outputs {
-			if r.nulls[out.Name] && (out.Class == ClassCost || out.Class == ClassMargin) {
+			if r.nulls[out.Name] && (out.Class == ClassCost || out.Class == ClassMargin || out.Class == ClassPayment) {
 				continue // masked for this row: absent, not blank
 			}
 			v := formatValue(out, r.vals[out.Name], loc)

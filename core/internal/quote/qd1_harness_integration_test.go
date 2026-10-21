@@ -153,12 +153,11 @@ func (a qd1CostAvail) AvailabilityAtBranch(_ context.Context, productID, branchI
 	}, nil
 }
 
-func (a qd1CostAvail) AvailabilityAllBranches(ctx context.Context, productID string) ([]BranchStock, error) {
-	one, err := a.AvailabilityAtBranch(ctx, productID, "b1")
-	if err != nil {
-		return nil, err
-	}
-	return []BranchStock{one}, nil
+func (a qd1CostAvail) AvailabilityPeek(_ context.Context, _, productID string) ([]BranchPeek, error) {
+	return []BranchPeek{{
+		ProductID: productID, BranchID: "b1", BranchCode: "TRT", BranchName: "Trenton",
+		OnHandBase: 10, AvailableBase: 10,
+	}}, nil
 }
 
 // qd1Arbiter is a deterministic FloorArbiter double. belowFloor is derived

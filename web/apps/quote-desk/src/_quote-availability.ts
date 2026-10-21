@@ -10,7 +10,6 @@
 // never "none": a chip saying none would turn away a sale because a wire was
 // loose, and a chip saying "not reported" must never be read as stock. Every
 // grade carries a word as well as a look, so colour is never the only signal.
-import { moneyWord } from "./_quote-edit.js";
 
 export interface BranchStock {
   product_id: string;
@@ -24,6 +23,19 @@ export interface BranchStock {
   soft_held_base: number;
   /** Rides only for a caller on the cost list. */
   avg_cost_cents?: number;
+}
+
+/** One branch row of the cross branch peek: quantities only, the peek serves no cost to any role. */
+export interface BranchPeek {
+  product_id: string;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  on_hand_base: number;
+  reserved_base: number;
+  in_transit_base: number;
+  available_base: number;
+  soft_held_base: number;
 }
 
 export interface LineAvailability {
@@ -81,13 +93,11 @@ export function softHeldNote(a: LineAvailability): string {
 /**
  * One branch row of the cross branch peek. Every row the server returns is
  * shown (a missing branch reads as a bug, not an answer), this branch's own
- * marked. The average cost is appended only when the server sent one: an
- * absent value is absent, never a zero.
+ * marked. The row speaks quantities only: the peek carries no cost.
  */
-export function branchRowLabel(b: BranchStock, currentBranchId: string): string {
+export function branchRowLabel(b: BranchPeek, currentBranchId: string): string {
   const here = b.branch_id === currentBranchId ? " (this branch)" : "";
   const stock = b.available_base > 0 ? `${formatQty(b.available_base)} available` : "none available";
   const inbound = b.in_transit_base > 0 ? ` (+${formatQty(b.in_transit_base)} inbound)` : "";
-  const cost = b.avg_cost_cents === undefined ? "" : ` · avg cost ${moneyWord(b.avg_cost_cents)}`;
-  return `${b.branch_code}${here}: ${stock}${inbound}${cost}`;
+  return `${b.branch_code}${here}: ${stock}${inbound}`;
 }

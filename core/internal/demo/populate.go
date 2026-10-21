@@ -320,6 +320,8 @@ type Report struct {
 	PersonaGrantsRemoved int
 	DisplayNamesRenamed  int
 	DealerNamesReplaced  int
+	// LocationsOrgStamped counts the location rows that carried no org and took the demo org.
+	LocationsOrgStamped  int
 	UsersDeactivated     int
 	EmailsMoved          int
 	CredentialsCleared   int
@@ -528,6 +530,14 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
 	}
 	report.OrgInserted = pop.OrgInserted
+	// The org holds its locations (UX-88): every stock, branch and reach read is held to the caller's
+	// org through the location's org_id, and the migration planted branches carry none, so the demo
+	// world's branches take the org the identity program just provisioned.
+	branchOrgs, err := stampDemoLocationOrg(ctx, tx, pop.OrgID)
+	report.LocationsOrgStamped = branchOrgs
+	if err != nil {
+		return report, err
+	}
 	report.StaffGrantsInserted = pop.Grants.Inserted
 
 	// The personas' staff grants, keyed by the namespaced subject, written
@@ -913,6 +923,20 @@ func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) 
 	}
 	replaced += int(tag.RowsAffected())
 	return replaced, nil
+}
+
+// stampDemoLocationOrg puts the demo org on every location row that carries none: the branches the
+// migrations plant and their zones. Guarded on the column being NULL, so a re-run stamps nothing and
+// a row somebody gave another org is left alone.
+func stampDemoLocationOrg(ctx context.Context, tx pgx.Tx, orgID string) (int, error) {
+	if orgID == "" {
+		return 0, fmt.Errorf("demo-populate: stamping the locations needs the demo org id")
+	}
+	tag, err := tx.Exec(ctx, `UPDATE locations SET org_id = $1::uuid, updated_at = now() WHERE org_id IS NULL`, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("demo-populate: stamping the demo org on the locations: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // writePaymentConfig seals the invented credentials under the box's own

@@ -69,6 +69,9 @@ type Branch struct {
 // the same shape rather than inventing a second one: the HANDLER translates identity into these two
 // fields, and the service below it gates on strings it cannot mistake for an authority object.
 type CallerScope struct {
+	// OrgID is the dealer org the middleware resolved for the request (UX-88). Even a global-scope
+	// caller is global inside this org only: the list never names a branch of another org or of no org.
+	OrgID string
 	// AllBranches is a GLOBAL-scope caller (identity.ScopeGlobal). The list is not fenced for them,
 	// which is identity.StaffContext.CanAccessBranch's own rule (rbac.go:103-109) said once more.
 	AllBranches bool

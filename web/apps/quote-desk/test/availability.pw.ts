@@ -51,8 +51,8 @@ test("a thin line says so in words and its peek shows every branch the server re
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText("PLM (this branch): 2 available");
   await expect(rows.nth(1)).toContainText("JUL: 60 available");
-  // The caller is on the cost list: the average cost rides, in money words.
-  await expect(rows.nth(1)).toContainText("avg cost $");
+  // The peek serves quantities only: no cost, whoever the caller is.
+  await expect(rows.nth(1)).not.toContainText("cost");
   await shot(panel(page), "availability-peek");
   // The peek closes again.
   await thin.getByRole("button", { name: "Other branches" }).click();

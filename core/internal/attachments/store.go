@@ -998,18 +998,16 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, _ string
 	if !arm.sees(delLinks) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	seq, err := allocateSeqTx(ctx, tx)
-	if err != nil {
-		return sync.RowState{}, err
-	}
+	// The tombstone relies on the sync seq trigger (0422): the row lock first, then the counter. An explicit
+	// draw ahead of the UPDATE would take the counter before the row and cross a writer that relies on the
+	// trigger (PR 556 round 3c); RETURNING answers the seq the trigger drew.
 	r, err := scanAttachment(tx.QueryRow(ctx, `
 		UPDATE attachment SET
 			deleted_at = now(),
-			updated_at = now(),
-			seq        = $3
+			updated_at = now()
 		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
 		RETURNING `+attachmentColumns,
-		id, f.OrgID, seq))
+		id, f.OrgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

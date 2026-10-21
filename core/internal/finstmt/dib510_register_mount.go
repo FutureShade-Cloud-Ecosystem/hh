@@ -77,6 +77,13 @@ func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
 	return h
 }
 
+// WithCustomerReach binds the customer reach rule the account workspace is held to. Unbound, the
+// workspace answers not found for every customer.
+func (h *Handler) WithCustomerReach(r billing.WorkspaceReach) *Handler {
+	h.customerReach = r
+	return h
+}
+
 // WithRegisterTaxLabel binds the dealer's tax word seam (platform/taxwords) for the register's printed
 // invoice. Unbound is the Ontario dealer's "HST".
 func (h *Handler) WithRegisterTaxLabel(src taxwords.Source) *Handler {
@@ -132,7 +139,11 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	if h.svc != nil && h.svc.now != nil {
 		creditSvc = creditSvc.WithClock(h.svc.now)
 	}
-	billing.NewWorkspaceHandler(repo, creditSvc, h.log).RegisterRoutes(r, g)
+	billing.NewWorkspaceHandler(repo, creditSvc, h.log).
+		WithUserLinker(h.userLink).
+		WithPaymentTrail(h.paymentTrail).
+		WithCustomerReach(h.customerReach).
+		RegisterRoutes(r, g)
 
 	// -- the C8 S3 + S4 + S3M surface (manual hold, paylink, statement preview) ---------------------
 	// Three new operations beside the workspace handler. The handler rides the same billing

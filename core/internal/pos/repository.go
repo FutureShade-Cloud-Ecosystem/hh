@@ -143,13 +143,16 @@ func (r *Repository) ResolveWalkIn(ctx context.Context) (string, error) {
 	return id, err
 }
 
-func (r *Repository) ReadStockOnHand(ctx context.Context, productID string) (map[string]float64, error) {
+func (r *Repository) ReadStockOnHand(ctx context.Context, orgID, productID string) (map[string]float64, error) {
 	out := map[string]float64{}
 	if r.pool == nil {
 		return out, errNoPool
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT location_id::text, on_hand_base - qty_reserved FROM stock_balances WHERE product_id = $1`, productID) // UNION-W4 (B E3): the POS glance shows AVAILABLE, a fully hard-reserved product must not read as sellable
+		`SELECT sb.branch_id::text, SUM(sb.on_hand_base - sb.qty_reserved)
+		   FROM stock_balances sb JOIN locations l ON l.id = sb.branch_id
+		  WHERE sb.product_id = $1 AND l.org_id = $2::uuid
+		  GROUP BY sb.branch_id`, productID, orgID) // UX-88: the caller's org only, a branch of no org is in no caller's org. UNION-W4 (B E3): the POS glance shows AVAILABLE, a fully hard-reserved product must not read as sellable
 	if err != nil {
 		return out, err
 	}
@@ -169,7 +172,7 @@ func (r *Repository) ReadStockOnHand(ctx context.Context, productID string) (map
 // base-unit availability in the item's SELL unit, plus the dealer's authored low thresholds. Same
 // M2-debt posture as ReadStockOnHand directly above (and the products read in repository_w7.go:
 // parkedProductName): an isolated cross-module READ, display-only, never a decrement.
-func (r *Repository) ReadStockUnitMeta(ctx context.Context, productID string) (baseUOM, sellUOM string, sellFactor float64, lowBase map[string]float64, err error) {
+func (r *Repository) ReadStockUnitMeta(ctx context.Context, orgID, productID string) (baseUOM, sellUOM string, sellFactor float64, lowBase map[string]float64, err error) {
 	lowBase = map[string]float64{}
 	if r.pool == nil {
 		return "", "", 0, lowBase, errNoPool
@@ -200,8 +203,9 @@ func (r *Repository) ReadStockUnitMeta(ctx context.Context, productID string) (b
 		sellFactor = f
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT branch_id::text, reorder_point_base::float8
-		   FROM product_reorder_points WHERE product_id::text = $1 AND is_active`, productID)
+		`SELECT rp.branch_id::text, rp.reorder_point_base::float8
+		   FROM product_reorder_points rp JOIN locations l ON l.id = rp.branch_id
+		  WHERE rp.product_id::text = $1 AND rp.is_active AND l.org_id = $2::uuid`, productID, orgID)
 	if err != nil {
 		return "", "", 0, lowBase, err
 	}

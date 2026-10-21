@@ -204,11 +204,20 @@ func intParam(r *http.Request, name string, def int) int {
 
 // GET /api/v1/inventory/branch-stock?product_id=&branch_id=, the 4-bucket per-branch view.
 // Without branch_id it returns EVERY branch, which is the cross-branch answer the ticket asks for.
-func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	productID := r.URL.Query().Get("product_id")
 	branchID := r.URL.Query().Get("branch_id")
 	if branchID != "" {
-		row, err := h.svc.AvailabilityAtBranch(r.Context(), productID, branchID)
+		// The named branch form holds two fences (UX-88 round 2). A scoped caller must hold the branch:
+		// 403, the shape the yard and branch doors answer for a branch out of reach. Then the read
+		// itself holds to the caller's org, so a GLOBAL caller reaches its own org's branches only and
+		// another org's, or a branch with no org, is a 404.
+		sc, ok := identity.StaffContextFromContext(r.Context())
+		if !ok || !sc.CanAccessBranch(branchID) {
+			httpx.Error(w, http.StatusForbidden, "inventory: branch out of scope")
+			return
+		}
+		row, err := h.svc.AvailabilityAtBranchInOrg(r.Context(), caller.OrgID, productID, branchID)
 		if err != nil {
 			h.writeErr(w, r, err)
 			return
@@ -221,7 +230,7 @@ func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, _ guards.S
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": []BranchStock{row}})
 		return
 	}
-	rows, err := h.svc.AvailabilityAllBranches(r.Context(), productID)
+	rows, err := h.svc.AvailabilityAllBranches(r.Context(), caller.OrgID, productID)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -243,7 +252,7 @@ func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, _ guards.S
 // DIB-452: &offset= pages the read. The response echoes the limit and offset it actually answered
 // for alongside the pre-limit total, so a caller can walk the whole match set without assuming its
 // request survived clamping. The 200-row cap is per PAGE and has not moved.
-func (h *Handler) browse(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) browse(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	csv := func(name string) []string {
 		v := strings.TrimSpace(q.Get(name))
@@ -267,6 +276,7 @@ func (h *Handler) browse(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 	res, err := h.svc.Browse(r.Context(), BrowseFilter{
 		Text:         q.Get("text"),
 		BranchID:     q.Get("branch_id"),
+		OrgID:        caller.OrgID,
 		ColorFamily:  csv("color_family"),
 		Texture:      csv("texture"),
 		ProductSize:  csv("product_size"),

@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 var errNoDB = errors.New("bankrec: database not configured")
@@ -308,6 +310,12 @@ func (r *Repository) PersistMatch(ctx context.Context, m Match, claimPaymentIDs 
 		return "", conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
 	}
 	if len(claimPaymentIDs) > 0 {
+		// The named payment rows first, ascending (the payments module's own lock, LOCK-ORDER.md): the
+		// UPDATE below takes the payments counter on its first row, and must not hold it while it waits
+		// for another row a reversal holds.
+		if lerr := payments.LockPaymentRowsTx(ctx, tx, claimPaymentIDs); lerr != nil {
+			return "", fmt.Errorf("bankrec: lock payments: %w", lerr)
+		}
 		ct, cerr := tx.Exec(ctx,
 			`UPDATE payments
 			   SET status = 'DEPOSITED',

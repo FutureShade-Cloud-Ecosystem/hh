@@ -220,6 +220,11 @@ func (s *Service) ApplyFreightRaiseTx(ctx context.Context, tx pgx.Tx, raiseID, d
 		return conflictf("dispatch: this freight raise was already %s", strings.ToLower(raise.State))
 	}
 
+	// The order's live loads first, ascending (PR 556 round 3d): the mints below draw the stops counter and the
+	// split after them locks these same rows; rows first, then the counter.
+	if err := s.repo.LockLoadsForOrderTx(ctx, tx, raise.OrderID); err != nil {
+		return err
+	}
 	loads, err := s.repo.LoadsForOrderTx(ctx, tx, raise.OrderID)
 	if err != nil {
 		return err

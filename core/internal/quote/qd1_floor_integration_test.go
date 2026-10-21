@@ -486,14 +486,9 @@ func TestQD1_AvailabilityCostGatedByCostList(t *testing.T) {
 		t.Errorf("a caller off the cost list must not read avg_cost_cents through the availability chips, got %d",
 			rows[0].Branch.AvgCostCents)
 	}
-	peek, err := svc.CrossBranchPeek(hidCtx, "00000000-0000-4000-8000-0000000000aa")
-	if err != nil {
+	// The peek has no cost field at all (UX-88), so the off-list caller has nothing to read there.
+	if _, err := svc.CrossBranchPeek(hidCtx, w5aOrgID, "00000000-0000-4000-8000-0000000000aa"); err != nil {
 		t.Fatalf("cross branch peek for an off-list caller: %v", err)
-	}
-	for _, b := range peek {
-		if b.AvgCostCents != 0 {
-			t.Errorf("a caller off the cost list must not read avg_cost_cents through the branch peek, got %d", b.AvgCostCents)
-		}
 	}
 
 	// A caller ON the list still reads it.

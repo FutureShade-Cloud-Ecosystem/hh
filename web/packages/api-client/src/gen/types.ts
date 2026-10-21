@@ -997,7 +997,7 @@ export type BillingCustomerWorkspaceActivity = {
   kind: "INVOICE" | "PAYMENT" | "CREDIT_MEMO" | "ADJUSTMENT" | "NSF" | "WRITE_OFF";
   reference?: string;
   amount_cents: number;
-  balance_after_cents: number;
+  balance_after_cents?: number;
   branch_id?: string;
   memo?: string;
   occurred_at: string;
@@ -1007,7 +1007,8 @@ export type BillingCustomerWorkspace = {
   invoices_open: BillingCustomerWorkspaceInvoice[];
   invoices_closed: BillingCustomerWorkspaceInvoice[];
   invoices_disputed: BillingCustomerWorkspaceInvoice[];
-  payments: BillingCustomerWorkspacePayment[];
+  payments?: BillingCustomerWorkspacePayment[];
+  payments_withheld: boolean;
   credit_notes: BillingCustomerWorkspaceCreditNote[];
   statements: BillingCustomerWorkspaceStatement[];
   notes: BillingCustomerWorkspaceNote[];
@@ -7191,8 +7192,19 @@ export type QuoteBranchStock = {
   soft_held_base: number;
   avg_cost_cents?: number;
 };
-export type QuoteBranchStockList = {
-  branches: QuoteBranchStock[];
+export type QuoteBranchPeek = {
+  product_id: string;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  on_hand_base: number;
+  reserved_base: number;
+  in_transit_base: number;
+  available_base: number;
+  soft_held_base: number;
+};
+export type QuoteBranchPeekList = {
+  branches: QuoteBranchPeek[];
   seam_wired: boolean;
 };
 export type QuoteExpiredHold = {
