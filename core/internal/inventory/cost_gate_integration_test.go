@@ -20,6 +20,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -37,6 +38,7 @@ type costGateWorld struct {
 func newCostGateWorld(t *testing.T) *costGateWorld {
 	t.Helper()
 	pool := intPool(t)
+	stampTestOrg(t, pool)
 	svc := newIntSvc(pool)
 	ctx := context.Background()
 
@@ -116,7 +118,7 @@ func withQuery(req *http.Request, kv ...string) *http.Request {
 func costGateGet(t *testing.T, h func(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller), req *http.Request) map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
-	h(w, req, guards.StaffCaller{})
+	h(w, req, guards.StaffCaller{StaffScope: authz.StaffScope{OrgID: ux88OrgA}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("handler answered %d: %s", w.Code, w.Body.String())
 	}

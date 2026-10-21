@@ -106,7 +106,7 @@ func (s *Service) replenishReader() (replenishReader, error) {
 // LOCATIONS, which is why the branch can always be NAMED even for a product that has never been
 // stocked there: a nudge that said "at 5d1b3f6e-…" would be unreadable.
 type branchPositionReader interface {
-	BranchStock(ctx context.Context, productID, branchID string) ([]BranchStock, error)
+	BranchStock(ctx context.Context, productID, branchID, orgID string) ([]BranchStock, error)
 }
 
 func (s *Service) branchPositionReader() (branchPositionReader, error) {
@@ -415,7 +415,7 @@ func trimQty(v float64) string {
 // returns a ZEROED row rather than not-found, exactly as AvailabilityAtBranch does, "none at
 // Kingston" is a real answer, and it is the answer a nudge is most likely to be about.
 func (s *Service) positionAt(ctx context.Context, pr branchPositionReader, productID, branchID string) (BranchStock, error) {
-	rows, err := pr.BranchStock(ctx, productID, branchID)
+	rows, err := pr.BranchStock(ctx, productID, branchID, "")
 	if err != nil {
 		return BranchStock{}, err
 	}

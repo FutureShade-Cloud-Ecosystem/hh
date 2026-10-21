@@ -113,12 +113,26 @@ type BranchStock struct {
 	AvgCostCents  int64   `json:"avg_cost_cents,omitempty"`
 }
 
+// BranchPeek is one branch's row in the cross-branch peek: the four buckets and nothing else. It has
+// no cost field at all, so no role can be handed a cost through the peek (UX-88, row 2809).
+type BranchPeek struct {
+	ProductID     string  `json:"product_id"`
+	BranchID      string  `json:"branch_id"`
+	BranchCode    string  `json:"branch_code"`
+	BranchName    string  `json:"branch_name"`
+	OnHandBase    float64 `json:"on_hand_base"`
+	ReservedBase  float64 `json:"reserved_base"`
+	InTransitBase float64 `json:"in_transit_base"`
+	AvailableBase float64 `json:"available_base"`
+	SoftHeldBase  float64 `json:"soft_held_base"`
+}
+
 // AvailabilityReader is the consumer-declared half of inventory's published QuoteAvailabilityReader.
 // The provider side compile-asserts *inventory.Service against its own copy (inventory/visibility.go);
 // this is the identically-shaped, differently-named consumer copy the convention calls for.
 type AvailabilityReader interface {
 	AvailabilityAtBranch(ctx context.Context, productID, branchID string) (BranchStock, error)
-	AvailabilityAllBranches(ctx context.Context, productID string) ([]BranchStock, error)
+	AvailabilityPeek(ctx context.Context, orgID, productID string) ([]BranchPeek, error)
 }
 
 // WithStockReserver injects the soft-hold port.

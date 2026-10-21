@@ -271,6 +271,7 @@ func intParam(raw, name string) (int, error) {
 // is an answer, and a download that silently does nothing is indistinguishable from a broken button.
 func (h *Handler) catalogueXLSX(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := CatalogueQuery{
+		OrgID:         caller.OrgID,
 		Filter:        parseCatalogueFilter(r),
 		Sort:          ParseSortKey(r.URL.Query().Get("sort")),
 		Desc:          strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("dir")), "desc"),

@@ -89,14 +89,14 @@ func (h *StaffHandler) releaseHolds(w http.ResponseWriter, r *http.Request, _ gu
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"holds_released": n})
 }
 
-func (h *StaffHandler) crossBranchPeek(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	rows, err := h.svc.CrossBranchPeek(r.Context(), r.PathValue("productId"))
+func (h *StaffHandler) crossBranchPeek(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	rows, err := h.svc.CrossBranchPeek(r.Context(), caller.OrgID, r.PathValue("productId"))
 	if err != nil {
 		h.writeErr(w, err)
 		return
 	}
 	if rows == nil {
-		rows = []BranchStock{}
+		rows = []BranchPeek{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"branches": rows, "seam_wired": h.svc.AvailabilitySeamWired(),

@@ -12,8 +12,9 @@ type fakeStore struct {
 	existsErr error
 }
 
-func (f *fakeStore) List(context.Context) ([]Branch, error)          { return f.list, nil }
-func (f *fakeStore) DefaultBranchID(context.Context) (string, error) { return f.defaultID, nil }
+func (f *fakeStore) List(context.Context) ([]Branch, error)              { return f.list, nil }
+func (f *fakeStore) ListInOrg(context.Context, string) ([]Branch, error) { return f.list, nil }
+func (f *fakeStore) DefaultBranchID(context.Context) (string, error)     { return f.defaultID, nil }
 
 // Exists answers off the same fixture list, so a test cannot accidentally set up a branch that the
 // list has and the existence read does not.
