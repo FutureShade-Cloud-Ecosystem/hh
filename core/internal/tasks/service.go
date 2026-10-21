@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -18,6 +19,11 @@ var (
 	// returns this (the main.go adapter maps order.ErrNotFound onto it) so the service never imports
 	// the order package. → 422.
 	ErrUnknownOrder = errors.New("tasks: unknown order")
+	// ErrReachUnavailable, the branch to org read behind a caller's reach could not answer (UX-81 round 5). → 503,
+	// a retry, never an unknown order answer.
+	ErrReachUnavailable = errors.New("tasks: branch reach unavailable")
+	// ErrNoOrg, a list read that names no org (UX-81 round 5): it lists nothing rather than every org's tasks.
+	ErrNoOrg = errors.New("tasks: no org on this read")
 	// ErrIllegalTransition, the requested status move is not legal from the task's current status. → 409.
 	ErrIllegalTransition = errors.New("tasks: illegal transition")
 	// ErrNoTransition, the task is already in the requested status (a benign duplicate move). → 409.
@@ -94,7 +100,11 @@ type Service struct {
 	orders   OrderReader
 	notifier ChatNotifier
 	picks    PickSource // W2 yard queue feed (see yard.go); nil = no ticket decoration
-	log      *slog.Logger
+	// orgOrders and orgPicks are the org held reads (UX-81 round 4), taken from the seams when they implement them.
+	orgOrders  OrgOrderReader
+	orgPicks   OrgPickSource
+	orgPending OrgPendingSource
+	log        *slog.Logger
 
 	// - W3 (Swarm C) -
 	// lines is the DIB-324 order-line edit seam (weight.go). Nil = the weight is recorded and the
@@ -124,7 +134,17 @@ func NewService(store taskStore) *Service {
 }
 
 // WithOrderReader injects the order-validation seam (create-from-order rejects an unknown order).
-func (s *Service) WithOrderReader(r OrderReader) *Service { s.orders = r; return s }
+func (s *Service) WithOrderReader(r OrderReader) *Service {
+	s.orders = r
+	s.orgOrders, _ = r.(OrgOrderReader) // the org held read, taken from the seam when it has one (UX-81 round 4)
+	return s
+}
+
+// OrgScoped reports whether the create's order read and the ticket reads are held to the caller's org (the
+// composition root's boot check, UX-81 round 4).
+func (s *Service) OrgScoped() bool {
+	return s.orgOrders != nil && (s.picks == nil || (s.orgPicks != nil && s.orgPending != nil))
+}
 
 // RoleLabeler answers the role label each given user holds. The identity resolver satisfies it.
 type RoleLabeler interface {
@@ -163,9 +183,37 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 	if s.orders == nil {
 		return Task{}, errNotConfigured
 	}
-	ob, err := s.orders.OrderBrief(ctx, in.OrderID)
+	// The order is read under the caller's org (UX-81 round 4): another org's order is an unknown order, the
+	// same 422 "order not found", so a GLOBAL caller of one org cannot create a pick on another org's order.
+	var ob OrderBrief
+	var err error
+	if s.orgOrders != nil {
+		// An empty org reads nothing (UX-81 round 5): the unscoped read is for a seam with no org held read only.
+		if in.OrgID == "" {
+			return Task{}, ErrUnknownOrder
+		}
+		ob, err = s.orgOrders.OrderBriefInOrg(ctx, in.OrgID, in.OrderID)
+	} else {
+		ob, err = s.orders.OrderBrief(ctx, in.OrderID)
+	}
 	if err != nil {
 		return Task{}, err // ErrUnknownOrder (or a transport error), surfaced as-is
+	}
+	// An order outside the caller's branch reach is an unknown order to it (UX-81 round 3): the same error, so
+	// the same 422 "order not found", tells the caller nothing about an order on another branch.
+	if in.Reach != nil {
+		reach, err := in.Reach(ob.BranchID)
+		if err != nil {
+			return Task{}, fmt.Errorf("%w: %v", ErrReachUnavailable, err)
+		}
+		if !reach {
+			return Task{}, ErrUnknownOrder
+		}
+	}
+	// A pick is never born with no branch (UX-81 round 2): the repository would write a NULL for an empty
+	// branch, and a branchless pick belongs to no yard.
+	if ob.BranchID == "" {
+		return Task{}, httpx.BadRequestf("this order has no branch, so no pick was made")
 	}
 	t, err := s.store.CreateTask(ctx, NewTaskInput{
 		OrderID:         ob.ID,
