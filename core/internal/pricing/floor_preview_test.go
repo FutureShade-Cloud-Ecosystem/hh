@@ -13,7 +13,7 @@ import (
 
 type fakeCands struct{ prods []CandidateProduct }
 
-func (f fakeCands) CandidateProducts(_ context.Context, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
+func (f fakeCands) CandidateProducts(_ context.Context, _, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
 	var out []CandidateProduct
 	for _, p := range f.prods {
 		if productID != "" && p.ProductID != productID {

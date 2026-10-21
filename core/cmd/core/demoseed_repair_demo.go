@@ -64,6 +64,10 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if !ok {
 		return 0, fmt.Errorf("demoseed: the repair pass needs a transaction that can read the schema")
 	}
+	locs, err := repairDemoLocationOrg(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
 	world, err := repairDemoSeq(ctx, tx, rq)
 	if err != nil {
 		return 0, err
@@ -77,7 +81,7 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 		return 0, err
 	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + sequenced + tasks + world + reps + grants + n, err
+	return fixed + stamped + sequenced + tasks + locs + world + reps + grants + n, err
 }
 
 // yardPersonaBranchGrantRepairSQL deletes every user_branch_grants row of the yard persona
@@ -392,4 +396,17 @@ func demoProductIDs() []string {
 		ids = append(ids, demoID("product:"+p.Key))
 	}
 	return ids
+}
+
+// repairDemoLocationOrg stamps the demo org on every location that carries none, on every apply, and
+// returns how many rows it stamped. Every UX-88 read holds to the caller's org through the location's
+// org_id, so a demo box whose branches carry none shows its personas no branch at all. The statement is
+// guarded on the column being NULL and on the org row existing, so the second run matches nothing and a
+// box whose populate has not yet provisioned the org is left for the next apply.
+func repairDemoLocationOrg(ctx context.Context, tx txExec) (int, error) {
+	tag, err := tx.Exec(ctx, locationOrgRepairSQL, demoOrgSlug)
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: stamping the demo org on the locations: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }

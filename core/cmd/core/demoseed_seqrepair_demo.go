@@ -168,9 +168,11 @@ UPDATE %[1]s t
   FROM todo
  WHERE t.ctid = todo.row_ctid`
 
-// locationOrgRepairSQL stamps the demo org on the branch rows that carry none. The org row must exist
-// (a fresh box's first apply runs before the populate provisions it), and a branch that already
-// names an org is left alone.
+// locationOrgRepairSQL stamps the demo org on the location rows that carry none. The org row must exist
+// (a fresh box's first apply runs before the populate provisions it), and a row that already names an
+// org is left alone. It runs on EVERY apply (repairDemoLocationOrg, demoseed_repair_demo.go), not
+// under the seq repair's done marker: that marker is written once the org exists, and a box that was
+// marked done before its branches were stamped would otherwise never be mended.
 const locationOrgRepairSQL = `UPDATE locations
 	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext)
 	 WHERE org_id IS NULL AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`
@@ -203,11 +205,6 @@ func repairDemoSeq(ctx context.Context, tx txExec, rows rowQuery) (int, error) {
 		return 0, err
 	}
 	total := 0
-	tag, err := tx.Exec(ctx, locationOrgRepairSQL, demoOrgSlug)
-	if err != nil {
-		return 0, fmt.Errorf("demoseed: stamping the demo org on the branches: %w", err)
-	}
-	total += int(tag.RowsAffected())
 	for _, s := range demoSeqTables {
 		cols, ok := have[s.table]
 		if !ok {

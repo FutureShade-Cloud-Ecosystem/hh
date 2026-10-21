@@ -56,7 +56,7 @@
 //   GET  /api/v1/quotes/{id}/hold-expiry         -> QuoteHoldExpiryView
 //   POST /api/v1/quotes/{id}/holds/resync        -> QuoteHoldResyncResult | 409
 //   GET  /api/v1/quotes/{id}/availability        -> QuoteLineAvailabilityList
-//   GET  /api/v1/quote-availability/{id}/branches -> QuoteBranchStockList
+//   GET  /api/v1/quote-availability/{id}/branches -> QuoteBranchPeekList
 //   POST /api/v1/staff/policy/check              -> IdentityPolicyCheckResponse
 //   GET  /api/v1/staff/approvals                 -> IdentityApprovalPage
 //   POST /api/v1/staff/approvals/{id}/decide     -> IdentityStatusResponse | 403 | 409
@@ -521,6 +521,12 @@ function branchStockRow(productId, branchId, caller) {
     soft_held_base: 0,
     ...(switches.callerOnCostList && product !== undefined ? { avg_cost_cents: product.branch_cost_cents[POINT_LOMA_ID] ?? 0 } : {}),
   };
+}
+
+// The cross branch peek serves quantities only: the real core's peek has no cost field for any role.
+function peekRow(productId, branchId) {
+  const { avg_cost_cents: _cost, ...quantities } = branchStockRow(productId, branchId, undefined);
+  return quantities;
 }
 
 function gradeOf(available, qty) {
@@ -3128,7 +3134,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     respondJson(response, 200, {
-      branches: [branchStockRow(match[1], POINT_LOMA_ID, caller), branchStockRow(match[1], JULIAN_ID, caller)],
+      branches: [peekRow(match[1], POINT_LOMA_ID), peekRow(match[1], JULIAN_ID)],
       seam_wired: true,
     });
     return;

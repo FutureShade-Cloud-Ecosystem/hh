@@ -336,7 +336,7 @@ func TestStockGlance_CarriesWeightWhenOnFile(t *testing.T) {
 	h := newHarness()
 	h.store.stock["prod-paver"] = map[string]float64{"branch-trt": 100}
 	h.store.weights = map[string]float64{"prod-paver": 3.9}
-	g, err := h.svc.StockGlance(context.Background(), "prod-paver")
+	g, err := h.svc.StockGlance(context.Background(), "org-1", "prod-paver")
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestStockGlance_CarriesWeightWhenOnFile(t *testing.T) {
 	}
 	// No weight on file → absent (0/omitempty), never a guess.
 	h.store.stock["prod-nows"] = map[string]float64{"branch-trt": 5}
-	g, err = h.svc.StockGlance(context.Background(), "prod-nows")
+	g, err = h.svc.StockGlance(context.Background(), "org-1", "prod-nows")
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}

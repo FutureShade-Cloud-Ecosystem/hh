@@ -25,7 +25,7 @@ import {
   formatQty,
   shouldOfferPeek,
   softHeldNote,
-  type BranchStock,
+  type BranchPeek,
   type LineAvailability,
 } from "./_quote-availability.js";
 
@@ -36,7 +36,7 @@ export class QdQuoteAvailability extends PanelBase {
   @state() private names: Record<number, string> = {};
   @state() private seamWired = true;
   @state() private loaded = false;
-  @state() private peeks: Record<string, BranchStock[]> = {};
+  @state() private peeks: Record<string, BranchPeek[]> = {};
   @state() private openPeek = "";
 
   static styles = [
