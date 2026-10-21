@@ -132,7 +132,10 @@ test('a held account with a bare standing invents no past due, bucket, promise o
 
 test('a held account names a crew member only when one is passed in', () => {
   const res = evaluateAccountCheck({ name: 'X', on_hold: true }, null, { crewMemberName: 'Crew Person' });
-  assert.equal(res.lines[res.lines.length - 1], 'Crew Person may buy on this account, but it is on hold. Three ways forward:');
+  assert.equal(
+    res.lines[res.lines.length - 1],
+    'Crew Person is a listed crew member of X, but the account is on hold, so a charge to it will be refused.',
+  );
 });
 
 test('blocked detection triggers on customer on_hold flag', () => {

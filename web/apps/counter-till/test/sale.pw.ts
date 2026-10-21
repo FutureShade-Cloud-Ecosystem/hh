@@ -601,11 +601,8 @@ test("clicking a way forward on a held account claims no send and makes no reque
     await page.getByTestId(id).click();
   }
   expect(posts).toEqual([]);
-  const text = (await page.locator("body").innerText()).toLowerCase();
-  expect(text).not.toContain("paylink sent");
-  expect(text).not.toContain("request sent");
-  expect(text).not.toContain("2.9%");
-  expect(text).not.toContain("hold lifts");
+  // getByText pierces the till's shadow root; body.innerText() does not, and would pass on an empty read.
+  await expect(page.getByText(/paylink sent|request sent|2\.9%|hold lifts/i)).toHaveCount(0);
 });
 
 test("a terms-0 account's check reads no terms on file, never thirty days", async ({ page }) => {

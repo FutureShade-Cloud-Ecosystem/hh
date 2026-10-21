@@ -171,7 +171,7 @@ export function evaluateAccountCheck(
     : '.';
   const line1 = `Available credit ${availableCreditFormatted}, but the account is on hold${pastDuePart}`;
   const crewLine = options?.crewMemberName
-    ? `${options.crewMemberName} may buy on this account, but it is on hold. Three ways forward:`
+    ? `${options.crewMemberName} is a listed crew member of ${name}, but the account is on hold, so a charge to it will be refused.`
     : 'The account is on hold. Three ways forward:';
   const lines = [line1];
   if (standing?.promise_text) lines.push(standing.promise_text);
