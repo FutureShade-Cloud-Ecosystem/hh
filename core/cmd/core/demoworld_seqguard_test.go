@@ -110,31 +110,40 @@ func TestDemoWorld_SeqRepairListMatchesTheSchema(t *testing.T) {
 	}
 }
 
-// TestDemoWorld_SeqRepairSecondApplyDrawsNothing: a second apply on the same world sequences no row and
-// moves no scope counter.
+// TestDemoWorld_SeqRepairSecondApplyDrawsNothing: a second apply sequences no row and re-serves none:
+// every seeded row keeps its seq. (The scope COUNTERS may move: since migration 0422 the sync seq trigger
+// draws for each proposed row of the applier's INSERT ... ON CONFLICT DO NOTHING before the conflict is
+// known, a harmless gap. What a device sees is the rows' own seq.)
 func TestDemoWorld_SeqRepairSecondApplyDrawsNothing(t *testing.T) {
 	w := bootDriveWorld(t)
 	ctx := context.Background()
+	have, err := seqColumnTables(ctx, w.pool)
+	if err != nil {
+		t.Fatalf("reading the seq tables: %v", err)
+	}
 	snap := func() string {
-		rows, err := w.pool.Query(ctx, `SELECT scope || '=' || next_value FROM scope_sequences ORDER BY scope`)
-		if err != nil {
-			t.Fatalf("reading the scope counters: %v", err)
-		}
-		defer rows.Close()
 		var parts []string
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err != nil {
-				t.Fatalf("scan: %v", err)
+		for _, s := range demoSeqTables {
+			if _, ok := have[s.table]; !ok {
+				continue
 			}
-			parts = append(parts, s)
+			var digest *string
+			if err := w.pool.QueryRow(ctx, fmt.Sprintf(
+				`SELECT md5(string_agg(coalesce(seq::text, 'null'), ',' ORDER BY seq NULLS FIRST, ctid::text)) FROM %s`, s.table)).Scan(&digest); err != nil {
+				t.Fatalf("digesting %s: %v", s.table, err)
+			}
+			d := "empty"
+			if digest != nil {
+				d = *digest
+			}
+			parts = append(parts, s.table+"="+d)
 		}
 		return strings.Join(parts, " ")
 	}
 	before := snap()
 	driveApplyAt(t, qwClock)
 	if after := snap(); after != before {
-		t.Fatalf("a second apply moved the scope counters:\nbefore %s\nafter  %s", before, after)
+		t.Fatalf("a second apply moved a row's seq:\nbefore %s\nafter  %s", before, after)
 	}
 	if left := unsequencedByTable(ctx, t, w.pool); len(left) > 0 {
 		t.Fatalf("rows left unsequenced after a second apply: %s", listUnsequenced(left))

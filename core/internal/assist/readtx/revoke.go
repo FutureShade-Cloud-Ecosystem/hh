@@ -9,7 +9,8 @@ import (
 )
 
 // revokeExtensionFunctionsSQL closes EXECUTE to PUBLIC on every function that belongs to an extension, gives
-// it to the function users role, and gives pgcrypto's hmac(text, text, text) to the claims owner. The two
+// it to the function users role, gives pgcrypto's hmac(text, text, text) to the claims owner, and citext's
+// citext_eq(citext, citext) to the zone reader (when that role exists). The three
 // role names arrive as transaction local settings; nothing else is read from outside. Idempotent.
 //
 // It reads the system catalogue, which is no module's data, and says so to the table gate in the one way the
@@ -20,8 +21,10 @@ const revokeExtensionFunctionsSQL = `DO $do$
 DECLARE
   fn_users     text := current_setting('readtx.fn_users');
   claims_owner text := current_setting('readtx.claims_owner');
+  zone_reader  text := current_setting('readtx.zone_reader');
   r            record;
   crypto       text;
+  citext_sch   text;
 BEGIN
   FOR r IN
     SELECT p.oid::regprocedure::text AS sig
@@ -36,6 +39,10 @@ BEGIN
   SELECT n.nspname INTO crypto FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pgcrypto';
   IF crypto IS NOT NULL THEN
     EXECUTE format('GRANT EXECUTE ON FUNCTION %I.hmac(text, text, text) TO %I', crypto, claims_owner);
+  END IF;
+  SELECT n.nspname INTO citext_sch FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'citext';
+  IF citext_sch IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = zone_reader) THEN
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %I.citext_eq(%I.citext, %I.citext) TO %I', citext_sch, citext_sch, citext_sch, zone_reader);
   END IF;
 END
 $do$`
@@ -52,7 +59,7 @@ func ProvisionRevokeExtensionFunctions(ctx context.Context, conn *pgx.Conn, role
 		return errors.New("readtx: cannot begin")
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if _, err := tx.Exec(ctx, `SELECT set_config('readtx.fn_users', $1, true), set_config('readtx.claims_owner', $2, true)`, roles.FunctionUsers, roles.ClaimsOwner); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT set_config('readtx.fn_users', $1, true), set_config('readtx.claims_owner', $2, true), set_config('readtx.zone_reader', $3, true)`, roles.FunctionUsers, roles.ClaimsOwner, roles.ZoneReader); err != nil {
 		return fmt.Errorf("readtx: cannot stage the role names%s", sqlState(err))
 	}
 	if _, err := tx.Exec(ctx, revokeExtensionFunctionsSQL); err != nil {

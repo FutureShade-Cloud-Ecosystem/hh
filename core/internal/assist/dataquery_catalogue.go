@@ -99,6 +99,8 @@ func (v ViewDef) col(name string) (ColumnDef, bool) {
 const (
 	GateRoleList       = "role_list"
 	GatePurchasePolicy = "purchase_policy"
+	// GatePaymentTrail is the role gate's admission to the two payment trail routes (ruling 87), carried in the claim.
+	GatePaymentTrail = "payment_trail"
 )
 
 // columnHeld is classHeld for one column: a cost column is held according to the vocabulary that governs it.
@@ -125,7 +127,7 @@ func classHeld(c Caller, class string) bool {
 
 // builtinViews is the shipped catalogue, before any asker's filtering.
 func builtinViews() []ViewDef {
-	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView()}
+	return []ViewDef{ordersView(), orderLinesView(), stockBalancesView(), quotesView(), quoteLinesView(), purchaseOrdersView(), purchaseOrderLinesView(), invoicesView(), arAgingView(), paymentsView(), paymentAllocationsView()}
 }
 
 func ordersView() ViewDef { return classify(rawOrdersView()) }
@@ -345,5 +347,109 @@ func rawPurchaseOrderLinesView() ViewDef {
 		},
 		Default:      []string{"po_no", "line_no", "sku", "description", "qty_ordered_base", "qty_received_base", "uom"},
 		DefaultOrder: []OrderBy{{Col: "po_no", Dir: "asc"}, {Col: "line_no", Dir: "asc"}},
+	}
+}
+
+func invoicesView() ViewDef { return classify(rawInvoicesView()) }
+
+func rawInvoicesView() ViewDef {
+	return ViewDef{
+		Name: "ai.invoices", Schema: "ai", Table: "invoices", Title: "Invoices", MinTier: 2, Large: true,
+		About: "One row per invoice or credit memo: number, type, status, issue and due date, branch, customer, order, totals, holdback and balance due in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Invoice id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "invoice_no", Label: "Invoice", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "doc_type", Label: "Type", Type: typeText, Filter: true, Group: true},
+			{Name: "status", Label: "Status", Type: typeText, Filter: true, Group: true},
+			{Name: "issue_date", Label: "Issued", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "due_date", Label: "Due", Type: typeDate, Filter: true, Group: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "account_no", Label: "Account", Type: typeText, Filter: true, Group: true},
+			{Name: "order_id", Label: "Order id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "order_no", Label: "Order", Type: typeText, Filter: true, Group: true},
+			{Name: "subtotal_cents", Label: "Subtotal", Type: typeCents, Filter: true, Agg: true},
+			{Name: "tax_cents", Label: "Tax", Type: typeCents, Filter: true, Agg: true},
+			{Name: "holdback_cents", Label: "Holdback", Type: typeCents, Filter: true, Agg: true},
+			{Name: "total_cents", Label: "Total", Type: typeCents, Filter: true, Agg: true},
+			{Name: "balance_cents", Label: "Balance due", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"invoice_no", "customer_name", "branch_label", "status", "due_date", "balance_cents"},
+		DefaultOrder: []OrderBy{{Col: "due_date", Dir: "asc"}, {Col: "invoice_no", Dir: "asc"}},
+		Period:       "issue_date",
+		CiteKind:     RefInvoice, CiteIDCol: "id", CiteLabelCol: "invoice_no", CiteLabelPrefix: "Invoice ",
+	}
+}
+
+func arAgingView() ViewDef { return classify(rawARAgingView()) }
+
+func rawARAgingView() ViewDef {
+	return ViewDef{
+		Name: "ai.ar_aging", Schema: "ai", Table: "ar_aging", Title: "Receivables aging", MinTier: 2, Large: true,
+		About: "One row per account with an open balance: the balance in cents, as of the dealer's day, in the aging screen's bands (current, 1 to 30, 31 to 60, 61 to 90 and over 90 days past due).",
+		Columns: []ColumnDef{
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "account_no", Label: "Account", Type: typeText, Filter: true, Group: true},
+			{Name: "as_of", Label: "As of", Type: typeDate, Filter: true},
+			{Name: "current_cents", Label: "Current", Type: typeCents, Filter: true, Agg: true},
+			{Name: "days_1_30_cents", Label: "1 to 30 days", Type: typeCents, Filter: true, Agg: true},
+			{Name: "days_31_60_cents", Label: "31 to 60 days", Type: typeCents, Filter: true, Agg: true},
+			{Name: "days_61_90_cents", Label: "61 to 90 days", Type: typeCents, Filter: true, Agg: true},
+			{Name: "days_90_plus_cents", Label: "Over 90 days", Type: typeCents, Filter: true, Agg: true},
+			{Name: "open_cents", Label: "Open balance", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"customer_name", "account_no", "current_cents", "days_1_30_cents", "days_31_60_cents", "days_61_90_cents", "days_90_plus_cents", "open_cents"},
+		DefaultOrder: []OrderBy{{Col: "open_cents", Dir: "desc"}, {Col: "account_no", Dir: "asc"}},
+		CiteKind:     RefCustomer, CiteIDCol: "customer_id", CiteLabelCol: "account_no", CiteLabelPrefix: "Account ",
+	}
+}
+
+func paymentsView() ViewDef { return classify(rawPaymentsView()) }
+
+func rawPaymentsView() ViewDef {
+	return ViewDef{
+		Name: "ai.payments", Schema: "ai", Table: "payments", Title: "Payments", MinTier: 2, Large: true,
+		About: "One row per payment: number, date, branch and customer and, where you hold the payment trail, the method, status, amount and unapplied amount in cents.",
+		Columns: []ColumnDef{
+			{Name: "id", Label: "Payment id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "payment_no", Label: "Payment", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "received_at", Label: "Received", Type: typeTime, Filter: true, Agg: true},
+			{Name: "branch_id", Label: "Branch id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "branch_label", Label: "Branch", Type: typeText, Filter: true, Group: true},
+			{Name: "customer_id", Label: "Customer id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "customer_name", Label: "Customer", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "method", Label: "Method", Type: typeText, Filter: true, Group: true},
+			{Name: "status", Label: "Payment status", Type: typeText, Filter: true, Group: true},
+			{Name: "amount_cents", Label: "Amount", Type: typeCents, Filter: true, Agg: true},
+			{Name: "unapplied_cents", Label: "Unapplied", Type: typeCents, Filter: true, Agg: true},
+		},
+		Default:      []string{"payment_no", "customer_name", "branch_label", "received_at"},
+		DefaultOrder: []OrderBy{{Col: "received_at", Dir: "desc"}, {Col: "payment_no", Dir: "asc"}},
+		Period:       "received_at",
+		CiteKind:     RefPayment, CiteIDCol: "id", CiteLabelCol: "payment_no", CiteLabelPrefix: "Payment ",
+	}
+}
+
+func paymentAllocationsView() ViewDef { return classify(rawPaymentAllocationsView()) }
+
+func rawPaymentAllocationsView() ViewDef {
+	return ViewDef{
+		Name: "ai.payment_allocations", Schema: "ai", Table: "payment_allocations", Title: "Payment allocations", MinTier: 2, Large: true,
+		About: "One row per payment applied to an invoice: the payment, the invoice, the amount applied in cents and when. Only askers who hold the payment trail see any.",
+		Columns: []ColumnDef{
+			{Name: "payment_id", Label: "Payment id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "payment_no", Label: "Payment", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "invoice_id", Label: "Invoice id", Type: typeUUID, Filter: true, Hidden: true},
+			{Name: "invoice_no", Label: "Invoice", Type: typeText, Filter: true, Group: true, Search: true},
+			{Name: "amount_cents", Label: "Amount applied", Type: typeCents, Filter: true, Agg: true},
+			{Name: "allocated_at", Label: "Applied", Type: typeTime, Filter: true, Agg: true},
+		},
+		Default:      []string{"payment_no", "invoice_no"},
+		DefaultOrder: []OrderBy{{Col: "payment_no", Dir: "asc"}, {Col: "invoice_no", Dir: "asc"}},
+		Period:       "allocated_at",
+		CiteKind:     RefPayment, CiteIDCol: "payment_id", CiteLabelCol: "payment_no", CiteLabelPrefix: "Payment ",
 	}
 }

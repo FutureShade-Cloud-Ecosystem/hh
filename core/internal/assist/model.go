@@ -214,6 +214,10 @@ const (
 	// contract, a typo here is a silently missing link, not an error, so it is a constant here for
 	// the same reason the other three are.
 	RefQuote = "quote"
+	// RefInvoice and RefPayment are slice 7a's: the receivables views cite an invoice or a payment by these kinds.
+	// A host that cannot open one shows the citation as a plain label, as it does for any kind it does not route.
+	RefInvoice = "invoice"
+	RefPayment = "payment"
 )
 
 // refTo builds a Ref, or nil when there is no addressable id. A half-ref (a kind with no id) would

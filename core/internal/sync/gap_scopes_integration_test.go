@@ -197,6 +197,7 @@ func openGapPool(t *testing.T) *pgxpool.Pool {
 		VALUES ($1::uuid, $2::uuid, 1, $3::uuid, 'Fixture gap line', 10, 'EA', 10, 10, 1000, 'EA', 10000, $4::uuid, $5::uuid)
 		ON CONFLICT (id) DO NOTHING`,
 		gapOrderLineID, gapOrderID, testkit.ProductID, testkit.OrgNorthID, testkit.TenantAlphaID)
+	hideFixtureRowsFromFeeds(t, pool)
 	t.Cleanup(func() {
 		ctx := context.Background()
 		exec := func(q string, args ...any) { _, _ = pool.Exec(ctx, q, args...) }

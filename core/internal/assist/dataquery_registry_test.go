@@ -138,3 +138,45 @@ func TestRegistry_NoCitationLabelIsBuiltFromAPersonalColumn(t *testing.T) {
 		}
 	}
 }
+
+// Slice 7a: the payment class follows the claim's payment trail in the catalogue. A manager without the trail
+// is shown the payment views' identifying columns and none of the payment class; with the trail, all of it.
+func TestCatalogue_PaymentClassFollowsThePaymentTrail(t *testing.T) {
+	gated := map[string][]string{
+		"ai.payments":            {"method", "status", "amount_cents", "unapplied_cents"},
+		"ai.payment_allocations": {"amount_cents", "allocated_at"},
+	}
+	plain := map[string][]string{
+		"ai.payments":            {"payment_no", "received_at", "branch_label", "customer_name"},
+		"ai.payment_allocations": {"payment_no", "invoice_no"},
+	}
+	has := func(c Caller, view, col string) bool {
+		for _, v := range CatalogueFor(c) {
+			if v.Name == view {
+				_, ok := v.Column(col)
+				return ok
+			}
+		}
+		return false
+	}
+	off := Caller{UserID: "u", RoleCode: "manager", Tier: 2, BranchIDs: []string{"22222222-2222-2222-2222-222222222222"}}
+	on := off
+	on.PaymentTrail = true
+	for view, cols := range gated {
+		for _, col := range cols {
+			if has(off, view, col) {
+				t.Errorf("%s.%s is in the catalogue of a caller without the trail", view, col)
+			}
+			if !has(on, view, col) {
+				t.Errorf("%s.%s is not in the catalogue of a caller with the trail", view, col)
+			}
+		}
+	}
+	for view, cols := range plain {
+		for _, col := range cols {
+			if !has(off, view, col) {
+				t.Errorf("%s.%s should be plain, and is missing without the trail", view, col)
+			}
+		}
+	}
+}
