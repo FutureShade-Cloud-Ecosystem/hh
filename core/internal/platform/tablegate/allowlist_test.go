@@ -397,8 +397,8 @@ var allowlist = []allowlistEntry{
 	{
 		module: "inventory",
 		file:   "core/internal/inventory/browse.go",
-		tables: []string{"products"},
-		reason: "the browse surface is the stock-aware product list; it reads the catalog columns and promoted UDF facets it filters on",
+		tables: []string{"locations", "products"},
+		reason: "the browse surface is the stock-aware product list; it reads the catalog columns and promoted UDF facets it filters on, and holds every stock and cost column to the caller's org through the org anchor read on locations (UX-88)",
 	},
 	{
 		module: "inventory",

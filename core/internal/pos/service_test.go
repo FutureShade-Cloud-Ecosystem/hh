@@ -273,13 +273,13 @@ func (f *fakeStore) ReadCustomerTx(_ context.Context, _ pgx.Tx, id string) (cust
 
 func (f *fakeStore) ResolveWalkIn(_ context.Context) (string, error) { return f.walkInID, nil }
 
-func (f *fakeStore) ReadStockOnHand(_ context.Context, productID string) (map[string]float64, error) {
+func (f *fakeStore) ReadStockOnHand(_ context.Context, _, productID string) (map[string]float64, error) {
 	return f.stock[productID], nil
 }
 
 // DIB-488: canned unit meta for the glance. Zero-valued when a test never sets it, which is the
 // honest "no conversion on file / no thresholds authored" shape.
-func (f *fakeStore) ReadStockUnitMeta(_ context.Context, productID string) (string, string, float64, map[string]float64, error) {
+func (f *fakeStore) ReadStockUnitMeta(_ context.Context, _, productID string) (string, string, float64, map[string]float64, error) {
 	m := f.stockMeta[productID]
 	return m.baseUOM, m.sellUOM, m.sellFactor, m.lowBase, nil
 }
@@ -2046,7 +2046,7 @@ func TestSignature_ProviderIsSeam(t *testing.T) {
 func TestStockGlance_BothBranches_ReadOnly(t *testing.T) {
 	h := newHarness()
 	h.store.stock["prod-blu"] = map[string]float64{"branch-trt": 240, "branch-kgn": 80}
-	g, err := h.svc.StockGlance(context.Background(), "prod-blu")
+	g, err := h.svc.StockGlance(context.Background(), "org-1", "prod-blu")
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}

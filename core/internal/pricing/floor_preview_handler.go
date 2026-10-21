@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -55,7 +56,7 @@ type floorNoCostBranchJSON struct {
 	Products   int    `json:"products"`
 }
 
-func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var b floorPreviewBody
 	if !decode(w, r, &b) {
 		return
@@ -64,14 +65,25 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 		!optionalBodyUUID(w, b.CustomerID, "customer_id") || !optionalBodyUUID(w, b.CategoryID, "category_id") {
 		return
 	}
-	// The preview grades a change at a customer's type and prices: the account is held to the caller's reach.
+	// A named branch is a branch the caller reaches (UX-88 round 2): a scoped manager naming one it does
+	// not hold is refused 403, the shape the yard and branch doors answer. The branch is then held to
+	// the caller's org by the candidate seam, so a GLOBAL manager cannot grade against another org's cost.
+	if b.BranchID != "" {
+		sc, ok := identity.StaffContextFromContext(r.Context())
+		if !ok || !sc.CanAccessBranch(b.BranchID) {
+			httpx.Error(w, http.StatusForbidden, "pricing: branch out of scope")
+			return
+		}
+	}
+	// The preview grades a change at a customer's type and prices: the account is held to the caller's reach
+	// (UX-89), with the one customer answer.
 	if !h.fenceCustomer(w, r, b.CustomerID) {
 		return
 	}
 	if b.Rule != nil && !h.fenceCustomer(w, r, b.Rule.CustomerID) {
 		return
 	}
-	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID}
+	ch := FloorChange{Kind: b.Kind, ID: b.ID, BranchID: b.BranchID, OrgID: caller.OrgID}
 	switch b.Kind {
 	case "rule":
 		if b.Rule != nil {
@@ -152,7 +164,7 @@ type floorConfirmationBody struct {
 	RefEntityID   string   `json:"ref_entity_id"`
 }
 
-func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var b floorConfirmationBody
 	if !decode(w, r, &b) {
 		return
@@ -166,7 +178,7 @@ func (h *Handler) floorConfirmation(w http.ResponseWriter, r *http.Request, _ gu
 		}
 	}
 	err := h.svc.RecordFloorConfirmation(r.Context(), FloorConfirmation{
-		EntityType: b.EntityType, EntityID: b.EntityID, ProductIDs: b.ProductIDs,
+		OrgID: caller.OrgID, EntityType: b.EntityType, EntityID: b.EntityID, ProductIDs: b.ProductIDs,
 		RefType: b.RefEntityType, RefID: b.RefEntityID,
 	}, staffUserID(r))
 	if err != nil {

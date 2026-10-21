@@ -691,7 +691,7 @@ func (h *Handler) addonSuggestions(w http.ResponseWriter, r *http.Request, calle
 }
 
 func (h *Handler) stockGlance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	g, err := h.svc.StockGlance(r.Context(), r.URL.Query().Get("product_id"))
+	g, err := h.svc.StockGlance(r.Context(), caller.OrgID, r.URL.Query().Get("product_id"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

@@ -51,6 +51,9 @@ const stockReadLimit = 200
 // CatalogueQuery is the export's filter set, the same facets the screen's filter bar carries, plus
 // the column it is sorted by, so the file and the screen agree row for row.
 type CatalogueQuery struct {
+	// OrgID is the dealer org the middleware resolved for the request: the Available column reads the
+	// stock of this org's branches only.
+	OrgID  string
 	Filter product.Filter
 	// Sort is a column key ("" = the API's own name order) and Desc its direction. The catalogue
 	// sorts client-side (DIB-436), so the component passes what the user clicked.
@@ -161,7 +164,7 @@ func (s *CatalogueService) Workbook(ctx context.Context, q CatalogueQuery) (*Wor
 	if err != nil {
 		return nil, err
 	}
-	buckets := s.readStock(ctx, q.Filter)
+	buckets := s.readStock(ctx, q.OrgID, q.Filter)
 	return s.build(rows, buckets, q), nil
 }
 
@@ -176,11 +179,11 @@ func (s *CatalogueService) Workbook(ctx context.Context, q CatalogueQuery) (*Wor
 // catalogue screen is already allowed to lose without losing the table (empty state ≠ error state) -
 // the rows and their prices are real either way, and Available renders blank. Denying the whole
 // download because one of two reads was unhappy would be strictly worse for the person who clicked.
-func (s *CatalogueService) readStock(ctx context.Context, f product.Filter) map[string]inventory.BrowseRow {
+func (s *CatalogueService) readStock(ctx context.Context, orgID string, f product.Filter) map[string]inventory.BrowseRow {
 	if s.stock == nil {
 		return nil
 	}
-	res, err := s.stock.Browse(ctx, browseFilterFor(f))
+	res, err := s.stock.Browse(ctx, browseFilterFor(orgID, f))
 	if err != nil {
 		s.log.Warn("export: catalogue stock read failed; Available exports blank", "err", err)
 		return nil
@@ -200,7 +203,7 @@ func (s *CatalogueService) readStock(ctx context.Context, f product.Filter) map[
 // takes lists where the catalogue takes single values, so each non-empty facet becomes a one-element
 // list; an empty one is left nil (no constraint) rather than []string{""}, which would filter to
 // products whose colour is literally the empty string.
-func browseFilterFor(f product.Filter) inventory.BrowseFilter {
+func browseFilterFor(orgID string, f product.Filter) inventory.BrowseFilter {
 	one := func(v string) []string {
 		v = strings.TrimSpace(v)
 		if v == "" {
@@ -211,6 +214,7 @@ func browseFilterFor(f product.Filter) inventory.BrowseFilter {
 	return inventory.BrowseFilter{
 		Text:         strings.TrimSpace(f.Q),
 		BranchID:     f.BranchID,
+		OrgID:        orgID,
 		Manufacturer: one(f.Manufacturer),
 		Collection:   one(f.Collection),
 		Color:        one(f.Color),
