@@ -204,13 +204,21 @@ func (s *Service) NegativeStock(ctx context.Context, branchID string) ([]Negativ
 	return out, nil
 }
 
-// ListReconRuns returns the recon history for a branch (the recon screen table).
+// ListReconRuns returns the recon history for a branch (the recon screen table). Fenced to the
+// caller's branch reach (FW1-10): the recon history of a branch is that branch's books.
 func (s *Service) ListReconRuns(ctx context.Context, branchID string) ([]ReconRun, error) {
+	if err := s.authorizeBranch(ctx, branchID); err != nil {
+		return nil, err
+	}
 	return s.store().ListReconRuns(ctx, branchID)
 }
 
-// ReconRunFor returns the recon row for a period (after a lazy run).
+// ReconRunFor returns the recon row for a period (after a lazy run). Fenced to the caller's branch
+// reach, like every other recon read (FW1-10).
 func (s *Service) ReconRunFor(ctx context.Context, year, month int, branchID string) (ReconRun, bool, error) {
+	if err := s.authorizeBranch(ctx, branchID); err != nil {
+		return ReconRun{}, false, err
+	}
 	return s.store().GetReconRun(ctx, year, month, branchID)
 }
 
