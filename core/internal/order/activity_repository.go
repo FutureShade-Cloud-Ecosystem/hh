@@ -209,7 +209,8 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 	payRows, err := r.pool.Query(ctx, `
 		SELECT p.id::text, i.invoice_no::text, p.method, pa.amount_cents, pa.created_at,
 		       COALESCE(pa.allocated_by::text,''), COALESCE(ua.display_name,''),
-		       COALESCE(p.received_by::text,''), COALESCE(ur.display_name,'')
+		       COALESCE(p.received_by::text,''), COALESCE(ur.display_name,''),
+		       p.reverses_payment_id IS NOT NULL
 		  FROM payment_allocations pa
 		  JOIN invoices i ON i.id = pa.invoice_id
 		  JOIN payments p ON p.id = pa.payment_id
@@ -227,9 +228,10 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 			allocBy, allocName, rcvBy, rcvName string
 			amountCents                        int64
 			at                                 time.Time
+			isReversal                         bool
 		)
 		if err := payRows.Scan(&pid, &invNo, &method, &amountCents, &at,
-			&allocBy, &allocName, &rcvBy, &rcvName); err != nil {
+			&allocBy, &allocName, &rcvBy, &rcvName, &isReversal); err != nil {
 			return nil, fmt.Errorf("order: scan activity payment: %w", err)
 		}
 		ev := DocEvent{
@@ -237,6 +239,12 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 			ActorID: allocBy, ActorName: allocName,
 			Summary: fmt.Sprintf("applied a %s payment (%s) to invoice %s",
 				moneyStr(amountCents), humanCode(method), invNo),
+		}
+		if isReversal {
+			// A reversing row's contra allocation is the payment taken back, its own act (PR 602 round 2), not a
+			// second payment applied.
+			ev.Summary = fmt.Sprintf("reversed a %s payment (%s) on invoice %s",
+				moneyStr(amountCents), humanCode(method), invNo)
 		}
 		if ev.ActorID == "" {
 			ev.ActorID, ev.ActorName = rcvBy, rcvName

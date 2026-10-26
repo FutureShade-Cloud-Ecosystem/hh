@@ -109,3 +109,9 @@ customer, Dr 2310 / Cr AR.
    held reads as owing it until it is re-applied or paid out. Netting is a policy choice (which invoice or bucket the
    held money offsets) across those readers, with a payments seam for the customer's held total; it is sized and left
    for a ruling.
+8. **The register shows re-applied slices (SF-2r).** An invoice's Applied figure adds its slices and its timeline carries
+   one applied entry per slice ("re applied from a reversed payment", with the payment it came from), read through the
+   payments module's `ReappliedToInvoice` seam: the register never reads `payment_reapplications`. The Applied figure
+   also counts a reversing row's contra allocation as negative, so a payment and its reversal net to zero (summed
+   plainly it read twice the payment). The statement and the customer activity read the subledger row and already show
+   a slice.

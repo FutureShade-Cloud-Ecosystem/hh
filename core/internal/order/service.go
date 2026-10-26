@@ -108,6 +108,8 @@ type Service struct {
 	// are nil until main.go injects them, OrderHistory degrades to an empty/id-only timeline.
 	auditTrail AuditTrailReader
 	names      ActorNameResolver
+	// reapplied reads the money a reversal held and a manager applied to the order's invoices (reapplied_seam.go).
+	reapplied ReappliedReader
 	// CP-04 reorder seams (reorder.go): nil until main.go injects them via
 	// WithReorderPricing / WithReorderInventory, reorder answers 501 until then.
 	pricer PriceResolver
