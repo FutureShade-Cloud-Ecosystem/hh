@@ -363,7 +363,8 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	}
 	y, m := fiscalYearMonthIn(zone, d.OccurredAt)
 	var periodID, pstatus string
-	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+	var periodYear int
+	err = tx.QueryRow(ctx, `SELECT id::text, status, year FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus, &periodYear)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// FW1-01: the year roll forward. A posting dated past the latest seeded year used to be
 		// refused outright (the GL-02 / ENV-CI blocker: once the house day passed the twelfth
@@ -378,7 +379,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			if err := r.ensureFiscalYearTx(ctx, tx, y); err != nil {
 				return "", false, err
 			}
-			err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+			err = tx.QueryRow(ctx, `SELECT id::text, status, year FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus, &periodYear)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
@@ -388,7 +389,18 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		return "", false, fmt.Errorf("gl: resolve period: %w", err)
 	}
 	if pstatus == "CLOSED" {
-		return "", false, errClosedPeriod
+		// FW1-01, ruling 82.2: a MANUAL journal into a closed month is still refused. A SYSTEM
+		// journal never is: a refusal is how the subledger and the GL come apart. It posts into
+		// the EARLIEST OPEN month instead, keeps the document date on posted_at, and reads back
+		// late posted (its posted_at falls before its period's month). If every period is closed,
+		// the roll forward above opens the next year rather than refusing.
+		if d.Source == SourceManual {
+			return "", false, errClosedPeriod
+		}
+		periodID, periodYear, err = r.earliestOpenPeriodTx(ctx, tx)
+		if err != nil {
+			return "", false, err
+		}
 	}
 
 	// Resolve account codes → active account ids.
@@ -417,7 +429,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	// (outbox consumer, landed cost, bankrec, close). next_entry_no locks the year's counter row FOR UPDATE
 	// before reading it, so a second minter waits instead of colliding; the bump lives in THIS transaction,
 	// so a rollback returns the number rather than burning it (numbering stays gapless, unlike a sequence).
-	if err := tx.QueryRow(ctx, `SELECT next_entry_no($1)`, y).Scan(&entryNo); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT next_entry_no($1)`, periodYear).Scan(&entryNo); err != nil {
 		return "", false, fmt.Errorf("gl: next entry_no: %w", err)
 	}
 
@@ -432,7 +444,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		    created_by, idempotency_key, approved_by, reverses_journal_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		 RETURNING id::text`,
-		y, entryNo, periodID, d.Source, nullStr(d.SourceRefID), d.Memo, d.Status, postedAt, nullStr(d.BranchID),
+		periodYear, entryNo, periodID, d.Source, nullStr(d.SourceRefID), d.Memo, d.Status, postedAt, nullStr(d.BranchID),
 		nullStr(d.CreatedBy), d.IdempotencyKey, nullStr(d.ApprovedBy), nullStr(d.ReversesJournalID)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) && d.IdempotencyKey != "" {
@@ -502,15 +514,26 @@ func journalIDByKeyOn(ctx context.Context, q rowQuerier, key string) (string, bo
 	return id, true, nil
 }
 
+// journalCols ends in the derived late_posted marker (FW1-01, ruling 82.2): a POSTED journal whose
+// posted_at, the document date it carries, does not fall in its own period's month. It is derived,
+// not stored: the insert keeps the document date on posted_at and files the journal in the earliest
+// open month when its own is closed, so the marker is exactly "the date and the month it landed in
+// are not the same month". The derivation
+// reads the date in the default Ontario house zone (businessday.go's houseZone), the zone a dealer
+// with no configuration is filed under; a dealer configured elsewhere still posts through the dealer
+// zone and the marker can disagree by a boundary hour at month edge, display only.
 const journalCols = `id::text, fiscal_year, entry_no, period_id::text, source, COALESCE(source_ref_id::text,''),
 	memo, status, posted_at, COALESCE(branch_id::text,''), COALESCE(approved_by::text,''),
-	COALESCE(reverses_journal_id::text,''), idempotency_key, COALESCE(created_by::text,''), created_at`
+	COALESCE(reverses_journal_id::text,''), idempotency_key, COALESCE(created_by::text,''), created_at,
+	EXISTS (SELECT 1 FROM fiscal_periods lp WHERE lp.id = gl_journals.period_id
+	        AND gl_journals.posted_at IS NOT NULL
+	        AND date_trunc('month', gl_journals.posted_at AT TIME ZONE 'America/Toronto') != make_date(lp.year, lp.month, 1))`
 
 func scanJournal(row pgx.Row) (Journal, error) {
 	var j Journal
 	err := row.Scan(&j.ID, &j.FiscalYear, &j.EntryNo, &j.PeriodID, &j.Source, &j.SourceRefID, &j.Memo,
 		&j.Status, &j.PostedAt, &j.BranchID, &j.ApprovedBy, &j.ReversesJournalID, &j.IdempotencyKey,
-		&j.CreatedBy, &j.CreatedAt)
+		&j.CreatedBy, &j.CreatedAt, &j.LatePosted)
 	return j, err
 }
 
@@ -580,20 +603,28 @@ func (r *Repository) ListJournals(ctx context.Context, f JournalFilter) ([]Journ
 	// are the resume key (NULL on the first page, guarded by the IS NULL
 	// leg so the row comparison only evaluates with a key present), $8 the
 	// limit. No count query: the cursor envelope carries no total.
+	const latePosted = `EXISTS (SELECT 1 FROM fiscal_periods lp WHERE lp.id = gl_journals.period_id
+	        AND gl_journals.posted_at IS NOT NULL
+	        AND date_trunc('month', gl_journals.posted_at AT TIME ZONE 'America/Toronto') != make_date(lp.year, lp.month, 1))`
 	const whereClause = `
 		 WHERE ($1 = '' OR status = $1) AND ($2 = '' OR branch_id = $2::uuid)
 		   AND ($3 = '' OR source_ref_id = $3::uuid)
 		   AND ($4 = '' OR (posted_at IS NOT NULL AND posted_at::date >= $4::date))
 		   AND ($5 = '' OR (posted_at IS NOT NULL AND posted_at::date <= $5::date))
-		   AND ($6::int IS NULL OR (fiscal_year, entry_no) < ($6::int, $7::int))`
+		   AND ($6::int IS NULL OR (fiscal_year, entry_no) < ($6::int, $7::int))
+		   AND ($9::bool IS NULL OR $9 = ` + latePosted + `)`
 	var fy, en any
 	if f.AfterCursor {
 		fy, en = f.CursorFiscalYear, f.CursorEntryNo
 	}
+	var late any
+	if f.LatePosted != nil {
+		late = *f.LatePosted
+	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+journalCols+` FROM gl_journals`+whereClause+`
 		 ORDER BY fiscal_year DESC, entry_no DESC
-		 LIMIT $8`, f.Status, f.BranchID, f.SourceRefID, f.DateFrom, f.DateTo, fy, en, f.Limit)
+		 LIMIT $8`, f.Status, f.BranchID, f.SourceRefID, f.DateFrom, f.DateTo, fy, en, f.Limit, late)
 	if err != nil {
 		return nil, fmt.Errorf("gl: list journals: %w", err)
 	}
@@ -800,6 +831,41 @@ func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int
 		return fmt.Errorf("gl: create fiscal year %d: %w", year, err)
 	}
 	return nil
+}
+
+// earliestOpenPeriodTx answers the earliest OPEN fiscal period on tx, creating the next fiscal year
+// first when every period is closed (a system journal is never refused for want of an open month).
+func (r *Repository) earliestOpenPeriodTx(ctx context.Context, tx pgx.Tx) (string, int, error) {
+	scan := func() (string, int, error) {
+		var id string
+		var year int
+		err := tx.QueryRow(ctx,
+			`SELECT id::text, year FROM fiscal_periods WHERE status = 'OPEN' ORDER BY year, month LIMIT 1`).Scan(&id, &year)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, pgx.ErrNoRows
+		}
+		if err != nil {
+			return "", 0, fmt.Errorf("gl: resolve the earliest open period: %w", err)
+		}
+		return id, year, nil
+	}
+	id, year, err := scan()
+	if errors.Is(err, pgx.ErrNoRows) {
+		max, merr := r.maxSeededYearTx(ctx, tx)
+		if merr != nil {
+			return "", 0, merr
+		}
+		if err := r.ensureFiscalYearTx(ctx, tx, max+1); err != nil {
+			return "", 0, err
+		}
+		id, year, err = scan()
+		if err != nil {
+			return "", 0, err
+		}
+	} else if err != nil {
+		return "", 0, err
+	}
+	return id, year, nil
 }
 
 // maxSeededYearTx answers the latest fiscal year the database holds on tx.

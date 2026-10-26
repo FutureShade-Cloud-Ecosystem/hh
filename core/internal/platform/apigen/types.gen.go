@@ -2865,6 +2865,7 @@ type GlJournal struct {
 	IdempotencyKey    *string         `json:"idempotency_key,omitempty"`
 	CreatedBy         *string         `json:"created_by,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
+	LatePosted        *bool           `json:"late_posted,omitempty"`
 	Lines             []GlJournalLine `json:"lines"`
 }
 

@@ -69,7 +69,7 @@ export async function glExport(
 
 export async function glListJournals(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string },
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string; late_posted?: boolean },
   call?: ApiCallOptions
 ): Promise<Result<GlJournalPage>> {
   return client.request<GlJournalPage>({

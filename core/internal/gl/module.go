@@ -166,6 +166,11 @@ type ExternalJournal struct {
 	Memo           string
 	BranchID       string
 	Lines          []ExternalLine
+	// DocumentDate, when set, is the document the journal belongs to (a bankrec clearing journal's
+	// statement line): the journal posts in that document's month when it is open, and into the
+	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
+	// Zero keeps the clock.
+	DocumentDate time.Time
 }
 
 // ExternalLine is one leg of an ExternalJournal, addressed by account code (resolved to account_id on post).

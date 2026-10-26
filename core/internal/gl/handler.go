@@ -218,6 +218,17 @@ func (h *Handler) listJournals(w http.ResponseWriter, r *http.Request, _ guards.
 		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
 		return
 	}
+	// FW1-01: late_posted=true lists the journals posted past a closed month into a later open
+	// one, the Controller's late posted list. Absent reads both.
+	var late *bool
+	if v := r.URL.Query().Get("late_posted"); v != "" {
+		if v != "true" && v != "false" {
+			httpx.Error(w, http.StatusBadRequest, "late_posted must be true or false")
+			return
+		}
+		b := v == "true"
+		late = &b
+	}
 	f := JournalFilter{
 		Status:           r.URL.Query().Get("status"),
 		BranchID:         branchID,
@@ -228,6 +239,7 @@ func (h *Handler) listJournals(w http.ResponseWriter, r *http.Request, _ guards.
 		AfterCursor:      ok && p.Cursor != "",
 		CursorFiscalYear: fy,
 		CursorEntryNo:    en,
+		LatePosted:       late,
 	}
 	js, err := h.svc.ListJournals(r.Context(), f)
 	if err != nil {

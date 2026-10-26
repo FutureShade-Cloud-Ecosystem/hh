@@ -2411,6 +2411,7 @@ export type GlJournal = {
   idempotency_key?: string;
   created_by?: string;
   created_at: string;
+  late_posted?: boolean;
   lines: GlJournalLine[];
 };
 export type GlJournalLineInput = {

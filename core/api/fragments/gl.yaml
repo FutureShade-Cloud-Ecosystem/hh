@@ -122,6 +122,14 @@ paths:
           required: false
           description: Inclusive upper bound on posted_at
           schema: { type: string, format: date }
+        - name: late_posted
+          in: query
+          required: false
+          description: >-
+            Filter to journals posted past a closed month into a later open
+            one (true), or to journals that are not (false); absent reads both.
+            The Controller's late posted list.
+          schema: { type: boolean }
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -1482,6 +1490,13 @@ components:
         idempotency_key: { type: string }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
+        late_posted:
+          type: boolean
+          description: >-
+            Derived, never stored: the journal carries a document date earlier
+            than its own period's month, posted past a closed month into the
+            earliest open one. A system journal is never refused for a closed
+            month; this marker is what the late posted list reads.
         lines:
           type: array
           items: { $ref: "#/components/schemas/GlJournalLine" }

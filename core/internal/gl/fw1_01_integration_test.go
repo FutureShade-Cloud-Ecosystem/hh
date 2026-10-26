@@ -189,7 +189,15 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 	}
 	docAt := time.Date(2088, 5, 10, 12, 0, 0, 0, time.UTC)
 	clockAt := time.Date(2088, 6, 15, 12, 0, 0, 0, time.UTC)
-	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
+	// The earliest OPEN period the database holds (the seeded 2026 months stand open in this
+	// database, so the earliest open is not necessarily June: the ruling names the earliest open
+	// month, whichever it is).
+	var wantMonth, wantYear int
+	if err := pool.QueryRow(ctx,
+		`SELECT month, year FROM fiscal_periods WHERE status='OPEN' ORDER BY year, month LIMIT 1`).Scan(&wantMonth, &wantYear); err != nil {
+		t.Fatalf("read the earliest open period: %v", err)
+	}
+	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
 	dep := fw1PlantDeposit(t, pool, docAt)
 
@@ -206,8 +214,8 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 		 WHERE j.idempotency_key = $1`, "ar.invoice.finalized:"+dep).Scan(&finMonth, &finPosted); err != nil {
 		t.Fatalf("read the finalization journal: %v", err)
 	}
-	if finMonth != 6 {
-		t.Fatalf("the finalization journal posts in period month %d, want 6 (the earliest OPEN month)", finMonth)
+	if finMonth != wantMonth {
+		t.Fatalf("the finalization journal posts in period month %d, want %d (the earliest OPEN month)", finMonth, wantMonth)
 	}
 	if finPosted == nil || finPosted.UTC().Format("2006-01-02") != "2088-05-10" {
 		t.Fatalf("the finalization journal carries posted_at %v, want the document date 2088-05-10 kept", finPosted)
@@ -217,11 +225,34 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 		t.Fatalf("the release consume for a closed month: %v (a system journal is never refused for a closed month)", err)
 	}
 	pmonth, posted := fw1ReleaseJournal(t, pool, dep)
-	if pmonth != 6 {
-		t.Fatalf("the release journal posts in period month %d, want 6 (the earliest OPEN month)", pmonth)
+	if pmonth != wantMonth {
+		t.Fatalf("the release journal posts in period month %d, want %d (the earliest OPEN month)", pmonth, wantMonth)
 	}
 	if posted == nil || posted.UTC().Format("2006-01-02") != "2088-05-10" {
 		t.Fatalf("the release journal carries posted_at %v, want the document date 2088-05-10 kept", posted)
+	}
+
+	// The Controller's late posted list: both closed-month journals read back
+	// marked, and the filter names exactly them.
+	var depBranch string
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text,'') FROM gl_journals WHERE idempotency_key=$1`, "deposit.released:"+dep).Scan(&depBranch); err != nil {
+		t.Fatalf("read the release journal's branch: %v", err)
+	}
+	late := true
+	js, err := post.ListJournals(ctx, JournalFilter{LatePosted: &late, BranchID: depBranch, Limit: 100})
+	if err != nil {
+		t.Fatalf("the late posted list: %v", err)
+	}
+	keys := map[string]bool{}
+	for _, j := range js {
+		if !j.LatePosted {
+			t.Fatalf("journal %s came through the late posted filter unmarked", j.IdempotencyKey)
+		}
+		keys[j.IdempotencyKey] = true
+	}
+	if !keys["ar.invoice.finalized:"+dep] || !keys["deposit.released:"+dep] {
+		t.Fatalf("the late posted list = %v, wants both the finalization and the release", keys)
 	}
 }
 
