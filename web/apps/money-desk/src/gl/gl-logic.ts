@@ -173,6 +173,9 @@ export function refusalWords(action: string, message: string, status: number): s
     }
     if (lower.includes("reason is required")) return "A reason is required. Say why, and try again.";
   }
+  if (status === 403 && lower.includes("cannot access this branch")) {
+    return "You cannot read the books of that branch. Choose a branch you hold.";
+  }
   if (status === 403) {
     return "That is for the Financial Controller or the General Manager.";
   }

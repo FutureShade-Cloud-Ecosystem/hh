@@ -163,6 +163,11 @@ test("a refusal names who may do it and never shows the bare word Forbidden", ()
   }
   assert.match(refusalWords("rate", "Forbidden", 403), /Financial Controller/);
   assert.match(refusalWords("evidence", "Forbidden", 403), /manager/);
+  // FW1-10: a reconcile out of the caller's branch reach says whose read the whole company is.
+  assert.equal(
+    refusalWords("recon", "tax: caller cannot access this branch", 403),
+    "This reconciliation covers every branch, so it is for someone who holds every branch. Ask the Financial Controller.",
+  );
 });
 
 test("the core's sentences are rewritten into what to do next, with none of its old words", () => {

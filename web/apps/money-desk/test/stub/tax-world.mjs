@@ -134,9 +134,12 @@ export function createTaxWorld() {
       const sub = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")).sub;
       // The tiers the core's guards read: the controller is tier 1 global (admin), the Payables and Receivables
       // role and the Sales manager are tier 2 (manager), the rest are staff.
-      if (sub === IDS.controller) return { id: sub, tier: 1 };
-      if (sub === IDS.payrec || sub === IDS.manager) return { id: sub, tier: 2 };
-      return { id: sub, tier: 3 };
+      // global is the caller's branch reach (FW1-10): the controller and the Payables and
+      // Receivables role are dealer wide, the Sales manager is Point Loma alone.
+      if (sub === IDS.controller) return { id: sub, tier: 1, global: true };
+      if (sub === IDS.payrec) return { id: sub, tier: 2, global: true };
+      if (sub === IDS.manager) return { id: sub, tier: 2, global: false };
+      return { id: sub, tier: 3, global: false };
     } catch {
       return { id: "", tier: 3 };
     }
@@ -401,8 +404,15 @@ export function createTaxWorld() {
         return validateEvidence(path.split("/").at(-2), url);
       case "POST /api/v1/tax/recompute":
         return recompute(input);
-      case "GET /api/v1/tax/recon":
+      case "GET /api/v1/tax/recon": {
+        // The reconcile is fenced to the caller's branch reach (FW1-10): a named branch must be
+        // reachable, and the unnamed figure is the whole company's books, a dealer wide caller's
+        // read. The Sales manager holds Point Loma alone.
+        const branch = url.searchParams.get("branch_id") ?? "";
+        if (!caller.global && branch === "") return clientError(403, "tax: caller cannot access this branch");
+        if (!caller.global && branch !== "b0000000-0000-4000-8000-000000000001") return clientError(403, "tax: caller cannot access this branch");
         return recon(url);
+      }
       default:
         return null;
     }

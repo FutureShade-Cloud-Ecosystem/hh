@@ -221,6 +221,12 @@ function plainCodes(text: string): string {
  */
 export function refusalWords(action: TaxAction, message: string, status: number): string {
   const lower = message.toLowerCase();
+  if (status === 403 && lower.includes("cannot access this branch")) {
+    // The reconcile covers every branch unless a branch is named, so a branch-scoped caller is
+    // refused (FW1-10); the screen itself asks for the whole company, so the way out is the
+    // controller's, not a branch choice the screen does not offer.
+    return "This reconciliation covers every branch, so it is for someone who holds every branch. Ask the Financial Controller.";
+  }
   if (status === 403) {
     switch (action) {
       case "rate":

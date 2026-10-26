@@ -82,6 +82,11 @@ test("any other refusal keeps the core's own sentence, capitalised and ended", (
   assert.equal(refusalWords("decide", "invalid approval id", 400), "Invalid approval id.");
   assert.equal(refusalWords("trial", "no fiscal period for 2031-01", 422), "No fiscal period for 2031-01.");
   assert.equal(refusalWords("trial", "", 500), "The ledger did not answer. Reload to try again.");
+  // FW1-10: a read out of the caller's branch reach gets the way out beside it.
+  assert.equal(
+    refusalWords("trial", "gl: caller cannot access this branch", 403),
+    "You cannot read the books of that branch. Choose a branch you hold.",
+  );
 });
 
 test("a floor request reads in words: the quote, the line, the discount, the margins, no id and no bps", () => {

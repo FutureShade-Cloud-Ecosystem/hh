@@ -209,7 +209,9 @@ test("the guards: a read is a manager's, a write an administrator's, a capture a
   ]) {
     assert.ok(moduleSource.includes(line), `the core's guard moved: ${line}`);
   }
-  const reads = ["/api/v1/tax/rates", "/api/v1/tax/profiles", "/api/v1/tax/review-queue", "/api/v1/tax/config", "/api/v1/tax/evidence", `/api/v1/tax/recon?year=${prior.year}`];
+  // The recon names Point Loma for the manager leg: it is fenced to the caller's branch reach
+  // (FW1-10), and the unnamed figure is a dealer wide caller's read.
+  const reads = ["/api/v1/tax/rates", "/api/v1/tax/profiles", "/api/v1/tax/review-queue", "/api/v1/tax/config", "/api/v1/tax/evidence", `/api/v1/tax/recon?year=${prior.year}&branch_id=b0000000-0000-4000-8000-000000000001`];
   for (const path of reads) {
     const staff = await call(SALES, "GET", path);
     assert.equal(staff.status, 403, `${path} is not a staff member's`);
@@ -371,6 +373,10 @@ test("a recompute adds rows once and a second run skips them; a date the core ca
 test("the reconciliation needs a year, ties out one month and is off in the other, in the core's fields", async () => {
   await reset();
   refused(await ctl("GET", "/api/v1/tax/recon"), 400, "year required");
+  // Fenced to the caller's branch reach (FW1-10): the Sales manager (Point Loma alone) is refused
+  // the whole company's reconcile and a foreign branch, in the core's own sentence.
+  refused(await call(IDS.manager, "GET", `/api/v1/tax/recon?year=${prior.year}&month=${prior.month}`), 403, "tax: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/tax/recon?year=${prior.year}&month=${prior.month}&branch_id=b0000000-0000-4000-8000-000000000002`), 403, "tax: caller cannot access this branch");
   const tied = await ctl("GET", `/api/v1/tax/recon?year=${prior.year}&month=${prior.month}`);
   assert.equal(tied.status, 200);
   holds("TaxReconReport", tied.json);
