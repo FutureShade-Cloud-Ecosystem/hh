@@ -17,6 +17,7 @@ import {
   ApiClient,
   staffBranches,
   staffDashboard,
+  staffDispatch,
   staffIdentity,
   staffOrder,
   staffPurchasing,
@@ -24,6 +25,8 @@ import {
   type IdentityPolicyType,
   type Result,
 } from "@hardscapehouse/api-client";
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { toDispatchBoard, type DispatchBoardView } from "./drivers-api.js";
 
 // -- the needs-you queue --------------------------------------------------------------------------
 
@@ -556,22 +559,207 @@ export class ManagerApi {
     return answer.ok ? { ok: true, value: toChangeOrder(answer.value) } : answer;
   }
 
-  // -- WALK-C10: Manager Home Landing (boards final, change 10) ---------------------------------
+  // -- WALK-C10 / FW1-14: the TODAY cards, every figure the core returned ------------------------
 
-  /** The four TODAY money KPI cards: sales, gross margin, AR overdue, cash collected. */
-  async readLandingKpis(branchId: string): Promise<Result<readonly LandingKpi[]>> {
-    return { ok: true, value: KpiDemo.figures(branchId) };
+  /** The four TODAY money KPI cards, measured by the core's own viz series. */
+  async readLandingKpis(): Promise<Result<readonly LandingKpi[]>> {
+    const answer = await staffDashboard.dashboardGetViz(this.#client, { tile: [...LANDING_VIZ_TILES] });
+    if (!answer.ok) return answer;
+    return { ok: true, value: landingKpisFrom(toLandingTiles(answer.value)) };
   }
 
-  /** The DELIVERIES TODAY card: the count, the summary, and the three branch runs. */
-  async readLandingDeliveries(branchId: string): Promise<Result<LandingDeliveries>> {
-    return { ok: true, value: KpiDemo.deliveries(branchId) };
+  /** The DELIVERIES TODAY card, counted off each branch's own dispatch board. */
+  async readLandingDeliveries(branchId: string): Promise<Result<LandingDeliveries | null>> {
+    const all = await this.branches();
+    if (!all.ok) return all;
+    const scope = branchId === "" ? all.value : all.value.filter((b) => b.id === branchId);
+    const boards: DispatchBoardView[] = [];
+    for (const branch of scope) {
+      const answer = await staffDispatch.dispatchGetBoard(this.#client, { branch_id: branch.id });
+      if (answer.ok) boards.push(toDispatchBoard(answer.value));
+    }
+    return { ok: true, value: landingDeliveriesFrom(scope, boards) };
   }
 
-  /** The NEEDS YOU, BY MONEY AT STAKE card: ranked rows with inline actions and accent bars. */
-  async readLandingNeeds(branchId: string): Promise<Result<readonly LandingNeedRow[]>> {
-    return { ok: true, value: KpiDemo.needs(branchId) };
+  /** The NEEDS YOU, BY MONEY AT STAKE card: the caller's pending approvals, ranked by amount. */
+  async readLandingNeeds(): Promise<Result<readonly LandingNeedRow[]>> {
+    const answer = await this.approvals("", true);
+    if (!answer.ok) return answer;
+    return { ok: true, value: landingNeedsFrom(answer.value) };
   }
+}
+
+// -- FW1-14: the TODAY cards, built from the core's own reads ---------------------------------------
+
+/** What a card the core does not answer says: the words, never a figure. */
+export const LANDING_NOT_CONNECTED = "Not connected yet";
+
+/** One composed series the core measured, narrowed to what the cards read. */
+export interface LandingVizTile {
+  readonly tile_id: string;
+  readonly state: string;
+  readonly total: number | null;
+  readonly points: readonly { readonly label: string; readonly number: number }[];
+}
+
+function toLandingTiles(raw: unknown): readonly LandingVizTile[] {
+  return list(bag(raw).tiles).map((tile) => {
+    const b = bag(tile);
+    return {
+      tile_id: text(b.tile_id),
+      state: text(b.state),
+      total: maybeNum(b.total),
+      points: list(b.points).map((p) => ({ label: text(bag(p).label), number: num(bag(p).number) })),
+    };
+  });
+}
+
+/** The composed ids the landing asks for: today's counter sales by branch, the all time margin in
+ * basis points, and the AR aging buckets. An id the caller may not compose is byte absent in the
+ * answer and its card says so in words. */
+const LANDING_VIZ_TILES = [
+  "viz.sales.today-branch-split",
+  "viz.margin.gross_bps-branch-list",
+  "viz.ar.aging-bucket-split",
+] as const;
+
+function landingMoney(cents: number): string {
+  return formatDollars(cents);
+}
+
+function landingPercentFromBps(bps: number): string {
+  return `${(bps / 100).toFixed(1)}%`;
+}
+
+function landingNotConnected(title: string, kind: "money" | "percent"): LandingKpi {
+  return { title, kind, connected: false, value: "", note: "", branches: [] };
+}
+
+/** The four money KPI cards from the core's viz answer. A measure that did not come back, or came
+ * back in any state but ok, is a card with its title and LANDING_NOT_CONNECTED, never a figure. */
+export function landingKpisFrom(tiles: readonly LandingVizTile[]): readonly LandingKpi[] {
+  const byId = new Map(tiles.map((t) => [t.tile_id, t]));
+  const measured = (id: string): LandingVizTile | null => {
+    const tile = byId.get(id);
+    return tile !== undefined && tile.state === "ok" ? tile : null;
+  };
+  const totalOf = (tile: LandingVizTile): number => tile.total ?? tile.points.reduce((a, p) => a + p.number, 0);
+
+  const sales = measured("viz.sales.today-branch-split");
+  const margin = measured("viz.margin.gross_bps-branch-list");
+  const aging = measured("viz.ar.aging-bucket-split");
+
+  const cards: LandingKpi[] = [];
+  cards.push(sales !== null
+    ? {
+        title: "Sales today", kind: "money", connected: true,
+        value: landingMoney(totalOf(sales)), note: "Counter sales committed today",
+        branches: sales.points.map((p) => ({ label: p.label, value: landingMoney(p.number) })),
+      }
+    : landingNotConnected("Sales today", "money"));
+  cards.push(margin !== null
+    ? {
+        title: "Gross margin", kind: "percent", connected: true,
+        value: landingPercentFromBps(totalOf(margin)), note: "All invoiced order lines, all time",
+        branches: margin.points.map((p) => ({ label: p.label, value: landingPercentFromBps(p.number) })),
+      }
+    : landingNotConnected("Gross margin", "percent"));
+  cards.push(aging !== null
+    ? {
+        title: "Receivables past due", kind: "money", connected: true,
+        value: landingMoney(aging.points.filter((p) => p.label !== "Current").reduce((a, p) => a + p.number, 0)),
+        note: "Open invoices past their due day",
+        branches: [],
+      }
+    : landingNotConnected("Receivables past due", "money"));
+  // Cash collected today: no core measure ships for it, so the card says so in words.
+  cards.push(landingNotConnected("Cash collected today", "money"));
+  return cards;
+}
+
+/** The DELIVERIES TODAY card from the branches' own boards: the day's stops, the words of their
+ * states, and the runs themselves. No board read says null and the card does not draw. */
+export function landingDeliveriesFrom(
+  branches: readonly BranchRef[],
+  boards: readonly DispatchBoardView[],
+): LandingDeliveries | null {
+  if (boards.length === 0) return null;
+  let delivered = 0;
+  let onRoad = 0;
+  let toLeave = 0;
+  const runs: LandingDeliveries["runs"][number][] = [];
+  const byBranch: { label: string; count: number }[] = [];
+  for (const board of boards) {
+    for (const stop of board.stops) {
+      if (stop.delivered_at !== null) delivered += 1;
+      else if (stop.en_route_at !== null) onRoad += 1;
+      else toLeave += 1;
+    }
+    byBranch.push({
+      label: branches.find((b) => b.id === board.branch_id)?.name ?? board.branch_id,
+      count: board.stops.length,
+    });
+    for (const run of board.runs) {
+      const done = board.stops.filter((s) => s.run_id === run.id && s.delivered_at !== null).length;
+      runs.push({
+        runId: run.run_no,
+        branch: branches.find((b) => b.id === board.branch_id)?.name ?? board.branch_id,
+        when: run.dispatched_at !== null ? `left ${landingClockWords(run.dispatched_at)}` : "not left yet",
+        stops: `${done} of ${run.stop_count} stops done`,
+      });
+    }
+  }
+  const count = delivered + onRoad + toLeave;
+  const fromWords = byBranch.map((b) => `${b.count} from ${b.label}`).join(", ");
+  return {
+    count,
+    branches: byBranch,
+    summary: `${fromWords}. ${delivered} done, ${onRoad} on the road, ${toLeave} still to leave.`,
+    runs,
+  };
+}
+
+function landingClockWords(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+/** The approval kinds' words, one per policy type the core decides. */
+const LANDING_NEED_KIND_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  MARGIN_BELOW_MINIMUM: "Margin floor",
+  CREDIT_LIMIT_EXCEEDED: "Credit limit",
+  COD_CONSTRAINT: "Cash on demand",
+  JE_OVER_THRESHOLD: "Journal over threshold",
+  FREIGHT_ABOVE_QUOTE: "Freight above the quote",
+});
+
+/** The needs card from the caller's pending approvals: ranked by the money at stake, each row
+ * opening the approvals view where the decision itself lives. */
+export function landingNeedsFrom(rows: readonly ApprovalRow[]): readonly LandingNeedRow[] {
+  return rows
+    .filter((row) => row.status === "PENDING")
+    .sort((a, b) => b.amount_cents - a.amount_cents)
+    .map((row) => {
+      const kindWord = LANDING_NEED_KIND_WORDS[row.policy_type] ?? "Approval";
+      const ref = landingRefOfDetail(row.detail);
+      const body = ref === ""
+        ? row.detail
+        : row.detail.replace(new RegExp(`^(?:Quote|Order|Journal entry|Journal)?\\s*${ref}\\s*`), "").trim();
+      return {
+        id: row.id,
+        title: ref === "" ? kindWord : `${kindWord}: ${ref}`,
+        body: body === "" ? row.detail : body.charAt(0).toUpperCase() + body.slice(1),
+        amountLabel: row.amount_cents > 0 ? landingMoney(row.amount_cents) : "not priced",
+        action: "open-approvals",
+        actionLabel: "Open the request",
+        accent: row.policy_type === "MARGIN_BELOW_MINIMUM" ? "margin"
+          : row.policy_type === "CREDIT_LIMIT_EXCEEDED" || row.policy_type === "COD_CONSTRAINT" ? "credit"
+          : "escalation",
+        targetView: "approvals",
+        targetRef: row.id,
+      };
+    });
 }
 
 // -- WALK-C10: the landing's read shapes (boards final, change 10) ---------------------------------
@@ -580,25 +768,27 @@ export class ManagerApi {
 export interface LandingKpi {
   readonly title: string;
   readonly kind: "money" | "percent";
-  readonly combined: { readonly value: string; readonly compare: string };
-  readonly pointLoma: { readonly value: string };
-  readonly julian: { readonly value: string };
+  /** False when the core did not answer: the card shows its title and the not connected words. */
+  readonly connected: boolean;
+  readonly value: string;
+  /** What the figure covers, in words; the card carries it beside the number. */
+  readonly note: string;
+  readonly branches: readonly { readonly label: string; readonly value: string }[];
 }
 
 /** The DELIVERIES TODAY card. */
 export interface LandingDeliveries {
   readonly count: number;
-  readonly pointLomaCount: number;
-  readonly julianCount: number;
   readonly summary: string;
+  readonly branches: readonly { readonly label: string; readonly count: number }[];
   readonly runs: readonly { readonly runId: string; readonly branch: string; readonly when: string; readonly stops: string }[];
 }
 
 /** The inline action a NEEDS YOU row's button runs. */
-export type LandingNeedAction = "approve-credit-hold" | "approve-margin" | "issue-warranty" | "message-branch";
+export type LandingNeedAction = "open-approvals";
 
 /** The accent bar the row draws. */
-export type LandingNeedAccent = "credit" | "margin" | "warranty" | "escalation";
+export type LandingNeedAccent = "credit" | "margin" | "escalation";
 
 /** One row on the NEEDS YOU, BY MONEY AT STAKE list. */
 export interface LandingNeedRow {
@@ -609,117 +799,15 @@ export interface LandingNeedRow {
   readonly action: LandingNeedAction;
   readonly actionLabel: string;
   readonly accent: LandingNeedAccent;
-  readonly targetView: "approvals" | "warranty" | "message";
+  readonly targetView: "approvals";
   readonly targetRef: string;
 }
 
-export const KpiDemo = {
-  figures(branchId: string): readonly LandingKpi[] {
-    void branchId;
-    return [
-      {
-        title: "Sales today",
-        kind: "money",
-        combined: { value: "$48,320.00", compare: "$44,150.00 same day last week, up 9.4%" },
-        pointLoma: { value: "$29,870.00" },
-        julian: { value: "$18,450.00" },
-      },
-      {
-        title: "Gross margin",
-        kind: "percent",
-        combined: { value: "31.8%", compare: "30.9% same day last week, up 0.9 points" },
-        pointLoma: { value: "32.4%" },
-        julian: { value: "30.7%" },
-      },
-      {
-        title: "AR overdue",
-        kind: "money",
-        combined: { value: "$96,240.00", compare: "11 accounts, $18,400.00 at risk" },
-        pointLoma: { value: "$61,300.00" },
-        julian: { value: "$34,940.00" },
-      },
-      {
-        title: "Cash collected today",
-        kind: "money",
-        combined: { value: "$21,860.00", compare: "$19,400.00 same day last week, up 12.7%" },
-        pointLoma: { value: "$14,220.00" },
-        julian: { value: "$7,640.00" },
-      },
-    ];
-  },
-  deliveries(branchId: string): LandingDeliveries {
-    void branchId;
-    return {
-      count: 17,
-      pointLomaCount: 12,
-      julianCount: 5,
-      summary: "12 from Point Loma, 5 from Julian. 5 done, 6 on the road, 6 still to leave.",
-      runs: [
-        { runId: "R1", branch: "Point Loma", when: "left 6:40 AM", stops: "4 of 6 stops done" },
-        { runId: "R5", branch: "Point Loma", when: "leaves 8:15 AM", stops: "3 stops, load 2nd" },
-        { runId: "J2", branch: "Julian", when: "left 7:10 AM", stops: "1 of 5 stops done" },
-      ],
-    };
-  },
-  needs(branchId: string): readonly LandingNeedRow[] {
-    void branchId;
-    return [
-      {
-        id: "credit-hold-1",
-        title: "Credit hold: Fieldstone Pools and Patios",
-        body: "Order SO-PLM-1049 waits on a release. Over limit by $2,100.00, in good standing.",
-        amountLabel: "$11,350.00",
-        action: "approve-credit-hold",
-        actionLabel: "Approve credit hold",
-        accent: "credit",
-        targetView: "approvals",
-        targetRef: "appr-001",
-      },
-      {
-        id: "margin-1",
-        title: "Margin floor: Q-2041, line 2",
-        body: "Seat wall block at 18.4%, below the 22.0% floor. Quote $4,187.88.",
-        amountLabel: "$771.46",
-        action: "approve-margin",
-        actionLabel: "Approve margin",
-        accent: "margin",
-        targetView: "approvals",
-        targetRef: "appr-002",
-      },
-      {
-        id: "warranty-1",
-        title: "Warranty: RT-1017 · needs a claim",
-        body: "Ridgeway paver 60 mm, 12 defective, over the $50 threshold. Copperline Pavers.",
-        amountLabel: "$100.80",
-        action: "issue-warranty",
-        actionLabel: "Issue warranty claim",
-        accent: "warranty",
-        targetView: "warranty",
-        targetRef: "def-rt1017",
-      },
-      {
-        id: "warranty-2",
-        title: "Warranty: RT-1019 · needs a claim",
-        body: "Coping stone 12 in, 4 defective, over the $50 threshold. Heronfield Stone.",
-        amountLabel: "$56.80",
-        action: "issue-warranty",
-        actionLabel: "Issue warranty claim",
-        accent: "warranty",
-        targetView: "warranty",
-        targetRef: "def-rt1019",
-      },
-      {
-        id: "escalation-1",
-        title: "Escalation: #escalations",
-        body: "Julian asks for a ruling on a customer pickup after hours.",
-        amountLabel: "not priced",
-        action: "message-branch",
-        actionLabel: "Message a branch",
-        accent: "escalation",
-        targetView: "message",
-        targetRef: "julian-after-hours",
-      },
-    ];
-  },
-};
+/** The reference a request's words name ("Quote Q-2002 line 1 ..."), read the same way the
+ * approvals view reads it, so a row's title here and there can not disagree. */
+function landingRefOfDetail(detail: string): string {
+  const m = /\b([A-Z]{1,4}-[A-Z0-9][A-Z0-9-]*)\b/.exec(detail);
+  return m ? m[1] : "";
+}
+
 

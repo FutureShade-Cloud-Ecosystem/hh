@@ -100,6 +100,58 @@ test("the needs-you footer opens the queue, and the view links sit as small chip
   }
 });
 
+test("the TODAY money cards carry the core's figures, and a measure with no core says so in words", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const kpis = page.locator("[data-test='c10-today-kpis']");
+  await expect(kpis).toBeVisible();
+
+  // The stub's viz answer: sales 123456 cents today, margin 3180 bps all time,
+  // AR 9624000 cents open of which 3494000 is past its due day. Every figure
+  // the card draws came back on the wire; none is a constant the app holds.
+  const sales = kpis.locator(".kpi-card", { hasText: "Sales today" });
+  await expect(sales.locator(".kpi-value")).toHaveText("$1,234.56");
+  await expect(sales.locator(".kpi-compare")).toHaveText("Counter sales committed today");
+  const margin = kpis.locator(".kpi-card", { hasText: "Gross margin" });
+  await expect(margin.locator(".kpi-value")).toHaveText("31.8%");
+  const pastDue = kpis.locator(".kpi-card", { hasText: "Receivables past due" });
+  await expect(pastDue.locator(".kpi-value")).toHaveText("$34,940.00");
+
+  // Cash collected today has no core measure: the words, never a figure.
+  const cash = kpis.locator(".kpi-card", { hasText: "Cash collected today" });
+  await expect(cash).toContainText("Not connected yet");
+  await expect(cash).not.toContainText("$");
+
+  // Branch beside branch draws the branches the core named, never a hardcoded pair.
+  await kpis.locator(".toggle-pill", { hasText: "Branch beside branch" }).click();
+  await expect(sales.locator(".kpi-branch-label").first()).toHaveText("Trenton");
+  await expect(sales.locator(".kpi-branch-value").first()).toHaveText("$1,234.56");
+});
+
+test("the deliveries card counts the dispatch board's own runs, and the needs card ranks the caller's approvals", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const deliveries = page.locator("[data-test='c10-deliveries-today']");
+  await expect(deliveries).toBeVisible();
+  await expect(deliveries.locator(".deliveries-count")).toHaveText(/^\d+$/);
+  await expect(deliveries.locator(".deliveries-summary")).toContainText(/done, \d+ on the road/);
+  const firstRun = deliveries.locator(".run").first();
+  await expect(firstRun.locator(".run-id")).not.toHaveText("");
+
+  const needs = page.locator("[data-test='c10-needs-stake']");
+  await expect(needs).toBeVisible();
+  const amounts = needs.locator(".need-amount");
+  const count = await amounts.count();
+  for (let i = 1; i < count; i += 1) {
+    const before = await amounts.nth(i - 1).textContent();
+    const after = await amounts.nth(i).textContent();
+    if (before !== "not priced" && after !== "not priced") {
+      expect(Number(before.replace(/[^0-9.]/g, ""))).toBeGreaterThanOrEqual(Number(after.replace(/[^0-9.]/g, "")));
+    }
+  }
+  await expect(needs.locator(".need-action").first()).toHaveText("Open the request");
+});
+
 test("the hero carries the day's count and its window word", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");

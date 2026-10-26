@@ -25,6 +25,7 @@ import type {
   WidgetDatum,
   WidgetView,
 } from "./manager-api.js";
+import { LANDING_NOT_CONNECTED } from "./manager-api.js";
 import {
   APPROVAL_KINDS,
   RESOLUTION_CHOICES,
@@ -156,8 +157,8 @@ export function renderC10Landing(
         <div class="today-head">
           <h2 class="section-eyebrow">Today</h2>
           <div class="branch-toggle" role="group" aria-label="Branch scope">
-            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>Both branches combined</button>
-            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Point Loma beside Julian</button>
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>All branches together</button>
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Branch beside branch</button>
           </div>
         </div>
         <div class="kpi-row kpi-row-${branchMode}">
@@ -171,42 +172,46 @@ export function renderC10Landing(
 }
 
 export function renderKpiCard(kpi: LandingKpi, mode: BranchMode): TemplateResult {
+  if (!kpi.connected) {
+    return html`
+      <article class="kpi-card kpi-card-combined" data-test="kpi-not-connected">
+        <h3 class="kpi-title">${kpi.title}</h3>
+        <p class="kpi-compare">${LANDING_NOT_CONNECTED}</p>
+      </article>
+    `;
+  }
   if (mode === "split") {
+    const rows = kpi.branches.length > 0 ? kpi.branches : [{ label: "All branches", value: kpi.value }];
     return html`
       <article class="kpi-card kpi-card-split">
         <h3 class="kpi-title">${kpi.title}</h3>
-        <div class="kpi-branch">
-          <span class="kpi-branch-label">Point Loma</span>
-          <span class="kpi-branch-value ${kpi.kind}">${kpi.pointLoma.value}</span>
-        </div>
-        <div class="kpi-branch">
-          <span class="kpi-branch-label">Julian</span>
-          <span class="kpi-branch-value ${kpi.kind}">${kpi.julian.value}</span>
-        </div>
+        ${rows.map((branch) => html`
+          <div class="kpi-branch">
+            <span class="kpi-branch-label">${branch.label}</span>
+            <span class="kpi-branch-value ${kpi.kind}">${branch.value}</span>
+          </div>
+        `)}
       </article>
     `;
   }
   return html`
     <article class="kpi-card kpi-card-combined">
       <h3 class="kpi-title">${kpi.title}</h3>
-      <span class="kpi-value ${kpi.kind}">${kpi.combined.value}</span>
-      <p class="kpi-compare">${kpi.combined.compare}</p>
+      <span class="kpi-value ${kpi.kind}">${kpi.value}</span>
+      <p class="kpi-compare">${kpi.note}</p>
     </article>
   `;
 }
 
 export function renderDeliveriesCard(d: LandingDeliveries, mode: BranchMode): TemplateResult {
-  const summary = mode === "split"
-    ? `${d.pointLomaCount - 3} from Point Loma, ${d.julianCount} from Julian. 5 done, 6 on the road, 3 still to leave.`
-    : d.summary;
-  const count = mode === "split" ? d.pointLomaCount + d.julianCount - 3 : d.count;
+  void mode;
   return html`
     <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Deliveries today">
       <div class="deliveries-head">
         <h2 class="section-eyebrow">Deliveries today</h2>
-        <span class="deliveries-count">${count}</span>
+        <span class="deliveries-count">${d.count}</span>
       </div>
-      <p class="deliveries-summary">${summary}</p>
+      <p class="deliveries-summary">${d.summary}</p>
       <div class="runs-row">
         ${d.runs.map((run) => html`
           <div class="run">
