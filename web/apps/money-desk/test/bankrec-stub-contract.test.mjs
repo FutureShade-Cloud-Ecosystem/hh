@@ -441,3 +441,50 @@ test("the walls: any staff reads, a manager imports, matches, undoes and opens a
   refused(await call(IDS.payrec, "POST", "/api/v1/bankrec/rules", { code: "x", name: "x", spec: { kind: "gateway_ref_exact" } }), 403, "Forbidden");
   assert.equal((await call(IDS.payrec, "POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating })).status, 200);
 });
+
+test("a derived month in the stub recomputes its statement balance from the lines at completion, and autoMatch skips a completed month", async () => {
+  await reset();
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  const wire = await lineByRef("WIRE FROM CONTRACTOR");
+  const cheque = await lineByRef("CHEQUE DEPOSIT");
+  const fee = await lineByRef("MONTHLY SERVICE FEE");
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  // Move the ledger to equal the month's line net (675,575) so a derived open (0) has zero variance.
+  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: -OPENING_CENTS }) });
+  const derived = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 })).json;
+  assert.equal(derived.statement_balance_cents, 675_575);
+  assert.equal(derived.variance_cents, 0);
+  // Import a late +$1,000.00 line into the month and match it to an existing journal (so the ledger stays at $6,755.75).
+  await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.operating,
+    profile_code: "rbc-default",
+    filename: "late.csv",
+    content: `Date,Description,Amount,Reference\n${period}-26,LATE JOURNAL LINE,1000.00,\n`,
+  });
+  const late = await lineByRef("LATE JOURNAL LINE");
+  assert.equal((await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: late.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000099" })).status, 201);
+  // Refreshing with the stored figure keeps the month derived, and completion recomputes the statement from the lines ($7,755.75 vs $6,755.75, $1,000.00 apart).
+  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: derived.statement_balance_cents });
+  const staleDerived = await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`);
+  refused(staleDerived, 422, "the statement reads");
+  assert.equal(
+    staleDerived.json.error,
+    "cannot complete, the statement reads $7,755.75 and the ledger reads $6,755.75 ($1,000.00 apart); they must agree, refresh the figures and match what is open",
+  );
+
+  // A completed month is skipped by autoMatch.
+  const cardRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.fuelCard, year: 2031, month: 6, statement_balance_cents: 0 })).json;
+  assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${cardRec.id}/complete`)).status, 200);
+  await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.fuelCard,
+    profile_code: "rbc-default",
+    filename: "closed-month.csv",
+    content: "Date,Description,Amount,Reference\n2031-06-05,CLOSED MONTH LODGEMENT,2450.50,LODGE-310\n",
+  });
+  const autoClosed = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.fuelCard });
+  assert.equal(autoClosed.status, 200);
+  assert.deepEqual([autoClosed.json.matched, autoClosed.json.unmatched], [0, 1]);
+});
+

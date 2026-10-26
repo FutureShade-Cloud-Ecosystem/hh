@@ -220,3 +220,27 @@ func TestIntegration_ReconVariance_TheAutoRunSkipsALineInACompletedMonth(t *test
 		t.Errorf("the line in the completed month was matched: line %s, summary %+v", ls, sum)
 	}
 }
+
+// P3-1 and P3-2 (PR 607 round 2): a nil GLBalanceReader on Service or a nil ledger callback on Repository refuses
+// completion in plain words instead of reading the ledger as $0.00, and dollars formats $1,000.00 and up with commas.
+func TestIntegration_ReconVariance_NilLedgerReaderOrCallbackRefusesCompletion(t *testing.T) {
+	w, _, _, rec, _ := varianceWorld(t)
+	ctx := context.Background()
+	unwired := NewService(NewRepository(w.pool)).WithJournals(w.journals)
+	_, err := unwired.CompleteReconciliation(ctx, rec.ID, "")
+	t.Logf("complete with nil GLBalanceReader: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot complete, the ledger balance cannot be read") {
+		t.Fatalf("nil GLBalanceReader got %v, want refusal saying the ledger balance cannot be read", err)
+	}
+	_, err = NewRepository(w.pool).CompleteReconciliation(ctx, rec.ID, "1000", "", nil, nil)
+	t.Logf("complete with nil ledger callback: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot complete, the ledger balance cannot be read") {
+		t.Fatalf("nil ledger callback got %v, want refusal saying the ledger balance cannot be read", err)
+	}
+	if got := dollars(100000); got != "$1,000.00" {
+		t.Errorf("dollars(100000) = %q, want $1,000.00", got)
+	}
+	if got := dollars(-123456); got != "-$1,234.56" {
+		t.Errorf("dollars(-123456) = %q, want -$1,234.56", got)
+	}
+}
