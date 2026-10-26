@@ -50,7 +50,9 @@ type InvoiceFacts struct {
 	OrderNo    string
 	CustomerID string
 	BranchID   string
-	// TermsDays is the customer's payment terms; 0 lets billing apply its own default.
+	// TermsDays is the customer's payment terms, passed through VERBATIM: 0 is the customer's own
+	// Cash On Demand answer and stays 0 (the invoice is due on issue); only a missing customer row
+	// resolves none, spelled negative, and billing applies its own default.
 	TermsDays int
 	// TaxReasonCode is the order's tax treatment; "" means billing's standard.
 	TaxReasonCode string
@@ -166,7 +168,7 @@ func orderBillingHeaderOn(ctx context.Context, q invoiceQuerier, orderID string)
 	f.OrderID = orderID
 	err := q.QueryRow(ctx, `
 SELECT o.order_no::text, o.customer_id::text, o.branch_id::text,
-       COALESCE(c.payment_terms_days, 0)
+       COALESCE(c.payment_terms_days, -1)
   FROM orders o
   LEFT JOIN customers c ON c.id = o.customer_id
  WHERE o.id = $1`, orderID).Scan(&f.OrderNo, &f.CustomerID, &f.BranchID, &f.TermsDays)
