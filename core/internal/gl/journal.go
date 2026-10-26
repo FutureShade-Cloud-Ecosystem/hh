@@ -85,10 +85,22 @@ func (s *Service) ListJournals(ctx context.Context, f JournalFilter) ([]Journal,
 	return js, nil
 }
 
+// GetJournal is fenced to the caller's branch reach (FW1-10), the same rule ListJournals carries
+// (DIB-392): a journal posted at a branch the caller cannot reach answers as MISSING, never 403,
+// because an id is an existence oracle and the list already hides these rows. A journal with no
+// branch (a dealer wide row: a recurring run, a year-end close) names no branch's books and stays
+// readable by id.
 func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
 	j, err := s.store.GetJournal(ctx, id)
 	if err != nil {
 		return Journal{}, err
+	}
+	if j.BranchID != "" && !caller.CanAccessBranch(j.BranchID) {
+		return Journal{}, errNotFound
 	}
 	j.DerivedStatus = derivedStatus(j.Status, j.TotalCents(), s.thresholdFor(ctx, j.BranchID))
 	return j, nil
