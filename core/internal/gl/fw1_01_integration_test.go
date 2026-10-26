@@ -203,13 +203,15 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 	}
 	docAt := time.Date(2088, 5, 10, 12, 0, 0, 0, time.UTC)
 	clockAt := time.Date(2088, 6, 15, 12, 0, 0, 0, time.UTC)
-	// The earliest OPEN period the database holds (the seeded 2026 months stand open in this
-	// database, so the earliest open is not necessarily June: the ruling names the earliest open
-	// month, whichever it is).
+	// The earliest OPEN period at or after the document's month (round 1b, FROM-PRINCIPAL 96). The
+	// seeded 2026 months stand open in this database, so the seed query needs the at-or-after bound
+	// or the stray 2026 January would answer.
 	var wantMonth, wantYear int
 	if err := pool.QueryRow(ctx,
-		`SELECT month, year FROM fiscal_periods WHERE status='OPEN' ORDER BY year, month LIMIT 1`).Scan(&wantMonth, &wantYear); err != nil {
-		t.Fatalf("read the earliest open period: %v", err)
+		`SELECT month, year FROM fiscal_periods
+		  WHERE status='OPEN' AND (year > $1 OR (year = $1 AND month >= $2))
+		  ORDER BY year, month LIMIT 1`, docAt.UTC().Year(), int(docAt.UTC().Month())).Scan(&wantMonth, &wantYear); err != nil {
+		t.Fatalf("read the earliest open period at or after the document's: %v", err)
 	}
 	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
@@ -229,7 +231,7 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 		t.Fatalf("read the finalization journal: %v", err)
 	}
 	if finMonth != wantMonth {
-		t.Fatalf("the finalization journal posts in period month %d, want %d (the earliest OPEN month)", finMonth, wantMonth)
+		t.Fatalf("the finalization journal posts in period month %d, want %d (the earliest OPEN month at or after the document's)", finMonth, wantMonth)
 	}
 	if finPosted == nil || finPosted.UTC().Format("2006-01-02") != "2088-05-10" {
 		t.Fatalf("the finalization journal carries posted_at %v, want the document date 2088-05-10 kept", finPosted)
@@ -240,7 +242,7 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 	}
 	pmonth, posted := fw1ReleaseJournal(t, pool, dep)
 	if pmonth != wantMonth {
-		t.Fatalf("the release journal posts in period month %d, want %d (the earliest OPEN month)", pmonth, wantMonth)
+		t.Fatalf("the release journal posts in period month %d, want %d (the earliest OPEN month at or after the document's)", pmonth, wantMonth)
 	}
 	if posted == nil || posted.UTC().Format("2006-01-02") != "2088-05-10" {
 		t.Fatalf("the release journal carries posted_at %v, want the document date 2088-05-10 kept", posted)

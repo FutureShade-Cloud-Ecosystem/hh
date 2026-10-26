@@ -397,7 +397,8 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		if d.Source == SourceManual {
 			return "", false, errClosedPeriod
 		}
-		periodID, periodYear, err = r.earliestOpenPeriodTx(ctx, tx)
+		docY, docM := fiscalYearMonthIn(zone, d.OccurredAt)
+		periodID, periodYear, err = r.earliestOpenPeriodTx(ctx, tx, docY, docM)
 		if err != nil {
 			return "", false, err
 		}
@@ -833,19 +834,23 @@ func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int
 	return nil
 }
 
-// earliestOpenPeriodTx answers the earliest OPEN fiscal period on tx, creating the next fiscal year
-// first when every period is closed (a system journal is never refused for want of an open month).
-func (r *Repository) earliestOpenPeriodTx(ctx context.Context, tx pgx.Tx) (string, int, error) {
+// earliestOpenPeriodTx answers the earliest OPEN fiscal period AT OR AFTER the document's (year, month)
+// on tx (round 1b, FROM-PRINCIPAL 96: a stray earlier open month, one a controller left open behind a
+// closed month, never catches the late journal), creating the next fiscal year first when no open month
+// from there on exists (a system journal is never refused for want of an open month).
+func (r *Repository) earliestOpenPeriodTx(ctx context.Context, tx pgx.Tx, docYear, docMonth int) (string, int, error) {
 	scan := func() (string, int, error) {
 		var id string
 		var year int
 		err := tx.QueryRow(ctx,
-			`SELECT id::text, year FROM fiscal_periods WHERE status = 'OPEN' ORDER BY year, month LIMIT 1`).Scan(&id, &year)
+			`SELECT id::text, year FROM fiscal_periods
+			  WHERE status = 'OPEN' AND (year > $1 OR (year = $1 AND month >= $2))
+			  ORDER BY year, month LIMIT 1`, docYear, docMonth).Scan(&id, &year)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", 0, pgx.ErrNoRows
 		}
 		if err != nil {
-			return "", 0, fmt.Errorf("gl: resolve the earliest open period: %w", err)
+			return "", 0, fmt.Errorf("gl: resolve the earliest open period at or after %04d-%02d: %w", docYear, docMonth, err)
 		}
 		return id, year, nil
 	}
@@ -855,7 +860,11 @@ func (r *Repository) earliestOpenPeriodTx(ctx context.Context, tx pgx.Tx) (strin
 		if merr != nil {
 			return "", 0, merr
 		}
-		if err := r.ensureFiscalYearTx(ctx, tx, max+1); err != nil {
+		next := max + 1
+		if docYear > next {
+			next = docYear
+		}
+		if err := r.ensureFiscalYearTx(ctx, tx, next); err != nil {
 			return "", 0, err
 		}
 		id, year, err = scan()
