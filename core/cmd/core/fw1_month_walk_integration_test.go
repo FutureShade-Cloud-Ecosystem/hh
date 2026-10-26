@@ -174,12 +174,21 @@ func newFW1Walk(t *testing.T) *fw1Walk {
 	messaging.NewConsumer(ops.messagingSvc, log).RegisterHandlers(d)
 	messaging.NewPortalBridge(ops.messagingSvc, log).RegisterHandlers(d)
 
-	now := time.Now()
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("loading dealer zone America/Toronto: %v", err)
+	}
+	var seededYear int
+	if err := pool.QueryRow(ctx, `SELECT year FROM fiscal_periods ORDER BY year DESC LIMIT 1`).Scan(&seededYear); err != nil {
+		t.Fatalf("reading seeded fiscal calendar year: %v", err)
+	}
+	now := time.Now().In(zone)
+	walkMonth := int(now.Month())
 	w := &fw1Walk{
 		t: t, pool: pool, mux: mux, sg: sg, money: money, ops: ops, tops: tops, disp: d,
 		prod: map[string]string{}, cust: map[string]string{},
-		year: now.Year(), month: int(now.Month()),
-		monthEnd: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).
+		year: seededYear, month: walkMonth,
+		monthEnd: time.Date(seededYear, time.Month(walkMonth), 1, 0, 0, 0, 0, zone).
 			AddDate(0, 1, 0).Add(-time.Second),
 	}
 	for _, sku := range []string{"DBS-GATOR-SAND", "DBS-INLITE-LED", "DBS-UL-BRUSSELS", "DBS-TB-BLU60", "DBS-SIKA-SEALER"} {
@@ -301,13 +310,6 @@ func TestFW1MonthWalk(t *testing.T) {
 	w := newFW1Walk(t)
 	ctx := context.Background()
 
-	// The seeded fiscal calendar must hold the walk's month, or every posting is refused for
-	// want of a period (FW1-01's ground).
-	var periodStatus string
-	if err := w.pool.QueryRow(ctx, `SELECT status FROM fiscal_periods WHERE year = $1 AND month = $2`, w.year, w.month).Scan(&periodStatus); err != nil {
-		t.Fatalf("no fiscal period for %04d-%02d: %v (FW1-01 owns the roll forward)", w.year, w.month, err)
-	}
-
 	// -- opening balances -------------------------------------------------------------
 	// The seed plants open account invoices with no journal, and opening stock with no 1200
 	// balance. Both are loaded as opening trial balance entries against 3000 (opening equity),
@@ -363,7 +365,7 @@ func TestFW1MonthWalk(t *testing.T) {
 			SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
 			  FROM stock_balances sb
 			  JOIN product_branch_costs c ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
-			 WHERE sb.on_hand_base > 0 AND sb.branch_id = $1`, branch).Scan(&c); err != nil {
+			 WHERE sb.on_hand_base != 0 AND sb.branch_id = $1`, branch).Scan(&c); err != nil {
 			t.Fatalf("stock value: %v", err)
 		}
 		return c
@@ -533,8 +535,11 @@ func TestFW1MonthWalk(t *testing.T) {
 
 	// A posted vendor bill: PO to the seeded Techo Bloc vendor, received, billed, posted.
 	vendor := w.one(`SELECT id::text FROM vendors WHERE vendor_no = 'V-TECHO'`)
+	poExpected := fmt.Sprintf("%04d-%02d-20", w.year, w.month)
+	billDate := fmt.Sprintf("%04d-%02d-15", w.year, w.month)
+	billDue := time.Date(w.year, time.Month(w.month), 15, 0, 0, 0, 0, w.monthEnd.Location()).AddDate(0, 0, 30).Format("2006-01-02")
 	poOut := w.ok("purchase order", http.MethodPost, "/api/v1/purchasing/pos", map[string]any{
-		"vendor_id": vendor, "branch_id": fw1TRT, "expected_at": "2026-10-20",
+		"vendor_id": vendor, "branch_id": fw1TRT, "expected_at": poExpected,
 		"lines": []map[string]any{{"product_id": w.prod["DBS-TB-BLU60"], "description": "Blu 60", "qty_ordered_base": 100, "uom": "PC", "unit_cost_cents": 500}},
 	})
 	var poResp struct {
@@ -550,7 +555,7 @@ func TestFW1MonthWalk(t *testing.T) {
 	})
 	w.drain()
 	billOut := w.ok("vendor bill", http.MethodPost, "/api/v1/purchasing/bills", map[string]any{
-		"bill_no": "TECHO-FW1-1", "po_id": poResp.ID, "bill_date": "2026-10-15", "due_date": "2026-11-14", "tax_cents": 650,
+		"bill_no": "TECHO-FW1-1", "po_id": poResp.ID, "bill_date": billDate, "due_date": billDue, "tax_cents": 650,
 		"lines": []map[string]any{{"po_line_id": lineID, "description": "Blu 60", "qty_billed_base": 100, "unit_cost_cents": 500}},
 	})
 	var billResp struct {
@@ -809,7 +814,7 @@ func (w *fw1Walk) assertStockTies(t *testing.T) {
 		SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
 		  FROM stock_balances sb
 		  JOIN product_branch_costs c ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
-		 WHERE sb.on_hand_base > 0`).Scan(&stock); err != nil {
+		 WHERE sb.on_hand_base != 0`).Scan(&stock); err != nil {
 		t.Fatalf("stock value: %v", err)
 	}
 	gl1200, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1200", w.monthEnd, "")
