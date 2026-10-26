@@ -47,11 +47,15 @@ test("deactivating an account is a review that names what it keeps and what it e
   await page.locator("[data-confirm]").getByRole("button", { name: "Deactivate 5200" }).click();
   await expect(page.locator("[data-confirm-error]")).toContainText("referenced by DRAFT journal(s); cannot deactivate");
   await page.locator("[data-confirm]").getByRole("button", { name: "Keep it as it is" }).click();
-  // 1100 is free of drafts: it deactivates and reads Inactive.
+  // 1100 is free of drafts, but the posting rules for invoicing and payments point at it: the refusal
+  // names them in words a dealer reads, and the account stays active so nothing stops posting.
   await page.getByRole("button", { name: "Deactivate 1100 Accounts Receivable" }).click();
   await page.locator("[data-confirm]").getByRole("button", { name: "Deactivate 1100" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Account 1100 Accounts Receivable is deactivated");
-  await expect(page.locator('[data-account="1100"]')).toContainText("Inactive");
+  await expect(page.locator("[data-confirm-error]")).toContainText("carries automated postings");
+  await expect(page.locator("[data-confirm-error]")).toContainText("invoice.finalized");
+  await expect(page.locator("[data-confirm-error]")).toContainText("payment.received");
+  await expect(page.locator("[data-confirm-error]")).toContainText("nothing was changed");
+  await expect(page.locator('[data-account="1100"]')).toContainText("Active");
 });
 
 test("a journal below the threshold posts after a review, the register shows it posted and the trial balance carries it", async ({ page, request }) => {
@@ -163,23 +167,34 @@ test("a post refused at the gate names who may post, never the bare gate word", 
 test("reversing a posted journal is a review that lists its lines, cancel changes nothing, and the reversal links back", async ({ page, request }) => {
   await openApprovals(page, request);
   await openTab(page, "journals");
+  // JE-0004 came from the till, so it is not reversed here: the panel names the till instead.
   await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0004" }).click();
+  await expect(page.getByRole("button", { name: "Reverse", exact: true })).toHaveCount(0);
+  await expect(page.locator("[data-system-note]")).toContainText("the till");
+  await expect(page.locator("[data-system-note]")).toContainText("correct it where it came from");
+  // A journal a person posted reverses behind the review.
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0001" }).click();
   await page.getByRole("button", { name: "Reverse", exact: true }).click();
   const confirm = page.locator("[data-confirm]");
-  await expect(confirm).toContainText("Reverse JE-0004?");
+  await expect(confirm).toContainText("Reverse JE-0001?");
   await expect(confirm).toContainText("every line's side swapped");
   await expect(confirm).toContainText("stays posted");
-  await expect(confirm.getByRole("table", { name: "Lines of the journal being reversed" })).toContainText("$25.00");
+  await expect(confirm.getByRole("table", { name: "Lines of the journal being reversed" })).toContainText("$20,000.00");
   await expect(confirm).toBeFocused();
   await confirm.getByRole("button", { name: "Keep it as it is" }).click();
   await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0007/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Reverse", exact: true }).click();
-  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0004" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Reversed JE-0004. JE-0007 carries the opposite lines");
+  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0001" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Reversed JE-0001. JE-0007 carries the opposite lines");
   await expect(page.locator("[data-journal-panel]")).toContainText("JE-0007");
-  await expect(page.locator("[data-reverses]")).toHaveText("JE-0004");
-  // The original stays posted; a posted journal cannot be voided and a second reversal is a new journal.
-  await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0004/ })).toContainText("Posted");
+  await expect(page.locator("[data-reverses]")).toHaveText("JE-0001");
+  // The original stays posted, and a second reversal is refused in words that say why.
+  await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0001/ })).toContainText("Posted");
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0001" }).click();
+  await page.getByRole("button", { name: "Reverse", exact: true }).click();
+  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0001" }).click();
+  await expect(page.locator("[data-confirm-error]")).toContainText("already reversed");
+  await expect(page.locator("[data-confirm-error]")).toContainText("reversed once, so nothing was posted");
 });
 
 test("voiding a draft is a review, and the register then reads it Void", async ({ page, request }) => {
@@ -449,14 +464,14 @@ test("a lost answer to a close period rereads the periods, never leaving the pan
 test("a lost answer to a reverse rereads the register", async ({ page, request }) => {
   await openApprovals(page, request);
   await openTab(page, "journals");
-  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0004" }).click();
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0001" }).click();
   await page.getByRole("button", { name: "Reverse", exact: true }).click();
   // The server applies the reversal but the answer is lost: the register must show it without a reload.
   await page.route("**/api/v1/gl/journals/*/reverse", async (route) => {
     await route.fetch();
     await route.abort("failed");
   });
-  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0004" }).click();
+  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0001" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been saved");
   await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0007/ })).toContainText("Posted");
 });

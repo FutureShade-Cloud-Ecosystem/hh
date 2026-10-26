@@ -126,10 +126,14 @@ test("the journal register keeps a journal number on one line and offers void an
   const box = await link.boundingBox();
   expect(box === null ? 99 : box.height).toBeLessThan(40);
   await link.click();
-  // A parked draft can be voided; a posted journal can only be reversed.
+  // A parked draft can be voided; a journal a person posted can only be reversed; a journal the till
+  // posted is not reversed here, and the panel names the till.
   await expect(page.getByRole("button", { name: "Void", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reverse", exact: true })).toHaveCount(0);
   await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0004" }).click();
+  await expect(page.getByRole("button", { name: "Reverse", exact: true })).toHaveCount(0);
+  await expect(page.locator("[data-system-note]")).toContainText("the till");
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0001" }).click();
   await expect(page.getByRole("button", { name: "Reverse", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Void", exact: true })).toHaveCount(0);
 });
