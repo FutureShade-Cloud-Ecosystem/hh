@@ -132,6 +132,20 @@ func fw1PlantDeposit(t *testing.T, pool *pgxpool.Pool, docAt time.Time) string {
 	return inv
 }
 
+// fw1ReleaseJournalFor reads one keyed journal's period month and posted_at.
+func fw1ReleaseJournalFor(t *testing.T, pool *pgxpool.Pool, key string) (int, *time.Time) {
+	t.Helper()
+	var pmonth int
+	var posted *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT p.month, j.posted_at
+		  FROM gl_journals j JOIN fiscal_periods p ON p.id = j.period_id
+		 WHERE j.idempotency_key = $1`, key).Scan(&pmonth, &posted); err != nil {
+		t.Fatalf("read the keyed journal: %v", err)
+	}
+	return pmonth, posted
+}
+
 // fw1ReleaseJournal reads the release journal's period month and posted_at.
 func fw1ReleaseJournal(t *testing.T, pool *pgxpool.Pool, invoiceID string) (periodMonth int, postedAt *time.Time) {
 	t.Helper()
@@ -332,5 +346,33 @@ func TestIntegration_FW1_01_ControllerOpensTheNextFiscalYearEarly(t *testing.T) 
 	}
 	if res2.FiscalYear != following {
 		t.Fatalf("the repeat open made year %d, want %d (always one year ahead of the latest)", res2.FiscalYear, following)
+	}
+}
+
+// TestIntegration_FW1_01_LateJournalNeverLandsBeforeItsDocumentsMonth is
+// round 1b (FROM-PRINCIPAL 96): a stray EARLIER open month (January left
+// open) must not catch a journal whose own month (May, closed) posts late;
+// it lands in the earliest open month AT OR AFTER its document's month (June).
+func TestIntegration_FW1_01_LateJournalNeverLandsBeforeItsDocumentsMonth(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	ensurePeriods(t, pool, 2096)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2096, 6, 15, 12, 0, 0, 0, time.UTC))
+	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2096, 5), "round 1b closed May"); err != nil {
+		t.Fatalf("close May 2096: %v", err)
+	}
+	docAt := time.Date(2096, 5, 10, 12, 0, 0, 0, time.UTC)
+	clockAt := time.Date(2096, 6, 15, 12, 0, 0, 0, time.UTC)
+	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt).
+		WithInvoiceReader(seedInvoiceReader{pool: pool})
+	dep := fw1PlantDeposit(t, pool, docAt)
+
+	if err := post.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": dep})); err != nil {
+		t.Fatalf("the finalization consume with a stray earlier open month: %v", err)
+	}
+	pmonth, _ := fw1ReleaseJournalFor(t, pool, "ar.invoice.finalized:"+dep)
+	if pmonth != 6 {
+		t.Fatalf("the late journal landed in month %d, want 6 (the earliest open month AT OR AFTER the document's; never a stray earlier open month)", pmonth)
 	}
 }
