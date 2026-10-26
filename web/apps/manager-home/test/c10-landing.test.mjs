@@ -1,10 +1,20 @@
-// WALK-C10 Manager Home Landing unit tests: the four money KPI cards in combined
-// and side-by-side branch mode, the Deliveries today card with its three branch
-// runs, and the Needs you, by money at stake ranked rows with inline actions.
+// WALK-C10 Manager Home Landing unit tests, FW1-14 rewrite: every figure the
+// TODAY cards draw comes from the core, and a card the core cannot answer says
+// "Not connected yet" with no figure. The old KpiDemo constants are gone; these
+// legs pin the mapping from the core's own reads (the viz series, the dispatch
+// board, the approvals queue) to the cards, so a hardcoded figure can not come
+// back unnoticed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KpiDemo } from "../src/manager-api.ts";
-import { renderC10Landing, renderDeliveriesCard, renderKpiCard, renderNeedsYouCard } from "../src/views.ts";
+import {
+  LANDING_NOT_CONNECTED,
+  landingKpisFrom,
+  landingDeliveriesFrom,
+  landingNeedsFrom,
+
+} from "../src/manager-api.ts";
+import { renderKpiCard, renderDeliveriesCard, renderNeedsYouCard } from "../src/views.ts";
+
 
 function flattenTemplate(value) {
   if (value === null || value === undefined || typeof value === "symbol") return "";
@@ -21,61 +31,162 @@ function flattenTemplate(value) {
   return "";
 }
 
-test("WALK-C10 KPI cards carry combined and Point Loma beside Julian figures", () => {
-  const kpis = KpiDemo.figures("br-plm");
-  assert.equal(kpis.length, 4);
+// The core's viz answer for a controller: sales by branch, margin in basis
+// points, the AR aging buckets. Numbers the core computed, not a board's.
+const CORE_TILES = [
+  {
+    tile_id: "viz.sales.today-branch-split", state: "ok", total: 4_832_00,
+    points: [
+      { label: "TRT", number: 2_987_00 },
+      { label: "KGN", number: 1_845_00 },
+    ],
+  },
+  {
+    tile_id: "viz.margin.gross_bps-branch-list", state: "ok", total: 3_180,
+    points: [
+      { label: "TRT", number: 3_240 },
+      { label: "KGN", number: 3_070 },
+    ],
+  },
+  {
+    tile_id: "viz.ar.aging-bucket-split", state: "ok", total: 96_240_00,
+    points: [
+      { label: "Current", number: 61_300_00 },
+      { label: "1-30", number: 18_400_00 },
+      { label: "31-60", number: 9_000_00 },
+      { label: "60+", number: 7_540_00 },
+    ],
+  },
+];
+
+test("the KPI cards carry the core's figures: sales, margin, and AR past due", () => {
+  const kpis = landingKpisFrom(CORE_TILES);
   assert.deepEqual(
     kpis.map((k) => k.title),
-    ["Sales today", "Gross margin", "AR overdue", "Cash collected today"],
+    ["Sales today", "Gross margin", "Receivables past due", "Cash collected today"],
   );
-  const combinedHtml = flattenTemplate(renderKpiCard(kpis[0], "combined"));
-  assert.match(combinedHtml, /\$48,320\.00/);
-  assert.match(combinedHtml, /\$44,150\.00 same day last week, up 9\.4%/);
 
-  const splitHtml = flattenTemplate(renderKpiCard(kpis[0], "split"));
-  assert.match(splitHtml, /Point Loma/);
-  assert.match(splitHtml, /\$29,870\.00/);
-  assert.match(splitHtml, /Julian/);
-  assert.match(splitHtml, /\$18,450\.00/);
-});
-
-test("WALK-C10 Deliveries today card renders combined 17 and split 14 with three branch runs", () => {
-  const deliveries = KpiDemo.deliveries("br-plm");
-  assert.equal(deliveries.count, 17);
-  assert.equal(deliveries.runs.length, 3);
+  const sales = kpis[0];
+  assert.equal(sales.connected, true);
+  assert.equal(sales.value, "$4,832.00");
   assert.deepEqual(
-    deliveries.runs.map((r) => `${r.runId} ${r.branch}`),
-    ["R1 Point Loma", "R5 Point Loma", "J2 Julian"],
+    sales.branches.map((b) => `${b.label} ${b.value}`),
+    ["TRT $2,987.00", "KGN $1,845.00"],
   );
-  const combinedHtml = flattenTemplate(renderDeliveriesCard(deliveries, "combined"));
-  assert.match(combinedHtml, />17</);
-  assert.match(combinedHtml, /12 from Point Loma, 5 from Julian\. 5 done, 6 on the road, 6 still to leave\./);
+  const salesHtml = flattenTemplate(renderKpiCard(sales, "combined"));
+  assert.match(salesHtml, /\$4,832\.00/);
+  assert.match(salesHtml, /Counter sales committed today/);
 
-  const splitHtml = flattenTemplate(renderDeliveriesCard(deliveries, "split"));
-  assert.match(splitHtml, />14</);
-  assert.match(splitHtml, /9 from Point Loma, 5 from Julian\. 5 done, 6 on the road, 3 still to leave\./);
+  const margin = kpis[1];
+  assert.equal(margin.connected, true);
+  assert.equal(margin.value, "31.8%");
+  const marginSplit = flattenTemplate(renderKpiCard(margin, "split"));
+  assert.match(marginSplit, /TRT/);
+  assert.match(marginSplit, /32\.4%/);
+
+  // Past due is every bucket but Current, the core's own arithmetic, and the
+  // card says what it covers rather than "AR overdue".
+  const pastDue = kpis[2];
+  assert.equal(pastDue.connected, true);
+  assert.equal(pastDue.value, "$34,940.00");
 });
 
-test("WALK-C10 Needs you, by money at stake lists five ranked rows with inline actions", () => {
-  const needs = KpiDemo.needs("br-plm");
-  assert.equal(needs.length, 5);
+test("a card the core cannot answer says Not connected yet, with no figure", () => {
+  const kpis = landingKpisFrom(CORE_TILES);
+  const cash = kpis[3];
+  assert.equal(cash.connected, false);
+  const html = flattenTemplate(renderKpiCard(cash, "combined"));
+  assert.match(html, new RegExp(LANDING_NOT_CONNECTED));
+  assert.doesNotMatch(html, /\$/);
+
+  // No viz answer at all: every card is honest, none invents a number.
+  const empty = landingKpisFrom([]);
+  assert.equal(empty.length, 4);
+  assert.ok(empty.every((k) => k.connected === false));
+  const tilesAbsent = landingKpisFrom([
+    { tile_id: "viz.sales.today-branch-split", state: "error", total: null, points: [] },
+  ]);
+  assert.equal(tilesAbsent[0].connected, false);
+});
+
+test("the deliveries card counts the dispatch board's own runs and stops", () => {
+  const branches = [
+    { id: "b-trt", code: "TRT", name: "Trenton" },
+    { id: "b-kgn", code: "KGN", name: "Kingston" },
+  ];
+  const board = (runId, branchId, stops) => ({
+    branch_id: branchId,
+    date: "2026-10-26",
+    runs: [{
+      id: `r-${runId}`, run_no: runId, status: stops.every((s) => s.delivered) ? "COMPLETED" : "DISPATCHED",
+      driver_id: "", driver_name: "A Driver", truck_id: "", truck_code: "", stop_count: stops.length,
+      created_at: "2026-10-26T10:40:00Z", dispatched_at: "2026-10-26T11:40:00Z", completed_at: null, reopened_at: "",
+    }],
+    stops: stops.map((s, i) => ({
+      id: `s-${runId}-${i}`, run_id: `r-${runId}`, stop_no: i + 1,
+      status: s.delivered ? "DELIVERED" : s.enRoute ? "EN_ROUTE" : "READY",
+      loaded_at: "2026-10-26T10:00:00Z",
+      en_route_at: s.enRoute || s.delivered ? "2026-10-26T11:40:00Z" : null,
+      delivered_at: s.delivered ? "2026-10-26T12:40:00Z" : null,
+      reopened_at: "",
+    })),
+    unassigned: [],
+  });
+  const deliveries = landingDeliveriesFrom(branches, [
+    board("TRT-1", "b-trt", [{ delivered: true, enRoute: false }, { delivered: false, enRoute: true }, { delivered: false, enRoute: false }]),
+    board("KGN-2", "b-kgn", [{ delivered: false, enRoute: true }, { delivered: false, enRoute: false }]),
+  ]);
+  assert.notEqual(deliveries, null);
+  assert.equal(deliveries.count, 5);
   assert.deepEqual(
-    needs.map((n) => n.amountLabel),
-    ["$11,350.00", "$771.46", "$100.80", "$56.80", "not priced"],
+    deliveries.branches.map((b) => `${b.label} ${b.count}`),
+    ["Trenton 3", "Kingston 2"],
   );
-  const markup = flattenTemplate(renderNeedsYouCard(needs));
-  assert.match(markup, /Credit hold: Fieldstone Pools and Patios/);
-  assert.match(markup, /Approve credit hold/);
-  assert.match(markup, /Margin floor: Q-2041, line 2/);
-  assert.match(markup, /Approve margin/);
-  assert.match(markup, /Issue warranty claim/);
-  assert.match(markup, /Message a branch/);
+  assert.match(deliveries.summary, /1 done, 2 on the road, 2 still to leave/);
+  assert.equal(deliveries.runs.length, 2);
+  assert.match(deliveries.runs[0].stops, /1 of 3 stops done/);
+  const html = flattenTemplate(renderDeliveriesCard(deliveries, "combined"));
+  assert.match(html, />5</);
+  assert.match(html, /TRT-1 Trenton/);
+  // No invented run, no borrowed count.
+  assert.doesNotMatch(html, /R1|left 6:40 AM/);
 
-  const fullLanding = flattenTemplate(renderC10Landing("combined", KpiDemo.figures("br-plm"), deliveriesForTest(), needs));
-  assert.match(fullLanding, /Both branches combined/);
-  assert.match(fullLanding, /Point Loma beside Julian/);
+  const none = landingDeliveriesFrom(branches, []);
+  assert.equal(none, null);
 });
 
-function deliveriesForTest() {
-  return KpiDemo.deliveries("br-plm");
-}
+test("the needs card ranks the caller's pending approvals by the money at stake", () => {
+  const rows = [
+    {
+      id: "ap-1", branch_id: "b-trt", policy_type: "MARGIN_BELOW_MINIMUM",
+      detail: "Quote Q-2041 line 2 is below the margin floor", subject_ref: "", amount_cents: 7_714_6, status: "PENDING",
+    },
+    {
+      id: "ap-2", branch_id: "b-kgn", policy_type: "CREDIT_LIMIT_EXCEEDED",
+      detail: "Order SO-1049 exceeds the credit limit", subject_ref: "", amount_cents: 11_350_00, status: "PENDING",
+    },
+    {
+      id: "ap-3", branch_id: "b-trt", policy_type: "COD_CONSTRAINT",
+      detail: "A cash on demand account has an unpaid balance", subject_ref: "", amount_cents: 0, status: "PENDING",
+    },
+    {
+      id: "ap-4", branch_id: "b-trt", policy_type: "MARGIN_BELOW_MINIMUM",
+      detail: "Already decided", subject_ref: "", amount_cents: 5_00, status: "APPROVED",
+    },
+  ];
+  const needs = landingNeedsFrom(rows);
+  assert.deepEqual(
+    needs.map((n) => n.id),
+    ["ap-2", "ap-1", "ap-3"],
+  );
+  assert.equal(needs[0].amountLabel, "$11,350.00");
+  assert.equal(needs[2].amountLabel, "not priced");
+  assert.equal(needs[0].targetView, "approvals");
+  const html = flattenTemplate(renderNeedsYouCard(needs));
+  assert.match(html, /Q-2041/);
+  assert.match(html, /\$11,350\.00/);
+  // The invented board rows are gone: no Fieldstone, no invented warranty claim.
+  assert.doesNotMatch(html, /Fieldstone|RT-1017/);
+
+  assert.deepEqual(landingNeedsFrom([]), []);
+});
