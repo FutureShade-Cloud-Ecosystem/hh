@@ -111,3 +111,24 @@ func (s *Service) SessionCountTx(ctx context.Context, tx pgx.Tx, sessionID strin
 	}
 	return c, nil
 }
+
+// SessionCountForWriteOffTx is SessionCountTx with the session row FOR UPDATE: a write off sums the session's earlier
+// write offs after this read, and two write offs of one session must not each read the other's sum as zero (PR 606
+// round 2, S3's P1). The second queues here until the first commits, then re-reads what changed. The caller already
+// holds the payment row, so the order stays payment row, then session; no session writer takes a payment row.
+func (s *Service) SessionCountForWriteOffTx(ctx context.Context, tx pgx.Tx, sessionID string) (payments.SessionCount, error) {
+	if _, err := s.caller(ctx); err != nil {
+		return payments.SessionCount{}, err
+	}
+	var c payments.SessionCount
+	err := tx.QueryRow(ctx,
+		`SELECT status, branch_id::text, COALESCE(over_short_cents, 0) FROM till_sessions WHERE id = $1::uuid FOR UPDATE`,
+		sessionID).Scan(&c.Status, &c.BranchID, &c.OverShortCents)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return payments.SessionCount{}, payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
+	}
+	if err != nil {
+		return payments.SessionCount{}, fmt.Errorf("till: read the session count for the write off: %w", err)
+	}
+	return c, nil
+}

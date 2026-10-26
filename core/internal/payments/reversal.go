@@ -807,7 +807,10 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 		if tillSession == "" {
 			return Payout{}, fmt.Errorf("%w: this payment was not rung through a till session, so there is no count to cover a write off", ErrPayoutNotAllowed)
 		}
-		count, err := r.till.SessionCountTx(ctx, tx, tillSession)
+		// The session row FOR UPDATE, not FOR SHARE: the sum of the session's earlier write offs below must be read
+		// under the row, or two write offs of one session each read the other's sum as zero and together exceed the
+		// shortage (PR 606 round 2, S3's P1). The payment row above is already held, so the order stays.
+		count, err := r.till.SessionCountForWriteOffTx(ctx, tx, tillSession)
 		if err != nil {
 			return Payout{}, err
 		}

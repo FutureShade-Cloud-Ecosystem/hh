@@ -117,6 +117,10 @@ type TillSeam interface {
 	// PayOutHeldMoney writes the PAID_OUT movement and answers the session it landed on.
 	PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in DrawerPaidOut) (sessionID string, err error)
 	SessionCountTx(ctx context.Context, tx pgx.Tx, sessionID string) (SessionCount, error)
+	// SessionCountForWriteOffTx is the write off's count read: the session row FOR UPDATE, so a second write off of
+	// one session queues behind the first and re-reads what it already wrote off (PR 606 round 2, S3's P1). Lock
+	// order unchanged: the payment row first, then the session; no session writer takes a payment row.
+	SessionCountForWriteOffTx(ctx context.Context, tx pgx.Tx, sessionID string) (SessionCount, error)
 }
 
 // payoutStore is the persistence the pay out service needs.
