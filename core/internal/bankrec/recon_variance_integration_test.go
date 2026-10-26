@@ -111,6 +111,69 @@ func TestIntegration_ReconVariance_ADerivedStatementBalanceIsRecomputedFromTheLi
 	}
 }
 
+// P2-1 (PR 607 round 2): a derived month (opened with 0), a line imported after the open, then a refresh, then
+// completion. The refresh must keep the month derived, and completion must refuse while the ledger matches only the
+// old figure ($500.00 against $512.34 of lines).
+func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	line := w.line(t, "SF2S P21 OPEN", 50000)
+	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-p21-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	y, m := w.monthOf(t, line)
+	bal := &movingBalance{val: 50000}
+	svc := NewService(NewRepository(w.pool)).WithJournals(w.journals).WithGLBalances(bal)
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m}) // zero: derived
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
+	})
+	time.Sleep(20 * time.Millisecond)
+	late := w.line(t, "SF2S P21 LATE", 1234)
+	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-p21-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	// Refresh the month with the stored derived figure (or with 0): the derived flag must hold, so completion
+	// re-derives from the lines ($512.34) and refuses while the ledger matches only the old figure ($500.00).
+	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: rec.StatementBalanceCents})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	_, err = svc.CompleteReconciliation(ctx, refreshed.ID, "")
+	t.Logf("complete after late import and refresh: %v", err)
+	if err == nil {
+		t.Fatalf("a derived month refreshed after a late import was signed off while the ledger matched only the old figure")
+	}
+	if !strings.Contains(err.Error(), "$512.34") || !strings.Contains(err.Error(), "$500.00") {
+		t.Errorf("the refusal %q does not name the statement $512.34 and the ledger $500.00", err.Error())
+	}
+}
+
+// P2-2 (PR 607 round 2): a stated closing balance that happens to equal the lines' net at the open ($700.00), then an
+// extra line (+$50.00) imported and matched so the ledger and the lines both reach $750.00. Completion must keep the
+// stated $700.00 and refuse against it ($700.00 versus $750.00).
+func TestIntegration_ReconVariance_AStatedBalanceEqualToTheLinesAtOpenRefusesAnExtraLine(t *testing.T) {
+	w, svc, bal, rec, _ := varianceWorld(t)
+	ctx := context.Background()
+	time.Sleep(20 * time.Millisecond)
+	extra := w.line(t, "SF2S P22 EXTRA", 5000)
+	if code, body := w.post(w.callerAB, w.manualOf(extra, "JOURNAL", w.plantJournal(t, "sf2s-p22-e-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 5000, 0}, {"4950", 0, 5000}}), 5000)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	bal.val = 75000
+	_, err := svc.CompleteReconciliation(ctx, rec.ID, "")
+	t.Logf("complete stated balance after an extra line matched: %v", err)
+	if err == nil {
+		t.Fatalf("a month opened with a stated $700.00 was signed off at $750.00 after an extra line was matched")
+	}
+	if !strings.Contains(err.Error(), "$700.00") || !strings.Contains(err.Error(), "$750.00") {
+		t.Errorf("the refusal %q does not name the stated $700.00 and the ledger $750.00", err.Error())
+	}
+}
+
 // S3's P3: the auto run skips a line inside a COMPLETED month (errMonthCompleted) and goes on; the line stays unmatched.
 func TestIntegration_ReconVariance_TheAutoRunSkipsALineInACompletedMonth(t *testing.T) {
 	w := newReachWorld(t)
