@@ -422,3 +422,47 @@ test("the trial balance takes a month and a year, and a month shows that period'
   assert.equal(september.rows.length, 0);
   refused(await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?branch_id=nope"), 400, "invalid branch_id");
 });
+
+test("the posting queue answers the Controller's list and the banner's counts, and the list is the Controller's alone", async () => {
+  await reset();
+  const empty = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(empty.status, 200);
+  holds("GlPostingQueueCounts", empty.json);
+  assert.deepEqual(empty.json, { waiting: 0, dead: 0 });
+  const items = [
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f1",
+      topic: "payment.received",
+      document: "d0560000-0000-4000-9000-0000000000f2",
+      status: "PENDING",
+      attempts: 2,
+      last_error: "gl: no fiscal period for 2027-01",
+      occurred_at: "2026-03-12T10:00:00Z",
+    },
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f3",
+      topic: "ar.invoice.finalized",
+      document: "d0560000-0000-4000-9000-0000000000f4",
+      status: "DEAD",
+      attempts: 5,
+      last_error: "gl: account \"2200\" is inactive; cannot post",
+      occurred_at: "2026-03-12T11:00:00Z",
+    },
+  ];
+  const set = await fetch(`${base}/_stub/posting-queue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+  assert.equal(set.status, 200);
+  const list = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue");
+  assert.equal(list.status, 200);
+  holds("GlPostingQueuePage", list.json);
+  assert.deepEqual(list.json.items, items);
+  const counts = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(counts.status, 200);
+  holds("GlPostingQueueCounts", counts.json);
+  assert.deepEqual(counts.json, { waiting: 1, dead: 1 });
+  refused(await call(IDS.generalManager, "GET", "/api/v1/gl/posting-queue"), 403, "gl: only the Financial Controller may read the posting queue");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/posting-queue"), 403, "Forbidden");
+  const managerCounts = await call(IDS.manager, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(managerCounts.status, 200);
+  assert.deepEqual(managerCounts.json, { waiting: 1, dead: 1 });
+  await reset();
+});

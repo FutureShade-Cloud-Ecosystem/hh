@@ -14,6 +14,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 )
 
 func TestIntegration_PostingQueueListsWaitingAndDeadForTheController(t *testing.T) {
@@ -43,6 +44,7 @@ VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
 	})
 
 	svc := NewService(NewRepository(pool)).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return controller, true })
 
 	rows, err := svc.PostingQueue(ctx)
@@ -81,6 +83,7 @@ VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
 
 	// The list is the Controller's alone; the counts are not.
 	managerSvc := NewService(NewRepository(pool)).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return manager, true })
 	if _, err := managerSvc.PostingQueue(ctx); err == nil {
 		t.Fatalf("a non controller read the posting queue list")

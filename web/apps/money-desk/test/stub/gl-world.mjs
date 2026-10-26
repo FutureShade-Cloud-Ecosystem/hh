@@ -16,6 +16,7 @@ export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
   sales: "de110000-0000-4000-9000-000000000001",
   manager: "de110000-0000-4000-9000-000000000002",
+  generalManager: "de110000-0000-4000-9000-000000000009",
   pointLoma: "b0000000-0000-4000-8000-000000000001",
   julian: "b0000000-0000-4000-8000-000000000002",
   fr1: "2f6a1c00-0000-4000-9000-0000000000f1",
@@ -182,6 +183,7 @@ function fresh() {
         status: "PENDING",
       },
     ],
+    postingQueue: [],
     journals: [
       journal(IDS.j1, 5, "MANUAL", "Insurance premium paid ahead for the year (demo)", "DRAFT", IDS.pointLoma, IDS.manager, 30, [
         ["1300", 750000, 0],
@@ -270,6 +272,7 @@ export function createGlWorld() {
     try {
       const sub = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")).sub;
       if (sub === IDS.controller) return { id: sub, role: "FINANCIAL_CONTROLLER", tier: 1, global: true, level: "admin" };
+      if (sub === IDS.generalManager) return { id: sub, role: "GENERAL_MANAGER", tier: 1, global: true, level: "admin" };
       if (sub === IDS.payRec) return { id: sub, role: "PAYABLES_RECEIVABLES", tier: 2, global: true, level: "work" };
       if (sub === IDS.manager) return { id: sub, role: "SALES_MANAGER", tier: 2, global: false, level: "read" };
       return { id: sub, role: "INSIDE_SALES", tier: 3, global: false, level: "read" };
@@ -509,6 +512,23 @@ export function createGlWorld() {
       return made.journal === undefined ? made : { status: 201, body: made.journal };
     }
 
+    // the posting queue (FW1-02): the Controller's list and the banner's counts
+    if (m === "GET" && path === "/api/v1/gl/posting-queue") {
+      const refused = gate(caller, "admin");
+      if (refused !== null) return refused;
+      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may read the posting queue");
+      return { status: 200, body: { items: world.postingQueue } };
+    }
+    if (m === "GET" && path === "/api/v1/gl/posting-queue/count") {
+      const refused = gate(caller, "read");
+      return refused ?? {
+        status: 200,
+        body: {
+          waiting: world.postingQueue.filter((r) => r.status === "PENDING").length,
+          dead: world.postingQueue.filter((r) => r.status === "DEAD").length,
+        },
+      };
+    }
     // periods
     if (m === "GET" && path === "/api/v1/gl/periods") {
       const refused = gate(caller, "read");
@@ -735,6 +755,11 @@ export function createGlWorld() {
     if (req.method === "POST" && path === "/_stub/legacy-import") {
       world.legacyImport = String(JSON.parse(bodyText || "{}").source ?? "");
       return { status: 200, body: { ok: true, source: world.legacyImport } };
+    }
+    if (req.method === "POST" && path === "/_stub/posting-queue") {
+      const asked = JSON.parse(bodyText || "{}");
+      world.postingQueue = Array.isArray(asked.items) ? asked.items : [];
+      return { status: 200, body: { ok: true, count: world.postingQueue.length } };
     }
     if (req.method === "GET" && path === "/api/v1/branches") return { status: 200, body: branches() };
     const caller = callerOf(req);

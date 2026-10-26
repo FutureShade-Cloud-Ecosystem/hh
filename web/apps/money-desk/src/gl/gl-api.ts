@@ -31,6 +31,7 @@ import {
   type GlJournalCreate,
   type GlPeriod,
   type GlPolicy,
+  type GlPostingQueueCounts,
   type GlRecurringTemplate,
   type GlTieoutState,
   type GlTrialBalanceResult,
@@ -175,6 +176,11 @@ export class GlApi {
    * dealer names none, and "" when the read fails: the legacy import check stays off rather than
    * drawn for a dealer that may not have one.
    */
+  /** The posting queue's two counts (waiting, dead lettered), the banner's figures. */
+  async postingQueueCount(): Promise<Result<GlPostingQueueCounts>> {
+    return staffGl.glPostingQueueCount(this.#client);
+  }
+
   async legacyImportSource(): Promise<string> {
     const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "money-desk", {});
     // The dealer's business day zone rides on this read; the desk's day words follow it.
