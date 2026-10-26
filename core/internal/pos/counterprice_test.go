@@ -10,7 +10,6 @@ package pos
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -82,30 +81,30 @@ func TestCounterPrices_CustomerTypeComesFromTheAccount(t *testing.T) {
 type missingCustStore struct{ *fakeStore }
 
 func (missingCustStore) ReadCustomer(context.Context, string) (customerRec, error) {
-	return customerRec{}, errors.New("pos: no such customer")
+	return customerRec{}, pgx.ErrNoRows
 }
 
 // The tx twin answers from the same data the pool read answers from: no
 // customer row is ever found, on either shape.
 func (missingCustStore) ReadCustomerTx(context.Context, pgx.Tx, string) (customerRec, error) {
-	return customerRec{}, errors.New("pos: no such customer")
+	return customerRec{}, pgx.ErrNoRows
 }
 
-func TestCounterPrices_UnknownAccountPricesAsRetail(t *testing.T) {
+// UX-89 round 2 reversed the old rule (an unknown account priced as walk-in RETAIL): an id that is no account
+// answers 404 "customer not found", the same answer an account the caller cannot reach gives, so the read never
+// tells the two apart and never quotes a quiet walk-in price against a customer the till named.
+func TestCounterPrices_UnknownAccountIsNotFound(t *testing.T) {
 	h, q := counterHarness(t)
 	h.svc.store = missingCustStore{h.store}
-	out, err := h.svc.CounterPrices(context.Background(), CounterPriceInput{
+	_, err := h.svc.CounterPrices(context.Background(), CounterPriceInput{
 		CustomerID: "cust-does-not-exist",
 		Items:      []CounterPriceItem{{ProductID: "prod-paver", QtyEntered: 1}},
 	})
-	if err != nil {
-		t.Fatalf("an unknown account is not an error: %v", err)
+	if err == nil || statusOf(t, err) != 404 || err.Error() != "customer not found" {
+		t.Fatalf("an unknown account answers 404 customer not found, got %v", err)
 	}
-	if out.CustomerType != "RETAIL" {
-		t.Fatalf("an unresolvable account falls back to the DEAREST tier, never a guess: %q", out.CustomerType)
-	}
-	if len(q.got) != 1 || q.got[0].CustomerID != "" {
-		t.Fatalf("an unresolvable id must not be forwarded as if it were an account: %+v", q.got)
+	if len(q.got) != 0 {
+		t.Fatalf("the engine was asked for an unknown account: %+v", q.got)
 	}
 }
 

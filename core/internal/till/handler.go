@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -20,6 +21,7 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	reach    customerwall.Reach // the customer module's reach rule (UX-89)
 }
 
 // NewHandler wires the service.
@@ -138,6 +140,9 @@ func (h *Handler) updateNSFPolicy(w http.ResponseWriter, r *http.Request, caller
 func (h *Handler) recordAttempt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in PaymentAttempt
 	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if !customerwall.Fence(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	if err := h.svc.RecordPaymentAttempt(r.Context(), in); err != nil {
@@ -286,3 +291,13 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
 }
+
+// WithCustomerReach binds the customer module's reach rule (the one seam) the payment attempt route hold their customer to
+// (UX-89). CustomerReachWired is the boot check that it was.
+func (h *Handler) WithCustomerReach(c customerwall.Reach) *Handler {
+	h.reach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *Handler) CustomerReachWired() bool { return h.reach != nil }

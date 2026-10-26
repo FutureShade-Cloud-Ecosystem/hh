@@ -22,6 +22,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -115,6 +116,7 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	reach    customerwall.Reach // the customer module's reach rule (UX-89)
 }
 
 // NewHandler wires the service.
@@ -169,3 +171,13 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// - board convenience: the Kanban columns (confirmed phases) -
 	r.Handle("GET /api/v1/warranty/board", g.RequireStaff(h.staff(h.board)))
 }
+
+// WithCustomerReach binds the customer module's reach rule (the one seam) the warranty claim create hold their customer to
+// (UX-89). CustomerReachWired is the boot check that it was.
+func (h *Handler) WithCustomerReach(c customerwall.Reach) *Handler {
+	h.reach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *Handler) CustomerReachWired() bool { return h.reach != nil }

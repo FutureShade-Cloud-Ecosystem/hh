@@ -53,6 +53,7 @@ type C8S3S4Handler struct {
 	userLink identity.UserIDLinker
 	repo     *Repository
 	log      *slog.Logger
+	reach    WorkspaceReach // the customer module's reach rule (UX-89)
 }
 
 // NewC8S3S4Handler wires the three new operations over a billing Repository. The
@@ -64,6 +65,9 @@ func NewC8S3S4Handler(repo *Repository, log *slog.Logger) *C8S3S4Handler {
 	}
 	return &C8S3S4Handler{repo: repo, log: log}
 }
+
+// WithCustomerReach binds the customer reach rule the statement preview holds its customer to (UX-89).
+func (h *C8S3S4Handler) WithCustomerReach(c WorkspaceReach) *C8S3S4Handler { h.reach = c; return h }
 
 // WithUserLinker binds the ERP users.id linker the caller-stamp carries. Nil is legal.
 func (h *C8S3S4Handler) WithUserLinker(link identity.UserIDLinker) *C8S3S4Handler {
@@ -138,6 +142,9 @@ func (h *C8S3S4Handler) createHold(w http.ResponseWriter, r *http.Request, calle
 	}
 	if h.repo == nil || h.repo.pool == nil {
 		httpx.Error(w, http.StatusServiceUnavailable, "billing repository is not bound")
+		return
+	}
+	if !FenceCustomer(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	exists, custErr := customerExists(r.Context(), h.repo, in.CustomerID)
@@ -228,6 +235,9 @@ func (h *C8S3S4Handler) sendPaylink(w http.ResponseWriter, r *http.Request, call
 		httpx.Error(w, http.StatusServiceUnavailable, "billing repository is not bound")
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, in.CustomerID) {
+		return
+	}
 	exists, custErr := customerExists(r.Context(), h.repo, in.CustomerID)
 	if custErr != nil {
 		h.writeErr(w, r, custErr)
@@ -299,6 +309,9 @@ func (h *C8S3S4Handler) statementPreview(w http.ResponseWriter, r *http.Request,
 	}
 	if !c8LooksLikeUUIDish(statementID) {
 		httpx.Error(w, http.StatusBadRequest, "statement_id must be a uuid-shaped string")
+		return
+	}
+	if !FenceCustomer(w, r, h.reach, customerID) {
 		return
 	}
 	if h.repo == nil || h.repo.pool == nil {

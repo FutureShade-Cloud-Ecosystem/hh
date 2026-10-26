@@ -51,12 +51,23 @@ func (f *fakeStore) ListReturnRequestsByCustomer(_ context.Context, customerID s
 	return out, nil
 }
 
-func (f *fakeStore) ListReturnRequestsByStatus(_ context.Context, status string, _ int) ([]ReturnRequest, error) {
+func (f *fakeStore) ListReturnRequestsByStatus(_ context.Context, status string, branchIDs []string, _ int) ([]ReturnRequest, error) {
+	f.requestReach, f.requestReachSet = branchIDs, true
 	out := []ReturnRequest{}
 	for _, rr := range f.returnRequests {
-		if rr.Status == status {
-			out = append(out, rr)
+		if rr.Status != status {
+			continue
 		}
+		if branchIDs != nil {
+			in := false
+			for _, b := range branchIDs {
+				in = in || b == rr.BranchID
+			}
+			if !in {
+				continue
+			}
+		}
+		out = append(out, rr)
 	}
 	return out, nil
 }

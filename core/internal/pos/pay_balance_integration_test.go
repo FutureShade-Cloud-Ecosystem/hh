@@ -32,12 +32,12 @@ func seedOwingWorld(t *testing.T, pool *pgxpool.Pool, charger till.CardCharger, 
 	t.Helper()
 	ctx := globalCtx(t, pool)
 	productID, branchID := aPaver(t, pool)
-	phone = fmt.Sprintf("613-555-%04d", tillRunSalt%10000)
+	phone = fmt.Sprintf("613-555-%04d", (tillRunSalt+tillFixtureSeq.Add(1))%10000)
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		VALUES ($1, 'Pay balance proof', 'CONTRACTOR', 0, 5000000)
 		RETURNING id::text`,
-		fmt.Sprintf("PB-%s-%d", salt, tillRunSalt)).Scan(&custID); err != nil {
+		fmt.Sprintf("PB-%s-%s", salt, fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the customer: %v", err)
 	}
 	// The phone the find matches lives on the customer's contact row.

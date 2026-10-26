@@ -160,7 +160,9 @@ type Handler struct {
 	// paymentTrail says whether a caller holds the payment trail reads (ruling 87); the register's
 	// invoice detail shows the payment entries of its timeline to those callers alone.
 	paymentTrail billing.PaymentTrailReader
-	// customerReach holds the customer account workspace to the caller's branches (UX-93).
+	// customerReach holds every customer taking door the module mounts to the caller's branches: the account
+	// workspace (UX-93) and the statement preview, payment policy, hold and paylink (UX-89). One seam, the
+	// customer module's own rule.
 	customerReach billing.WorkspaceReach
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The receivables
 	// register judges "past" and "due" on the dealer's own calendar day.

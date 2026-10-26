@@ -66,7 +66,7 @@ func TestIntegration_PickHold_CashOnDemandDepositHoldsEveryReleasingPath(t *test
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		VALUES ($1, 'Pick hold proof', 'CONTRACTOR', 0, 5000000)
 		RETURNING id::text`,
-		fmt.Sprintf("PH-%d", tillRunSalt)).Scan(&custID); err != nil {
+		fmt.Sprintf("PH-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the cash on demand customer: %v", err)
 	}
 	t.Cleanup(func() {
@@ -169,7 +169,7 @@ func TestIntegration_PickHold_ConvertedCashOnDemandOrderOwesBeforeInvoicing(t *t
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		VALUES ($1, 'Pick hold converted proof', 'CONTRACTOR', 0, 5000000)
 		RETURNING id::text`,
-		fmt.Sprintf("PHC-%d", tillRunSalt)).Scan(&custID); err != nil {
+		fmt.Sprintf("PHC-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the customer: %v", err)
 	}
 	t.Cleanup(func() {
@@ -181,7 +181,7 @@ func TestIntegration_PickHold_ConvertedCashOnDemandOrderOwesBeforeInvoicing(t *t
 		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, tax_cents, total_cents)
 		VALUES ($1, $2::uuid, $3::uuid, 'CONFIRMED', 'WILL_CALL', 10000, 1300, 11300)
 		RETURNING id::text`,
-		fmt.Sprintf("SO-PHC-%d", tillRunSalt), custID, branchID).Scan(&orderID); err != nil {
+		fmt.Sprintf("SO-PHC-%s", fixtureTag()), custID, branchID).Scan(&orderID); err != nil {
 		t.Fatalf("plant the converted order: %v", err)
 	}
 	t.Cleanup(func() {
@@ -240,7 +240,7 @@ func TestIntegration_PickHold_PaymentsSettleLiftsOnce_UnderConcurrency(t *testin
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		VALUES ($1, 'Pick hold race proof', 'CONTRACTOR', 0, 5000000)
 		RETURNING id::text`,
-		fmt.Sprintf("PHR-%d", tillRunSalt)).Scan(&custID); err != nil {
+		fmt.Sprintf("PHR-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the customer: %v", err)
 	}
 	t.Cleanup(func() {
