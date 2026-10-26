@@ -99,7 +99,6 @@ type fw1Walk struct {
 
 	nullBranchLines int // snapshot taken before the year end close posts its own lines
 	seededInvoiceID []string
-	stepErrs        []string
 }
 
 func fw1Dollars(c int64) string { return fmt.Sprintf("$%.2f", float64(c)/100) }
@@ -200,11 +199,6 @@ func newFW1Walk(t *testing.T) *fw1Walk {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&w.bankAccountID); err != nil {
 		t.Fatalf("the operating bank account: %v", err)
 	}
-	t.Cleanup(func() {
-		for _, s := range w.stepErrs {
-			t.Logf("STEP DID NOT RUN: %s", s)
-		}
-	})
 	return w
 }
 
@@ -237,14 +231,13 @@ func (w *fw1Walk) do(method, path string, body any) (int, []byte) {
 	return rsp.Code, rsp.Body.Bytes()
 }
 
-// ok is a step call that must succeed; a failure is recorded and the walk keeps going, so the
-// other steps still run and the report names the broken one (the brief's "Not here" rule).
+// ok is a step call that must succeed; a failed step fails the test immediately so no assertion
+// can pass on a reduced scenario.
 func (w *fw1Walk) ok(step, method, path string, body any) []byte {
 	w.t.Helper()
 	code, out := w.do(method, path, body)
 	if code >= 300 {
-		w.stepErrs = append(w.stepErrs, fmt.Sprintf("%s: %s %s answered %d: %s", step, method, path, code, out))
-		return nil
+		w.t.Fatalf("%s: %s %s answered %d: %s", step, method, path, code, out)
 	}
 	return out
 }
@@ -441,27 +434,25 @@ func TestFW1MonthWalk(t *testing.T) {
 
 	// The delivered order's account invoice, paid half at the Money Desk and the rest through
 	// Counter Till Pay balance (the pay balance receipt is FW1-02's own journal).
-	var deliveredInv, deliveredOrder string
-	if delivered != nil {
-		deliveredInv, _ = delivered["invoice_id"].(string)
-		deliveredOrder, _ = delivered["order_id"].(string)
+	deliveredInv, _ := delivered["invoice_id"].(string)
+	deliveredOrder, _ := delivered["order_id"].(string)
+	if deliveredInv == "" || deliveredOrder == "" {
+		t.Fatalf("delivered order returned no invoice_id or order_id: %v", delivered)
 	}
-	if deliveredInv != "" {
-		var total int64
-		if err := w.pool.QueryRow(ctx, `SELECT total_cents FROM invoices WHERE id = $1`, deliveredInv).Scan(&total); err != nil {
-			t.Fatal(err)
-		}
-		w.ok("money desk part payment", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
-			"customer_id": w.cust["CUST-1001"], "method": "EFT", "amount_cents": total / 2,
-			"invoice_ids": []string{deliveredInv}, "idempotency_key": "fw1-desk-part",
-		})
-		w.drain()
-		w.ok("counter pay balance remainder", http.MethodPost, "/api/v1/pos/pay-balance", map[string]any{
-			"order_id": deliveredOrder, "method": "CASH", "amount_cents": total - total/2,
-			"till_session_id": w.tillTRT, "idempotency_key": "fw1-pay-balance",
-		})
-		w.drain()
+	var total int64
+	if err := w.pool.QueryRow(ctx, `SELECT total_cents FROM invoices WHERE id = $1`, deliveredInv).Scan(&total); err != nil {
+		t.Fatal(err)
 	}
+	w.ok("money desk part payment", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+		"customer_id": w.cust["CUST-1001"], "method": "EFT", "amount_cents": total / 2,
+		"invoice_ids": []string{deliveredInv}, "idempotency_key": "fw1-desk-part",
+	})
+	w.drain()
+	w.ok("counter pay balance remainder", http.MethodPost, "/api/v1/pos/pay-balance", map[string]any{
+		"order_id": deliveredOrder, "method": "CASH", "amount_cents": total - total/2,
+		"till_session_id": w.tillTRT, "idempotency_key": "fw1-pay-balance",
+	})
+	w.drain()
 
 	// An untaxed invoice: the counter's First Nations point of sale relief (the reason code the
 	// tax engine owns; FW1-02's untaxed posting and FW1-08's branch on the relief legs).
@@ -475,58 +466,48 @@ func TestFW1MonthWalk(t *testing.T) {
 	w.drain()
 
 	// A cheque lodged against the collect later invoice, then bounced (NSF).
-	var chequePayment string
 	var invC2 string
 	var balC2 int64
 	if err := w.pool.QueryRow(ctx, `SELECT id::text, balance_cents FROM invoices
 		WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')
 		ORDER BY issue_date DESC, invoice_no DESC LIMIT 1`, w.cust["CUST-1002"]).Scan(&invC2, &balC2); err != nil {
-		w.stepErrs = append(w.stepErrs, "cheque lodged: no open invoice for CUST-1002: "+err.Error())
+		t.Fatalf("cheque lodged: no open invoice for CUST-1002: %v", err)
 	}
-	if balC2 > 0 {
-		out := w.ok("cheque lodged", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
-			"customer_id": w.cust["CUST-1002"], "method": "CHEQUE", "amount_cents": balC2,
-			"invoice_ids": []string{invC2}, "idempotency_key": "fw1-cheque", "reference": "CHQ-101",
-		})
-		w.drain()
-		if out != nil {
-			var ans struct {
-				PaymentID string `json:"payment_id"`
-			}
-			_ = json.Unmarshal(out, &ans)
-			chequePayment = ans.PaymentID
-		}
+	chequeOut := w.ok("cheque lodged", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+		"customer_id": w.cust["CUST-1002"], "method": "CHEQUE", "amount_cents": balC2,
+		"invoice_ids": []string{invC2}, "idempotency_key": "fw1-cheque", "reference": "CHQ-101",
+	})
+	w.drain()
+	var chequeAns struct {
+		PaymentID string `json:"payment_id"`
 	}
-	if chequePayment != "" {
-		w.ok("cheque bounced", http.MethodPost, "/api/v1/ar/payments/"+chequePayment+"/nsf", map[string]any{"reason": "NSF, drawer's bank refused"})
-		w.drain()
+	if err := json.Unmarshal(chequeOut, &chequeAns); err != nil || chequeAns.PaymentID == "" {
+		t.Fatalf("cheque lodged returned no payment_id: %s", chequeOut)
 	}
+	w.ok("cheque bounced", http.MethodPost, "/api/v1/ar/payments/"+chequeAns.PaymentID+"/nsf", map[string]any{"reason": "NSF, drawer's bank refused"})
+	w.drain()
 
 	// A reversal and a re-application of held money: Frontenac pays $2,000.00 of the seeded
 	// open invoice, the payment is reversed (the money holds in 2310), then re-applied.
 	seedInv := w.one(`SELECT id::text FROM invoices WHERE invoice_no = 'INV-2026-0002'`)
-	var heldPayment string
-	out := w.ok("payment to reverse", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+	heldOut := w.ok("payment to reverse", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
 		"customer_id": w.cust["CUST-1005"], "method": "EFT", "amount_cents": 200000,
 		"invoice_ids": []string{seedInv}, "idempotency_key": "fw1-held",
 	})
 	w.drain()
-	if out != nil {
-		var ans struct {
-			PaymentID string `json:"payment_id"`
-		}
-		_ = json.Unmarshal(out, &ans)
-		heldPayment = ans.PaymentID
+	var heldAns struct {
+		PaymentID string `json:"payment_id"`
 	}
-	if heldPayment != "" {
-		w.ok("reversal of held money", http.MethodPost, "/api/v1/ar/payments/"+heldPayment+"/reverse", map[string]any{"reason": "fw1 walk reversal"})
-		w.drain()
-		w.ok("re-application of held money", http.MethodPost, "/api/v1/ar/payments/"+heldPayment+"/reapply", map[string]any{
-			"reason": "fw1 walk reapplication", "idempotency_key": "fw1-reapply",
-			"allocations": []map[string]any{{"invoice_id": seedInv, "amount_cents": 200000}},
-		})
-		w.drain()
+	if err := json.Unmarshal(heldOut, &heldAns); err != nil || heldAns.PaymentID == "" {
+		t.Fatalf("payment to reverse returned no payment_id: %s", heldOut)
 	}
+	w.ok("reversal of held money", http.MethodPost, "/api/v1/ar/payments/"+heldAns.PaymentID+"/reverse", map[string]any{"reason": "fw1 walk reversal"})
+	w.drain()
+	w.ok("re-application of held money", http.MethodPost, "/api/v1/ar/payments/"+heldAns.PaymentID+"/reapply", map[string]any{
+		"reason": "fw1 walk reapplication", "idempotency_key": "fw1-reapply",
+		"allocations": []map[string]any{{"invoice_id": seedInv, "amount_cents": 200000}},
+	})
+	w.drain()
 
 	// A finance issued credit memo (FW1-12 gives this its route and screen; today the desk's
 	// own writer is the nearest real call, decorated exactly as worker.go decorates it).
@@ -538,7 +519,7 @@ func TestFW1MonthWalk(t *testing.T) {
 		CustomerID: w.cust["CUST-1003"], BranchID: fw1KGN, AmountCents: 5000,
 		Memo: "FW1 walk finance credit", IdempotencyKey: "fw1-credit-memo",
 	}); err != nil {
-		w.stepErrs = append(w.stepErrs, "finance credit memo: "+err.Error())
+		t.Fatalf("finance credit memo: %v", err)
 	}
 	w.drain()
 
@@ -552,59 +533,50 @@ func TestFW1MonthWalk(t *testing.T) {
 
 	// A posted vendor bill: PO to the seeded Techo Bloc vendor, received, billed, posted.
 	vendor := w.one(`SELECT id::text FROM vendors WHERE vendor_no = 'V-TECHO'`)
-	poID := ""
-	if poOut := w.ok("purchase order", http.MethodPost, "/api/v1/purchasing/pos", map[string]any{
+	poOut := w.ok("purchase order", http.MethodPost, "/api/v1/purchasing/pos", map[string]any{
 		"vendor_id": vendor, "branch_id": fw1TRT, "expected_at": "2026-10-20",
 		"lines": []map[string]any{{"product_id": w.prod["DBS-TB-BLU60"], "description": "Blu 60", "qty_ordered_base": 100, "uom": "PC", "unit_cost_cents": 500}},
-	}); poOut != nil {
-		var m struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(poOut, &m)
-		poID = m.ID
+	})
+	var poResp struct {
+		ID string `json:"id"`
 	}
-	if poID != "" {
-		w.ok("place the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poID+"/transition", map[string]any{"to": "ORDERED"})
-		lineID := w.one(`SELECT id::text FROM purchasing_po_lines WHERE po_id = $1 ORDER BY line_no LIMIT 1`, poID)
-		w.ok("receive the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poID+"/receive", map[string]any{
-			"lines": []map[string]any{{"po_line_id": lineID, "qty_base": 100}},
-		})
-		w.drain()
-		billID := ""
-		if billOut := w.ok("vendor bill", http.MethodPost, "/api/v1/purchasing/bills", map[string]any{
-			"bill_no": "TECHO-FW1-1", "po_id": poID, "bill_date": "2026-10-15", "due_date": "2026-11-14", "tax_cents": 650,
-			"lines": []map[string]any{{"po_line_id": lineID, "description": "Blu 60", "qty_billed_base": 100, "unit_cost_cents": 500}},
-		}); billOut != nil {
-			var m struct {
-				ID string `json:"id"`
-			}
-			_ = json.Unmarshal(billOut, &m)
-			billID = m.ID
-		}
-		if billID != "" {
-			w.ok("post the vendor bill", http.MethodPost, "/api/v1/purchasing/bills/"+billID+"/post", map[string]any{"accept_variance": true, "note": "fw1 walk"})
-			w.drain()
-		}
+	if err := json.Unmarshal(poOut, &poResp); err != nil || poResp.ID == "" {
+		t.Fatalf("purchase order returned no id: %s", poOut)
 	}
+	w.ok("place the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poResp.ID+"/transition", map[string]any{"to": "ORDERED"})
+	lineID := w.one(`SELECT id::text FROM purchasing_po_lines WHERE po_id = $1 ORDER BY line_no LIMIT 1`, poResp.ID)
+	w.ok("receive the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poResp.ID+"/receive", map[string]any{
+		"lines": []map[string]any{{"po_line_id": lineID, "qty_base": 100}},
+	})
+	w.drain()
+	billOut := w.ok("vendor bill", http.MethodPost, "/api/v1/purchasing/bills", map[string]any{
+		"bill_no": "TECHO-FW1-1", "po_id": poResp.ID, "bill_date": "2026-10-15", "due_date": "2026-11-14", "tax_cents": 650,
+		"lines": []map[string]any{{"po_line_id": lineID, "description": "Blu 60", "qty_billed_base": 100, "unit_cost_cents": 500}},
+	})
+	var billResp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(billOut, &billResp); err != nil || billResp.ID == "" {
+		t.Fatalf("vendor bill returned no id: %s", billOut)
+	}
+	w.ok("post the vendor bill", http.MethodPost, "/api/v1/purchasing/bills/"+billResp.ID+"/post", map[string]any{"accept_variance": true, "note": "fw1 walk"})
+	w.drain()
 
 	// A stock transfer between the branches (Sika sealer, zero stock at Kingston by design).
-	trID := ""
-	if trOut := w.ok("stock transfer", http.MethodPost, "/api/v1/inventory/transfers", map[string]any{
+	trOut := w.ok("stock transfer", http.MethodPost, "/api/v1/inventory/transfers", map[string]any{
 		"from_branch_id": fw1TRT, "to_branch_id": fw1KGN, "notes": "fw1 walk",
 		"lines": []map[string]any{{"product_id": w.prod["DBS-SIKA-SEALER"], "qty_base": 20}},
-	}); trOut != nil {
-		var m struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(trOut, &m)
-		trID = m.ID
+	})
+	var trResp struct {
+		ID string `json:"id"`
 	}
-	if trID != "" {
-		w.ok("ship the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trID+"/ship", map[string]any{})
-		w.drain()
-		w.ok("receive the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trID+"/receive", map[string]any{})
-		w.drain()
+	if err := json.Unmarshal(trOut, &trResp); err != nil || trResp.ID == "" {
+		t.Fatalf("stock transfer returned no id: %s", trOut)
 	}
+	w.ok("ship the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trResp.ID+"/ship", map[string]any{})
+	w.drain()
+	w.ok("receive the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trResp.ID+"/receive", map[string]any{})
+	w.drain()
 
 	// The bank month. An outstanding cheque (a vendor payment the bank has not seen) through
 	// the GL's own manual journal; a deposit in transit (the Kingston lodgement, not on the
@@ -629,44 +601,35 @@ func TestFW1MonthWalk(t *testing.T) {
 	w.drain()
 	// Match the deposit to the lodgement by hand, which posts the clearing DR 1000 / CR 1020.
 	lodgementTRT := w.one(`SELECT id::text FROM till_movements WHERE reference = 'DEP-TRT-1' ORDER BY id LIMIT 1`)
-	var stmtDepositLine string
-	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'DEP-TRT-1' LIMIT 1`, w.bankAccountID).Scan(&stmtDepositLine); err != nil {
-		w.stepErrs = append(w.stepErrs, "bank statement import: no deposit line for DEP-TRT-1: "+err.Error())
-	} else {
-		w.ok("match the deposit", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
-			"mode": "manual", "bank_account_id": w.bankAccountID,
-			"statement_line_id": stmtDepositLine, "target_type": "LODGEMENT", "target_ref_id": lodgementTRT,
-			"amount_cents": 40000,
-		})
-		w.drain()
-	}
+	stmtDepositLine := w.one(`SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'DEP-TRT-1' LIMIT 1`, w.bankAccountID)
+	w.ok("match the deposit", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
+		"mode": "manual", "bank_account_id": w.bankAccountID,
+		"statement_line_id": stmtDepositLine, "target_type": "LODGEMENT", "target_ref_id": lodgementTRT,
+		"amount_cents": 40000,
+	})
+	w.drain()
 	// Book the monthly bank charge on the ledger and match the statement line to that journal.
-	var feeJournalID string
-	if feeOut := w.ok("bank charge journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
+	feeOut := w.ok("bank charge journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
 		"branch_id": fw1TRT, "memo": "fw1 walk monthly bank service charge", "source": "MANUAL",
 		"lines": []map[string]any{
 			{"account_code": "6300", "debit_cents": 650, "memo": "bank service charge"},
 			{"account_code": "1000", "credit_cents": 650, "memo": "bank service charge"},
 		},
-	}); feeOut != nil {
-		var m struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(feeOut, &m)
-		feeJournalID = m.ID
+	})
+	var feeResp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(feeOut, &feeResp); err != nil || feeResp.ID == "" {
+		t.Fatalf("bank charge journal returned no id: %s", feeOut)
 	}
 	w.drain()
-	var stmtChargeLine string
-	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'SVC' LIMIT 1`, w.bankAccountID).Scan(&stmtChargeLine); err != nil {
-		w.stepErrs = append(w.stepErrs, "bank statement import: no charge line for SVC: "+err.Error())
-	} else if feeJournalID != "" {
-		w.ok("match the bank charge", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
-			"mode": "manual", "bank_account_id": w.bankAccountID,
-			"statement_line_id": stmtChargeLine, "target_type": "JOURNAL", "target_ref_id": feeJournalID,
-			"amount_cents": -650,
-		})
-		w.drain()
-	}
+	stmtChargeLine := w.one(`SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'SVC' LIMIT 1`, w.bankAccountID)
+	w.ok("match the bank charge", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
+		"mode": "manual", "bank_account_id": w.bankAccountID,
+		"statement_line_id": stmtChargeLine, "target_type": "JOURNAL", "target_ref_id": feeResp.ID,
+		"amount_cents": -650,
+	})
+	w.drain()
 	// The statement balance comes from the imported bank statement lines, a real external
 	// figure (+$400.00 deposit less $6.50 bank charge = $393.50), never from the ledger.
 	if err := w.pool.QueryRow(ctx, `
@@ -691,11 +654,6 @@ func TestFW1MonthWalk(t *testing.T) {
 		SELECT count(*) FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
 		 WHERE l.branch_id IS NULL AND j.status = 'POSTED'`).Scan(&w.nullBranchLines); err != nil {
 		t.Fatalf("branchless journal lines: %v", err)
-	}
-	if len(w.stepErrs) > 0 {
-		for _, s := range w.stepErrs {
-			t.Logf("STEP DID NOT RUN: %s", s)
-		}
 	}
 
 	// -- the eight assertions ----------------------------------------------------------
