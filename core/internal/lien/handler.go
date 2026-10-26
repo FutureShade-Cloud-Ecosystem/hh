@@ -6,6 +6,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -94,6 +95,9 @@ func (h *Handler) documentVersions(w http.ResponseWriter, r *http.Request, calle
 func (h *Handler) createJob(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in JobInput
 	if !h.decode(w, r, &in) {
+		return
+	}
+	if !customerwall.Fence(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	job, err := h.svc.CreateJob(r.Context(), in)

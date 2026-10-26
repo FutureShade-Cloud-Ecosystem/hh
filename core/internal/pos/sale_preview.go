@@ -239,7 +239,7 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		}
 		customerID = walkIn
 	}
-	cust, err := s.store.ReadCustomer(ctx, customerID)
+	cust, err := s.customerFor(ctx, caller, customerID)
 	if err != nil {
 		return SalePreview{}, err
 	}

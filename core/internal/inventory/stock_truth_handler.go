@@ -348,9 +348,18 @@ func (h *Handler) listReservations(w http.ResponseWriter, r *http.Request, _ gua
 
 // POST /api/v1/inventory/reservations, hold stock. The HTTP path opens its own transaction; the
 // in-process path (an order confirm) calls ReserveTx with the caller's transaction instead.
-func (h *Handler) createReservation(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) createReservation(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in ReserveInput
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	// The branch wall: a hold is placed only at a branch the caller is granted (the in-process callers,
+	// an order confirm and a quote, hold their own fences before they reach ReserveTx). A body naming no
+	// branch falls through to ReserveTx's own 400.
+	// The stock location is branch grain (it defaults to the branch), so one named apart is held to the
+	// same reach.
+	if (in.BranchID != "" && !caller.CanAccessBranch(in.BranchID)) || (in.LocationID != "" && !caller.CanAccessBranch(in.LocationID)) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return
 	}
 	in.CreatedBy = identity.StaffUserIDFromContext(r.Context())

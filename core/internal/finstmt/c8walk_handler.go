@@ -147,8 +147,25 @@ func c8Errf(format string, args ...any) error {
 // is delegated to the underlying billing.ARLandingRepository, the file the cross-module allowlist
 // already covers.
 type C8WalkHandler struct {
-	repo *billing.ARLandingRepository
-	log  *slog.Logger
+	repo  *billing.ARLandingRepository
+	log   *slog.Logger
+	reach billing.WorkspaceReach // the customer module's reach rule for the payment policy routes (UX-89)
+	// userLink adds the linked ERP users.id to the caller stamp. The customer reach rule is the customer read,
+	// which refuses a caller with no linked staff row, so these routes stamp it like every other door here.
+	userLink identity.UserIDLinker
+}
+
+// WithUserLinker binds the ERP users.id linker the caller stamp carries. Nil is legal (authority only), and
+// then no customer is reachable.
+func (h *C8WalkHandler) WithUserLinker(link identity.UserIDLinker) *C8WalkHandler {
+	h.userLink = link
+	return h
+}
+
+// WithCustomerReach binds the customer reach rule the payment policy routes hold their customer to.
+func (h *C8WalkHandler) WithCustomerReach(c billing.WorkspaceReach) *C8WalkHandler {
+	h.reach = c
+	return h
 }
 
 // NewC8WalkHandler wires the new walk's surface.
@@ -174,7 +191,7 @@ func (h *C8WalkHandler) RegisterC8WalkRoutes(r httpx.Registrar, g *guards.Guards
 // staff is the caller-stamp wrapper, identical shape to finstmt's caller_stamp.go's staff wrapper.
 func (h *C8WalkHandler) staffed(next guards.StaffHandler) guards.StaffHandler {
 	return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-		next(w, identity.StampRequest(r, caller, nil), caller)
+		next(w, identity.StampRequest(r, caller, h.userLink), caller)
 	}
 }
 
@@ -213,6 +230,9 @@ func (h *C8WalkHandler) listPromises(w http.ResponseWriter, r *http.Request, cal
 		}
 	}
 	customerID := q.Get("customer_id")
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
+		return
+	}
 	cursor := q.Get("cursor")
 	limit := c8AtoiOr(q.Get("limit"), 50)
 	rows, next, err := h.repo.ListPromisesEnriched(r.Context(), statuses, customerID, cursor, limit)
@@ -240,6 +260,9 @@ func (h *C8WalkHandler) getAccountPaymentPolicy(w http.ResponseWriter, r *http.R
 		httpx.Error(w, http.StatusBadRequest, "invalid customer_id")
 		return
 	}
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
+		return
+	}
 	p, err := h.repo.ReadAccountPaymentPolicy(r.Context(), customerID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -257,6 +280,9 @@ func (h *C8WalkHandler) putAccountPaymentPolicy(w http.ResponseWriter, r *http.R
 	customerID := r.PathValue("customerID")
 	if _, err := uuid.Parse(customerID); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid customer_id")
+		return
+	}
+	if !billing.FenceCustomer(w, r, h.reach, customerID) {
 		return
 	}
 	var in C8AccountPaymentPolicyInput
@@ -321,6 +347,9 @@ func (h *C8WalkHandler) enrolReminder(w http.ResponseWriter, r *http.Request, ca
 		httpx.Error(w, http.StatusBadRequest, "invalid rule_id")
 		return
 	}
+	if !billing.FenceCustomer(w, r, h.reach, in.CustomerID) {
+		return
+	}
 	res, err := h.repo.EnrolReminder(r.Context(), in.CustomerID, in.RuleID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -345,6 +374,9 @@ func (h *C8WalkHandler) exemptReminder(w http.ResponseWriter, r *http.Request, c
 	}
 	if _, err := uuid.Parse(in.RuleID); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid rule_id")
+		return
+	}
+	if !billing.FenceCustomer(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	if strings.TrimSpace(in.Note) == "" {

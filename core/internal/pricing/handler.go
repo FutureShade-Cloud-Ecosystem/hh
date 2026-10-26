@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -51,6 +52,102 @@ type Handler struct {
 	svc       *Service
 	log       *slog.Logger
 	costRoles CostRoles
+	custReach CustomerReach
+}
+
+// CustomerReach is the customer module's own reach rule, declared here by the consumer because pricing
+// reads pricing tables only. It answers whether the caller (the stamped staff context on ctx) may see
+// the account: false for an account homed to a branch the caller cannot reach and for an unknown one,
+// the same answer the customer read gives as not found. The composition root implements it over the
+// customer service.
+type CustomerReach interface {
+	CustomerReachable(ctx context.Context, customerID string) (bool, error)
+}
+
+// WithCustomerReach wires the customer reach rule the resolve and low margin doors hold a named
+// customer to. CustomerReachWired is the boot check that it was.
+func (h *Handler) WithCustomerReach(c CustomerReach) *Handler {
+	h.custReach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is wired.
+func (h *Handler) CustomerReachWired() bool { return h.custReach != nil }
+
+// fenceLine holds one priced line to the caller's reach before anything is resolved: a branch the caller
+// is not granted is a 403 in words (the till's wording for a branch outside the grants), and a named
+// customer the caller cannot reach is a 404, as the account read answers it. A line naming no branch is
+// the dealer wide picture and stays answered. It reports whether the line may go on. A handler built
+// without the customer rule (the DB free unit tests) skips the customer half; the composition root
+// refuses to boot without it.
+func (h *Handler) fenceLine(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller, branchID, customerID string) bool {
+	if branchID != "" && !caller.CanAccessBranch(branchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
+		return false
+	}
+	return h.fenceCustomer(w, r, customerID)
+}
+
+// fenceCustomer is the one customer answer every pricing door gives (UX-89 round 2): an account the caller
+// cannot reach is answered exactly as an id that is no account, 404 "customer not found", by the customer
+// module's own rule through the seam. It reports whether the request may go on. A handler built without the
+// seam (the DB free unit tests) skips it; the composition root refuses to boot without it.
+func (h *Handler) fenceCustomer(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	if customerID == "" || h.custReach == nil {
+		return true
+	}
+	ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "customer not found")
+		return false
+	}
+	return true
+}
+
+// fenceExistingRule and fenceExistingOverride read the row a write names by id and hold it to its account's
+// reach before the write; a row that is not there falls through to the write's own not found.
+func (h *Handler) fenceExistingRule(w http.ResponseWriter, r *http.Request, id string) bool {
+	if h.custReach == nil {
+		return true
+	}
+	rule, err := h.svc.GetRule(r.Context(), id)
+	if err != nil {
+		return true
+	}
+	return h.fenceOwnedRow(w, r, rule.CustomerID)
+}
+
+func (h *Handler) fenceExistingOverride(w http.ResponseWriter, r *http.Request, id string) bool {
+	if h.custReach == nil {
+		return true
+	}
+	o, err := h.svc.store.GetOverride(r.Context(), id)
+	if err != nil {
+		return true
+	}
+	return h.fenceOwnedRow(w, r, o.CustomerID)
+}
+
+// fenceOwnedRow is fenceCustomer for a row found by its own id (a rule or an override): the row of an
+// unreachable account answers what a missing row answers, 404 "not found".
+func (h *Handler) fenceOwnedRow(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	if customerID == "" || h.custReach == nil {
+		return true
+	}
+	ok, err := h.custReach.CustomerReachable(r.Context(), customerID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "not found")
+		return false
+	}
+	return true
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {
@@ -143,7 +240,7 @@ type resolveRequest struct {
 	DocRefID   string `json:"doc_ref_id"`
 }
 
-func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req resolveRequest
 	if !decode(w, r, &req) {
 		return
@@ -156,6 +253,9 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request, _ guards.Staff
 	}
 	if req.DocRefType != "" && !docRefTypes[req.DocRefType] {
 		httpx.Error(w, http.StatusBadRequest, "doc_ref_type must be 'quote' or 'order'")
+		return
+	}
+	if !h.fenceLine(w, r, caller, req.BranchID, req.CustomerID) {
 		return
 	}
 	bd, err := h.svc.ResolvePrice(r.Context(), ResolveInput{
@@ -197,6 +297,30 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	// A rule scoped to one account is that account's price: the list holds only the rules of accounts the
+	// caller reaches, as if an unreachable account had no rules (the reach is asked once per account).
+	if h.custReach != nil {
+		seen := map[string]bool{}
+		kept := rules[:0:0]
+		for _, rl := range rules {
+			if rl.CustomerID != "" {
+				ok, known := seen[rl.CustomerID]
+				if !known {
+					var rerr error
+					if ok, rerr = h.custReach.CustomerReachable(r.Context(), rl.CustomerID); rerr != nil {
+						h.writeErr(w, r, rerr)
+						return
+					}
+					seen[rl.CustomerID] = ok
+				}
+				if !ok {
+					continue
+				}
+			}
+			kept = append(kept, rl)
+		}
+		rules = kept
 	}
 	if rules == nil {
 		rules = []Rule{}
@@ -241,6 +365,9 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request, _ guards.St
 		!optionalBodyUUID(w, p.ProductID, "product_id") || !optionalBodyUUID(w, p.BranchID, "branch_id") {
 		return
 	}
+	if !h.fenceCustomer(w, r, p.CustomerID) {
+		return
+	}
 	out, err := h.svc.CreateRule(r.Context(), p.toRule(), staffUserID(r))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -257,6 +384,9 @@ func (h *Handler) getRule(w http.ResponseWriter, r *http.Request, _ guards.Staff
 	rule, err := h.svc.GetRule(r.Context(), id)
 	if err != nil {
 		h.writeErr(w, r, err)
+		return
+	}
+	if !h.fenceOwnedRow(w, r, rule.CustomerID) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, rule)
@@ -319,6 +449,12 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, _ guards.St
 		ValidFrom: vf, ValidTo: vt, ClearValidFrom: clearVF, ClearValidTo: clearVT,
 		DetailText: p.DetailText, IsActive: p.IsActive,
 	}
+	if !h.fenceExistingRule(w, r, id) {
+		return
+	}
+	if p.CustomerID != nil && !h.fenceCustomer(w, r, *p.CustomerID) {
+		return
+	}
 	out, err := h.svc.UpdateRule(r.Context(), id, patch, p.Version, staffUserID(r))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -336,6 +472,9 @@ func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, _ guards.St
 	}
 	ver, ok := parseVersion(w, r)
 	if !ok {
+		return
+	}
+	if !h.fenceExistingRule(w, r, id) {
 		return
 	}
 	if err := h.svc.DeleteRule(r.Context(), id, ver, staffUserID(r)); err != nil {
@@ -396,6 +535,9 @@ func (h *Handler) listOverrides(w http.ResponseWriter, r *http.Request, _ guards
 		httpx.Error(w, http.StatusBadRequest, "customerId must be a uuid")
 		return
 	}
+	if !h.fenceCustomer(w, r, customerID) {
+		return
+	}
 	list, err := h.svc.ListOverrides(r.Context(), customerID)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -431,6 +573,9 @@ func (h *Handler) createOverride(w http.ResponseWriter, r *http.Request, _ guard
 	if !optionalBodyUUID(w, p.CategoryID, "category_id") {
 		return
 	}
+	if !h.fenceCustomer(w, r, customerID) {
+		return
+	}
 	out, err := h.svc.CreateOverride(r.Context(), Override{
 		CustomerID: customerID, CategoryID: p.CategoryID, CalcType: p.CalcType,
 		PriceCents: p.PriceCents, DiscountBps: p.DiscountBps, MarkupBps: p.MarkupBps,
@@ -450,6 +595,9 @@ func (h *Handler) updateOverride(w http.ResponseWriter, r *http.Request, _ guard
 	}
 	var p overridePayload
 	if !decode(w, r, &p) {
+		return
+	}
+	if !h.fenceExistingOverride(w, r, id) {
 		return
 	}
 	out, err := h.svc.UpdateOverride(r.Context(), id, Override{
@@ -473,6 +621,9 @@ func (h *Handler) deleteOverride(w http.ResponseWriter, r *http.Request, _ guard
 	}
 	ver, ok := parseVersion(w, r)
 	if !ok {
+		return
+	}
+	if !h.fenceExistingOverride(w, r, id) {
 		return
 	}
 	if err := h.svc.DeleteOverride(r.Context(), id, ver, staffUserID(r)); err != nil {
@@ -520,7 +671,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request, _ guards.Sta
 // returns only the breaching lines (margin < target/floor), worst-first. The batch input
 // is a quoting EXPORT that does not exist yet (D-PA-3), this endpoint is the read-only
 // classifier preview, not the principal's daily live-sales report.
-func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req struct {
 		Lines []resolveRequest `json:"lines"`
 	}
@@ -529,6 +680,9 @@ func (h *Handler) lowMarginReport(w http.ResponseWriter, r *http.Request, _ guar
 	}
 	inputs := make([]ResolveInput, 0, len(req.Lines))
 	for _, l := range req.Lines {
+		if !h.fenceLine(w, r, caller, l.BranchID, l.CustomerID) {
+			return
+		}
 		inputs = append(inputs, ResolveInput{
 			CustomerID: l.CustomerID, CustomerType: l.CustomerType, ProductID: l.ProductID,
 			CategoryID: l.CategoryID, BranchID: l.BranchID, QtyEntered: l.QtyEntered,
@@ -885,7 +1039,9 @@ func ClientStatus(err error) (status int, msg string, ok bool) {
 		return http.StatusUnprocessableEntity, "references a nonexistent customer, product, category or branch", true
 	case errors.Is(err, errNotFound):
 		return http.StatusNotFound, "not found", true
-	case errors.Is(err, errNoConversion):
+	case isNoConversion(err):
+		// Both the pricing sentinel and the product module's own ErrNoConversion (the real converter's
+		// answer): a product with no factor for the unit asked is a request to correct, not a server fault.
 		return http.StatusUnprocessableEntity, "no uom conversion factor", true
 	case errors.Is(err, errNoListPrice):
 		return http.StatusUnprocessableEntity, "no retail anchor for product", true
