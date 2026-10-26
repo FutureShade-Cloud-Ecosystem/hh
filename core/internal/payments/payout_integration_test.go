@@ -325,6 +325,12 @@ func TestIntegration_Payout_AnUnnamedDrawerIsTheBranchsOneOpenDrawer(t *testing.
 		t.Fatalf("seed a branch: %v", err)
 	}
 	t.Cleanup(func() {
+		var left int
+		if err := w.r.obs.QueryRow(context.Background(), `SELECT count(*) FROM locations WHERE id = $1::uuid`, branch).Scan(&left); err != nil || left != 0 {
+			t.Errorf("the drawer leg left %d locations row(s) behind for branch %s (err=%v), want 0", left, branch, err)
+		}
+	})
+	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = w.r.obs.Exec(c, `UPDATE payments SET till_session_id = NULL WHERE branch_id = $1::uuid`, branch)
 		_, _ = w.r.obs.Exec(c, `DELETE FROM till_movements WHERE till_session_id IN (SELECT id FROM till_sessions WHERE branch_id = $1::uuid)`, branch)
