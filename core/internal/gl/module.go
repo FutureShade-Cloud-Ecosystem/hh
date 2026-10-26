@@ -144,7 +144,7 @@ type ApprovalStateChecker interface {
 	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
-// - delivery date seam (round 2, S2 P1-2) -
+// - delivery date and audit seams (round 2, S2 P1-2 and P2-4) -
 
 // DeliveryReader answers the delivery fact MarkDelivered records on an order: when the goods left,
 // found=false when the order carries no stamp. Satisfied by order.Repository, wired in cmd/core.
@@ -157,6 +157,26 @@ type DeliveryReader interface {
 // Satisfied by audit.Service.RecordTx, wired in cmd/core. Nil (or unwired) records nothing.
 type AuditTxRecorder interface {
 	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+}
+
+// - close pre flight seams (FW1-09b; nil = the check is not wired and passes with no figures) -
+
+// StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
+// inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
+type StockValueReader interface {
+	StockValueCents(ctx context.Context, branchID string) (int64, error)
+}
+
+// TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the
+// month stand OPEN still. Satisfied by till.Repository, wired in cmd/core.
+type TillDrawerReader interface {
+	OpenDrawersInMonth(ctx context.Context, year, month int) (int, error)
+}
+
+// OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are
+// still waiting (PENDING) or dead lettered (DEAD). Satisfied by notify.PgOutboxStore, wired in cmd/core.
+type OutboxQueueReader interface {
+	UnpostedForWindow(ctx context.Context, topics []string, from, to time.Time) (int, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -248,6 +268,9 @@ type Service struct {
 	costBasis       CostBasis
 	dead            DeadRequeuer
 	audit           audit.Recorder
+	stockValue      StockValueReader
+	drawers         TillDrawerReader
+	queue           OutboxQueueReader
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
@@ -356,6 +379,16 @@ func (s *Service) WithDeliveryReader(r DeliveryReader) *Service { s.delivery = r
 
 // WithAuditTxRecorder injects the in-transaction audit seam the Controller's open year records through (round 2).
 func (s *Service) WithAuditTxRecorder(r AuditTxRecorder) *Service { s.auditTx = r; return s }
+
+// WithStockReader injects the stock-ledger seam the close pre flight's 1200 tie check reads (FW1-09b).
+func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = r; return s }
+
+// WithDrawerReader injects the till seam the close pre flight's open drawer check reads (FW1-09b).
+func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r; return s }
+
+// WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
+func (s *Service) WithQueueReader(r OutboxQueueReader) *Service { s.queue = r; return s }
+
 
 // WithTaxSplitReader injects the pos tax-split seam.
 func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }

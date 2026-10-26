@@ -201,10 +201,11 @@ func (s *Service) ReopenPeriod(ctx context.Context, id, reason string) (Period, 
 
 // YearCloseResult summarizes a year-end close.
 type YearCloseResult struct {
-	FiscalYear       int    `json:"fiscal_year"`
-	ClosingJournalID string `json:"closing_journal_id,omitempty"`
-	NetIncomeCents   int64  `json:"net_income_cents"`
-	PeriodsClosed    bool   `json:"periods_closed"`
+	FiscalYear        int      `json:"fiscal_year"`
+	ClosingJournalID  string   `json:"closing_journal_id,omitempty"`
+	ClosingJournalIDs []string `json:"closing_journal_ids,omitempty"`
+	NetIncomeCents    int64    `json:"net_income_cents"`
+	PeriodsClosed     bool     `json:"periods_closed"`
 }
 
 // CloseYear posts the year-end closing entry, it flattens every REVENUE/EXPENSE account for the fiscal year
