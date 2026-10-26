@@ -807,6 +807,11 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 		if tillSession == "" {
 			return Payout{}, fmt.Errorf("%w: this payment was not rung through a till session, so there is no count to cover a write off", ErrPayoutNotAllowed)
 		}
+		// The shortage the close posts is counted CASH less expected CASH, so only a cash payment's held money can be
+		// written off against it: a cheque's or card's money was never in the drawer (PR 606 round 2, S3's P2).
+		if method != "CASH" {
+			return Payout{}, fmt.Errorf("%w: a write off is cash that left the drawer unrecorded, and this payment was taken by %s, whose money was never in the drawer", ErrPayoutNotAllowed, method)
+		}
 		// The session row FOR UPDATE, not FOR SHARE: the sum of the session's earlier write offs below must be read
 		// under the row, or two write offs of one session each read the other's sum as zero and together exceed the
 		// shortage (PR 606 round 2, S3's P1). The payment row above is already held, so the order stays.
