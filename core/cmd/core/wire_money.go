@@ -28,6 +28,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
@@ -392,7 +393,11 @@ func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID strin
 type tillDrawerAdapter struct{ repo *till.Repository }
 
 func (a tillDrawerAdapter) OpenDrawersInMonth(ctx context.Context, year, month int) (int, error) {
-	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	// The house zone decides the month's first instant, the same rule the
+	// ledger's own pre flight reads the month window by (the dealer's
+	// midnight closes its month, never Greenwich's).
+	zone := houseday.DefaultZone()
+	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, zone.Location())
 	return a.repo.OpenSessionsBetween(ctx, from, from.AddDate(0, 1, 0))
 }
 
