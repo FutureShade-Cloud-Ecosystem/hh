@@ -1,0 +1,947 @@
+//go:build integration
+
+package main
+
+// fw1_month_walk_integration_test.go, FW1-00: the HH finance wave 1 exit test. One month of
+// trading across Trenton (TRT) and Kingston (KGN) on a real migrated database seeded with the
+// default build's Ontario Dibbits seed (never the -tags demo world), every step through the
+// real services wired exactly as cmd/core wires them (wireMoney, wireOperations, wireTops over
+// one mux; no fakes for money), and the GL consumer's posting loop run synchronously after each
+// step, exactly as worker.go registers it, so every outbox event becomes a journal before the
+// next assertion.
+//
+// The eight assertions (the wave brief section 2, items 1 to 8) are eight named subtests. A
+// subtest whose name is a key of fw1WalkRed (fw1_walk_red.go) skips with "red until FW1-NN";
+// each item deletes its own line when its assertion goes green. A second test guards the map:
+// every key must name a real subtest, so a stale skip line fails.
+//
+//	Run: DATABASE_URL='postgres://colton:fw1@127.0.0.1:57602/postgres?sslmode=disable' \
+//	     go test -tags integration ./cmd/core/ -run FW1MonthWalk -count=1 -v
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	coreid "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	staffctx "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+)
+
+// The walk's fixed facts: org, branches and the walk month.
+const (
+	fw1OrgID   = "88a20000-0000-4000-8000-0000000000f1"
+	fw1OrgSlug = "fw1-walk"
+	fw1TRT     = "5d1b3f6e-0000-4000-9000-000000000001"
+	fw1KGN     = "5d1b3f6e-0000-4000-9000-000000000002"
+)
+
+// fw1AssertionNames is the walk's eight assertions in the wave brief's order. The parent test
+// runs them from this list, and the skip map guard checks its keys against it.
+func fw1AssertionNames() []string {
+	return []string{
+		"AR_aging_ties_to_GL_1100",
+		"customer_statement_equals_aging_and_subledger",
+		"stock_value_ties_to_GL_1200",
+		"HST_reconcile_ties",
+		"bank_month_signs_off_at_zero_with_outstanding_items",
+		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum",
+		"no_journal_waiting_or_dead_lettered",
+		"year_end_close_opens_next_year_and_keeps_income_statement",
+	}
+}
+
+type fw1Walk struct {
+	t     *testing.T
+	pool  *pgxpool.Pool
+	mux   *http.ServeMux
+	sg    *testkit.StaffGuards
+	money *moneySpine
+	ops   *operationsSpine
+	tops  *topsSpine
+	disp  *notify.Dispatcher
+
+	prod map[string]string // sku -> product id
+	cust map[string]string // account_no -> customer id
+
+	tillTRT, tillKGN string
+	year             int
+	month            int
+	monthEnd         time.Time
+
+	// figures assertion 5 names in its failure message
+	outstandingChequeCents int64
+	depositInTransitCents  int64
+	statementBalanceCents  int64
+	bankAccountID          string
+
+	nullBranchLines int // snapshot taken before the year end close posts its own lines
+	stepErrs        []string
+}
+
+func fw1Dollars(c int64) string { return fmt.Sprintf("$%.2f", float64(c)/100) }
+
+// fw1StaffCtx is the global staff context the GL's close and tie reads stamp their actor from.
+func fw1StaffCtx(ctx context.Context) context.Context {
+	return staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
+		UserID: "d7000000-0000-4000-9000-000000000006", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
+	})
+}
+
+// fw1TestWriter routes the wired services' logs into the test log, so a step's 500 names its
+// cause without printing outside the test run.
+type fw1TestWriter struct{ t *testing.T }
+
+func (w fw1TestWriter) Write(b []byte) (int, error) {
+	w.t.Logf("%s", bytes.TrimRight(b, "\n"))
+	return len(b), nil
+}
+
+// newFW1Walk builds the throwaway database (migrated from zero, then the Ontario Dibbits seed),
+// the org the seed's branches carry, and the full served wiring over one mux with the kit's
+// staff guards double (the only double; every money path is the real one).
+func newFW1Walk(t *testing.T) *fw1Walk {
+	t.Helper()
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "fw1walk")
+	body, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		t.Fatalf("reading the embedded seed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("applying the seed: %v", err)
+	}
+	// The seed runs before any org exists; give the branches one org (as the door walk's fixture
+	// does) and link the caller's platform subject to the seeded financial controller login.
+	mustExec(t, ctx, pool, `INSERT INTO org (id, slug, name) VALUES ($1, $2, 'FW1 Walk Org') ON CONFLICT (id) DO NOTHING`, fw1OrgID, fw1OrgSlug)
+	mustExec(t, ctx, pool, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, fw1OrgID)
+	mustExec(t, ctx, pool, `UPDATE users SET platform_user_id = $1 WHERE id = 'd7000000-0000-4000-9000-000000000006'`, testkit.SubSalesManager)
+
+	sg := testkit.NewStaffGuards(t)
+	sg.Harness.Membership.SetMember(testkit.SubSalesManager, fw1OrgSlug, true)
+	sg.Harness.Resolver.Set(fw1OrgSlug, fw1OrgID)
+	sg.SetAuthority(coreid.StaffAuthority{RoleID: "financial_controller", Tier: coreid.TierLeadership, Scope: coreid.ScopeGlobal})
+
+	log := slog.New(slog.NewTextHandler(fw1TestWriter{t}, nil))
+	// The card rail needs a configured merchant before any card capture is dispatched; the
+	// deterministic stub processor over a throwaway key, exactly as the card wiring test plants
+	// one. The key is the same one the wiring hands the vault.
+	vaultKey := dashVaultKey(t)
+	vault, err := payment.NewVault(vaultKey)
+	if err != nil {
+		t.Fatalf("the walk's vault: %v", err)
+	}
+	if err := (payment.NewStore(pool, vault)).Configure(ctx, "run_payments", "MID-FW1WALK", "CAD", "", 0, false,
+		map[string]string{"api_key": "fw1-walk-not-a-secret"}, ""); err != nil {
+		t.Fatalf("configuring the walk's card rail: %v", err)
+	}
+	mux := http.NewServeMux()
+	belt := buildSmsBelt(pool, log)
+	money := wireMoney(mux, pool, sg.Guards, log, "", mustRoleConfigForWire())
+	ops := wireOperations(mux, pool, sg.Guards, log, money, "fw1-walk-fx-ticket", belt.outbox)
+	tops := wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: vaultKey}, mustRoleConfigForWire(), belt)
+
+	// The GL consumer and its neighbours, registered exactly as worker.go registers them, then
+	// drained synchronously by drain() after every step.
+	d := notify.NewDispatcher(money.outboxStore, log)
+	portal.RegisterNotificationHandlers(d, tops.notifier, "", log)
+	money.glSvc.RegisterPostingHandlers(d)
+	money.inventorySvc.RegisterPostingHandlers(d)
+	order.NewLifecycleConsumer(money.orderSvc, tops.billingRepo, log).RegisterHandlers(d)
+	registerOrderEventOwners(d, log)
+	messaging.NewConsumer(ops.messagingSvc, log).RegisterHandlers(d)
+	messaging.NewPortalBridge(ops.messagingSvc, log).RegisterHandlers(d)
+
+	now := time.Now()
+	w := &fw1Walk{
+		t: t, pool: pool, mux: mux, sg: sg, money: money, ops: ops, tops: tops, disp: d,
+		prod: map[string]string{}, cust: map[string]string{},
+		year: now.Year(), month: int(now.Month()),
+		monthEnd: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).
+			AddDate(0, 1, 0).Add(-time.Second),
+	}
+	for _, sku := range []string{"DBS-GATOR-SAND", "DBS-INLITE-LED", "DBS-UL-BRUSSELS", "DBS-TB-BLU60", "DBS-SIKA-SEALER"} {
+		var id string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM products WHERE sku = $1`, sku).Scan(&id); err != nil {
+			t.Fatalf("seed product %s: %v", sku, err)
+		}
+		w.prod[sku] = id
+	}
+	for _, acct := range []string{"CUST-1001", "CUST-1002", "CUST-1003", "CUST-1004", "CUST-1005", "CUST-1007"} {
+		var id string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE account_no = $1`, acct).Scan(&id); err != nil {
+			t.Fatalf("seed customer %s: %v", acct, err)
+		}
+		w.cust[acct] = id
+	}
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&w.bankAccountID); err != nil {
+		t.Fatalf("the operating bank account: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, s := range w.stepErrs {
+			t.Logf("STEP DID NOT RUN: %s", s)
+		}
+	})
+	return w
+}
+
+// drain runs the dispatcher's posting loop until the outbox holds nothing it can claim.
+func (w *fw1Walk) drain() {
+	w.t.Helper()
+	for i := 0; i < 30; i++ {
+		if w.disp.DrainOnce(context.Background()) == 0 {
+			return
+		}
+	}
+}
+
+// do is one authenticated staff call over the served mux.
+func (w *fw1Walk) do(method, path string, body any) (int, []byte) {
+	w.t.Helper()
+	var rdr *bytes.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rdr = bytes.NewReader(b)
+	} else {
+		rdr = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.Header.Set("Authorization", "Bearer "+w.sg.Harness.Minter.StaffToken(w.t, testkit.SubSalesManager))
+	req.Header.Set(authz.HeaderXOrg, fw1OrgSlug)
+	req.Header.Set("Content-Type", "application/json")
+	rsp := httptest.NewRecorder()
+	w.mux.ServeHTTP(rsp, req)
+	return rsp.Code, rsp.Body.Bytes()
+}
+
+// ok is a step call that must succeed; a failure is recorded and the walk keeps going, so the
+// other steps still run and the report names the broken one (the brief's "Not here" rule).
+func (w *fw1Walk) ok(step, method, path string, body any) []byte {
+	w.t.Helper()
+	code, out := w.do(method, path, body)
+	if code >= 300 {
+		w.stepErrs = append(w.stepErrs, fmt.Sprintf("%s: %s %s answered %d: %s", step, method, path, code, out))
+		return nil
+	}
+	return out
+}
+
+func (w *fw1Walk) one(q string, args ...any) string {
+	w.t.Helper()
+	var v string
+	if err := w.pool.QueryRow(context.Background(), q, args...).Scan(&v); err != nil {
+		w.t.Fatalf("read (%.80s): %v", q, err)
+	}
+	return v
+}
+
+func (w *fw1Walk) sale(step string, body map[string]any) map[string]any {
+	w.t.Helper()
+	out := w.ok(step, http.MethodPost, "/api/v1/pos/sales", body)
+	if out == nil {
+		return nil
+	}
+	var m map[string]any
+	_ = json.Unmarshal(out, &m)
+	return m
+}
+
+// countBody builds a till count from the session's own Z report expectations, with a named over
+// or short on the cash drawer (FW1-13's screen blind count is the nearest real call today).
+func (w *fw1Walk) countBody(sessionID string, overCents int64) map[string]any {
+	w.t.Helper()
+	out := w.ok("z report "+sessionID, http.MethodGet, "/api/v1/till/sessions/"+sessionID+"/zreport", nil)
+	var z struct {
+		PerTender []struct {
+			Method        string `json:"method"`
+			ExpectedCents int64  `json:"expected_cents"`
+		} `json:"per_tender"`
+		Cash struct {
+			ExpectedCents     int64 `json:"expected_cents"`
+			OpeningFloatCents int64 `json:"opening_float_cents"`
+		} `json:"cash"`
+	}
+	if out != nil {
+		_ = json.Unmarshal(out, &z)
+	}
+	tenders := []map[string]any{}
+	for _, p := range z.PerTender {
+		actual := p.ExpectedCents
+		if p.Method == "CASH" {
+			actual += overCents
+		}
+		tenders = append(tenders, map[string]any{"method": p.Method, "actual_cents": actual})
+	}
+	if len(tenders) == 0 {
+		tenders = append(tenders, map[string]any{"method": "CASH", "actual_cents": z.Cash.ExpectedCents + overCents})
+	}
+	return map[string]any{
+		"tenders": tenders, "closing_float_cents": z.Cash.OpeningFloatCents,
+	}
+}
+
+// TestFW1MonthWalk is the wave's exit test: the month script, then the eight assertions.
+func TestFW1MonthWalk(t *testing.T) {
+	w := newFW1Walk(t)
+	ctx := context.Background()
+
+	// The seeded fiscal calendar must hold the walk's month, or every posting is refused for
+	// want of a period (FW1-01's ground).
+	var periodStatus string
+	if err := w.pool.QueryRow(ctx, `SELECT status FROM fiscal_periods WHERE year = $1 AND month = $2`, w.year, w.month).Scan(&periodStatus); err != nil {
+		t.Fatalf("no fiscal period for %04d-%02d: %v (FW1-01 owns the roll forward)", w.year, w.month, err)
+	}
+
+	// -- opening balances -------------------------------------------------------------
+	// The seed plants an open account invoice (INV-2026-0002) with no journal, and opening stock
+	// with no 1200 balance. The walk brings both onto the ledger the real way: the invoice
+	// through its own ar.invoice.finalized event and the real consumer, the opening stock
+	// through the GL's own external post (the opening trial balance entry), valued with the
+	// same read assertion 3 uses.
+	// Every open seeded invoice (the Dibbits open account and the landed cost demo's), by branch.
+	openRows, err := w.pool.Query(ctx, `
+		SELECT branch_id::text, COALESCE(SUM(balance_cents),0), COALESCE(SUM(subtotal_cents * balance_cents / NULLIF(total_cents,0)),0), COALESCE(SUM(tax_cents * balance_cents / NULLIF(total_cents,0)),0)
+		  FROM invoices WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0 GROUP BY branch_id`)
+	if err != nil {
+		t.Fatalf("the opening AR read: %v", err)
+	}
+	type openAR struct {
+		branch         string
+		bal, sub, taxC int64
+	}
+	var opens []openAR
+	for openRows.Next() {
+		var o openAR
+		if err := openRows.Scan(&o.branch, &o.bal, &o.sub, &o.taxC); err != nil {
+			t.Fatal(err)
+		}
+		opens = append(opens, o)
+	}
+	openRows.Close()
+	for i, o := range opens {
+		lines := []gl.ExternalLine{
+			{AccountCode: "1100", DebitCents: o.bal, Memo: "opening AR"},
+			{AccountCode: "4000", CreditCents: o.sub, Memo: "opening revenue"},
+		}
+		if o.taxC != 0 { // a zero leg would break the lines' amount check
+			lines = append(lines, gl.ExternalLine{AccountCode: "2200", CreditCents: o.taxC, Memo: "opening HST"})
+		}
+		if _, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+			Source: gl.SourceInvoice, SourceRefID: "88a20000-0000-4000-8000-0000000000a2",
+			IdempotencyKey: fmt.Sprintf("fw1:opening:ar:%d", i),
+			Memo:           "opening accounts receivable, the seeded open invoices", BranchID: o.branch,
+			Lines: lines,
+		}); err != nil {
+			t.Fatalf("the opening AR journal for %s: %v", o.branch, err)
+		}
+	}
+	stockValue := func(branch string) int64 {
+		var c int64
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
+			  FROM stock_balances sb
+			  JOIN product_branch_costs c ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
+			 WHERE sb.on_hand_base > 0 AND sb.branch_id = $1`, branch).Scan(&c); err != nil {
+			t.Fatalf("stock value: %v", err)
+		}
+		return c
+	}
+	for _, b := range []string{fw1TRT, fw1KGN} {
+		v := stockValue(b)
+		if _, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+			Source: "MANUAL", SourceRefID: "88a20000-0000-4000-8000-0000000000a1", IdempotencyKey: "fw1:opening:" + b,
+			Memo: "opening balances", BranchID: b,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "1200", DebitCents: v, Memo: "opening stock"},
+				{AccountCode: "3000", CreditCents: v, Memo: "opening equity"},
+			},
+		}); err != nil {
+			t.Fatalf("the opening stock journal for %s: %v", b, err)
+		}
+	}
+	w.drain()
+
+	// -- the month --------------------------------------------------------------------
+	// Till sessions at both branches.
+	w.ok("open till TRT", http.MethodPost, "/api/v1/till/sessions", map[string]any{"branch_id": fw1TRT, "station": "MAIN", "float_cents": 20000})
+	w.tillTRT = w.one(`SELECT id::text FROM till_sessions WHERE branch_id = $1 AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`, fw1TRT)
+	w.ok("open till KGN", http.MethodPost, "/api/v1/till/sessions", map[string]any{"branch_id": fw1KGN, "station": "MAIN", "float_cents": 15000})
+	w.tillKGN = w.one(`SELECT id::text FROM till_sessions WHERE branch_id = $1 AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`, fw1KGN)
+	w.drain()
+
+	// Counter cash sale at Trenton (a retail homeowner, gator sand by the bag).
+	w.sale("counter cash sale TRT", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b1", "branch_id": fw1TRT, "till_session_id": w.tillTRT,
+		"customer_id": w.cust["CUST-1007"], "tender": "CASH", "sale_type": "COLLECT_NOW",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-GATOR-SAND"], "qty_entered": 2, "uom_entered": "BAG"}},
+	})
+	w.drain()
+
+	// Counter card sale at Kingston (a walk-in, card on the simulated rail).
+	w.sale("counter card sale KGN", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b2", "branch_id": fw1KGN, "till_session_id": w.tillKGN,
+		"tender": "CARD", "payment_token": "tok_fw1_walk", "sale_type": "COLLECT_NOW",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-INLITE-LED"], "qty_entered": 1, "uom_entered": "EA"}},
+	})
+	w.drain()
+
+	// A delivered order on account at Trenton (Quinte Hardscapes).
+	delivered := w.sale("delivered order TRT", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b3", "branch_id": fw1TRT, "till_session_id": w.tillTRT,
+		"customer_id": w.cust["CUST-1001"], "tender": "ACCOUNT", "sale_type": "DELIVERED",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-UL-BRUSSELS"], "qty_entered": 100, "uom_entered": "SF"}},
+	})
+	w.drain()
+
+	// A collect later order on account at Trenton (Bay of Quinte).
+	w.sale("collect later order TRT", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b4", "branch_id": fw1TRT, "till_session_id": w.tillTRT,
+		"customer_id": w.cust["CUST-1002"], "tender": "ACCOUNT", "sale_type": "COLLECT_LATER",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-TB-BLU60"], "qty_entered": 50, "uom_entered": "SF"}},
+	})
+	w.drain()
+
+	// A Cash On Demand order at Kingston (Cataraqui, terms set to same day for the posture).
+	mustExec(t, ctx, w.pool, `UPDATE customers SET payment_terms_days = 0 WHERE id = $1`, w.cust["CUST-1004"])
+	w.sale("cash on demand order KGN", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b5", "branch_id": fw1KGN, "till_session_id": w.tillKGN,
+		"customer_id": w.cust["CUST-1004"], "tender": "CHEQUE", "sale_type": "COD", "fulfilment": "PICKUP",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-GATOR-SAND"], "qty_entered": 4, "uom_entered": "BAG"}},
+	})
+	w.drain()
+
+	// The delivered order's account invoice, paid half at the Money Desk and the rest through
+	// Counter Till Pay balance (the pay balance receipt is FW1-02's own journal).
+	var deliveredInv, deliveredOrder string
+	if delivered != nil {
+		deliveredInv, _ = delivered["invoice_id"].(string)
+		deliveredOrder, _ = delivered["order_id"].(string)
+	}
+	if deliveredInv != "" {
+		var total int64
+		if err := w.pool.QueryRow(ctx, `SELECT total_cents FROM invoices WHERE id = $1`, deliveredInv).Scan(&total); err != nil {
+			t.Fatal(err)
+		}
+		w.ok("money desk part payment", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+			"customer_id": w.cust["CUST-1001"], "method": "EFT", "amount_cents": total / 2,
+			"invoice_ids": []string{deliveredInv}, "idempotency_key": "fw1-desk-part",
+		})
+		w.drain()
+		w.ok("counter pay balance remainder", http.MethodPost, "/api/v1/pos/pay-balance", map[string]any{
+			"order_id": deliveredOrder, "method": "CASH", "amount_cents": total - total/2,
+			"till_session_id": w.tillTRT, "idempotency_key": "fw1-pay-balance",
+		})
+		w.drain()
+	}
+
+	// An untaxed invoice: the counter's First Nations point of sale relief (the reason code the
+	// tax engine owns; FW1-02's untaxed posting and FW1-08's branch on the relief legs).
+	w.sale("untaxed invoice TRT", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b6", "branch_id": fw1TRT, "till_session_id": w.tillTRT,
+		"customer_id": w.cust["CUST-1007"], "tender": "CASH", "sale_type": "COLLECT_NOW",
+		"relief": map[string]any{"purchaser_type": "FIRST_NATIONS", "declared_use": "delivery to reserve",
+			"fulfilment": "PICKUP", "reason_code": "ON_FN_POS_8"},
+		"lines": []map[string]any{{"product_id": w.prod["DBS-GATOR-SAND"], "qty_entered": 1, "uom_entered": "BAG"}},
+	})
+	w.drain()
+
+	// A cheque lodged against the collect later invoice, then bounced (NSF).
+	var chequePayment string
+	var invC2 string
+	var balC2 int64
+	if err := w.pool.QueryRow(ctx, `SELECT id::text, balance_cents FROM invoices
+		WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')
+		ORDER BY issue_date DESC, invoice_no DESC LIMIT 1`, w.cust["CUST-1002"]).Scan(&invC2, &balC2); err != nil {
+		w.stepErrs = append(w.stepErrs, "cheque lodged: no open invoice for CUST-1002: "+err.Error())
+	}
+	if balC2 > 0 {
+		out := w.ok("cheque lodged", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+			"customer_id": w.cust["CUST-1002"], "method": "CHEQUE", "amount_cents": balC2,
+			"invoice_ids": []string{invC2}, "idempotency_key": "fw1-cheque", "reference": "CHQ-101",
+		})
+		w.drain()
+		if out != nil {
+			var ans struct {
+				PaymentID string `json:"payment_id"`
+			}
+			_ = json.Unmarshal(out, &ans)
+			chequePayment = ans.PaymentID
+		}
+	}
+	if chequePayment != "" {
+		w.ok("cheque bounced", http.MethodPost, "/api/v1/ar/payments/"+chequePayment+"/nsf", map[string]any{"reason": "NSF, drawer's bank refused"})
+		w.drain()
+	}
+
+	// A reversal and a re-application of held money: Frontenac pays $2,000.00 of the seeded
+	// open invoice, the payment is reversed (the money holds in 2310), then re-applied.
+	seedInv := w.one(`SELECT id::text FROM invoices WHERE invoice_no = 'INV-2026-0002'`)
+	var heldPayment string
+	out := w.ok("payment to reverse", http.MethodPost, "/api/v1/ar/payments/apply", map[string]any{
+		"customer_id": w.cust["CUST-1005"], "method": "EFT", "amount_cents": 200000,
+		"invoice_ids": []string{seedInv}, "idempotency_key": "fw1-held",
+	})
+	w.drain()
+	if out != nil {
+		var ans struct {
+			PaymentID string `json:"payment_id"`
+		}
+		_ = json.Unmarshal(out, &ans)
+		heldPayment = ans.PaymentID
+	}
+	if heldPayment != "" {
+		w.ok("reversal of held money", http.MethodPost, "/api/v1/ar/payments/"+heldPayment+"/reverse", map[string]any{"reason": "fw1 walk reversal"})
+		w.drain()
+		w.ok("re-application of held money", http.MethodPost, "/api/v1/ar/payments/"+heldPayment+"/reapply", map[string]any{
+			"reason": "fw1 walk reapplication", "idempotency_key": "fw1-reapply",
+			"allocations": []map[string]any{{"invoice_id": seedInv, "amount_cents": 200000}},
+		})
+		w.drain()
+	}
+
+	// A finance issued credit memo (FW1-12 gives this its route and screen; today the desk's
+	// own writer is the nearest real call, decorated exactly as worker.go decorates it).
+	writer := newInvoiceWriter(w.pool).
+		WithCreditMemoPoster(w6cCreditMemoPoster{svc: w.money.glSvc, rules: gl.NewRepository(w.pool), words: newTaxWords(w.pool)}).
+		WithDeliveredOrders(w.money.orderSvc).
+		WithJournalKeyReader(w.money.glSvc)
+	if _, err := writer.IssueCreditMemo(ctx, billing.CreditMemoInput{
+		CustomerID: w.cust["CUST-1003"], BranchID: fw1KGN, AmountCents: 5000,
+		Memo: "FW1 walk finance credit", IdempotencyKey: "fw1-credit-memo",
+	}); err != nil {
+		w.stepErrs = append(w.stepErrs, "finance credit memo: "+err.Error())
+	}
+	w.drain()
+
+	// Till movements at Trenton: paid in, paid out, a lodgement that reaches the statement; and
+	// one at Kingston that stays in transit (the deposit in transit).
+	w.ok("till paid in", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/movements", map[string]any{"movement_type": "PAID_IN", "method": "CASH", "amount_cents": 5000, "reason": "fw1 walk"})
+	w.ok("till paid out", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/movements", map[string]any{"movement_type": "PAID_OUT", "method": "CASH", "amount_cents": 3000, "reason": "fw1 walk"})
+	w.ok("till lodgement TRT", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/movements", map[string]any{"movement_type": "LODGEMENT", "method": "CASH", "amount_cents": 40000, "reason": "fw1 walk", "reference": "DEP-TRT-1"})
+	w.ok("till lodgement KGN in transit", http.MethodPost, "/api/v1/till/sessions/"+w.tillKGN+"/movements", map[string]any{"movement_type": "LODGEMENT", "method": "CASH", "amount_cents": 25000, "reason": "fw1 walk", "reference": "DEP-KGN-1"})
+	w.drain()
+
+	// A posted vendor bill: PO to the seeded Techo Bloc vendor, received, billed, posted.
+	vendor := w.one(`SELECT id::text FROM vendors WHERE vendor_no = 'V-TECHO'`)
+	poID := ""
+	if poOut := w.ok("purchase order", http.MethodPost, "/api/v1/purchasing/pos", map[string]any{
+		"vendor_id": vendor, "branch_id": fw1TRT, "expected_at": "2026-10-20",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-TB-BLU60"], "description": "Blu 60", "qty_ordered_base": 100, "uom": "PC", "unit_cost_cents": 500}},
+	}); poOut != nil {
+		var m struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(poOut, &m)
+		poID = m.ID
+	}
+	if poID != "" {
+		w.ok("place the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poID+"/transition", map[string]any{"to": "ORDERED"})
+		lineID := w.one(`SELECT id::text FROM purchasing_po_lines WHERE po_id = $1 ORDER BY line_no LIMIT 1`, poID)
+		w.ok("receive the purchase order", http.MethodPost, "/api/v1/purchasing/pos/"+poID+"/receive", map[string]any{
+			"lines": []map[string]any{{"po_line_id": lineID, "qty_base": 100}},
+		})
+		w.drain()
+		billID := ""
+		if billOut := w.ok("vendor bill", http.MethodPost, "/api/v1/purchasing/bills", map[string]any{
+			"bill_no": "TECHO-FW1-1", "po_id": poID, "bill_date": "2026-10-15", "due_date": "2026-11-14", "tax_cents": 650,
+			"lines": []map[string]any{{"po_line_id": lineID, "description": "Blu 60", "qty_billed_base": 100, "unit_cost_cents": 500}},
+		}); billOut != nil {
+			var m struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(billOut, &m)
+			billID = m.ID
+		}
+		if billID != "" {
+			w.ok("post the vendor bill", http.MethodPost, "/api/v1/purchasing/bills/"+billID+"/post", map[string]any{"accept_variance": true, "note": "fw1 walk"})
+			w.drain()
+		}
+	}
+
+	// A stock transfer between the branches (Sika sealer, zero stock at Kingston by design).
+	trID := ""
+	if trOut := w.ok("stock transfer", http.MethodPost, "/api/v1/inventory/transfers", map[string]any{
+		"from_branch_id": fw1TRT, "to_branch_id": fw1KGN, "notes": "fw1 walk",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-SIKA-SEALER"], "qty_base": 20}},
+	}); trOut != nil {
+		var m struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(trOut, &m)
+		trID = m.ID
+	}
+	if trID != "" {
+		w.ok("ship the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trID+"/ship", map[string]any{})
+		w.drain()
+		w.ok("receive the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trID+"/receive", map[string]any{})
+		w.drain()
+	}
+
+	// The bank month. An outstanding cheque (a vendor payment the bank has not seen) through
+	// the GL's own manual journal; a deposit in transit (the Kingston lodgement, not on the
+	// statement); a statement that carries the Trenton lodgement and a bank charge.
+	w.outstandingChequeCents = 12500
+	w.depositInTransitCents = 25000
+	w.ok("outstanding cheque journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
+		"branch_id": fw1TRT, "memo": "fw1 walk vendor cheque, not yet presented", "source": "MANUAL",
+		"lines": []map[string]any{
+			{"account_code": "2100", "debit_cents": w.outstandingChequeCents, "memo": "vendor payment"},
+			{"account_code": "1000", "credit_cents": w.outstandingChequeCents, "memo": "cheque written"},
+		},
+	})
+	w.drain()
+	importBody := "Date,Description,Amount,Reference\n" +
+		fmt.Sprintf("%04d-%02d-10,DEPOSIT TRT,400.00,DEP-TRT-1\n", w.year, w.month) +
+		fmt.Sprintf("%04d-%02d-12,BANK CHARGE,-6.50,SVC\n", w.year, w.month)
+	w.ok("bank statement import", http.MethodPost, "/api/v1/bankrec/imports", map[string]any{
+		"bank_account_id": w.bankAccountID, "profile_code": "rbc-default", "filename": "fw1-rbc.csv", "content": importBody,
+	})
+	w.drain()
+	// Match the deposit to the lodgement by hand, which posts the clearing DR 1000 / CR 1020.
+	lodgementTRT := w.one(`SELECT id::text FROM till_movements WHERE reference = 'DEP-TRT-1' ORDER BY id LIMIT 1`)
+	var stmtDepositLine string
+	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'DEP-TRT-1' LIMIT 1`, w.bankAccountID).Scan(&stmtDepositLine); err != nil {
+		w.stepErrs = append(w.stepErrs, "bank statement import: no deposit line for DEP-TRT-1: "+err.Error())
+	} else {
+		w.ok("match the deposit", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
+			"mode": "manual", "bank_account_id": w.bankAccountID,
+			"statement_line_id": stmtDepositLine, "target_type": "LODGEMENT", "target_ref_id": lodgementTRT,
+			"amount_cents": 40000,
+		})
+		w.drain()
+	}
+	// The statement balance the sign off must reach from balances at month end:
+	// GL 1000 at month end + deposits in transit - outstanding cheques.
+	gl1000 := func() int64 {
+		var c int64
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(COALESCE(l.debit_cents,0) - COALESCE(l.credit_cents,0)), 0)
+			  FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+			 JOIN gl_accounts a ON a.id = l.account_id
+			 WHERE a.code = '1000' AND j.status = 'POSTED'`).Scan(&c); err != nil {
+			w.t.Fatalf("GL 1000 balance: %v", err)
+		}
+		return c
+	}()
+	w.statementBalanceCents = gl1000 + w.depositInTransitCents - w.outstandingChequeCents
+
+	// Till close with an over at Trenton (counted cash $1.50 over) and an exact close at
+	// Kingston (FW1-13's screen is the item; the till service's own count and close are the
+	// nearest real calls today).
+	w.ok("count till TRT over", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/count", w.countBody(w.tillTRT, 150))
+	w.ok("complete till TRT", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/complete", map[string]any{"override_notes": "fw1 walk over"})
+	w.ok("count till KGN", http.MethodPost, "/api/v1/till/sessions/"+w.tillKGN+"/count", w.countBody(w.tillKGN, 0))
+	w.ok("complete till KGN", http.MethodPost, "/api/v1/till/sessions/"+w.tillKGN+"/complete", map[string]any{})
+	w.drain()
+
+	// Snapshot the branchless line count BEFORE the year end close (assertion 8) posts its own
+	// unbranched closing lines, so assertion 6 speaks about the month's writers alone.
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+		 WHERE l.branch_id IS NULL AND j.status = 'POSTED'`).Scan(&w.nullBranchLines); err != nil {
+		t.Fatalf("branchless journal lines: %v", err)
+	}
+	if len(w.stepErrs) > 0 {
+		for _, s := range w.stepErrs {
+			t.Logf("STEP DID NOT RUN: %s", s)
+		}
+	}
+
+	// -- the eight assertions ----------------------------------------------------------
+	assertions := map[string]func(t *testing.T){
+		"AR_aging_ties_to_GL_1100":                                          w.assertARAgingTies,
+		"customer_statement_equals_aging_and_subledger":                     w.createStatementTies,
+		"stock_value_ties_to_GL_1200":                                       w.assertStockTies,
+		"HST_reconcile_ties":                                                w.assertHSTTies,
+		"bank_month_signs_off_at_zero_with_outstanding_items":               w.assertBankMonth,
+		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum": w.assertBranchOnEveryLine,
+		"no_journal_waiting_or_dead_lettered":                               w.assertNothingWaiting,
+		"year_end_close_opens_next_year_and_keeps_income_statement":         w.assertYearEndClose,
+	}
+	for _, name := range fw1AssertionNames() {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			if item, red := fw1WalkRed[name]; red {
+				t.Skip("red until " + item)
+			}
+			assertions[name](t)
+		})
+	}
+}
+
+// -- the assertions, one per wave brief item -----------------------------------------
+
+// 1. AR aging total equals GL 1100, inception to date, to the cent.
+func (w *fw1Walk) assertARAgingTies(t *testing.T) {
+	ctx := staffctx.ContextWithStaff(context.Background(), staffctx.StaffContext{
+		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
+	})
+	rows, err := billing.NewCreditService(billing.NewRepository(w.pool)).Aging(ctx, w.monthEnd, "")
+	if err != nil {
+		t.Fatalf("the aging read: %v", err)
+	}
+	var aging int64
+	for _, r := range rows {
+		aging += r.TotalCents
+	}
+	gl1100, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1100", w.monthEnd, "")
+	if err != nil {
+		t.Fatalf("the GL 1100 read: %v", err)
+	}
+	if aging != gl1100 {
+		t.Errorf("AR aging total %s does not tie to GL 1100 %s (inception to date): the aging is %s %s",
+			fw1Dollars(aging), fw1Dollars(gl1100),
+			shorter(aging, gl1100), byDollars(aging-gl1100))
+	}
+}
+
+// 2. Each customer's statement balance equals their aging and their subledger.
+func (w *fw1Walk) createStatementTies(t *testing.T) {
+	ctx := context.Background()
+	sctx := staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
+		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
+	})
+	rows, err := billing.NewCreditService(billing.NewRepository(w.pool)).Aging(sctx, w.monthEnd, "")
+	if err != nil {
+		t.Fatalf("the aging read: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("the walk left no AR to tie")
+	}
+	_, stmts, err := billing.NewStatementService(billing.NewRepository(w.pool)).GenerateRun(sctx, "MASS", "", w.monthEnd, "d7000000-0000-4000-9000-000000000006")
+	if err != nil {
+		t.Fatalf("the statement run: %v", err)
+	}
+	stmtByCust := map[string]int64{}
+	for _, s := range stmts {
+		stmtByCust[s.CustomerID] = s.ClosingCents
+	}
+	for _, r := range rows {
+		var sub int64
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+			 WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, r.CustomerID).Scan(&sub); err != nil {
+			t.Fatalf("the subledger read for %s: %v", r.AccountNo, err)
+		}
+		// The statement's own line walk: the last line's running balance is the balance the
+		// statement's reader sees under the total, and it must be the same figure.
+		lines, err := billing.NewRepository(w.pool).StatementLines(ctx, r.CustomerID, w.monthEnd, billing.AllBranches)
+		if err != nil {
+			t.Fatalf("the statement lines for %s: %v", r.AccountNo, err)
+		}
+		var walked int64
+		if len(lines) > 0 {
+			walked = lines[len(lines)-1].BalanceRun
+		}
+		stmt := stmtByCust[r.CustomerID]
+		if stmt != r.TotalCents || r.TotalCents != sub || (sub != 0 && walked != sub) {
+			t.Errorf("%s: statement %s, aging %s, subledger %s, statement line walk %s do not tie (the statement is %s the aging; the aging is %s the subledger; the line walk is %s the subledger)",
+				r.AccountNo, fw1Dollars(stmt), fw1Dollars(r.TotalCents), fw1Dollars(sub), fw1Dollars(walked),
+				byDollars(stmt-r.TotalCents), byDollars(r.TotalCents-sub), byDollars(walked-sub))
+		}
+	}
+}
+
+// 3. Stock value equals GL 1200.
+func (w *fw1Walk) assertStockTies(t *testing.T) {
+	var stock int64
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
+		  FROM stock_balances sb
+		  JOIN product_branch_costs c ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
+		 WHERE sb.on_hand_base > 0`).Scan(&stock); err != nil {
+		t.Fatalf("stock value: %v", err)
+	}
+	gl1200, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1200", w.monthEnd, "")
+	if err != nil {
+		t.Fatalf("the GL 1200 read: %v", err)
+	}
+	if stock != gl1200 {
+		t.Errorf("stock value %s does not tie to GL 1200 %s: the ledger is %s the shelves by %s",
+			fw1Dollars(stock), fw1Dollars(gl1200), shorter(stock, gl1200), byDollars(stock-gl1200))
+	}
+}
+
+// 4. The HST reconcile ties.
+func (w *fw1Walk) assertHSTTies(t *testing.T) {
+	svc := tax.NewService(tax.NewRepository(w.pool)).WithGLBalances(glBalanceAdapter{svc: w.money.glSvc})
+	rep, err := svc.ReconcileReport(context.Background(), w.year, w.month, "")
+	if err != nil {
+		t.Fatalf("the HST reconcile: %v", err)
+	}
+	if rep.VarianceCents != 0 || !rep.TiedOut {
+		t.Errorf("the HST reconcile does not tie for %04d-%02d: GL 2200 payable %s against %s collected on tax decisions, a variance of %s (%s)",
+			w.year, w.month, fw1Dollars(rep.GLPayableCents), fw1Dollars(rep.CollectedCents), fw1Dollars(rep.VarianceCents),
+			shorter(rep.GLPayableCents, rep.CollectedCents))
+	}
+}
+
+// 5. The bank month signs off at a zero difference computed from balances at month end, with
+// the outstanding items listed.
+func (w *fw1Walk) assertBankMonth(t *testing.T) {
+	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1000", w.monthEnd, "")
+	if err != nil {
+		t.Fatalf("the GL 1000 read: %v", err)
+	}
+	svc := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithPayments(till.NewRepository(w.pool)).
+		WithLodgements(till.NewRepository(w.pool)).
+		WithJournalPoster(glPosterAdapter{svc: w.money.glSvc}).
+		WithGLBalances(glBalanceAdapter{svc: w.money.glSvc}).
+		WithJournals(w.money.glSvc)
+	rec, err := svc.OpenReconciliation(context.Background(), bankrec.ReconInput{
+		BankAccountID: w.bankAccountID, Year: w.year, Month: w.month, StatementBalanceCents: w.statementBalanceCents,
+	})
+	if err != nil {
+		t.Fatalf("the bank month sign off: %v", err)
+	}
+	want := gl1000 + w.depositInTransitCents - w.outstandingChequeCents
+	if rec.VarianceCents != 0 || w.statementBalanceCents != want {
+		t.Errorf("the bank month does not sign off at zero: statement %s against GL 1000 at month end %s plus %s in transit less %s outstanding cheques = %s; the difference computes to %s (the ledger side is %s)",
+			fw1Dollars(w.statementBalanceCents), fw1Dollars(gl1000), fw1Dollars(w.depositInTransitCents),
+			fw1Dollars(w.outstandingChequeCents), fw1Dollars(want), fw1Dollars(rec.VarianceCents),
+			shorter(w.statementBalanceCents, want))
+	}
+}
+
+// 6. Every journal line carries a branch, and the branch trial balances sum to the consolidated one.
+func (w *fw1Walk) assertBranchOnEveryLine(t *testing.T) {
+	if w.nullBranchLines != 0 {
+		t.Errorf("%d posted journal lines carry no branch (the GL side of the tie is the lines without a branch)", w.nullBranchLines)
+	}
+	cons, err := w.money.glSvc.TrialBalance(context.Background(), w.year, w.month, "")
+	if err != nil {
+		t.Fatalf("the consolidated trial balance: %v", err)
+	}
+	var sumDebit, sumCredit int64
+	for _, b := range []string{fw1TRT, fw1KGN} {
+		tb, err := w.money.glSvc.TrialBalance(context.Background(), w.year, w.month, b)
+		if err != nil {
+			t.Fatalf("the %s trial balance: %v", b, err)
+		}
+		sumDebit += tb.TotalDebit
+		sumCredit += tb.TotalCredit
+	}
+	if sumDebit != cons.TotalDebit || sumCredit != cons.TotalCredit {
+		t.Errorf("the branch trial balances sum to %s debit and %s credit against the consolidated %s debit and %s credit (the branches are %s the whole by %s)",
+			fw1Dollars(sumDebit), fw1Dollars(sumCredit), fw1Dollars(cons.TotalDebit), fw1Dollars(cons.TotalCredit),
+			shorter(sumDebit, cons.TotalDebit), byDollars(sumDebit-cons.TotalDebit))
+	}
+}
+
+// 7. No journal is waiting or dead lettered.
+func (w *fw1Walk) assertNothingWaiting(t *testing.T) {
+	var pending, dead int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM events_outbox WHERE status = 'PENDING'`).Scan(&pending); err != nil {
+		t.Fatalf("the waiting read: %v", err)
+	}
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM events_outbox WHERE status = 'DEAD'`).Scan(&dead); err != nil {
+		t.Fatalf("the dead letter read: %v", err)
+	}
+	if pending != 0 || dead != 0 {
+		var topics []string
+		rows, err := w.pool.Query(context.Background(), `SELECT DISTINCT topic FROM events_outbox WHERE status IN ('PENDING','DEAD')`)
+		if err == nil {
+			for rows.Next() {
+				var topic string
+				if err := rows.Scan(&topic); err == nil {
+					topics = append(topics, topic)
+				}
+			}
+			rows.Close()
+		}
+		t.Errorf("%d journal events are waiting and %d are dead lettered after the consumer's pass (topics: %s)",
+			pending, dead, strings.Join(topics, ", "))
+	}
+}
+
+// 8. Year end close opens the next year and leaves the closed year's income statement unchanged.
+func (w *fw1Walk) assertYearEndClose(t *testing.T) {
+	income := func() map[string]int64 {
+		out := map[string]int64{}
+		rows, err := w.pool.Query(context.Background(), `
+			SELECT account_code, SUM(amount_cents) FROM v_income_statement WHERE fiscal_year = $1 GROUP BY account_code`, w.year)
+		if err != nil {
+			t.Fatalf("the income statement read: %v", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var code string
+			var amt int64
+			if err := rows.Scan(&code, &amt); err != nil {
+				t.Fatal(err)
+			}
+			out[code] = amt
+		}
+		return out
+	}
+	before := income()
+	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk year end close"); err != nil {
+		t.Fatalf("the year end close: %v", err)
+	}
+	after := income()
+	for code, amt := range before {
+		if after[code] != amt {
+			t.Errorf("the year end close changed the closed year's income statement: account %s held %s before the close and %s after (%s)",
+				code, fw1Dollars(amt), fw1Dollars(after[code]), byDollars(after[code]-amt))
+		}
+	}
+	var nextYear int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1`, w.year+1).Scan(&nextYear); err != nil {
+		t.Fatalf("the next year read: %v", err)
+	}
+	if nextYear == 0 {
+		t.Errorf("the year end close opened no %d fiscal periods: posting into the next year is refused for want of a period", w.year+1)
+	}
+}
+
+// TestFW1WalkRedMapNamesRealSubtests guards the skip map: every key must name one of the walk's
+// eight subtests, so a line left behind after its assertion went green fails the suite.
+func TestFW1WalkRedMapNamesRealSubtests(t *testing.T) {
+	real := map[string]bool{}
+	for _, name := range fw1AssertionNames() {
+		real[name] = true
+	}
+	for name := range fw1WalkRed {
+		if !real[name] {
+			t.Errorf("fw1WalkRed names %q, which is not a subtest of the month walk: remove the stale line", name)
+		}
+	}
+}
+
+// shorter says which of two figures is the smaller, in words.
+func shorter(a, b int64) string {
+	if a < b {
+		return "short"
+	}
+	return "over"
+}
+
+// byDollars renders a delta as a signed dollar amount.
+func byDollars(c int64) string {
+	if c < 0 {
+		return "-" + fw1Dollars(-c)
+	}
+	return fw1Dollars(c)
+}
