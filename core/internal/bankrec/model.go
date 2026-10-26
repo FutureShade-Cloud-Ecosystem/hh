@@ -133,15 +133,16 @@ type Match struct {
 
 // Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations).
 type Reconciliation struct {
-	ID                    string     `json:"id"`
-	BankAccountID         string     `json:"bank_account_id"`
-	Year                  int        `json:"year"`
-	Month                 int        `json:"month"`
-	StatementBalanceCents int64      `json:"statement_balance_cents"`
-	GLBalanceCents        int64      `json:"gl_balance_cents"`
-	VarianceCents         int64      `json:"variance_cents"`
-	Status                string     `json:"status"`
-	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	ID                      string     `json:"id"`
+	BankAccountID           string     `json:"bank_account_id"`
+	Year                    int        `json:"year"`
+	Month                   int        `json:"month"`
+	StatementBalanceCents   int64      `json:"statement_balance_cents"`
+	StatementBalanceDerived bool       `json:"-"`
+	GLBalanceCents          int64      `json:"gl_balance_cents"`
+	VarianceCents           int64      `json:"variance_cents"`
+	Status                  string     `json:"status"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // - inputs (request bodies) -

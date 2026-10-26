@@ -527,7 +527,8 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 		return Reconciliation{}, err
 	}
 	stmtBal := in.StatementBalanceCents
-	if stmtBal == 0 {
+	derived := stmtBal == 0
+	if derived {
 		if stmtBal, err = s.repo.MonthLineSum(ctx, acct.ID, in.Year, in.Month); err != nil {
 			return Reconciliation{}, err
 		}
@@ -539,12 +540,13 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 		}
 	}
 	return s.repo.UpsertReconciliation(ctx, Reconciliation{
-		BankAccountID:         acct.ID,
-		Year:                  in.Year,
-		Month:                 in.Month,
-		StatementBalanceCents: stmtBal,
-		GLBalanceCents:        glBal,
-		VarianceCents:         stmtBal - glBal,
+		BankAccountID:           acct.ID,
+		Year:                    in.Year,
+		Month:                   in.Month,
+		StatementBalanceCents:   stmtBal,
+		StatementBalanceDerived: derived,
+		GLBalanceCents:          glBal,
+		VarianceCents:           stmtBal - glBal,
 	})
 }
 

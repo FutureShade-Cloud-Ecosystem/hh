@@ -150,6 +150,26 @@ func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *t
 	if !strings.Contains(err.Error(), "$512.34") || !strings.Contains(err.Error(), "$500.00") {
 		t.Errorf("the refusal %q does not name the statement $512.34 and the ledger $500.00", err.Error())
 	}
+	// Refreshing with 0 (what the desk's Refresh figures sends for a derived month) keeps the flag TRUE and updates
+	// the stored statement figure to $512.34; completion still refuses while the ledger is $500.00.
+	refreshedZero, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m})
+	if err != nil {
+		t.Fatalf("refresh with zero: %v", err)
+	}
+	if !refreshedZero.StatementBalanceDerived || refreshedZero.StatementBalanceCents != 51234 {
+		t.Errorf("refresh with zero: derived=%v statement=%d, want true and 51234", refreshedZero.StatementBalanceDerived, refreshedZero.StatementBalanceCents)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, refreshedZero.ID, ""); err == nil {
+		t.Fatalf("completion succeeded after refresh with zero while ledger is $500.00 and statement is $512.34")
+	}
+	// A fresh open with a typed closing balance sets statement_balance_derived FALSE.
+	stated, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: 51234})
+	if err != nil {
+		t.Fatalf("open with typed balance: %v", err)
+	}
+	if stated.StatementBalanceDerived {
+		t.Errorf("a fresh open with a typed balance left StatementBalanceDerived true")
+	}
 }
 
 // P2-2 (PR 607 round 2): a stated closing balance that happens to equal the lines' net at the open ($700.00), then an

@@ -821,19 +821,31 @@ func (r *Repository) UpsertReconciliation(ctx context.Context, rec Reconciliatio
 	}
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO bank_reconciliations
-		  (bank_account_id, year, month, statement_balance_cents, gl_balance_cents, variance_cents, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
+		  (bank_account_id, year, month, statement_balance_cents, statement_balance_derived, gl_balance_cents, variance_cents, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')
 		ON CONFLICT (bank_account_id, year, month) DO UPDATE SET
+		  statement_balance_derived = CASE
+		    WHEN EXCLUDED.statement_balance_derived THEN TRUE
+		    WHEN bank_reconciliations.statement_balance_derived
+		     AND EXCLUDED.statement_balance_cents = bank_reconciliations.statement_balance_cents
+		     AND EXCLUDED.statement_balance_cents <> (
+		       SELECT COALESCE(SUM(amount_cents), 0) FROM bank_statement_lines
+		        WHERE bank_account_id = bank_reconciliations.bank_account_id
+		          AND EXTRACT(YEAR FROM txn_date) = bank_reconciliations.year
+		          AND EXTRACT(MONTH FROM txn_date) = bank_reconciliations.month
+		     ) THEN TRUE
+		    ELSE FALSE
+		  END,
 		  statement_balance_cents = EXCLUDED.statement_balance_cents,
 		  gl_balance_cents = EXCLUDED.gl_balance_cents,
 		  variance_cents = EXCLUDED.variance_cents,
 		  updated_at = now()
 		WHERE bank_reconciliations.status = 'OPEN'
-		RETURNING id::text, bank_account_id::text, year, month, statement_balance_cents, gl_balance_cents,
-		          variance_cents, status, completed_at`,
-		rec.BankAccountID, rec.Year, rec.Month, rec.StatementBalanceCents, rec.GLBalanceCents, rec.VarianceCents).
-		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents, &rec.GLBalanceCents,
-			&rec.VarianceCents, &rec.Status, &rec.CompletedAt)
+		RETURNING id::text, bank_account_id::text, year, month, statement_balance_cents, statement_balance_derived,
+		          gl_balance_cents, variance_cents, status, completed_at`,
+		rec.BankAccountID, rec.Year, rec.Month, rec.StatementBalanceCents, rec.StatementBalanceDerived, rec.GLBalanceCents, rec.VarianceCents).
+		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents, &rec.StatementBalanceDerived,
+			&rec.GLBalanceCents, &rec.VarianceCents, &rec.Status, &rec.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Reconciliation{}, conflict("bankrec: reconciliation for %d-%02d is already COMPLETED", rec.Year, rec.Month)
 	}
@@ -850,11 +862,11 @@ func (r *Repository) GetReconciliation(ctx context.Context, id string) (Reconcil
 	}
 	var rec Reconciliation
 	err := r.pool.QueryRow(ctx, `
-		SELECT id::text, bank_account_id::text, year, month, statement_balance_cents, gl_balance_cents,
-		       variance_cents, status, completed_at
+		SELECT id::text, bank_account_id::text, year, month, statement_balance_cents, statement_balance_derived,
+		       gl_balance_cents, variance_cents, status, completed_at
 		FROM bank_reconciliations WHERE id = $1`, id).
-		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents, &rec.GLBalanceCents,
-			&rec.VarianceCents, &rec.Status, &rec.CompletedAt)
+		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents, &rec.StatementBalanceDerived,
+			&rec.GLBalanceCents, &rec.VarianceCents, &rec.Status, &rec.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Reconciliation{}, errNotFound
 	}
@@ -870,8 +882,8 @@ func (r *Repository) ListReconciliations(ctx context.Context, accountID string) 
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, bank_account_id::text, year, month, statement_balance_cents, gl_balance_cents,
-		       variance_cents, status, completed_at
+		SELECT id::text, bank_account_id::text, year, month, statement_balance_cents, statement_balance_derived,
+		       gl_balance_cents, variance_cents, status, completed_at
 		FROM bank_reconciliations WHERE ($1 = '' OR bank_account_id = $1::uuid)
 		ORDER BY year DESC, month DESC`, accountID)
 	if err != nil {
@@ -882,7 +894,7 @@ func (r *Repository) ListReconciliations(ctx context.Context, accountID string) 
 	for rows.Next() {
 		var rec Reconciliation
 		if err := rows.Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents,
-			&rec.GLBalanceCents, &rec.VarianceCents, &rec.Status, &rec.CompletedAt); err != nil {
+			&rec.StatementBalanceDerived, &rec.GLBalanceCents, &rec.VarianceCents, &rec.Status, &rec.CompletedAt); err != nil {
 			return nil, fmt.Errorf("bankrec: scan reconciliation: %w", err)
 		}
 		out = append(out, rec)
@@ -994,28 +1006,23 @@ func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCo
 	// The variance is recomputed HERE, after the month's lock, never trusted from the figures stored when the month was
 	// opened (SF-2s): the ledger can move after the open (any posting to the bank account in the month), and a
 	// statement balance that was derived from the lines goes stale when a line is imported. The ledger comes through
-	// the GLBalanceReader seam. The statement balance is the stated one kept as stored, unless it equals the net of the
-	// lines as they stood at the open (what a derived balance is: a typed zero is replaced by that net), in which case it
-	// is derived again from the lines now (read in this transaction, the lines locked above). The stated and the derived
-	// are not stored apart, so a stated balance that happens to equal the net at the open is treated as derived: a
-	// refresh of the figures settles it. What the lock cannot freeze: the GL. A posting committed between this read and
-	// the commit is not seen; it shows as a later period's variance.
+	// the GLBalanceReader seam. The statement balance is re-derived from the month's lines if and only if
+	// statement_balance_derived is set (migration 0438). What the lock cannot freeze: the GL. A posting committed
+	// between this read and the commit is not seen; it shows as a later period's variance.
 	var storedStmt int64
-	var openedAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_balance_cents, updated_at FROM bank_reconciliations WHERE id = $1::uuid`, id).Scan(&storedStmt, &openedAt); err != nil {
+	var derived bool
+	if err := tx.QueryRow(ctx, `SELECT statement_balance_cents, statement_balance_derived FROM bank_reconciliations WHERE id = $1::uuid`, id).Scan(&storedStmt, &derived); err != nil {
 		return Reconciliation{}, fmt.Errorf("bankrec: read the stored statement balance: %w", err)
 	}
-	var netAtOpen, netNow int64
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_cents) FILTER (WHERE created_at <= $4), 0), COALESCE(SUM(amount_cents), 0)
-		  FROM bank_statement_lines
-		 WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2 AND EXTRACT(MONTH FROM txn_date) = $3`,
-		acctID, year, month, openedAt).Scan(&netAtOpen, &netNow); err != nil {
-		return Reconciliation{}, fmt.Errorf("bankrec: recompute the statement balance: %w", err)
-	}
 	stmt := storedStmt
-	if storedStmt == netAtOpen {
-		stmt = netNow
+	if derived {
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(SUM(amount_cents), 0)
+			  FROM bank_statement_lines
+			 WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2 AND EXTRACT(MONTH FROM txn_date) = $3`,
+			acctID, year, month).Scan(&stmt); err != nil {
+			return Reconciliation{}, fmt.Errorf("bankrec: recompute the statement balance: %w", err)
+		}
 	}
 	var gl int64
 	if ledger != nil {

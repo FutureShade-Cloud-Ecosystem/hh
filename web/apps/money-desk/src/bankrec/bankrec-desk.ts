@@ -93,6 +93,9 @@ export class BankrecDesk {
   // A selection asks the screen to bring its panel into view once it has rendered: on a phone the panel sits
   // under the whole list and a press would otherwise change nothing the person can see.
   #reveal = "";
+  // Months opened with a zero balance derive their statement figure from the month's lines; a refresh of such a
+  // month sends 0 again so the core keeps statement_balance_derived set and re-derives from the lines.
+  readonly #derivedMonths = new Set<string>();
   // The fields to put back into the page after the next paint (a clone of a rule, a cleared form).
   #fill: Record<string, string> | null = null;
 
@@ -431,13 +434,18 @@ export class BankrecDesk {
       this.#host.repaint();
       return;
     }
-    await this.#writeMonth(when.year, when.month, cents, typed === "" ? false : cents === 0);
+    const typedZero = typed === "" ? false : cents === 0;
+    const key = `${this.#accountId}:${when.year}:${when.month}`;
+    if (typedZero) this.#derivedMonths.add(key);
+    else this.#derivedMonths.delete(key);
+    await this.#writeMonth(when.year, when.month, cents, typedZero);
   }
 
   async #refreshMonth(row: BankRecReconciliation): Promise<void> {
     if (this.#busy) return;
     this.#clearMessages();
-    await this.#writeMonth(row.year, row.month, row.statement_balance_cents, false);
+    const derived = this.#derivedMonths.has(`${row.bank_account_id}:${row.year}:${row.month}`);
+    await this.#writeMonth(row.year, row.month, derived ? 0 : row.statement_balance_cents, false);
   }
 
   async #writeMonth(year: number, month: number, cents: number, typedZero: boolean): Promise<void> {
