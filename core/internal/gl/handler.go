@@ -522,6 +522,19 @@ func (h *Handler) closeYear(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+func (h *Handler) openYear(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var b reasonBody
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	res, err := h.svc.OpenNextFiscalYear(r.Context(), b.Reason)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // - policy + export -
 
 func (h *Handler) policy(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

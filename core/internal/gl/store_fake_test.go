@@ -251,6 +251,8 @@ func (f *fakeStore) VoidJournal(_ context.Context, id string) (Journal, error) {
 	return *j, nil
 }
 
+func (f *fakeStore) EnsureNextFiscalYear(_ context.Context) (int, error) { return 2027, nil }
+
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }
 func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 	return Period{}, errNotFound

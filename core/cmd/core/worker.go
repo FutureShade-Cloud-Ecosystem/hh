@@ -131,6 +131,17 @@ func worker(getenv func(string) string) error {
 	messaging.NewPortalBridge(graph.ops.messagingSvc, log).RegisterHandlers(dispatcher)
 	go dispatcher.Run(ctx) // stops on ctx cancellation (SIGINT/SIGTERM)
 
+	// FW1-01: the fiscal year roll forward runs at worker start on every box,
+	// idempotently, so the year after the latest that exists is always there
+	// ahead of need (the posting path covers the boundary itself; this makes
+	// it true even on a box nobody posts on until the day after the last
+	// seeded month).
+	if res, err := graph.money.glSvc.EnsureNextFiscalYear(ctx); err != nil {
+		return fmt.Errorf("worker: ensure the next fiscal year: %w", err)
+	} else {
+		log.Info("worker: next fiscal year ensured", "fiscal_year", res.FiscalYear)
+	}
+
 	// 1 · OUT-OF-BAND NOTIFICATION RUNS ON ITS OWN DISPATCHER, DELIBERATELY
 	// (the pin's two-dispatcher separation rationale, D37's verbatim
 	// carry): events_outbox claims by STATUS alone, so a new topic on the

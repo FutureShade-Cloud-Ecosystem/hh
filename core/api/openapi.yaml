@@ -8475,6 +8475,47 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/gl/periods/open-year:
+    post:
+      operationId: glOpenYear
+      tags:
+        - staff-gl
+      summary: Open the next fiscal year early
+      description: Financial-Controller-only inside the service on top of the admin gate; any other caller is refused as forbidden. A reason is required and the open is audit stamped. The same twelve months the automatic roll forward creates, made sure of early and on the record.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlPeriodReopenBody"
+      responses:
+        "200":
+          description: The opened year
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlYearOpenResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: A reason is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/gl/policy:
     get:
       operationId: glGetPolicy
@@ -37960,6 +38001,14 @@ components:
           format: int32
         reason:
           type: string
+    GlYearOpenResult:
+      type: object
+      required:
+        - fiscal_year
+      properties:
+        fiscal_year:
+          type: integer
+          format: int32
     GlYearCloseResult:
       type: object
       required:

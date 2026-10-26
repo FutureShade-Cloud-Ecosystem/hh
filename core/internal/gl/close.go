@@ -17,6 +17,10 @@ import (
 // control, reopening a sealed period is a privileged, reason-bearing act).
 const actGLPeriodReopen = "GL_PERIOD_REOPEN"
 
+// actGLFiscalYearOpen is the sensitive-access action stamped on a Controller's early open of the next
+// fiscal year (the roll forward otherwise happens on its own ahead of need; an early open is deliberate).
+const actGLFiscalYearOpen = "GL_FISCAL_YEAR_OPEN"
+
 // controllerRole is the only role permitted to reopen a closed period (the frozen route is RequireAdmin -
 // Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically).
 const controllerRole = "FINANCIAL_CONTROLLER"
@@ -95,6 +99,53 @@ func (s *Service) TieOut(ctx context.Context, asOf time.Time, branchID string) (
 
 func (s *Service) ListPeriods(ctx context.Context) ([]Period, error) {
 	return s.store.ListPeriods(ctx)
+}
+
+// YearOpenResult answers which fiscal year an open made sure of.
+type YearOpenResult struct {
+	FiscalYear int `json:"fiscal_year"`
+}
+
+// EnsureNextFiscalYear idempotently creates the fiscal year after the latest that exists. The worker calls
+// it at start on every box, so the next year exists ahead of need without anyone acting.
+func (s *Service) EnsureNextFiscalYear(ctx context.Context) (YearOpenResult, error) {
+	year, err := s.store.EnsureNextFiscalYear(ctx)
+	if err != nil {
+		return YearOpenResult{}, err
+	}
+	return YearOpenResult{FiscalYear: year}, nil
+}
+
+// OpenNextFiscalYear is the Controller's early open: the same idempotent creation as EnsureNextFiscalYear,
+// narrowed to the Financial Controller, reason required, and audit stamped (the deliberate act is
+// distinguished from the automatic roll forward by the record, not by a different database write).
+func (s *Service) OpenNextFiscalYear(ctx context.Context, reason string) (YearOpenResult, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return YearOpenResult{}, err
+	}
+	if caller.RoleCode != controllerRole {
+		return YearOpenResult{}, errNotController
+	}
+	if strings.TrimSpace(reason) == "" {
+		return YearOpenResult{}, errReasonRequired
+	}
+	res, err := s.EnsureNextFiscalYear(ctx)
+	if err != nil {
+		return YearOpenResult{}, err
+	}
+	if s.audit != nil {
+		if aerr := s.audit.Record(ctx, audit.SensitiveAccess{
+			Action:     actGLFiscalYearOpen,
+			EntityType: "gl.period",
+			EntityID:   fmt.Sprintf("fiscal_year:%d", res.FiscalYear),
+			ActorID:    caller.UserID,
+			Reason:     reason,
+		}); aerr != nil {
+			return YearOpenResult{}, fmt.Errorf("gl: audit open fiscal year: %w", aerr)
+		}
+	}
+	return res, nil
 }
 
 // ClosePeriod seals a fiscal period (OPEN → CLOSED) and logs the override. A reason is optional on close (it

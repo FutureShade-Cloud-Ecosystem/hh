@@ -255,3 +255,51 @@ func TestIntegration_FW1_01_ManualJournalIntoAClosedMonthIsStillRefused(t *testi
 		t.Fatalf("the manual refusal = %q, want %q", got, errClosedPeriod.msg)
 	}
 }
+
+// TestIntegration_FW1_01_ControllerOpensTheNextFiscalYearEarly covers the
+// Controller action: a manager is refused, a Controller without a reason is
+// refused, and a Controller with a reason creates the following year's twelve
+// months; the act is idempotent in that it always leaves exactly one more
+// year than existed (a repeat answers the year after that).
+func TestIntegration_FW1_01_ControllerOpensTheNextFiscalYearEarly(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	next := fw1NextYear(t, pool)
+	following := next + 1
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`, following)
+		_, _ = pool.Exec(c, `DELETE FROM fiscal_periods WHERE year=$1`, following)
+	})
+
+	manager := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, time.Date(next, 1, 15, 12, 0, 0, 0, time.UTC))
+	if _, err := manager.OpenNextFiscalYear(ctx, "early open"); err == nil {
+		t.Fatalf("a manager opened the next fiscal year; it is Controller only")
+	}
+	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership}, time.Date(next, 1, 15, 12, 0, 0, 0, time.UTC))
+	if _, err := controller.OpenNextFiscalYear(ctx, "   "); err == nil {
+		t.Fatalf("the Controller opened the year without a reason; a reason is required")
+	}
+	res, err := controller.OpenNextFiscalYear(ctx, "FW1-01 early open proof")
+	if err != nil {
+		t.Fatalf("the Controller's early open: %v", err)
+	}
+	if res.FiscalYear != next {
+		t.Fatalf("the early open made year %d, want %d", res.FiscalYear, next)
+	}
+	var months int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, next).Scan(&months); err != nil {
+		t.Fatalf("count the opened year's periods: %v", err)
+	}
+	if months != 12 {
+		t.Fatalf("the opened year holds %d periods, want 12", months)
+	}
+	res2, err := controller.OpenNextFiscalYear(ctx, "FW1-01 one more year ahead")
+	if err != nil {
+		t.Fatalf("the repeat open: %v", err)
+	}
+	if res2.FiscalYear != following {
+		t.Fatalf("the repeat open made year %d, want %d (always one year ahead of the latest)", res2.FiscalYear, following)
+	}
+}

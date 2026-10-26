@@ -263,6 +263,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/api/v1/gl/journals/{id}/void", OperationID: "glVoidJournal", Tag: "staff-gl", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/gl/periods", OperationID: "glListPeriods", Tag: "staff-gl", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/gl/periods/close-year", OperationID: "glCloseYear", Tag: "staff-gl", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
+	{Method: "POST", Path: "/api/v1/gl/periods/open-year", OperationID: "glOpenYear", Tag: "staff-gl", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
 	{Method: "POST", Path: "/api/v1/gl/periods/{id}/close", OperationID: "glClosePeriod", Tag: "staff-gl", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "POST", Path: "/api/v1/gl/periods/{id}/reopen", OperationID: "glReopenPeriod", Tag: "staff-gl", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
 	{Method: "GET", Path: "/api/v1/gl/policy", OperationID: "glGetPolicy", Tag: "staff-gl", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},

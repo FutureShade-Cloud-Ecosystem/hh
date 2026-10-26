@@ -365,7 +365,24 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	var periodID, pstatus string
 	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
+		// FW1-01: the year roll forward. A posting dated past the latest seeded year used to be
+		// refused outright (the GL-02 / ENV-CI blocker: once the house day passed the twelfth
+		// seeded month, every writer on every box went 422). The GL now creates the FOLLOWING
+		// year idempotently at the latest when a posting needs it: exactly one year beyond the
+		// latest that exists, never a bridge of years (a typo'd far-future date still refuses).
+		maxYear, merr := r.maxSeededYearTx(ctx, tx)
+		if merr != nil {
+			return "", false, merr
+		}
+		if y <= maxYear+1 {
+			if err := r.ensureFiscalYearTx(ctx, tx, y); err != nil {
+				return "", false, err
+			}
+			err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
+		}
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("gl: resolve period: %w", err)
@@ -767,6 +784,60 @@ func (r *Repository) ReopenPeriod(ctx context.Context, id, actorID, reason strin
 		return Period{}, fmt.Errorf("gl: commit reopen: %w", err)
 	}
 	return r.GetPeriod(ctx, id)
+}
+
+// ensureFiscalYearTx idempotently creates a fiscal year's twelve OPEN calendar months on tx. Periods are
+// calendar months (0007 seeds 1..12 of one year and fiscalYearMonthIn answers the calendar pair), so the
+// following year is the same twelve months of year+1; gl_policy.fiscal_year_start_month is a stored policy
+// read no period math follows today, and this roll forward keeps that (it changes nothing about which
+// month a date lands in, only that the month exists).
+func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month)
+		 SELECT $1, m FROM generate_series(1,12) AS m
+		 WHERE NOT EXISTS (SELECT 1 FROM fiscal_periods WHERE year = $1)
+		 ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
+		return fmt.Errorf("gl: create fiscal year %d: %w", year, err)
+	}
+	return nil
+}
+
+// maxSeededYearTx answers the latest fiscal year the database holds on tx.
+func (r *Repository) maxSeededYearTx(ctx context.Context, tx pgx.Tx) (int, error) {
+	var max int
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(year), 0) FROM fiscal_periods`).Scan(&max); err != nil {
+		return 0, fmt.Errorf("gl: read the latest fiscal year: %w", err)
+	}
+	return max, nil
+}
+
+// EnsureNextFiscalYear creates the fiscal year AFTER the latest that exists, idempotently, and answers
+// the year it made sure of. Called at worker start on every box (the year exists ahead of need) and by
+// the posting path's own boundary leg, so a box that never opens the Controller action still rolls forward.
+func (r *Repository) EnsureNextFiscalYear(ctx context.Context) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("gl: begin ensure next fiscal year: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	max, err := r.maxSeededYearTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if max == 0 {
+		return 0, clientErr(409, "gl: no fiscal period exists to roll forward from")
+	}
+	next := max + 1
+	if err := r.ensureFiscalYearTx(ctx, tx, next); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("gl: commit ensure next fiscal year: %w", err)
+	}
+	return next, nil
 }
 
 func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error {

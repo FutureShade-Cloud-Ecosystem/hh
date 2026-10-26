@@ -2525,6 +2525,9 @@ export type GlCloseYearBody = {
   year: number;
   reason: string;
 };
+export type GlYearOpenResult = {
+  fiscal_year: number;
+};
 export type GlYearCloseResult = {
   fiscal_year: number;
   closing_journal_id?: string;

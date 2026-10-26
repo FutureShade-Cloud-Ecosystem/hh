@@ -2996,6 +2996,10 @@ type GlCloseYearBody struct {
 	Reason string `json:"reason"`
 }
 
+type GlYearOpenResult struct {
+	FiscalYear int32 `json:"fiscal_year"`
+}
+
 type GlYearCloseResult struct {
 	FiscalYear       int32   `json:"fiscal_year"`
 	ClosingJournalId *string `json:"closing_journal_id,omitempty"`

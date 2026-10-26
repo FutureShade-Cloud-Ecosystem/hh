@@ -510,6 +510,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
 	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
 	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
+	r.Handle("POST /api/v1/gl/periods/open-year", g.RequireAdmin(h.staff(h.openYear)))
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
