@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -34,6 +35,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -366,6 +368,32 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// glStockValueAdapter satisfies gl's close pre flight stock seam over the
+// inventory snapshot (FW1-09b): the stock ledger side of the 1200 tie check,
+// the weighted average value of everything on hand.
+type glStockValueAdapter struct{ svc *inventory.Service }
+
+func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
+	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, sn := range snaps {
+		total += int64(sn.OnHandBase * float64(sn.AvgCostCents))
+	}
+	return total, nil
+}
+
+// tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till
+// repository (FW1-09b): the till sessions opened in the month still OPEN.
+type tillDrawerAdapter struct{ repo *till.Repository }
+
+func (a tillDrawerAdapter) OpenDrawersInMonth(ctx context.Context, year, month int) (int, error) {
+	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	return a.repo.OpenSessionsBetween(ctx, from, from.AddDate(0, 1, 0))
 }
 
 // w5aQuoteStockReserver satisfies quote's stock reservation seam over

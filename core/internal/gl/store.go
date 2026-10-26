@@ -77,6 +77,8 @@ type glStore interface {
 	TrialBalanceAsOf(ctx context.Context, asOf time.Time, branchID string) ([]TrialBalanceRow, error)
 	TrialBalance(ctx context.Context, year, month int, branchID string) ([]TrialBalanceRow, error)
 	PLBalances(ctx context.Context, year int) ([]TrialBalanceRow, error)
+	// PLBalancesByBranch is PLBalances per branch stamp ("" = company level), FW1-09b's year end input.
+	PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error)
 
 	// - tie-out state (first-seen age) -
 	UpsertTieout(ctx context.Context, subledger, accountCode, branchID string, subledgerCents, glCents int64, at time.Time) (TieoutState, error)

@@ -172,14 +172,28 @@ func (f fw1StockValue) StockValueCents(_ context.Context, _ string) (int64, erro
 	return f.cents, nil
 }
 
-type fw1Drawers struct{ n int }
+type fw1Drawers struct {
+	year, month int
+	n           int
+}
 
-func (f fw1Drawers) OpenDrawersInMonth(_ context.Context, _, _ int) (int, error) { return f.n, nil }
+func (f fw1Drawers) OpenDrawersInMonth(_ context.Context, year, month int) (int, error) {
+	if year == f.year && month == f.month {
+		return f.n, nil
+	}
+	return 0, nil
+}
 
-type fw1Queue struct{ n int }
+type fw1Queue struct {
+	year, month int
+	n           int
+}
 
-func (f fw1Queue) UnpostedForWindow(_ context.Context, _ []string, _, _ time.Time) (int, error) {
-	return f.n, nil
+func (f fw1Queue) UnpostedForWindow(_ context.Context, _ []string, from, _ time.Time) (int, error) {
+	if from.UTC().Year() == f.year && int(from.UTC().Month()) == f.month {
+		return f.n, nil
+	}
+	return 0, nil
 }
 
 type fw1AR struct{ cents int64 }
@@ -202,8 +216,8 @@ func TestIntegration_FW1_09b_PeriodCloseRunsAPreFlight(t *testing.T) {
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, at).
 		WithARSubledger(fw1AR{cents: 250000}).
 		WithStockReader(fw1StockValue{cents: 10000}).
-		WithDrawerReader(fw1Drawers{n: 2}).
-		WithQueueReader(fw1Queue{n: 1})
+		WithDrawerReader(fw1Drawers{year: 2084, month: 6, n: 2}).
+		WithQueueReader(fw1Queue{year: 2084, month: 6, n: 1})
 
 	_, err := svc.ClosePeriod(ctx, periodID(t, pool, 2084, 6), "FW1-09b preflight proof")
 	if err == nil {
@@ -229,8 +243,14 @@ func TestIntegration_FW1_09b_PeriodCloseRunsAPreFlight(t *testing.T) {
 		t.Fatalf("the refused close left the period %s, want OPEN", status)
 	}
 
-	// A month the wired seams see clean still closes.
-	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2084, 7), "FW1-09b clean month"); err != nil {
+	// A month the wired seams see quiet still closes: the drawers and the
+	// queue answer clean for July. The AR and stock fakes are fixed answer,
+	// so July closes under a service whose tie seams are unwired (a nil
+	// seam is an unwired check, it never blocks a close).
+	quiet := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, at).
+		WithDrawerReader(fw1Drawers{year: 2084, month: 6, n: 2}).
+		WithQueueReader(fw1Queue{year: 2084, month: 6, n: 1})
+	if _, err := quiet.ClosePeriod(ctx, periodID(t, pool, 2084, 7), "FW1-09b clean month"); err != nil {
 		t.Fatalf("the clean month did not close: %v", err)
 	}
 }

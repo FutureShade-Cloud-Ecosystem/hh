@@ -153,11 +153,21 @@ func (s *Service) OpenNextFiscalYear(ctx context.Context, reason string) (YearOp
 }
 
 // ClosePeriod seals a fiscal period (OPEN → CLOSED) and logs the override. A reason is optional on close (it
-// is mandatory on reopen). Guarded by RequireManager at the route.
+// is mandatory on reopen). Guarded by RequireManager at the route. Before it seals, the close runs the
+// FW1-09b pre flight: AR in tie with 1100, stock in tie with 1200, nothing waiting or dead lettered for
+// the month, no open till drawer. A failing check refuses the close and names each failing check with its
+// figures in dollars (a month still trading does not seal under the trading).
 func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return Period{}, err
+	}
+	p, err := s.store.GetPeriod(ctx, id)
+	if err != nil {
+		return Period{}, err
+	}
+	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
+		return Period{}, clientErr(409, "gl: period close pre flight failed: %s", strings.Join(fails, "; "))
 	}
 	if reason == "" {
 		reason = "period close"
@@ -220,26 +230,43 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if reason == "" {
 		reason = fmt.Sprintf("year-end close FY%d", year)
 	}
-	pls, err := s.store.PLBalances(ctx, year)
+	// FW1-09b: each branch's results close under its own stamp, so the yards' P&L closes with the
+	// company's and the closing entry is dated in the closed year (calendar December 31; the fiscal
+	// year start is stored policy no period math follows, the FW1-01 report's finding). The group
+	// with no branch stamp closes consolidated exactly as before, so a book with no branch stamps
+	// still gets the one closing journal it always did.
+	pls, err := s.store.PLBalancesByBranch(ctx, year)
 	if err != nil {
 		return YearCloseResult{}, err
 	}
-	var lines []draftLine
-	var totalND int64 // Σ net_debit across P&L = −(net income)
+	byBranch := map[string][]PLBranchRow{}
+	var order []string
 	for _, r := range pls {
-		nd := r.BalanceCents
-		if nd == 0 {
+		if _, seen := byBranch[r.BranchID]; !seen {
+			order = append(order, r.BranchID)
+		}
+		byBranch[r.BranchID] = append(byBranch[r.BranchID], r)
+	}
+	res := YearCloseResult{FiscalYear: year}
+	closingAt := time.Date(year, 12, 31, 12, 0, 0, 0, time.UTC)
+	for _, branch := range order {
+		var lines []draftLine
+		var totalND int64 // Σ net_debit across the branch's P&L = −(its net income)
+		for _, r := range byBranch[branch] {
+			nd := r.NetDebitCents
+			if nd == 0 {
+				continue
+			}
+			if nd > 0 {
+				lines = append(lines, cr(r.AccountCode, nd, "close to retained earnings"))
+			} else {
+				lines = append(lines, dr(r.AccountCode, -nd, "close to retained earnings"))
+			}
+			totalND += nd
+		}
+		if len(lines) == 0 {
 			continue
 		}
-		if nd > 0 {
-			lines = append(lines, cr(r.AccountCode, nd, "close to retained earnings"))
-		} else {
-			lines = append(lines, dr(r.AccountCode, -nd, "close to retained earnings"))
-		}
-		totalND += nd
-	}
-	res := YearCloseResult{FiscalYear: year, NetIncomeCents: -totalND}
-	if len(lines) > 0 {
 		// The 3900 offset makes the closing entry balance: reversing lines net −totalND, so 3900 nets +totalND.
 		if totalND > 0 {
 			lines = append(lines, dr(RetainedEarningsCode, totalND, "net loss to retained earnings"))
@@ -250,15 +277,20 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 			Source:     SourceClosing,
 			Memo:       fmt.Sprintf("Year-end close FY%d", year),
 			Status:     StatusPosted,
+			BranchID:   branch,
 			CreatedBy:  caller.UserID,
-			OccurredAt: time.Date(year, 12, 31, 12, 0, 0, 0, time.UTC),
+			OccurredAt: closingAt,
 			Lines:      lines,
 		}
 		id, _, err := s.store.InsertJournal(ctx, draft)
 		if err != nil {
 			return YearCloseResult{}, err
 		}
-		res.ClosingJournalID = id
+		res.ClosingJournalIDs = append(res.ClosingJournalIDs, id)
+		res.NetIncomeCents += -totalND
+	}
+	if len(res.ClosingJournalIDs) == 1 {
+		res.ClosingJournalID = res.ClosingJournalIDs[0]
 	}
 	if err := s.store.ClosePeriodsForYear(ctx, year, caller.UserID, reason); err != nil {
 		return YearCloseResult{}, err
