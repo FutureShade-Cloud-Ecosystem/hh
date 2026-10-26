@@ -367,9 +367,10 @@ func systemJournalOwner(j Journal) string {
 		return "the year end close"
 	}
 	for prefix, owner := range map[string]string{
-		"bankrec:":          "the bank reconciliation module",
-		"landedcost.":       "the landed cost module",
-		"holdback-release:": "the holdback module",
+		"bankrec:":                "the bank reconciliation module",
+		"landedcost.":             "the landed cost module",
+		"holdback-release:":       "the holdback module",
+		"till.session.completed:": "the till module",
 	} {
 		if strings.HasPrefix(j.IdempotencyKey, prefix) {
 			return owner
