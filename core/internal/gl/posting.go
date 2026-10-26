@@ -673,13 +673,16 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// FW1-01, ruling 82.2: the release is the deposit document's own journal, so it carries the
+	// document's date (its finalization), not the processing day. When that month is closed the
+	// store posts it into the earliest open month and keeps this date on posted_at, late posted.
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
 		IdempotencyKey: "deposit.released:" + p.InvoiceID,
 		Memo:           "Deposit released " + a.InvoiceNo,
 		BranchID:       a.BranchID,
-		OccurredAt:     s.clock(),
+		OccurredAt:     a.FinalizedAt,
 		Lines: []draftLine{
 			dr(depCode, a.TotalCents, "customer deposit released"),
 			cr(revCode, a.TotalCents, "revenue"),
@@ -1119,6 +1122,12 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 	for _, l := range in.Lines {
 		lines = append(lines, draftLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo})
 	}
+	at := s.clock()
+	// FW1-01: a caller-built journal takes its document's date when the caller knows one (bankrec
+	// dates a clearing journal by its statement line); the clock is only the fallback.
+	if !in.DocumentDate.IsZero() {
+		at = in.DocumentDate
+	}
 	draft := journalDraft{
 		Source:         source,
 		SourceRefID:    in.SourceRefID,
@@ -1126,7 +1135,7 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 		Memo:           in.Memo,
 		BranchID:       in.BranchID,
 		Status:         StatusPosted,
-		OccurredAt:     s.clock(),
+		OccurredAt:     at,
 		Lines:          lines,
 	}
 	// Reject any leg carrying a negative debit or credit BEFORE the DB does. A negative debit leg (e.g. a

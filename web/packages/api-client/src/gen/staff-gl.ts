@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult } from "./types.js";
+import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult, GlYearOpenResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -69,7 +69,7 @@ export async function glExport(
 
 export async function glListJournals(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string },
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string; late_posted?: boolean },
   call?: ApiCallOptions
 ): Promise<Result<GlJournalPage>> {
   return client.request<GlJournalPage>({
@@ -184,6 +184,21 @@ export async function glCloseYear(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "glCloseYear",
+  });
+}
+
+export async function glOpenYear(
+  client: ApiClient,
+  body: GlPeriodReopenBody,
+  call?: ApiCallOptions
+): Promise<Result<GlYearOpenResult>> {
+  return client.request<GlYearOpenResult>({
+    method: "POST",
+    path: "/api/v1/gl/periods/open-year",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "glOpenYear",
   });
 }
 

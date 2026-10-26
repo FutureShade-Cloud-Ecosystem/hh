@@ -54,6 +54,10 @@ type glStore interface {
 	ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
+	// EnsureNextFiscalYear idempotently creates the fiscal year after the latest that exists and answers
+	// the year it made sure of (FW1-01's roll forward: the worker calls it at start on every box, the
+	// posting path covers the boundary itself, and the Controller action opens a year early).
+	EnsureNextFiscalYear(ctx context.Context) (int, error)
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)

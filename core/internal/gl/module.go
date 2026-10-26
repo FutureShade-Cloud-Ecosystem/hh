@@ -166,6 +166,11 @@ type ExternalJournal struct {
 	Memo           string
 	BranchID       string
 	Lines          []ExternalLine
+	// DocumentDate, when set, is the document the journal belongs to (a bankrec clearing journal's
+	// statement line): the journal posts in that document's month when it is open, and into the
+	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
+	// Zero keeps the clock.
+	DocumentDate time.Time
 }
 
 // ExternalLine is one leg of an ExternalJournal, addressed by account code (resolved to account_id on post).
@@ -510,6 +515,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
 	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
 	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
+	r.Handle("POST /api/v1/gl/periods/open-year", g.RequireAdmin(h.staff(h.openYear)))
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
