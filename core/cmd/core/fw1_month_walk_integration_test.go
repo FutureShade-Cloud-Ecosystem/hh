@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -99,6 +100,48 @@ type fw1Walk struct {
 
 	nullBranchLines int // snapshot taken before the year end close posts its own lines
 	seededInvoiceID []string
+}
+
+// fw1TB is the testing surface each assertion writes to. *testing.T satisfies it directly, and
+// fw1Probe captures failures without failing the parent test when checking that a skipped
+// assertion is still red.
+type fw1TB interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Fatalf(format string, args ...any)
+	Fatal(args ...any)
+}
+
+type fw1Probe struct {
+	errs []string
+}
+
+type fw1ProbeAbort struct{}
+
+func (p *fw1Probe) Helper() {}
+func (p *fw1Probe) Errorf(format string, args ...any) {
+	p.errs = append(p.errs, fmt.Sprintf(format, args...))
+}
+func (p *fw1Probe) Fatalf(format string, args ...any) {
+	p.errs = append(p.errs, fmt.Sprintf(format, args...))
+	panic(fw1ProbeAbort{})
+}
+func (p *fw1Probe) Fatal(args ...any) {
+	p.errs = append(p.errs, fmt.Sprint(args...))
+	panic(fw1ProbeAbort{})
+}
+func (p *fw1Probe) run(fn func(fw1TB)) (failed bool, msgs []string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(fw1ProbeAbort); !ok {
+				panic(r)
+			}
+		}
+		failed = len(p.errs) > 0
+		msgs = p.errs
+	}()
+	fn(p)
+	return len(p.errs) > 0, p.errs
 }
 
 func fw1Dollars(c int64) string { return fmt.Sprintf("$%.2f", float64(c)/100) }
@@ -662,7 +705,7 @@ func TestFW1MonthWalk(t *testing.T) {
 	}
 
 	// -- the eight assertions ----------------------------------------------------------
-	assertions := map[string]func(t *testing.T){
+	assertions := map[string]func(t fw1TB){
 		"AR_aging_ties_to_GL_1100":                                          w.assertARAgingTies,
 		"customer_statement_equals_aging_and_subledger":                     w.createStatementTies,
 		"stock_value_ties_to_GL_1200":                                       w.assertStockTies,
@@ -676,7 +719,12 @@ func TestFW1MonthWalk(t *testing.T) {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			if item, red := fw1WalkRed[name]; red {
-				t.Skip("red until " + item)
+				p := &fw1Probe{}
+				failed, msgs := p.run(assertions[name])
+				if !failed {
+					t.Fatalf("green but still skipped: %s passed while listed in fw1_walk_red.go under %s: delete its line in this PR", name, item)
+				}
+				t.Skipf("red until %s: %s", item, strings.Join(msgs, "; "))
 			}
 			assertions[name](t)
 		})
@@ -686,7 +734,7 @@ func TestFW1MonthWalk(t *testing.T) {
 // -- the assertions, one per wave brief item -----------------------------------------
 
 // 1. AR aging total equals GL 1100, inception to date, to the cent.
-func (w *fw1Walk) assertARAgingTies(t *testing.T) {
+func (w *fw1Walk) assertARAgingTies(t fw1TB) {
 	ctx := staffctx.ContextWithStaff(context.Background(), staffctx.StaffContext{
 		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
 	})
@@ -711,7 +759,7 @@ func (w *fw1Walk) assertARAgingTies(t *testing.T) {
 
 // 2. Each customer's statement balance equals their aging, their customer_transactions
 // subledger, and their independent documents and receipts in the walk.
-func (w *fw1Walk) createStatementTies(t *testing.T) {
+func (w *fw1Walk) createStatementTies(t fw1TB) {
 	ctx := context.Background()
 	sctx := staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
 		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
@@ -808,7 +856,7 @@ func (w *fw1Walk) createStatementTies(t *testing.T) {
 }
 
 // 3. Stock value equals GL 1200.
-func (w *fw1Walk) assertStockTies(t *testing.T) {
+func (w *fw1Walk) assertStockTies(t fw1TB) {
 	var stock int64
 	if err := w.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
@@ -828,7 +876,7 @@ func (w *fw1Walk) assertStockTies(t *testing.T) {
 }
 
 // 4. The HST reconcile ties.
-func (w *fw1Walk) assertHSTTies(t *testing.T) {
+func (w *fw1Walk) assertHSTTies(t fw1TB) {
 	ctx := context.Background()
 	var gl2200Move, docSalesHST, billITC int64
 	if err := w.pool.QueryRow(ctx, `
@@ -874,7 +922,7 @@ func (w *fw1Walk) assertHSTTies(t *testing.T) {
 
 // 5. The bank month signs off at a zero difference computed from balances at month end, with
 // the outstanding items listed.
-func (w *fw1Walk) assertBankMonth(t *testing.T) {
+func (w *fw1Walk) assertBankMonth(t fw1TB) {
 	ctx := context.Background()
 	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.monthEnd, "")
 	if err != nil {
@@ -944,7 +992,7 @@ func (w *fw1Walk) assertBankMonth(t *testing.T) {
 }
 
 // 6. Every journal line carries a branch, and the branch trial balances sum to the consolidated one.
-func (w *fw1Walk) assertBranchOnEveryLine(t *testing.T) {
+func (w *fw1Walk) assertBranchOnEveryLine(t fw1TB) {
 	if w.nullBranchLines != 0 {
 		t.Errorf("%d posted journal lines carry no branch (the GL side of the tie is the lines without a branch)", w.nullBranchLines)
 	}
@@ -969,7 +1017,7 @@ func (w *fw1Walk) assertBranchOnEveryLine(t *testing.T) {
 }
 
 // 7. No journal is waiting or dead lettered.
-func (w *fw1Walk) assertNothingWaiting(t *testing.T) {
+func (w *fw1Walk) assertNothingWaiting(t fw1TB) {
 	var pending, dead int
 	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM events_outbox WHERE status = 'PENDING'`).Scan(&pending); err != nil {
 		t.Fatalf("the waiting read: %v", err)
@@ -995,7 +1043,7 @@ func (w *fw1Walk) assertNothingWaiting(t *testing.T) {
 }
 
 // 8. Year end close opens the next year and leaves the closed year's income statement unchanged.
-func (w *fw1Walk) assertYearEndClose(t *testing.T) {
+func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	income := func() map[string]int64 {
 		out := map[string]int64{}
 		rows, err := w.pool.Query(context.Background(), `
@@ -1035,16 +1083,34 @@ func (w *fw1Walk) assertYearEndClose(t *testing.T) {
 }
 
 // TestFW1WalkRedMapNamesRealSubtests guards the skip map: every key must name one of the walk's
-// eight subtests, so a line left behind after its assertion went green fails the suite.
+// eight subtests, every value must name a single owning item, and when FW1_WAVE_FINAL=1 is set
+// the map must be empty.
 func TestFW1WalkRedMapNamesRealSubtests(t *testing.T) {
 	real := map[string]bool{}
 	for _, name := range fw1AssertionNames() {
 		real[name] = true
 	}
-	for name := range fw1WalkRed {
+	for name, owner := range fw1WalkRed {
 		if !real[name] {
 			t.Errorf("fw1WalkRed names %q, which is not a subtest of the month walk: remove the stale line", name)
 		}
+		if strings.TrimSpace(owner) == "" || strings.Contains(owner, " and ") || strings.Contains(owner, ",") {
+			t.Errorf("fw1WalkRed[%q] = %q must name a single owning item", name, owner)
+		}
+	}
+	if os.Getenv("FW1_WAVE_FINAL") == "1" && len(fw1WalkRed) != 0 {
+		t.Fatalf("FW1_WAVE_FINAL=1 requires fw1WalkRed to be empty, but %d line(s) remain: %v", len(fw1WalkRed), fw1WalkRed)
+	}
+}
+
+// TestFW1WalkRedEmptyOnWaveFinal fails when FW1_WAVE_FINAL=1 is set and fw1WalkRed is not empty,
+// so the final wave PR can prove every assertion runs unskipped.
+func TestFW1WalkRedEmptyOnWaveFinal(t *testing.T) {
+	if os.Getenv("FW1_WAVE_FINAL") != "1" {
+		return
+	}
+	if len(fw1WalkRed) != 0 {
+		t.Fatalf("FW1_WAVE_FINAL=1 requires fw1WalkRed to be empty, but %d line(s) remain: %v", len(fw1WalkRed), fw1WalkRed)
 	}
 }
 

@@ -7,7 +7,7 @@ package main
 // The walk is committed red first with this map empty; the lines below name exactly the
 // assertions that failed on main, with their red lines quoted in FW1-00-REPORT.md.
 var fw1WalkRed = map[string]string{
-	"AR_aging_ties_to_GL_1100":                                          "FW1-02 and FW1-06a",
+	"AR_aging_ties_to_GL_1100":                                          "FW1-06a",
 	"HST_reconcile_ties":                                                "FW1-11",
 	"bank_month_signs_off_at_zero_with_outstanding_items":               "FW1-04",
 	"customer_statement_equals_aging_and_subledger":                     "FW1-06a",
