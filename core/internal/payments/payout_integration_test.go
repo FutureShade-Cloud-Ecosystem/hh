@@ -332,12 +332,27 @@ func TestIntegration_Payout_AnUnnamedDrawerIsTheBranchsOneOpenDrawer(t *testing.
 	})
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = w.r.obs.Exec(c, `UPDATE payments SET till_session_id = NULL WHERE branch_id = $1::uuid`, branch)
-		_, _ = w.r.obs.Exec(c, `DELETE FROM till_movements WHERE till_session_id IN (SELECT id FROM till_sessions WHERE branch_id = $1::uuid)`, branch)
-		_, _ = w.r.obs.Exec(c, `DELETE FROM till_sessions WHERE branch_id = $1::uuid`, branch)
-		_, _ = w.r.obs.Exec(c, `DELETE FROM payment_payouts WHERE branch_id = $1::uuid`, branch)
-		_, _ = w.r.obs.Exec(c, `DELETE FROM invoices WHERE branch_id = $1::uuid`, branch)
-		_, _ = w.r.obs.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, branch)
+		steps := []struct {
+			name string
+			sql  string
+		}{
+			{"journal lines", `DELETE FROM gl_journal_lines WHERE branch_id = $1::uuid OR journal_id IN (SELECT id FROM gl_journals WHERE branch_id = $1::uuid)`},
+			{"journals", `DELETE FROM gl_journals WHERE branch_id = $1::uuid`},
+			{"subledger", `DELETE FROM customer_transactions WHERE branch_id = $1::uuid`},
+			{"payouts", `DELETE FROM payment_payouts WHERE branch_id = $1::uuid`},
+			{"allocations", `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE branch_id = $1::uuid) OR invoice_id IN (SELECT id FROM invoices WHERE branch_id = $1::uuid)`},
+			{"payment links", `UPDATE payments SET reversed_by_payment_id = NULL, reverses_payment_id = NULL, till_session_id = NULL WHERE branch_id = $1::uuid`},
+			{"payments", `DELETE FROM payments WHERE branch_id = $1::uuid`},
+			{"invoices", `DELETE FROM invoices WHERE branch_id = $1::uuid`},
+			{"till movements", `DELETE FROM till_movements WHERE till_session_id IN (SELECT id FROM till_sessions WHERE branch_id = $1::uuid)`},
+			{"till sessions", `DELETE FROM till_sessions WHERE branch_id = $1::uuid`},
+			{"location", `DELETE FROM locations WHERE id = $1::uuid`},
+		}
+		for _, s := range steps {
+			if _, err := w.r.obs.Exec(c, s.sql, branch); err != nil {
+				t.Errorf("cleanup %s for branch %s: %v", s.name, branch, err)
+			}
+		}
 	})
 	var inv string
 	if err := w.r.obs.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
