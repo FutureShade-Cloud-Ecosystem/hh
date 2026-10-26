@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -32,6 +33,7 @@ type StaffHandler struct {
 	svc                 *StaffService
 	userLink            identity.UserIDLinker
 	settingsGrantReader func(ctx context.Context) (SettingsGrant, error)
+	reach               customerwall.Reach // the customer module's reach rule (UX-89)
 }
 
 // WithSettingsGrantReader wires the settings grant read behind the route. A handler
@@ -124,6 +126,9 @@ func (h *StaffHandler) createQuote(w http.ResponseWriter, r *http.Request, _ gua
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeErr(w, err)
+		return
+	}
+	if !customerwall.Fence(w, r, h.reach, body.CustomerID) {
 		return
 	}
 	view, err := h.svc.CreateQuote(r.Context(), QuoteCreate{
@@ -592,3 +597,13 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
 }
+
+// WithCustomerReach binds the customer module's reach rule (the one seam) the quote create hold their customer to
+// (UX-89). CustomerReachWired is the boot check that it was.
+func (h *StaffHandler) WithCustomerReach(c customerwall.Reach) *StaffHandler {
+	h.reach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *StaffHandler) CustomerReachWired() bool { return h.reach != nil }

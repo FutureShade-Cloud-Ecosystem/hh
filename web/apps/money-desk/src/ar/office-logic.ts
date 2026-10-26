@@ -6,7 +6,7 @@
 // The limits and sentences follow the core (core/internal/billing: ar_reminders.go, ar_landing.go,
 // register_service.go; core/internal/till; core/internal/payments) so a refusal the browser makes is the one the
 // server would have made.
-import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend } from "@hardscapehouse/api-client";
+import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend, PaymentsReapplication } from "@hardscapehouse/api-client";
 import { refusalWords } from "./ar-logic.js";
 
 // ---- who may, in words, for the walls this slice meets ------------------------------------------------------------
@@ -273,6 +273,29 @@ export function reversalWords(result: PaymentsReversalResult, paymentNo: string)
   const n = result.reopened_invoices.length;
   const kind = result.label === "VOID" ? "a void, the same day" : "a reversal";
   return `Payment ${paymentNo} is reversed as ${kind}. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}.`;
+}
+
+export type ReapplyCheck = { ok: true; invoiceId: string; amountCents: number; reason: string } | { ok: false; words: string };
+
+/** The core's re-application checks, said before the request is sent; the amount is parsed through the decimal string. */
+export function reapplyCheck(input: { invoiceId: string; amountText: string; reason: string; heldCents: number; balanceCents: number | null }): ReapplyCheck {
+  if (input.invoiceId === "" || input.balanceCents === null) return { ok: false, words: "Choose the invoice to put the money on." };
+  if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount to apply, such as 100.00." };
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
+  if (cents > input.heldCents) return { ok: false, words: `That is more than the ${formatMoney(input.heldCents)} still held for this payment.` };
+  if (cents > input.balanceCents) return { ok: false, words: `That is more than the invoice's open balance of ${formatMoney(input.balanceCents)}.` };
+  const reason = input.reason.trim();
+  if (reason === "") return { ok: false, words: "Enter why the money is being applied, such as keyed on the wrong account." };
+  return { ok: true, invoiceId: input.invoiceId, amountCents: cents, reason };
+}
+
+/** What a re-application did, from the server's own answer: the money moved, and what is still held. */
+export function reapplyWords(result: PaymentsReapplication, paymentNo: string): string {
+  const where = result.lines.map((l) => l.invoice_no).join(" and ");
+  const left = result.held_after_cents === 0 ? "Nothing is held for this payment now." : `${formatMoney(result.held_after_cents)} is still held for this payment.`;
+  return `${formatMoney(result.applied_cents)} of payment ${paymentNo} is applied to invoice ${where}. ${left}`;
 }
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------

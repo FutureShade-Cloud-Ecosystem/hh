@@ -35,7 +35,7 @@ import type { ApplyAnswer } from "./ar-api.js";
 import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
-import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
+import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
 import { renderSettingsPanels } from "./office-settings-views.js";
 
 export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
@@ -859,7 +859,9 @@ function paymentList(model: DeskModel, account: AccountModel): TemplateResult {
           <li data-payment-row>
             <span>${p.payment_no} · ${p.method.toLowerCase()} · ${formatMoney(p.amount_cents)}
               ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : p.status === "VOID" ? html`<span class="pill pill-plain">Reversal</span>` : p.reversed_at !== undefined ? html`<span class="pill pill-plain">Reversed</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
-            ${p.status === "BOUNCED" || p.status === "VOID" || p.reversed_at !== undefined
+            ${p.reversed_at !== undefined && p.status !== "VOID" && p.status !== "BOUNCED"
+              ? html`<span class="row-actions">${renderReapply(model.office, p, account.invoices.filter(isUnpaidInvoice), account.detail?.id ?? "")}</span>`
+              : p.status === "BOUNCED" || p.status === "VOID" || p.reversed_at !== undefined
               ? nothing
               : account.bounceFor === p.payment_id
                 ? html`<span class="inline-form"><label><span class="visually-hidden">Reason it bounced</span><input type="text" data-field="bounce-reason" placeholder="Why it came back, such as cheque returned NSF" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="bounce-confirm" data-payment-id="${p.payment_id}">Confirm bounced</button><button type="button" class="btn btn-secondary small-btn" data-action="bounce-cancel">Cancel</button></span>`

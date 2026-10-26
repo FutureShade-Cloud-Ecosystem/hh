@@ -219,12 +219,23 @@ func (s *Service) ListReturnRequests(ctx context.Context, status string) ([]Retu
 	default:
 		return nil, clientErr(http.StatusBadRequest, "pos: unknown request status %q", status)
 	}
-	rows, err := s.store.ListReturnRequestsByStatus(ctx, status, 200)
+	// THE BRANCH WALL: the staff queue shows only the requests at branches the caller reaches. The reach
+	// goes INTO the query, so the row limit counts the caller's own rows: filtering after a LIMIT 200 let
+	// other branches' pending requests crowd a quiet branch's out of the page.
+	caller, err := s.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// THE BRANCH WALL: the staff queue shows only the requests at branches the caller reaches.
-	caller, err := s.caller(ctx)
+	var reach []string // nil: every branch (a global caller)
+	if caller.Scope != identity.ScopeGlobal {
+		reach = []string{}
+		for id, granted := range caller.Branches {
+			if granted {
+				reach = append(reach, id)
+			}
+		}
+	}
+	rows, err := s.store.ListReturnRequestsByStatus(ctx, status, reach, 200)
 	if err != nil {
 		return nil, err
 	}
@@ -581,14 +592,14 @@ func (r *Repository) GetReturnRequest(ctx context.Context, id string) (ReturnReq
 	return out[0], true, nil
 }
 
-func (r *Repository) listReturnRequests(ctx context.Context, where string, arg any, order string, limit int) ([]ReturnRequest, error) {
+func (r *Repository) listReturnRequests(ctx context.Context, where string, arg any, order string, limit int, extra ...any) ([]ReturnRequest, error) {
 	if r.pool == nil {
 		return nil, errNoPool
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := r.pool.Query(ctx, selectReturnRequest+where+order+` LIMIT $2`, arg, limit)
+	rows, err := r.pool.Query(ctx, selectReturnRequest+where+order+` LIMIT $2`, append([]any{arg, limit}, extra...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -614,9 +625,13 @@ func (r *Repository) ListReturnRequestsByCustomer(ctx context.Context, customerI
 	return r.listReturnRequests(ctx, ` WHERE rq.customer_id::text = $1`, customerID, ` ORDER BY rq.created_at DESC`, limit)
 }
 
-func (r *Repository) ListReturnRequestsByStatus(ctx context.Context, status string, limit int) ([]ReturnRequest, error) {
-	// Oldest first, the approval queue drains in arrival order.
-	return r.listReturnRequests(ctx, ` WHERE rq.status = $1`, status, ` ORDER BY rq.created_at`, limit)
+func (r *Repository) ListReturnRequestsByStatus(ctx context.Context, status string, branchIDs []string, limit int) ([]ReturnRequest, error) {
+	// Oldest first, the approval queue drains in arrival order. branchIDs nil is every branch; a list
+	// (empty included) narrows the query itself to those branches, before the row limit.
+	if branchIDs == nil {
+		return r.listReturnRequests(ctx, ` WHERE rq.status = $1`, status, ` ORDER BY rq.created_at`, limit)
+	}
+	return r.listReturnRequests(ctx, ` WHERE rq.status = $1 AND o.branch_id::text = ANY($3)`, status, ` ORDER BY rq.created_at`, limit, branchIDs)
 }
 
 // LockReturnRequestStatus takes FOR UPDATE on one return_requests row inside the caller's tx and

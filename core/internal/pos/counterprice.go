@@ -101,14 +101,12 @@ func (s *Service) CounterPrices(ctx context.Context, in CounterPriceInput) (Coun
 	// resolved authority does not reach is refused with the words create sale gives for it, never answered
 	// at that branch's rules and the named account's prices. A read naming no branch is the dealer wide
 	// picture and stays answered; a caller that cannot be resolved is the 401 the guard's door would give.
-	if branch := strings.TrimSpace(in.BranchID); branch != "" {
-		caller, err := s.caller(ctx)
-		if err != nil {
-			return CounterPrices{}, err
-		}
-		if !caller.CanAccessBranch(branch) {
-			return CounterPrices{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branch)
-		}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return CounterPrices{}, err
+	}
+	if branch := strings.TrimSpace(in.BranchID); branch != "" && !caller.CanAccessBranch(branch) {
+		return CounterPrices{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branch)
 	}
 	out := CounterPrices{CustomerType: "RETAIL", Prices: []pricing.CounterQuote{}}
 	quoter := s.counterQuoter()
@@ -121,14 +119,16 @@ func (s *Service) CounterPrices(ctx context.Context, in CounterPriceInput) (Coun
 	}
 	// THE CUSTOMER TYPE COMES FROM THE ACCOUNT, NOT FROM THE WIRE. The terminal knows the customer
 	// it picked, but "what tier is this account" is a pricing input and therefore a server fact.
-	// An unreadable or unknown customer prices as RETAIL, the safe direction, since RETAIL is the
-	// dearest tier and nobody gets a discount they are not entitled to by editing a request.
+	// THE CUSTOMER WALL: an id that is no account and an account the caller cannot reach (homed at a branch
+	// outside its grants) answer the same, 404 "customer not found" (customerFor), never the account's type
+	// or contract prices and never a quiet walk-in price that would tell the two apart.
 	customerID := strings.TrimSpace(in.CustomerID)
 	if customerID != "" {
-		cust, err := s.store.ReadCustomer(ctx, customerID)
-		if err != nil || cust.CustomerType == "" {
-			customerID = "" // unknown account → walk-in pricing, never a guess
-		} else {
+		cust, err := s.customerFor(ctx, caller, customerID)
+		if err != nil {
+			return CounterPrices{}, err
+		}
+		if cust.CustomerType != "" {
 			out.CustomerType = cust.CustomerType
 		}
 	}

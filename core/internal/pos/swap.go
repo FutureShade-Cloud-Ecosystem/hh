@@ -202,6 +202,8 @@ func (s *Service) swapFigures(ctx context.Context, in SwapInput) (swapFig, error
 				"pos: order %s still has an open invoice, so its return is not credit in hand; return it as a credit note first, then ring the new order", oc.OrderNo)
 		}
 	}
+	// The account is read directly, on purpose (customerFor's ruling): the swap is held by the sale's branch
+	// above, so its replacement order prices at the account's type even for a yard-held account.
 	cust, err := s.store.ReadCustomer(ctx, in.CustomerID)
 	if err != nil {
 		return fig, err

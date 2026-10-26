@@ -75,3 +75,43 @@ bank match.
   match posts Dr bank / Cr clearing). It has no live caller today (it follows the claim's predicate, a reversed CARD is deposited and every other reversed tender refused). A caller that used it would leave the GL on the
   clearing account while the status says DEPOSITED, and a deposit-status payment would show as banked in the matcher while the
   GL never moved the money there. It must post its own clearing journal before it gains a caller.
+
+## Re-application (SF-2l, migration 0431)
+
+Re-application is the first act that clears 2310: it applies the money a reversal holds to invoices of the same
+customer, Dr 2310 / Cr AR.
+
+1. **The held figure** of a reversed payment is its amount less the sum of its rows in `payment_reapplications`. There
+   is no column on `payments` (a sync feed row; a stamp would draw its counter for a fact no device reads) and no second
+   ledger. The service refuses a request above the figure under the payment row `FOR UPDATE`, and the table's guard
+   trigger refuses the same insert, so a second call site cannot forget. The pay out and the write off (SF-2m, SF-2n)
+   subtract from the same figure in rows of their own.
+2. **It reuses the settle.** The invoice balance move (with its invoices feed seq and the PAID or PARTIALLY_PAID flip)
+   and the AR subledger PAYMENT row are `applySliceTx`, the body `AllocateToInvoiceTx` already ran, now shared. A
+   re-application writes no payments row, no allocation, no till movement and no tender: the cash is already in the
+   drawer's count through the reversed original, and a new payment would count it again.
+3. **Who and what.** A manager, with a reason and an idempotency key. The invoices are the payment's own customer's,
+   open, in the caller's branch reach and in the payment's own branch (the 2310 liability was booked to that branch and
+   the clearing journal carries one branch), each taking at most its payable. Another customer's invoice is not allowed:
+   the source does not say the money may follow a customer's group.
+4. **GL.** `payment.reapplied` (rule rows in 0431) posts one journal per request, keyed `payment.reapplied:<batch>`,
+   Dr 2310 `refund_payable` / Cr AR `ar` for the total.
+5. **Reversed or bounced again.** The original is already reversed, so `ReversePayment` refuses it
+   (`ErrAlreadyReversed`) and `MarkNSF` refuses a reversed payment; the applied slices are not payments, so there is
+   nothing for either to take twice. An applied slice is final here: moving money back from an invoice into 2310 is a
+   separate act, not built.
+6. **Locks.** Payment row, then the invoice rows ascending (`FOR NO KEY UPDATE`), then the invoices counter the balance
+   moves draw. No payments counter is drawn. Two concurrent applies of one held amount serialise on the payment row:
+   the first lands, the second is refused with the held figure it finds.
+7. **Dunning, ageing and credit hold do not yet net the held money** (FROM-PRINCIPAL 55.3). Every reader sums invoice
+   balances (`agingSelect`, `v_ar_aging`, the reminder worklist, the credit limit and COD gates, the dispatch gate, the
+   financial statements' ageing), and the reversal reopens the invoices, so a customer whose payment is reversed and
+   held reads as owing it until it is re-applied or paid out. Netting is a policy choice (which invoice or bucket the
+   held money offsets) across those readers, with a payments seam for the customer's held total; it is sized and left
+   for a ruling.
+8. **The register shows re-applied slices (SF-2r).** An invoice's Applied figure adds its slices and its timeline carries
+   one applied entry per slice ("re applied from a reversed payment", with the payment it came from), read through the
+   payments module's `ReappliedToInvoice` seam: the register never reads `payment_reapplications`. The Applied figure
+   also counts a reversing row's contra allocation as negative, so a payment and its reversal net to zero (summed
+   plainly it read twice the payment). The statement and the customer activity read the subledger row and already show
+   a slice.

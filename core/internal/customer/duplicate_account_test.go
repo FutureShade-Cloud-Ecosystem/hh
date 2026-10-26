@@ -3,7 +3,7 @@ package customer
 import (
 	"bytes"
 	"context"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +38,8 @@ func TestCreate_DuplicateAccountNo_Returns409(t *testing.T) {
 	body := bytes.NewBufferString(`{"account_no":"DIB-DUP","name":"Dup Co"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/customers", body)
 	rec := httptest.NewRecorder()
-	h.create(rec, req, guards.StaffCaller{})
+	// A GLOBAL caller: a null home account is the global caller's to file (UX-89 round 2).
+	h.create(rec, req, fenceCaller(coreidentity.ScopeGlobal))
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate account_no: status = %d, want 409; body %s", rec.Code, rec.Body.String())
