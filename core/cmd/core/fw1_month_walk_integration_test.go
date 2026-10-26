@@ -600,7 +600,8 @@ func TestFW1MonthWalk(t *testing.T) {
 
 	// The bank month. An outstanding cheque (a vendor payment the bank has not seen) through
 	// the GL's own manual journal; a deposit in transit (the Kingston lodgement, not on the
-	// statement); a statement that carries the Trenton lodgement and a bank charge.
+	// statement); a statement that carries the Trenton lodgement and a bank charge, with the
+	// bank charge booked on the ledger and matched to its statement line.
 	w.outstandingChequeCents = 12500
 	w.depositInTransitCents = 25000
 	w.ok("outstanding cheque journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
@@ -631,20 +632,41 @@ func TestFW1MonthWalk(t *testing.T) {
 		})
 		w.drain()
 	}
-	// The statement balance the sign off must reach from balances at month end:
-	// GL 1000 at month end + deposits in transit - outstanding cheques.
-	gl1000 := func() int64 {
-		var c int64
-		if err := w.pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(COALESCE(l.debit_cents,0) - COALESCE(l.credit_cents,0)), 0)
-			  FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
-			 JOIN gl_accounts a ON a.id = l.account_id
-			 WHERE a.code = '1000' AND j.status = 'POSTED'`).Scan(&c); err != nil {
-			w.t.Fatalf("GL 1000 balance: %v", err)
+	// Book the monthly bank charge on the ledger and match the statement line to that journal.
+	var feeJournalID string
+	if feeOut := w.ok("bank charge journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
+		"branch_id": fw1TRT, "memo": "fw1 walk monthly bank service charge", "source": "MANUAL",
+		"lines": []map[string]any{
+			{"account_code": "6300", "debit_cents": 650, "memo": "bank service charge"},
+			{"account_code": "1000", "credit_cents": 650, "memo": "bank service charge"},
+		},
+	}); feeOut != nil {
+		var m struct {
+			ID string `json:"id"`
 		}
-		return c
-	}()
-	w.statementBalanceCents = gl1000 + w.depositInTransitCents - w.outstandingChequeCents
+		_ = json.Unmarshal(feeOut, &m)
+		feeJournalID = m.ID
+	}
+	w.drain()
+	var stmtChargeLine string
+	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'SVC' LIMIT 1`, w.bankAccountID).Scan(&stmtChargeLine); err != nil {
+		w.stepErrs = append(w.stepErrs, "bank statement import: no charge line for SVC: "+err.Error())
+	} else if feeJournalID != "" {
+		w.ok("match the bank charge", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
+			"mode": "manual", "bank_account_id": w.bankAccountID,
+			"statement_line_id": stmtChargeLine, "target_type": "JOURNAL", "target_ref_id": feeJournalID,
+			"amount_cents": -650,
+		})
+		w.drain()
+	}
+	// The statement balance comes from the imported bank statement lines, a real external
+	// figure (+$400.00 deposit less $6.50 bank charge = $393.50), never from the ledger.
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0)
+		  FROM bank_statement_lines
+		 WHERE bank_account_id = $1`, w.bankAccountID).Scan(&w.statementBalanceCents); err != nil {
+		w.t.Fatalf("bank statement balance from lines: %v", err)
+	}
 
 	// Till close with an over at Trenton (counted cash $1.50 over) and an exact close at
 	// Kingston (FW1-13's screen is the item; the till service's own count and close are the
@@ -800,9 +822,43 @@ func (w *fw1Walk) assertHSTTies(t *testing.T) {
 // 5. The bank month signs off at a zero difference computed from balances at month end, with
 // the outstanding items listed.
 func (w *fw1Walk) assertBankMonth(t *testing.T) {
-	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1000", w.monthEnd, "")
+	ctx := context.Background()
+	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.monthEnd, "")
 	if err != nil {
 		t.Fatalf("the GL 1000 read: %v", err)
+	}
+	var depositInTransit, outstandingCheques int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(tm.amount_cents), 0)
+		  FROM till_movements tm
+		 WHERE tm.movement_type = 'LODGEMENT'
+		   AND NOT EXISTS (
+		       SELECT 1 FROM bank_matches bm
+		        WHERE bm.target_type = 'LODGEMENT'
+		          AND bm.target_ref_id = tm.id
+		          AND bm.unmatched_at IS NULL
+		   )`).Scan(&depositInTransit); err != nil {
+		t.Fatalf("the deposits in transit read: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(l.credit_cents), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE a.code = '1000'
+		   AND j.status = 'POSTED'
+		   AND COALESCE(l.credit_cents, 0) > 0
+		   AND NOT EXISTS (
+		       SELECT 1 FROM bank_matches bm
+		        WHERE (bm.journal_id = j.id OR (bm.target_type = 'JOURNAL' AND bm.target_ref_id = j.id))
+		          AND bm.unmatched_at IS NULL
+		   )`).Scan(&outstandingCheques); err != nil {
+		t.Fatalf("the outstanding cheques read: %v", err)
+	}
+	if depositInTransit != w.depositInTransitCents || outstandingCheques != w.outstandingChequeCents {
+		t.Errorf("the bank month outstanding items do not match the walk: deposit in transit %s (want %s), outstanding cheques %s (want %s)",
+			fw1Dollars(depositInTransit), fw1Dollars(w.depositInTransitCents),
+			fw1Dollars(outstandingCheques), fw1Dollars(w.outstandingChequeCents))
 	}
 	svc := bankrec.NewService(bankrec.NewRepository(w.pool)).
 		WithPayments(till.NewRepository(w.pool)).
@@ -810,18 +866,27 @@ func (w *fw1Walk) assertBankMonth(t *testing.T) {
 		WithJournalPoster(glPosterAdapter{svc: w.money.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: w.money.glSvc}).
 		WithJournals(w.money.glSvc)
-	rec, err := svc.OpenReconciliation(context.Background(), bankrec.ReconInput{
-		BankAccountID: w.bankAccountID, Year: w.year, Month: w.month, StatementBalanceCents: w.statementBalanceCents,
+	rec, err := svc.OpenReconciliation(ctx, bankrec.ReconInput{
+		BankAccountID: w.bankAccountID, Year: w.year, Month: w.month, StatementBalanceCents: 0,
 	})
 	if err != nil {
-		t.Fatalf("the bank month sign off: %v", err)
+		t.Fatalf("the bank month open: %v", err)
 	}
-	want := gl1000 + w.depositInTransitCents - w.outstandingChequeCents
-	if rec.VarianceCents != 0 || w.statementBalanceCents != want {
-		t.Errorf("the bank month does not sign off at zero: statement %s against GL 1000 at month end %s plus %s in transit less %s outstanding cheques = %s; the difference computes to %s (the ledger side is %s)",
-			fw1Dollars(w.statementBalanceCents), fw1Dollars(gl1000), fw1Dollars(w.depositInTransitCents),
-			fw1Dollars(w.outstandingChequeCents), fw1Dollars(want), fw1Dollars(rec.VarianceCents),
-			shorter(w.statementBalanceCents, want))
+	if rec.StatementBalanceCents != w.statementBalanceCents {
+		t.Errorf("the bank month statement balance %s does not match the statement lines %s",
+			fw1Dollars(rec.StatementBalanceCents), fw1Dollars(w.statementBalanceCents))
+	}
+	// Standard bank reconciliation tie: statement balance + deposits in transit - outstanding cheques = book balance (GL 1000).
+	adjustedBank := rec.StatementBalanceCents + depositInTransit - outstandingCheques
+	if rec.VarianceCents != 0 || adjustedBank != gl1000 {
+		t.Errorf("the bank month does not tie at zero: statement %s plus %s deposit in transit less %s outstanding cheques = %s against GL 1000 at month end %s (the ledger side is %s by %s; OpenReconciliation reports variance %s)",
+			fw1Dollars(rec.StatementBalanceCents), fw1Dollars(depositInTransit),
+			fw1Dollars(outstandingCheques), fw1Dollars(adjustedBank), fw1Dollars(gl1000),
+			shorter(gl1000, adjustedBank), byDollars(gl1000-adjustedBank), fw1Dollars(rec.VarianceCents))
+	}
+	completed, err := svc.CompleteReconciliation(ctx, rec.ID, "d7000000-0000-4000-9000-000000000006")
+	if err != nil || completed.Status != bankrec.ReconCompleted {
+		t.Errorf("the bank month sign off (CompleteReconciliation) did not succeed: err=%v status=%s", err, completed.Status)
 	}
 }
 
